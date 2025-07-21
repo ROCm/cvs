@@ -8,13 +8,16 @@ import time
 import json
 import logging
 
-import lib.rccl_lib
-from lib.parallel_ssh_lib import *
-from lib.utils_lib import *
-from lib.verify_lib import *
+sys.path.insert( 0, '../../lib' )
+import rccl_lib
+from parallel_ssh_lib import *
+from utils_lib import *
+from verify_lib import *
 
+import globals
 
-log = logging.getLogger()
+log = globals.log
+
 
 
 # Importing additional cmd line args to script ..
@@ -73,9 +76,9 @@ def  vpc_node_list(cluster_dict):
 def test_cluster_all_reduce_ring_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
     start_time = phdl.exec('date')
-
+    globals.error_list = []
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='all_reduce_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='all_reduce_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -110,15 +113,16 @@ def test_cluster_all_reduce_ring_simple(phdl, cluster_dict, vpc_node_list, confi
 
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
-
+    update_test_result()
               
 
 
 def test_cluster_all_gather_ring_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
     start_time = phdl.exec('date')
 
+    globals.error_list = []
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='all_gather_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='all_gather_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -152,15 +156,17 @@ def test_cluster_all_gather_ring_simple(phdl, cluster_dict, vpc_node_list, confi
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 
 def test_cluster_gather_ring_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='gather_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='gather_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -194,15 +200,17 @@ def test_cluster_gather_ring_simple(phdl, cluster_dict, vpc_node_list, config_di
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 
 def test_cluster_scatter_ring_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='scatter_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='scatter_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -236,14 +244,16 @@ def test_cluster_scatter_ring_simple(phdl, cluster_dict, vpc_node_list, config_d
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 def test_cluster_reduce_ring_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='reduce_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='reduce_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -277,14 +287,16 @@ def test_cluster_reduce_ring_simple(phdl, cluster_dict, vpc_node_list, config_di
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 def test_cluster_alltoall_ring_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='alltoall_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='alltoall_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -318,15 +330,17 @@ def test_cluster_alltoall_ring_simple(phdl, cluster_dict, vpc_node_list, config_
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 
 def test_cluster_alltoallv_ring_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='alltoallv_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='alltoallv_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -360,14 +374,16 @@ def test_cluster_alltoallv_ring_simple(phdl, cluster_dict, vpc_node_list, config
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 def test_cluster_sendrecv_ring_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='sendrecv_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='sendrecv_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -401,14 +417,16 @@ def test_cluster_sendrecv_ring_simple(phdl, cluster_dict, vpc_node_list, config_
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 def test_cluster_broadcast_ring_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='broadcast_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='broadcast_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -442,6 +460,7 @@ def test_cluster_broadcast_ring_simple(phdl, cluster_dict, vpc_node_list, config
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
@@ -454,9 +473,10 @@ def test_cluster_broadcast_ring_simple(phdl, cluster_dict, vpc_node_list, config
 
 def test_cluster_all_reduce_tree_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='all_reduce_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='all_reduce_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -491,15 +511,17 @@ def test_cluster_all_reduce_tree_simple(phdl, cluster_dict, vpc_node_list, confi
        )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 
 def test_cluster_gather_tree_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='gather_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='gather_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -533,15 +555,17 @@ def test_cluster_gather_tree_simple(phdl, cluster_dict, vpc_node_list, config_di
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 
 def test_cluster_scatter_tree_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
     start_time = phdl.exec('date')
+    globals.error_list = []
 
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='scatter_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='scatter_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -575,15 +599,17 @@ def test_cluster_scatter_tree_simple(phdl, cluster_dict, vpc_node_list, config_d
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 
 def test_cluster_alltoall_tree_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='alltoall_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='alltoall_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -617,15 +643,17 @@ def test_cluster_alltoall_tree_simple(phdl, cluster_dict, vpc_node_list, config_
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 
 def test_cluster_alltoallv_tree_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='alltoallv_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='alltoallv_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -659,14 +687,16 @@ def test_cluster_alltoallv_tree_simple(phdl, cluster_dict, vpc_node_list, config
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 def test_cluster_sendrecv_tree_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='sendrecv_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='sendrecv_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -700,14 +730,16 @@ def test_cluster_sendrecv_tree_simple(phdl, cluster_dict, vpc_node_list, config_
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 def test_cluster_broadcast_tree_simple(phdl, cluster_dict, vpc_node_list, config_dict, ):
+    globals.error_list = []
 
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='broadcast_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='broadcast_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -739,6 +771,7 @@ def test_cluster_broadcast_tree_simple(phdl, cluster_dict, vpc_node_list, config
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
@@ -750,9 +783,10 @@ def test_cluster_broadcast_tree_simple(phdl, cluster_dict, vpc_node_list, config
 
 def test_cluster_all_reduce_ring_ll128(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='all_reduce_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='all_reduce_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -787,15 +821,17 @@ def test_cluster_all_reduce_ring_ll128(phdl, cluster_dict, vpc_node_list, config
        )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 
 def test_cluster_all_gather_ring_ll128(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='all_gather_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='all_gather_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -829,15 +865,17 @@ def test_cluster_all_gather_ring_ll128(phdl, cluster_dict, vpc_node_list, config
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 
 def test_cluster_gather_ring_ll128(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='gather_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='gather_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -871,15 +909,17 @@ def test_cluster_gather_ring_ll128(phdl, cluster_dict, vpc_node_list, config_dic
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 
 def test_cluster_scatter_ring_ll128(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='scatter_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='scatter_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -913,14 +953,16 @@ def test_cluster_scatter_ring_ll128(phdl, cluster_dict, vpc_node_list, config_di
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 def test_cluster_reduce_ring_ll128(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='reduce_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='reduce_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -954,14 +996,16 @@ def test_cluster_reduce_ring_ll128(phdl, cluster_dict, vpc_node_list, config_dic
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 def test_cluster_alltoall_ring_ll128(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='alltoall_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='alltoall_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -995,15 +1039,17 @@ def test_cluster_alltoall_ring_ll128(phdl, cluster_dict, vpc_node_list, config_d
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 
 def test_cluster_alltoallv_ring_ll128(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='alltoallv_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='alltoallv_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -1037,14 +1083,16 @@ def test_cluster_alltoallv_ring_ll128(phdl, cluster_dict, vpc_node_list, config_
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 def test_cluster_sendrecv_ring_ll128(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='sendrecv_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='sendrecv_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -1078,14 +1126,16 @@ def test_cluster_sendrecv_ring_ll128(phdl, cluster_dict, vpc_node_list, config_d
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
 
 
 def test_cluster_broadcast_ring_ll128(phdl, cluster_dict, vpc_node_list, config_dict, ):
 
+    globals.error_list = []
     start_time = phdl.exec('date')
     node_list = list(cluster_dict['node_dict'].keys())
-    result_dict = lib.rccl_lib.rccl_cluster_test( phdl, test_name='broadcast_perf', \
+    result_dict = rccl_lib.rccl_cluster_test( phdl, test_name='broadcast_perf', \
        node_list=node_list, \
        vpc_node_list=vpc_node_list, \
        user_name=cluster_dict['username'], \
@@ -1119,4 +1169,5 @@ def test_cluster_broadcast_ring_ll128(phdl, cluster_dict, vpc_node_list, config_
     )
     end_time = phdl.exec('date')
     verify_dmesg_for_errors( phdl, start_time, end_time )
+    update_test_result()
 
