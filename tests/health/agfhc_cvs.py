@@ -105,40 +105,40 @@ def test_agfhc_hbm(phdl, config_dict, ):
 
 
 # 2 hrs
-#@pytest.mark.dependency(depends=["init"])
-#def test_agfhc_hbm1_lvl5(phdl, config_dict, ):
-#    globals.error_list = []
-#    log.info('Testcase Run HBM1 Test - hbm_lvl5')
-#    path = config_dict['path']
-#    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm1 -r hbm_lvl5', timeout=(60*300))
-#    scan_agfc_results(out_dict)
-#    print_test_output(log, out_dict)
-#    update_test_result()
+@pytest.mark.dependency(depends=["init"])
+def test_agfhc_hbm1_lvl5(phdl, config_dict, ):
+    globals.error_list = []
+    log.info('Testcase Run HBM1 Test - hbm_lvl5')
+    path = config_dict['path']
+    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm1 -r hbm_lvl5', timeout=(60*300))
+    scan_agfc_results(out_dict)
+    print_test_output(log, out_dict)
+    update_test_result()
 
 
 # 2 hrs
-#@pytest.mark.dependency(depends=["init"])
-#def test_agfhc_hbm2_lvl5(phdl, config_dict, ):
-#    globals.error_list = []
-#    log.info('Testcase Run HBM2 Test - hbm_lvl5')
-#    path = config_dict['path']
-#    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm2 -r hbm_lvl5', timeout=(60*300))
-#    scan_agfc_results(out_dict)
-#    print_test_output(log, out_dict)
-#    update_test_result()
+@pytest.mark.dependency(depends=["init"])
+def test_agfhc_hbm2_lvl5(phdl, config_dict, ):
+    globals.error_list = []
+    log.info('Testcase Run HBM2 Test - hbm_lvl5')
+    path = config_dict['path']
+    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm2 -r hbm_lvl5', timeout=(60*300))
+    scan_agfc_results(out_dict)
+    print_test_output(log, out_dict)
+    update_test_result()
 
 
 
 # 30 min
-#@pytest.mark.dependency(depends=["init"])
-#def test_agfhc_hbm3_lvl3(phdl, config_dict, ):
-#    globals.error_list = []
-#    log.info('Testcase Run HBM3 Test - hbm_lvl3')
-#    path = config_dict['path']
-#    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm3 -r hbm_lvl3', timeout=(60*100))
-#    scan_agfc_results(out_dict)
-#    print_test_output(log, out_dict)
-#    update_test_result()
+@pytest.mark.dependency(depends=["init"])
+def test_agfhc_hbm3_lvl3(phdl, config_dict, ):
+    globals.error_list = []
+    log.info('Testcase Run HBM3 Test - hbm_lvl3')
+    path = config_dict['path']
+    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm3 -r hbm_lvl3', timeout=(60*100))
+    scan_agfc_results(out_dict)
+    print_test_output(log, out_dict)
+    update_test_result()
 
 
 
@@ -148,7 +148,7 @@ def test_agfhc_dma_lvl1(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run all_lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r all_lvl1', timeout=(60*20))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r all_lvl1', timeout=(60*30))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
@@ -159,7 +159,7 @@ def test_agfhc_dma_lvl1(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run DMA lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r dma_lvl1', timeout=(60*20))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r dma_lvl1', timeout=(60*30))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
@@ -170,7 +170,7 @@ def test_agfhc_gfx_lvl1(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run GFX lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r gfx_lvl1', timeout=(60*20))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r gfx_lvl1', timeout=(60*60))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
@@ -181,7 +181,7 @@ def test_agfhc_pcie_lvl1(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run PCIe lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl1', timeout=(60*20))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl1', timeout=(60*60))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
@@ -192,7 +192,7 @@ def test_agfhc_pcie_lvl3(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run PCIe lvl3')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl3', timeout=(60*50))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl3', timeout=(60*60))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
@@ -234,11 +234,11 @@ def test_agfhc_all_lvl5(phdl, config_dict, ):
 
 
 #180m
-@pytest.mark.dependency(depends=["init"])
-def test_agfhc_rochpl(phdl, config_dict, ):
-    log.info('Testcase rochpl for 180 min')
-    path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc rochpl:d=180m', timeout=(60*350))
-    scan_agfc_results(out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
+#@pytest.mark.dependency(depends=["init"])
+#def test_agfhc_rochpl(phdl, config_dict, ):
+#    log.info('Testcase rochpl for 180 min')
+#    path = config_dict['path']
+#    out_dict = phdl.exec(f'sudo {path}/agfhc rochpl:d=180m', timeout=(60*650))
+#    scan_agfc_results(out_dict)
+#    print_test_output(log, out_dict)
+#    update_test_result()

@@ -184,13 +184,16 @@ def  hdl(cluster_dict):
 
 @pytest.mark.dependency(name="init")
 def test_install_transferbench(hdl, phdl, config_dict ):
+    # For install case, if the systems are using NFS, use single connection to 
+    # just first node with netmiko
     globals.error_list = []
     log.info('Testcase install transferbench')
     package_path = config_dict['package_path']
     git_url = config_dict['git_url']
     print(package_path)
-    #out = hdl.send_command(f'cd {package_path};git clone {git_url}', delay_factor=10)
-    out_dict = phdl.exec(f'cd {package_path};git clone {git_url}', delay_factor=10)
+    out = hdl.send_command(f'rm -rf TransferBench')
+    out = hdl.send_command(f'cd {package_path};git clone {git_url};cd', delay_factor=10)
+    #out_dict = phdl.exec(f'cd {package_path};git clone {git_url}', delay_factor=10)
     print(out)
     out_dict = phdl.exec(f'cd {package_path}/TransferBench;CC=hipcc make')
     out_dict = phdl.exec(f'ls -l /opt/amd/transferbench')
