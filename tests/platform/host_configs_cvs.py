@@ -9,7 +9,7 @@ import json
 import logging
 import json
 
-sys.path.insert( 0, '../../lib' )
+sys.path.insert( 0, './lib' )
 from parallel_ssh_lib import *
 from utils_lib import *
 from verify_lib import *
