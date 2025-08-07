@@ -1,0 +1,304 @@
+{
+
+    "config":
+    {
+        "container_image": "rocm/megatron-lm:v25.5_py310",
+        "container_name": "megatron_llama3.1_8b_310",
+        "distributed_training": "True",
+        "nnodes": "4",
+        "master_address": "10.2.96.21",
+        "training_iterations": "10",
+        "nic_type": "thor2",
+        "nccl_ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7",
+        "nccl_socket_ifname": "ens51f1np1",
+        "gloo_socket_ifname": "ens51f1np1",
+        "nccl_ib_gid_index": "3",
+        "nccl_debug": "ERROR",
+        "hf_token_file": "/home/venksrin/.hf_token",
+        "shm_size": "128G",
+        "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
+        "data_cache_dir": "/home/venksrin/cache",
+        "mock_data": "True",
+        "log_dir": "/home/venksrin/LOG_DIR",
+        "dataset_source": 
+        {
+        },
+        "container_config":
+        {
+            "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm" ],
+            "volume_dict":
+            {
+            "/home/venksrin": "/home/venksrin",
+            "/dev/infiniband": "/dev/infiniband",
+            "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+            "/lib/libibverbs.d": "/lib/libibverbs.d",
+            "/tmp/TRAINING_LOGS": "/workspace/Megatron-LM/output"
+            }
+        }
+    },
+    "model_params":
+    {
+        "single_node":
+        {
+             "llama3_1_8b":
+             {
+                 "mi300":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-8B",
+                     "model_size": "8",
+                     "batch_size": "128",
+                     "micro_batch_size": "2",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "1",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 },
+                 "mi325":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-8B",
+                     "model_size": "8",
+                     "batch_size": "128",
+                     "micro_batch_size": "2",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "1",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 },
+                 "mi355":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-8B",
+                     "model_size": "8",
+                     "batch_size": "128",
+                     "micro_batch_size": "2",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "1",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 }
+             },
+             "llama3_1_70b":
+             {
+                 "mi300":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
+                     "model_size": "70",
+                     "batch_size": "128",
+                     "micro_batch_size": "2",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "1",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 },
+                 "mi325":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
+                     "model_size": "70",
+                     "batch_size": "128",
+                     "micro_batch_size": "2",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "1",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 },
+                 "mi355":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
+                     "model_size": "70",
+                     "batch_size": "128",
+                     "micro_batch_size": "2",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "1",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 }
+             }
+        },
+        "multi_node":
+        {
+             "llama3_1_8b":
+             {
+                 "mi300":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-8B",
+                     "model_size": "8",
+                     "_batch_size_4nodes": "256",
+                     "batch_size": "240",
+                     "micro_batch_size": "8",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "8",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 },
+                 "mi325":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-8B",
+                     "model_size": "8",
+                     "batch_size": "128",
+                     "micro_batch_size": "2",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "1",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 },
+                 "mi355":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-8B",
+                     "model_size": "8",
+                     "batch_size": "128",
+                     "micro_batch_size": "2",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "1",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 }
+             },
+             "llama3_1_70b":
+             {
+                 "mi300":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
+                     "model_size": "70",
+                     "batch_size": "256",
+                     "micro_batch_size": "2",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "1",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 },
+                 "mi325":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
+                     "model_size": "70",
+                     "batch_size": "128",
+                     "micro_batch_size": "2",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "1",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 },
+                 "mi355":
+                 {
+                     "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
+                     "model_size": "70",
+                     "batch_size": "128",
+                     "micro_batch_size": "2",
+                     "precision": "TE_FP8",
+                     "sequence_length": "8192",
+                     "tensor_parallelism": "1",
+                     "pipeline_parallelism": "1",
+                     "recompute": "0",
+                     "fsdp": "0",
+                     "result_dict":
+                     {
+                         "throughput_per_gpu": "380.0",
+                         "tokens_per_gpu": "6500.0",
+                         "elapsed_time_per_iteration": "12000.0",
+                         "mem_usage": "0.7"
+                     }
+                 }
+             }
+        }
+
+
+    }
+
+}

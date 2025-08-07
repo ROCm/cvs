@@ -67,7 +67,7 @@
     },
     "host":
     {
-       "os_version": "Ubuntu 22.04.5 LTS",
+       "os_version": "Ubuntu 24.04.1 LTS",
        "kernel_version": "6.8.0-60-generic",
        "rocm_version": "6.4.1",
        "bios_version": "20171212",
