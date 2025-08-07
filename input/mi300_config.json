@@ -95,8 +95,8 @@
     },
     "rccl":
     {
-       "no_of_nodes": "2",
-       "no_of_global_ranks": "16",
+       "no_of_nodes": "4",
+       "no_of_global_ranks": "32",
        "no_of_local_ranks": "8",
        "ranks_per_node": "8",
        "rocm_path": "/opt/rocm-6.4.0",
