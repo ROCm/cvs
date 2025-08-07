@@ -151,9 +151,11 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
         fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
 
-    result_out = hdl.send_command(f'cat {rccl_result_file}') 
-    print(result_out)
-    smi_out = hdl.send_command('rocm-smi -a')
+    #result_out = hdl.send_command(f'cat {rccl_result_file}') 
+    result_dict_out = shdl.exec(f'cat {rccl_result_file}')
+    result_out = result_dict_out[head_node]
+    smi_out_dict = shdl.exec('rocm-smi -a | head -30')
+    smi_out = smi_out_dict[head_node]
     model=get_model_from_rocm_smi_output(smi_out)
     if re.search( 'True', verify_avg_bus_bw, re.I ):
         check_avg_bus_bw( output, exp_results_dict[model][test_name] )
@@ -163,5 +165,3 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
 
     return result_out
     
-
-  
