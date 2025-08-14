@@ -31,9 +31,30 @@ def get_amd_smi_fw_dict( phdl ):
     return firmware_dict
 
 
+def get_amd_smi_ras_metrics_dict( phdl ):
+    ras_dict = {}
+    ras_dict_t = convert_phdl_json_to_dict( phdl.exec( 'sudo amd-smi metric --ecc --json' ))
+    for node in ras_dict_t.keys():
+        ras_dict[node] = {}
+        for gpu_dict in list(ras_dict_t[node]['gpu_data']):
+            ras_dict[node][gpu_dict['gpu']] = gpu_dict['ecc']
+    return ras_dict
+
+
+def get_amd_smi_pcie_metrics_dict( phdl ):
+    pcie_dict = {}
+    pcie_dict_t = convert_phdl_json_to_dict( phdl.exec( 'sudo amd-smi metric --pcie --json' ))
+    for node in pcie_dict_t.keys():
+        pcie_dict[node] = {}
+        for gpu_dict in list(pcie_dict_t[node]['gpu_data']):
+            pcie_dict[node][gpu_dict['gpu']] = gpu_dict['pcie']
+    return pcie_dict
+
+
 def get_gpu_mem_use_dict( phdl ):
     d_dict = convert_phdl_json_to_dict( phdl.exec('sudo rocm-smi --showmemuse --json'))
     return d_dict
+
 
 def get_gpu_use_dict( phdl ):
     d_dict = convert_phdl_json_to_dict( phdl.exec('sudo rocm-smi --showuse --json'))

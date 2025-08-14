@@ -180,7 +180,7 @@ def get_nic_ethtool_stats_dict( phdl, vendor=None ):
             for counter in stats_dict[node][intf].keys():
                 if re.search( 'err|discard|drop|crc|fcs|reset', counter, re.I ):
                     if int(stats_dict[node][intf][counter]) > 0:
-                        print(f'ERROR !! {node} {intf} {counter} {stats_dict[node][intf][counter]}')
+                        print(f'WARN !! {node} {intf} {counter} {stats_dict[node][intf][counter]}')
     return stats_dict
             
 
@@ -231,7 +231,9 @@ def get_rdma_stats_dict( phdl ):
     return rdma_stats_dict
 
 
- 
+
+
+
 def get_linux_perf_tuning_dict( phdl ):
     out_dict = {}
     out_dict['bios_version'] = phdl.exec('sudo dmidecode -s bios-version')
