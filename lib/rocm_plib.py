@@ -34,10 +34,19 @@ def get_amd_smi_fw_dict( phdl ):
 def get_amd_smi_ras_metrics_dict( phdl ):
     ras_dict = {}
     ras_dict_t = convert_phdl_json_to_dict( phdl.exec( 'sudo amd-smi metric --ecc --json' ))
+    print(ras_dict_t)
     for node in ras_dict_t.keys():
         ras_dict[node] = {}
-        for gpu_dict in list(ras_dict_t[node]['gpu_data']):
-            ras_dict[node][gpu_dict['gpu']] = gpu_dict['ecc']
+        print('^^^^^')
+        print(ras_dict_t[node])
+        if isinstance( ras_dict_t[node], dict ):
+            if 'gpu_data' in ras_dict_t[node].keys():
+                for gpu_dict in list(ras_dict_t[node]['gpu_data']):
+                    ras_dict[node][gpu_dict['gpu']] = gpu_dict['ecc']
+        elif isinstance( ras_dict_t[node], list ):
+            for gpu_dict in ras_dict_t[node]:
+                ras_dict[node][gpu_dict['gpu']] = gpu_dict['ecc']
+            
     return ras_dict
 
 
@@ -46,8 +55,13 @@ def get_amd_smi_pcie_metrics_dict( phdl ):
     pcie_dict_t = convert_phdl_json_to_dict( phdl.exec( 'sudo amd-smi metric --pcie --json' ))
     for node in pcie_dict_t.keys():
         pcie_dict[node] = {}
-        for gpu_dict in list(pcie_dict_t[node]['gpu_data']):
-            pcie_dict[node][gpu_dict['gpu']] = gpu_dict['pcie']
+        if isinstance( pcie_dict_t[node], dict ):
+            if 'gpu_data' in pcie_dict_t[node].keys():
+                for gpu_dict in list(pcie_dict_t[node]['gpu_data']):
+                    pcie_dict[node][gpu_dict['gpu']] = gpu_dict['pcie']
+        elif isinstance( pcie_dict_t[node], list ):
+            for gpu_dict in pcie_dict_t[node]:
+                pcie_dict[node][gpu_dict['gpu']] = gpu_dict['pcie']
     return pcie_dict
 
 
