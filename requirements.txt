@@ -1,4 +1,6 @@
 parallel-ssh
+paramiko
+scp
 pytest
 pytest-html
 pytest-repeat
