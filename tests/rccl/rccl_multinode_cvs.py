@@ -94,7 +94,7 @@ def pytest_generate_tests(metafunc):
                                  "scatter_perf", "gather_perf", \
                                  "reduce_scatter_perf", "sendrecv_perf", \
                                  "alltoall_perf", "alltoallv_perf", \
-                                 "broadcast_perf"]
+                                 "reduce_scatter_perf", "broadcast_perf"]
 
     if 'rccl_algo' in config['rccl']:
         rccl_algo_list = config['rccl']['rccl_algo']
@@ -164,6 +164,9 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, rccl_
         cluster_dict_before = create_cluster_metrics_snapshot( phdl )
 
 
+    if not re.search( 'None', config_dict['env_source_script'], re.I ):
+        phdl.exec(f'bash {config_dict['env_source_script']}')
+
     result_dict = rccl_lib.rccl_cluster_test( phdl, shdl, \
        test_name               = rccl_collective, \
        cluster_node_list       = node_list, \
@@ -173,11 +176,12 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, rccl_
        net_dev_list            = config_dict['net_dev_list'], \
        oob_port                = config_dict['oob_port'], \
        no_of_global_ranks      = config_dict['no_of_global_ranks'], \
-       rocm_path               = config_dict['rocm_path'], \
-       ucx_path                = config_dict['ucx_path'], \
-       mpi_path                = config_dict['mpi_path'], \
-       rccl_path               = config_dict['rccl_path'], \
-       rccl_tests_path         = config_dict['rccl_tests_path'], \
+       rocm_path_var           = config_dict['rocm_path_var'], \
+       mpi_dir                 = config_dict['mpi_dir'], \
+       mpi_path_var            = config_dict['mpi_path_var'], \
+       rccl_dir                = config_dict['rccl_dir'], \
+       rccl_path_var           = config_dict['rccl_path_var'], \
+       rccl_tests_dir          = config_dict['rccl_tests_dir'], \
        nccl_algo               = rccl_algo, \
        nccl_proto              = rccl_protocol, \
        gid_index               = config_dict['gid_index'], \
