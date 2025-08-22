@@ -1,9 +1,6 @@
 import re
 import sys
 import os
-import netmiko
-from netmiko import ConnectHandler
-from netmiko import redispatch
 
 import globals
 
@@ -51,28 +48,32 @@ def check_avg_bus_bw( output, exp_res_dict ):
 
 
 
-def check_bus_bw( output, exp_res_dict ):
+def check_bus_bw( test_name, output, exp_res_dict ):
     actual_bw_dict = {}
-    msg_size_list = list(exp_res_dict['out_bus_bw'].keys())
-    print(msg_size_list)
-    print(exp_res_dict)
-    for line in output.split("\n"):
-        line_dict = json.loads(line)
-        print('^^^^^^')
-        print(line_dict)
-        if line_dict['inPlace'] == 0:
-            msg_size = str(line_dict['size'])
-            if msg_size in msg_size_list:
-               
-                if float(line_dict['busBw']) < float(exp_res_dict['out_bus_bw'][msg_size]):
-                    fail_test(f"The actual out-of-place bus BW {line_dict['busBw']} for msg size {line_dict['size']} is lower than expected bus BW {exp_res_dict['out_bus_bw'][msg_size]}")
+    msg_size_list = list(exp_res_dict['bus_bw'].keys())
+    print(test_name)
+    act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
+    if re.search( 'alltoall|all_to_all', test_name, re.I ):
+        for act_dict in act_res_dict:
+            if act_dict['inPlace'] == 0:
+                for msg_size in msg_size_list:
+                    if str(msg_size) == str(act_dict['size']):
+                        if float(act_dict['busBw']) < float(exp_res_dict['bus_bw'][msg_size]):
+                            fail_test(f"The actual out-of-place bus BW {act_dict['busBw']} for msg size {act_dict['size']} is lower than expected bus BW {exp_res_dict['bus_bw'][msg_size]}")
+    else:
+        for act_dict in act_res_dict:
+            if act_dict['inPlace'] == 1:
+                for msg_size in msg_size_list:
+                    if str(msg_size) == str(act_dict['size']):
+                        if float(act_dict['busBw']) < float(exp_res_dict['bus_bw'][msg_size]):
+                            fail_test(f"The actual out-of-place bus BW {act_dict['busBw']} for msg size {act_dict['size']} is lower than expected bus BW {exp_res_dict['bus_bw'][msg_size]}")
 
  
 
 
 def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, user_name, ib_hca_list, \
-        net_dev_list, oob_port, no_of_global_ranks, rocm_path, ucx_path, mpi_path, \
-        rccl_path, rccl_tests_path, nccl_algo='ring', \
+        net_dev_list, oob_port, no_of_global_ranks, rocm_path_var, mpi_dir, mpi_path_var, \
+        rccl_dir, rccl_path_var, rccl_tests_dir, nccl_algo='ring', \
         nccl_proto='simple', gid_index=1, qp_count=1, start_msg_size=1024, end_msg_size='16g', \
         step_function=2, threads_per_gpu=1, warmup_iterations=10, no_of_iterations=1, \
         check_iteration_count=1, debug_level='INFO', \
@@ -85,20 +86,20 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         user_key_file=None, verify_bus_bw=False, \
         exp_results_dict=None ):
 
-    print(test_name)
-    ROCM_PATH=rocm_path
-    MPI_PATH=f'{mpi_path}/install/bin'
-    UCX_INSTALL_DIR=f'{ucx_path}/install'
-    MPI_INSTALL_DIR=f'{mpi_path}/install'
-    RCCL_INSTALL_DIR=f'{rccl_path}/build/release'
-    RCCL_TESTS_INSTALL_DIR=f'{rccl_tests_path}/build'
+    print(f'Starting RCCL Test ..........................................{test_name}')
+    ROCM_PATH=rocm_path_var
 
-    PATH=f'{MPI_INSTALL_DIR}/bin:{ROCM_PATH}/bin:$PATH'
-    LD_LIBRARY_PATH=f'{RCCL_INSTALL_DIR}/lib:{MPI_INSTALL_DIR}/lib:$LD_LIBRARY_PATH'
+    #MPI_PATH=f'{mpi_path}/install/bin'
+    MPI_PATH=f'{mpi_path_var}'
+    MPI_INSTALL_DIR=f'{mpi_dir}'
+    RCCL_INSTALL_DIR=f'{rccl_dir}'
+    RCCL_PATH=f'{rccl_path_var}'
+    RCCL_TESTS_INSTALL_DIR=f'{rccl_tests_dir}'
 
-    print('%%%% vpc_node_list %%%%')
-    print(vpc_node_list)
-    print(vpc_node_list[0])
+    PATH=f'{MPI_PATH}/bin:{ROCM_PATH}/bin:$PATH'
+    LD_LIBRARY_PATH=f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:$LD_LIBRARY_PATH'
+
+    print(f'%% VPC Node IPs {vpc_node_list}')
 
     head_node = cluster_node_list[0]
     host_params=''
@@ -107,19 +108,10 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         host_params = f'{host_params}{node}:{proc_per_node},'
 
     host_params = host_params.rstrip(',')
-    print(host_params)
+    print(f'RCCL Hosts -H value {host_params}')
 
-    #if user_password is None and user_key_file is None:
-    #    print('ERROR !! Both password and key file cannot be none, need one to login to the host')
-    #    return
-    #elif user_key_file is None:
-    #    hdl = ConnectHandler( ip=head_node, device_type='linux', username=user_name, \
-    #          password = user_password )
-    #elif user_password is None:
-    #    hdl = ConnectHandler( ip=head_node, device_type='linux', username=user_name, \
-    #          use_keys=True, key_file=user_key_file )
         
-    cmd = f'''{MPI_PATH}/mpirun --np {no_of_global_ranks} \
+    cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         -H {host_params} \
         -x NCCL_DEBUG={debug_level} \
@@ -148,30 +140,28 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         -x NCCL_PXN_DISABLE={nccl_pxn_disable} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
         {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-        -g {threads_per_gpu} -N {no_of_iterations} -c {check_iteration_count} -w {warmup_iterations} \
-        -Z json -x {rccl_result_file}'''
+        -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
+        -Z json -x {rccl_result_file}
+        '''
 
     print('%%%%%%%%%%%%%%%%')
     print(cmd)
     print('%%%%%%%%%%%%%%%%')
-    #output = hdl.send_command(cmd, read_timeout=300)
     try:
         out_dict = shdl.exec(cmd, timeout=500)
         output = out_dict[head_node]
-        print(output)
+        #print(output)
         scan_rccl_logs(output)
     except Exception as e:
         log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
         fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
 
-    #result_out = hdl.send_command(f'cat {rccl_result_file}') 
     result_dict_out = shdl.exec(f'cat {rccl_result_file}')
     result_out = result_dict_out[head_node]
     smi_out_dict = shdl.exec('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
     model=get_model_from_rocm_smi_output(smi_out)
     if re.search( 'True', verify_bus_bw, re.I ):
-        check_bus_bw( result_out, exp_results_dict[model][test_name] )
+        check_bus_bw( test_name, result_out, exp_results_dict[test_name] )
 
     return result_out
-    
