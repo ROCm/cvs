@@ -5,11 +5,41 @@ import json
 
 from rocm_plib import *
 
-#<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
 
 def build_html_page_header(filename):
+    """
+    Create (or overwrite) an HTML file and write a standard header section.
+
+    Args:
+      filename (str): Path to the HTML file to create. The file is opened in write mode ('w'),
+                      truncating any existing content.
+
+    Behavior:
+      - Prints a simple status message for visibility.
+      - Opens the target file in write mode using a context manager.
+      - Writes a multi-line HTML header containing:
+          * DOCTYPE and basic <html>/<head> structure
+          * UTF-8 meta charset
+          * Title: 'CVS Cluster View'
+          * Link to DataTables CSS
+          * Simple inline CSS classes (.highlight-red, .label-danger)
+          * Opening <body> tag to prepare for subsequent content
+      - File is automatically closed when exiting the context manager.
+
+    Notes:
+      - The explicit fp.close() is unnecessary because the with-statement closes the file.
+      - Consider specifying encoding='utf-8' when opening the file for portability.
+      - If this function is called repeatedly, it will overwrite the existing file content each time.
+      - For larger or templated HTML, consider using a template engine (e.g., Jinja2).
+    """
+    # Announce action for operator/logs
+
     print('Build HTML Page header')
+
+    # Open the file in write mode; this truncates any existing file.
+    # Use a context manager to ensure the file is properly closed even if an exception occurs.
     with open(filename, 'w') as fp:
+         # Static HTML header content including basic document structure and CSS references
          html_lines='''
 <!DOCTYPE html>
 <html>
@@ -36,8 +66,33 @@ def build_html_page_header(filename):
 
 
 def build_html_page_footer( filename, ):
+
+    """
+    Append a standard HTML footer section with JS dependencies and DataTables initialization.
+
+    Args:
+      filename (str): Path to the HTML file to append to. The file is opened in append mode ('a').
+
+    Behavior:
+      - Prints a status message (currently says "header"; consider updating to "footer").
+      - Appends the following to the file:
+        * jQuery and DataTables JS includes (via CDN).
+        * A document.ready block that initializes multiple DataTables by table ID.
+      - Leaves the file open context automatically (with-statement handles closing).
+
+    Notes:
+      - The print message says 'Build HTML Page header' but this is a footer builder; consider fixing it.
+      - This function assumes the page already includes matching table elements with the given IDs:
+          #prod, #gpuuse, #memuse, #nic, #training, #ethtoolstats, #rdmastats, #pciexgmimetrics
+        If an ID is missing in the DOM, DataTables initialization for that selector will fail.
+      - Consider appending closing tags (</body></html>) after the script block if this is the final footer.
+      - Consider using encoding='utf-8' for cross-platform consistency.
+      - For large pages or to avoid CDN dependency at runtime, you may want to host/serve the JS locally.
+    """
+
     print('Build HTML Page header')
     with open(filename, 'a') as fp:
+         # Open the file in append mode; footer content is added at the end of the document.
          html_lines='''
 <!-- jQuery -->
 <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
@@ -103,10 +158,52 @@ def build_html_page_footer( filename, ):
 
 
 def build_rdma_stats_table( filename, rdma_dict, ):
+
+    """
+    Append an HTML table summarizing RDMA statistics to the given file.
+
+    Args:
+      filename (str): Path to the HTML file to append to. The file is opened in append mode.
+      rdma_dict (dict): Nested structure of RDMA stats per node and device. Expected format:
+        {
+          "nodeA": {
+            "mlx5_0": {
+              "ifname": "rdma0",
+              "<counter_name>": "<numeric string or int>", ...
+            },
+            "mlx5_1": { ... }
+          },
+          "nodeB": { ... }
+        }
+
+    Behavior:
+      - Determines the RDMA device columns based on the first node?s device list.
+      - Writes a <h2> header and a DataTables-ready <table> with id="rdmastats".
+      - Creates a column for each RDMA device index (rdma_device_0, rdma_device_1, ...).
+      - For each node (row), inserts a nested table per RDMA device showing non-zero counters.
+      - Highlights counters whose names match error-like patterns in red (label-danger).
+      - Skips the "ifname" key from stats display.
+
+    Notes:
+      - Assumes every node has the same set of RDMA devices as the first node (node_0).
+        If the set differs by node, columns may not align as expected.
+      - Casting stats values to int may raise if the value is not numeric. Ensure inputs are clean.
+      - Consider HTML-escaping node names, device names, and values to avoid HTML injection issues.
+      - Closing the file explicitly (fp.close()) is unnecessary; the context manager handles it.
+      - The nested table uses border=1 inline; consider CSS classes/styles for consistency.
+      - The table relies on external JS/CSS (e.g., DataTables) initialized elsewhere in your page.
+    """
+
     node_0 = list(rdma_dict.keys())[0]
+
+    # Regex pattern for highlighting counters considered "error-like"
     err_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer'
+
+    # Determine device count from the first node?s keys
     rdma_device_list = rdma_dict[node_0].keys()
-    device_count = len(rdma_device_list) 
+    device_count = len(rdma_device_list)
+
+    # Open the HTML file in append mode; we assume header/body already started elsewhere
     with open(filename, 'a') as fp:
          html_lines='''
 <h2 style="background-color: lightblue">RDMA Statistics Table</h2>
@@ -115,21 +212,28 @@ def build_rdma_stats_table( filename, rdma_dict, ):
   <tr>
   <th>Node</th>'''
          fp.write(html_lines)
+
+         # Create one column header per RDMA device index from the first node
          for j in range(0,len(rdma_device_list)):
              fp.write(f'<th>rdma_device_{j}</th>\n')
          fp.write('</tr></thead>\n')
          # End or header, let us start data rows ..
 
+         # Begin writing data rows, one per node
          for node in rdma_dict.keys():
              # begin each node row
              fp.write(f'<tr><td>{node}</td>\n')
+             # For each RDMA device on this node, render a nested table of non-zero counters
              for rdma_device in rdma_dict[node].keys():
                  fp.write(f'<td><table border=1>\n')
                  stats_dict = rdma_dict[node][rdma_device]
                  fp.write(f'<tr><td>rdma_device</td><td>{rdma_device}</td></tr>\n')
                  for stats_key in stats_dict.keys():
                      if stats_key != "ifname":
+                         # Convert the value to int to check if it is non-zero
+                         # NOTE: Will raise if value is not numeric; sanitize inputs as needed.
                          if int(stats_dict[stats_key]) > 0:
+                             # If the counter name looks like an error, apply a red label for emphasis
                              if re.search( f'{err_pattern}', stats_key, re.I ):
                                  fp.write(f'<tr><td>{stats_key}</td><td><span class="label label-danger">{stats_dict[stats_key]}</td></tr>\n')
                              else: 
@@ -147,11 +251,47 @@ def build_rdma_stats_table( filename, rdma_dict, ):
         
 
 def build_ethtool_stats_table( filename, d_dict, ):
+
+    """
+    Append an HTML table summarizing per-node ethtool statistics.
+
+    Args:
+      filename (str): Path to the HTML file to append to. Opened in append mode ('a').
+      d_dict (dict): Nested dict of NIC stats per node and per device.
+                     Expected structure:
+                       {
+                         "nodeA": {
+                           "eth0": { "<counter_name>": "<numeric_str_or_int>", ... },
+                           "eth1": { ... }
+                         },
+                         "nodeB": { ... }
+                       }
+
+    Behavior:
+      - Determines device columns based on the device keys of the first node.
+      - Writes a section header and a DataTables-compatible table (id="ethtoolstats").
+      - For each node, creates a row with one cell per NIC containing a nested table of stats.
+      - Only non-zero counters are displayed to keep the table concise.
+      - Highlights counters whose names match an error-like regex (err_pattern) using a "label-danger" span.
+
+    Notes and assumptions:
+      - Assumes all nodes have (roughly) the same number/order of NICs as the first node.
+      - Values are cast to int to determine > 0; if any value is non-numeric, int(...) will raise.
+      - Consider HTML-escaping node/device names and values to avoid injecting HTML.
+      - The explicit fp.close() at the end is not needed because the with-context closes the file.
+      - The nested table styling uses border=1; consider CSS classes for consistent styling.
+      - Ensure matching CSS (e.g., .label-danger) exists in your page?s styles for red highlighting.
+    """
+
+    # Use the first node to derive the table column layout and device count (one column per device index)
     node_0 = list(d_dict.keys())[0]
     eth_device_list = d_dict[node_0].keys()
-    device_count = len(eth_device_list) 
+    device_count = len(eth_device_list)
+
+    # Regex to detect "error-like" counters for highlighting
     err_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|collision|reset|uncorrect'
- 
+
+    # Append to the HTML file (assumes an HTML <body> is already open) 
     with open(filename, 'a') as fp:
          html_lines='''
 <h2 style="background-color: lightblue">Ethtool Statistics Table</h2>
@@ -160,20 +300,30 @@ def build_ethtool_stats_table( filename, d_dict, ):
   <tr>
   <th>Node</th>'''
          fp.write(html_lines)
+
+         # Create device columns based on the first node's device count
          for j in range(0,device_count):
              fp.write(f'<th>eth_device_{j}</th>\n')
          fp.write('</tr></thead>\n')
          # End or header, let us start data rows ..
 
+
+         # Start writing table rows, one per node
          for node in d_dict.keys():
+
              # begin each node row
              fp.write(f'<tr><td>{node}</td>\n')
+
+             # For each NIC on this node, render a nested table of non-zero counters
              for eth_device in d_dict[node].keys():
                  fp.write(f'<td><table border=1>\n')
                  fp.write(f'<tr><td>eth_device</td><td>{eth_device}</td></tr>\n')
                  stats_dict = d_dict[node][eth_device]
                  for stats_key in stats_dict.keys():
+                     # Show only counters with non-zero values to reduce noise
                      if int(stats_dict[stats_key]) > 0:
+                         # Error-like counters: highlight in red
+                         # NOTE: consider closing </span> to keep HTML well-formed.
                          if re.search( f'{err_pattern}', stats_key, re.I ):
                              fp.write(f'<tr><td>{stats_key}</td><td><span class="label label-danger">{stats_dict[stats_key]}</td></tr>\n')
                          else: 
@@ -197,6 +347,41 @@ def build_ethtool_stats_table( filename, d_dict, ):
 
 
 def build_training_results_table( filename, out_dict, title ):
+
+    """
+    Append an HTML table summarizing per-node training results.
+
+    Args:
+      filename (str): Path to the HTML file to append to. Opened in append mode ('a').
+      out_dict (dict): Mapping of node -> metrics dict. Expected keys in each metrics dict:
+                       {
+                         "throughput_per_gpu": <value or list/str>,
+                         "tokens_per_gpu": <value or list/str>,
+                         "elapsed_time_per_iteration": <value or list/str>,
+                         "nan_iterations": <value or list/str>,
+                         "mem_usages": <value or list/str>,
+                         ...
+                       }
+                       Values are written as-is; ensure they are strings or renderable.
+      title (str): Section title to render above the table.
+
+    Behavior:
+      - Appends a section header (<h2>) using the provided title.
+      - Appends a DataTables-compatible table (id="training") with a header row and one row per node.
+      - For each node, writes a row containing:
+          Node, Throughput per GPU, Tokens per GPU, Elapsed time per iteration, Nan iterations, Mem usage.
+
+    Notes:
+      - HTML escaping: This function does not escape title/node/values; if inputs can contain
+        special HTML characters, consider escaping to avoid broken markup or injection issues.
+      - Column header row: Thead includes an opening <tr> but should also include a closing </tr>;
+        this function closes the row implicitly by starting the first data row. Consider adding </tr>.
+      - Key names: The code expects 'mem_usages' in out_dict, but the column is labeled 'Mem usage'.
+        Ensure key names match your data producers (or normalize here).
+      - File handling: Explicit fp.close() is not necessary; the 'with' context manages closure.
+      - Encoding: For non-ASCII content, consider using encoding='utf-8' when opening the file.
+    """
+
     print('Build HTML training table')
     with open(filename, 'a') as fp:
          html_lines='''
@@ -241,6 +426,55 @@ def build_training_results_table( filename, out_dict, title ):
 
 def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
     print('Build HTML product table')
+    """
+    Append a Network Info HTML table to the given file, summarizing NIC and RDMA device state per node.
+
+    Args:
+      filename (str): Path to the HTML file to append to. File is opened in append mode ('a').
+      rdma_dict (dict): Per-node RDMA/NIC mapping and status. Expected structure (example):
+                        {
+                          "node1": {
+                            "rdma0": {
+                              "eth_device": "ensX",
+                              "device_status": "ACTIVE|DOWN|...",
+                              "link_status": "UP|DOWN|..."
+                            },
+                            ...
+                          },
+                          ...
+                        }
+      lshw_dict (dict): Per-node LSHW details keyed by eth_device. Example:
+                        { "node1": { "ensX": { "pci_bus": "0000:01:00.0" }, ... }, ... }
+      ip_dict (dict): Per-node IP/MTU details keyed by eth_device. Example:
+                      { "node1": { "ensX": { "mtu": 9000, "ipv4_addr_list": ["10.0.0.1/24"] }, ... }, ... }
+
+    Behavior:
+      - Writes a "Network Info" section and a DataTables-compatible table (id="nic").
+      - For each node:
+        * Iterates through its RDMA devices to build lists of:
+          - Ethernet device names
+          - RDMA device names
+          - Link and device status
+          - PCIe bus addresses (from lshw_dict)
+          - MTU values (from ip_dict)
+          - IPv4 address lists (from ip_dict)
+        * Renders a single table row for the node, with each cell containing the collected list.
+      - Leaves closing of the HTML document to the caller. Ensures only this section/table is closed.
+
+    Notes:
+      - This function writes Python lists directly into HTML cells (e.g., ['ensX', 'ensY']).
+        Consider formatting as a comma-separated string or an unordered list (<ul><li>...).
+      - No HTML escaping is performed; if device names or addresses can contain special characters,
+        consider escaping content to prevent broken markup or injection.
+      - The code assumes that for every RDMA device:
+        - rdma_dict[node][rdma_dev]['eth_device'] exists
+        - lshw_dict[node][eth_dev]['pci_bus'] exists
+        - ip_dict[node][eth_dev]['mtu'] and ['ipv4_addr_list'] exist
+        Missing keys will raise KeyError.
+      - The explicit fp.close() is unnecessary in a with-context; it will be closed automatically.
+      - Consider opening the file with encoding='utf-8' for portability.
+    """
+
     with open(filename, 'a') as fp:
          html_lines='''
 <h2 style="background-color: lightblue">Network Info</h2>
@@ -258,6 +492,8 @@ def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
   </tr>
   </thead>'''
          fp.write(html_lines)
+
+         # For each node, collect NIC/RDMA properties into lists (one row per node)
          for node in rdma_dict.keys():
              rdma_dev_list = list(rdma_dict[node].keys())
              eth_dev_list = []
@@ -266,6 +502,8 @@ def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
              pcie_bus_list = []
              mtu_list = []
              ip_list = []
+
+             # Build each list by walking RDMA devices mapped to Ethernet interfaces
              for rdma_dev in rdma_dev_list:
                  eth_dev = rdma_dict[node][rdma_dev]['eth_device']
                  eth_dev_list.append(eth_dev)
@@ -299,7 +537,77 @@ def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
 
 
 def build_html_cluster_product_table( filename, model_dict, fw_dict ):
+
+    """
+    Append a 'Product Info' HTML table to the given file, summarizing GPU model and firmware info per node.
+
+    Args:
+      filename (str): Path to the HTML file to append to. Opened in append mode ('a').
+      model_dict (dict): Per-node model metadata, expected structure:
+                         {
+                           "<node>": {
+                             "card0": {
+                               "Card Series": "...",
+                               "GFX Version": "...",
+                               "Card SKU": "..."
+                             },
+                             ...
+                           },
+                           ...
+                         }
+      fw_dict (dict): Per-node firmware metadata, expected structure:
+                      {
+                        "<node>": {
+                          "card0": {
+                            "MEC firmware version": "...",
+                            "RLC firmware version": "...",
+                            "RLC SRLC firmware version": "...",
+                            "RLC SRLG firmware version": "...",
+                            "RLC SRLS firmware version": "...",
+                            "SDMA firmware version": "...",
+                            "SMC firmware version": "...",
+                            "SOS firmware version": "...",  # may be missing
+                            "TA RAS firmware version": "...",
+                            "TA XGMI firmware version": "...",
+                            "VCN firmware version": "..."
+                          },
+                          ...
+                        },
+                        ...
+                      }
+
+    Behavior:
+      - Writes a <h2> section title and an HTML table header (id="prod") compatible with DataTables.
+      - Iterates nodes and reads model_dict[node]["card0"] and fw_dict[node]["card0"].
+      - Ensures a value (dash) for 'SOS firmware version' if missing.
+      - Appends one row per node with model/firmware columns.
+
+    Important notes:
+      - Column/header mismatch:
+          The <thead> defines 12 columns, but the row formatter provides 1 (node)
+          + 3 (model fields) + 11 (firmware fields) = 15 cells. DataTables/HTML
+          requires the number of <th> (headers) to match the number of <td> cells
+          per row. Either add headers for the extra RLC SRLC/SRLG/SRLS columns or
+          remove them from rows to match headers.
+      - Robustness:
+          Accesses many dictionary keys directly; KeyError will occur if any key is missing
+          (except 'SOS firmware version', which is defaulted to "-").
+      - Security/HTML:
+          Values are inserted verbatim without HTML-escaping. If values can contain
+          special characters, consider escaping to avoid broken markup or injection.
+      - File handling:
+          The explicit fp.close() is unnecessary when using a 'with' context manager.
+      - Encoding:
+          Consider using encoding='utf-8' when opening files to ensure portability.
+      - Single-GPU assumption:
+          Function hardcodes "card0". If multiple cards per node need to be shown, extend
+          to iterate cards.
+
+    """
+
     print('Build HTML product table')
+
+    # Append to the existing HTML file (assumes <body> already opened elsewhere)
     with open(filename, 'a') as fp:
          html_lines='''
 <h2 style="background-color: lightblue">Product Info</h2>
@@ -321,6 +629,8 @@ def build_html_cluster_product_table( filename, model_dict, fw_dict ):
   </tr>
   </thead>'''
          fp.write(html_lines)
+         # Emit one row per node
+         # Only printing for card0, gpu0 .. assuming all GPUs running same version, otherwise the table size is so huge
          for node in model_dict.keys():
              m_dict = model_dict[node]["card0"]
              f_dict = fw_dict[node]["card0"]
@@ -360,6 +670,42 @@ def build_html_cluster_product_table( filename, model_dict, fw_dict ):
  
 
 def build_html_gpu_utilization_table( filename, use_dict ):
+
+    """
+    Append a 'GPU Utilization' HTML table to the given file, summarizing per-GPU usage per node.
+
+    Args:
+      filename (str): Path to the HTML file to append to. The file is opened in append mode ('a').
+      use_dict (dict): Nested per-node GPU utilization dictionary. Expected structure:
+        {
+          "<node>": {
+            "card0": { "GPU use (%)": "<str|int>", "GFX Activity": "<str|int>" },
+            "card1": { "GPU use (%)": "...", "GFX Activity": "..." },
+            ...
+            "card7": { ... }
+          },
+          ...
+        }
+
+    Behavior:
+      - Writes a section header and a DataTables-compatible table (id="gpuuse").
+      - Table is hardcoded for 8 GPUs (card0..card7), with two columns per card:
+        * GPU use (%)
+        * GFX Activity
+      - Iterates nodes and emits one row per node, reading values from use_dict.
+      - Leaves closing of the overall HTML document to the caller (only closes this table section).
+
+    Notes/Assumptions:
+      - The function assumes each node has keys 'card0' through 'card7' and the two metrics per card;
+        missing keys will raise KeyError. If GPU counts vary, consider generating columns dynamically.
+      - Values are written verbatim; if content can include special characters, consider HTML-escaping.
+      - DataTables JS/CSS and initialization for table id "gpuuse" must be included elsewhere in the page.
+      - The explicit fp.close() is unnecessary in a with-context (file is closed automatically).
+      - Consider opening the file with encoding='utf-8' for portability.
+      - The thead contains an opening <tr> but no explicit closing </tr> before rows; browsers tolerate this,
+        but you may want to add the closing tag for strict HTML validity.
+    """
+
     print('Build HTML utilization table')
     with open(filename, 'a') as fp:
          html_lines='''
@@ -387,8 +733,10 @@ def build_html_gpu_utilization_table( filename, use_dict ):
   </tr>
   </thead>'''
          fp.write(html_lines)
+
+         # Emit one data row per node with utilization and activity for GPUs 0..7.
          for node in use_dict.keys():
-             u_dict = use_dict[node]
+             u_dict = use_dict[node]       # Per-node GPU metrics (expects card0..card7 with required keys)
              html_lines='''
   <tr>
   <td>{}</td>
@@ -431,6 +779,55 @@ def build_html_gpu_utilization_table( filename, use_dict ):
 
 
 def build_html_mem_utilization_table( filename, use_dict, amd_dict ):
+
+    """
+    Append a 'GPU Memory Utilization' HTML table to the given file, summarizing per-GPU
+    memory usage and activity metrics per node.
+
+    Args:
+      filename (str): Path to the HTML file to append to. Opened in append mode ('a').
+      use_dict (dict): Per-node, per-GPU utilization metrics (string/number values). Expected shape:
+                       {
+                         "node1": {
+                           "card0": {
+                             "GPU Memory Allocated (VRAM%)": "...",
+                             "GPU Memory Read/Write Activity (%)": "...",
+                             "Memory Activity": "...",
+                             "Avg. Memory Bandwidth": "..."
+                           },
+                           ...
+                           "card7": {...}
+                         },
+                         ...
+                       }
+      amd_dict (dict | list): Per-node, per-GPU VRAM usage from AMD SMI (rocm-smi/json).
+                              May be a dict (ROCm 7.x style) or list (ROCm 6.x style):
+                               - Dict: { "node1": { "gpu_data": [ { "mem_usage": { ... } }, ... ] }, ... }
+                               - List: { "node1": [ { "mem_usage": { ... } }, ... ], ... }
+                              Each GPU entry should contain:
+                                mem_usage.total_vram.value
+                                mem_usage.used_vram.value
+                                mem_usage.free_vram.value
+
+    Behavior:
+      - Writes a section header and a DataTables-compatible table (id="memuse").
+      - Header row includes 7 columns per GPU for 8 GPUs (G0..G7), plus the Node column.
+      - For each node, outputs a row with:
+          - total/used/free VRAM (MB) from amd_dict,
+          - memory allocation %, read/write activity %, memory activity, and average memory bandwidth
+            from use_dict for each of 8 GPUs (card0..card7).
+      - Leaves closing of the overall HTML document to the caller (only closes this table section).
+
+    Assumptions and caveats:
+      - Assumes exactly 8 GPUs per node (card0..card7). Will raise KeyError/IndexError if missing.
+      - Expects specific keys to exist in both use_dict and amd_dict; missing keys will raise.
+      - Writes raw values directly into HTML (no escaping). If values may contain special characters,
+        consider HTML-escaping to avoid broken markup/injection.
+      - The thead closes correctly; ensure your page includes DataTables assets and initialization for #memuse.
+      - For portability, consider opening the file with encoding='utf-8'.
+
+    """
+
     print('Build HTML mem utilization table')
     with open(filename, 'a') as fp:
          html_lines='''
@@ -464,6 +861,9 @@ def build_html_mem_utilization_table( filename, use_dict, amd_dict ):
              fp.write(html_lines)
              u_dict = use_dict[node]
              #a_list = amd_dict[node]
+             # Normalize amd_dict shape across ROCm versions:
+             # - For ROCm 7.x: expect dict with "gpu_data" list
+             # - For ROCm 6.x: expect list directly
              if isinstance( amd_dict[node], dict ):
                  # handling different between rocm6.x and 7.x
                  if 'gpu_data' in amd_dict[node].keys():
@@ -505,6 +905,66 @@ def build_html_mem_utilization_table( filename, use_dict, amd_dict ):
 
 
 def build_html_pcie_xgmi_metrics_table( filename, metrics_dict, amd_dict ):
+
+    """
+    Append a 'GPU PCIe XGMI Metrics' HTML table to the given file.
+
+    Args:
+      filename (str): Path to the HTML file to append to. File is opened in append mode ('a').
+      metrics_dict (dict): Per-node PCIe/XGMI counter metrics (typically parsed from tooling).
+                           Expected structure (example):
+                             {
+                               "node1": {
+                                 "card0": {
+                                   "pcie_l0_to_recov_count_acc (Count)": "...",
+                                   "pcie_replay_count_acc (Count)": "...",
+                                   "pcie_replay_rover_count_acc (Count)": "...",
+                                   "pcie_nak_sent_count_acc (Count)": "...",
+                                   "pcie_nak_rcvd_count_acc (Count)": "...",
+                                   "xgmi_link_width": "...",
+                                   "xgmi_link_speed_gbps": "...",
+                                   "xgmi_link_status_toggle_up_down": "...",
+                                   "vram_max_bw_gbs": "..."
+                                 },
+                                 ...
+                               },
+                               ...
+                             }
+      amd_dict (dict | list): Per-node PCIe properties as reported by amd-smi (ROCm 6.x or 7.x JSON).
+                              Two possible shapes:
+                                - ROCm 7.x style: amd_dict[node] is dict with key 'gpu_data' -> list of per-GPU dicts
+                                - ROCm 6.x style: amd_dict[node] is directly a list of per-GPU dicts
+                              Each GPU entry should include:
+                                {
+                                  "pcie": {
+                                    "width": "<int or str>",
+                                    "speed": { "value": "<GT/s>" },
+                                    "bandwidth": { "value": "<Mb/s>" }
+                                  },
+                                  ...
+                                }
+
+    Behavior:
+      - Writes a section header and a DataTables-compatible table (id="pciexgmimetrics").
+      - Table header includes 12 columns per GPU (G0..G7), plus the Node column.
+      - For each node, emits a row with 8× per-GPU metrics:
+          * PCIe: lane count, lane speed (GT/s), instantaneous bandwidth (Mb/s)
+          * PCIe error counters: L0->Recovery, replay, replay rover, NAK sent/received
+          * XGMI: link width, link speed (Gbps), link status toggles up/down
+          * VRAM: max bandwidth (GB/s)
+      - Uses amd_dict for PCIe properties and metrics_dict for counter/XGMI/VRAM fields.
+
+    Assumptions and caveats:
+      - Assumes 8 GPUs per node, referencing keys 'card0'..'card7' and list indices 0..7.
+        This will raise if fewer GPUs exist.
+      - Dict lookups are direct; missing keys will raise KeyError. Consider adding guards.
+      - Values are written verbatim to HTML with no escaping. If values can include special chars,
+        HTML-escape them to avoid broken markup/injection.
+      - The function prints a status and relies on DataTables CSS/JS and initialization elsewhere.
+      - Uses 'with open(..., "a")' context; no need to call fp.close() explicitly.
+
+    """
+
     print('Build HTML PCIe metrics table')
     with open(filename, 'a') as fp:
          html_lines='''
@@ -595,6 +1055,64 @@ def build_html_pcie_xgmi_metrics_table( filename, metrics_dict, amd_dict ):
 
 
 def build_html_error_table( filename, metrics_dict, amd_dict ):
+
+    """
+    Append a 'GPU Error Metrics' HTML table to the given file, summarizing ECC and PCIe error counters
+    per GPU (assumes 8 GPUs per node).
+
+    Args:
+      filename (str): Path to the HTML file to append to. File is opened in append mode ('a').
+      metrics_dict (dict): Per-node error counters for each GPU (e.g., PCIe counters).
+                           Expected structure (example):
+                             {
+                               "node1": {
+                                 "card0": {
+                                   "pcie_l0_to_recov_count_acc (Count)": "...",
+                                   "pcie_replay_count_acc (Count)": "...",
+                                   "pcie_replay_rover_count_acc (Count)": "...",
+                                   "pcie_nak_sent_count_acc (Count)": "...",
+                                   "pcie_nak_rcvd_count_acc (Count)": "...",
+                                   ...
+                                 },
+                                 "card1": { ... },
+                                 ...
+                               },
+                               ...
+                             }
+      amd_dict (dict | list): Per-node ROCm SMI data including ECC counts.
+                              - ROCm 7.x style: amd_dict[node] is a dict with 'gpu_data' -> list of GPU dicts
+                              - ROCm 6.x style: amd_dict[node] is a list of GPU dicts
+                              Each GPU entry should include:
+                                {
+                                  "ecc": {
+                                    "total_correctable_count": "<int-like>",
+                                    "total_uncorrectable_count": "<int-like>",
+                                    "total_deferred_count": "<int-like>",
+                                    "cache_correctable_count": "<int-like>",
+                                    "cache_uncorrectable_count": "<int-like>"
+                                  },
+                                  ...
+                                }
+
+    Behavior:
+      - Writes a section title and a DataTables-compatible table (id="error") with:
+        Node + 10 columns per GPU (G0..G7):
+          ECC: correct, uncorrect, deferred, cache correct, cache uncorrect
+          PCIe: L0->Recovery, replay, replay rover, NAK sent, NAK received
+      - For each node, emits one row with 8× per-GPU values.
+      - Highlights ECC values > 0 in red using a 'label label-danger' span.
+
+    Assumptions and caveats:
+      - Assumes 8 GPUs per node (card0..card7) and that amd_dict and metrics_dict contain aligned data.
+      - Direct dict/index access will raise KeyError/IndexError if shapes/keys differ.
+      - Values are written verbatim to HTML (no escaping). Escape if inputs may contain special chars.
+      - The snippet provided appears truncated (e.g., missing code for remaining ECC fields and PCIe counters,
+        missing closing tags for some spans/td/tr/table). Ensure the full implementation closes all tags
+        and writes all declared columns in the header.
+      - Consider opening files with encoding='utf-8' for portability.
+
+    """
+
     print('Build HTML Error table')
     with open(filename, 'a') as fp:
          html_lines='''
@@ -757,7 +1275,7 @@ def build_html_error_table( filename, metrics_dict, amd_dict ):
 
 
 
-
+#TO BE DONE
 def build_html_env_metrics_table():
     print('Build HTML env metrics table')
     with open(filename, 'a') as fp:

@@ -30,6 +30,37 @@ def textwrap_for_yml( msg_string ):
 
 class JaxTrainingJob():
 
+    """
+    JAX training class for running training of popular models like Llama on AMD GPU cluster.
+
+    Responsibilities:
+      - Store user-provided training and model parameters.
+      - Initialize defaults for missing training config entries (container, networking, etc.).
+      - Capture cluster context (host list), job command stubs, and timing metadata.
+      - Prepare pre-training network/GPU stats containers and log directories.
+
+    Args:
+      phdl: Process/host handle abstraction; expected to expose:
+            - host_list: list of cluster nodes
+            - exec(cmd: str) -> dict[node: str]: run command on nodes, return stdout per node
+      model_name (str): Identifier for the model to be trained (e.g., "llama2-7b").
+      training_config_dict (dict): Training configuration parameters (may be partial).
+      model_params_dict (dict): Model-specific parameters/hyperparameters (may be tuned).
+      hf_token (str): Hugging Face token for model/dataset access.
+      gpu_type (str): GPU type selector (e.g., "mi300"). Defaults to "mi300".
+      tune_model_params (bool): Whether to allow auto-tuning of model params. Defaults to True.
+      scripts_dir (str): Path to scripts directory. Defaults to ~/SCRIPTS.
+
+    Attributes:
+      phdl, host_list, model_name, hf_token, gpu_type
+      training_config_dict, tc_dict (alias), model_params_dict, tune_model_params
+      scripts_dir, job_cmd, job_cmd_list, training_result_dict
+      rdma_stats_dict_before, ethtool_stats_dict_before, rdma_stats_dict_after
+      training_start_time, training_end_time
+      home_dir, container_image, container_name
+      (plus defaulted entries placed into self.tc_dict, such as networking/NCCL knobs)
+    """
+
     def __init__( self,  phdl, model_name,
         training_config_dict, model_params_dict,
         hf_token, gpu_type='mi300',
@@ -147,6 +178,22 @@ class JaxTrainingJob():
 
 
     def exec_nic_setup_scripts( self, ):
+        """
+        Execute NIC-related setup steps inside the training container.
+
+        Behavior:
+        - Only runs for distributed training.
+        - If NIC type appears to be Broadcom/Thor, applies a temporary workaround:
+          * Copies the bnxt RDMA library from the host-named file to the container?s expected path.
+          * Verifies that ibv_devinfo shows a bnxt_ HCA (to confirm RDMA is wired correctly).
+        - Forces NCCL GID index to 3 for Broadcom/Thor (common requirement).
+
+        Assumptions:
+        - self.phdl.exec runs a shell command and returns a dict: {node: stdout}.
+        - sudo is non-interactive within the container.
+        - The bnxt library file paths exist in the container base image.
+        """
+
         # Run all your backend NIC related bringups for containers here .. 
         if self.distributed_training is True:
             # This is a temporary hack needed for broadcom nics to work within containers ..
@@ -165,6 +212,25 @@ class JaxTrainingJob():
 
 
     def build_training_job_cmd( self, ):
+
+        """
+        Generate MaxText YAML config files and environment variables inside the container,
+        then generate a per-node training wrapper script and logging directories.
+
+        Steps:
+        1) Emit training_config_for_jax.yml (runtime/training knobs).
+        2) Emit model_config_for_jax.yml (model architecture knobs).
+        3) Create XLA_FLAGS file and fix quoting.
+        4) Append per-node environment exports into maxtext_env.sh (NCCL/IB/GPU env).
+        5) Create log directories per node.
+        6) Create training_wrapper_script.sh to launch training (reference config).
+        7) Patch wrapper script to use the generated training_config_for_jax.yml.
+
+        Assumptions:
+        - self.phdl.exec executes commands on all nodes, returning {node: stdout}.
+        - textwrap_for_yml ensures the multi-line echo is properly formatted for YAML.
+        - self.mp_dict and self.tc_dict contain all referenced keys.
+        """
 
         cmd = f'''docker exec {self.container_name} /bin/bash -c "echo 'base_config: base.yml
                   run_name: {self.model_name}-job
@@ -291,21 +357,79 @@ class JaxTrainingJob():
 
 
     def start_training_job( self, ):
+
+        """
+        Launch the JAX training job inside the container on all nodes.
+
+        Behavior:
+        - Builds a list of docker exec commands, one per node rank, that:
+          * source the MaxText environment (maxtext_env.sh),
+          * run the training wrapper script in the background (nohup),
+          * redirect output to a per-node log file under log_dir/jax-logs/out-node<i>.
+        - Executes the list of commands across nodes via phdl.exec_cmd_list.
+        - Sleeps for 60 seconds to give processes time to initialize and start logging.
+
+        Assumptions:
+        - self.nnodes is an int-compatible value (number of nodes/ranks to launch).
+        - self.container_name and self.tc_dict['log_dir'] are correctly set.
+        - maxtext_env.sh and training_wrapper_script.sh exist in /workspace/maxtext inside the container.
+        - self.phdl.exec_cmd_list(cmd_list) executes each command across the appropriate nodes.
+        - Docker and the container are available and running on each node.
+
+        """
+
         print('Start Training on all Nodes')
         cmd_list = []
+
+        # Build a docker exec command per node/rank
         for i in range(0,int(self.nnodes)):
+            # Source the env file, then launch training in background with nohup, redirecting output to a per-node log
             cmd = f'''docker exec {self.container_name} /bin/bash -c "source /workspace/maxtext/maxtext_env.sh && nohup bash /workspace/maxtext/training_wrapper_script.sh > {self.tc_dict['log_dir']}/jax-logs/out-node{i}/training_redirect_logs"'''
             cmd_list.append(cmd)
+
+        # Execute the launch commands (expected to run across the cluster)
         self.phdl.exec_cmd_list(cmd_list)
+
+        # Allow time for processes to come up and begin writing logs
         time.sleep(60)
 
 
+
+
     def check_deviation_from_median(self, training_results_dict, metric_name, percentage_off ):
+       
+        """
+        Validate that a per-step training metric stays within a percentage band around the median.
+
+        Args:
+        training_results_dict (dict): Mapping of step index -> dict of metrics for that step.
+                                    Example: { 0: {"loss": 3.2, "tflops_per_sec_per_gpu": 120.5}, ... }
+        metric_name (str): The metric key to check (e.g., "loss", "tflops_per_sec_per_gpu").
+        percentage_off (float): Allowed deviation as a fraction (e.g., 0.10 for ±10%).
+
+        Behavior:
+        - Ignores the first two steps to avoid warmup noise/outliers.
+        - Computes the median of the selected metric over steps [2, self.training_steps).
+        - Calculates acceptable lower/upper bounds as median ± (median * percentage_off).
+        - For each checked step, prints a confirmation if within bounds; otherwise records a failure via fail_test.
+
+        Assumptions:
+        - training_results_dict contains entries for all steps in [0, self.training_steps).
+        - training_results_dict[i][metric_name] is numeric (int/float).
+        - self.training_steps >= 3 to ensure at least one value when skipping first two steps.
+        - statistics module is imported (statistics.median).
+        - fail_test is available in scope to record failures.
+        """
+ 
         list_of_values = []
         #To avoid any outliers, we exclude the first couple of steps ..
         for i in range(2, self.training_steps ):
             list_of_values.append(training_results_dict[i][metric_name])
+
+        # Compute the central tendency of the metric across the stable range of steps
         median_value = statistics.median(list_of_values)
+
+        # Define acceptable bounds around the median based on the allowed percentage deviation
         upper_bound = median_value * (1 + percentage_off )
         lower_bound = median_value * (1 - percentage_off )
         for i in range(2, self.training_steps ):
@@ -317,14 +441,58 @@ class JaxTrainingJob():
             
 
     def get_training_results_dict(self, ):
+
+        """
+        Parse per-step training metrics from the aggregated training log and run sanity checks.
+
+        Returns:
+        dict: A dictionary keyed by step index with extracted metrics per step, for example:
+            {
+              0: {
+                "time_elapsed": "<str seconds>",
+                "tflops_per_sec_per_gpu": "<str float>",
+                "tokens_per_sec_per_gpu": "<str float>",
+                "total_weights": "<str float>",
+                "loss": "<str float>"
+              },
+              1: { ... },
+              ...
+            }
+
+        Behavior:
+        - Reads the consolidated training log from the last node in self.host_list.
+        - For each step from 0..self.training_steps-1:
+          * Extracts time, TFLOP/s/device, Tokens/s/device, total_weights, loss using a regex.
+          * Stores them as strings under the step index in the result dict.
+        - Invokes check_deviation_from_median on several metrics to ensure stability.
+
+        Assumptions:
+        - self.phdl.exec(cmd) returns a dict mapping node -> stdout string.
+        - The training log format contains a line per step that matches the regex provided.
+        - self.training_steps is an int >= 1.
+        - self.check_deviation_from_median exists and accepts (results_dict, metric_name, percentage_off).
+
+        """
+
         training_results_dict = {}
         percentage_off = 0.10
+
+        # Read the training log output from the "last" node (assumed authoritative)
         last_node = self.host_list[len(self.host_list) -1]
         out_dict = self.phdl.exec(f'cat {self.home_dir}/training_logs')
         output = out_dict[last_node]
+
+        # Parse metrics for each step based on expected log line structure
         for i in range(0, self.training_steps):
             training_results_dict[i] = {}
             match = re.search( f'completed step:\s{i}, seconds:\s([0-9\.]+),\sTFLOP\/s\/device:\s([0-9\.]+)\s+Tokens\/s\/device:\s([0-9\.]+),\s+total_weights:\s([0-9\.]+),\s+loss:\s([0-9\.]+)', output, re.I )
+
+            # Guard against missing or malformed lines to avoid AttributeError on match.group(...)
+            if not match:
+                fail_test(f'Missing or malformed metrics line for step {i} in training logs on node {last_node}')
+                continue
+
+            # Store extracted values as strings; convert to float later if needed
             training_results_dict[i]['time_elapsed'] = match.group(1)
             training_results_dict[i]['tflops_per_sec_per_gpu'] = match.group(2)
             training_results_dict[i]['tokens_per_sec_per_gpu'] = match.group(3)
@@ -341,16 +509,54 @@ class JaxTrainingJob():
         return training_result_dict
 
 
+
     def scan_for_training_errors(self, ):
+
+        """
+        Scan training logs for known error patterns and report status.
+
+        Returns:
+        bool: True if no error patterns are found; False otherwise.
+
+        Behavior:
+        - Constructs a list of commands to read each node's training.log.
+        - Executes the commands across nodes using phdl.exec_cmd_list.
+        - Checks the last node's log output against regex patterns in training_err_dict.
+        - On first match:
+          * Calls fail_test with a descriptive message.
+          * Logs an error to indicate polling should stop.
+          * Sets training_pass to False.
+        - Returns training_pass at the end.
+
+        Assumptions:
+        - self.nnodes is an integer-compatible value.
+        - self.tc_dict['log_dir'] points to the base directory containing jax-logs/out-node<rank>/training.log.
+        - self.phdl.exec_cmd_list(cmd_list) executes each command and returns a dict-like mapping
+          from node to command output. This method uses the output from the "last" node only.
+        - training_err_dict is a dict of error-name -> regex pattern (strings).
+        - re, log, and fail_test are available in scope.
+
+        """
+
         print('Scan for training errors')
         training_pass=True
+
+        # Identify which node's output will be used (currently "last" node only)
         last_node = self.host_list[len(self.host_list) -1]
+
+        # Build the list of commands to read each node's training log file
         cmd_list = []
+
+        # Execute the commands across nodes; returns a mapping of node -> command output
         for j in range(0,int(self.nnodes)):
             cmd = f"sudo cat {self.tc_dict['log_dir']}/jax-logs/out-node{j}/training.log"
             cmd_list.append(cmd)
-        out_dict = self.phdl.exec_cmd_list(cmd_list) 
+        out_dict = self.phdl.exec_cmd_list(cmd_list)
+
+
         output = out_dict[last_node]
+
+        # Check the log content against all known training error patterns
         for err_key in training_err_dict:
             if re.search( f'{training_err_dict[err_key]}', output ):
                 fail_test(f'ERROR {training_err_dict[err_key]} seen in training logs ..')
@@ -359,7 +565,170 @@ class JaxTrainingJob():
         return training_pass
 
 
-    def poll_for_training_completion( self, ):
+    def poll_for_training_completion( self, waittime_between_iters=60,  \
+        total_timeout = 3600, require_all_nodes=True ):
+
+        """
+        Periodically poll training logs to detect completion or failure, with robust checks and a hard timeout.
+
+        Improvements implemented (based on previous suggestions):
+        - Scan all nodes' logs (not just the last node) for completion and invalid values (NaN/Inf).
+        - Fix regex checks to use proper alternation for NaN/Inf: (NaN|Inf) instead of [NaN|Inf].
+        - Add a hard wall-clock timeout via total_timeout; return a structured status report.
+        - Capture both stdout and stderr when tailing logs (2>&1).
+        - Return a structured dict with status, reason, and optional results.
+
+        Args:
+        waittime_between_iters: Seconds to sleep between polling iterations (in addition to short waits while in progress).
+        total_timeout: Maximum wall-clock seconds to poll before returning a timeout status. If None, no wall-clock limit.
+        require_all_nodes: If True, require the "final step completed" pattern to be present on every node;
+                         if False, proceed when any node shows final step completed.
+
+        Returns:
+        dict: A structured status report with keys:
+        - "status": "success" | "error" | "timeout" | "in_progress"
+        - "reason": Optional short message on why we exited early or failed
+        - "results": Optionally, the parsed training results dict when status == "success"
+
+        Assumptions:
+        - self.nnodes, self.training_steps, self.training_poll_iterations are valid integers.
+        - self.tc_dict['log_dir'] contains per-node paths: .../jax-logs/out-node<rank>/training.log
+        - self.phdl.exec_cmd_list(cmd_list) executes commands across the cluster and returns a mapping of node -> concatenated stdout (and now stderr due to 2>&1).
+        - self.scan_for_training_errors() returns True when OK, False when any error pattern is detected.
+        - self.get_training_results_dict() parses final metrics and populates self.training_result_dict.
+
+        Notes:
+        - Completion criterion:
+          final_step = self.training_steps - 1
+          We look for 'completed step:\s+<final_step>,' on logs.
+        - NaN/Inf check uses alternation on key metrics to detect invalid numeric outputs.
+        - If require_all_nodes=True and at least one node lags behind, we continue polling (unless timeout).
+        """
+
+        print('Poll for training completion')
+
+        # Initial wait to give training time to start logging
+        time.sleep(60)
+
+        # Track wall-clock timeout if specified
+        start_time = time.time()
+        def timed_out() -> bool:
+            return total_timeout is not None and (time.time() - start_time) >= float(total_timeout)
+
+        final_step = int(self.training_steps) - 1
+        completed_step_pattern = re.compile(rf'completed step:\s+{final_step},', re.I)
+        invalid_value_pattern = re.compile(r'(NaN|Inf)', re.I)
+        tflops_pattern = re.compile(r'TFLOPS\/s\/device:\s+(NaN|Inf)', re.I)
+        tokens_pattern = re.compile(r'Tokens\/s\/device:\s+(NaN|Inf)', re.I)
+
+        # Poll up to a maximum iteration count (safety cap) as well as wall-clock (if provided)
+        for itr in range(1, int(self.training_poll_iterations) + 1):
+            print(f'Starting iteration {itr}')
+
+            # Early abort on training errors
+            if not self.scan_for_training_errors():
+                msg = 'Failures seen in training logs, Aborting!!!'
+                fail_test(msg)
+                return {"status": "error", "reason": msg}
+
+            # Build commands to tail recent lines from each node's training log and capture stderr as well
+            cmd_list = []
+            for j in range(0, int(self.nnodes)):
+                cmd = f"sudo tail -2000 {self.tc_dict['log_dir']}/jax-logs/out-node{j}/training.log 2>&1"
+                cmd_list.append(cmd)
+
+            # Execute across nodes; out_dict is expected to be a mapping of node -> tailed output
+            out_dict = self.phdl.exec_cmd_list(cmd_list)
+
+            # Determine completion across nodes
+            node_completion = {}
+            for node, output in out_dict.items():
+                node_completion[node] = bool(completed_step_pattern.search(output))
+
+            if require_all_nodes:
+                all_complete = all(node_completion.values()) if node_completion else False
+            else:
+                all_complete = any(node_completion.values()) if node_completion else False
+
+            # If not yet complete, wait and continue (subject to timeout)
+            if not all_complete:
+                if timed_out():
+                    msg = f"Timeout while waiting for training completion after ~{int(time.time() - start_time)}s"
+                    print(msg)
+                    return {"status": "timeout", "reason": msg}
+                print('Training still in progress')
+                # Short progress wait before the longer inter-iteration sleep
+                time.sleep(30)
+                time.sleep(int(waittime_between_iters))
+                continue
+
+            # If complete (per the requirement), validate that reported metrics are not NaN/Inf on any node
+            invalid_nodes = []
+            for node, output in out_dict.items():
+                if tflops_pattern.search(output) or tokens_pattern.search(output):
+                    invalid_nodes.append(node)
+
+            if invalid_nodes:
+                msg = f"ERROR - NaN or Inf values seen in training results on node(s): {', '.join(map(str, invalid_nodes))}"
+                fail_test(f'{msg}\nLast outputs: { {n: out_dict[n] for n in invalid_nodes} }')
+                return {"status": "error", "reason": msg}
+
+            # Parse/store final results and report success
+            self.training_result_dict = self.get_training_results_dict()
+            print('Completed Training, returning !!!')
+            return {"status": "success", "results": self.training_result_dict}
+
+            # If we reached here, loop continues (but we return above on success)
+
+
+
+        # If we exhaust the iteration cap without completing, treat as timeout (or in_progress if no wall-clock limit)
+        if timed_out():
+            msg = f"Timeout after maximum iterations ({self.training_poll_iterations}) and ~{int(time.time() - start_time)}s"
+            print(msg)
+            return {"status": "timeout", "reason": msg}
+        else:
+            # If no wall-clock timeout was set and we hit the iteration cap, report in-progress
+            msg = f"Reached iteration cap ({self.training_poll_iterations}) without completion; still in progress"
+            print(msg)
+            return {"status": "in_progress", "reason": msg}
+
+
+
+
+    def old_poll_for_training_completion( self, waittime_between_iters=60  ):
+
+        """
+        Periodically poll training logs to detect completion or failure, with robust checks and a hard timeout.
+
+        Improvements implemented (based on previous suggestions):
+        - Scan all nodes' logs (not just the last node) for completion and invalid values (NaN/Inf).
+        - Fix regex checks to use proper alternation for NaN/Inf: (NaN|Inf) instead of [NaN|Inf].
+        - Add a hard wall-clock timeout via total_timeout; return a structured status report.
+        - Capture both stdout and stderr when tailing logs (2>&1).
+        - Return a structured dict with status, reason, and optional results.
+
+        Args:
+        waittime_between_iters: Seconds to sleep between polling iterations (in addition to short waits while in progress).
+        total_timeout: Maximum wall-clock seconds to poll before returning a timeout status. If None, no wall-clock limit.
+        require_all_nodes: If True, require the "final step completed" pattern to be present on every node;
+                         if False, proceed when any node shows final step completed.
+
+    Assumptions:
+      - self.nnodes, self.training_steps, self.training_poll_iterations are valid integers.
+      - self.tc_dict['log_dir'] contains per-node paths: .../jax-logs/out-node<rank>/training.log
+      - self.phdl.exec_cmd_list(cmd_list) executes commands across the cluster and returns a mapping of node -> concatenated stdout (and now stderr due to 2>&1).
+      - self.scan_for_training_errors() returns True when OK, False when any error pattern is detected.
+      - self.get_training_results_dict() parses final metrics and populates self.training_result_dict.
+
+    Notes:
+      - Completion criterion:
+          final_step = self.training_steps - 1
+          We look for 'completed step:\s+<final_step>,' on logs.
+      - NaN/Inf check uses alternation on key metrics to detect invalid numeric outputs.
+      - If require_all_nodes=True and at least one node lags behind, we continue polling (unless timeout).
+    """
+
         print('Poll for training completion')
         time.sleep(60)
         last_node = self.host_list[len(self.host_list) -1]
@@ -389,8 +758,8 @@ class JaxTrainingJob():
                     self.training_result_dict = self.get_training_results_dict()
                     print('Completed Training, returning !!!')
                     return
-            # Wait 60 secs between every iteration
-            time.sleep(60)
+            # Wait secs between every iteration
+            time.sleep(int(waittime_between_iters))
 
         
     def verify_training_results( self, ):

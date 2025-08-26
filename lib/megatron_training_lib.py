@@ -94,10 +94,52 @@ err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_bu
 
 class MegatronLlamaTrainingJob():
 
+    """
+    Orchestrates a Megatron-LM Llama training job across one or more nodes.
+
+    Responsibilities:
+      - Normalize training configuration and model parameters (with sensible defaults).
+      - Prepare per-node wrapper scripts and environment variables for distributed runs.
+      - Optionally collect pre/post network (RDMA/ethtool) stats for validation.
+      - Launch the job (single-node or distributed) inside a specified container.
+      - Poll logs for completion and errors; extract performance metrics from logs.
+      - Verify training results against expected thresholds and system health checks.
+
+    Assumptions:
+      - phdl provides remote execution utilities across nodes:
+          - phdl.host_list (list of nodes)
+          - phdl.exec(cmd: str) -> Dict[node, str] or str, depending on implementation
+          - phdl.exec_cmd_list(cmd_list: List[str]) -> Dict[node, str]
+      - Docker container is pre-deployed and accessible on each node.
+      - Training scripts exist under /workspace/Megatron-LM/examples/llama/.
+      - External helpers referenced in the methods are available in scope:
+          - linux_utils.get_rdma_stats_dict, linux_utils.get_nic_ethtool_stats_dict
+          - json_to_dict, fail_test, verify_dmesg_for_errors, log, training_err_dict
+          - err_counters_pattern
+    """
+    
     def __init__( self,  phdl, model_name,
         training_config_dict, model_params_dict,
         hf_token, gpu_type='mi300',
         tune_model_params=True, scripts_dir=os.path.expanduser("~") + '/SCRIPTS'  ):
+
+        """
+        Initialize job configuration and resolve defaults from the provided dicts.
+
+        - Normalizes training_config_dict and model_params_dict; applies defaults
+          if fields are missing.
+        - Builds paths and internal state used later to construct job commands.
+
+        Args:
+          phdl: Remote execution handle for multi-node command execution.
+          model_name: Canonical model name key used in model_params_dict (e.g., "llama3.1_8b").
+          training_config_dict: Unstructured training config; defaults are applied here.
+          model_params_dict: Parameter sets per model and topology (single/multi-node).
+          hf_token: Hugging Face token passed to the job environment.
+          gpu_type: GPU platform key to select model params (default: 'mi300').
+          tune_model_params: If True, adjust some parameters based on cluster size.
+          scripts_dir: Folder on nodes to place generated wrapper scripts.
+        """
 
         self.phdl                  = phdl
         self.host_list             = phdl.host_list
@@ -106,6 +148,7 @@ class MegatronLlamaTrainingJob():
         self.gpu_type              = gpu_type
 
         # Sample training config and model params dict saved above
+        # User-supplied config/params and derived fields
         self.training_config_dict  = training_config_dict
         self.model_params_dict     = model_params_dict
         self.iterations            = training_config_dict['training_iterations'] 
@@ -113,6 +156,7 @@ class MegatronLlamaTrainingJob():
 
         self.scripts_dir           = scripts_dir
 
+        
         self.job_cmd               = ''
         self.job_cmd_list          = []
         self.training_result_dict  = {}
@@ -237,6 +281,28 @@ class MegatronLlamaTrainingJob():
 
 
     def exec_nic_setup_scripts( self, ):
+        """
+        Prepare backend NICs inside containers before starting distributed training.
+
+        This method applies in-container NIC setup steps when running distributed jobs.
+        It currently implements a Broadcom-specific workaround to ensure the RDMA
+        provider library (bnxt_re) is correctly available inside the container.
+
+        Behavior:
+         - Only runs when distributed_training is True.
+         - If nic_type indicates Broadcom/Thor, it:
+          * Forces NCCL GID index to 3 (common Broadcom requirement).
+          * Copies the host-side libbnxt_re library into the container?s ibverbs path.
+          * Runs ibv_devinfo to verify the RDMA device enumerates as bnxt_.
+          * Fails the test if the expected device string is not detected.
+
+        Assumptions:
+          - self.phdl provides exec(...) to run commands on all nodes/hosts.
+          - Docker is installed and the container is already running on each node.
+          - The source and destination library paths are correct for the target image.
+          - fail_test(...) is available in scope to abort on setup failures.
+
+        """
         # Run all your backend NIC related bringups for containers here .. 
         if self.distributed_training is True:
             # This is a temporary hack needed for broadcom nics to work within containers ..
@@ -320,15 +386,43 @@ class MegatronLlamaTrainingJob():
 
 
     def start_training_job( self, timeout=500 ):
+        """
+        Launch the Megatron-LM training job (distributed or single-node).
+
+        Behavior:
+         - Prints debug information about the prepared commands.
+         - Distributed mode:
+         * Runs NIC setup workarounds (if any).
+         * Creates per-node distributed wrapper scripts across nodes via phdl.exec_cmd_list.
+         * Executes those scripts inside each node's container using docker exec.
+        - Single-node mode:
+         * Writes a single wrapper script locally.
+         * Executes the script inside the container.
+         * Ensures the training log file is writable.
+        - Sleeps for a short period to allow processes to initialize before polling.
+
+        Args:
+          timeout (int): Reserved for future use (e.g., health checks). Not currently used.
+
+        Assumptions:
+          - self.phdl provides:
+          * exec(cmd: str) -> per-node or local command execution
+          * exec_cmd_list(cmd_list: List[str]) -> parallel per-node execution
+          - Docker is installed and container self.container_name is available on each node.
+          - self.job_cmd_list (distributed) or self.job_cmd (single-node) has been populated
+           by build_training_job_cmd() prior to invocation.
+        """
         print('start training job')
         print(self.job_cmd_list)
         print(self.job_cmd)
         if self.distributed_training:
+            # Run any required NIC setup steps inside containers (e.g., Broadcom workaround)
             self.exec_nic_setup_scripts()
             # Following creates the training script
             out_dict = self.phdl.exec_cmd_list( self.job_cmd_list )
             # Build the docker cmd list to run on each node ..
             docker_cmd_list = []
+            
             for i in range(0, int(self.nnodes)):
                 cmd = f'docker exec {self.container_name} /bin/bash -c "nohup \
                       {self.scripts_dir}/distributed_wrapper_script_{i}.sh > \
@@ -348,42 +442,155 @@ class MegatronLlamaTrainingJob():
 
 
     def get_training_results_dict(self, ):
+
+        """
+        Parse training log output from the last node and extract key performance metrics.
+
+        Returns:
+        dict: A dictionary with lists of extracted values (strings) for each metric:
+        - 'throughput_per_gpu': Matches 'throughput per GPU: <float>'
+        - 'tokens_per_gpu': Matches 'tokens/GPU/s: <int>'
+        - 'mem_usage': Matches 'mem usages: <float>'
+        - 'elapsed_time_per_iteration': Matches 'elapsed time per iteration: <float>'
+
+        Behavior:
+        - Reads the consolidated training log file from self.home_dir/training_logs on all hosts.
+        - Selects the output from the last host in self.host_list (assumes that node has the final log).
+        - Applies regex searches to extract metrics and returns them in a dictionary.
+        - Prints the dictionary for quick visibility.
+
+        Assumptions:
+        - self.phdl.exec(cmd) returns a dict mapping host -> command output (string).
+        - self.host_list is a non-empty list of hosts; the last entry contains the desired log.
+        - The training log contains lines that match the expected regex patterns.
+        - re is imported in the module scope.
+        """
+
+
         training_result_dict = {}
+
+        # Identify the last node; assume its logs contain the final/authoritative metrics
         last_node = self.host_list[len(self.host_list) -1]
+
+        # Read the training logs file on all hosts (phdl.exec returns dict of node -> output)
         out_dict = self.phdl.exec(f'cat {self.home_dir}/training_logs')
+
+        # Select the log content from the last node
         output = out_dict[last_node]
+
+        # Extract throughput per GPU as a list of numbers (strings), if multiple occurrences exist
         training_result_dict['throughput_per_gpu'] = re.findall( \
             'throughput per GPU:\s+([0-9\.]+)', output, re.I)
+
+        # Extract tokens per GPU per second (integers as strings)
         training_result_dict['tokens_per_gpu'] = re.findall( \
             'tokens\/GPU\/s: ([0-9]+)', output, re.I )
+
+        # Extract memory usage values (floats as strings)
         training_result_dict['mem_usage'] = re.findall( \
             'mem usages:\s+([0-9\.]+)', output, re.I )
+
+        # Extract elapsed time per iteration (floats as strings)
         training_result_dict['elapsed_time_per_iteration'] = re.findall( \
             'elapsed time per iteration: \s+([0-9\.]+)', output, re.I)
+
         print(training_result_dict)
         return training_result_dict
 
 
     def scan_for_training_errors(self, ):
+
+        """
+        Scan the consolidated training logs for known error patterns and report status.
+
+        Returns:
+        bool: True if no error patterns are found; False otherwise.
+
+        Behavior:
+        - Reads the training log file from self.home_dir/training_logs via sudo on all hosts.
+        - Selects the output from the last host in self.host_list (assumes it has the final log).
+        - Iterates through regex patterns in training_err_dict and searches the log content.
+        - On first match:
+          * Calls fail_test with a descriptive message.
+          * Logs an error indicating polling should stop.
+          * Marks training_pass as False.
+        - Returns training_pass.
+
+        Assumptions:
+        - self.phdl.exec(cmd) returns a dict mapping host -> command stdout (string).
+        - self.host_list is non-empty and its last element contains the relevant log.
+        - training_err_dict is a dict of name -> regex pattern available in scope.
+        - re, log, and fail_test are imported/available in scope.
+        - sudo can read the training_logs file without interactive prompts.
+
+        Notes:
+        - Regex search is case-sensitive as written; pass re.I to re.search for case-insensitive matching.
+        - If multiple error patterns are present, all matches will trigger fail_test, but the function
+          does not short-circuit; it continues scanning and ultimately returns False.
+        - Consider logging or returning which specific patterns matched for better diagnostics.
+        """
+
         print('Scan for training errors')
-        training_pass=True
-        last_node = self.host_list[len(self.host_list) -1]        
+        training_pass=True        # Default to pass; flip to False if any error pattern is detected
+
+        # Identify the node whose log we treat as authoritative (last in the host list)
+        last_node = self.host_list[len(self.host_list) -1]
+
+        # Read training logs across nodes; select the last node's output for scanning
         out_dict = self.phdl.exec(f'sudo cat {self.home_dir}/training_logs')
+
         output = out_dict[last_node] 
+
+        # Check the log content against all known training error patterns
         for err_key in training_err_dict:
             if re.search( f'{training_err_dict[err_key]}', output ):
+                # Record failure and log an error for visibility
                 fail_test(f'ERROR {training_err_dict[err_key]} seen in training logs ..')
                 log.error(f'Aborting training log polling')
                 training_pass=False
         return training_pass
           
   
-    def poll_for_training_completion( self, ):
+    def poll_for_training_completion( self, iterations=30, time_between_iters=60 ):
+
+        """
+        Periodically poll training logs to detect completion, surface errors, and validate results.
+
+        Args:
+        iterations (int): Maximum number of polling iterations before giving up.
+        time_between_iters (int | float): Seconds to sleep between each polling iteration.
+
+        Behavior:
+        - Waits an initial 60s to allow training to start producing logs.
+        - For up to `iterations` loops:
+          * Invokes self.scan_for_training_errors(); aborts if it flags errors.
+          * Reads the consolidated training log from the "last" node in self.host_list.
+          * Checks for completion indicators (throughput per GPU or tokens/GPU/s).
+        - If not seen, prints a status and sleeps before next iteration.
+        - If seen, verifies that metrics do not contain NaN/Inf values.
+        - Fails on invalid values, else parses and stores results via get_training_results_dict().
+        - Returns on success or failure (no explicit return value).
+        - Sleeps `time_between_iters` seconds between iterations (except when it early-sleeps 30s on in-progress).
+ 
+
+        Assumptions:
+        - self.host_list is non-empty; last node contains authoritative training logs.
+        - self.phdl.exec(cmd) returns {node: stdout_str}.
+        - self.scan_for_training_errors() returns True when OK, False on error patterns.
+        - self.get_training_results_dict() parses known metrics into self.training_result_dict.
+        - re, time, and fail_test are available in scope.
+
+        Notes:
+        - The regex '[NaN|Inf]' uses a character class and will not match "NaN" or "Inf" as intended.
+        Consider using '(NaN|Inf)' to check for either token.
+        - The progress regex for tokens/GPU/s lacks a colon; consider 'tokens\\/GPU\\/s:\\s+[0-9]+'.
+        """
+
         print('Poll for training completion ..')
         time.sleep(60)
         last_node = self.host_list[len(self.host_list) -1]
 
-        for i in range(1,30):
+        for i in range(1,int(iterations)+1):
             print(f'Starting Iteration {i}')
             if not self.scan_for_training_errors():
                 fail_test('Failures seen in training logs, Aborting!!!')
@@ -394,7 +601,6 @@ class MegatronLlamaTrainingJob():
             if not re.search( 'throughput per GPU:|tokens\/GPU\/s\s+[0-9]+', \
                 output, re.I ):
                 print('Training still in progress')
-                time.sleep(30)
             else:
                 if re.search( 'throughput per GPU:\s+[NaN|Inf]', output, re.I ) or \
                        re.search( 'tokens\/GPU\/s:\s+[NaN|Inf]', output, re.I ) or \
@@ -405,19 +611,60 @@ class MegatronLlamaTrainingJob():
                     self.training_result_dict = self.get_training_results_dict()
                     print('Completed Training, returning !!!')
                     return
-            # Wait 60 secs between every iteration
-            time.sleep(60)
+            # Wait secs between every iteration
+            time.sleep(int(time_between_iters))
 
 
 
     def verify_training_results( self, ):
+
+        """
+        Validate collected training results and environment health after a training run.
+
+        Behavior:
+        - Records end time of training for later log scanning.
+        - Scans parsed training_result_dict for NaN/Inf values in any reported metric.
+        - If distributed training is enabled:
+          * Collects RDMA and NIC (ethtool) stats after training.
+          * Verifies selected error counters did not increase vs. their pre-training baselines.
+        - Scans kernel logs (dmesg) between training start and end for known error patterns.
+        - Compares observed performance results against expected thresholds provided in
+          self.expected_result_dict and flags deviations.
+
+        Assumptions:
+        - self.phdl.exec(cmd) returns a mapping of node -> command output (string).
+        - self.training_result_dict is populated before calling this method and structured
+          as: { metric_key: <iterable of metric lists/values> }.
+        - self.distributed_training indicates whether to collect/compare network-related stats.
+        - linux_utils.get_rdma_stats_dict and linux_utils.get_nic_ethtool_stats_dict return
+          per-node dictionaries of counters where values are numeric strings or ints.
+        - err_counters_pattern is a regex pattern for error counters to check.
+        - verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict) is available and
+          scans logs between provided timestamps mapped by node.
+        - self.training_start_time and self.training_end_time are dicts keyed by node with
+          human-readable timestamps, compatible with verify_dmesg_for_errors.
+        - self.expected_result_dict contains numeric thresholds as strings or numbers.
+
+        Side effects:
+        - Calls fail_test(...) to report errors and accumulate failure messages.
+        - Logs warnings for missing expected result keys.
+
+        Returns:
+        None. Uses fail_test to record failures.
+        """
+
         # across nodes what numbers we are getting - median variance, per iteration variance.
         # Network errors
+
+        # Record the training end time; used later for dmesg time-bounded scanning
         self.training_end_time = self.phdl.exec('date')
 
+
+        # Check the parsed training results for invalid numeric values (NaN/Inf)
         for result_key in self.training_result_dict.keys():
             for result_list in self.training_result_dict[result_key]:
                 for result_val in result_list:
+                    # Search for 'nan' or 'inf' (case-sensitive as written; add re.I if desired)
                     if re.search( 'nan|inf', result_val):
                         fail_test(f'Failures seen in training_result dict for {result_key}, numbers are either NaN or Inf - f{result_val}')
 
@@ -425,6 +672,8 @@ class MegatronLlamaTrainingJob():
         if self.distributed_training is True:
             self.rdma_stats_dict_after = linux_utils.get_rdma_stats_dict(self.phdl)
             self.ethtool_stats_dict_after = linux_utils.get_nic_ethtool_stats_dict(self.phdl)
+
+            # Compare RDMA error counters; fail if any error counter increased
             for node in self.rdma_stats_dict_after.keys():
                 for counter_nam in self.rdma_stats_dict_after[node]:
                     if re.search( f'{err_counters_pattern}', counter_nam, re.I ):
@@ -433,6 +682,8 @@ class MegatronLlamaTrainingJob():
                             fail_test(f'Error counter {counter_nam} has gone up after training on node {node} \
                               Before = {self.rdma_stats_dict_before[node][counter_nam]}, \
                               After = {self.rdma_stats_dict_after[node][counter_nam]}')
+
+            # Compare NIC error counters; fail if any error counter increased
             for node in self.ethtool_stats_dict_after.keys():
                 for counter_nam in self.ethtool_stats_dict_after[node]:
                     if re.search( f'{err_counters_pattern}', counter_nam, re.I ):
