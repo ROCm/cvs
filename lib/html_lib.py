@@ -93,6 +93,7 @@ def build_html_page_header(filename):
     min-height: 100dvh;
     display: grid;
     grid-template-columns: var(--sidebar-w) 1fr;
+    overflow-x:hidden;
   }
   header{
     position: sticky; top:0; z-index: 5;
@@ -120,6 +121,7 @@ def build_html_page_header(filename):
   main{
     padding: 1.25rem 1.25rem 4rem;
     max-width: 1200px;
+    min-width: 0;
   }
 
   /* ---- Sidebar nav ---- */
@@ -196,10 +198,8 @@ def build_html_page_header(filename):
       <div class="group">
         <div class="title"><b>Cluster Summary</b></div>
         <ul>
-          <li><a class="item" href="#clustsummary"><span class="icon">*</span>Cluster Summary</a></li>
-          <li><a class="item" href="#gpuinfo"><span class="icon">*</span>GPU Info</a></li>
-          <li><a class="item" href="#nicinfo"><span class="icon">*</span>NIC Info</a></li>
-          <li><a class="item" href="#lldpinfo"><span class="icon">*</span>LLDP Neighbors </a></li>
+          <li><a class="item" href="#clustsummary"><span class="icon">*</span>Summary</a></li>
+          <li><a class="item" href="#lldpid"><span class="icon">*</span>LLDP Neighbors </a></li>
         </ul>
       </div>
 
@@ -207,9 +207,11 @@ def build_html_page_header(filename):
       <div class="group">
         <div class="title"><b>GPU Info</b></div>
         <ul>
-          <li><a class="item" href="#gpuinfo"><span class="icon">*</span>GPU Info</a></li>
-          <li><a class="item" href="#nicinfo"><span class="icon">*</span>NIC Info</a></li>
-          <li><a class="item" href="#lldpinfo"><span class="icon">*</span>LLDP Neighbors </a></li>
+          <li><a class="item" href="#prodid"><span class="icon">*</span>GPU Firmware</a></li>
+          <li><a class="item" href="#gpuuseid"><span class="icon">*</span>GPU Utilization</a></li>
+          <li><a class="item" href="#memuseid"><span class="icon">*</span>GPU Memory Utilization</a></li>
+          <li><a class="item" href="#pciexgmimetid"><span class="icon">*</span>GPU PCIe XGMI Metrics</a></li>
+          <li><a class="item" href="#gpuerrorid"><span class="icon">*</span>GPU Error Metrics</a></li>
         </ul>
       </div>
 
@@ -217,16 +219,16 @@ def build_html_page_header(filename):
       <div class="group">
         <div class="title"><b>NIC Info</b></div>
         <ul>
-          <li><a class="item" href="#gpuinfo"><span class="icon">*</span>GPU Info</a></li>
-          <li><a class="item" href="#nicinfo"><span class="icon">*</span>NIC Info</a></li>
-          <li><a class="item" href="#lldpinfo"><span class="icon">*</span>LLDP Neighbors </a></li>
+          <li><a class="item" href="#nicid"><span class="icon">*</span>NIC Info</a></li>
+          <li><a class="item" href="#rdmastatsid"><span class="icon">*</span>RDMA Statistics</a></li>
+          <li><a class="item" href="#ethtoolstatsid"><span class="icon">*</span>Ethtool Statistics</a></li>
         </ul>
       </div>
 
 
 
       <div class="group">
-        <div class="title"> Cluster Snapshot</div>
+        <div class="title"> Snapshot Diffs</div>
         <ul>
           <li><a class="item" href="#snapdmesg"><span class="icon">*</span>Dmesg Diff</a></li>
           <li><a class="item" href="#snapgpumetrics"><span class="icon">*</span>GPU Metrics Diff</a></li>
@@ -235,11 +237,10 @@ def build_html_page_header(filename):
       </div>
 
       <div class="group">
-        <div class="title"><b>Historic Err Info</b></div>
+        <div class="title"><b>Historic Err Logs</b></div>
         <ul>
-          <li><a class="item" href="#histdmesg"><span class="icon">*</span>Logs</a></li>
-          <li><a class="item" href="#histgpumetrics"><span class="icon">*</span>GPU Metrics</a></li>
-          <li><a class="item" href="#histnicmetrics"><span class="icon">*</span>NIC Metrics</a></li>
+          <li><a class="item" href="#dmesgerrid"><span class="icon">*</span>Dmesg Logs</a></li>
+          <li><a class="item" href="#journlctlerrid"><span class="icon">*</span>Journctl Logs</a></li>
         </ul>
       </div>
 
@@ -353,6 +354,51 @@ def build_html_page_footer( filename, ):
      "pageLength": 100,
      "autoWidth": true
     });
+    $('#snapdmesgtable').DataTable({
+     "scrollX": true,
+     "pageLength": 100,
+     "autoWidth": true
+    });
+    $('#snaperrlogsethtable').DataTable({
+     "scrollX": true,
+     "pageLength": 100,
+     "autoWidth": true
+    });
+    $('#snaperrlogspcietable').DataTable({
+     "scrollX": true,
+     "pageLength": 100,
+     "autoWidth": true
+    });
+    $('#snaperrlogsrastable').DataTable({
+     "scrollX": true,
+     "pageLength": 100,
+     "autoWidth": true
+    });
+    $('#snaperrlogsrdmatable').DataTable({
+     "scrollX": true,
+     "pageLength": 100,
+     "autoWidth": true
+    });
+    $('#snaprdmastatstable').DataTable({
+     "scrollX": true,
+     "pageLength": 100,
+     "autoWidth": true
+    });
+    $('#snapethstatstable').DataTable({
+     "scrollX": true,
+     "pageLength": 100,
+     "autoWidth": true
+    });
+    $('#snappcieerrtable').DataTable({
+     "scrollX": true,
+     "pageLength": 100,
+     "autoWidth": true
+    });
+    $('#snaprastatstable').DataTable({
+     "scrollX": true,
+     "pageLength": 100,
+     "autoWidth": true
+    });
     $('#error').DataTable({
      "scrollX": true,
      "pageLength": 100,
@@ -420,6 +466,7 @@ def build_rdma_stats_table( filename, rdma_dict, ):
     # Open the HTML file in append mode; we assume header/body already started elsewhere
     with open(filename, 'a') as fp:
          html_lines='''
+<h2 id="rdmastatsid"></h2><br>
 <h2 style="background-color: lightblue">RDMA Statistics Table</h2>
 <table id="rdmastatstable" class="display cell-border">
   <thead>
@@ -508,6 +555,7 @@ def build_ethtool_stats_table( filename, d_dict, ):
     # Append to the HTML file (assumes an HTML <body> is already open) 
     with open(filename, 'a') as fp:
          html_lines='''
+<h2 id="ethtoolstatsid"></h2><br>
 <h2 style="background-color: lightblue">Ethtool Statistics Table</h2>
 <table id="ethtoolstatstable" class="display cell-border">
   <thead>
@@ -555,6 +603,73 @@ def build_ethtool_stats_table( filename, d_dict, ):
         
 
 
+def build_snapshot_stats_diff_table( filename, d_dict, title, table_name, id_name ):
+    # Use the first node to derive the table column layout and device count (one column per device index)
+    node_0 = list(d_dict.keys())[0]
+    eth_device_list = d_dict[node_0].keys()
+    device_count = len(eth_device_list)
+
+    # Regex to detect "error-like" counters for highlighting
+    err_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|collision|reset|uncorrect'
+
+    # Append to the HTML file (assumes an HTML <body> is already open) 
+    with open(filename, 'a') as fp:
+         html_lines=f'''
+<h2 id="{id_name}"></h2><br>
+<h2 style="background-color: lightblue">{title}</h2>
+<table id="{table_name}" class="display cell-border">
+  <thead>
+  <tr>
+  <th>Node</th>'''
+         fp.write(html_lines)
+
+         # Create device columns based on the first node's device count
+         for j in range(0,device_count):
+             fp.write(f'<th>device_{j}</th>\n')
+         fp.write('</tr></thead>\n')
+         # End or header, let us start data rows ..
+
+
+         # Start writing table rows, one per node
+         for node in d_dict.keys():
+
+             # begin each node row
+             fp.write(f'<tr><td>{node}</td>\n')
+
+             # For each NIC on this node, render a nested table of non-zero counters
+             for eth_device in d_dict[node].keys():
+                 # Write the inside stats table only if err diff is seen
+                 if d_dict[node][eth_device]:
+                     stats_dict = d_dict[node][eth_device]
+                     non_zero_diff = False
+                     for stats_key in stats_dict.keys():
+                         if int(stats_dict[stats_key]['diff']) > 0:
+                             non_zero_diff = True
+                     if non_zero_diff:
+                         fp.write(f'<td><table border=1>\n')
+                         fp.write(f'<tr><td>{eth_device}</td><td>Before</td><td>After</td><td>Diff</td></tr>\n')
+                         for stats_key in stats_dict.keys():
+                             if int(stats_dict[stats_key]['diff']) > 0:
+                                 fp.write(f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]['before']}</td><td>{stats_dict[stats_key]['after']}</td><td><span class="label label-danger">{stats_dict[stats_key]['diff']}</td></tr>\n')
+                         fp.write(f'</table></td>\n')
+                     else:
+                         fp.write('<td></td>')
+                 else:
+                     fp.write('<td> </td>')
+             #End of each node row
+             fp.write(f'</tr>\n')
+         html_lines='''
+         </table>
+         <br><br>
+         '''
+         fp.write(html_lines)
+         fp.close()
+             
+        
+
+
+
+
 
 
 
@@ -563,7 +678,7 @@ def build_lldp_table( filename, lldp_dict ):
     print('Build HTML training table')
     with open(filename, 'a') as fp:
          html_lines='''
-<h2 id="lldpinfo"></h2><br>
+<h2 id="lldpid"></h2><br>
 <h2 style="background-color: lightblue">Cluster LLDP Table</h2>
 <table id="lldptable" class="display cell-border">
   <thead>
@@ -652,8 +767,9 @@ def build_training_results_table( filename, out_dict, title ):
     print('Build HTML training table')
     with open(filename, 'a') as fp:
          html_lines='''
+<h2 id="trainingid"></h2><br>
 <h2 style="background-color: lightblue">''' + title + '''</h2>
-<table id="training" class="display cell-border">
+<table id="trainingtable" class="display cell-border">
   <thead>
   <tr>
   <th>Node</th>
@@ -691,7 +807,7 @@ def build_training_results_table( filename, out_dict, title ):
 
 
 
-def build_historic_err_log_table( filename, d_dict, title, table_name, id_name ):
+def build_err_log_table( filename, d_dict, title, table_name, id_name ):
     print(f'Build HTML Historic error table {title}')
     with open(filename, 'a') as fp:
          html_lines=f'''
@@ -711,7 +827,7 @@ def build_historic_err_log_table( filename, d_dict, title, table_name, id_name )
              <td>{node}</td>
              '''
              fp.write(html_lines)
-             html_lines = '<td>'
+             html_lines = '<td><span class="label label-danger">'
              for err_line in d_dict[node]:
                  html_lines = html_lines + err_line + '<br>'
              html_lines = html_lines + '</td></tr>'
@@ -782,7 +898,7 @@ def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
     with open(filename, 'a') as fp:
          html_lines='''
 
-<h2 id="nicinfo">NIC Information</h2><br>
+<h2 id="nicid"></h2><br>
 <h2 style="background-color: lightblue">Network Info</h2>
 <table id="nictable" class="display cell-border">
   <thead>
@@ -794,7 +910,8 @@ def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
   <th>RDMA Status</th>
   <th>PCIe Bus</th>
   <th>MTU</th>
-  <th>IP Addr List</th>
+  <th>IPv4 Addr List</th>
+  <th>IPv6 Addr List</th>
   </tr>
   </thead>'''
          fp.write(html_lines)
@@ -808,6 +925,7 @@ def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
              pcie_bus_list = []
              mtu_list = []
              ip_list = []
+             ip6_list = []
 
              # Build each list by walking RDMA devices mapped to Ethernet interfaces
              for rdma_dev in rdma_dev_list:
@@ -818,8 +936,10 @@ def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
                  pcie_bus_list.append(lshw_dict[node][eth_dev]['pci_bus'])
                  mtu_list.append(ip_dict[node][eth_dev]['mtu'])
                  ip_list.append(ip_dict[node][eth_dev]['ipv4_addr_list'])
+                 ip6_list.append(ip_dict[node][eth_dev]['ipv6_addr_list'])
              html_lines='''
   <tr>
+  <td>{}</td>
   <td>{}</td>
   <td>{}</td>
   <td>{}</td>
@@ -831,7 +951,7 @@ def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
   </tr>
   '''.format( node,
              eth_dev_list, rdma_dev_list, link_status_list,
-             dev_status_list, pcie_bus_list, mtu_list, ip_list )
+             dev_status_list, pcie_bus_list, mtu_list, ip_list, ip6_list )
              fp.write(html_lines)
          html_lines='''
          </table>
@@ -917,8 +1037,7 @@ def build_html_cluster_product_table( filename, model_dict, fw_dict ):
     with open(filename, 'a') as fp:
          html_lines='''
 
-<h2 id="gpuinfo">GPU Information</h2><br>
-
+<h2 id="prodid"></h2><br>
 <h2 style="background-color: lightblue">Firmware Info</h2>
 <table id="prodtable" class="display cell-border">
   <thead>
@@ -1008,7 +1127,7 @@ def build_html_gpu_utilization_table( filename, use_dict ):
       - The function assumes each node has keys 'card0' through 'card7' and the two metrics per card;
         missing keys will raise KeyError. If GPU counts vary, consider generating columns dynamically.
       - Values are written verbatim; if content can include special characters, consider HTML-escaping.
-      - DataTables JS/CSS and initialization for table id "gpuuse" must be included elsewhere in the page.
+      - DataTables JS/CSS and initialization for table id "gpuusetable" must be included elsewhere in the page.
       - The explicit fp.close() is unnecessary in a with-context (file is closed automatically).
       - Consider opening the file with encoding='utf-8' for portability.
       - The thead contains an opening <tr> but no explicit closing </tr> before rows; browsers tolerate this,
@@ -1018,6 +1137,7 @@ def build_html_gpu_utilization_table( filename, use_dict ):
     print('Build HTML utilization table')
     with open(filename, 'a') as fp:
          html_lines='''
+<h2 id="gpuuseid"></h2><br>
 <h2 style="background-color: lightblue">GPU Utilization</h2>
 <table id="gpuusetable" class="display cell-border">
   <thead>
@@ -1140,6 +1260,7 @@ def build_html_mem_utilization_table( filename, use_dict, amd_dict ):
     print('Build HTML mem utilization table')
     with open(filename, 'a') as fp:
          html_lines='''
+<h2 id="memuseid"></h2><br>
 <h2 style="background-color: lightblue">GPU Memory Utilization</h2>
 <table id="memusetable" class="display cell-border">
   <thead>
@@ -1277,6 +1398,7 @@ def build_html_pcie_xgmi_metrics_table( filename, metrics_dict, amd_dict ):
     print('Build HTML PCIe metrics table')
     with open(filename, 'a') as fp:
          html_lines='''
+<h2 id="pciexgmimetid"></h2><br>
 <h2 style="background-color: lightblue">GPU PCIe XGMI Metrics Table</h2>
 <table id="pciexgmimettable" class="display cell-border">
   <thead>
@@ -1425,6 +1547,7 @@ def build_html_error_table( filename, metrics_dict, amd_dict ):
     print('Build HTML Error table')
     with open(filename, 'a') as fp:
          html_lines='''
+<h2 id="gpuerrorid"></h2><br>
 <h2 style="background-color: lightblue">GPU Error Metrics Table</h2>
 <table id="gpuerrortable" class="display cell-border">
   <thead>
@@ -1589,8 +1712,9 @@ def build_html_env_metrics_table():
     print('Build HTML env metrics table')
     with open(filename, 'a') as fp:
          html_lines='''
+<h2 id="envmetricsid"></h2><br>
 <h2 style="background-color: lightblue">GPU Environmental Metrics Table</h2>
-<table id="envmetrics" class="display cell-border">
+<table id="envmetricstable" class="display cell-border">
   <thead>
   <tr>
   <th>Node</th>

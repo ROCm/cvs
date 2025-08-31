@@ -206,6 +206,8 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict ):
  
     print('scan dmesg')
 
+    err_dict = {}
+
     # Use the first node key to derive the time window to search .. assume cluster has NTP
     node0 = list(start_time_dict.keys())[0]
     start_time = start_time_dict[node0]
@@ -225,6 +227,8 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict ):
     # Filter out allowed/denied lines to reduce noise. Return is a dict keyed by node.
     output_dict = phdl.exec(f"sudo dmesg -T | awk '/{start_pattern}.*/,/{end_pattern}.*/' | egrep -v 'ALLOWED|DENIED' --color=never")
     #print(output_dict)
+    for node in output_dict.keys():
+        err_dict[node] = []
 
     # Iterate through each node's sliced dmesg and scan for known error patterns
     for node in output_dict.keys():
@@ -232,6 +236,10 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict ):
             for err_key in err_patterns_dict.keys():
                 if re.search( f'{err_patterns_dict[err_key]}', line, re.I ):
                     fail_test(f'ERROR - Failue pattern ** {line} ** seen in Dmesg')
+                    err_dict[node].append(line)
+
+    return err_dict
+
 
 
 
@@ -685,7 +693,15 @@ def compare_cluster_metrics_snapshots( s_dict_before, s_dict_after ):
     """
 
     print('Compare 2 cluster snapshots')
+    # err_dict will capture the ERROR, WARN log messages at a node level which have seen 
+    # increment in values for any error or warning counters. The same can be obtained
+    # from the complete test log by doing a grep on ERROR|WARN and snapshot
     err_dict = {}
+
+    # err_stats_diff_dict is a collection of node, device level error/warning metrics which 
+    # have actually incremented during the snapshot period with the values of before and
+    # after for each of those metrics. This will be used to display the values before and
+    # after in the snaphot Diff tables for GPU and NIC metrics
     err_stats_diff_dict = {}
 
     # Compute per-stat deltas between the two snapshots:
@@ -710,11 +726,14 @@ def compare_cluster_metrics_snapshots( s_dict_before, s_dict_after ):
                             log.warn(msg)
                             print(msg)
                             err_dict[key_nam][node].append(msg)
-                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
-                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = \
-                                    s_dict_before[key_nam][node][dev_nam][stat_nam]
-                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = \
-                                    s_dict_after[key_nam][node][dev_nam][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = \
+                               s_dict_before[key_nam][node][dev_nam][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = \
+                               s_dict_after[key_nam][node][dev_nam][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['diff'] = \
+                               int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after']) - \
+                               int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'])
 
 
                     # Error counters: log when any positive increase occurs
@@ -724,11 +743,14 @@ def compare_cluster_metrics_snapshots( s_dict_before, s_dict_after ):
                             log.error(msg)
                             print(msg)
                             err_dict[key_nam][node].append(msg)
-                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
-                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = \
-                                    s_dict_before[key_nam][node][dev_nam][stat_nam]
-                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = \
-                                    s_dict_after[key_nam][node][dev_nam][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = \
+                            s_dict_before[key_nam][node][dev_nam][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = \
+                            s_dict_after[key_nam][node][dev_nam][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['diff'] = \
+                            int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after']) - \
+                            int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'])
 
                     # Threshold-based warning counters: require delta to exceed a configured threshold
                     elif re.search( f'{threshold_stats_pattern}', stat_nam, re.I ):
@@ -737,11 +759,14 @@ def compare_cluster_metrics_snapshots( s_dict_before, s_dict_after ):
                             log.warn(msg)
                             print(msg)
                             err_dict[key_nam][node].append(msg)
-                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
-                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = \
-                                    s_dict_before[key_nam][node][dev_nam][stat_nam]
-                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = \
-                                    s_dict_after[key_nam][node][dev_nam][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = \
+                            s_dict_before[key_nam][node][dev_nam][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = \
+                            s_dict_after[key_nam][node][dev_nam][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['diff'] = \
+                            int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after']) - \
+                            int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'])
 
     print('Completed comparing the cluster snapshots')
     return err_dict, err_stats_diff_dict
