@@ -1,0 +1,32 @@
+{
+
+    "host":
+    {
+       "os_version": "Ubuntu 24.04.1 LTS",
+       "kernel_version": "6.8.0-60-generic",
+       "rocm_version": "6.4.1",
+       "bios_version": "20171212",
+       "pci_realloc": "off",
+       "online_memory": "1.3T",
+       "gpu_count": "8",
+       "gpu_pcie_speed": "32",
+       "gpu_pcie_width": "16",
+       "fw_dict":
+       {
+           "CP_MEC1": "32945",
+           "CP_MEC2": "32945",
+           "RLC": "65",
+           "SDMA0": "24",
+           "SDMA1": "24",
+           "VCN": "09.11.70.09",
+           "RLC_RESTORE_LIST_GPM_MEM": "4",
+           "RLC_RESTORE_LIST_SRM_MEM": "4",
+           "RLC_RESTORE_LIST_CNTL": "4",
+           "PSP_SOSDRV": "00.36.02.56",
+           "TA_RAS": "1B.36.02.14",
+           "TA_XGMI": "20.00.00.14",
+           "PM": "07.85.11.01"
+       }
+    }
+
+}

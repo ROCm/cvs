@@ -1,0 +1,87 @@
+{
+
+    "agfhc":
+    {
+         "path": "/opt/amd/agfhc",
+         "package_tar_ball": "/root/cache/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
+         "install_dir": "/root/cache/INSTALL/agfhc/",
+         "nfs_install": "True",
+         "hbm_test_duration": "00:01:30"
+    },
+    "transferbench":
+    {
+       "path": "/opt/amd/transferbench",
+       "example_tests_path": "/root/cache/INSTALL/TransferBench/examples",
+       "git_install_path": "/root/cache/INSTALL/",
+       "git_url": "https://github.com/ROCm/TransferBench.git",
+       "nfs_install": "True",
+       "results":
+       {
+           "bytes_to_transfer": "268435456",
+           "path": "/opt/amd/transferbench",
+           "gpu_to_gpu_a2a_rtotal": "320.0",
+           "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
+           "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
+           "best_gpu0_bw": "480.0",
+           "32_cu_local_read": "1650",
+           "32_cu_local_write": "1250.0",
+           "32_cu_local_copy": "1250.0",
+           "32_cu_rem_read": "48.0",
+           "32_cu_rem_write": "48.0",
+           "32_cu_rem_copy": "48.0",
+           "example_results":
+           {
+               "test1": "47.1",
+               "test2": "48.4",
+               "test3_0_to_1": "31.9",
+               "test3_1_to_0": "38.9",
+               "test4": "1264",
+               "test6": "48.6"
+           }
+
+       }
+    },
+    "rocblas":
+    {
+       "path": "/root/cache/INSTALL/rocBLAS/build/release/clients/staging",
+       "git_install_path": "/root/cache/INSTALL",
+       "git_url": "https://github.com/ROCm/rocBLAS.git",
+       "rocm_version": "7.0.0",
+       "nfs_install": "True",
+       "results":
+       {
+           "fp32_gflops": "94100",
+           "bf16_gflops": "130600",
+           "int8_gflops": "162700"
+       }
+    },
+    "rochpl":
+    {
+       "path": "/root/cache/INSTALL/rocHPL",
+       "git_install_path": "/root/cache/INSTALL",
+       "git_url": "https://github.com/ROCm/rocHPL.git",
+       "nfs_install": "True",
+       "results":
+       {
+           "fp32_gflops": "94100",
+           "bf16_gflops": "130600",
+           "int8_gflops": "162700"
+       }
+    },
+    "babelstream":
+    {
+       "path": "/root/cache/INSTALL/BabelStream/build",
+       "git_install_path": "/root/cache/INSTALL",
+       "git_url": "https://github.com/UoB-HPC/BabelStream.git",
+       "nfs_install": "True",
+       "results":
+       {
+           "copy": "4177285",
+           "mul": "4067069",
+           "add": "3920853",
+           "triad": "3885301",
+           "dot": "3660781"
+       }
+    }
+
+}

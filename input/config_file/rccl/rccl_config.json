@@ -1,0 +1,131 @@
+{
+    "rccl":
+    {
+       "no_of_nodes": "2",
+       "no_of_global_ranks": "16",
+       "no_of_local_ranks": "8",
+       "ranks_per_node": "8",
+       "rccl_dir": "/opt/rccl-tests/",
+       "rccl_tests_dir": "/opt/rccl-tests/build",
+       "mpi_dir": "/usr/bin",
+       "mpi_path_var": "/usr",
+       "rocm_path_var": "/opt/rocm-6.4.2/",
+       "rccl_path_var": "/opt/rccl-tests/",
+       "cluster_snapshot_debug": "False",
+       "env_source_script": "/root/env_source_file.sh",
+       "rccl_collective": [ "all_reduce_perf", "all_gather_perf", "scatter_perf", "gather_perf", "reduce_scatter_perf", "sendrecv_perf", "alltoall_perf", "alltoallv_perf", "reduce_scatter_perf", "broadcast_perf" ],
+       "rccl_algo": [ "ring" ],
+       "rccl_protocol": [ "simple" ],
+       "qp_scale": [ "1" ],
+       "ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7",
+       "net_dev_list": "ens28np0,ens27np0,ens25np0,ens26np0,ens24np0,ens23np0,ens21np0,ens22np0",
+       "oob_port": "eth0",
+       "gid_index": "1",
+       "qp_count": "1",
+       "start_msg_size": "1024",
+       "end_msg_size": "16g",
+       "step_function": "2",
+       "threads_per_gpu": "1",
+       "warmup_iterations": "10",
+       "no_of_iterations": "1",
+       "check_iteration_count": "1",
+       "nccl_ib_timeout": "30",
+       "ib_rx_queue_len": "8192",
+       "ucx_tls": "tcp",
+       "hcoll_enable_mcast_all": "0",
+       "nccl_cumem_enable": "0",
+       "nccl_ib_sl": "0",
+       "nccl_ib_tc": "0",
+       "nccl_ib_split_data_on_qps": "0",
+       "nccl_pxn_disable": "0",
+       "nccl_net_plugin": "none",
+       "verify_bus_bw": "False",
+       "debug_level": "ERROR",
+       "rccl_result_file": "/tmp/rccl_result_file.json",
+       "_comments_results": "expected results below are for 2 node cluster, will vary based on cluster size",
+       "results":
+       {
+           "all_reduce_perf":
+           {
+               "bus_bw":
+               {
+                   "8589934592": "330.00",
+                   "17179869184": "350.00"
+               }
+           },
+           "all_gather_perf":
+           {
+               "bus_bw":
+               {
+                   "8589934592": "330.00",
+                   "17179869184": "350.00"
+               }
+           },
+           "gather_perf":
+           {
+               "bus_bw":
+               {
+                   "8589934592": "330.00",
+                   "17179869184": "350.00"
+               }
+           },
+           "scatter_perf":
+           {
+               "bus_bw":
+               {
+                   "8589934592": "330.0",
+                   "17179869184": "350.0"
+               }
+           },
+           "reduce_perf":
+           {
+               "bus_bw":
+               {
+                   "8589934592": "300.0",
+                   "17179869184": "310.00"
+               }
+           },
+           "reduce_scatter_perf":
+           {
+               "bus_bw":
+               {
+                   "8589934592": "340.0",
+                   "17179869184": "360.00"
+               }
+           },
+           "alltoall_perf":
+           {
+               "bus_bw":
+               {
+                   "8589934592": "45.00",
+                   "17179869184": "50.00"
+               }
+           },
+           "alltoallv_perf":
+           {
+               "bus_bw":
+               {
+                   "8589934592": "45.00",
+                   "17179869184": "50.00"
+               }
+           },
+           "sendrecv_perf":
+           {
+               "bus_bw":
+               {
+                   "8589934592": "47.00",
+                   "17179869184": "48.00"
+               }
+           },
+           "broadcast_perf":
+           {
+               "bus_bw":
+               {
+                   "8589934592": "310.00",
+                   "17179869184": "312.00"
+               }
+           }
+        }
+    }
+
+}

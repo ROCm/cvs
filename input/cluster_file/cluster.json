@@ -1,0 +1,31 @@
+{
+    "_comment": "change to your user-id and your private key and your node IPs. The Public IPs of the nodes will be the keys of the node_dict",
+    "_vpc_comment": "If your cluster has a dedicated VPC IP that is reachable from other nodes in the cluster, set it to that (or) else set the same as the main host IP/Name",
+    "username": "{user-id}",
+    "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+    "head_node_dict":
+    {
+        "mgmt_ip": "{xx.xx.xx.xx|hostname}"
+    },
+    "node_dict":
+    {
+        "{xx.xx.xx.xx|hostname}":
+        {
+            "bmc_ip": "NA",
+            "vpc_ip": "{xx.xx.xx.xx|hostname}"
+        },
+        "{xx.xx.xx.xx|hostname}":
+        {
+            "bmc_ip": "NA",
+            "vpc_ip": "{xx.xx.xx.xx|hostname}"
+        },
+        "{xx.xx.xx.xx|hostname}":
+        {
+            "bmc_ip": "NA",
+            "vpc_ip": "{xx.xx.xx.xx|hostname}"
+        }
+
+    }
+
+
+}
