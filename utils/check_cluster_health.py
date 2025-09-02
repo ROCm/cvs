@@ -73,6 +73,10 @@ def build_html_report( phdl, html_file, gen_health_dict, \
     # Html headers
     html_lib.build_html_page_header(html_file)
 
+
+    # LLDP Table
+    html_lib.build_lldp_table( html_file, lldp_dict )
+
     # GPU Info tables
     html_lib.build_html_cluster_product_table( html_file, model_dict, fw_dict )
     html_lib.build_html_gpu_utilization_table( html_file, use_dict )
@@ -80,38 +84,31 @@ def build_html_report( phdl, html_file, gen_health_dict, \
     html_lib.build_html_pcie_xgmi_metrics_table( html_file, metrics_dict, amd_dict )
     html_lib.build_html_error_table( html_file, metrics_dict, amd_dict )
 
-    # LLDP Table
-    html_lib.build_lldp_table( html_file, lldp_dict )
-
-
     # NIC Info tables
     html_lib.build_html_nic_table( html_file, rdma_nic_dict, lshw_dict, ip_dict )
     html_lib.build_rdma_stats_table( html_file, rdma_stats_dict )
     html_lib.build_ethtool_stats_table( html_file, ethtool_stats_dict)
 
-    print(snapshot_err_dict)
-    print(snapshot_err_dict.keys())
-    # Snapshot tables
-
 
     # Historic Info Tables
-    html_lib.build_err_log_table( html_file, gen_health_dict['gpu_pcie_errors'], \
-            'GPU PCIE Errors Table', 'gpupcieerrtable', 'gpupcieerrid' )
-    html_lib.build_err_log_table( html_file, gen_health_dict['gpu_pcie_link'], \
-            'GPU PCIE Link Status Errors', 'gpupcielinktable', 'gpupcielinkid' )
-    html_lib.build_err_log_table( html_file, gen_health_dict['host_pcie'], \
-            'Host Side PCIE Status Errors', 'hostpcielinktable', 'hostpcielinkid' )
     html_lib.build_err_log_table( html_file, gen_health_dict['dmesg_scan'], \
             'Dmesg Error Table', 'dmesgerrtable', 'dmesgerrid' )
     html_lib.build_err_log_table( html_file, gen_health_dict['driver_errors'], \
             'GPU Driver Error Table', 'gpudrivererrtable', 'gpudrivererrid' )
     html_lib.build_err_log_table( html_file, gen_health_dict['journlctl_scan'], \
             'Journlctl Error Table', 'journlctlerrtable', 'journlctlerrid' )
+    html_lib.build_err_log_table( html_file, gen_health_dict['gpu_pcie_errors'], \
+            'GPU PCIE Errors Table', 'gpupcieerrtable', 'gpupcieerrid' )
+    html_lib.build_err_log_table( html_file, gen_health_dict['gpu_pcie_link'], \
+            'GPU PCIE Link Status Errors', 'gpupcielinktable', 'gpupcielinkid' )
+    html_lib.build_err_log_table( html_file, gen_health_dict['host_pcie'], \
+            'Host Side PCIE Status Errors', 'hostpcielinktable', 'hostpcielinkid' )
     html_lib.build_err_log_table( html_file, gen_health_dict['nic_link_flap'], \
             'NIC Link Flap Logs Table', 'niclinkflaptable', 'niclinkflapid' )
 
 
 
+    # Snapshot tables
     # Scan Dmesgs to see any new errors while running the passive health check
     end_time = phdl.exec('date')
     dmesg_diff_dict = verify_lib.verify_dmesg_for_errors( phdl, start_time, end_time )
@@ -121,19 +118,19 @@ def build_html_report( phdl, html_file, gen_health_dict, \
     # Compare the snapshots and use the diff of metrics to see any new errors occurred
     # for GPU or NIC
     html_lib.build_err_log_table( html_file, snapshot_err_dict['eth_stats'], \
-            'Snapshot diff logs of any new ethstats error metrics incrementing across snapshots', \
+            'Snapshot diff logs of any new ethstats errors incrementing across snapshots', \
             'snaperrlogsethtable', 'snaperrlogsethid' )
 
     html_lib.build_err_log_table( html_file, snapshot_err_dict['gpu_pcie_stats'], \
-            'Snapshot diff logs of any new GPU PCIe error metrics incrementing across snapshots', \
+            'Snapshot diff logs of any new GPU PCIe errors incrementing across snapshots', \
             'snaperrlogspcietable', 'snaperrlogspcieid' )
 
     html_lib.build_err_log_table( html_file, snapshot_err_dict['gpu_ras_stats'], \
-            'Snapshot diff logs of any new GPU RAS error metrics incrementing across snapshots', \
+            'Snapshot diff logs of any new GPU RAS errors incrementing across snapshots', \
             'snaperrlogsrastable', 'snaperrlogsrasid' )
 
     html_lib.build_err_log_table( html_file, snapshot_err_dict['rdma_stats'], \
-            'Snapshot diff logs of any new RDMA error metrics incrementing across snapshots', \
+            'Snapshot diff logs of any new RDMA errors incrementing across snapshots', \
             'snaperrlogsrdmatable', 'snaperrlogsrdmaid' )
 
 
