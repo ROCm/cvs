@@ -40,6 +40,8 @@
        "nccl_pxn_disable": "0",
        "nccl_net_plugin": "none",
        "verify_bus_bw": "False",
+       "verify_bw_dip": "True",
+       "verify_lat_dip": "True",
        "debug_level": "ERROR",
        "rccl_result_file": "/tmp/rccl_result_file.json",
        "_comments_results": "expected results below are for 2 node cluster, will vary based on cluster size",
