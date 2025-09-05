@@ -10,12 +10,12 @@ import linux_utils
 err_patterns_dict = {
 
     'gpu_reset': 'GPU reset begin|GPU hang|cp might be in an unrecoverable state|fence wait loop timeout expired',
-    'crash': 'crashed|Traceback|cut here|Bug:|Call Trace|end trace|amdgpu: Fatal error',
+    'crash': 'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|show_stack|dump_stack|fault ',
     'test_fail': 'Test failure',
     'fault': 'no-retry page fault|Illegal register access|PROTECTION_FAULT_STATUS',
-    'driver': 'Queue preemption failed for queue|Failed to evict process queues',
+    'driver': 'Queue preemption failed for queue|Failed to evict process queues|Runlist is getting oversubscribed|No more SDMA queue to allocate|Expect reduced ROCm performance|amdgpu: process pid',
     'hardware': 'hardware error|hardware fail|ras error|uncorrectable|correctable err',
-    'down': 'NIC Link is Down|link is down'
+    'network': 'NIC Link is Down|link is down|ib_uverb'
 
 }
 
