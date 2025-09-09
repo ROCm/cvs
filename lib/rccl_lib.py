@@ -107,7 +107,8 @@ def check_bus_bw( test_name, output, exp_res_dict ):
     actual_bw_dict = {}
     msg_size_list = list(exp_res_dict['bus_bw'].keys())
     print(test_name)
-    act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
+    #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
+    act_res_dict = output
     if re.search( 'alltoall|all_to_all', test_name, re.I ):
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 0:
@@ -128,7 +129,8 @@ def check_bus_bw( test_name, output, exp_res_dict ):
 
 
 def check_bw_dip( test_name, output, exp_res_dict ):
-    act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
+    #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
+    act_res_dict = output
     if re.search( 'alltoall|all_to_all', test_name, re.I ):
         last_bw = 0.0
         last_msg_size = act_res_dict[0]['size']
@@ -151,7 +153,8 @@ def check_bw_dip( test_name, output, exp_res_dict ):
 
 
 def check_lat_dip( test_name, output, exp_res_dict ):
-    act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
+    #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
+    act_res_dict = output
     if re.search( 'alltoall|all_to_all', test_name, re.I ):
         last_time = 0.0
         last_msg_size = act_res_dict[0]['size']
@@ -176,6 +179,26 @@ def check_lat_dip( test_name, output, exp_res_dict ):
 
 
 
+def convert_to_graph_dict(result_dict):
+    graph_dict = {}
+    for graph_series_name in result_dict.keys():
+        graph_dict[graph_series_name] = {}
+        dict_list = result_dict[graph_series_name]
+        for dict_item in dict_list:
+            msg_size = dict_item['size']
+            graph_dict[graph_series_name][msg_size] = {}
+            if re.search( 'alltoall', dict_item['name'], re.I) and dict_item['inPlace'] == 1:
+                graph_dict[graph_series_name][msg_size]['bus_bw'] = dict_item['busBw']
+                graph_dict[graph_series_name][msg_size]['alg_bw'] = dict_item['algBw']
+                graph_dict[graph_series_name][msg_size]['time'] = dict_item['time']
+            else:
+                graph_dict[graph_series_name][msg_size]['bus_bw'] = dict_item['busBw']
+                graph_dict[graph_series_name][msg_size]['alg_bw'] = dict_item['algBw']
+                graph_dict[graph_series_name][msg_size]['time'] = dict_item['time']
+    print(graph_dict)
+    return graph_dict
+
+
 
 
 
@@ -188,13 +211,14 @@ def check_lat_dip( test_name, output, exp_res_dict ):
 def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, user_name, ib_hca_list, \
         net_dev_list, oob_port, no_of_global_ranks, rocm_path_var, mpi_dir, mpi_path_var, \
         rccl_dir, rccl_path_var, rccl_tests_dir, nccl_algo='ring', \
-        nccl_proto='simple', gid_index=1, qp_count=1, start_msg_size=1024, end_msg_size='16g', \
+        nccl_proto='simple', gid_index=1, qp_count=1, \
+        start_msg_size=1024, end_msg_size='16g', \
         step_function=2, threads_per_gpu=1, warmup_iterations=10, no_of_iterations=1, \
         check_iteration_count=1, debug_level='INFO', \
         rccl_result_file='/tmp/rccl_result_output.json', no_of_local_ranks=8, \
         ib_rx_queue_len=8192, ucx_tls='tcp', hcoll_enable_mcast_all=0, \
         nccl_cumem_enable=0, nccl_ib_timeout=30, nccl_ib_sl=0, \
-        nccl_ib_tc=41, nccl_ib_split_data_on_qps=0, nccl_pxn_disable=0, \
+        nccl_ib_tc=41, nccl_ib_split_data_on_qps=0, nccl_pxn_disable=1, \
         nccl_net_plugin=None, user_password=None, \
         min_channels=64, max_channels=64, \
         user_key_file=None, verify_bus_bw=False, \
@@ -309,7 +333,8 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
 
     # Read the JSON results emitted by the RCCL test binary
     result_dict_out = shdl.exec(f'cat {rccl_result_file}')
-    result_out = result_dict_out[head_node]
+    result_out = json.loads(result_dict_out[head_node].replace( '\n', '').replace( '\r', ''))
+
 
     # Collect basic GPU information via rocm-smi
     smi_out_dict = shdl.exec('rocm-smi -a | head -30')

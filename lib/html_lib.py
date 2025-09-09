@@ -426,6 +426,326 @@ def build_html_page_footer( filename, ):
 
 
 
+
+
+
+
+
+def build_rccl_amcharts_graph( filename, chart_name, rccl_dict ):
+    with open(filename, 'a') as fp:
+         html_lines='''
+<style>
+
+.highlight-red {
+   color: red;
+}
+.label-danger {
+   color: red;
+}
+
+
+#''' + str(chart_name) + '''{
+  width: 120%;
+  height: 550px;
+  max-width: 120%;
+}
+</style>
+
+<!-- Resources -->
+<script src="https://cdn.amcharts.com/lib/5/index.js"></script>
+<script src="https://cdn.amcharts.com/lib/5/xy.js"></script>
+<script src="https://cdn.amcharts.com/lib/5/themes/Animated.js"></script>
+
+<!-- Chart code -->
+<script>
+am5.ready(function() {
+
+// Create root element
+// https://www.amcharts.com/docs/v5/getting-started/#Root_element 
+var root = am5.Root.new("''' + str(chart_name) + '''");
+
+const myTheme = am5.Theme.new(root);
+
+myTheme.rule("AxisLabel", ["minor"]).setAll({
+  dy:1
+});
+
+myTheme.rule("Grid", ["x"]).setAll({
+  strokeOpacity: 0.05
+});
+
+myTheme.rule("Grid", ["x", "minor"]).setAll({
+  strokeOpacity: 0.05
+});
+
+// Create chart
+// https://www.amcharts.com/docs/v5/charts/xy-chart/
+var chart = root.container.children.push(am5xy.XYChart.new(root, {
+  panX: true,
+  panY: true,
+  wheelX: "panX",
+  wheelY: "zoomX",
+  maxTooltipDistance: 0,
+  pinchZoomX:true
+}));
+
+
+// Create axes
+// https://www.amcharts.com/docs/v5/charts/xy-chart/axes/
+var xAxis = chart.xAxes.push(am5xy.ValueAxis.new(root, {
+  maxDeviation: 0.2,
+  renderer: am5xy.AxisRendererX.new(root, {
+    minorGridEnabled: true
+  }),
+  tooltip: am5.Tooltip.new(root, {})
+}));
+
+var yAxis = chart.yAxes.push(am5xy.ValueAxis.new(root, {
+  renderer: am5xy.AxisRendererY.new(root, {}),
+  numberFormat: "#.# 'GB'"
+  })
+);
+
+
+// covert message size to MB
+
+xAxis.set("numberFormatter", am5.NumberFormatter.new(root, {
+ numberFormat: "#.0b",
+  numericFields: ["valueX"]
+}));
+
+         '''
+         fp.write(html_lines)
+
+         for series_name in rccl_dict.keys():
+             html_lines='''
+var series = chart.series.push(am5xy.LineSeries.new(root, {
+    name: "''' + str(series_name) + '''",
+    xAxis: xAxis,
+    yAxis: yAxis,
+    valueYField: "bus_bw",
+    valueXField: "msg_size",
+    legendValueText: "{valueY.formatNumber('#.00')}",
+    tooltip: am5.Tooltip.new(root, {
+      pointerOrientation: "horizontal",
+      labelText: "{name}\\n: {valueY.formatNumber('#.00')} GB"
+    })
+   }));
+             '''
+             fp.write(html_lines)
+             data_list = []
+             for msg_size in rccl_dict[series_name].keys():
+                 data_list.append( { 'msg_size': msg_size, 'bus_bw': rccl_dict[series_name][msg_size]['bus_bw'] } )
+             html_lines=f'''
+   data = {data_list}
+   series.data.setAll(data);
+   // Make stuff animate on load
+   // https://www.amcharts.com/docs/v5/concepts/animations/
+   series.appear();
+             '''
+             fp.write(html_lines)
+         html_lines='''
+// Add cursor
+// https://www.amcharts.com/docs/v5/charts/xy-chart/cursor/
+var cursor = chart.set("cursor", am5xy.XYCursor.new(root, {
+  behavior: "none"
+}));
+cursor.lineY.set("visible", false);
+
+
+// Add scrollbar
+// https://www.amcharts.com/docs/v5/charts/xy-chart/scrollbars/
+chart.set("scrollbarX", am5.Scrollbar.new(root, {
+  orientation: "horizontal"
+}));
+
+chart.set("scrollbarY", am5.Scrollbar.new(root, {
+  orientation: "vertical"
+}));
+
+
+// Add legend
+// https://www.amcharts.com/docs/v5/charts/xy-chart/legend-xy-series/
+var legend = chart.rightAxesContainer.children.push(am5.Legend.new(root, {
+  width: 270,
+  paddingLeft: 8,
+  height: am5.percent(100)
+}));
+
+legend.labels.template.setAll({
+  fontSize: 10, // Change the font size of the labels
+  maxWidth: 200, // Set a maximum width for the labels
+  oversizedBehavior: "truncate" // Truncate oversized text
+});
+
+
+// When legend item container is hovered, dim all the series except the hovered one
+legend.itemContainers.template.events.on("pointerover", function(e) {
+  var itemContainer = e.target;
+
+  // As series list is data of a legend, dataContext is series
+  var series = itemContainer.dataItem.dataContext;
+
+  chart.series.each(function(chartSeries) {
+    if (chartSeries != series) {
+      chartSeries.strokes.template.setAll({
+        strokeOpacity: 0.15,
+        stroke: am5.color(0x000000)
+      });
+    } else {
+      chartSeries.strokes.template.setAll({
+        strokeWidth: 3
+      });
+    }
+  })
+})
+// When legend item container is unhovered, make all series as they are
+legend.itemContainers.template.events.on("pointerout", function(e) {
+  var itemContainer = e.target;
+  var series = itemContainer.dataItem.dataContext;
+
+  chart.series.each(function(chartSeries) {
+    chartSeries.strokes.template.setAll({
+      strokeOpacity: 1,
+      strokeWidth: 1,
+      stroke: chartSeries.get("fill")
+    });
+  });
+})
+
+legend.valueLabels.template.setAll({
+  fontSize: 10
+});
+
+legend.itemContainers.template.set("width", am5.p100);
+legend.valueLabels.template.setAll({
+  width: am5.p100,
+  textAlign: "right"
+});
+
+// It's is important to set legend data after all the events are set on template, otherwise events won't be copied
+legend.data.setAll(chart.series.values);
+
+
+// Make stuff animate on load
+// https://www.amcharts.com/docs/v5/concepts/animations/
+chart.appear(1000, 100);
+
+}); // end am5.ready()
+</script>
+             '''
+         fp.write(html_lines)
+
+
+
+
+
+def add_html_begin( filename ):
+    with open(filename, 'w') as fp:
+         html_lines='''
+         <html>
+         <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+         '''
+         fp.write(html_lines)
+
+
+def add_html_end( filename ):
+    with open(filename, 'a') as fp:
+         html_lines='''
+<!-- jQuery -->
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+<!-- DataTables JS -->
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+
+<script>
+  // Initialize DataTable
+  $(document).ready(function() {
+    $('#rccltable').DataTable({
+     "pageLength": 100,
+     "autoWidth": true
+    });
+
+  });
+</script>
+
+         </html>
+         '''
+         fp.write(html_lines)
+
+
+
+
+
+
+def build_rccl_result_table( filename, res_dict ):
+    print('Build HTML RCCL Result table')
+    with open(filename, 'a') as fp:
+         html_lines='''
+<h2 style="background-color: lightblue">RCCL Results Table</h2>
+<table id="rccltable" class="display cell-border">
+  <thead>
+  <tr>
+  <th>Collective</th>
+  <th>Algo</th>
+  <th>Protocol</th>
+  <th>QP_count</th>
+  <th>PXN_DISABLE</th>
+  <th>Msg Size</th>
+  <th>Algo BW GB/s</th>
+  <th>Bus BW GB/s</th>
+  <th>Latency us</th>
+  </tr>
+  </thead>'''
+         fp.write(html_lines)
+         for key_nam in res_dict.keys():
+             (collective,algo,protocol,qp_count,pxn_disable) = key_nam.split("-")
+             last_bw = 0.0
+             last_time = 0
+             for msg_size in res_dict[key_nam].keys():
+                 bus_bw = res_dict[key_nam][msg_size]['bus_bw']
+                 time = res_dict[key_nam][msg_size]['time']
+                 html_lines=f'''
+     <tr>
+     <td>{collective}</td>
+     <td>{algo}</td>
+     <td>{protocol}</td>
+     <td>{qp_count}</td>
+     <td>{pxn_disable}</td>
+     <td>{msg_size}</td>
+     <td>{res_dict[key_nam][msg_size]['alg_bw']}</td>
+                 '''
+                 fp.write(html_lines)
+                 if float(bus_bw) < float(last_bw):
+                     html_lines = '''<td><span class="label label-danger">''' + str(bus_bw) + '''</td>\n'''
+                 else:
+                     html_lines = '''<td>''' + str(bus_bw) + '''</td>\n'''
+                 fp.write(html_lines)
+                 if float(time) < float(last_time):
+                     html_lines = '''<td><span class="label label-danger">''' + str(time) + '''</td>\n'''
+                 else:
+                     html_lines = '''<td>''' + str(time) + '''</td>\n'''
+                 fp.write(html_lines)
+                 last_bw = bus_bw
+                 last_time = time
+         html_lines='''
+         </table>
+         <br><br>
+         '''
+         fp.write(html_lines)
+
+
+
+
+
+
+def insert_chart(filename, chart_name):           
+    with open(filename, 'a') as fp:
+         html_lines=f'''<div id="{chart_name}"></div>'''
+         fp.write(html_lines)
+       
+
+
+
 def build_rdma_stats_table( filename, rdma_dict, ):
 
     """
