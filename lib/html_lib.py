@@ -434,6 +434,7 @@ def build_html_page_footer( filename, ):
 def build_rccl_amcharts_graph( filename, chart_name, rccl_dict ):
     with open(filename, 'a') as fp:
          html_lines='''
+         <h2 style="background-color: lightblue">RCCL Perf Results Bandwidth Graph</h2>
 <style>
 
 .highlight-red {
@@ -672,6 +673,22 @@ def add_html_end( filename ):
          '''
          fp.write(html_lines)
 
+
+
+
+
+def add_json_data( filename, json_data ):
+
+    with open(filename, 'a') as fp:
+         html_lines = '''
+         <h2 style="background-color: lightblue">RCCL Results JSON Format</h2>
+         <pre id="json-display"></pre>
+         <script>
+         formatted_json = JSON.stringify( ''' + str(json_data) + ''', null, 4 )
+         document.getElementById('json-display').textContent = formatted_json
+         </script>
+         '''
+         fp.write(html_lines)
 
 
 
