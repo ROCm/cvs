@@ -639,7 +639,7 @@ series.bullets.push(function () {
       populateText: true,
       centerX: am5.p50,
       centerY: am5.p50,
-      fontSize: 12,
+      fontSize: 9,
       text: "{value}%"
     })
   });
