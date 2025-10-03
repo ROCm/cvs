@@ -1,0 +1,35 @@
+{
+    "ibperf":
+    {
+       "install_perf_package": "False",
+       "install_dir": "/home/venksrin/",
+       "rocm_dir": "/opt/rocm",
+       "qp_count_list": [ "8", "16" ],
+       "ib_bw_test_list": [ "ib_write_bw", "ib_send_bw"],
+       "ib_lat_test_list": [ "ib_write_lat", "ib_send_lat", "ib_read_lat" ],
+       "msg_size_list": [ 2, 4096, 8192 ],
+       "gid_index": "3",
+       "port_no": "1516",
+       "duration": "30",
+       "verify_bw": "True",
+       "expected_results":
+       {
+	    "ib_write_bw":
+	    {
+	        "8192":
+	              {
+			  "8": "180.0",
+			  "16": "200.0"
+	              },
+	        "8388608":
+	              {
+			  "8": "280.0",
+			  "16": "300.0"
+	              }
+
+            }
+            
+       }
+    }
+
+}
