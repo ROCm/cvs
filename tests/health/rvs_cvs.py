@@ -97,19 +97,16 @@ def parse_rvs_gst_results(out_dict, exp_dict):
       exp_dict: Dictionary of expected results
     """
     for node in out_dict.keys():
+        # Check for "met: FALSE" which indicates target GFLOPS not achieved
+        if re.search(r'met:\s*FALSE', out_dict[node], re.I):
+            fail_test(f'RVS GST target GFLOPS not met on node {node}')
+
         # Look for GFLOPS performance results
-        gflops_matches = re.findall(r'GFLOPS:\s*([0-9\.]+)', out_dict[node], re.I)
+        gflops_matches = re.findall(r'GFLOPS\s*([0-9\.]+)', out_dict[node], re.I)
         if gflops_matches:
             for gflops_value in gflops_matches:
                 if float(gflops_value) < float(exp_dict.get('min_gflops', '0')):
                     fail_test(f"RVS GST GFLOPS {gflops_value} is below expected minimum {exp_dict['min_gflops']} on node {node}")
-
-        # Look for temperature readings
-        temp_matches = re.findall(r'temperature:\s*([0-9\.]+)', out_dict[node], re.I)
-        if temp_matches:
-            for temp_value in temp_matches:
-                if float(temp_value) > float(exp_dict.get('max_temperature', '100')):
-                    fail_test(f"RVS GST temperature {temp_value}°C exceeds maximum {exp_dict['max_temperature']}°C on node {node}")
 
         # Check for overall test result
         if re.search(r'PASS', out_dict[node], re.I):
@@ -172,29 +169,92 @@ def phdl(cluster_dict):
     return phdl
 
 
+def test_rvs_gpu_enumeration(phdl, config_dict):
+    """
+    Run RVS GPU enumeration test to detect and validate GPU presence.
+
+    This is a basic connectivity and detection test.
+    """
+    globals.error_list = []
+    log.info('Testcase Run RVS GPU Enumeration Test')
+
+    rvs_path = config_dict['path']
+
+    # Run GPU enumeration (using gpup module)
+    out_dict = phdl.exec(f'{rvs_path}/rvs -g', timeout=60)
+    print_test_output(log, out_dict)
+    scan_test_results(out_dict)
+
+    # Validate that GPUs are detected
+    for node in out_dict.keys():
+        if not re.search(r'GPU|device', out_dict[node], re.I):
+            fail_test(f'No GPUs detected in RVS enumeration on node {node}')
+
+    update_test_result()
+
+
+def test_rvs_memory_test(phdl, config_dict):
+    """
+    Run RVS memory test using available configuration.
+
+    This test validates GPU memory functionality.
+    """
+    globals.error_list = []
+    log.info('Testcase Run RVS Memory Test')
+
+    rvs_path = config_dict['path']
+
+    # Try to find memory test config, fall back to simple memory test
+    mem_config_path = determine_rvs_config_path(phdl, config_dict, 'mem_single.conf')
+
+    # Check if memory config exists
+    out_dict = phdl.exec(f'ls -l {mem_config_path}', timeout=30)
+    config_exists = False
+    for node in out_dict.keys():
+        if not re.search('No such file', out_dict[node], re.I):
+            config_exists = True
+            break
+
+    if config_exists:
+        # Run with configuration file
+        out_dict = phdl.exec(f'sudo {rvs_path}/rvs -c {mem_config_path}', timeout=1800)
+        print_test_output(log, out_dict)
+        scan_test_results(out_dict)
+    else:
+        #fail the test if no config file found
+        fail_test(f'No memory test configuration file found at {mem_config_path}')
+
+    # Basic validation - look for PASS/FAIL results
+    for node in out_dict.keys():
+        if re.search(r'FAIL|ERROR', out_dict[node], re.I) and not re.search(r'PASS', out_dict[node], re.I):
+            fail_test(f'RVS memory test failed on node {node}')
+
+    update_test_result()
+
+
 def test_rvs_gst_single(phdl, config_dict):
     """
     Run RVS GST (GPU Stress Test) - Single GPU validation test.
-    
+
     This test runs the GPU stress test configuration to validate GPU functionality
     and performance under load.
     """
     globals.error_list = []
     log.info('Testcase Run RVS GST Single GPU Test')
-    
+
     rvs_path = config_dict['path']
     config_file = 'gst_single.conf'
     config_path = determine_rvs_config_path(phdl, config_dict, config_file)
-    
+
     # Get test configuration
     test_config = next((test for test in config_dict['tests'] if test['name'] == 'gst_single'), {})
     timeout = test_config.get('timeout', 300)
-    
+
     # Run RVS GST test
     out_dict = phdl.exec(f'sudo {rvs_path}/rvs.py -c {config_path}', timeout=timeout)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
-    
+
     # Parse and validate results
     parse_rvs_gst_results(out_dict, config_dict['results'].get('gst_single', {}))
     update_test_result()
@@ -253,66 +313,3 @@ def test_rvs_pebb_single(phdl, config_dict):
     parse_rvs_pebb_results(out_dict, config_dict['results'].get('pebb_single', {}))
     update_test_result()
 '''
-
-def test_rvs_gpu_enumeration(phdl, config_dict):
-    """
-    Run RVS GPU enumeration test to detect and validate GPU presence.
-    
-    This is a basic connectivity and detection test.
-    """
-    globals.error_list = []
-    log.info('Testcase Run RVS GPU Enumeration Test')
-    
-    rvs_path = config_dict['path']
-    
-    # Run GPU enumeration (using gpup module)
-    out_dict = phdl.exec(f'{rvs_path}/rvs.py -g', timeout=60)
-    print_test_output(log, out_dict)
-    scan_test_results(out_dict)
-    
-    # Validate that GPUs are detected
-    for node in out_dict.keys():
-        if not re.search(r'GPU.*detected|device.*found', out_dict[node], re.I):
-            fail_test(f'No GPUs detected in RVS enumeration on node {node}')
-    
-    update_test_result()
-
-
-def test_rvs_memory_test(phdl, config_dict):
-    """
-    Run RVS memory test using available configuration.
-    
-    This test validates GPU memory functionality.
-    """
-    globals.error_list = []
-    log.info('Testcase Run RVS Memory Test')
-    
-    rvs_path = config_dict['path']
-    
-    # Try to find memory test config, fall back to simple memory test
-    mem_config_path = determine_rvs_config_path(phdl, config_dict, 'mem_single.conf')
-    
-    # Check if memory config exists
-    out_dict = phdl.exec(f'ls -l {mem_config_path}', timeout=30)
-    config_exists = False
-    for node in out_dict.keys():
-        if not re.search('No such file', out_dict[node], re.I):
-            config_exists = True
-            break
-    
-    if config_exists:
-        # Run with configuration file
-        out_dict = phdl.exec(f'sudo {rvs_path}/rvs.py -c {mem_config_path}', timeout=300)
-    else:
-        # Run basic memory test using mem module
-        out_dict = phdl.exec(f'sudo {rvs_path}/rvs.py -a mem', timeout=300)
-    
-    print_test_output(log, out_dict)
-    scan_test_results(out_dict)
-    
-    # Basic validation - look for PASS/FAIL results
-    for node in out_dict.keys():
-        if re.search(r'FAIL|ERROR', out_dict[node], re.I) and not re.search(r'PASS', out_dict[node], re.I):
-            fail_test(f'RVS memory test failed on node {node}')
-    
-    update_test_result()

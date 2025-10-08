@@ -180,8 +180,8 @@ def test_install_rvs(phdl, shdl, config_dict):
     out_dict = phdl.exec('which rvs', timeout=30)
     rvs_found = False
     for node in out_dict.keys():
-        if not re.search('not found|no rvs', out_dict[node], re.I):
-            log.info(f'RVS appears to be already installed on node {node}')
+        if out_dict[node].strip() and re.search('rvs', out_dict[node], re.I):
+            log.info(f'RVS appears to be already installed on node {node} at: {out_dict[node].strip()}')
             rvs_found = True
 
     # Check if RVS config files exist
@@ -192,42 +192,50 @@ def test_install_rvs(phdl, shdl, config_dict):
             log.info(f'RVS configuration files found on node {node}')
             config_found = True
 
-    # If RVS is not found or configs are missing, install from source
+    # If RVS is not found or configs are missing, install it
     if not rvs_found or not config_found:
-        log.info('Installing RVS from source')
-        
-        # Check if install directory exists, otherwise create
-        out_dict = shdl.exec(f'ls -ld {git_install_path}')
-        for node in out_dict.keys():
-            if re.search('No such file', out_dict[node]):
-                hdl.exec(f'mkdir -p {git_install_path}')
+        log.info('RVS not found, attempting to install from artifactory repo first')
 
-        # Remove any existing RVS directory and clone fresh
-        out_dict = hdl.exec(f'rm -rf {git_install_path}/ROCmValidationSuite')
-        out_dict = hdl.exec(f'cd {git_install_path};git clone {git_url}', timeout=300)
-        
-        # Check for build dependencies
-        out_dict = hdl.exec('which cmake && which make && which g++', timeout=60)
-        for node in out_dict.keys():
-            if re.search('not found', out_dict[node], re.I):
-                log.info(f'Installing build dependencies on node {node}')
-                hdl.exec('sudo apt-get update && sudo apt-get install -y cmake build-essential libpci-dev libyaml-cpp-dev', timeout=600)
+        # First try to install from artifactory repo
+        package_installed = False
+        out_dict = hdl.exec('sudo apt-get update -y', timeout=600)
+        out_dict = hdl.exec('sudo apt-get install -y libpci3 libpci-dev doxygen unzip cmake git libyaml-cpp-dev', timeout=600)
+        out_dict = hdl.exec('sudo apt-get install -y rocblas rocm-smi-lib', timeout=600)
+        out_dict = hdl.exec('sudo apt-get install -y rocm-validation-suite', timeout=600)
 
-        # Build and install RVS
-        try:
-            out_dict = hdl.exec(f'''cd {git_install_path}/ROCmValidationSuite
-mkdir -p build
-cd build
-cmake -DROCM_PATH=/opt/rocm ..
-make -j$(nproc)
-sudo make install''', timeout=1200)
+        for node in out_dict.keys():
+            if re.search('Unable to locate package|Package.*not found|E: Could not get lock|dpkg: error', out_dict[node], re.I):
+                log.info(f'RVS package installation failed on node {node}, will try building from source')
+            else:
+                log.info(f'RVS package installation successful on node {node}')
+                package_installed = True
+
+        # If package installation failed, build from source
+        if not package_installed:
+            log.info('Installing RVS from source')
             
+            # Check if install directory exists, otherwise create
+            out_dict = shdl.exec(f'ls -ld {git_install_path}')
             for node in out_dict.keys():
-                if re.search('Error|FAILED|No such file', out_dict[node], re.I):
-                    fail_test(f'RVS build/installation failed on node {node}')
-                    
-        except Exception as e:
-            fail_test(f'RVS installation failed with exception: {e}')
+                if re.search('No such file', out_dict[node]):
+                    hdl.exec(f'mkdir -p {git_install_path}')
+
+            # Remove any existing RVS directory and clone fresh
+            out_dict = hdl.exec(f'rm -rf {git_install_path}/ROCmValidationSuite')
+            out_dict = hdl.exec(f'cd {git_install_path};git clone {git_url}', timeout=300)
+
+            # Build and install RVS
+            try:
+                out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite; cmake -B ./build -DROCM_PATH=/opt/rocm -DCMAKE_INSTALL_PREFIX=/opt/rocm -DCPACK_PACKAGING_INSTALL_PREFIX=/opt/rocm', timeout=600)
+                out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc) package', timeout=600)
+                out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite/build; sudo dpkg -i rocm-validation-suite-*.deb', timeout=600)
+
+                for node in out_dict.keys():
+                    if re.search('Error|FAILED|No such file', out_dict[node], re.I):
+                        fail_test(f'RVS build/installation failed on node {node}')
+
+            except Exception as e:
+                fail_test(f'RVS installation failed with exception: {e}')
 
     # Verify RVS installation
     out_dict = phdl.exec('which rvs || ls -l /opt/rocm/bin/rvs*', timeout=60)
