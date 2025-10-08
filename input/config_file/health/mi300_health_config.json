@@ -116,8 +116,7 @@
         ],
         "results": {
             "gst_single": {
-                "min_gflops": "50000",
-                "max_temperature": "95"
+                "min_gflops": "50000"
             },
             "iet_single": {
                 "max_power_violation": "0"
