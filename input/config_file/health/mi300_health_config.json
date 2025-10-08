@@ -82,6 +82,50 @@
            "triad": "3885301",
            "dot": "3660781"
        }
+    },
+    "rvs":
+    {
+        "path": "/opt/rocm/bin",
+        "git_install_path": "/root/cache/INSTALL",
+        "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
+        "nfs_install": "True",
+        "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",
+        "config_path_default": "/opt/rocm/share/rocm-validation-suite/conf",
+        "tests": [
+            {
+                "name": "gst_single",
+                "config_file": "gst_single.conf",
+                "description": "GPU Stress Test - Single GPU validation",
+                "timeout": 300,
+                "expected_pass": true
+            },
+            {
+                "name": "iet_single",
+                "config_file": "iet_single.conf",
+                "description": "Input EDPp Test - Single GPU validation",
+                "timeout": 180,
+                "expected_pass": true
+            },
+            {
+                "name": "pebb_single",
+                "config_file": "pebb_single.conf",
+                "description": "PCI Express Bandwidth Benchmark - Single GPU",
+                "timeout": 240,
+                "expected_pass": true
+            }
+        ],
+        "results": {
+            "gst_single": {
+                "min_gflops": "50000",
+                "max_temperature": "95"
+            },
+            "iet_single": {
+                "max_power_violation": "0"
+            },
+            "pebb_single": {
+                "min_bandwidth_gbps": "25.0"
+            }
+        }
     }
 
 }
