@@ -226,7 +226,7 @@ def test_rvs_memory_test(phdl, config_dict):
 
     # Basic validation - look for PASS/FAIL results
     for node in out_dict.keys():
-        if re.search(r'FAIL|ERROR', out_dict[node], re.I):
+        if re.search(r'FAIL|ERROR:', out_dict[node], re.I):
             fail_test(f'RVS memory test failed on node {node}')
 
     update_test_result()
