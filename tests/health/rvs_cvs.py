@@ -205,7 +205,7 @@ def test_rvs_memory_test(phdl, config_dict):
     rvs_path = config_dict['path']
 
     # Try to find memory test config, fall back to simple memory test
-    mem_config_path = determine_rvs_config_path(phdl, config_dict, 'mem_single.conf')
+    mem_config_path = determine_rvs_config_path(phdl, config_dict, 'mem.conf')
 
     # Check if memory config exists
     out_dict = phdl.exec(f'ls -l {mem_config_path}', timeout=30)
