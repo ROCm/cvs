@@ -226,7 +226,7 @@ def test_rvs_memory_test(phdl, config_dict):
 
     # Basic validation - look for PASS/FAIL results
     for node in out_dict.keys():
-        if re.search(r'FAIL|ERROR', out_dict[node], re.I) and not re.search(r'PASS', out_dict[node], re.I):
+        if re.search(r'FAIL|ERROR', out_dict[node], re.I):
             fail_test(f'RVS memory test failed on node {node}')
 
     update_test_result()
@@ -259,7 +259,7 @@ def test_rvs_gst_single(phdl, config_dict):
     parse_rvs_gst_results(out_dict, config_dict['results'].get('gst_single', {}))
     update_test_result()
 
-'''
+@pytest.mark.skip(reason="Test implementation and output parsing pending")
 def test_rvs_iet_single(phdl, config_dict):
     """
     Run RVS IET (Input EDPp Test) - Single GPU validation test.
@@ -287,6 +287,7 @@ def test_rvs_iet_single(phdl, config_dict):
     update_test_result()
 
 
+@pytest.mark.skip(reason="Test implementation and output parsing pending")
 def test_rvs_pebb_single(phdl, config_dict):
     """
     Run RVS PEBB (PCI Express Bandwidth Benchmark) - Single GPU test.
@@ -312,4 +313,4 @@ def test_rvs_pebb_single(phdl, config_dict):
     # Parse and validate results
     parse_rvs_pebb_results(out_dict, config_dict['results'].get('pebb_single', {}))
     update_test_result()
-'''
+
