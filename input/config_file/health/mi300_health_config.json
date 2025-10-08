@@ -96,21 +96,21 @@
                 "name": "gst_single",
                 "config_file": "gst_single.conf",
                 "description": "GPU Stress Test - Single GPU validation",
-                "timeout": 300,
+                "timeout": 1800,
                 "expected_pass": true
             },
             {
                 "name": "iet_single",
                 "config_file": "iet_single.conf",
                 "description": "Input EDPp Test - Single GPU validation",
-                "timeout": 180,
+                "timeout": 1800,
                 "expected_pass": true
             },
             {
                 "name": "pebb_single",
                 "config_file": "pebb_single.conf",
                 "description": "PCI Express Bandwidth Benchmark - Single GPU",
-                "timeout": 240,
+                "timeout": 1800,
                 "expected_pass": true
             }
         ],

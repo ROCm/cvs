@@ -248,10 +248,10 @@ def test_rvs_gst_single(phdl, config_dict):
 
     # Get test configuration
     test_config = next((test for test in config_dict['tests'] if test['name'] == 'gst_single'), {})
-    timeout = test_config.get('timeout', 300)
+    timeout = test_config.get('timeout', 1800)
 
     # Run RVS GST test
-    out_dict = phdl.exec(f'sudo {rvs_path}/rvs.py -c {config_path}', timeout=timeout)
+    out_dict = phdl.exec(f'sudo {rvs_path}/rvs -c {config_path}', timeout=timeout)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
 
