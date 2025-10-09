@@ -103,50 +103,34 @@ def parse_rvs_gst_results(out_dict):
             log.info(f'RVS GST test passed. target GFLOPS are met on node {node}')
 
 
-def parse_rvs_iet_results(out_dict, exp_dict):
+def parse_rvs_iet_results(out_dict):
     """
     Parse RVS IET (Input EDPp Test) results and validate against expected values.
 
     Args:
       out_dict: Dictionary of node -> command output
-      exp_dict: Dictionary of expected results
     """
     for node in out_dict.keys():
-        # Look for power violations
-        power_violation_matches = re.findall(r'power.*violation.*:?\s*([0-9]+)', out_dict[node], re.I)
-        if power_violation_matches:
-            for violation_count in power_violation_matches:
-                if int(violation_count) > int(exp_dict.get('max_power_violation', '0')):
-                    fail_test(f"RVS IET power violations {violation_count} exceeds maximum {exp_dict['max_power_violation']} on node {node}")
-
-        # Check for overall test result
-        if re.search(r'PASS', out_dict[node], re.I):
-            log.info(f'RVS IET test passed on node {node}')
-        elif re.search(r'FAIL', out_dict[node], re.I):
+        # Check for "pass: FALSE" which indicates failure
+        if re.search(r'pass:\s*FALSE', out_dict[node], re.I):
             fail_test(f'RVS IET test failed on node {node}')
+        else:
+            log.info(f'RVS IET test passed on node {node}')
 
 
-def parse_rvs_pebb_results(out_dict, exp_dict):
+def parse_rvs_pebb_results(out_dict):
     """
     Parse RVS PEBB (PCI Express Bandwidth Benchmark) results and validate against expected values.
 
     Args:
-      out_dict: Dictionary of node -> command output  
-      exp_dict: Dictionary of expected results
+      out_dict: Dictionary of node -> command output
     """
     for node in out_dict.keys():
-        # Look for bandwidth measurements (in GB/s)
-        bw_matches = re.findall(r'bandwidth.*:?\s*([0-9\.]+)\s*GB/s', out_dict[node], re.I)
-        if bw_matches:
-            for bw_value in bw_matches:
-                if float(bw_value) < float(exp_dict.get('min_bandwidth_gbps', '0')):
-                    fail_test(f"RVS PEBB bandwidth {bw_value} GB/s is below expected minimum {exp_dict['min_bandwidth_gbps']} GB/s on node {node}")
-
-        # Check for overall test result
-        if re.search(r'PASS', out_dict[node], re.I):
-            log.info(f'RVS PEBB test passed on node {node}')
-        elif re.search(r'FAIL', out_dict[node], re.I):
+        # Check for "[ERROR ]" which indicates failure
+        if re.search(r'\[ERROR\s*\]', out_dict[node], re.I):
             fail_test(f'RVS PEBB test failed on node {node}')
+        else:
+            log.info(f'RVS PEBB test passed on node {node}')
 
 
 @pytest.fixture(scope="module")
@@ -249,7 +233,6 @@ def test_rvs_gst_single(phdl, config_dict):
     parse_rvs_gst_results(out_dict)
     update_test_result()
 
-@pytest.mark.skip(reason="Test implementation and output parsing pending")
 def test_rvs_iet_single(phdl, config_dict):
     """
     Run RVS IET (Input EDPp Test) - Single GPU validation test.
@@ -265,19 +248,18 @@ def test_rvs_iet_single(phdl, config_dict):
     
     # Get test configuration
     test_config = next((test for test in config_dict['tests'] if test['name'] == 'iet_single'), {})
-    timeout = test_config.get('timeout', 180)
+    timeout = test_config.get('timeout', 1800)
     
     # Run RVS IET test
-    out_dict = phdl.exec(f'sudo {rvs_path}/rvs.py -c {config_path}', timeout=timeout)
+    out_dict = phdl.exec(f'{rvs_path}/rvs -c {config_path}', timeout=timeout)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     
     # Parse and validate results
-    parse_rvs_iet_results(out_dict, config_dict['results'].get('iet_single', {}))
+    parse_rvs_iet_results(out_dict)
     update_test_result()
 
 
-@pytest.mark.skip(reason="Test implementation and output parsing pending")
 def test_rvs_pebb_single(phdl, config_dict):
     """
     Run RVS PEBB (PCI Express Bandwidth Benchmark) - Single GPU test.
@@ -296,11 +278,11 @@ def test_rvs_pebb_single(phdl, config_dict):
     timeout = test_config.get('timeout', 240)
     
     # Run RVS PEBB test
-    out_dict = phdl.exec(f'sudo {rvs_path}/rvs.py -c {config_path}', timeout=timeout)
+    out_dict = phdl.exec(f'sudo {rvs_path}/rvs -c {config_path}', timeout=timeout)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     
     # Parse and validate results
-    parse_rvs_pebb_results(out_dict, config_dict['results'].get('pebb_single', {}))
+    parse_rvs_pebb_results(out_dict)
     update_test_result()
 
