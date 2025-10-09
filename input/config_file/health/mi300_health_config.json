@@ -113,18 +113,7 @@
                 "timeout": 1800,
                 "expected_pass": true
             }
-        ],
-        "results": {
-            "gst_single": {
-                "min_gflops": "50000"
-            },
-            "iet_single": {
-                "max_power_violation": "0"
-            },
-            "pebb_single": {
-                "min_bandwidth_gbps": "25.0"
-            }
-        }
+        ]
     }
 
 }

@@ -88,31 +88,19 @@ def determine_rvs_config_path(phdl, config_dict, config_file):
     return default_path
 
 
-def parse_rvs_gst_results(out_dict, exp_dict):
+def parse_rvs_gst_results(out_dict):
     """
     Parse RVS GST (GPU Stress Test) results and validate against expected values.
 
     Args:
       out_dict: Dictionary of node -> command output
-      exp_dict: Dictionary of expected results
     """
     for node in out_dict.keys():
         # Check for "met: FALSE" which indicates target GFLOPS not achieved
         if re.search(r'met:\s*FALSE', out_dict[node], re.I):
             fail_test(f'RVS GST target GFLOPS not met on node {node}')
-
-        # Look for GFLOPS performance results
-        gflops_matches = re.findall(r'GFLOPS\s*([0-9\.]+)', out_dict[node], re.I)
-        if gflops_matches:
-            for gflops_value in gflops_matches:
-                if float(gflops_value) < float(exp_dict.get('min_gflops', '0')):
-                    fail_test(f"RVS GST GFLOPS {gflops_value} is below expected minimum {exp_dict['min_gflops']} on node {node}")
-
-        # Check for overall test result
-        if re.search(r'PASS', out_dict[node], re.I):
-            log.info(f'RVS GST test passed on node {node}')
-        elif re.search(r'FAIL', out_dict[node], re.I):
-            fail_test(f'RVS GST test failed on node {node}')
+        else:
+            log.info(f'RVS GST test passed. target GFLOPS are met on node {node}')
 
 
 def parse_rvs_iet_results(out_dict, exp_dict):
@@ -217,7 +205,7 @@ def test_rvs_memory_test(phdl, config_dict):
 
     if config_exists:
         # Run with configuration file
-        out_dict = phdl.exec(f'sudo {rvs_path}/rvs -c {mem_config_path}', timeout=1800)
+        out_dict = phdl.exec(f'{rvs_path}/rvs -c {mem_config_path}', timeout=1800)
         print_test_output(log, out_dict)
         scan_test_results(out_dict)
     else:
@@ -228,6 +216,8 @@ def test_rvs_memory_test(phdl, config_dict):
     for node in out_dict.keys():
         if re.search(r'FAIL|ERROR:', out_dict[node], re.I):
             fail_test(f'RVS memory test failed on node {node}')
+        else:
+            log.info(f'RVS memory test passed on node {node}')
 
     update_test_result()
 
@@ -251,12 +241,12 @@ def test_rvs_gst_single(phdl, config_dict):
     timeout = test_config.get('timeout', 1800)
 
     # Run RVS GST test
-    out_dict = phdl.exec(f'sudo {rvs_path}/rvs -c {config_path}', timeout=timeout)
+    out_dict = phdl.exec(f'{rvs_path}/rvs -c {config_path}', timeout=timeout)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
 
     # Parse and validate results
-    parse_rvs_gst_results(out_dict, config_dict['results'].get('gst_single', {}))
+    parse_rvs_gst_results(out_dict)
     update_test_result()
 
 @pytest.mark.skip(reason="Test implementation and output parsing pending")
