@@ -5,4 +5,4 @@ pytest
 pytest-html
 pytest-repeat
 pytest-dependency
-influxdb_client
+xlsxwriter
