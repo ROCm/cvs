@@ -124,6 +124,7 @@ def run_ib_perf_bw_test( phdl, bw_test, gpu_numa_dict, gpu_nic_dict, bck_nic_dic
     i=0
     cmd_dict = {}
     phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt')
+    phdl.exec('sudo rm -rf /tmp/ib_perf*')
     phdl.exec('touch /tmp/ib_cmds_file.txt')
     server_addr = None
     for node in bck_nic_dict.keys():
@@ -201,7 +202,8 @@ def run_ib_perf_lat_test( phdl, lat_test, gpu_numa_dict, gpu_nic_dict, bck_nic_d
     result_dict = {}
     i=0
     cmd_dict = {}
-    phdl.exec('rm -rf /tmp/ib_cmds_file.txt')
+    phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt')
+    phdl.exec('sudo rm -rf /tmp/ib_perf*')
     phdl.exec('touch /tmp/ib_cmds_file.txt')
     server_addr = None
     for node in bck_nic_dict.keys():
