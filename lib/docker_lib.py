@@ -62,7 +62,7 @@ def delete_all_images( phdl ):
 
 
 
-def install_docker_on_ubuntu( phdl ):
+def old_install_docker_on_ubuntu( phdl ):
     phdl.exec('sudo apt-get -y update')
     phdl.exec('sudo apt-get -y install ca-certificates curl')
     phdl.exec('sudo install -m 0755 -d /etc/apt/keyrings')
@@ -85,13 +85,29 @@ def install_docker_on_ubuntu( phdl ):
             fail_test(f'Failed to install docker packages on node {node}, please check')
 
 
+def install_docker_on_ubuntu( phdl ):
+    phdl.exec('sudo rm /etc/apt/keyrings/docker.gpg')
+    phdl.exec('sudo rm /etc/apt/sources.list.d/docker.list')
+    phdl.exec('sudo apt-get -y update')
+    phdl.exec('sudo apt install -y apt-transport-https ca-certificates curl software-properties-common')
+    phdl.exec('curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -')
+    phdl.exec('sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable"')
+    phdl.exec('apt-cache policy docker-ce')
+    phdl.exec('sudo apt install -y docker-ce')
+    time.sleep(3)
+    phdl.exec('sudo systemctl start docker')
+    time.sleep(3)
+    phdl.exec('sudo systemctl status docker')
+
+
 
 
 def launch_docker_container( phdl, container_name, image, device_list=[], volume_dict={}, 
        env_dict={}, network='host',
        shm_size='64G', timeout=60*10 ):
 
-    cmd = f'docker run -d --network {network} --ipc {network} --group-add video \
+    cmd = f'docker run -d --network {network} --ipc {network} \
+            --group-add render --group-add video \
             --cap-add=IPC_LOCK --security-opt seccomp=unconfined --privileged '
     for device in device_list:
         cmd = cmd + f' --device {device} '
