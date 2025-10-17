@@ -16,3 +16,4 @@ Here are code snippets and the parameters for each configuration file:
 - :doc:`Platform </reference/configuration-files/platform>`
 - :doc:`Health </reference/configuration-files/health>`
 - :doc:`RCCL </reference/configuration-files/rccl>`
+- :doc:`InfiniBand (IB Perf) </reference/configuration-files/ib>`

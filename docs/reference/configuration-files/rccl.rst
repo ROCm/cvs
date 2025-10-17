@@ -319,7 +319,7 @@ Here's an exhaustive list of the available parameters in the RCCL configuration 
      - Global reduction: sum/max/min across all GPUs
    * - ``all_gather_perf``
      - 
-     - Gather data from all ranks to all ranks
+     - All GPUs receive the complete combined dataset from all ranks
    * - ``gather_perf``
      - 
      - Collect data from all ranks to one root rank

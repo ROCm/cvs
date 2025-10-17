@@ -160,3 +160,8 @@ In the ``cvs/input/config_file/rccl/rccl_config.json`` file, change the director
 - ``mpi_path_var`` 
 - ``rccl_path_var``
 - ``rocm_path_var``
+
+InfiniBand (IB Perf)
+--------------------
+
+Change the parameters in the configuration file as needed.

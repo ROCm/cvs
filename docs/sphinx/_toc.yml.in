@@ -30,6 +30,8 @@ subtrees:
         title: Health
       - file: reference/configuration-files/rccl
         title: RCCL
+      - file: reference/configuration-files/ib
+        title: IB Perf
 
    
 - caption: About

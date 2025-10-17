@@ -7,7 +7,6 @@ Run Cluster Validation Suites tests
 ***********************************
 
 The CVS Pytest scripts are in the ``cvs/tests`` folder of the cloned GitHub repository. 
-These CVS test scripts have two parts, installing the functionality and running the tests.
 Every test must be run from the cvs root folder, as the system lib paths have been set accordingly.
 
 These are the arguments typically used in these test scripts:
@@ -68,6 +67,7 @@ Here are the available tests:
 - TransferBench
 - RocBLAS
 - RocHPL 
+- ROCm Validation Suite (RVS)
 
 Here are the test cases for those tests:
 
@@ -93,6 +93,8 @@ Here are the test cases for those tests:
 - ``test_rocblas_fp32_benchmark``
 - ``test_rocblas_bf16_benchmark``
 - ``test_rocblas_int8_benchmark``
+
+Use these scripts to run each health test. These CVS test scripts have two parts, installing the functionality and running the tests.
 
 AGFHC
 ~~~~~
@@ -137,11 +139,20 @@ rocHPL
 
   pytest -vvv --log-file=/tmp/test.log -s ./tests/health/rochpl_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rochpl.html --capture=tee-sys --self-contained-html
 
+RVS
+~~~
+
+.. code:: bash
+
+  pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_rvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html
+
+  pytest -vvv --log-file=/tmp/test.log -s ./tests/health/rvs_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html
 
 ROCm Communication Collectives Library (RCCL) test script
 ---------------------------------------------------------
 
-All the RCCL-related algorithms runin this test.
+These RCCL tests are comprehensive benchmarks that validate distributed GPU communication performance across AMD GPU clusters. 
+These tests ensure optimal performance for AI training, HPC workloads, and distributed computing.
 
 Here are the RCCL test cases:
 
@@ -163,6 +174,24 @@ Here's the test script:
 .. code:: bash
 
   pytest -vvv --log-file=/tmp/test.log -s ./tests/rccl/rccl_multinode_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl.html --capture=tee-sys --self-contained-html
+
+
+InfiniBand (IB Perf) test script
+--------------------------------
+
+Here are the IB Perf test cases:
+
+- ``test_install_ib_perf``
+- ``test_ib_bw_perf``
+- ``test_ib_lat_perf``
+- ``test_build_ib_bw_perf_chart``
+- ``test_build_ib_lat_perf_chart``
+
+Here's the test script:
+
+.. code:: bash
+
+  pytest -vvv --log-file=/tmp/test.log -s ./tests/ ibperf/ib_perf_bw_test.py--cluster_file input/cluster_file/cluster.json  --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
 
 Test results
 ============

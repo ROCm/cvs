@@ -13,93 +13,121 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
 
 .. code:: json
   
- {
+  {
 
-    "agfhc":
-    {
-         "path": "/opt/amd/agfhc",
-         "package_tar_ball": "/root/cache/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
-         "install_dir": "/root/cache/INSTALL/agfhc/",
-         "nfs_install": "True",
-         "hbm_test_duration": "00:01:30"
-    },
-    "transferbench":
-    {
-       "path": "/opt/amd/transferbench",
-       "example_tests_path": "/root/cache/INSTALL/TransferBench/examples",
-       "git_install_path": "/root/cache/INSTALL/",
-       "git_url": "https://github.com/ROCm/TransferBench.git",
-       "nfs_install": "True",
-       "results":
-       {
-           "bytes_to_transfer": "268435456",
-           "path": "/opt/amd/transferbench",
-           "gpu_to_gpu_a2a_rtotal": "320.0",
-           "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
-           "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
-           "best_gpu0_bw": "480.0",
-           "32_cu_local_read": "1650",
-           "32_cu_local_write": "1250.0",
-           "32_cu_local_copy": "1250.0",
-           "32_cu_rem_read": "48.0",
-           "32_cu_rem_write": "48.0",
-           "32_cu_rem_copy": "48.0",
-           "example_results":
-           {
-               "test1": "47.1",
-               "test2": "48.4",
-               "test3_0_to_1": "31.9",
-               "test3_1_to_0": "38.9",
-               "test4": "1264",
-               "test6": "48.6"
-           }
+      "agfhc":
+      {
+          "path": "/opt/amd/agfhc",
+          "package_tar_ball": "/root/cache/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
+          "install_dir": "/root/cache/INSTALL/agfhc/",
+          "nfs_install": "True",
+          "hbm_test_duration": "00:01:30"
+      },
+      "transferbench":
+      {
+        "path": "/opt/amd/transferbench",
+        "example_tests_path": "/root/cache/INSTALL/TransferBench/examples",
+        "git_install_path": "/root/cache/INSTALL/",
+        "git_url": "https://github.com/ROCm/TransferBench.git",
+        "nfs_install": "True",
+        "results":
+        {
+            "bytes_to_transfer": "268435456",
+            "path": "/opt/amd/transferbench",
+            "gpu_to_gpu_a2a_rtotal": "320.0",
+            "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
+            "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
+            "best_gpu0_bw": "480.0",
+            "32_cu_local_read": "1650",
+            "32_cu_local_write": "1250.0",
+            "32_cu_local_copy": "1250.0",
+            "32_cu_rem_read": "48.0",
+            "32_cu_rem_write": "48.0",
+            "32_cu_rem_copy": "48.0",
+            "example_results":
+            {
+                "test1": "47.1",
+                "test2": "48.4",
+                "test3_0_to_1": "31.9",
+                "test3_1_to_0": "38.9",
+                "test4": "1264",
+                "test6": "48.6"
+            }
 
-       }
-    },
-    "rocblas":
-    {
-       "path": "/root/cache/INSTALL/rocBLAS/build/release/clients/staging",
-       "git_install_path": "/root/cache/INSTALL",
-       "git_url": "https://github.com/ROCm/rocBLAS.git",
-       "rocm_version": "7.0.0",
-       "nfs_install": "True",
-       "results":
-       {
-           "fp32_gflops": "94100",
-           "bf16_gflops": "130600",
-           "int8_gflops": "162700"
-       }
-    },
-    "rochpl":
-    {
-       "path": "/root/cache/INSTALL/rocHPL",
-       "git_install_path": "/root/cache/INSTALL",
-       "git_url": "https://github.com/ROCm/rocHPL.git",
-       "nfs_install": "True",
-       "results":
-       {
-           "fp32_gflops": "94100",
-           "bf16_gflops": "130600",
-           "int8_gflops": "162700"
-       }
-    },
-    "babelstream":
-    {
-       "path": "/root/cache/INSTALL/BabelStream/build",
-       "git_install_path": "/root/cache/INSTALL",
-       "git_url": "https://github.com/UoB-HPC/BabelStream.git",
-       "nfs_install": "True",
-       "results":
-       {
-           "copy": "4177285",
-           "mul": "4067069",
-           "add": "3920853",
-           "triad": "3885301",
-           "dot": "3660781"
-       }
-    }
+        }
+      },
+      "rocblas":
+      {
+        "path": "/root/cache/INSTALL/rocBLAS/build/release/clients/staging",
+        "git_install_path": "/root/cache/INSTALL",
+        "git_url": "https://github.com/ROCm/rocBLAS.git",
+        "rocm_version": "7.0.0",
+        "nfs_install": "True",
+        "results":
+        {
+            "fp32_gflops": "94100",
+            "bf16_gflops": "130600",
+            "int8_gflops": "162700"
+        }
+      },
+      "rochpl":
+      {
+        "path": "/root/cache/INSTALL/rocHPL",
+        "git_install_path": "/root/cache/INSTALL",
+        "git_url": "https://github.com/ROCm/rocHPL.git",
+        "nfs_install": "True",
+        "results":
+        {
+            "fp32_gflops": "94100",
+            "bf16_gflops": "130600",
+            "int8_gflops": "162700"
+        }
+      },
+      "babelstream":
+      {
+        "path": "/root/cache/INSTALL/BabelStream/build",
+        "git_install_path": "/root/cache/INSTALL",
+        "git_url": "https://github.com/UoB-HPC/BabelStream.git",
+        "nfs_install": "True",
+        "results":
+        {
+            "copy": "4177285",
+            "mul": "4067069",
+            "add": "3920853",
+            "triad": "3885301",
+            "dot": "3660781"
+        }
+      },
+      "rvs":
+      {
+          "path": "/opt/rocm/bin",
+          "git_install_path": "/root/cache/INSTALL",
+          "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
+          "nfs_install": "True",
+          "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",
+          "config_path_default": "/opt/rocm/share/rocm-validation-suite/conf",
+          "tests": 
+              {
+                  "name": "gst_single",
+                  "config_file": "gst_single.conf",
+                  "description": "GPU Stress Test - Single GPU validation",
+                  "timeout": 1800,
+                  "expected_pass": true
+              },
+              {
+                  "name": "iet_single",
+                  "config_file": "iet_single.conf",
+                  "description": "Input EDPp Test - Single GPU validation",
+                  "timeout": 1800,
+                  "expected_pass": true
+              },
+              {
+                  "name": "pebb_single",
+                  "config_file": "pebb_single.conf",
+                  "description": "PCI Express Bandwidth Benchmark - Single GPU",
+                  "timeout": 1800,
+  }
 
- }
 
 Parameters
 ==========
@@ -153,7 +181,7 @@ TransferBench
      - Path where the Git repo is installed
    * - ``git_url``
      - `https://github.com/ROCm/TransferBench.git <https://github.com/ROCm/TransferBench.git>`_
-     - URL for git repo
+     - URL for Git repo
    * - ``nfs_install``
      - True
      - Set the flag to install nfs
@@ -227,7 +255,7 @@ RocBLAS
      - Path where rocBLAS is installed
    * - ``git_url``
      - `https://github.com/ROCm/rocBLAS.git <https://github.com/ROCm/rocBLAS.git>`_
-     - URL for git repo
+     - URL for Git repo
    * - ``rocm_version``
      - 7.0.0
      - ROCm Version
@@ -262,7 +290,7 @@ rocHPL
      - Path where rocHPL is installed
    * - ``git_url``
      - `https://github.com/ROCm/rocHPL.com <https://github.com/ROCm/rocHPL.com>`_
-     - URL for git repo
+     - URL for Git repo
    * - ``nfs_install``
      - True
      - Set the flag to install nfs
@@ -294,7 +322,7 @@ BabelStream
      - Path where babelstream is installed
    * - ``git_url``
      - `https://github.com/UoB-HPC/BabelStream.git <https://github.com/UoB-HPC/BabelStream.git>`_
-     - 
+     - URL for Git repo
    * - ``nfs_install``
      - True
      - Set the flag to install nfs
@@ -314,4 +342,65 @@ BabelStream
      - 3660781
      - Dot product
 
+ROCm Validation Suite (RVS)
+---------------------------
 
+.. list-table::
+   :widths: 15 10 30
+   :header-rows: 1
+
+   * - Configuration parameters
+     - Default values
+     - Description
+   * - ``path``
+     - ``/opt/rocm/bin``
+     - Path where the RVS test is installed
+   * - ``git_install_path``
+     - ``/root/cache/INSTALL``
+     - Path to installed Git repo
+   * - ``git_url``
+     - `https://github.com/ROCm/ROCmValidationSuite.git <https://github.com/ROCm/ROCmValidationSuite.git>`_
+     - URL for Git repo
+   * - ``nfs_install``
+     - True
+     - Set the flag to install nfs
+   * - ``config_path_mi300x``
+     - ``/opt/rocm/share/rocm-validation-suite/conf/MI300X``
+     - Path for MI300X config 
+   * - ``config_path_default``
+     - ``/opt/rocm/share/rocm-validation-suite/conf``
+     -  Default path for RVS
+   * - ``name``
+     - ``gst_single``
+     - Test name
+   * - ``config_file``
+     - ``gst_single.conf``
+     - Test config file
+   * - ``description``
+     - GPU Stress Test - Single GPU validation
+     - Test Description
+   * - ``timeout``
+     - 1800
+     - Timeout in seconds
+   * - ``expected_pass``
+     - True
+     - Result
+   * - ``name``
+     - ``iet_single``
+     -  Test name
+   * - ``config_file``
+     - ``iet_single.conf``
+     - Test config file
+   * - ``description``
+     - Input EDPp Test - Single GPU validation
+     - Test description
+   * - ``config_file``
+     - ``iet_single.conf``
+     - Test config file
+   * - ``name``
+     - ``pebb_single``
+     -  Test name
+   * - ``config_file``
+     - ``pebb_single.conf``
+     - Test config file
+ 
