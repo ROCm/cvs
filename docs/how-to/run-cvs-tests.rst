@@ -179,6 +179,8 @@ Here's the test script:
 InfiniBand (IB Perf) test script
 --------------------------------
 
+IB Perf test scripts check cable connections, verify adapter configuration, ensure sufficient GPU memory, and checks switch configurations.
+
 Here are the IB Perf test cases:
 
 - ``test_install_ib_perf``
