@@ -9,7 +9,7 @@ import sys
 import os
 import re
 import time
-
+import statistics
 import globals
 log = globals.log
 
@@ -23,8 +23,7 @@ training_err_dict = {
     'cache_err': 'Unable to save MockGPTDataset indexes because path_to_cache is None',
     'NCCL ERROR': 'NCCL ERROR|NCCL timeout|local work queue catastrophic error',
     'GPU HW ERROR': 'HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset',
-    'AssertionError': 'AssertionError',
-    'Connection Err': 'XlaRuntimeError|DEADLINE_EXCEEDED|Leader can be deadlocked',
+    'AssertionError': 'AssertionError|ValueError:',
     'rocm Err': 'FAILED_PRECONDITION: No visible GPU devices|failed call to hipInit: HIP_ERROR_NoDevice|librocm reported version is: NOT_FOUND',
     'python err': 'ModuleNotFoundError: No module named|Fatal Python error:',
     'tensorflow': 'tensorflow.CoordinationServiceError|tensorflow.BarrierError|CoordinationServiceError',
@@ -101,7 +100,7 @@ class JaxTrainingJob():
         self.rdma_stats_dict_before      = {}
         self.ethtool_stats_dict_before   = {}
         self.rdma_stats_dict_after       = {}
-        self.training_start_time         = self.phdl.exec('date')
+        self.training_start_time         = phdl.exec('date +"%a %b %e %H:%M"')
         self.training_end_time           = None
 
 
@@ -303,11 +302,11 @@ class JaxTrainingJob():
         self.phdl.exec(formatted_cmd)
 
         xla_dict = self.mp_dict['xla_flags']
-        cmd = f'''docker exec {self.container_name} /bin/bash -c \"echo export XLA_FLAGS=--xla_gpu_enable_cublaslt={xla_dict['xla_gpu_enable_cublaslt']} --xla_gpu_graph_level={xla_dict['xla_gpu_graph_level']} --xla_gpu_autotune_level={xla_dict['xla_gpu_autotune_level']} --xla_gpu_enable_reduce_scatter_combine_by_dim={xla_dict['xla_gpu_enable_reduce_scatter_combine_by_dim']} --xla_gpu_reduce_scatter_combine_threshold_bytes={xla_dict['xla_gpu_reduce_scatter_combine_threshold_bytes']} --xla_gpu_all_reduce_combine_threshold_bytes={xla_dict['xla_gpu_all_reduce_combine_threshold_bytes']}  --xla_gpu_all_gather_combine_threshold_bytes={xla_dict['xla_gpu_all_gather_combine_threshold_bytes']} --xla_gpu_enable_all_gather_combine_by_dim={xla_dict['xla_gpu_enable_all_gather_combine_by_dim']} > /workspace/maxtext/maxtext_env.sh\"'''
+        cmd = f'''docker exec {self.container_name} /bin/bash -c \"echo export XLA_FLAGS=--xla_gpu_enable_cublaslt={xla_dict['xla_gpu_enable_cublaslt']} --xla_gpu_graph_level={xla_dict['xla_gpu_graph_level']} --xla_gpu_autotune_level={xla_dict['xla_gpu_autotune_level']} --xla_gpu_enable_reduce_scatter_combine_by_dim={xla_dict['xla_gpu_enable_reduce_scatter_combine_by_dim']} --xla_gpu_reduce_scatter_combine_threshold_bytes={xla_dict['xla_gpu_reduce_scatter_combine_threshold_bytes']} --xla_gpu_all_reduce_combine_threshold_bytes={xla_dict['xla_gpu_all_reduce_combine_threshold_bytes']}  --xla_gpu_all_gather_combine_threshold_bytes={xla_dict['xla_gpu_all_gather_combine_threshold_bytes']} --xla_gpu_enable_all_gather_combine_by_dim={xla_dict['xla_gpu_enable_all_gather_combine_by_dim']} --xla_gpu_executable_warn_stuck_timeout={xla_dict['xla_gpu_executable_warn_stuck_timeout']} --xla_gpu_executable_terminate_timeout={xla_dict['xla_gpu_executable_terminate_timeout']} > /workspace/maxtext/maxtext_xla_env.sh\"'''
         self.phdl.exec(cmd)
 
         # Hack to add the double quotes ..
-        cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i -e "s/XLA_FLAGS=/XLA_FLAGS=\\\"/g" -e "/XLA_FLAGS/s/$/\\\"/g" /workspace/maxtext/maxtext_env.sh'  '''
+        cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i -e "s/XLA_FLAGS=/XLA_FLAGS=\\\"/g" -e "/XLA_FLAGS/s/$/\\\"/g" /workspace/maxtext/maxtext_xla_env.sh'  '''
         self.phdl.exec(cmd)
 
         time.sleep(5)
@@ -328,6 +327,7 @@ class JaxTrainingJob():
                       export NVTE_FUSED_ATTN=1
                       export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
                       export XLA_PYTHON_CLIENT_MEM_FRACTION={self.tc_dict['xla_python_client_mem_fraction']}
+                      export XLA_GPU_EXECUTABLE_WARN_STUCK_TIMEOUT={self.tc_dict['xla_gpu_executable_warn_stuck_timeout']}
                       export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
                       export NCCL_DEBUG={self.tc_dict['nccl_debug']}
                       export NCCL_CHECKS_DISABLE={self.tc_dict['nccl_checks_disable']}
@@ -400,7 +400,7 @@ class JaxTrainingJob():
         # Build a docker exec command per node/rank
         for i in range(0,int(self.nnodes)):
             # Source the env file, then launch training in background with nohup, redirecting output to a per-node log
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "source /workspace/maxtext/maxtext_env.sh && nohup bash /workspace/maxtext/training_wrapper_script.sh > {self.tc_dict['log_dir']}/jax-logs/out-node{i}/training_redirect_logs"'''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "source /workspace/maxtext/maxtext_xla_env.sh && source /workspace/maxtext/maxtext_env.sh && nohup bash /workspace/maxtext/training_wrapper_script.sh > {self.tc_dict['log_dir']}/jax-logs/out-node{i}/training_redirect_logs"'''
             cmd_list.append(cmd)
 
         # Execute the launch commands (expected to run across the cluster)
@@ -440,7 +440,7 @@ class JaxTrainingJob():
         list_of_values = []
         #To avoid any outliers, we exclude the first couple of steps ..
         for i in range(2, self.training_steps ):
-            list_of_values.append(training_results_dict[i][metric_name])
+            list_of_values.append(float(training_results_dict[i][metric_name]))
 
         # Compute the central tendency of the metric across the stable range of steps
         median_value = statistics.median(list_of_values)
@@ -449,7 +449,7 @@ class JaxTrainingJob():
         upper_bound = median_value * (1 + percentage_off )
         lower_bound = median_value * (1 - percentage_off )
         for i in range(2, self.training_steps ):
-            if lower_bound <= training_results_dict[i][metric_name] <= upper_bound:
+            if lower_bound <= float(training_results_dict[i][metric_name]) <= upper_bound:
                 print(f'Training step {i} training metric {metric_name} is in expected range')
             else:
                 fail_test(f'FAIL Training step {i} training metric {metric_name} is over {percentage_off}% from median value {median_value} - actual value {training_results_dict[i][metric_name]}')
@@ -495,13 +495,16 @@ class JaxTrainingJob():
 
         # Read the training log output from the "last" node (assumed authoritative)
         last_node = self.host_list[len(self.host_list) -1]
-        out_dict = self.phdl.exec(f'cat {self.home_dir}/training_logs')
+        last_node_num = len(self.host_list) - 1
+        out_dict = self.phdl.exec(f'cat {self.home_dir}/LOGS/jax-logs/out-node{last_node_num}/training.log')
         output = out_dict[last_node]
 
         # Parse metrics for each step based on expected log line structure
         for i in range(0, self.training_steps):
             training_results_dict[i] = {}
-            match = re.search( f'completed step:\s{i}, seconds:\s([0-9\.]+),\sTFLOP\/s\/device:\s([0-9\.]+)\s+Tokens\/s\/device:\s([0-9\.]+),\s+total_weights:\s([0-9\.]+),\s+loss:\s([0-9\.]+)', output, re.I )
+
+            pattern = f'completed step:\s+{i},\s+seconds:\s+([0-9\.]+),\s+TFLOP\/s\/device:\s+([0-9\.]+),\s+Tokens\/s\/device:\s+([0-9\.]+),\s+total_weights:\s+([0-9\\.]+),\s+loss:\s([0-9\.]+)'
+            match = re.search( pattern, output, re.I )
 
             # Guard against missing or malformed lines to avoid AttributeError on match.group(...)
             if not match:
@@ -515,14 +518,13 @@ class JaxTrainingJob():
             training_results_dict[i]['total_weights'] = match.group(4)
             training_results_dict[i]['loss'] = match.group(5)
 
-        #TO DO
         # Check if the Loss function is not growing by over 10%
         self.check_deviation_from_median( training_results_dict, 'tflops_per_sec_per_gpu', percentage_off )    
         self.check_deviation_from_median( training_results_dict, 'tokens_per_sec_per_gpu', percentage_off )    
         self.check_deviation_from_median( training_results_dict, 'loss', percentage_off )    
             
-        print(training_result_dict)
-        return training_result_dict
+        print(training_results_dict)
+        return training_results_dict
 
 
 
@@ -692,10 +694,9 @@ class JaxTrainingJob():
             # Parse/store final results and report success
             self.training_result_dict = self.get_training_results_dict()
             print('Completed Training, returning !!!')
-            return {"status": "success", "results": self.training_result_dict}
+            return { "status": "success", "results": self.training_result_dict}
 
-            # If we reached here, loop continues (but we return above on success)
-
+            # If we reached here, it means poll for training completion failed
 
 
         # If we exhaust the iteration cap without completing, treat as timeout (or in_progress if no wall-clock limit)
@@ -707,76 +708,32 @@ class JaxTrainingJob():
             # If no wall-clock timeout was set and we hit the iteration cap, report in-progress
             msg = f"Reached iteration cap ({self.training_poll_iterations}) without completion; still in progress"
             print(msg)
-            return {"status": "in_progress", "reason": msg}
+            return {"status": "stuck_in_progress", "reason": msg}
 
 
 
-
-    def old_poll_for_training_completion( self, waittime_between_iters=60  ):
-
-        """
-        Periodically poll training logs to detect completion or failure, with robust checks and a hard timeout.
-
-        Improvements implemented (based on previous suggestions):
-        - Scan all nodes' logs (not just the last node) for completion and invalid values (NaN/Inf).
-        - Fix regex checks to use proper alternation for NaN/Inf: (NaN|Inf) instead of [NaN|Inf].
-        - Add a hard wall-clock timeout via total_timeout; return a structured status report.
-        - Capture both stdout and stderr when tailing logs (2>&1).
-        - Return a structured dict with status, reason, and optional results.
-
-        Args:
-        waittime_between_iters: Seconds to sleep between polling iterations (in addition to short waits while in progress).
-        total_timeout: Maximum wall-clock seconds to poll before returning a timeout status. If None, no wall-clock limit.
-        require_all_nodes: If True, require the "final step completed" pattern to be present on every node;
-                         if False, proceed when any node shows final step completed.
-
-    Assumptions:
-      - self.nnodes, self.training_steps, self.training_poll_iterations are valid integers.
-      - self.tc_dict['log_dir'] contains per-node paths: .../jax-logs/out-node<rank>/training.log
-      - self.phdl.exec_cmd_list(cmd_list) executes commands across the cluster and returns a mapping of node -> concatenated stdout (and now stderr due to 2>&1).
-      - self.scan_for_training_errors() returns True when OK, False when any error pattern is detected.
-      - self.get_training_results_dict() parses final metrics and populates self.training_result_dict.
-
-    Notes:
-      - Completion criterion:
-          final_step = self.training_steps - 1
-          We look for 'completed step:\s+<final_step>,' on logs.
-      - NaN/Inf check uses alternation on key metrics to detect invalid numeric outputs.
-      - If require_all_nodes=True and at least one node lags behind, we continue polling (unless timeout).
-    """
-
-        print('Poll for training completion')
-        time.sleep(60)
-        last_node = self.host_list[len(self.host_list) -1]
-
-        for i in range(1,int(self.training_poll_iterations)):
-            print(f'Starting iteration {i}')
-            if not self.scan_for_training_errors():
-                fail_test('Failures seen in training logs, Aborting!!!')
-                return
-            cmd_list = []
-            for j in range(0,int(self.nnodes)):
-                cmd = f"sudo tail -2000 {self.tc_dict['log_dir']}/jax-logs/out-node{j}/training.log"
-                cmd_list.append(cmd)
-            out_dict = self.phdl.exec_cmd_list(cmd_list)
-            output = out_dict[last_node]
-
-            max_iterations = int(self.training_steps)-1
-            if not re.search( f'completed step:\s+{max_iterations},', output, re.I ):
-                print('Training still in progress')
-                time.sleep(30)
-            else:
-                if re.search( 'TFLOPS\/s\/device:\s+[NaN|Inf]', output, re.I ) or \
-                       re.search( 'Tokens\/s\/device:\s+[NaN|Inf]', output, re.I ):
-                    fail_test(f'ERROR - NaN or Inf values seen in training results {output}')
-                    return
-                else:
-                    self.training_result_dict = self.get_training_results_dict()
-                    print('Completed Training, returning !!!')
-                    return
-            # Wait secs between every iteration
-            time.sleep(int(waittime_between_iters))
-
-        
     def verify_training_results( self, ):
-        print('Verify Training Results')
+        print('Verify Training Completion Msg')
+        last_node = self.host_list[len(self.host_list) -1]
+        last_node_num = len(self.host_list) - 1
+        out_dict = self.phdl.exec(f'cat {self.home_dir}/LOGS/jax-logs/out-node{last_node_num}/training.log')
+        if not re.search( 'Distributed task shutdown result: OK', out_dict[last_node], re.I ):
+            fail_test('JAX Distributed training job did not complete or shutdown properly, test failed')
+        for i in self.training_result_dict.keys():
+            if int(i) > 5:
+                if float(self.training_result_dict[i]['tflops_per_sec_per_gpu']) < \
+                        float(self.expected_result_dict['tflops_per_sec_per_gpu']):
+                    fail_test(f"FAIL - The TFLOPS/s/device is not matching expected number. \
+                            Expected = {self.expected_result_dict['tflops_per_sec_per_gpu']}, \
+                            Actual = {self.training_result_dict[i]['tflops_per_sec_per_gpu']}")
+                if float(self.training_result_dict[i]['tokens_per_sec_per_gpu']) < \
+                        float(self.expected_result_dict['tokens_per_sec_per_gpu']):
+                    fail_test(f"FAIL - The tokens_per_sec_per_gpu is not matching expected number. \
+                            Expected = {self.expected_result_dict['tokens_per_sec_per_gpu']} \
+                            Actual = {self.training_result_dict[i]['tokens_per_sec_per_gpu']}" )
+
+        # Scan Dmesg for errors ..
+        self.training_end_time = self.phdl.exec('date +"%a %b %e %H:%M"')
+        time.sleep(2)
+        verify_dmesg_for_errors( self.phdl, self.training_start_time, self.training_end_time )
+
