@@ -18,7 +18,7 @@ mkdir $HTML_DIR
 mkdir $LOG_DIR
 
 pytest -vvv --log-file=$LOG_DIR/agfhc_test.log -s agfhc_cvs.py --cluster_file $CLUSTER_FILE --config_file $CONFIG_FILE --html=$HTML_DIR/agfhc_test_report.html --capture=tee-sys --self-contained-html > $LOG_DIR/agfhc_script.log
-pytest -vvv --log-file=$LOG_DIR/agfhc_test.log -s transferbench_cvs.py --cluster_file $CLUSTER_FILE --config_file $CONFIG_FILE --html=$HTML_DIR/transferbench_test_report.html --capture=tee-sys --self-contained-html > $LOG_DIR/transferbench_script.log
-pytest -vvv --log-file=$LOG_DIR/agfhc_test.log -s rocblas_cvs.py --cluster_file $CLUSTER_FILE --config_file $CONFIG_FILE --html=$HTML_DIR/rocblas_test_report.html --capture=tee-sys --self-contained-html > $LOG_DIR/rocblas_script.log
-pytest -vvv --log-file=$LOG_DIR/agfhc_test.log -s babelstream_cvs.py --cluster_file $CLUSTER_FILE --config_file $CONFIG_FILE --html=$HTML_DIR/babelstream_test_report.html --capture=tee-sys --self-contained-html > $LOG_DIR/babelstream_script.log
+pytest -vvv --log-file=$LOG_DIR/transferbench_test.log -s transferbench_cvs.py --cluster_file $CLUSTER_FILE --config_file $CONFIG_FILE --html=$HTML_DIR/transferbench_test_report.html --capture=tee-sys --self-contained-html > $LOG_DIR/transferbench_script.log
+pytest -vvv --log-file=$LOG_DIR/rocblas_test.log -s rocblas_cvs.py --cluster_file $CLUSTER_FILE --config_file $CONFIG_FILE --html=$HTML_DIR/rocblas_test_report.html --capture=tee-sys --self-contained-html > $LOG_DIR/rocblas_script.log
+pytest -vvv --log-file=$LOG_DIR/babelstream_test.log -s babelstream_cvs.py --cluster_file $CLUSTER_FILE --config_file $CONFIG_FILE --html=$HTML_DIR/babelstream_test_report.html --capture=tee-sys --self-contained-html > $LOG_DIR/babelstream_script.log
 pytest -vvv --log-file=$LOG_DIR/rvs_test.log -s rvs_cvs.py --cluster_file $CLUSTER_FILE --config_file $CONFIG_FILE --html=$HTML_DIR/rvs_test_report.html --capture=tee-sys --self-contained-html > $LOG_DIR/rvs_script.log

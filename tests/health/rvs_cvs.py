@@ -1,6 +1,7 @@
 '''
 Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
+All rights reserved. This notice is intended as a precaution against inadvertent
+publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
@@ -53,6 +54,13 @@ def config_dict(config_file):
     return config_dict
 
 
+@pytest.fixture(scope="module")
+def phdl(cluster_dict):
+    print(cluster_dict)
+    node_list = list(cluster_dict['node_dict'].keys())
+    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    return phdl
+
 def determine_rvs_config_path(phdl, config_dict, config_file):
     """
     Determine the correct configuration file path for RVS tests.
@@ -88,64 +96,70 @@ def determine_rvs_config_path(phdl, config_dict, config_file):
     return default_path
 
 
-def parse_rvs_gst_results(out_dict):
+def parse_rvs_test_results(test_config, out_dict):
     """
-    Parse RVS GST (GPU Stress Test) results and validate against expected values.
+    Generic parser for RVS test results that validates against expected patterns.
 
     Args:
+      test_config: Test configuration dictionary containing name and fail_regex_pattern
       out_dict: Dictionary of node -> command output
     """
+    test_name = test_config.get('name', 'unknown')
+    fail_pattern = test_config.get('fail_regex_pattern', r'\[ERROR\s*\]')
+
     for node in out_dict.keys():
-        # Check for "met: FALSE" which indicates target GFLOPS not achieved
-        if re.search(r'met:\s*FALSE', out_dict[node], re.I):
-            fail_test(f'RVS GST target GFLOPS not met on node {node}')
+        # Check for failure pattern
+        if re.search(fail_pattern, out_dict[node], re.I):
+            fail_test(f'RVS {test_name} test failed on node {node}')
         else:
-            log.info(f'RVS GST test passed. target GFLOPS are met on node {node}')
+            log.info(f'RVS {test_name} test passed on node {node}')
 
-
-def parse_rvs_iet_results(out_dict):
+def execute_rvs_test(phdl, config_dict, test_name):
     """
-    Parse RVS IET (Input EDPp Test) results and validate against expected values.
+    Generic function to execute any RVS test.
 
     Args:
-      out_dict: Dictionary of node -> command output
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
+      test_name: Name of the test to execute
     """
-    for node in out_dict.keys():
-        # Check for "pass: FALSE" which indicates failure
-        if re.search(r'pass:\s*FALSE', out_dict[node], re.I):
-            fail_test(f'RVS IET test failed on node {node}')
-        else:
-            log.info(f'RVS IET test passed on node {node}')
+    globals.error_list = []
 
+    # Get test configuration
+    test_config = next((test for test in config_dict['tests'] if test['name'] == test_name), None)
 
-def parse_rvs_pebb_results(out_dict):
-    """
-    Parse RVS PEBB (PCI Express Bandwidth Benchmark) results and validate against expected values.
+    if not test_config:
+        fail_test(f'Test configuration for {test_name} not found')
+        update_test_result()
+        return
 
-    Args:
-      out_dict: Dictionary of node -> command output
-    """
-    for node in out_dict.keys():
-        # Check for "[ERROR ]" which indicates failure
-        if re.search(r'\[ERROR\s*\]', out_dict[node], re.I):
-            fail_test(f'RVS PEBB test failed on node {node}')
-        else:
-            log.info(f'RVS PEBB test passed on node {node}')
+    log.info(f'Testcase Run RVS {test_config.get("description", test_name)}')
 
+    rvs_path = config_dict['path']
+    config_file = test_config.get('config_file')
+    timeout = test_config.get('timeout', 1800)
 
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    print(cluster_dict)
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
-    return phdl
+    # Determine config path
+    config_path = determine_rvs_config_path(phdl, config_dict, config_file)
+
+    # Run RVS test
+    out_dict = phdl.exec(f'{rvs_path}/rvs -c {config_path}', timeout=timeout)
+    print_test_output(log, out_dict)
+    scan_test_results(out_dict)
+
+    # Parse and validate results
+    parse_rvs_test_results(test_config, out_dict)
+    update_test_result()
 
 
 def test_rvs_gpu_enumeration(phdl, config_dict):
     """
     Run RVS GPU enumeration test to detect and validate GPU presence.
-
     This is a basic connectivity and detection test.
+
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
     """
     globals.error_list = []
     log.info('Testcase Run RVS GPU Enumeration Test')
@@ -159,130 +173,138 @@ def test_rvs_gpu_enumeration(phdl, config_dict):
 
     # Validate that GPUs are detected
     for node in out_dict.keys():
-        if not re.search(r'GPU|device', out_dict[node], re.I):
+        if re.search(r'No supported GPUs available', out_dict[node], re.I):
             fail_test(f'No GPUs detected in RVS enumeration on node {node}')
 
     update_test_result()
 
-
-def test_rvs_memory_test(phdl, config_dict):
+def test_rvs_gpup_single(phdl, config_dict):
     """
-    Run RVS memory test using available configuration.
+    Run RVS GPUP (GPU Properties) test.
+    This test validates GPU properties and capabilities.
 
-    This test validates GPU memory functionality.
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
     """
-    globals.error_list = []
-    log.info('Testcase Run RVS Memory Test')
+    test_name = 'gpup_single'
+    execute_rvs_test(phdl, config_dict, test_name)
 
-    rvs_path = config_dict['path']
 
-    # Try to find memory test config, fall back to simple memory test
-    mem_config_path = determine_rvs_config_path(phdl, config_dict, 'mem.conf')
+def test_rvs_mem_test(phdl, config_dict):
+    """
+    Run RVS Memory Test.
+    This test validates GPU memory functionality and integrity.
 
-    # Check if memory config exists
-    out_dict = phdl.exec(f'ls -l {mem_config_path}', timeout=30)
-    config_exists = False
-    for node in out_dict.keys():
-        if not re.search('No such file', out_dict[node], re.I):
-            config_exists = True
-            break
-
-    if config_exists:
-        # Run with configuration file
-        out_dict = phdl.exec(f'{rvs_path}/rvs -c {mem_config_path}', timeout=1800)
-        print_test_output(log, out_dict)
-        scan_test_results(out_dict)
-    else:
-        #fail the test if no config file found
-        fail_test(f'No memory test configuration file found at {mem_config_path}')
-
-    # Basic validation - look for PASS/FAIL results
-    for node in out_dict.keys():
-        if re.search(r'FAIL|ERROR:', out_dict[node], re.I):
-            fail_test(f'RVS memory test failed on node {node}')
-        else:
-            log.info(f'RVS memory test passed on node {node}')
-
-    update_test_result()
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
+    """
+    test_name = 'mem_test'
+    execute_rvs_test(phdl, config_dict, test_name)
 
 
 def test_rvs_gst_single(phdl, config_dict):
     """
     Run RVS GST (GPU Stress Test) - Single GPU validation test.
-
     This test runs the GPU stress test configuration to validate GPU functionality
     and performance under load.
+
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
     """
-    globals.error_list = []
-    log.info('Testcase Run RVS GST Single GPU Test')
+    test_name = 'gst_single'
+    execute_rvs_test(phdl, config_dict, test_name)
 
-    rvs_path = config_dict['path']
-    config_file = 'gst_single.conf'
-    config_path = determine_rvs_config_path(phdl, config_dict, config_file)
-
-    # Get test configuration
-    test_config = next((test for test in config_dict['tests'] if test['name'] == 'gst_single'), {})
-    timeout = test_config.get('timeout', 1800)
-
-    # Run RVS GST test
-    out_dict = phdl.exec(f'{rvs_path}/rvs -c {config_path}', timeout=timeout)
-    print_test_output(log, out_dict)
-    scan_test_results(out_dict)
-
-    # Parse and validate results
-    parse_rvs_gst_results(out_dict)
-    update_test_result()
 
 def test_rvs_iet_single(phdl, config_dict):
     """
     Run RVS IET (Input EDPp Test) - Single GPU validation test.
-    
     This test validates power consumption and thermal behavior under load.
+
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
     """
-    globals.error_list = []
-    log.info('Testcase Run RVS IET Single GPU Test')
-    
-    rvs_path = config_dict['path']
-    config_file = 'iet_single.conf'
-    config_path = determine_rvs_config_path(phdl, config_dict, config_file)
-    
-    # Get test configuration
-    test_config = next((test for test in config_dict['tests'] if test['name'] == 'iet_single'), {})
-    timeout = test_config.get('timeout', 1800)
-    
-    # Run RVS IET test
-    out_dict = phdl.exec(f'{rvs_path}/rvs -c {config_path}', timeout=timeout)
-    print_test_output(log, out_dict)
-    scan_test_results(out_dict)
-    
-    # Parse and validate results
-    parse_rvs_iet_results(out_dict)
-    update_test_result()
+    test_name = 'iet_single'
+    execute_rvs_test(phdl, config_dict, test_name)
 
 
 def test_rvs_pebb_single(phdl, config_dict):
     """
-    Run RVS PEBB (PCI Express Bandwidth Benchmark) - Single GPU test.
-    
+    Run RVS PEBB (PCI Express Bandwidth Benchmark).
     This test measures and validates PCI Express bandwidth performance.
+
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
     """
-    globals.error_list = []
-    log.info('Testcase Run RVS PEBB Single GPU Test')
-    
-    rvs_path = config_dict['path']  
-    config_file = 'pebb_single.conf'
-    config_path = determine_rvs_config_path(phdl, config_dict, config_file)
-    
-    # Get test configuration
-    test_config = next((test for test in config_dict['tests'] if test['name'] == 'pebb_single'), {})
-    timeout = test_config.get('timeout', 240)
-    
-    # Run RVS PEBB test
-    out_dict = phdl.exec(f'sudo {rvs_path}/rvs -c {config_path}', timeout=timeout)
-    print_test_output(log, out_dict)
-    scan_test_results(out_dict)
-    
-    # Parse and validate results
-    parse_rvs_pebb_results(out_dict)
-    update_test_result()
+    test_name = 'pebb_single'
+    execute_rvs_test(phdl, config_dict, test_name)
+
+
+def test_rvs_pbqt_single(phdl, config_dict):
+    """
+    Run RVS PBQT (P2P Benchmark and Qualification Tool).
+    This test validates peer-to-peer communication between GPUs.
+
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
+    """
+    test_name = 'pbqt_single'
+    execute_rvs_test(phdl, config_dict, test_name)
+
+
+def test_rvs_peqt_single(phdl, config_dict):
+    """
+    Run RVS PEQT (PCI Express Qualification Tool).
+    This test validates PCI Express link quality and stability.
+
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
+    """
+    test_name = 'peqt_single'
+    execute_rvs_test(phdl, config_dict, test_name)
+
+
+def test_rvs_rcqt_single(phdl, config_dict):
+    """
+    Run RVS RCQT (ROCm Configuration Qualification Tool).
+    This test validates ROCm configuration and system setup.
+
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
+    """
+    test_name = 'rcqt_single'
+    execute_rvs_test(phdl, config_dict, test_name)
+
+
+def test_rvs_tst_single(phdl, config_dict):
+    """
+    Run RVS TST (Thermal Stress Test).
+    This test validates GPU thermal management under stress conditions.
+
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
+    """
+    test_name = 'tst_single'
+    execute_rvs_test(phdl, config_dict, test_name)
+
+
+def test_rvs_babel_stream(phdl, config_dict):
+    """
+    Run RVS BABEL Benchmark test.
+    This test runs the BABEL streaming benchmark for GPU memory bandwidth validation.
+
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
+    """
+    test_name = 'babel_stream'
+    execute_rvs_test(phdl, config_dict, test_name)
 
