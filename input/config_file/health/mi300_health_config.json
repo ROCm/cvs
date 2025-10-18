@@ -93,25 +93,84 @@
         "config_path_default": "/opt/rocm/share/rocm-validation-suite/conf",
         "tests": [
             {
+                "name": "gpup_single",
+                "config_file": "gpup_single.conf",
+                "description": "GPU Properties Test",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": "FAIL|ERROR"
+            },
+            {
+                "name": "mem_test",
+                "config_file": "mem.conf",
+                "description": "Memory Test",
+                "timeout": 6000,
+                "expected_pass": true,
+                "fail_regex_pattern": "FAIL|\\[ERROR\\s*\\]"
+            },
+            {
                 "name": "gst_single",
                 "config_file": "gst_single.conf",
-                "description": "GPU Stress Test - Single GPU validation",
-                "timeout": 1800,
-                "expected_pass": true
+                "description": "GPU Stress Test",
+                "timeout": 6000,
+                "expected_pass": true,
+                "fail_regex_pattern": "met:\\s*FALSE"
             },
             {
                 "name": "iet_single",
                 "config_file": "iet_single.conf",
-                "description": "Input EDPp Test - Single GPU validation",
+                "description": "Input EDPp Test",
                 "timeout": 1800,
-                "expected_pass": true
+                "expected_pass": true,
+                "fail_regex_pattern": "pass:\\s*FALSE"
             },
             {
                 "name": "pebb_single",
                 "config_file": "pebb_single.conf",
-                "description": "PCI Express Bandwidth Benchmark - Single GPU",
+                "description": "PCI Express Bandwidth Benchmark",
                 "timeout": 1800,
-                "expected_pass": true
+                "expected_pass": true,
+                "fail_regex_pattern": "\\[ERROR\\s*\\]"
+            },
+            {
+                "name": "pbqt_single",
+                "config_file": "pbqt_single.conf",
+                "description": "P2P Benchmark and Qualification Tool",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": "FAIL|ERROR:"
+            },
+            {
+                "name": "peqt_single",
+                "config_file": "peqt_single.conf",
+                "description": "PCI Express Qualification Tool",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": "peqt false"
+            },
+            {
+                "name": "rcqt_single",
+                "config_file": "rcqt_single.conf",
+                "description": "ROCm Configuration Qualification Tool",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": " not installed and no information is available"
+            },
+            {
+                "name": "tst_single",
+                "config_file": "tst_single.conf",
+                "description": "Thermal Stress Test",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": "pass: FLASE"
+            },
+            {
+                "name": "babel_stream",
+                "config_file": "babel.conf",
+                "description": "BABEL Benchmark Test",
+                "timeout": 6000,
+                "expected_pass": true,
+                "fail_regex_pattern": "\\[ERROR\\s*\\]"
             }
         ]
     }
