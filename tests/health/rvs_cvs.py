@@ -222,7 +222,57 @@ def determine_rvs_config_path(phdl, config_dict, config_file):
     log.error(f'Configuration file {config_file} not found in either device-specific or default location on any node')
     return None
 
+def parse_rcqt_single_results(test_config, out_dict):
+    """
+    Special parser for RVS RCQT (ROCm Configuration Qualification Tool) test results.
+    Validates that 'Missing packages' and 'Version mismatch packages' are both 0 for all occurrences.
 
+    Args:
+      test_config: Test configuration dictionary
+      out_dict: Dictionary of node -> command output
+    """
+    test_name = test_config.get('name', 'rcqt_single')
+    expected_pass_patterns = test_config.get('expected_pass_patterns', [])
+    fail_pattern = test_config.get('fail_regex_pattern', '')
+
+    for node in out_dict.keys():
+        output = out_dict[node]
+        node_passed = True
+
+        # Check for general failure pattern first
+        if fail_pattern and re.search(fail_pattern, output, re.I):
+            fail_test(f'RVS {test_name} test failed on node {node}: {fail_pattern} found in output')
+            node_passed = False
+            continue
+
+        # Check expected pass patterns
+        for pattern_config in expected_pass_patterns:
+            pattern = pattern_config.get('pattern')
+            expected_value = pattern_config.get('expected_value', 0)
+            description = pattern_config.get('description', 'unknown')
+
+            # Find all occurrences of the pattern
+            matches = re.findall(pattern, output, re.I)
+
+            if not matches:
+                log.warning(f'Node {node}: Pattern "{description}" not found in output')
+                continue
+
+            # Check all occurrences
+            log.info(f'Node {node}: Found {len(matches)} occurrence(s) of "{description}"')
+
+            for idx, match in enumerate(matches, 1):
+                actual_value = int(match)
+                # log.info(f'Node {node}: {description} occurrence {idx}: {actual_value}')
+
+                if actual_value != expected_value:
+                    fail_test(f'RVS {test_name} test failed on node {node}: '
+                             f'{description} occurrence {idx} = {actual_value} (expected {expected_value})')
+                    node_passed = False
+
+        # Log overall result for node
+        if node_passed:
+            log.info(f'RVS {test_name} test passed on node {node}: All package checks passed')
 
 def parse_rvs_test_results(test_config, out_dict):
     """
@@ -235,6 +285,12 @@ def parse_rvs_test_results(test_config, out_dict):
     test_name = test_config.get('name', 'unknown')
     fail_pattern = test_config.get('fail_regex_pattern', r'\[ERROR\s*\]')
 
+    # Special handling for rcqt_single test
+    if test_name == 'rcqt_single':
+        parse_rcqt_single_results(test_config, out_dict)
+        return
+
+    # Standard parsing for other tests
     for node in out_dict.keys():
         # Check for failure pattern
         if re.search(fail_pattern, out_dict[node], re.I):

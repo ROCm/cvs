@@ -153,8 +153,20 @@
                 "config_file": "rcqt_single.conf",
                 "description": "ROCm Configuration Qualification Tool",
                 "timeout": 1800,
-                "expected_pass": true,
-                "fail_regex_pattern": " not installed and no information is available"
+                "expected_pass": "true",
+                "fail_regex_pattern": "\\[ERROR\\s*\\]",
+                "expected_pass_patterns": [
+                    {
+                        "pattern": "Missing packages\\s*:\\s*(\\d+)",
+                        "expected_value": 0,
+                        "description": "Missing packages"
+                    },
+                    {
+                        "pattern": "Version mismatch packages\\s*:\\s*(\\d+)",
+                        "expected_value": 0,
+                        "description": "Version mismatch packages"
+                    }
+                ]
             },
             {
                 "name": "tst_single",
