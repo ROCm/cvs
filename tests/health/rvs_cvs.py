@@ -61,10 +61,100 @@ def phdl(cluster_dict):
     phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
     return phdl
 
+def get_gpu_device_name(phdl):
+    """
+    Detect GPU device name from amd-smi JSON output to match with RVS config folders.
+
+    Args:
+      phdl: Parallel SSH handle
+
+    Returns:
+      dict: Dictionary of node -> device name (e.g., 'MI300X', 'MI308X', 'MI300XHF', etc.)
+    """
+    device_map = {}
+
+    # Execute amd-smi command to get GPU information in JSON format
+    out_dict = phdl.exec('sudo amd-smi static -a -g 0 --json', timeout=30)
+
+    for node in out_dict.keys():
+        output = out_dict[node]
+
+        try:
+            # Parse JSON output
+            gpu_info = json.loads(output)
+
+            # Extract market name from the first GPU
+            if 'gpu_data' in gpu_info and len(gpu_info['gpu_data']) > 0:
+                market_name = gpu_info['gpu_data'][0].get('asic', {}).get('market_name', '')
+
+                if market_name:
+                    # Remove "AMD Instinct " prefix and any spaces
+                    device_name = market_name.replace('AMD Instinct ', '').replace(' ', '')
+
+                    if device_name:
+                        log.info(f'Node {node}: Detected GPU device from market_name: {market_name} -> {device_name}')
+                        device_map[node] = device_name
+                    else:
+                        log.warning(f'Node {node}: Market name found but device name is empty after processing')
+                        device_map[node] = None
+                else:
+                    log.warning(f'Node {node}: Market name not found in JSON output')
+                    device_map[node] = None
+            else:
+                log.warning(f'Node {node}: No GPU data found in JSON output')
+                device_map[node] = None
+
+        except json.JSONDecodeError as e:
+            log.error(f'Node {node}: Failed to parse JSON output from amd-smi: {e}')
+            device_map[node] = None
+        except Exception as e:
+            log.error(f'Node {node}: Error processing amd-smi output: {e}')
+            device_map[node] = None
+
+    return device_map
+
+
+def get_available_device_folders(phdl, base_config_path):
+    """
+    Get list of available MI300 variant device-specific folders in RVS config directory.
+    Only returns folders starting with 'MI3' (MI300 variants).
+
+    Args:
+      phdl: Parallel SSH handle
+      base_config_path: Base path for RVS configurations
+
+    Returns:
+      dict: Dictionary of node -> list of available MI300 device folders
+    """
+    available_folders = {}
+
+    out_dict = phdl.exec(f'ls -d {base_config_path}/*/ 2>/dev/null', timeout=30)
+
+    for node in out_dict.keys():
+        output = out_dict[node]
+
+        # Extract folder names from paths
+        folders = []
+        for line in output.split('\n'):
+            if line.strip():
+                # Extract folder name from path like '/opt/rocm/.../MI300X/'
+                folder_match = re.search(r'/([^/]+)/$', line.strip())
+                if folder_match:
+                    folder_name = folder_match.group(1)
+                    # Only add folders that start with 'MI3' (MI300 variants)
+                    if folder_name.startswith('MI3'):
+                        folders.append(folder_name)
+
+        available_folders[node] = folders
+        log.info(f'Node {node}: Available MI300 variant device folders: {folders}')
+
+    return available_folders
+
+
 def determine_rvs_config_path(phdl, config_dict, config_file):
     """
     Determine the correct configuration file path for RVS tests.
-    First checks for MI300X-specific config, falls back to default if not found.
+    Dynamically detects GPU device and checks for device-specific config folders.
 
     Args:
       phdl: Parallel SSH handle
@@ -73,27 +163,65 @@ def determine_rvs_config_path(phdl, config_dict, config_file):
 
     Returns:
       str: Full path to the configuration file to use
+      None: If config file is not found on any node
     """
-    mi300x_path = f"{config_dict['config_path_mi300x']}/{config_file}"
-    default_path = f"{config_dict['config_path_default']}/{config_file}"
+    base_path = config_dict['config_path_default']
+    default_path = f"{base_path}/{config_file}"
 
-    # Check for MI300X specific config first
-    out_dict = phdl.exec(f'ls -l {mi300x_path}', timeout=30)
-    for node in out_dict.keys():
-        if not re.search('No such file', out_dict[node], re.I):
-            log.info(f'Using MI300X-specific config: {mi300x_path}')
-            return mi300x_path
+    # Step 1: Detect GPU device name on each node
+    device_map = get_gpu_device_name(phdl)
 
-    # Fall back to default config
+    # Step 2: Get available device-specific folders
+    available_folders = get_available_device_folders(phdl, base_path)
+
+    # Step 3: Check for device-specific config on each node
+    device_specific_exists = False
+    default_exists = False
+    chosen_path = None
+
+    for node in device_map.keys():
+        device_name = device_map.get(node)
+        node_folders = available_folders.get(node, [])
+
+        if device_name and device_name in node_folders:
+            # Device-specific folder exists, check if config file is present
+            device_specific_path = f"{base_path}/{device_name}/{config_file}"
+
+            out_dict = phdl.exec(f'ls -l {device_specific_path}', timeout=30)
+            if not re.search('No such file', out_dict[node], re.I):
+                log.info(f'Node {node}: Device-specific config found: {device_specific_path}')
+                device_specific_exists = True
+                chosen_path = device_specific_path
+            else:
+                log.info(f'Node {node}: Device-specific folder exists but config file not found: {device_specific_path}')
+        else:
+            log.info(f'Node {node}: No device-specific folder match for device: {device_name}')
+
+    # If device-specific config exists on any node, use it
+    if device_specific_exists:
+        log.info(f'Using device-specific config: {chosen_path}')
+        return chosen_path
+
+    # Step 4: Fall back to default config (no device subfolder)
+    log.info(f'Falling back to default config path')
     out_dict = phdl.exec(f'ls -l {default_path}', timeout=30)
+
     for node in out_dict.keys():
         if not re.search('No such file', out_dict[node], re.I):
-            log.info(f'Using default config: {default_path}')
-            return default_path
+            log.info(f'Node {node}: Default config found: {default_path}')
+            default_exists = True
+        else:
+            log.error(f'Node {node}: Default config not found: {default_path}')
 
-    # If neither exists, still return the default path (test will fail appropriately)
-    log.warning(f'Configuration file {config_file} not found in either location, using default path')
-    return default_path
+    # Use default path if it exists on any node
+    if default_exists:
+        log.info(f'Using default config: {default_path}')
+        return default_path
+
+    # If neither exists on any node, return None
+    log.error(f'Configuration file {config_file} not found in either device-specific or default location on any node')
+    return None
+
 
 
 def parse_rvs_test_results(test_config, out_dict):
@@ -142,13 +270,23 @@ def execute_rvs_test(phdl, config_dict, test_name):
     # Determine config path
     config_path = determine_rvs_config_path(phdl, config_dict, config_file)
 
-    # Run RVS test
-    out_dict = phdl.exec(f'{rvs_path}/rvs -c {config_path}', timeout=timeout)
-    print_test_output(log, out_dict)
-    scan_test_results(out_dict)
+    if config_path is not None:
+        # Run RVS test
+        if test_name == 'peqt_single':
+            # PEQT test requires elevated permissions
+            rvs_cmd = f'sudo {rvs_path}/rvs -c {config_path}'
+        else:
+            rvs_cmd = f'{rvs_path}/rvs -c {config_path}'
 
-    # Parse and validate results
-    parse_rvs_test_results(test_config, out_dict)
+        out_dict = phdl.exec(f'{rvs_cmd}', timeout=timeout)
+        print_test_output(log, out_dict)
+        scan_test_results(out_dict)
+
+        # Parse and validate results
+        parse_rvs_test_results(test_config, out_dict)
+    else:
+        fail_test(f'Configuration file [{config_file}] for {test_name} not found on any/some node.')
+
     update_test_result()
 
 
