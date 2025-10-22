@@ -93,6 +93,34 @@
         "config_path_default": "/opt/rocm/share/rocm-validation-suite/conf",
         "tests": [
             {
+                "name": "level_config",
+                "description": "RVS LEVEL Configuration Test - Runs all modules collectively",
+                "timeout": 7200,
+                "expected_pass": true,
+                "fail_regex_patterns": [
+                    "met:\\s*FALSE",
+                    "pass:\\s*FALSE",
+                    "\\[ERROR\\s*\\]",
+                    "FAIL",
+                    "ERROR:",
+                    "peqt false",
+                    "not installed and no information is available",
+                    "RVS-ERROR"
+                ],
+                "expected_pass_patterns": [
+                    {
+                        "pattern": "Missing packages\\s*:\\s*(\\d+)",
+                        "expected_value": 0,
+                        "description": "Missing packages"
+                    },
+                    {
+                        "pattern": "Version mismatch packages\\s*:\\s*(\\d+)",
+                        "expected_value": 0,
+                        "description": "Version mismatch packages"
+                    }
+                ]
+            },
+            {
                 "name": "gpup_single",
                 "config_file": "gpup_single.conf",
                 "description": "GPU Properties Test",

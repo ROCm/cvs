@@ -15,6 +15,7 @@ import sys
 import time
 import json
 import logging
+from packaging import version
 
 sys.path.insert( 0, './lib' )
 from parallel_ssh_lib import *
@@ -34,6 +35,24 @@ def cluster_file(pytestconfig):
 @pytest.fixture(scope="module")
 def config_file(pytestconfig):
     return pytestconfig.getoption("config_file")
+
+@pytest.fixture(scope="module")
+def rvs_test_level(pytestconfig):
+    """Get RVS test level from command line, default to 4 if not provided or invalid"""
+    level = pytestconfig.getoption("rvs_test_level", default=4)
+
+    # Validate level is between 0 and 5
+    # Level 0 is special: run all individual tests regardless of RVS version
+    try:
+        level_int = int(level)
+        if 0 <= level_int <= 5:
+            return level_int
+        else:
+            log.warning(f'Invalid RVS test level: {level}. Using default level 4')
+            return 4
+    except (ValueError, TypeError):
+        log.warning(f'Invalid RVS test level format: {level}. Using default level 4')
+        return 4
 
 
 # Importing the cluster and cofig files to script to access node, switch, test config params
@@ -60,6 +79,116 @@ def phdl(cluster_dict):
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
     return phdl
+
+
+@pytest.fixture(scope="module")
+def rvs_version(phdl, config_dict):
+    """
+    Detect RVS version from all nodes.
+    Returns the minimum version across all nodes.
+    """
+    return get_rvs_version(phdl, config_dict['path'])
+
+
+def get_rvs_version(phdl, rvs_path):
+    """
+    Get RVS version from all nodes.
+
+    Args:
+      phdl: Parallel SSH handle
+      rvs_path: Path to RVS binary
+
+    Returns:
+      str: Minimum version across all nodes (e.g., "1.2.0", "1.3.0")
+    """
+    version_dict = {}
+
+    out_dict = phdl.exec(f'{rvs_path}/rvs --version', timeout=30)
+
+    for node in out_dict.keys():
+        output = out_dict[node].strip()
+
+        # Extract version - output is just the version number like "1.2.0" or "1.3.0"
+        # First try to match version pattern (digits.digits.digits)
+        version_match = re.search(r'(\d+\.\d+\.\d+)', output)
+
+        if version_match:
+            node_version = version_match.group(1)
+            log.info(f'Node {node}: RVS version {node_version}')
+            version_dict[node] = node_version
+        else:
+            log.warning(f'Node {node}: Could not detect RVS version from output: {output}')
+            version_dict[node] = "0.0.0"
+
+    # Return minimum version across all nodes
+    if version_dict:
+        min_version = min(version_dict.values(), key=lambda v: version.parse(v))
+        log.info(f'Using minimum RVS version across all nodes: {min_version}')
+        return min_version
+    else:
+        log.error('Could not determine RVS version from any node')
+        return "0.0.0"
+
+
+def pytest_collection_modifyitems(config, items):
+    """
+    Modify test collection based on RVS version and test level.
+
+    Logic:
+    - If rvs_test_level == 0: Run all individual tests, skip level_config
+    - If RVS version < 1.3.0: Run all individual tests, skip level_config
+    - If RVS version >= 1.3.0 and rvs_test_level != 0: Run only level_config, skip individual tests
+    """
+    # We need to get RVS version, but fixtures aren't available here yet
+    # So we'll mark tests and handle skipping in the test functions themselves
+    pass
+
+
+def should_skip_level_test(rvs_version_str, rvs_test_level):
+    """
+    Determine if level_config test should be skipped.
+
+    Args:
+      rvs_version_str: RVS version string (e.g., "1.2.0")
+      rvs_test_level: Test level (0-5)
+
+    Returns:
+      tuple: (should_skip, reason)
+    """
+    # Skip if level is 0 (user wants individual tests)
+    if rvs_test_level == 0:
+        return (True, "rvs_test_level=0: Running individual tests instead")
+
+    # Skip if RVS version < 1.3.0
+    if version.parse(rvs_version_str) < version.parse("1.3.0"):
+        return (True, f"RVS version {rvs_version_str} < 1.3.0: LEVEL configs not supported")
+
+    return (False, None)
+
+
+def should_skip_individual_test(rvs_version_str, rvs_test_level):
+    """
+    Determine if individual tests should be skipped.
+
+    Args:
+      rvs_version_str: RVS version string (e.g., "1.2.0")
+      rvs_test_level: Test level (0-5)
+
+    Returns:
+      tuple: (should_skip, reason)
+    """
+    # Don't skip if level is 0 (user explicitly wants individual tests)
+    if rvs_test_level == 0:
+        return (False, None)
+
+    # Don't skip if RVS version < 1.3.0 (level test not available)
+    if version.parse(rvs_version_str) < version.parse("1.3.0"):
+        return (False, None)
+
+    # Skip individual tests if RVS >= 1.3.0 and level != 0
+    return (True, f"RVS version {rvs_version_str} >= 1.3.0: Running LEVEL-{rvs_test_level} test instead")
+
+
 
 def get_gpu_device_name(phdl):
     """
@@ -298,6 +427,8 @@ def parse_rvs_test_results(test_config, out_dict):
         else:
             log.info(f'RVS {test_name} test passed on node {node}')
 
+
+
 def execute_rvs_test(phdl, config_dict, test_name):
     """
     Generic function to execute any RVS test.
@@ -346,6 +477,133 @@ def execute_rvs_test(phdl, config_dict, test_name):
     update_test_result()
 
 
+
+
+def parse_rvs_level_results(test_config, out_dict, level):
+    """
+    Parser for RVS LEVEL-based test results.
+    Checks for multiple failure patterns from all RVS modules.
+
+    Args:
+      test_config: Test configuration dictionary
+      out_dict: Dictionary of node -> command output
+      level: RVS test level (1-5)
+    """
+    test_name = f'level_{level}_config'
+    fail_patterns = test_config.get('fail_regex_patterns', [])
+    expected_pass_patterns = test_config.get('expected_pass_patterns', [])
+
+    if not fail_patterns:
+        log.warning(f'No fail patterns defined for RVS LEVEL {level} test')
+        return
+
+    for node in out_dict.keys():
+        output = out_dict[node]
+        node_passed = True
+        failures_found = []
+
+        # Check each failure pattern
+        for pattern in fail_patterns:
+            if re.search(pattern, output, re.I):
+                failures_found.append(pattern)
+                node_passed = False
+
+        # Check expected pass patterns ( for rcqt rvs module within level test )
+        for pattern_config in expected_pass_patterns:
+            pattern = pattern_config.get('pattern')
+            expected_value = pattern_config.get('expected_value', 0)
+            description = pattern_config.get('description', 'unknown')
+
+            # Find all occurrences of the pattern
+            matches = re.findall(pattern, output, re.I)
+
+            if not matches:
+                log.warning(f'Node {node}: Pattern "{description}" not found in output')
+                continue
+
+            # Check all occurrences
+            log.info(f'Node {node}: Found {len(matches)} occurrence(s) of "{description}"')
+
+            for idx, match in enumerate(matches, 1):
+                actual_value = int(match)
+                # log.info(f'Node {node}: {description} occurrence {idx}: {actual_value}')
+
+                if actual_value != expected_value:
+                    fail_test(f'RVS {test_name} test failed on node {node}: '
+                             f'{description} occurrence {idx} = {actual_value} (expected {expected_value})')
+                    node_passed = False
+
+        # Report results
+        if not node_passed:
+            fail_msg = f'RVS LEVEL-{level} test failed on node {node}. Failure patterns found: {", ".join(failures_found)}'
+            fail_test(fail_msg)
+        else:
+            log.info(f'RVS LEVEL-{level} test passed on node {node}: All module checks passed')
+
+
+################################################################################
+# Testcases for RVS modules
+################################################################################
+
+def test_rvs_level_config(phdl, config_dict, rvs_version, rvs_test_level):
+    """
+    Run RVS LEVEL-based configuration test.
+    This test runs all RVS modules collectively using the -r (run level) option.
+
+    Valid levels: 1-5 (default: 4)
+    Level 1: Quick basic checks
+    Level 2: Standard validation
+    Level 3: Extended validation
+    Level 4: Comprehensive testing (default)
+    Level 5: Maximum stress testing
+
+    Args:
+      phdl: Parallel SSH handle
+      config_dict: RVS configuration dictionary
+      rvs_test_level: Test level (0-5)
+      rvs_version: RVS version string
+    """
+    # Check if test should be skipped
+    should_skip, skip_reason = should_skip_level_test(rvs_version, rvs_test_level)
+    if should_skip:
+        pytest.skip(f"test_rvs_level_config: {skip_reason}")
+
+    globals.error_list = []
+
+    log.info(f'Testcase Run RVS LEVEL-{rvs_test_level} Configuration Test')
+    log.info(f'RVS Version: {rvs_version}')
+
+    # Get test configuration
+    test_config = next((test for test in config_dict['tests'] if test['name'] == 'level_config'), None)
+
+    if not test_config:
+        log.warning('LEVEL test configuration not found in config file. Using default settings.')
+        test_config = {
+            'name': 'level_config',
+            'description': f'RVS LEVEL-{rvs_test_level} Comprehensive Test',
+            'timeout': 7200,
+            'fail_regex_patterns': [],
+            'expected_pass_patterns': []
+        }
+
+    rvs_path = config_dict['path']
+    timeout = test_config.get('timeout', 7200)
+
+    # Run RVS with level configuration
+    # The -r option runs all modules with predefined configuration for that level
+    rvs_cmd = f'sudo {rvs_path}/rvs -r {rvs_test_level}'
+
+    log.info(f'Executing: {rvs_cmd}')
+    out_dict = phdl.exec(rvs_cmd, timeout=timeout)
+    print_test_output(log, out_dict)
+    scan_test_results(out_dict)
+
+    # Parse and validate results
+    parse_rvs_level_results(test_config, out_dict, rvs_test_level)
+
+    update_test_result()
+
+
 def test_rvs_gpu_enumeration(phdl, config_dict):
     """
     Run RVS GPU enumeration test to detect and validate GPU presence.
@@ -372,7 +630,7 @@ def test_rvs_gpu_enumeration(phdl, config_dict):
 
     update_test_result()
 
-def test_rvs_gpup_single(phdl, config_dict):
+def test_rvs_gpup_single(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS GPUP (GPU Properties) test.
     This test validates GPU properties and capabilities.
@@ -380,12 +638,19 @@ def test_rvs_gpup_single(phdl, config_dict):
     Args:
       phdl: Parallel SSH handle
       config_dict: RVS configuration dictionary
+      rvs_version: RVS version string
+      rvs_test_level: Test level (0-5)
     """
+    # Check if test should be skipped
+    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
+    if should_skip:
+        pytest.skip(f"test_rvs_gpup_single: {skip_reason}")
+
     test_name = 'gpup_single'
     execute_rvs_test(phdl, config_dict, test_name)
 
 
-def test_rvs_mem_test(phdl, config_dict):
+def test_rvs_mem_test(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS Memory Test.
     This test validates GPU memory functionality and integrity.
@@ -393,12 +658,19 @@ def test_rvs_mem_test(phdl, config_dict):
     Args:
       phdl: Parallel SSH handle
       config_dict: RVS configuration dictionary
+      rvs_version: RVS version string
+      rvs_test_level: Test level (0-5)
     """
+    # Check if test should be skipped
+    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
+    if should_skip:
+        pytest.skip(f"test_rvs_mem_test: {skip_reason}")
+
     test_name = 'mem_test'
     execute_rvs_test(phdl, config_dict, test_name)
 
 
-def test_rvs_gst_single(phdl, config_dict):
+def test_rvs_gst_single(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS GST (GPU Stress Test) - Single GPU validation test.
     This test runs the GPU stress test configuration to validate GPU functionality
@@ -407,12 +679,19 @@ def test_rvs_gst_single(phdl, config_dict):
     Args:
       phdl: Parallel SSH handle
       config_dict: RVS configuration dictionary
+      rvs_version: RVS version string
+      rvs_test_level: Test level (0-5)
     """
+    # Check if test should be skipped
+    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
+    if should_skip:
+        pytest.skip(f"test_rvs_gst_single: {skip_reason}")
+
     test_name = 'gst_single'
     execute_rvs_test(phdl, config_dict, test_name)
 
 
-def test_rvs_iet_single(phdl, config_dict):
+def test_rvs_iet_single(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS IET (Input EDPp Test) - Single GPU validation test.
     This test validates power consumption and thermal behavior under load.
@@ -420,12 +699,19 @@ def test_rvs_iet_single(phdl, config_dict):
     Args:
       phdl: Parallel SSH handle
       config_dict: RVS configuration dictionary
+      rvs_version: RVS version string
+      rvs_test_level: Test level (0-5)
     """
+    # Check if test should be skipped
+    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
+    if should_skip:
+        pytest.skip(f"test_rvs_iet_single: {skip_reason}")
+
     test_name = 'iet_single'
     execute_rvs_test(phdl, config_dict, test_name)
 
 
-def test_rvs_pebb_single(phdl, config_dict):
+def test_rvs_pebb_single(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS PEBB (PCI Express Bandwidth Benchmark).
     This test measures and validates PCI Express bandwidth performance.
@@ -433,12 +719,19 @@ def test_rvs_pebb_single(phdl, config_dict):
     Args:
       phdl: Parallel SSH handle
       config_dict: RVS configuration dictionary
+      rvs_version: RVS version string
+      rvs_test_level: Test level (0-5)
     """
+    # Check if test should be skipped
+    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
+    if should_skip:
+        pytest.skip(f"test_rvs_pebb_single: {skip_reason}")
+
     test_name = 'pebb_single'
     execute_rvs_test(phdl, config_dict, test_name)
 
 
-def test_rvs_pbqt_single(phdl, config_dict):
+def test_rvs_pbqt_single(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS PBQT (P2P Benchmark and Qualification Tool).
     This test validates peer-to-peer communication between GPUs.
@@ -446,12 +739,19 @@ def test_rvs_pbqt_single(phdl, config_dict):
     Args:
       phdl: Parallel SSH handle
       config_dict: RVS configuration dictionary
+      rvs_version: RVS version string
+      rvs_test_level: Test level (0-5)
     """
+    # Check if test should be skipped
+    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
+    if should_skip:
+        pytest.skip(f"test_rvs_pbqt_single: {skip_reason}")
+
     test_name = 'pbqt_single'
     execute_rvs_test(phdl, config_dict, test_name)
 
 
-def test_rvs_peqt_single(phdl, config_dict):
+def test_rvs_peqt_single(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS PEQT (PCI Express Qualification Tool).
     This test validates PCI Express link quality and stability.
@@ -459,12 +759,19 @@ def test_rvs_peqt_single(phdl, config_dict):
     Args:
       phdl: Parallel SSH handle
       config_dict: RVS configuration dictionary
+      rvs_version: RVS version string
+      rvs_test_level: Test level (0-5)
     """
+    # Check if test should be skipped
+    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
+    if should_skip:
+        pytest.skip(f"test_rvs_peqt_single: {skip_reason}")
+
     test_name = 'peqt_single'
     execute_rvs_test(phdl, config_dict, test_name)
 
 
-def test_rvs_rcqt_single(phdl, config_dict):
+def test_rvs_rcqt_single(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS RCQT (ROCm Configuration Qualification Tool).
     This test validates ROCm configuration and system setup.
@@ -472,12 +779,19 @@ def test_rvs_rcqt_single(phdl, config_dict):
     Args:
       phdl: Parallel SSH handle
       config_dict: RVS configuration dictionary
+      rvs_version: RVS version string
+      rvs_test_level: Test level (0-5)
     """
+    # Check if test should be skipped
+    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
+    if should_skip:
+        pytest.skip(f"test_rvs_rcqt_single: {skip_reason}")
+
     test_name = 'rcqt_single'
     execute_rvs_test(phdl, config_dict, test_name)
 
 
-def test_rvs_tst_single(phdl, config_dict):
+def test_rvs_tst_single(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS TST (Thermal Stress Test).
     This test validates GPU thermal management under stress conditions.
@@ -485,12 +799,19 @@ def test_rvs_tst_single(phdl, config_dict):
     Args:
       phdl: Parallel SSH handle
       config_dict: RVS configuration dictionary
+      rvs_version: RVS version string
+      rvs_test_level: Test level (0-5)
     """
+    # Check if test should be skipped
+    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
+    if should_skip:
+        pytest.skip(f"test_rvs_tst_single: {skip_reason}")
+
     test_name = 'tst_single'
     execute_rvs_test(phdl, config_dict, test_name)
 
 
-def test_rvs_babel_stream(phdl, config_dict):
+def test_rvs_babel_stream(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS BABEL Benchmark test.
     This test runs the BABEL streaming benchmark for GPU memory bandwidth validation.
@@ -498,7 +819,14 @@ def test_rvs_babel_stream(phdl, config_dict):
     Args:
       phdl: Parallel SSH handle
       config_dict: RVS configuration dictionary
+      rvs_version: RVS version string
+      rvs_test_level: Test level (0-5)
     """
+    # Check if test should be skipped
+    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
+    if should_skip:
+        pytest.skip(f"test_rvs_babel_stream: {skip_reason}")
+
     test_name = 'babel_stream'
     execute_rvs_test(phdl, config_dict, test_name)
 

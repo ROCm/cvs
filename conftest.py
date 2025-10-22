@@ -9,3 +9,13 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 def pytest_addoption(parser):
     parser.addoption( "--cluster_file", action="store", required=True, help="Input file with all the details of the cluster, nodes, switches in JSON format" )
     parser.addoption( "--config_file", action="store", required=True, help="Input file with all configurations and parameters for tests in JSON format" )
+    parser.addoption(
+        "--rvs_test_level",
+        action="store",
+        default=4,
+        type=int,
+        help="RVS test level configuration (0-5). "
+             "0: Run individual tests (skip level test), "
+             "1-5: Run LEVEL test if RVS >= 1.3.0, else run individual tests. "
+             "Default is 4."
+    )
