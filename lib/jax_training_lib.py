@@ -351,7 +351,7 @@ class JaxTrainingJob():
 
         cmd_list = []
         for i in range(0,int(self.nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {self.tc_dict['log_dir']}/jax-logs/out-node{i}"'''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {self.log_dir}/jax-logs/out-node{i}"'''
             cmd_list.append(cmd)
         self.phdl.exec_cmd_list(cmd_list)
 
@@ -360,8 +360,8 @@ class JaxTrainingJob():
         for i in range(0,int(self.nnodes)):
             # Take a reference config yml like llama2_70b
             cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
-                      mkdir -p {self.tc_dict['log_dir']}/jax-logs/out-node{i}
-                      export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/; cd /workspace/maxtext; python /workspace/maxtext/MaxText/train.py MaxText/configs/llama2_70b_gpu_bs7.yml base_output_directory={self.tc_dict['log_dir']} 2>&1 | tee >(grep -v 'external/xla/xla/') > {self.tc_dict['log_dir']}/jax-logs/out-node{i}/training.log' > /workspace/maxtext/training_wrapper_script.sh"'''
+                      mkdir -p {self.log_dir}/jax-logs/out-node{i}
+                      export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/; cd /workspace/maxtext; python /workspace/maxtext/MaxText/train.py MaxText/configs/llama2_70b_gpu_bs7.yml base_output_directory={self.tc_dict['log_dir']} 2>&1 | tee >(grep -v 'external/xla/xla/') > {self.log_dir}/jax-logs/out-node{i}/training.log' > /workspace/maxtext/training_wrapper_script.sh"'''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
         self.phdl.exec_cmd_list(cmd_list)
@@ -400,7 +400,7 @@ class JaxTrainingJob():
         # Build a docker exec command per node/rank
         for i in range(0,int(self.nnodes)):
             # Source the env file, then launch training in background with nohup, redirecting output to a per-node log
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "source /workspace/maxtext/maxtext_xla_env.sh && source /workspace/maxtext/maxtext_env.sh && nohup bash /workspace/maxtext/training_wrapper_script.sh > {self.tc_dict['log_dir']}/jax-logs/out-node{i}/training_redirect_logs"'''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "source /workspace/maxtext/maxtext_xla_env.sh && source /workspace/maxtext/maxtext_env.sh && nohup bash /workspace/maxtext/training_wrapper_script.sh > {self.log_dir}/jax-logs/out-node{i}/training_redirect_logs"'''
             cmd_list.append(cmd)
 
         # Execute the launch commands (expected to run across the cluster)
@@ -496,7 +496,7 @@ class JaxTrainingJob():
         # Read the training log output from the "last" node (assumed authoritative)
         last_node = self.host_list[len(self.host_list) -1]
         last_node_num = len(self.host_list) - 1
-        out_dict = self.phdl.exec(f'cat {self.home_dir}/LOGS/jax-logs/out-node{last_node_num}/training.log')
+        out_dict = self.phdl.exec(f'cat {self.log_dir}/jax-logs/out-node{last_node_num}/training.log')
         output = out_dict[last_node]
 
         # Parse metrics for each step based on expected log line structure
@@ -567,7 +567,7 @@ class JaxTrainingJob():
 
         # Execute the commands across nodes; returns a mapping of node -> command output
         for j in range(0,int(self.nnodes)):
-            cmd = f"sudo cat {self.tc_dict['log_dir']}/jax-logs/out-node{j}/training.log"
+            cmd = f"sudo cat {self.log_dir}/jax-logs/out-node{j}/training.log"
             cmd_list.append(cmd)
         out_dict = self.phdl.exec_cmd_list(cmd_list)
 
@@ -652,7 +652,7 @@ class JaxTrainingJob():
             # Build commands to tail recent lines from each node's training log and capture stderr as well
             cmd_list = []
             for j in range(0, int(self.nnodes)):
-                cmd = f"sudo tail -2000 {self.tc_dict['log_dir']}/jax-logs/out-node{j}/training.log 2>&1"
+                cmd = f"sudo tail -2000 {self.log_dir}/jax-logs/out-node{j}/training.log 2>&1"
                 cmd_list.append(cmd)
 
             # Execute across nodes; out_dict is expected to be a mapping of node -> tailed output
@@ -716,7 +716,7 @@ class JaxTrainingJob():
         print('Verify Training Completion Msg')
         last_node = self.host_list[len(self.host_list) -1]
         last_node_num = len(self.host_list) - 1
-        out_dict = self.phdl.exec(f'cat {self.home_dir}/LOGS/jax-logs/out-node{last_node_num}/training.log')
+        out_dict = self.phdl.exec(f'cat {self.log_dir}/jax-logs/out-node{last_node_num}/training.log')
         if not re.search( 'Distributed task shutdown result: OK', out_dict[last_node], re.I ):
             fail_test('JAX Distributed training job did not complete or shutdown properly, test failed')
         for i in self.training_result_dict.keys():
@@ -736,4 +736,5 @@ class JaxTrainingJob():
         self.training_end_time = self.phdl.exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
         verify_dmesg_for_errors( self.phdl, self.training_start_time, self.training_end_time )
+        print(self.training_result_dict)
 

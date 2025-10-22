@@ -120,13 +120,17 @@ def launch_docker_container( phdl, container_name, image, device_list=[], volume
 
     print(f'cmd = {cmd}')
     out_dict = phdl.exec(cmd, timeout=timeout)
-    time.sleep(10)
+    time.sleep(15)
 
     #out_dict = phdl.exec( f'docker start {container_name}', timeout=timeout)
     #time.sleep(3)
 
     #out_dict = phdl.exec( f'docker exec -it {container_name} /bin/bash', timeout=timeout)
     #time.sleep(3)
+    for node in out_dict.keys():
+        if re.search( 'error|fail', out_dict[node], re.I ):
+            fail_test('Failed to launch containers, please check logs')
+            return
 
     out_dict = phdl.exec('docker ps')
     for node in out_dict.keys():
