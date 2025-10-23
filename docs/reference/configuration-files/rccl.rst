@@ -6,10 +6,7 @@
 ROCm Communication Collectives Library (RCCL) configuration file
 ****************************************************************
 
-Configuration file
-==================
-
-Here's a code snippet of the ``rccl_config.json``` file for reference:
+Here's a code snippet of the ``rccl_config.json`` file for reference:
 
 .. code:: json
 
@@ -20,7 +17,7 @@ Here's a code snippet of the ``rccl_config.json``` file for reference:
        "no_of_global_ranks": "16",
        "no_of_local_ranks": "8",
        "ranks_per_node": "8",
-       "rccl_dir": /root/cache/INSTALL/rccl-tests",
+       "rccl_dir": "/root/cache/INSTALL/rccl-tests",
        "rccl_tests_dir": "/root/cache/INSTALL/rccl-tests/build",
        "mpi_dir": "/root/cache/INSTALL/ompi-4.1.6/install/bin",
        "mpi_path_var": "/root/cache/INSTALL/ompi-4.1.6/install",

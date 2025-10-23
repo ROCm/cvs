@@ -6,10 +6,7 @@
 InfiniBand (IB Perf) test configuration file
 ********************************************
 
-Configuration file
-==================
-
-Here's a code snippet of the ``ibperf_config.json``` file for reference:
+Here's a code snippet of the ``ibperf_config.json`` file for reference:
 
 .. code:: json
   

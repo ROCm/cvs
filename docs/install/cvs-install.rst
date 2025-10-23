@@ -14,10 +14,10 @@ System requirements
 
 CVS supports these GPUs:
 
-- AMD Instinct MI325X
-- AMD Instinct MI300X	
+- AMD Instinct™ MI325X
+- AMD Instinct™ MI300X	
 
-CVS supports these Linux OS distributions:
+CVS supports these Linux distributions:
 
 - Ubuntu 24.04.2
 

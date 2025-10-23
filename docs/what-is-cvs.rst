@@ -20,4 +20,4 @@ The single node tests run cluster-wide in parallel using the open-source paralle
 
 .. note::
 
-   CVS has only been validated on Ubuntu-based Linux distro clusters.
+   CVS has only been validated on Ubuntu-based Linux distribution clusters.
