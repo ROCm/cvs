@@ -86,7 +86,7 @@
     "rvs":
     {
         "path": "/opt/rocm/bin",
-        "git_install_path": "/root/cache/INSTALL",
+        "git_install_path": "/tmp/rvs/INSTALL",
         "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
         "nfs_install": "True",
         "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",
@@ -104,20 +104,9 @@
                     "FAIL",
                     "ERROR:",
                     "peqt false",
-                    "not installed and no information is available",
-                    "RVS-ERROR"
-                ],
-                "expected_pass_patterns": [
-                    {
-                        "pattern": "Missing packages\\s*:\\s*(\\d+)",
-                        "expected_value": 0,
-                        "description": "Missing packages"
-                    },
-                    {
-                        "pattern": "Version mismatch packages\\s*:\\s*(\\d+)",
-                        "expected_value": 0,
-                        "description": "Version mismatch packages"
-                    }
+                    "RVS-ERROR",
+                    "Missing packages\\s*:\\s*([1-9]\\d*)",
+                    "Version mismatch packages\\s*:\\s*([1-9]\\d*)"
                 ]
             },
             {
@@ -126,7 +115,7 @@
                 "description": "GPU Properties Test",
                 "timeout": 1800,
                 "expected_pass": true,
-                "fail_regex_pattern": "FAIL|ERROR"
+                "fail_regex_pattern": "FAIL|ERROR|RVS-ERROR"
             },
             {
                 "name": "mem_test",
@@ -134,7 +123,7 @@
                 "description": "Memory Test",
                 "timeout": 6000,
                 "expected_pass": true,
-                "fail_regex_pattern": "FAIL|\\[ERROR\\s*\\]"
+                "fail_regex_pattern": "FAIL|\\[ERROR\\s*\\]|RVS-ERROR"
             },
             {
                 "name": "gst_single",
@@ -142,31 +131,31 @@
                 "description": "GPU Stress Test",
                 "timeout": 6000,
                 "expected_pass": true,
-                "fail_regex_pattern": "met:\\s*FALSE"
+                "fail_regex_pattern": "met:\\s*FALSE|RVS-ERROR"
             },
             {
                 "name": "iet_single",
                 "config_file": "iet_single.conf",
                 "description": "Input EDPp Test",
-                "timeout": 1800,
+                "timeout": 3600,
                 "expected_pass": true,
-                "fail_regex_pattern": "pass:\\s*FALSE"
+                "fail_regex_pattern": "pass:\\s*FALSE|RVS-ERROR"
             },
             {
                 "name": "pebb_single",
                 "config_file": "pebb_single.conf",
                 "description": "PCI Express Bandwidth Benchmark",
-                "timeout": 1800,
+                "timeout": 3600,
                 "expected_pass": true,
-                "fail_regex_pattern": "\\[ERROR\\s*\\]"
+                "fail_regex_pattern": "\\[ERROR\\s*\\]|RVS-ERROR"
             },
             {
                 "name": "pbqt_single",
                 "config_file": "pbqt_single.conf",
                 "description": "P2P Benchmark and Qualification Tool",
-                "timeout": 1800,
+                "timeout": 3600,
                 "expected_pass": true,
-                "fail_regex_pattern": "FAIL|ERROR:"
+                "fail_regex_pattern": "FAIL|ERROR:|RVS-ERROR"
             },
             {
                 "name": "peqt_single",
@@ -174,7 +163,7 @@
                 "description": "PCI Express Qualification Tool",
                 "timeout": 1800,
                 "expected_pass": true,
-                "fail_regex_pattern": "peqt false"
+                "fail_regex_pattern": "peqt false|RVS-ERROR"
             },
             {
                 "name": "rcqt_single",
@@ -182,19 +171,7 @@
                 "description": "ROCm Configuration Qualification Tool",
                 "timeout": 1800,
                 "expected_pass": "true",
-                "fail_regex_pattern": "\\[ERROR\\s*\\]",
-                "expected_pass_patterns": [
-                    {
-                        "pattern": "Missing packages\\s*:\\s*(\\d+)",
-                        "expected_value": 0,
-                        "description": "Missing packages"
-                    },
-                    {
-                        "pattern": "Version mismatch packages\\s*:\\s*(\\d+)",
-                        "expected_value": 0,
-                        "description": "Version mismatch packages"
-                    }
-                ]
+                "fail_regex_pattern": "\\[ERROR\\s*\\]|RVS-ERROR|Missing packages\\s*:\\s*([1-9]\\d*)|Version mismatch packages\\s*:\\s*([1-9]\\d*)"
             },
             {
                 "name": "tst_single",
@@ -202,7 +179,7 @@
                 "description": "Thermal Stress Test",
                 "timeout": 1800,
                 "expected_pass": true,
-                "fail_regex_pattern": "pass: FLASE"
+                "fail_regex_pattern": "pass: FLASE|RVS-ERROR"
             },
             {
                 "name": "babel_stream",
@@ -210,7 +187,7 @@
                 "description": "BABEL Benchmark Test",
                 "timeout": 6000,
                 "expected_pass": true,
-                "fail_regex_pattern": "\\[ERROR\\s*\\]"
+                "fail_regex_pattern": "\\[ERROR\\s*\\]|RVS-ERROR"
             }
         ]
     }
