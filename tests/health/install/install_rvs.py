@@ -215,7 +215,7 @@ def test_install_rvs(phdl, shdl, config_dict):
             log.info('Installing RVS from source')
             
             # Check if install directory exists, otherwise create
-            out_dict = shdl.exec(f'ls -ld {git_install_path}')
+            out_dict = hdl.exec(f'ls -ld {git_install_path}')
             for node in out_dict.keys():
                 if re.search('No such file', out_dict[node]):
                     hdl.exec(f'mkdir -p {git_install_path}')
@@ -228,7 +228,7 @@ def test_install_rvs(phdl, shdl, config_dict):
             try:
                 out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite; cmake -B ./build -DROCM_PATH=/opt/rocm -DCMAKE_INSTALL_PREFIX=/opt/rocm -DCPACK_PACKAGING_INSTALL_PREFIX=/opt/rocm', timeout=600)
                 out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc) package', timeout=600)
-                out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite/build; sudo dpkg -i rocm-validation-suite-*.deb', timeout=600)
+                out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite/build; sudo dpkg -i rocm-validation-suite_*.deb', timeout=600)
 
                 for node in out_dict.keys():
                     if re.search('Error|FAILED|No such file', out_dict[node], re.I):
