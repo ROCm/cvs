@@ -1,4 +1,9 @@
 # Cluster Validation Suite
+
+> [!NOTE]
+
+> The published COMPONENT documentation is available [here](https://rocm.docs.amd.com/projects/cvs/en/latest/) in an organized, easy-to-read format, with search and a table of contents. The documentation source files reside in the `docs` folder of this repository. As with all ROCm projects, the documentation is open source. For more information on contributing to the documentation, see [Contribute to ROCm documentation](https://rocm.docs.amd.com/en/latest/contribute/contributing.html).
+
 CVS is a collection of tests scripts that can validate AMD AI clusters end to end from running single node burn in health tests to cluster wide distributed training and inferencing tests. CVS can be used by AMD customers to verify the health of the cluster as a whole which includes verifying the GPU/CPU node health, Host OS configuratin checks, NIC validations etc. CVS test suite collection comprises of the following set of tests
 
 1. Platform Tests - Host OS config checks, BIOS checks, Firmware/Driver checks, Network config checks.
