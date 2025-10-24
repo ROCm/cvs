@@ -70,8 +70,8 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
      - ROCm installation path   
    * - ``qp_count_list``
      - Values:
-        - "8" 
-        - "16"
+        - ``8`` 
+        - ``16``
      - Queue Pair counts to test
    * - ``ib_bw_test_list``
      - Values:

@@ -309,38 +309,38 @@ Here's an exhaustive list of the available parameters in the RCCL configuration 
      - ``/tmp/rccl_result_file.json``
      - Path where RCCL results are captured
    * - ``_comments_results``
-     - 
+     - N/A
      - Expected results are for the two-node cluster and vary based on cluster size
    * - ``all_reduce_perf``
-     - 
+     - N/A
      - Global reduction: sum/max/min across all GPUs
    * - ``all_gather_perf``
-     - 
+     - N/A
      - All GPUs receive the complete combined dataset from all ranks
    * - ``gather_perf``
-     - 
+     - N/A
      - Collect data from all ranks to one root rank
    * - ``scatter_perf``
-     - 
+     - N/A
      - Distribute data from one rank to all ranks
    * - ``reduce_perf``
-     - 
+     - N/A
      - Reduce operation 
    * - ``reduce_scatter_perf``
-     - 
+     - N/A
      - Reduce operation followed by scatter
    * - ``alltoall_perf``
-     - 
+     - N/A
      - Every rank sends unique data to every other rank
    * - ``alltoallv_perf``
-     - 
+     - N/A
      - Variable-size all-to-all exchange
    * - ``sendrecv_perf``
-     - 
+     - N/A
      - Point-to-point communication between rank pairs
    * - ``broadcast_perf``
-     - 
+     - N/A
      - One-to-all communication
    * - ``bus_bw``
-     - 
+     - N/A
      - Bus bandwidth
