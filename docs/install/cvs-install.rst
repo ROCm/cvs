@@ -116,7 +116,7 @@ The test configuration files are in the ``cvs/input/config_file`` directory of t
 
 .. tip::
 
-  See :doc:`Test configuration files <../reference/configuration-files/configure-config>`_ for code snippets and parameters of each configuration file.
+  See :doc:`Test configuration files <../reference/configuration-files/configure-config>` for code snippets and parameters of each configuration file.
 
 Follow these instructions for each test you'd like to conduct.
 
