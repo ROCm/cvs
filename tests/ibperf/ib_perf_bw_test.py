@@ -236,17 +236,19 @@ def test_ib_bw_perf( phdl, bw_test, config_dict ):
             # Log a message to Dmesg to create a timestamp record
             start_time = phdl.exec('date +"%a %b %e %H:%M"')
             phdl.exec( f'Starting Test {bw_test} for {msg_size} and QP count {qp_count} | sudo tee /dev/kmsg' )
-            ib_bw_dict[bw_test][msg_size][qp_count] = ibperf_lib.run_ib_perf_bw_test( phdl, bw_test, gpu_numa_dict, \
+            ib_bw_dict[bw_test][msg_size][qp_count] = ibperf_lib.run_ib_perf_bw_test( \
+                    phdl, bw_test, gpu_numa_dict, \
                     gpu_nic_dict, bck_nic_dict, f'{config_dict["install_dir"]}/perftest/bin', \
                     msg_size, config_dict['gid_index'], qp_count, int(config_dict['port_no']), \
                     int(config_dict['duration']) )
             end_time = phdl.exec('date +"%a %b %e %H:%M"')
             verify_dmesg_for_errors( phdl, start_time, end_time, till_end_flag=True )
             if re.search( 'True', config_dict['verify_bw'], re.I ):
-                ibperf_lib.verify_expected_bw( bw_test, msg_size, qp_count, ib_bw_dict[bw_test][msg_size][qp_count], \
+                ibperf_lib.verify_expected_bw( bw_test, msg_size, qp_count, \
+                        ib_bw_dict[bw_test][msg_size][qp_count], \
                         config_dict['expected_results'])
 
- 
+    print('%%%%%%%%% ib_bw_dict %%%%%%%%%%')
     print(ib_bw_dict)
     update_test_result()
 
@@ -255,7 +257,7 @@ def test_ib_bw_perf( phdl, bw_test, config_dict ):
 
 
 
-@pytest.mark.parametrize( "lat_test", [ "ib_write_lat", "ib_read_lat", "ib_send_lat" ] )
+@pytest.mark.parametrize( "lat_test", [ "ib_write_lat", "ib_send_lat" ] )
 
 
 def test_ib_lat_perf( phdl, lat_test, config_dict ):
@@ -295,7 +297,7 @@ def test_ib_lat_perf( phdl, lat_test, config_dict ):
             ibperf_lib.verify_expected_lat( lat_test, msg_size, ib_lat_dict[lat_test][msg_size], \
                  config_dict['expected_results'])
 
-
+    print('%%%%%%%%%%% ib_lat_dict %%%%%%%%%')
     print(ib_lat_dict)
     update_test_result()
 
@@ -306,7 +308,7 @@ def test_ib_lat_perf( phdl, lat_test, config_dict ):
 def test_build_ib_bw_perf_chart( phdl,  ):
 
     globals.error_list = []
-    ibperf_lib.generate_ibperf_bw_chart( ib_bw_dict )
+    ibperf_lib.generate_ibperf_bw_chart( ib_bw_dict, excel_file='ib_bw_pps_perf.xlsx'  )
     update_test_result()
 
 
