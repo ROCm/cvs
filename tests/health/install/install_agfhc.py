@@ -147,7 +147,7 @@ def test_install_agfhc(phdl, shdl, config_dict, ):
     install_dir = config_dict['install_dir']
     package_tar_ball = config_dict['package_tar_ball']
 
-    if config_dict['nfs_install'] is True:
+    if re.search( 'True', config_dict['nfs_install'], re.I ):
         hdl = shdl
     else:
         hdl = phdl
@@ -165,6 +165,10 @@ def test_install_agfhc(phdl, shdl, config_dict, ):
 
     # Copy the package to the install directory and untar
     hdl.exec( f'cd {install_dir};cp {package_tar_ball} . && tar -xvf {package_tar_ball}' )
+
+    time.sleep(10)
+    # Set hdl to parallel fleet wide
+    hdl = phdl
 
     # install the untarred file
     try:
