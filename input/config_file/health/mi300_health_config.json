@@ -10,15 +10,15 @@
     },
     "transferbench":
     {
-       "path": "/opt/amd/transferbench",
-       "example_tests_path": "/root/cache/INSTALL/TransferBench/examples",
-       "git_install_path": "/root/cache/INSTALL/",
+       "path": "/tmp/cvs/INSTALL/TransferBench",
+       "example_tests_path": "/tmp/cvs/INSTALL/TransferBench/examples",
+       "git_install_path": "/tmp/cvs/INSTALL/",
        "git_url": "https://github.com/ROCm/TransferBench.git",
        "nfs_install": "True",
        "results":
        {
            "bytes_to_transfer": "268435456",
-           "path": "/opt/amd/transferbench",
+           "path": "/tmp/cvs/INSTALL/TransferBench",
            "gpu_to_gpu_a2a_rtotal": "320.0",
            "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
            "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
