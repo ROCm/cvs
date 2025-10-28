@@ -36,25 +36,6 @@ def cluster_file(pytestconfig):
 def config_file(pytestconfig):
     return pytestconfig.getoption("config_file")
 
-@pytest.fixture(scope="module")
-def rvs_test_level(pytestconfig):
-    """Get RVS test level from command line, default to 4 if not provided or invalid"""
-    level = pytestconfig.getoption("rvs_test_level", default=4)
-
-    # Validate level is between 0 and 5
-    # Level 0 is special: run all individual tests regardless of RVS version
-    try:
-        level_int = int(level)
-        if 0 <= level_int <= 5:
-            return level_int
-        else:
-            log.warning(f'Invalid RVS test level: {level}. Using default level 4')
-            return 4
-    except (ValueError, TypeError):
-        log.warning(f'Invalid RVS test level format: {level}. Using default level 4')
-        return 4
-
-
 # Importing the cluster and cofig files to script to access node, switch, test config params
 @pytest.fixture(scope="module")
 def cluster_dict(cluster_file):
@@ -79,6 +60,26 @@ def phdl(cluster_dict):
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
     return phdl
+
+
+@pytest.fixture(scope="module")
+def rvs_test_level(config_dict):
+    """Get RVS test level from config file, default to 4 if not provided or invalid"""
+    level = config_dict.get('rvs_test_level', 4)
+
+    # Validate level is between 0 and 5
+    # Level 0 is special: run all individual tests regardless of RVS version
+    try:
+        level_int = int(level)
+        if 0 <= level_int <= 5:
+            log.info(f'Using RVS test level from config file: {level_int}')
+            return level_int
+        else:
+            log.warning(f'Invalid RVS test level in config: {level}. Using default level 4')
+            return 4
+    except (ValueError, TypeError):
+        log.warning(f'Invalid RVS test level format in config: {level}. Using default level 4')
+        return 4
 
 
 @pytest.fixture(scope="module")
