@@ -207,7 +207,7 @@ def test_install_transferbench(phdl, shdl, config_dict ):
     out_dict = hdl.exec(f'cd {git_install_path}/TransferBench;CC=hipcc make', timeout=500 )
 
     # Verify installation happened fine on all nodes
-    out_dict = phdl.exec(f'ls -l /opt/amd/transferbench')
+    out_dict = phdl.exec(f'ls -l {git_install_path}/TransferBench')
     for node in out_dict.keys():
         if not re.search( 'TransferBench', out_dict[node] ):
             fail_test(f'Transfer bench installation failed on node {node}')
