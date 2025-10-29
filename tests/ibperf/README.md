@@ -10,10 +10,15 @@ Following are the currently supported test suites
 
 This Pytest script can be run in the following fashion (for the details on arguments and their purpose, please refer the main README under the CVS parent folder
 
+In the config file, cvs/input/config_file/ibperf/ibperf_config.json, change the value of parameter "install_dir": "/home/linuxuser/" to the desired location.
+
+
 ```
 (myenv) [user@host]~/cvs:(main)$
 (myenv) [user@host]~/cvs:(main)$pwd
 /home/user/cvs
+(myenv) [user@host]~/cvs:(main)$pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/install_ibperf_tools.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
+
 (myenv) [user@host]~/cvs:(main)$pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/ib_perf_bw_test.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
 
 ```
