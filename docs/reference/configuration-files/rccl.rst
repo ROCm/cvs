@@ -2,9 +2,9 @@
   :description: Configure the RCCL configuration file variables
   :keywords: RCCL, ROCm, install, cvs
 
-****************************************************************
-ROCm Communication Collectives Library (RCCL) configuration file
-****************************************************************
+*********************************************************************
+ROCm Communication Collectives Library (RCCL) test configuration file
+*********************************************************************
 
 Here's a code snippet of the ``rccl_config.json`` file for reference:
 

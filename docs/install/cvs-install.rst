@@ -6,8 +6,8 @@
 Cluster Validation Suite (CVS) installation
 *******************************************
 
-Before you can use CVS, you must clone the `CVS GitHub repository <https://github.com/ROCm/cvs>`_ and set your environment. 
-Then, you need to configure the JSON cluster file and the script test configuration files according to your use case.
+Before using CVS, clone the `CVS GitHub repository <https://github.com/ROCm/cvs>`_ and set your environment. 
+Then configure the JSON cluster file and the script test configuration files according to your use case.
 
 System requirements
 ===================
@@ -30,7 +30,7 @@ CVS supports these Linux distributions:
 Install CVS
 ===========
 
-You should run CVS from a runner machine such as an Ubuntu virtual machine or bare metal. Alternatively, you can install and run CVS from the first host in your cluster. 
+Run CVS from a runner machine, such as an Ubuntu virtual machine or bare metal. Alternatively, you can install and run CVS from the first host in your cluster. 
 It's recommended to run CVS from a dedicated runner machine to avoid loss of data if the host requires a reboot (such as during a system failure).
 
 1. Git clone the package:
@@ -41,10 +41,10 @@ It's recommended to run CVS from a dedicated runner machine to avoid loss of dat
 
    The CVS GitHub repository is organized in these directories:
 
-   -	``tests``: This folder has the PyTest scripts which internally call the library functions under the ``./lib`` directory. They're in native Python and can be invoked from any Python scripts for reusability. The ``tests`` directory has a subfolder based on the nature of the tests like health, RCCL, training, and more.
+   -	``tests``: This folder contains the PyTest scripts which internally call the library functions under the ``./lib`` directory. They're in native Python and can be invoked from any Python scripts for reusability. The ``tests`` directory contains a subfolder based on the nature of the tests, such as health, RCCL, training, and more.
    -	``lib``: This is a collection of Python modules with utility functions that can be reused in other Python scripts.
    -	``input``: This is a collection of the input JSON files that are provided to the PyTest scripts using the two arguments ``--cluster_file`` and the ``--config_file``. The ``--cluster_file`` is a JSON file which captures all the aspects of the cluster test bed, such as the IP address/hostnames, username, keyfile, and more. 
-   -	``utils``: This is a collection of standalone scripts which can be run natively without PyTest. They offer different utility functions.
+   -	``utils``: This is a collection of standalone scripts that can be run natively without PyTest. They offer different utility functions.
 
 2. Navigate to the extracted directory and run the installation script:
 
@@ -66,7 +66,7 @@ It's recommended to run CVS from a dedicated runner machine to avoid loss of dat
 Configure the CVS cluster file
 ==============================
 
-The cluster file is a JSON file which has the details about the IPs of the cluster. You must configure the cluster file before you run any CVS tests. 
+The cluster file is a JSON file containing the cluster's IP addresses. You must configure the cluster file before you run any CVS tests. 
 
 1. Go to ``cvs/input/cluster_file/cluster.json`` in your cloned repo.
 2. Edit the management IP and node dictionary with the list of IPs of the available cluster:
