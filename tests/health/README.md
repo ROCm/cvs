@@ -27,11 +27,86 @@ These are Pytest scripts and can be run in the following fashion (for the detail
 pytest -vvv --log-file=/tmp/rvs_test.log -s ./tests/health/rvs_cvs.py --cluster_file ./input/cluster_file/cluster.json --config_file ./input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs_health_report.html --capture=tee-sys --self-contained-html
 ```
 
-RVS (ROCmValidationSuite) tests include:
-- GST (GPU Stress Test) - Single GPU validation
-- IET (Input EDPp Test) - Power and thermal validation
-- PEBB (PCI Express Bandwidth Benchmark) - PCIe performance validation
-- GPU Enumeration - Basic GPU detection
-- Memory Test - GPU memory functionality validation
+### RVS (ROCmValidationSuite) Test Suite
 
-The RVS tests automatically detect and use MI300X-specific configuration files when available, falling back to default configurations otherwise.
+RVS provides comprehensive GPU validation through multiple test modules. The test suite intelligently adapts based on RVS version and GPU hardware detected.
+
+#### Supported Test Modules
+
+Individual test modules include:
+- **GPUP** (GPU Properties Test) - Validates GPU properties and capabilities
+- **MEM** (Memory Test) - Validates GPU memory functionality and integrity
+- **GST** (GPU Stress Test) - Validates GPU functionality and performance under load
+- **IET** (Input EDPp Test) - Validates power consumption and thermal behavior
+- **PEBB** (PCI Express Bandwidth Benchmark) - Measures and validates PCIe bandwidth performance
+- **PBQT** (P2P Benchmark and Qualification Tool) - Validates peer-to-peer communication between GPUs
+- **PEQT** (PCI Express Qualification Tool) - Validates PCIe link quality and stability
+- **RCQT** (ROCm Configuration Qualification Tool) - Validates ROCm configuration and system setup
+- **TST** (Thermal Stress Test) - Validates GPU thermal management under stress
+- **BABEL** (BABEL Benchmark) - GPU memory bandwidth validation using BABEL streaming benchmark
+- **GPU Enumeration** - Basic GPU detection test
+
+#### Automatic Device-Specific Configuration
+
+The RVS test suite automatically detects the GPU device present in your system and uses the appropriate configuration files:
+
+- Detects GPU model using `amd-smi` (e.g., MI300X, MI308X, MI300XHF)
+- Searches for device-specific configuration folders (e.g., `/opt/rocm/share/rocm-validation-suite/conf/MI300X/`)
+- Falls back to default configuration if device-specific configs are not available
+- Works with any MI300 series variant
+
+This ensures optimal test configuration for your specific hardware without manual intervention.
+
+#### RVS Version-Based Test Execution
+
+The test suite adapts its execution strategy based on the RVS version installed:
+
+**RVS Version >= 1.3.0:**
+- Runs **LEVEL-based configuration test** by default (collective execution of all modules)
+- Skips individual module tests to reduce overall execution time
+- Uses `-r <level>` option for comprehensive validation in a single run
+
+**RVS Version < 1.3.0:**
+- Runs **individual module tests** (LEVEL configs not supported)
+- Each test module executes separately
+
+**Note:** Test skipping based on RVS version is expected behavior and improves efficiency.
+
+#### RVS Test Level Configuration
+
+Configure the test depth and comprehensiveness using the `rvs_test_level` parameter in your config file:
+
+```json
+{
+  "rvs": {
+    "rvs_test_level": 4
+  }
+}
+```
+
+**Available Test Levels:**
+
+- **Level 0**: Force individual module tests (skip LEVEL test regardless of RVS version)
+- **Level 1**: Quick basic checks - Fast validation
+- **Level 2**: Standard validation - Recommended for routine testing
+- **Level 3**: Extended validation - Thorough testing
+- **Level 4**: Comprehensive testing - **Default** (recommended for qualification)
+- **Level 5**: Maximum stress testing - Most extensive validation
+
+
+#### Future Direction
+
+In future CVS releases, individual RVS module test functions will be removed in favor of the more efficient LEVEL-based configuration tests. The current implementation maintains backward compatibility while encouraging migration to LEVEL-based testing.
+
+#### Expected Test Behavior
+
+When running RVS tests, you may see some tests being skipped. This is **expected behavior** based on:
+
+1. **RVS Version**: Tests skip based on version capabilities
+   - Example: `SKIPPED [test_rvs_gpup_single: RVS version 1.3.0 >= 1.3.0: Running LEVEL-4 test instead]`
+
+2. **Test Level Configuration**: Setting `rvs_test_level=0` skips LEVEL tests
+   - Example: `SKIPPED [test_rvs_level_config: rvs_test_level=0: Running individual tests instead]`
+
+This intelligent test selection reduces execution time while maintaining comprehensive validation coverage.
+
