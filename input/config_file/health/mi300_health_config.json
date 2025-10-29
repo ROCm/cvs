@@ -10,15 +10,15 @@
     },
     "transferbench":
     {
-       "path": "/tmp/cvs/INSTALL/TransferBench",
-       "example_tests_path": "/tmp/cvs/INSTALL/TransferBench/examples",
-       "git_install_path": "/tmp/cvs/INSTALL/",
+       "path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL/TransferBench",
+       "example_tests_path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL/TransferBench/examples",
+       "git_install_path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL/",
        "git_url": "https://github.com/ROCm/TransferBench.git",
        "nfs_install": "True",
        "results":
        {
            "bytes_to_transfer": "268435456",
-           "path": "/tmp/cvs/INSTALL/TransferBench",
+           "path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL/TransferBench",
            "gpu_to_gpu_a2a_rtotal": "320.0",
            "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
            "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
@@ -43,8 +43,8 @@
     },
     "rocblas":
     {
-       "path": "/root/cache/INSTALL/rocBLAS/build/release/clients/staging",
-       "git_install_path": "/root/cache/INSTALL",
+       "path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL/rocBLAS/build/release/clients/staging",
+       "git_install_path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL",
        "git_url": "https://github.com/ROCm/rocBLAS.git",
        "rocm_version": "7.0.0",
        "nfs_install": "True",
@@ -57,8 +57,8 @@
     },
     "rochpl":
     {
-       "path": "/root/cache/INSTALL/rocHPL",
-       "git_install_path": "/root/cache/INSTALL",
+       "path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL/rocHPL",
+       "git_install_path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL",
        "git_url": "https://github.com/ROCm/rocHPL.git",
        "nfs_install": "True",
        "results":
@@ -70,8 +70,8 @@
     },
     "babelstream":
     {
-       "path": "/root/cache/INSTALL/BabelStream/build",
-       "git_install_path": "/root/cache/INSTALL",
+       "path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL/BabelStream/build",
+       "git_install_path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL",
        "git_url": "https://github.com/UoB-HPC/BabelStream.git",
        "nfs_install": "True",
        "results":
