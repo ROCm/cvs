@@ -1,8 +1,16 @@
 {
-    "_comment": "change to your user-id and your private key and your node IPs. The Public IPs of the nodes will be the keys of the node_dict",
-    "_vpc_comment": "If your cluster has a dedicated VPC IP that is reachable from other nodes in the cluster, set it to that (or) else set the same as the main host IP/Name",
+    "_comment1": "Change <home_mount_dir_name> to your home mount dir name if different ex: 'home' or 'root' ",
+    "home_mount_dir_name": "home",
+
+    "_comment2": " user-id will be resolved to current username in runtime. You can also change to your user-id here.",
     "username": "{user-id}",
+
+    "_comment3": " Change <priv_key_file> to your private key if it is different.",
     "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+
+    "_comment4": " Change to your node IPs. The Public IPs of the nodes will be the keys of the node_dict",
+    "_vpc_comment": "If your cluster has a dedicated VPC IP that is reachable from other nodes in the cluster, set it to that (or) else set the same as the main host IP/Name",
+
     "head_node_dict":
     {
         "mgmt_ip": "{xx.xx.xx.xx|hostname}"
@@ -29,3 +37,4 @@
 
 
 }
+
