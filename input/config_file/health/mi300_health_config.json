@@ -86,7 +86,7 @@
     "rvs":
     {
         "path": "/opt/rocm/bin",
-        "git_install_path": "/tmp/rvs/INSTALL",
+        "git_install_path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL/rvs",
         "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
         "nfs_install": "True",
         "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",
