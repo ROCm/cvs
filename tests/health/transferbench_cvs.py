@@ -39,19 +39,27 @@ def config_file(pytestconfig):
 
 # Importing the cluster and cofig files to script to access node, switch, test config params
 @pytest.fixture(scope="module")
-def  cluster_dict(cluster_file):
-     with open(cluster_file) as json_file:
+def cluster_dict(cluster_file):
+    with open(cluster_file) as json_file:
         cluster_dict = json.load(json_file)
-     log.info(cluster_dict)
-     return cluster_dict
+
+    # Resolve path placeholders like {user-id} in cluster config
+    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
+
+    log.info(cluster_dict)
+    return cluster_dict
 
 @pytest.fixture(scope="module")
-def  config_dict(config_file):
-     with open(config_file) as json_file:
+def config_dict(config_file, cluster_dict):
+    with open(config_file) as json_file:
         config_dict_t = json.load(json_file)
-     config_dict = config_dict_t['transferbench']
-     log.info(config_dict)
-     return config_dict
+    config_dict = config_dict_t['transferbench']
+
+    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
+    config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
+
+    log.info(config_dict)
+    return config_dict
 
 
 

@@ -75,6 +75,10 @@ def cluster_dict(cluster_file):
     """
     with open(cluster_file) as json_file:
         cluster_dict = json.load(json_file)
+
+    # Resolve path placeholders like {user-id} in cluster config
+    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
+
     log.info(cluster_dict)
     return cluster_dict
 
@@ -83,7 +87,7 @@ def cluster_dict(cluster_file):
 
 
 @pytest.fixture(scope="module")
-def config_dict(config_file):
+def config_dict(config_file, cluster_dict):
     """
     Load and return the 'babelstream' subsection from the test configuration JSON.
 
@@ -100,6 +104,10 @@ def config_dict(config_file):
     with open(config_file) as json_file:
         config_dict_t = json.load(json_file)
     config_dict = config_dict_t['babelstream']
+
+    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
+    config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
+
     log.info(config_dict)
     return config_dict
 
