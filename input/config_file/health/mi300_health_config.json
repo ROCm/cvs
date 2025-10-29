@@ -2,13 +2,13 @@
 
     "agfhc":
     {
-         "path": "/opt/amd/agfhc",
-         "package_tar_ball": "/home/<changeme>/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
-         "install_dir": "/home/<changeme>/INSTALL/agfhc/",
-	 "_comments_log_dir": "log_dir has to be a NON NFS local file system",
-	 "log_dir": "/root/agfhc_logs",
-         "nfs_install": "True",
-         "hbm_test_duration": "00:01:30"
+        "path": "/opt/amd/agfhc",
+        "package_tar_ball": "/home/<changeme>/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
+        "install_dir": "/home/<changeme>/INSTALL/agfhc/",
+        "_comments_log_dir": "log_dir has to be a NON NFS local file system",
+        "log_dir": "/root/agfhc_logs",
+        "nfs_install": "True",
+        "hbm_test_duration": "00:01:30"
     },
     "transferbench":
     {
