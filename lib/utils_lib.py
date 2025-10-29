@@ -18,7 +18,7 @@ log = globals.log
 def fail_test(msg):
     """
     Record and report a test failure without immediately raising an exception.
-    This will enable Pytest to continue running further steps in the test case 
+    This will enable Pytest to continue running further steps in the test case
     without returning back on first failure.
 
     Parameters:
@@ -47,7 +47,7 @@ def fail_test(msg):
 
 def update_test_result():
     # For every Pytest test case, we will initialize the global.error_list to empty and
-    # whenever fail_test is executed, it would add the error messages and if this is 
+    # whenever fail_test is executed, it would add the error messages and if this is
     # a non-zero list, then the test case will be marked as a failure in the end of the
     # test case
     if len(globals.error_list) > 0:
@@ -61,7 +61,7 @@ def print_test_output(log, out_dict):
     print('#========================================================#')
     for node in out_dict.keys():
         print(f'==== {node} ====')
-        print(out_dict[node]) 
+        print(out_dict[node])
 
 
 
@@ -90,8 +90,8 @@ def scan_test_results(out_dict):
     """
 
     word_count = 5  # Number of words to include before/after the matched token for context
-   
-    # Iterate over each host's output 
+
+    # Iterate over each host's output
     for host in out_dict.keys():
         # Search for any high-level failure pattern in the raw output
         match = re.search( 'test FAIL |test ERROR |ABORT|Traceback|No such file|FATAL', out_dict[host], re.I )
@@ -127,7 +127,7 @@ def scan_test_results(out_dict):
 def json_to_dict(json_string):
     print('^^^^^^^^^')
     print(json_string)
-    return json.loads(json_string) 
+    return json.loads(json_string)
 
 
 def convert_phdl_json_to_dict( dict_json ):
@@ -192,14 +192,14 @@ def get_model_from_rocm_smi_output(smi_output):
 
     """
     if re.search( 'MI300X', smi_output, re.I ):
-        model = 'mi300x'  
+        model = 'mi300x'
     elif re.search( 'MI325', smi_output, re.I ):
-        model = 'mi325' 
+        model = 'mi325'
     elif re.search( 'MI350', smi_output, re.I ):
         model = 'mi350'
     elif re.search( 'MI355', smi_output, re.I ):
         model = 'mi355'
-    else:  
+    else:
         model = 'mi300x'
     return model
 
@@ -225,7 +225,7 @@ def convert_hms_to_secs( time_string ):
       - Computes total_seconds = hours*3600 + minutes*60 + seconds.
       - Prints a user-friendly error message and returns None on format/parse errors.
 
-    """ 
+    """
     try:
         # Break the time string into components by ':'
         parts = time_string.split(':')
@@ -245,3 +245,138 @@ def convert_hms_to_secs( time_string ):
     except ValueError:
         print("Invalid time format. Please ensure hours, minutes, and seconds are numeric.")
         return None
+
+
+def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
+    """
+    Internal helper function to recursively resolve placeholders in a dictionary.
+
+    Args:
+      target_dict: Dictionary (or nested dict/list/str) where placeholders should be replaced
+      replacements: Dictionary mapping placeholder strings to their replacement values
+                   Example: {'{user-id}': 'master', '{home}': '/home/master'}
+      context_name: Optional context name for logging (e.g., "cluster", "config")
+
+    Returns:
+      dict/list/str: Input structure with all placeholders replaced
+
+    Example:
+      target = {"path": "/home/{user-id}/files", "user": "{user-id}"}
+      replacements = {"{user-id}": "john"}
+      result = _resolve_placeholders_in_dict(target, replacements)
+      # Returns: {"path": "/home/john/files", "user": "john"}
+    """
+
+    def replace_in_string(value):
+        """Replace all placeholders in a string."""
+        if not isinstance(value, str):
+            return value
+
+        result = value
+        for placeholder, replacement in replacements.items():
+            result = result.replace(placeholder, replacement)
+        return result
+
+    def replace_recursive(obj):
+        """Recursively replace placeholders in nested structures."""
+        if isinstance(obj, dict):
+            return {k: replace_recursive(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [replace_recursive(item) for item in obj]
+        elif isinstance(obj, str):
+            return replace_in_string(obj)
+        else:
+            return obj
+
+    # Log the resolution operation
+    if context_name:
+        placeholder_summary = ', '.join([f'{k}={v}' for k, v in replacements.items()])
+        log.info(f'Resolving {context_name} placeholders: {placeholder_summary}')
+
+    resolved_dict = replace_recursive(target_dict)
+
+    return resolved_dict
+
+
+def resolve_cluster_config_placeholders(cluster_dict):
+    """
+    Resolve path placeholders in cluster configuration dictionary.
+    This is called when loading cluster_dict before username is available from config.
+
+    Supported placeholders:
+      - {user-id}: Replaced with current system user from environment
+
+    Args:
+      cluster_dict: Cluster configuration dictionary (can be nested dict/list/str)
+
+    Returns:
+      dict: Cluster configuration with resolved path placeholders
+
+    Example:
+      Input username:  "{user-id}"
+      Output username: "master" (from system environment)
+
+      Input priv_key_file: "/home/{user-id}/.ssh/id_rsa"
+      Output priv_key_file: "/home/master/.ssh/id_rsa"
+    """
+    # Get username from environment (fallback chain: USER -> LOGNAME -> USERNAME -> 'root')
+    username = os.getenv('USER') or os.getenv('LOGNAME') or os.getenv('USERNAME') or 'root'
+
+    log.info(f'Resolving cluster path placeholders with system username: {username}')
+
+    # Define replacement mapping - only resolve {user-id} in cluster config
+    replacements = {
+        '{user-id}': username,
+    }
+
+    resolved_cluster = _resolve_placeholders_in_dict(cluster_dict, replacements, context_name="cluster config")
+
+    return resolved_cluster
+
+
+def resolve_test_config_placeholders(config_dict, cluster_dict):
+    """
+    Resolve path placeholders in test configuration dictionary.
+
+    Supported placeholders:
+      - {user-id} or {user}: Replaced with username from cluster_dict or current system user
+      - {home}: Replaced with home directory of the user
+      - {home-mount-dir}: Replaced with home mount directory name from cluster_dict
+
+    Args:
+      config_dict: Configuration dictionary (can be nested dict/list/str)
+      cluster_dict: Cluster dictionary containing username and other cluster info
+
+    Returns:
+      dict/list/str: Configuration with resolved path placeholders
+
+    Example:
+      Input:  "/home/{user-id}/INSTALL"
+      Output: "/home/master/INSTALL"
+
+      Input:  "{home}/cvs/INSTALL"
+      Output: "/home/master/cvs/INSTALL"
+
+      Input:  "/{home-mount-dir}/{user-id}/cvs_cache"
+      Output: "/home/master/cvs_cache"
+    """
+    # Get username from cluster config or fallback to environment
+    username = cluster_dict.get('username', os.getenv('USER', 'root'))
+    home_mount_dir_name = cluster_dict.get('home_mount_dir_name', 'home')
+
+    # Get home directory
+    home_dir = os.path.expanduser(f'~{username}')
+
+    log.info(f'Resolving config path placeholders with username: {username}, home: {home_dir}, home_mount_dir: {home_mount_dir_name}')
+
+    # Define replacement mapping - resolve all placeholders in config
+    replacements = {
+        '{user-id}': username,
+        '{user}': username,
+        '{home}': home_dir,
+        '{home-mount-dir}': home_mount_dir_name
+    }
+
+    resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")
+
+    return resolved_config
