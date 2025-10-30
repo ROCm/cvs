@@ -138,7 +138,7 @@ def phdl(cluster_dict):
 def test_version_check( phdl, config_dict ):
     globals.error_list = []
     path = config_dict['path']
-    out_dict = phdl.exec('sudo {path}/agfhc -v')
+    out_dict = phdl.exec(f'sudo {path}/agfhc -v')
     for node in out_dict.keys():
         if not re.search( 'agfhc version:', out_dict[node], re.I ):
             fail_test(f'Failed to print the AGFHC version on node {node}, installation not proper')
