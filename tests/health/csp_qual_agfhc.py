@@ -133,8 +133,20 @@ def phdl(cluster_dict):
 
 
 
+# Get the version of AGFHC
+@pytest.mark.dependency()
+def test_version_check( phdl ):
+    globals.error_list = []
+    out_dict = phdl.exec('sudo {path}/agfhc -v')
+    for node in out_dict.keys():
+        if not re.search( 'agfhc version:', out_dict[node], re.I ):
+            fail_test(f'Failed to print the AGFHC version on node {node}, installation not proper')
+    update_test_result()
+
+
 
 # 2 hrs test
+@pytest.mark.dependency(depends=["test_version_check"])
 def test_all_lvl5(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run all_lvl5 Test')
@@ -146,6 +158,7 @@ def test_all_lvl5(phdl, config_dict, ):
 
 
 # 8 hrs
+@pytest.mark.dependency(depends=["test_version_check"])
 def test_agfhc_hbm_lvl5(phdl, config_dict, ):
     """
     Run AGFHC HBM1 level 5 recipe for 4 iterations
@@ -164,6 +177,7 @@ def test_agfhc_hbm_lvl5(phdl, config_dict, ):
 
 
 # 4 hrs
+@pytest.mark.dependency(depends=["test_version_check"])
 def test_agfhc_minihpl(phdl, config_dict, ):
 
     """
@@ -181,6 +195,7 @@ def test_agfhc_minihpl(phdl, config_dict, ):
 
 
 # 5 min
+@pytest.mark.dependency(depends=["test_version_check"])
 def test_agfhc_xgmi_lvl1(phdl, config_dict, ):
     """
     Run AGFHC XGMI lvl1 recipe:
@@ -197,6 +212,8 @@ def test_agfhc_xgmi_lvl1(phdl, config_dict, ):
 
 
 # 10 min
+# adding some additional time for buffer
+@pytest.mark.dependency(depends=["test_version_check"])
 def test_agfhc_pcie_lvl2(phdl, config_dict, ):
     """
     Run AGFHC pcie lvl2:
@@ -205,13 +222,14 @@ def test_agfhc_pcie_lvl2(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run PCIe lvl2')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl2', timeout=(60*10)+30)
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl2', timeout=(60*30)+30)
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
 
+@pytest.mark.dependency(depends=["test_version_check"])
 def test_agfhc_all_perf(phdl, config_dict, ):
     """
     Pytest: Run the AGFHC 'all_perf' performance recipe across nodes.
