@@ -75,6 +75,7 @@ class JaxTrainingJob():
     def __init__( self,  phdl, model_name,
         training_config_dict, model_params_dict,
         hf_token, gpu_type='mi300',
+        distributed_training=True,
         tune_model_params=True, scripts_dir=os.path.expanduser("~") + '/SCRIPTS'  ):
 
         self.phdl                        = phdl
@@ -125,11 +126,7 @@ class JaxTrainingJob():
         self.container_image       = self.tc_dict['container_image']
         self.container_name        = self.tc_dict['container_name']
 
-        if self.tc_dict['distributed_training'] == "True":
-            self.distributed_training  = True
-        else:
-            self.distributed_training  = False
-
+        self.distributed_training  = distributed_training
 
         self.training_steps        = int(self.tc_dict['training_steps'])
         self.nnodes                = self.tc_dict['nnodes']
