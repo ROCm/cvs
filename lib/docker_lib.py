@@ -107,7 +107,6 @@ def launch_docker_container( phdl, container_name, image, device_list=[], volume
        shm_size='64G', timeout=60*10 ):
 
     cmd = f'docker run -d --network {network} --ipc {network} \
-            --group-add render --group-add video \
             --cap-add=IPC_LOCK --security-opt seccomp=unconfined --privileged '
     for device in device_list:
         cmd = cmd + f' --device {device} '

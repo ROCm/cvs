@@ -254,6 +254,12 @@ class JaxTrainingJob():
                   model_name: {self.model_name}
                   enable_checkpointing: {self.training_config_dict['enable_checkpointing']}
                   attention: {self.mp_dict['attention']}
+                  packing: True
+                  enable_goodput_recording: False
+                  monitor_goodput: False
+                  optimizer_memory_host_offload: False
+                  param_scan_axis: 1
+                  shardy: False
                   dcn_data_parallelism: {self.mp_dict['dcn_data_parallelism']}
                   dcn_fsdp_parallelism: {self.mp_dict['dcn_fsdp_parallelism']}
                   dcn_pipeline_parallelism: {self.mp_dict['dcn_pipeline_parallelism']}
@@ -392,7 +398,7 @@ class JaxTrainingJob():
             # Take a reference config yml like llama2_70b
             cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                       mkdir -p {self.log_dir}/jax-logs/out-node{i}
-                      export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/; cd /workspace/maxtext; python /workspace/maxtext/MaxText/train.py MaxText/configs/llama2_70b_gpu_bs7.yml base_output_directory={self.tc_dict['log_dir']} 2>&1 | tee >(grep -v 'external/xla/xla/') > {self.log_dir}/jax-logs/out-node{i}/training.log' > /workspace/maxtext/training_wrapper_script.sh"'''
+                      export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/; cd /workspace/maxtext; python /workspace/maxtext/MaxText/train.py MaxText/configs/llama2_70b_gpu_bs7.yml enable_goodput_recording=false monitor_goodput=false shardy=False base_output_directory={self.tc_dict['log_dir']} 2>&1 | tee >(grep -v 'external/xla/xla/') > {self.log_dir}/jax-logs/out-node{i}/training.log' > /workspace/maxtext/training_wrapper_script.sh"'''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
         self.phdl.exec_cmd_list(cmd_list)
