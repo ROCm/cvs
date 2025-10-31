@@ -485,9 +485,8 @@ Change the parameters as needed in the two JAX training configuration files: ``2
 
     } 
 
- 
+ } 
 
-} 
 
 Parameters
 ----------
@@ -1296,7 +1295,7 @@ Parameters
 
   } 
 
- Parameters
+Parameters
 ----------
 
 ``config``

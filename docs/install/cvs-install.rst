@@ -148,7 +148,7 @@ In the ``cvs/input/config_file/health/mi300_health_config.json`` file, edit the 
 
 - Under ``rvs``:
 
-   - ``git_install_path`` 
+  - ``git_install_path`` 
  
 ROCm Communication Collectives Library (RCCL)
 ---------------------------------------------
