@@ -626,7 +626,7 @@ Use the parameters in these tables to configure the training file.
      - ``/dev/infiniband``
      - Exposes InfiniBand device files for RDMA networking 
    * - ``/usr/local/lib/libbnxt_re-rdmav34.so``
-     - ``/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host``
+     - /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host
      - Provides the ``bnxt_re`` RDMA provider (Broadcom NIC) inside the container 
    * - ``/lib/libibverbs.d``
      - ``/lib/libibverbs.d``
@@ -1456,13 +1456,13 @@ Use the parameters in these tables to configure the training file.
      - ``/dev/infiniband``
      - Exposes InfiniBand device files for RDMA networking 
    * - ``/usr/local/lib/libbnxt_re-rdmav34.so``
-     - ``/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host``
+     - /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host
      - Provides the ``bnxt_re`` RDMA provider (Broadcom NIC) inside the container 
    * - ``/lib/libibverbs.d``
      - ``/lib/libibverbs.d``
      - Mounts the RDMA verbs configuration directory — needed by libibverbs to detect RDMA devices
    * - ``/tmp/TRAINING_LOGS``
-     - ``/workspace/maxtext/output`` 
+     - /workspace/maxtext/output 
      - Stores training logs outside the container 
    * - ``env_dict``
      - N/A
@@ -1488,7 +1488,6 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 15 10 30
    :header-rows: 1
 
    * - Configuration parameters
@@ -1549,10 +1548,10 @@ Use the parameters in these tables to configure the training file.
      - parquet
      - Paths to training data and tokenizer
    * - ``hf_train_files``
-     - ``/home/{user-id}/maxtext/data/c4/000*.parquet``
+     - /home/{user-id}/maxtext/data/c4/000*.parquet
      - Paths to training data and tokenizer
    * - ``tokenizer_path``
-     - ``/home/{user-id}/maxtext/Meta-Llama-405-B`` 
+     - /home/{user-id}/maxtext/Meta-Llama-405-B 
      - Paths to tokenizer
    * - ``async_checkpointing``
      - false
@@ -1575,7 +1574,6 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 15 10 30
    :header-rows: 1
 
    * - Configuration parameters
@@ -1614,7 +1612,6 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 15 10 30
    :header-rows: 1
 
    * - Configuration parameters
@@ -1723,7 +1720,6 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 15 10 30
    :header-rows: 1
 
    * - Configuration parameters
