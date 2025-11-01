@@ -79,17 +79,22 @@ def cluster_dict(cluster_file):
     """
     with open(cluster_file) as json_file:
         cluster_dict = json.load(json_file)
+
+    # Resolve path placeholders like {user-id} in cluster config
+    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
+
     log.info(cluster_dict)
     return cluster_dict
 
 
 @pytest.fixture(scope="module")
-def training_dict(training_config_file):
+def training_dict(training_config_file, cluster_dict):
     """
     Load and return the 'config' section from the training config JSON.
 
     Args:
       training_config_file (str): Path to the training configuration JSON.
+      cluster_dict: Cluster configuration (for placeholder resolution)
 
     Returns:
       dict: The training configuration dictionary stored under the 'config' key.
@@ -100,6 +105,10 @@ def training_dict(training_config_file):
     with open(training_config_file) as json_file:
         training_dict_t = json.load(json_file)
     training_dict = training_dict_t['config']
+
+    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
+    training_dict = resolve_test_config_placeholders(training_dict, cluster_dict)
+
     return training_dict
 
 
@@ -282,4 +291,3 @@ def test_llama_3_1_fp8_distributed(phdl, training_dict, model_params_dict, hf_to
     jx_obj.verify_training_results()
     update_test_result()
 
- 
