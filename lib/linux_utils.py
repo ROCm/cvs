@@ -582,12 +582,14 @@ def get_lldp_dict( phdl ):
         if not re.search( 'lldpcli', out_dict[node] ):
             lldp_installed=False
     if lldp_installed is not True:
-        try:
-            phdl.exec('sudo apt update -y')
-            phdl.exec('sudo DEBIAN_FRONTEND=noninteractive apt install -yq lldpd')
-        except Exception as e:
-            print('Error installing LLDP with apt install - {}'.format(e))
-            return lldp_dict
+        print('Cannot get LLDP Dict as lldpcli is missing')
+        return {}
+        #try:
+        #    phdl.exec('sudo apt update -y')
+        #    phdl.exec('sudo DEBIAN_FRONTEND=noninteractive apt install -yq lldpd')
+        #except Exception as e:
+        #    print('Error installing LLDP with apt install - {}'.format(e))
+        #    return lldp_dict
 
     print('Get LLDP dict')
 
