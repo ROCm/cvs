@@ -81,12 +81,15 @@ def cluster_dict(cluster_file):
     """
     with open(cluster_file) as json_file:
        cluster_dict = json.load(json_file)
+
+    # Resolve path placeholders like {user-id} in cluster config
+    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
     log.info(cluster_dict)
     return cluster_dict
 
 
 @pytest.fixture(scope="module")
-def training_dict(training_config_file):
+def training_dict(training_config_file, cluster_dict):
     """
     Load the training configuration section ('config') from the training JSON file.
 
@@ -102,6 +105,9 @@ def training_dict(training_config_file):
     with open(training_config_file) as json_file:
        training_dict_t = json.load(json_file)
     training_dict = training_dict_t['config']
+
+    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
+    training_dict = resolve_test_config_placeholders(training_dict, cluster_dict)
     return training_dict
 
 
