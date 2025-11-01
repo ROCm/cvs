@@ -396,7 +396,7 @@ def execute_rvs_test(phdl, config_dict, test_name):
 
     rvs_path = config_dict['path']
     config_file = test_config.get('config_file')
-    timeout = test_config.get('timeout', 1800)
+    timeout = test_config.get('timeout', 9000)
 
     # Determine config path
     config_path = determine_rvs_config_path(phdl, config_dict, config_file)

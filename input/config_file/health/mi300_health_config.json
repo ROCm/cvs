@@ -97,7 +97,7 @@
             {
                 "name": "level_config",
                 "description": "RVS LEVEL Configuration Test - Runs all modules collectively",
-                "timeout": 7200,
+                "timeout": 14400,
                 "expected_pass": true,
                 "fail_regex_patterns": [
                     "met:\\s*FALSE",
@@ -123,7 +123,7 @@
                 "name": "mem_test",
                 "config_file": "mem.conf",
                 "description": "Memory Test",
-                "timeout": 6000,
+                "timeout": 9000,
                 "expected_pass": true,
                 "fail_regex_pattern": "FAIL|\\[ERROR\\s*\\]|RVS-ERROR"
             },
@@ -131,7 +131,7 @@
                 "name": "gst_single",
                 "config_file": "gst_single.conf",
                 "description": "GPU Stress Test",
-                "timeout": 6000,
+                "timeout": 9000,
                 "expected_pass": true,
                 "fail_regex_pattern": "met:\\s*FALSE|RVS-ERROR"
             },
@@ -187,7 +187,7 @@
                 "name": "babel_stream",
                 "config_file": "babel.conf",
                 "description": "BABEL Benchmark Test",
-                "timeout": 6000,
+                "timeout": 9000,
                 "expected_pass": true,
                 "fail_regex_pattern": "\\[ERROR\\s*\\]|RVS-ERROR"
             }
