@@ -629,7 +629,7 @@ Use the parameters in these tables to configure the training file.
      - ``/dev/infiniband``
      - Exposes InfiniBand device files for RDMA networking 
    * - /usr/local/lib/libbnxt_re-rdmav34.so
-     - ``/usr/lib/x86_64-linux``<br /> ``-gnu/libibverbs/libbnxt`` <br /> ``_re-rdmav34.so.host``
+     - ``/usr/lib/x86_64-linux`` |br| ``-gnu/libibverbs/libbnxt`` |br| ``_re-rdmav34.so.host``
      - Provides the ``bnxt_re`` RDMA provider (Broadcom NIC) inside the container 
    * - ``/lib/libibverbs.d``
      - ``/lib/libibverbs.d``
@@ -649,10 +649,10 @@ Use the parameters in these tables to configure the training file.
    * - ``NNODES``
      - 2 
      - Total number of nodes in the distributed job
-   * - ``JAX_DISTRIBUTED_INITIAL`` <br /> ``IZATION_TIMEOUT_SECONDS``
+   * - ``JAX_DISTRIBUTED_INITIAL`` |br| ``IZATION_TIMEOUT_SECONDS``
      - 1800
      - How long JAX waits for all nodes to join the distributed setup — longer is safer for large clusters 
-   * - ``JAX_DISTRIBUTED_HEART`` <br /> ``BEAT_TIMEOUT_SECONDS``
+   * - ``JAX_DISTRIBUTED_HEART`` |br| ``BEAT_TIMEOUT_SECONDS``
      - 900
      - Timeout for communication heartbeat
 
