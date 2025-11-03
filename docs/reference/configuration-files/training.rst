@@ -1467,7 +1467,7 @@ Use the parameters in these tables to configure the training file.
      - ``/lib/libibverbs.d``
      - Mounts the RDMA verbs configuration directory — needed by libibverbs to detect RDMA devices
    * - ``/tmp/TRAINING_LOGS``
-     - /workspace/maxtext/output 
+     - ``/workspace/maxtext/output`` 
      - Stores training logs outside the container 
    * - ``env_dict``
      - N/A

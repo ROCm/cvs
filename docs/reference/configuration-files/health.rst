@@ -154,6 +154,9 @@ Here's an exhaustive list of the available parameters in the Health configuratio
 
 AGFHC
 -----
+.. |br| raw:: html
+
+    <br />
 
 .. list-table::
    :widths: 15 10 30
@@ -163,7 +166,7 @@ AGFHC
      - Default values
      - Description
    * - ``path``
-     - ``/root/cache/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2``
+     - ``/root/cache/PACKAGES`` |br| ``/agfhc-mi300x_1.22.0`` |br| ``_ub2204.tar.bz2``
      - Path where AGFHC is installed
    * - ``package_tar_ball``
      - ``/root/cache/INSTALL/agfhc/``
@@ -192,7 +195,7 @@ TransferBench
      - ``/opt/amd/transferbench``
      - Path where TransferBench is installed
    * - ``example_tests_path``
-     - ``/root/cache/INSTALL/TransferBench/examples``
+     - ``/root/cache/INSTALL`` |br| ``/TransferBench/examples``
      - Path where TransferBench examples are installed
    * - ``git_install_path``
      - ``/root/cache/INSTALL/``
@@ -278,10 +281,10 @@ ROCm Validation Suite (RVS)
      - True
      - Set the flag to install nfs
    * - ``config_path_mi300x``
-     - ``/opt/rocm/share/rocm-validation-suite/conf/MI300X``
+     - ``/opt/rocm/share/`` |br| ``rocm-validation-suite`` |br| ``/conf/MI300X``
      - Path for Instinct MI300X configuration 
    * - ``config_path_default``
-     - ``/opt/rocm/share/rocm-validation-suite/conf``
+     - ``/opt/rocm/share/`` |br| ``rocm-validation`` |br| ``-suite/conf``
      -  Default path for RVS
    * - ``name``
      - ``gst_single``
