@@ -602,9 +602,12 @@ Use the parameters in these tables to configure the training file.
 
 ``container_config``
 ~~~~~~~~~~~~~~~~~~~~
+.. |br| raw:: html
+
+    <br />
 
 .. list-table::
-   :widths: 2 2 20
+   :widths: 2 3 5
    :header-rows: 1
 
    * - Configuration parameters
