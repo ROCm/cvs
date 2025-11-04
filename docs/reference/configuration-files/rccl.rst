@@ -150,7 +150,7 @@ Parameters
 Here's an exhaustive list of the available parameters in the RCCL configuration file:
 
 .. list-table::
-   :widths: 15 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters

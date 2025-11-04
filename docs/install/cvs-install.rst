@@ -21,11 +21,11 @@ CVS supports these Linux distributions:
 
 - Ubuntu 24.04.2
 
-  - Kernel: 6.8 [GA], 6.14 [HWE]
+  - Kernel: 6.8 [GA], 6.14 
 
 - Ubuntu 22.04.5
 
-  - Kernel: 5.15 [GA], 6.8 [HWE]
+  - Kernel: 5.15 [GA], 6.8 
 
 Install CVS
 ===========

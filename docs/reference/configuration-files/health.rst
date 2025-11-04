@@ -161,7 +161,7 @@ AGFHC
     <br />
 
 .. list-table::
-   :widths: 15 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -187,7 +187,7 @@ TransferBench
 -------------
 
 .. list-table::
-   :widths: 15 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -264,7 +264,7 @@ ROCm Validation Suite (RVS)
 ---------------------------
 
 .. list-table::
-   :widths: 15 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
