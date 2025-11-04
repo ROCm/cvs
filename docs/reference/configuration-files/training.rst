@@ -1485,10 +1485,10 @@ Use the parameters in these tables to configure the training file.
    * - ``NNODES``
      - 4 
      - Total number of nodes in the distributed job
-   * - ``JAX_DISTRIBUTED_INI`` |br| ``TIALIZATION_TIM`` |br| ``EOUT_SECONDS``
+   * - ``JAX_DISTRIBUTED_INITIAL`` |br| ``IZATION_TIMEOUT_SECONDS``
      - 1800
      - How long JAX waits for all nodes to join the distributed setup — longer is safer for large clusters 
-   * - ``JAX_DISTRIBUTED_HEA`` |br| ``RTBEAT_TIME`` |br| ``OUT_SECONDS``
+   * - ``JAX_DISTRIBUTED_HEARTBE`` |br| ``AT_TIMEOUT_SECONDS``
      - 900
      - Timeout for communication heartbeat
 
