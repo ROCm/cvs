@@ -13,481 +13,483 @@ Change the parameters as needed in the two JAX training configuration files: ``2
 
 This is the ``2_nodes_mi300x_llama_3_1_70b.json`` configuration file:
 
-.. code:: json
-  
- { 
+.. dropdown:: ``2_nodes_mi300x_llama_3_1_70b.json``
 
- 
-
-    "config": 
-
+  .. code:: json
+    
     { 
 
-        "container_image": "rocm/jax-training:maxtext-v25.5", 
+    
 
-        "container_name": "rocm-jax-llama3.1-70b", 
-
-        "distributed_training": "True", 
-
-        "enable_checkpointing": "False", 
-
-        "nnodes": "2", 
-
-        "coordinator_ip": "X.X.X.X", 
-
-        "training_steps": "20", 
-
-        "nic_type": "thor2", 
-
-        "nccl_ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re7,bnxt_re8", 
-
-        "nccl_ib_hca": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re7,bnxt_re8", 
-
-        "nccl_socket_ifname": "ens51f1np1", 
-
-        "gloo_socket_ifname": "ens51f1np1", 
-
-        "nccl_ib_gid_index": "3", 
-
-        "nccl_debug": "ERROR", 
-
-        "nccl_proto": "Simple", 
-
-        "gpu_max_hw_queues": "2", 
-
-        "nccl_ib_tc": "41", 
-
-        "nccl_ib_sl": "0", 
-
-        "nccl_checks_disable": "1", 
-
-        "nvte_ck_bwd_v3": "1", 
-
-        "nvte_ck_v3_bf16_cvt": "2", 
-
-        "xla_python_client_mem_fraction": "0.975", 
-
-        "xla_gpu_executable_warn_stuck_timeout": "90", 
-
-        "hf_token_file": "/home/{user-id}/.hf_token", 
-
-        "shm_size": "256G", 
-
-        "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training", 
-
-        "data_cache_dir": "/home/{user-id}/cache", 
-
-        "mock_data": "True", 
-
-        "log_dir": "/home/{user-id}/LOGS", 
-
-        "dataset_source":  
+        "config": 
 
         { 
 
-        }, 
+            "container_image": "rocm/jax-training:maxtext-v25.5", 
 
-        "container_config": 
+            "container_name": "rocm-jax-llama3.1-70b", 
 
-        { 
+            "distributed_training": "True", 
 
-            "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm" ], 
+            "enable_checkpointing": "False", 
 
-            "volume_dict": 
+            "nnodes": "2", 
+
+            "coordinator_ip": "X.X.X.X", 
+
+            "training_steps": "20", 
+
+            "nic_type": "thor2", 
+
+            "nccl_ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re7,bnxt_re8", 
+
+            "nccl_ib_hca": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re7,bnxt_re8", 
+
+            "nccl_socket_ifname": "ens51f1np1", 
+
+            "gloo_socket_ifname": "ens51f1np1", 
+
+            "nccl_ib_gid_index": "3", 
+
+            "nccl_debug": "ERROR", 
+
+            "nccl_proto": "Simple", 
+
+            "gpu_max_hw_queues": "2", 
+
+            "nccl_ib_tc": "41", 
+
+            "nccl_ib_sl": "0", 
+
+            "nccl_checks_disable": "1", 
+
+            "nvte_ck_bwd_v3": "1", 
+
+            "nvte_ck_v3_bf16_cvt": "2", 
+
+            "xla_python_client_mem_fraction": "0.975", 
+
+            "xla_gpu_executable_warn_stuck_timeout": "90", 
+
+            "hf_token_file": "/home/{user-id}/.hf_token", 
+
+            "shm_size": "256G", 
+
+            "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training", 
+
+            "data_cache_dir": "/home/{user-id}/cache", 
+
+            "mock_data": "True", 
+
+            "log_dir": "/home/{user-id}/LOGS", 
+
+            "dataset_source":  
 
             { 
-
-            "/home/{user-id}": "/home/{user-id}", 
-
-            "/dev/infiniband": "/dev/infiniband", 
-
-            "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host", 
-
-            "/lib/libibverbs.d": "/lib/libibverbs.d", 
-
-            "/tmp/TRAINING_LOGS": "/workspace/maxtext/output" 
 
             }, 
 
-            "env_dict": 
+            "container_config": 
 
             { 
 
-                "JAX_COORDINATOR_IP": "X.X.X.X", 
+                "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm" ], 
 
-                "JAX_COORDINATOR_PORT": "1234", 
+                "volume_dict": 
 
-                "NNODES": "2", 
+                { 
 
-                "JAX_DISTRIBUTED_INITIALIZATION_TIMEOUT_SECONDS": "1800", 
+                "/home/{user-id}": "/home/{user-id}", 
 
-                "JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS": "900" 
+                "/dev/infiniband": "/dev/infiniband", 
+
+                "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host", 
+
+                "/lib/libibverbs.d": "/lib/libibverbs.d", 
+
+                "/tmp/TRAINING_LOGS": "/workspace/maxtext/output" 
+
+                }, 
+
+                "env_dict": 
+
+                { 
+
+                    "JAX_COORDINATOR_IP": "X.X.X.X", 
+
+                    "JAX_COORDINATOR_PORT": "1234", 
+
+                    "NNODES": "2", 
+
+                    "JAX_DISTRIBUTED_INITIALIZATION_TIMEOUT_SECONDS": "1800", 
+
+                    "JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS": "900" 
+
+                } 
 
             } 
 
-        } 
-
-    }, 
-
-    "model_params": 
-
-    { 
-
-        "single_node": 
-
-        { 
-
-             "llama3.1-70b": 
-
-             { 
-
-                 "mi300x": 
-
-                 { 
-
-                     "tokenizer_model": "NousResearch/Meta-Llama-3-70B", 
-
-                     "model_size": "70", 
-
-                     "attention": "cudnn_flash_te", 
-
-                     "dcn_data_parallelism": "1", 
-
-                     "dcn_fsdp_parallelism": "-1", 
-
-                     "dcn_pipeline_parallelism": "1", 
-
-                     "dcn_tensor_parallelism": "1", 
-
-                     "dcn_sequence_parallelism": "1", 
-
-                     "ici_fsdp_parallelism": "8", 
-
-                     "ici_data_parallelism": "1", 
-
-                     "ici_sequence_parallelism": "1", 
-
-                     "ici_tensor_parallelism": "1", 
-
-                     "ici_pipeline_parallelism": "1", 
-
-                     "remat_policy": "full", 
-
-                     "use_iota_embed": "true", 
-
-                     "scan_layers": "true", 
-
-                     "dataset_type": "synthetic", 
-
-                     "hf_path": "parquet", 
-
-                     "hf_train_files": "/home/{user-id}/cache/maxtext/data/c4/000*.parquet", 
-
-                     "tokenizer_path": "/home/{user-id}/cache/maxtext/Meta-Llama-70-B", 
-
-                     "async_checkpointing": "false", 
-
-                     "logits_dot_in_fp32": "false", 
-
-                     "megablox": "false", 
-
-                     "dtype": "bfloat16", 
-
-                     "batch_size": "128", 
-
-                     "quantization": "", 
-
-                     "quantize_kvcache": "false", 
-
-                     "kv_quant_axis": "heads_and_dkv", 
-
-                     "kv_quant_dtype": "int8", 
-
-                     "weight_dtype": "bfloat16", 
-
-                     "checkpoint_is_quantized": "false", 
-
-                     "per_device_batch_size": "1", 
-
-                     "max_target_length": "8192", 
-
-                     "skip_first_n_steps_for_profiler": "3", 
-
- 
-
-                     "xla_flags": 
-
-                     { 
-
-                         "xla_gpu_enable_cublaslt": "True", 
-
-                         "xla_gpu_executable_warn_stuck_timeout": "90", 
-
-                         "xla_gpu_executable_terminate_timeout": "300", 
-
-                         "xla_gpu_first_collective_call_warn_stuck_timeout_seconds": "300", 
-
-                         "xla_gpu_first_collective_call_terminate_timeout_seconds": "1200", 
-
-                         "xla_gpu_graph_level": "0", 
-
-                         "xla_gpu_autotune_level": "4", 
-
-                         "xla_gpu_enable_reduce_scatter_combine_by_dim": "false", 
-
-                         "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592", 
-
-                         "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592", 
-
-                         "xla_gpu_all_gather_combine_threshold_bytes": "137438953472", 
-
-                         "xla_gpu_enable_all_gather_combine_by_dim": "FALSE" 
-
-                     }, 
-
- 
-
-                     "base_emb_dim": "16384", 
-
-                     "base_num_query_heads": "128", 
-
-                     "base_num_kv_heads": "8", 
-
-                     "base_num_decoder_layers": "126", 
-
-                     "base_mlp_dim": "53248", 
-
-                     "head_dim": "128", 
-
-                     "mlp_activations": ["silu","linear"], 
-
-                     "vocab_size": "128256", 
-
-                     "enable_dropout": "False", 
-
-                     "logits_via_embedding": "False", 
-
-                     "normalization_layer_epsilon": "1.0e-5", 
-
-                     "rope_max_timescale": "500_000", 
-
-                     "decoder_block": "llama2", 
-
- 
-
-                     "micro_batch_size": "2", 
-
-                     "precision": "TE_FP8", 
-
-                     "sequence_length": "8192", 
-
-                     "tensor_parallelism": "1", 
-
-                     "pipeline_parallelism": "1", 
-
-                     "recompute": "0", 
-
-                     "fsdp": "0", 
-
-                     "result_dict": 
-
-                     { 
-
-                        "tflops_per_sec_per_gpu": "380.0", 
-
-                         "tokens_per_sec_per_gpu": "800.0" 
-
-                     } 
-
-                 } 
-
-             } 
-
         }, 
 
-        "multi_node": 
+        "model_params": 
 
         { 
 
-             "llama3.1-70b": 
+            "single_node": 
 
-             { 
+            { 
 
-                 "mi300x": 
+                "llama3.1-70b": 
 
-                 { 
+                { 
 
-                     "tokenizer_model": "NousResearch/Meta-Llama-3-70B", 
+                    "mi300x": 
 
-                     "model_size": "70", 
+                    { 
 
-                     "hardware": "gpu", 
+                        "tokenizer_model": "NousResearch/Meta-Llama-3-70B", 
 
-                     "attention": "cudnn_flash_te", 
+                        "model_size": "70", 
 
-                     "dcn_data_parallelism": "1", 
+                        "attention": "cudnn_flash_te", 
 
-                     "dcn_fsdp_parallelism": "-1", 
+                        "dcn_data_parallelism": "1", 
 
-                     "dcn_pipeline_parallelism": "1", 
+                        "dcn_fsdp_parallelism": "-1", 
 
-                     "dcn_tensor_parallelism": "1", 
+                        "dcn_pipeline_parallelism": "1", 
 
-                     "dcn_sequence_parallelism": "1", 
+                        "dcn_tensor_parallelism": "1", 
 
-                     "ici_fsdp_parallelism": "8", 
+                        "dcn_sequence_parallelism": "1", 
 
-                     "ici_data_parallelism": "1", 
+                        "ici_fsdp_parallelism": "8", 
 
-                     "ici_sequence_parallelism": "1", 
+                        "ici_data_parallelism": "1", 
 
-                     "ici_tensor_parallelism": "1", 
+                        "ici_sequence_parallelism": "1", 
 
-                     "ici_pipeline_parallelism": "1", 
+                        "ici_tensor_parallelism": "1", 
 
-                     "remat_policy": "full", 
+                        "ici_pipeline_parallelism": "1", 
 
-                     "use_iota_embed": "true", 
+                        "remat_policy": "full", 
 
-                     "scan_layers": "true", 
+                        "use_iota_embed": "true", 
 
-                     "dataset_type": "synthetic", 
+                        "scan_layers": "true", 
 
-                     "hf_path": "parquet", 
+                        "dataset_type": "synthetic", 
 
-                     "hf_train_files": "/home/{user-id}/cache/maxtext/data/c4/000*.parquet", 
+                        "hf_path": "parquet", 
 
-                     "tokenizer_path": "/home/{user-id}/cache/maxtext/Meta-Llama-70-B", 
+                        "hf_train_files": "/home/{user-id}/cache/maxtext/data/c4/000*.parquet", 
 
-                     "async_checkpointing": "false", 
+                        "tokenizer_path": "/home/{user-id}/cache/maxtext/Meta-Llama-70-B", 
 
-                     "logits_dot_in_fp32": "false", 
+                        "async_checkpointing": "false", 
 
-                     "megablox": "false", 
+                        "logits_dot_in_fp32": "false", 
 
-                     "dtype": "bfloat16", 
+                        "megablox": "false", 
 
-                     "batch_size": "128", 
+                        "dtype": "bfloat16", 
 
-                     "quantization": "", 
+                        "batch_size": "128", 
 
-                     "quantize_kvcache": "false", 
+                        "quantization": "", 
 
-                     "kv_quant_axis": "heads_and_dkv", 
+                        "quantize_kvcache": "false", 
 
-                     "kv_quant_dtype": "int8", 
+                        "kv_quant_axis": "heads_and_dkv", 
 
-                     "weight_dtype": "bfloat16", 
+                        "kv_quant_dtype": "int8", 
 
-                     "checkpoint_is_quantized": "false", 
+                        "weight_dtype": "bfloat16", 
 
-                     "per_device_batch_size": "3", 
+                        "checkpoint_is_quantized": "false", 
 
-                     "max_target_length": "8192", 
+                        "per_device_batch_size": "1", 
 
-                     "skip_first_n_steps_for_profiler": "3", 
+                        "max_target_length": "8192", 
 
- 
+                        "skip_first_n_steps_for_profiler": "3", 
 
-                     "xla_flags": 
+    
 
-                     { 
+                        "xla_flags": 
 
-                         "xla_gpu_enable_cublaslt": "True", 
+                        { 
 
-                         "xla_gpu_executable_warn_stuck_timeout": "90", 
+                            "xla_gpu_enable_cublaslt": "True", 
 
-                         "xla_gpu_executable_terminate_timeout": "300", 
+                            "xla_gpu_executable_warn_stuck_timeout": "90", 
 
-                         "xla_gpu_first_collective_call_warn_stuck_timeout_seconds": "300", 
+                            "xla_gpu_executable_terminate_timeout": "300", 
 
-                         "xla_gpu_first_collective_call_terminate_timeout_seconds": "1200", 
+                            "xla_gpu_first_collective_call_warn_stuck_timeout_seconds": "300", 
 
-                         "xla_gpu_graph_level": "0", 
+                            "xla_gpu_first_collective_call_terminate_timeout_seconds": "1200", 
 
-                         "xla_gpu_autotune_level": "4", 
+                            "xla_gpu_graph_level": "0", 
 
-                         "xla_gpu_enable_reduce_scatter_combine_by_dim": "false", 
+                            "xla_gpu_autotune_level": "4", 
 
-                         "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592", 
+                            "xla_gpu_enable_reduce_scatter_combine_by_dim": "false", 
 
-                         "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592", 
+                            "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592", 
 
-                         "xla_gpu_all_gather_combine_threshold_bytes": "137438953472", 
+                            "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592", 
 
-                         "xla_gpu_enable_all_gather_combine_by_dim": "FALSE" 
+                            "xla_gpu_all_gather_combine_threshold_bytes": "137438953472", 
 
-                     }, 
+                            "xla_gpu_enable_all_gather_combine_by_dim": "FALSE" 
 
- 
+                        }, 
 
-                     "base_emb_dim": "16384", 
+    
 
-                     "base_num_query_heads": "128", 
+                        "base_emb_dim": "16384", 
 
-                     "base_num_kv_heads": "8", 
+                        "base_num_query_heads": "128", 
 
-                     "base_num_decoder_layers": "126", 
+                        "base_num_kv_heads": "8", 
 
-                     "base_mlp_dim": "53248", 
+                        "base_num_decoder_layers": "126", 
 
-                     "head_dim": "128", 
+                        "base_mlp_dim": "53248", 
 
-                     "mlp_activations": ["silu","linear"], 
+                        "head_dim": "128", 
 
-                     "vocab_size": "128256", 
+                        "mlp_activations": ["silu","linear"], 
 
-                     "enable_dropout": "False", 
+                        "vocab_size": "128256", 
 
-                     "logits_via_embedding": "False", 
+                        "enable_dropout": "False", 
 
-                     "normalization_layer_epsilon": "1.0e-5", 
+                        "logits_via_embedding": "False", 
 
-                     "rope_max_timescale": "500_000", 
+                        "normalization_layer_epsilon": "1.0e-5", 
 
-                     "decoder_block": "llama2", 
+                        "rope_max_timescale": "500_000", 
 
- 
+                        "decoder_block": "llama2", 
 
-                     "micro_batch_size": "2", 
+    
 
-                     "precision": "TE_FP8", 
+                        "micro_batch_size": "2", 
 
-                     "sequence_length": "8192", 
+                        "precision": "TE_FP8", 
 
-                     "tensor_parallelism": "1", 
+                        "sequence_length": "8192", 
 
-                     "pipeline_parallelism": "1", 
+                        "tensor_parallelism": "1", 
 
-                     "recompute": "0", 
+                        "pipeline_parallelism": "1", 
 
-                     "fsdp": "0", 
+                        "recompute": "0", 
 
-                     "result_dict": 
+                        "fsdp": "0", 
 
-                     { 
+                        "result_dict": 
 
-                         "tflops_per_sec_per_gpu": "380.0", 
+                        { 
 
-                         "tokens_per_sec_per_gpu": "800.0" 
+                            "tflops_per_sec_per_gpu": "380.0", 
 
-                     } 
+                            "tokens_per_sec_per_gpu": "800.0" 
 
-                 } 
+                        } 
 
-             } 
+                    } 
 
- 
+                } 
+
+            }, 
+
+            "multi_node": 
+
+            { 
+
+                "llama3.1-70b": 
+
+                { 
+
+                    "mi300x": 
+
+                    { 
+
+                        "tokenizer_model": "NousResearch/Meta-Llama-3-70B", 
+
+                        "model_size": "70", 
+
+                        "hardware": "gpu", 
+
+                        "attention": "cudnn_flash_te", 
+
+                        "dcn_data_parallelism": "1", 
+
+                        "dcn_fsdp_parallelism": "-1", 
+
+                        "dcn_pipeline_parallelism": "1", 
+
+                        "dcn_tensor_parallelism": "1", 
+
+                        "dcn_sequence_parallelism": "1", 
+
+                        "ici_fsdp_parallelism": "8", 
+
+                        "ici_data_parallelism": "1", 
+
+                        "ici_sequence_parallelism": "1", 
+
+                        "ici_tensor_parallelism": "1", 
+
+                        "ici_pipeline_parallelism": "1", 
+
+                        "remat_policy": "full", 
+
+                        "use_iota_embed": "true", 
+
+                        "scan_layers": "true", 
+
+                        "dataset_type": "synthetic", 
+
+                        "hf_path": "parquet", 
+
+                        "hf_train_files": "/home/{user-id}/cache/maxtext/data/c4/000*.parquet", 
+
+                        "tokenizer_path": "/home/{user-id}/cache/maxtext/Meta-Llama-70-B", 
+
+                        "async_checkpointing": "false", 
+
+                        "logits_dot_in_fp32": "false", 
+
+                        "megablox": "false", 
+
+                        "dtype": "bfloat16", 
+
+                        "batch_size": "128", 
+
+                        "quantization": "", 
+
+                        "quantize_kvcache": "false", 
+
+                        "kv_quant_axis": "heads_and_dkv", 
+
+                        "kv_quant_dtype": "int8", 
+
+                        "weight_dtype": "bfloat16", 
+
+                        "checkpoint_is_quantized": "false", 
+
+                        "per_device_batch_size": "3", 
+
+                        "max_target_length": "8192", 
+
+                        "skip_first_n_steps_for_profiler": "3", 
+
+    
+
+                        "xla_flags": 
+
+                        { 
+
+                            "xla_gpu_enable_cublaslt": "True", 
+
+                            "xla_gpu_executable_warn_stuck_timeout": "90", 
+
+                            "xla_gpu_executable_terminate_timeout": "300", 
+
+                            "xla_gpu_first_collective_call_warn_stuck_timeout_seconds": "300", 
+
+                            "xla_gpu_first_collective_call_terminate_timeout_seconds": "1200", 
+
+                            "xla_gpu_graph_level": "0", 
+
+                            "xla_gpu_autotune_level": "4", 
+
+                            "xla_gpu_enable_reduce_scatter_combine_by_dim": "false", 
+
+                            "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592", 
+
+                            "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592", 
+
+                            "xla_gpu_all_gather_combine_threshold_bytes": "137438953472", 
+
+                            "xla_gpu_enable_all_gather_combine_by_dim": "FALSE" 
+
+                        }, 
+
+    
+
+                        "base_emb_dim": "16384", 
+
+                        "base_num_query_heads": "128", 
+
+                        "base_num_kv_heads": "8", 
+
+                        "base_num_decoder_layers": "126", 
+
+                        "base_mlp_dim": "53248", 
+
+                        "head_dim": "128", 
+
+                        "mlp_activations": ["silu","linear"], 
+
+                        "vocab_size": "128256", 
+
+                        "enable_dropout": "False", 
+
+                        "logits_via_embedding": "False", 
+
+                        "normalization_layer_epsilon": "1.0e-5", 
+
+                        "rope_max_timescale": "500_000", 
+
+                        "decoder_block": "llama2", 
+
+    
+
+                        "micro_batch_size": "2", 
+
+                        "precision": "TE_FP8", 
+
+                        "sequence_length": "8192", 
+
+                        "tensor_parallelism": "1", 
+
+                        "pipeline_parallelism": "1", 
+
+                        "recompute": "0", 
+
+                        "fsdp": "0", 
+
+                        "result_dict": 
+
+                        { 
+
+                            "tflops_per_sec_per_gpu": "380.0", 
+
+                            "tokens_per_sec_per_gpu": "800.0" 
+
+                        } 
+
+                    } 
+
+                } 
+
+    
+
+            } 
+
+    
+
+    
 
         } 
 
- 
-
- 
-
     } 
-
- } 
 
 
 Parameters
@@ -1018,304 +1020,306 @@ Use the parameters in these tables to configure the training file.
 
 This is the ``4_nodes_mi300x_llama_3_1_405b.json`` configuration file:
 
-.. code:: json
- 
-  {
+.. dropdown:: ``4_nodes_mi300x_llama_3_1_405b.json`` 
 
-    "config": 
+  .. code:: json
+  
+    {
 
-    { 
+      "config": 
 
-        "container_image": "rocm/jax-training:maxtext-v25.5", 
+      { 
 
-        "container_name": "rocm-jax-llama3.1-405b", 
+          "container_image": "rocm/jax-training:maxtext-v25.5", 
 
-        "distributed_training": "True", 
+          "container_name": "rocm-jax-llama3.1-405b", 
 
-        "enable_checkpointing": "False", 
+          "distributed_training": "True", 
 
-        "nnodes": "4", 
+          "enable_checkpointing": "False", 
 
-        "coordinator_ip": "X.X.X.X", 
+          "nnodes": "4", 
 
-        "training_steps": "20", 
+          "coordinator_ip": "X.X.X.X", 
 
-        "nic_type": "thor2", 
+          "training_steps": "20", 
 
-        "nccl_ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7", 
+          "nic_type": "thor2", 
 
-        "nccl_ib_hca": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7", 
+          "nccl_ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7", 
 
-        "nccl_socket_ifname": "ens51f1np1", 
+          "nccl_ib_hca": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7", 
 
-        "gloo_socket_ifname": "ens51f1np1", 
+          "nccl_socket_ifname": "ens51f1np1", 
 
-        "nccl_ib_gid_index": "3", 
+          "gloo_socket_ifname": "ens51f1np1", 
 
-        "nccl_debug": "ERROR", 
+          "nccl_ib_gid_index": "3", 
 
-        "nccl_proto": "Simple", 
+          "nccl_debug": "ERROR", 
 
-        "gpu_max_hw_queues": "2", 
+          "nccl_proto": "Simple", 
 
-        "nccl_ib_tc": "41", 
+          "gpu_max_hw_queues": "2", 
 
-        "nccl_ib_sl": "0", 
+          "nccl_ib_tc": "41", 
 
-        "nccl_checks_disable": "1", 
+          "nccl_ib_sl": "0", 
 
-        "nvte_ck_bwd_v3": "1", 
+          "nccl_checks_disable": "1", 
 
-        "nvte_ck_v3_bf16_cvt": "2", 
+          "nvte_ck_bwd_v3": "1", 
 
-        "xla_python_client_mem_fraction": "0.975", 
+          "nvte_ck_v3_bf16_cvt": "2", 
 
-        "xla_gpu_executable_warn_stuck_timeout": "90", 
+          "xla_python_client_mem_fraction": "0.975", 
 
-        "hf_token_file": "/home/{user-id}/.hf_token", 
+          "xla_gpu_executable_warn_stuck_timeout": "90", 
 
-        "shm_size": "256G", 
+          "hf_token_file": "/home/{user-id}/.hf_token", 
 
-        "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training", 
+          "shm_size": "256G", 
 
-        "data_cache_dir": "/home/{user-id}/cache", 
+          "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training", 
 
-        "mock_data": "True", 
+          "data_cache_dir": "/home/{user-id}/cache", 
 
-        "log_dir": "/home/{user-id}/LOGS", 
+          "mock_data": "True", 
 
-        "dataset_source":  
+          "log_dir": "/home/{user-id}/LOGS", 
 
-        { 
+          "dataset_source":  
 
-        }, 
+          { 
 
-        "container_config": 
+          }, 
 
-        { 
+          "container_config": 
 
-            "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm" ], 
+          { 
 
-            "volume_dict": 
+              "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm" ], 
 
-            { 
+              "volume_dict": 
 
-            "/home/{user-id}": "/home/{user-id}", 
+              { 
 
-            "/dev/infiniband": "/dev/infiniband", 
+              "/home/{user-id}": "/home/{user-id}", 
 
-            "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host", 
+              "/dev/infiniband": "/dev/infiniband", 
 
-            "/lib/libibverbs.d": "/lib/libibverbs.d", 
+              "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host", 
 
-            "/tmp/TRAINING_LOGS": "/workspace/maxtext/output" 
+              "/lib/libibverbs.d": "/lib/libibverbs.d", 
 
-            }, 
+              "/tmp/TRAINING_LOGS": "/workspace/maxtext/output" 
 
-            "env_dict": 
+              }, 
 
-            { 
+              "env_dict": 
 
-                "JAX_COORDINATOR_IP": "X.X.X.X", 
+              { 
 
-                "JAX_COORDINATOR_PORT": "12345", 
+                  "JAX_COORDINATOR_IP": "X.X.X.X", 
 
-                "NNODES": "4", 
+                  "JAX_COORDINATOR_PORT": "12345", 
 
-                "JAX_DISTRIBUTED_INITIALIZATION_TIMEOUT_SECONDS": "300", 
+                  "NNODES": "4", 
 
-                "JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS": "30", 
+                  "JAX_DISTRIBUTED_INITIALIZATION_TIMEOUT_SECONDS": "300", 
 
-                "INITIALIZATION_TIMEOUT": "300", 
+                  "JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS": "30", 
 
-                "HEARTBEAT_TIMEOUT_SECONDS": "30" 
+                  "INITIALIZATION_TIMEOUT": "300", 
 
-            } 
+                  "HEARTBEAT_TIMEOUT_SECONDS": "30" 
 
-        } 
+              } 
 
-    }, 
+          } 
 
-    "model_params": 
+      }, 
 
-    { 
+      "model_params": 
 
-        "multi_node": 
+      { 
 
-        { 
+          "multi_node": 
 
-             "llama3.1-405b": 
+          { 
 
-             { 
+              "llama3.1-405b": 
 
-                 "mi300x": 
+              { 
 
-                 { 
+                  "mi300x": 
 
-                     "tokenizer_model": "NousResearch/Meta-Llama-3-405B", 
+                  { 
 
-                     "model_size": "405", 
+                      "tokenizer_model": "NousResearch/Meta-Llama-3-405B", 
 
-                     "attention": "cudnn_flash_te", 
+                      "model_size": "405", 
 
-                     "dcn_data_parallelism": "1", 
+                      "attention": "cudnn_flash_te", 
 
-                     "dcn_fsdp_parallelism": "-1", 
+                      "dcn_data_parallelism": "1", 
 
-                     "dcn_pipeline_parallelism": "1", 
+                      "dcn_fsdp_parallelism": "-1", 
 
-                     "dcn_tensor_parallelism": "1", 
+                      "dcn_pipeline_parallelism": "1", 
 
-                     "dcn_sequence_parallelism": "1", 
+                      "dcn_tensor_parallelism": "1", 
 
-                     "ici_fsdp_parallelism": "8", 
+                      "dcn_sequence_parallelism": "1", 
 
-                     "ici_data_parallelism": "1", 
+                      "ici_fsdp_parallelism": "8", 
 
-                     "ici_sequence_parallelism": "1", 
+                      "ici_data_parallelism": "1", 
 
-                     "ici_tensor_parallelism": "1", 
+                      "ici_sequence_parallelism": "1", 
 
-                     "ici_pipeline_parallelism": "1", 
+                      "ici_tensor_parallelism": "1", 
 
-                     "remat_policy": "full", 
+                      "ici_pipeline_parallelism": "1", 
 
-                     "use_iota_embed": "true", 
+                      "remat_policy": "full", 
 
-                     "scan_layers": "true", 
+                      "use_iota_embed": "true", 
 
-                     "dataset_type": "synthetic", 
+                      "scan_layers": "true", 
 
-                     "hf_path": "parquet", 
+                      "dataset_type": "synthetic", 
 
-                     "hf_train_files": "/home/{user-id}/cache/maxtext/data/c4/000*.parquet", 
+                      "hf_path": "parquet", 
 
-                     "tokenizer_path": "/home/{user-id}/cache/maxtext/Meta-Llama-405-B", 
+                      "hf_train_files": "/home/{user-id}/cache/maxtext/data/c4/000*.parquet", 
 
-                     "async_checkpointing": "false", 
+                      "tokenizer_path": "/home/{user-id}/cache/maxtext/Meta-Llama-405-B", 
 
-                     "logits_dot_in_fp32": "false", 
+                      "async_checkpointing": "false", 
 
-                     "megablox": "false", 
+                      "logits_dot_in_fp32": "false", 
 
-                     "dtype": "bfloat16", 
+                      "megablox": "false", 
 
-                     "batch_size": "128", 
+                      "dtype": "bfloat16", 
 
-                     "quantization": "", 
+                      "batch_size": "128", 
 
-                     "quantize_kvcache": "false", 
+                      "quantization": "", 
 
-                     "kv_quant_axis": "heads_and_dkv", 
+                      "quantize_kvcache": "false", 
 
-                     "kv_quant_dtype": "int8", 
+                      "kv_quant_axis": "heads_and_dkv", 
 
-                     "weight_dtype": "bfloat16", 
+                      "kv_quant_dtype": "int8", 
 
-                     "checkpoint_is_quantized": "false", 
+                      "weight_dtype": "bfloat16", 
 
-                     "per_device_batch_size": "1", 
+                      "checkpoint_is_quantized": "false", 
 
-                     "max_target_length": "8192", 
+                      "per_device_batch_size": "1", 
 
-                     "skip_first_n_steps_for_profiler": "3", 
+                      "max_target_length": "8192", 
 
- 
+                      "skip_first_n_steps_for_profiler": "3", 
 
-                     "xla_flags": 
+  
 
-                     { 
+                      "xla_flags": 
 
-                         "xla_gpu_enable_cublaslt": "True", 
+                      { 
 
-                         "xla_gpu_executable_warn_stuck_timeout": "90", 
+                          "xla_gpu_enable_cublaslt": "True", 
 
-                         "xla_gpu_executable_terminate_timeout": "300", 
+                          "xla_gpu_executable_warn_stuck_timeout": "90", 
 
-                         "xla_gpu_first_collective_call_warn_stuck_timeout_seconds": "300", 
+                          "xla_gpu_executable_terminate_timeout": "300", 
 
-                         "xla_gpu_first_collective_call_terminate_timeout_seconds": "1200", 
+                          "xla_gpu_first_collective_call_warn_stuck_timeout_seconds": "300", 
 
-                         "xla_gpu_graph_level": "0", 
+                          "xla_gpu_first_collective_call_terminate_timeout_seconds": "1200", 
 
-                         "xla_gpu_autotune_level": "4", 
+                          "xla_gpu_graph_level": "0", 
 
-                         "xla_gpu_enable_reduce_scatter_combine_by_dim": "false", 
+                          "xla_gpu_autotune_level": "4", 
 
-                         "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592", 
+                          "xla_gpu_enable_reduce_scatter_combine_by_dim": "false", 
 
-                         "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592", 
+                          "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592", 
 
-                         "xla_gpu_all_gather_combine_threshold_bytes": "137438953472", 
+                          "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592", 
 
-                         "xla_gpu_enable_all_gather_combine_by_dim": "FALSE" 
+                          "xla_gpu_all_gather_combine_threshold_bytes": "137438953472", 
 
-                     }, 
+                          "xla_gpu_enable_all_gather_combine_by_dim": "FALSE" 
 
- 
+                      }, 
 
-                     "base_emb_dim": "16384", 
+  
 
-                     "base_num_query_heads": "128", 
+                      "base_emb_dim": "16384", 
 
-                     "base_num_kv_heads": "8", 
+                      "base_num_query_heads": "128", 
 
-                     "base_num_decoder_layers": "126", 
+                      "base_num_kv_heads": "8", 
 
-                     "base_mlp_dim": "53248", 
+                      "base_num_decoder_layers": "126", 
 
-                     "head_dim": "128", 
+                      "base_mlp_dim": "53248", 
 
-                     "mlp_activations": ["silu","linear"], 
+                      "head_dim": "128", 
 
-                     "vocab_size": "128256", 
+                      "mlp_activations": ["silu","linear"], 
 
-                     "enable_dropout": "False", 
+                      "vocab_size": "128256", 
 
-                     "logits_via_embedding": "False", 
+                      "enable_dropout": "False", 
 
-                     "normalization_layer_epsilon": "1.0e-5", 
+                      "logits_via_embedding": "False", 
 
-                     "rope_max_timescale": "500_000", 
+                      "normalization_layer_epsilon": "1.0e-5", 
 
-                     "decoder_block": "llama2", 
+                      "rope_max_timescale": "500_000", 
 
-                     "micro_batch_size": "2", 
+                      "decoder_block": "llama2", 
 
-                     "precision": "TE_FP8", 
+                      "micro_batch_size": "2", 
 
-                     "sequence_length": "8192", 
+                      "precision": "TE_FP8", 
 
-                     "tensor_parallelism": "1", 
+                      "sequence_length": "8192", 
 
-                     "pipeline_parallelism": "1", 
+                      "tensor_parallelism": "1", 
 
-                     "recompute": "0", 
+                      "pipeline_parallelism": "1", 
 
-                     "fsdp": "0", 
+                      "recompute": "0", 
 
-                     "result_dict": 
+                      "fsdp": "0", 
 
-                     { 
+                      "result_dict": 
 
-                         "tflops_per_sec_per_gpu": "380.0", 
+                      { 
 
-                         "tokens_per_sec_per_gpu": "145.0" 
+                          "tflops_per_sec_per_gpu": "380.0", 
 
-                     } 
+                          "tokens_per_sec_per_gpu": "145.0" 
 
-                 } 
+                      } 
 
-             } 
+                  } 
 
- 
+              } 
 
-        } 
- 
+  
 
-    } 
+          } 
+  
 
-  }
+      } 
+
+    }
 
 Parameters
 ----------

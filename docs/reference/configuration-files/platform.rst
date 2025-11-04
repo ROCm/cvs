@@ -10,7 +10,6 @@ Here's a code snippet of the ``host_config.json`` file for reference:
 
 .. dropdown:: ``host_config.json``
      
-
   .. code:: json
     
     {

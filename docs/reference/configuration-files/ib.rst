@@ -8,43 +8,45 @@ InfiniBand (IB Perf) test configuration file
 
 Here's a code snippet of the ``ibperf_config.json`` file for reference:
 
-.. code:: json
-  
-  {
-      "ibperf":
-      {
-        "install_perf_package": "True",
-        "install_dir": "/home/linuxuser/",
-        "rocm_dir": "/opt/rocm",
-        "qp_count_list": [ "8", "16" ],
-        "ib_bw_test_list": [ "ib_write_bw", "ib_send_bw"],
-        "ib_lat_test_list": [ "ib_write_lat", "ib_send_lat", "ib_read_lat" ],
-        "msg_size_list": [ 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536 ],
-        "gid_index": "3",
-        "port_no": "1516",
-        "duration": "30",
-        "verify_bw": "True",
-        "expected_results":
-        {
-        "ib_write_bw":
-        {
-            "8192":
-                  {
-          "8": "180.0",
-          "16": "200.0"
-                  },
-            "8388608":
-                  {
-          "8": "280.0",
-          "16": "300.0"
-                  }
+.. dropdown:: ``ibperf_config.json``
 
-              }
-              
+  .. code:: json
+    
+    {
+        "ibperf":
+        {
+          "install_perf_package": "True",
+          "install_dir": "/home/linuxuser/",
+          "rocm_dir": "/opt/rocm",
+          "qp_count_list": [ "8", "16" ],
+          "ib_bw_test_list": [ "ib_write_bw", "ib_send_bw"],
+          "ib_lat_test_list": [ "ib_write_lat", "ib_send_lat", "ib_read_lat" ],
+          "msg_size_list": [ 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536 ],
+          "gid_index": "3",
+          "port_no": "1516",
+          "duration": "30",
+          "verify_bw": "True",
+          "expected_results":
+          {
+          "ib_write_bw":
+          {
+              "8192":
+                    {
+            "8": "180.0",
+            "16": "200.0"
+                    },
+              "8388608":
+                    {
+            "8": "280.0",
+            "16": "300.0"
+                    }
+
+                }
+                
+          }
         }
-      }
 
-  }
+    }
 
 
 Parameters

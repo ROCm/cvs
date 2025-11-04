@@ -8,144 +8,146 @@ Health test configuration file
 
 Here's a code snippet of the ``mi300_health_config.json`` file for reference:
 
-.. code:: json
-  
-  {
+.. dropdown:: ``mi300_health_config.json``
 
-      "agfhc":
-      {
-          "path": "/opt/amd/agfhc",
-          "package_tar_ball": "/root/cache/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
-          "install_dir": "/root/cache/INSTALL/agfhc/",
-          "nfs_install": "True",
-          "hbm_test_duration": "00:01:30"
-      },
-      "transferbench":
-      {
-        "path": "/opt/amd/transferbench",
-        "example_tests_path": "/root/cache/INSTALL/TransferBench/examples",
-        "git_install_path": "/root/cache/INSTALL/",
-        "git_url": "https://github.com/ROCm/TransferBench.git",
-        "nfs_install": "True",
-        "results":
+  .. code:: json
+    
+    {
+
+        "agfhc":
         {
-            "bytes_to_transfer": "268435456",
-            "path": "/opt/amd/transferbench",
-            "gpu_to_gpu_a2a_rtotal": "320.0",
-            "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
-            "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
-            "best_gpu0_bw": "480.0",
-            "32_cu_local_read": "1650",
-            "32_cu_local_write": "1250.0",
-            "32_cu_local_copy": "1250.0",
-            "32_cu_rem_read": "48.0",
-            "32_cu_rem_write": "48.0",
-            "32_cu_rem_copy": "48.0",
-            "example_results":
-            {
-                "test1": "47.1",
-                "test2": "48.4",
-                "test3_0_to_1": "31.9",
-                "test3_1_to_0": "38.9",
-                "test4": "1264",
-                "test6": "48.6"
-            }
-
-        }
-      },
-      "rvs":
-      {
-          "path": "/opt/rocm/bin",
-          "git_install_path": "/root/cache/INSTALL",
-          "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
+            "path": "/opt/amd/agfhc",
+            "package_tar_ball": "/root/cache/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
+            "install_dir": "/root/cache/INSTALL/agfhc/",
+            "nfs_install": "True",
+            "hbm_test_duration": "00:01:30"
+        },
+        "transferbench":
+        {
+          "path": "/opt/amd/transferbench",
+          "example_tests_path": "/root/cache/INSTALL/TransferBench/examples",
+          "git_install_path": "/root/cache/INSTALL/",
+          "git_url": "https://github.com/ROCm/TransferBench.git",
           "nfs_install": "True",
-          "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",
-          "config_path_default": "/opt/rocm/share/rocm-validation-suite/conf",
-          "tests": [
-           {
-               "name": "gpup_single",
-               "config_file": "gpup_single.conf",
-               "description": "GPU Properties Test",
-               "timeout": 1800,
-               "expected_pass": true,
-               "fail_regex_pattern": "FAIL|ERROR"
-           },
-           {
-               "name": "mem_test",
-               "config_file": "mem.conf",
-               "description": "Memory Test",
-               "timeout": 6000,
-               "expected_pass": true,
-               "fail_regex_pattern": "FAIL|\\[ERROR\\s*\\]"
-           },
-           {
-               "name": "gst_single",
-               "config_file": "gst_single.conf",
-               "description": "GPU Stress Test",
-               "timeout": 6000,
-               "expected_pass": true,
-               "fail_regex_pattern": "met:\\s*FALSE"
-           },
-           {
-               "name": "iet_single",
-               "config_file": "iet_single.conf",
-               "description": "Input EDPp Test",
-               "timeout": 1800,
-               "expected_pass": true,
-               "fail_regex_pattern": "pass:\\s*FALSE"
-           },
-           {
-               "name": "pebb_single",
-               "config_file": "pebb_single.conf",
-               "description": "PCI Express Bandwidth Benchmark",
-               "timeout": 1800,
-               "expected_pass": true,
-               "fail_regex_pattern": "\\[ERROR\\s*\\]"
-           },
-           {
-               "name": "pbqt_single",
-               "config_file": "pbqt_single.conf",
-               "description": "P2P Benchmark and Qualification Tool",
-               "timeout": 1800,
-               "expected_pass": true,
-               "fail_regex_pattern": "FAIL|ERROR:"
-           },
-           {
-               "name": "peqt_single",
-               "config_file": "peqt_single.conf",
-               "description": "PCI Express Qualification Tool",
-               "timeout": 1800,
-               "expected_pass": true,
-               "fail_regex_pattern": "peqt false"
-           },
-           {
-               "name": "rcqt_single",
-               "config_file": "rcqt_single.conf",
-               "description": "ROCm Configuration Qualification Tool",
-               "timeout": 1800,
-               "expected_pass": true,
-               "fail_regex_pattern": " not installed and no information is available"
-           },
-           {
-               "name": "tst_single",
-               "config_file": "tst_single.conf",
-               "description": "Thermal Stress Test",
-               "timeout": 1800,
-               "expected_pass": true,
-               "fail_regex_pattern": "pass: FLASE"
-           },
-           {
-               "name": "babel_stream",
-               "config_file": "babel.conf",
-               "description": "BABEL Benchmark Test",
-               "timeout": 6000,
-               "expected_pass": true,
-               "fail_regex_pattern": "\\[ERROR\\s*\\]"
-           }
-          ]
-   }
- 
-}
+          "results":
+          {
+              "bytes_to_transfer": "268435456",
+              "path": "/opt/amd/transferbench",
+              "gpu_to_gpu_a2a_rtotal": "320.0",
+              "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
+              "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
+              "best_gpu0_bw": "480.0",
+              "32_cu_local_read": "1650",
+              "32_cu_local_write": "1250.0",
+              "32_cu_local_copy": "1250.0",
+              "32_cu_rem_read": "48.0",
+              "32_cu_rem_write": "48.0",
+              "32_cu_rem_copy": "48.0",
+              "example_results":
+              {
+                  "test1": "47.1",
+                  "test2": "48.4",
+                  "test3_0_to_1": "31.9",
+                  "test3_1_to_0": "38.9",
+                  "test4": "1264",
+                  "test6": "48.6"
+              }
+
+          }
+        },
+        "rvs":
+        {
+            "path": "/opt/rocm/bin",
+            "git_install_path": "/root/cache/INSTALL",
+            "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
+            "nfs_install": "True",
+            "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",
+            "config_path_default": "/opt/rocm/share/rocm-validation-suite/conf",
+            "tests": [
+            {
+                "name": "gpup_single",
+                "config_file": "gpup_single.conf",
+                "description": "GPU Properties Test",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": "FAIL|ERROR"
+            },
+            {
+                "name": "mem_test",
+                "config_file": "mem.conf",
+                "description": "Memory Test",
+                "timeout": 6000,
+                "expected_pass": true,
+                "fail_regex_pattern": "FAIL|\\[ERROR\\s*\\]"
+            },
+            {
+                "name": "gst_single",
+                "config_file": "gst_single.conf",
+                "description": "GPU Stress Test",
+                "timeout": 6000,
+                "expected_pass": true,
+                "fail_regex_pattern": "met:\\s*FALSE"
+            },
+            {
+                "name": "iet_single",
+                "config_file": "iet_single.conf",
+                "description": "Input EDPp Test",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": "pass:\\s*FALSE"
+            },
+            {
+                "name": "pebb_single",
+                "config_file": "pebb_single.conf",
+                "description": "PCI Express Bandwidth Benchmark",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": "\\[ERROR\\s*\\]"
+            },
+            {
+                "name": "pbqt_single",
+                "config_file": "pbqt_single.conf",
+                "description": "P2P Benchmark and Qualification Tool",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": "FAIL|ERROR:"
+            },
+            {
+                "name": "peqt_single",
+                "config_file": "peqt_single.conf",
+                "description": "PCI Express Qualification Tool",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": "peqt false"
+            },
+            {
+                "name": "rcqt_single",
+                "config_file": "rcqt_single.conf",
+                "description": "ROCm Configuration Qualification Tool",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": " not installed and no information is available"
+            },
+            {
+                "name": "tst_single",
+                "config_file": "tst_single.conf",
+                "description": "Thermal Stress Test",
+                "timeout": 1800,
+                "expected_pass": true,
+                "fail_regex_pattern": "pass: FLASE"
+            },
+            {
+                "name": "babel_stream",
+                "config_file": "babel.conf",
+                "description": "BABEL Benchmark Test",
+                "timeout": 6000,
+                "expected_pass": true,
+                "fail_regex_pattern": "\\[ERROR\\s*\\]"
+            }
+            ]
+    }
+  
+  }
 
 Parameters
 ==========
