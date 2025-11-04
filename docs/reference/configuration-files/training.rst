@@ -501,7 +501,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -663,7 +663,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -750,7 +750,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -788,7 +788,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -891,7 +891,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -914,7 +914,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -1331,7 +1331,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -1443,7 +1443,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -1497,7 +1497,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -1584,7 +1584,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -1623,7 +1623,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
@@ -1732,7 +1732,7 @@ Use the parameters in these tables to configure the training file.
 ~~~~~~~~~~~~~~~
 
 .. list-table::
-   :widths: 5 10 30
+   :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
