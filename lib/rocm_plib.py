@@ -8,9 +8,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import re
 import os
 import sys
-import parallel_ssh_lib
+from . import parallel_ssh_lib
 
-from utils_lib import *
+from .utils_lib import *
 
 
 def get_rocm_smi_dict( phdl ):
