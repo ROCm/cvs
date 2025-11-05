@@ -9,9 +9,9 @@ import os
 import re
 import sys
 
-from utils_lib import *
-from rocm_plib import *
-import linux_utils
+from .utils_lib import *
+from .rocm_plib import *
+from . import linux_utils
 
 
 err_patterns_dict = {
