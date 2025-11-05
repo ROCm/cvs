@@ -6,6 +6,8 @@
 Health test configuration file
 ******************************
 
+The burn-in health tests are single-node diagnostic tests that validate the hardware and firmware versions' functionality and performance. 
+
 Here's a code snippet of the ``mi300_health_config.json`` file for reference:
 
 .. dropdown:: ``mi300_health_config.json``

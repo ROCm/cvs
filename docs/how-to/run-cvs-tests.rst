@@ -63,8 +63,8 @@ For the performance validation, they use the reference bandwidth or latency numb
 Here are the available tests:
 
 - AGFHC (AMD GPU Field Health Check)
-- `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/index.html>`_
-- `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/index.html>`_
+- `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/install/install.html#install-transferbench>`_
+- `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/install/installation.html>`_
 
 Here are the test cases for those tests:
 
@@ -152,6 +152,11 @@ Here's the test script:
 JAX training test script
 ------------------------
 
+The JAX training tests perform end-to-end orchestration and validation of a distributed JAX training run (Llama 3.1) across a multi-node cluster using Docker containers, 
+remote execution, and the project's JAX library. 
+
+The file uses PyTest and parallel SSH to prepare the environment, launch containers, and run/verify a short distributed training job.
+
 These are the JAX training test scripts:
 
 - ``test_llama_3_1_70b_distributed`` 
@@ -169,8 +174,7 @@ Here's the test script:
 InfiniBand (IB Perf) test script
 --------------------------------
 
-IB perf and latency tests are tools used to measure network performance. 
-Perf tests measure throughput (bandwidth), and latency tests measure delay. 
+IB Perf and latency tests measure network performance. Perf tests measure throughput (bandwidth), and latency tests measure delay. 
 Perf tests, such as ``ib_write_bw``, evaluate the maximum data transfer rate under different message sizes. 
 Latency tests, such as ``ib_send_lat``, measure the time it takes for a message to travel between two nodes and often report results like minimum, median, and maximum latency.
 

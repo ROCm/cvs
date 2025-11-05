@@ -6,6 +6,8 @@
 Platform test configuration file
 ********************************
 
+The platform host check scripts can validate various host-side configurations, such as model load balancing enablement, PCIe checks, kernel version, and ROCm version.
+
 Here's a code snippet of the ``host_config.json`` file for reference:
 
 .. dropdown:: ``host_config.json``

@@ -6,6 +6,8 @@
 InfiniBand (IB Perf) test configuration file
 ********************************************
 
+IB Perf and latency tests measure network performance. Perf tests measure throughput (bandwidth), and latency tests measure delay. 
+
 Here's a code snippet of the ``ibperf_config.json`` file for reference:
 
 .. dropdown:: ``ibperf_config.json``

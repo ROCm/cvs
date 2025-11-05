@@ -11,9 +11,9 @@ Use CVS to verify cluster health, GPU/CPU node health, host OS configuration, an
 Here are the tests available in the CVS:
 
 -	**Platform tests**: Perform host OS configuration, BIOS, firmware/driver, and network configuration checks.
--	**Burn-in health tests**: Perform AMD GPU Field Health Check (AGFHC), `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/index.html>`_, and `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/index.html>`_.
--	**Network tests**: Perform ping checks and multi-node `ROCm Communication Collectives Library (RCCL) <https://rocm.docs.amd.com/projects/rccl/en/latest/index.html>`_ validations for different collectives.
-- **Distributed training tests**: Run Llama 70B and 405B model distributed trainings with the JAX framework. 
+-	**Burn-in health tests**: Perform AMD GPU Field Health Check (AGFHC), `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/install/install.html#install-transferbench>`_, and `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/install/installation.html>`_.
+-	**Network tests**: Perform ping checks and multi-node `ROCm Communication Collectives Library (RCCL) <https://rocm.docs.amd.com/projects/rccl/en/latest/install/installation.html>`_ validations for different collectives.
+- **Distributed training tests**: Run and validate Llama 3.1 70B and 405B model distributed trainings across a multi-node cluster with the `JAX framework <https://rocm.docs.amd.com/en/latest/compatibility/ml-compatibility/jax-compatibility.html>`_. 
 - **InfiniBand (IB Perf)**: These tests are low-level network performance benchmarks that validate the raw communication capabilities of InfiniBand adapters and interconnects. These tests measure the fundamental building blocks on which RCCL and other high-level libraries depend.
 
 CVS uses the open-source PyTest framework to run the tests and generate reports. You can launch CVS from a head node or any Linux management station that has connectivity to the cluster nodes via SSH. 

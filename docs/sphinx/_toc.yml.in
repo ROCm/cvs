@@ -17,6 +17,8 @@ subtrees:
   entries:
   - file: how-to/run-cvs-tests
     title: Run tests
+  - file: how-to/run-cluster
+    title: Monitor the health of GPU clusters
 
 - caption: Reference
   entries:
@@ -35,7 +37,6 @@ subtrees:
       - file: reference/configuration-files/ib
         title: IB Perf
 
-   
 - caption: About
   entries:
   - file: license.md

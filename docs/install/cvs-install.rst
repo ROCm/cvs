@@ -19,7 +19,7 @@ CVS supports these GPUs:
 
 CVS supports these Linux distributions:
 
-- Ubuntu 24.04.2
+- Ubuntu 24.04.3
 
   - Kernel: 6.8 [GA], 6.14 
 
@@ -169,11 +169,11 @@ Training configuration (JAX)
 
 In the two training configuration files, change the directory path to your desired location in the ``git_install_path`` variable.
 
-Change any other parameters in the configuration files as needed.
+Change any parameters in the configuration file relevant to your testing requirements.
 
 InfiniBand (IB Perf)
 --------------------
 
-Change the parameters in the configuration file as needed.
+Change any parameters in the configuration file relevant to your testing requirements.
 
 

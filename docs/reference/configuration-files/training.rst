@@ -6,6 +6,9 @@
 Training configuration (JAX) files
 **********************************
 
+The JAX training tests perform end-to-end orchestration and validation of a distributed JAX training run (Llama 3.1) across a multi-node cluster using Docker containers, 
+remote execution, and the project's JAX library. 
+
 Change the parameters as needed in the two JAX training configuration files: ``2_nodes_mi300x_llama_3_1_70b.json`` and ``4_nodes_mi300x_llama_3_1_405b.json`` for 2 node and 4 node configurations, respectively.
 
 2 node configuration

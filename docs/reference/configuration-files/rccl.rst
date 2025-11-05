@@ -6,6 +6,9 @@
 ROCm Communication Collectives Library (RCCL) test configuration file
 *********************************************************************
 
+These RCCL tests are comprehensive benchmarks that validate distributed GPU communication performance across AMD GPU clusters. 
+These tests ensure optimal performance for AI training, HPC workloads, and distributed computing.
+
 Here's a code snippet of the ``rccl_config.json`` file for reference:
 
 .. dropdown:: ``rccl_config.json``
