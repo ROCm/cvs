@@ -62,7 +62,7 @@ For the performance validation, they use the reference bandwidth or latency numb
 
 Here are the available tests:
 
-- AGFHC (AMD GPU Field Health Check)
+- `AGFHC (AMD GPU Field Health Check) <https://instinct.docs.amd.com/projects/gpu-operator/en/main/test/agfhc.html>`_
 - `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/install/install.html#install-transferbench>`_
 - `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/install/installation.html>`_
 
