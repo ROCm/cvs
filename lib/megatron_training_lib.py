@@ -17,79 +17,9 @@ from utils_lib import *
 from verify_lib import *
 import linux_utils
 
-# Sample Training config dict. Actual values fed to PyTest script via input json file
-#"config":
-#{
-#        "container_image": "rocm/megatron-lm:v25.5_py312",
-#        "container_name": "megatron_llama3.1_8b",
-#        "nnodes": "4",
-#        "master_address": "10.2.96.21",
-#        "training_iterations": "10",
-#        "nic_type": "thor2",
-#        "nccl_ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7",
-#        "nccl_socket_ifname": "ens51f1np1",
-#        "gloo_socket_ifname": "ens51f1np1",
-#        "nccl_ib_gid_index": "3",
-#        "nccl_debug": "ERROR",
-#        "shm_size": "128G",
-#        "data_cache_dir": "/home/venksrin/cache",
-#        "mock_data": "True",
-#        "dataset_source":
-#        {
-#        },
-#        "container_config":
-#        {
-#            "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband" ],
-#            "volume_dict":
-#            {
-#                "/home/venksrin": "/home/venksrin",
-#                "/lib/libibverbs.d": "/lib/libibverbs.d",
-#                "/tmp/TRAINING_LOGS": "/workspace/Megatron-LM/output",
-#            }
-#}
-
-
-
-# Sample model params dict. Actual values fed to PyTest script via input json file
-#"model_params":
-#    {
-#        "single_node":
-#        {
-#             'llama3_1_8b':
-#             {
-#                 'mi300':
-#                 {
-#                     'tokenizer_model': 'meta-llama/Llama-3.1-8B',
-#                     'model_size': '8',
-#                     'batch_size': '128',
-#                     'micro_batch_size': '2',
-#                     'sequence_length': '8192',
-#                     'tensor_parallelism': '1',
-#                     'pipeline_parallelism': '1',
-#                     'recompute': '0',
-#                     'fsdp': '0'
-#                 },
-#                 'mi325':
-#                 {
-#                     'tokenizer_model': 'meta-llama/Llama-3.1-8B',
-#                     'model_size': '8',
-#                     'batch_size': '128',
-#                     'micro_batch_size': '2',
-#                     'sequence_length': '8192',
-#                     'tensor_parallelism': '1',
-#                     'pipeline_parallelism': '1',
-#                     'recompute': '0',
-#                     'fsdp': '0'
-#                 },
-#            }
-#      }
-#}
-
-# The batch size should be divisible by MBS and NNODES
 
 
 training_err_dict = {
-    'cache_err': 'Unable to save MockGPTDataset indexes because path_to_cache is None',
     'NCCL ERROR': 'NCCL ERROR|NCCL timeout|ncclRemoteError: A call failed possibly due to a network error|NCCL error:',
     'GPU HW ERROR': 'HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset',
     'torch': 'torch.distributed.elastic.multiprocessing.errors'
@@ -128,6 +58,7 @@ class MegatronLlamaTrainingJob():
     def __init__( self,  phdl, model_name,
         training_config_dict, model_params_dict,
         hf_token, gpu_type='mi300',
+        distributed_training=True,
         tune_model_params=True, scripts_dir=os.path.expanduser("~") + '/SCRIPTS'  ):
 
         """
@@ -158,15 +89,15 @@ class MegatronLlamaTrainingJob():
         # User-supplied config/params and derived fields
         self.training_config_dict  = training_config_dict
         self.model_params_dict     = model_params_dict
-        self.iterations            = training_config_dict['training_iterations'] 
-        self.tune_model_params        = tune_model_params
+        self.iterations            = int(training_config_dict['training_iterations'])
+        self.tune_model_params     = tune_model_params
 
         self.scripts_dir           = scripts_dir
 
         
         self.job_cmd               = ''
         self.job_cmd_list          = []
-        self.training_result_dict  = {}
+        self.training_results_dict  = {}
         print(self.gpu_type)
 
         # Intialize cluster stats dicts ..
@@ -183,7 +114,6 @@ class MegatronLlamaTrainingJob():
         tdict                      = training_config_dict
         tdict.setdefault( 'container_image', 'rocm/megatron-lm:v25.5_py312' )
         tdict.setdefault( 'container_name', 'megatron_llama3.1_8b' )
-        tdict.setdefault( 'distributed_training', True )
         tdict.setdefault( 'training_iterations', 10 )
         tdict.setdefault( 'nnodes', 2 )
         tdict.setdefault( 'nic_type', 'thor2' )
@@ -200,11 +130,8 @@ class MegatronLlamaTrainingJob():
 
         self.container_image       = tdict['container_image']
         self.container_name        = tdict['container_name']
-        if tdict['distributed_training'] == "True":
-            self.distributed_training  = True
-        else:
-            self.distributed_training  = False
-        self.iterations            = tdict['training_iterations']
+        self.distributed_training  = distributed_training
+        self.iterations            = int(tdict['training_iterations'])
         self.nnodes                = tdict['nnodes']
         self.nic_type              = tdict['nic_type']
         self.nccl_ib_hca_list      = tdict['nccl_ib_hca_list']
@@ -428,6 +355,14 @@ class MegatronLlamaTrainingJob():
             cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {self.log_dir}/megatron-logs/out-node{i}"'''
             cmd_list.append(cmd)
         self.phdl.exec_cmd_list(cmd_list)
+
+        cmd_list = []
+        for i in range(0, int(self.nnodes)):
+            result_training_log = f'{self.log_dir}/megatron-logs/out-node{i}/training.log'
+            cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i  "/^TRAIN_LOG=/c\TRAIN_LOG={result_training_log}" /workspace/Megatron-LM/examples/llama/train_llama3.sh' '''
+            cmd_list.append(cmd)
+        self.phdl.exec_cmd_list(cmd_list)
+
         if self.distributed_training:
             # Run any required NIC setup steps inside containers (e.g., Broadcom workaround)
             self.exec_nic_setup_scripts()
@@ -482,12 +417,12 @@ class MegatronLlamaTrainingJob():
         """
 
 
-        training_result_dict = {}
+        training_results_dict = {}
 
         # Read the training log output from the "last" node (assumed authoritative)
         last_node = self.host_list[len(self.host_list) -1]
         last_node_num = len(self.host_list) - 1
-        out_dict = self.phdl.exec(f'cat {self.log_dir}/megatron-logs/out-node{last_node_num}/training.log')
+        out_dict = self.phdl.exec(f'cat {self.log_dir}/megatron-logs/out-node{last_node_num}/training.log | tail -15')
 
 
         # Select the log content from the last node
@@ -497,24 +432,32 @@ class MegatronLlamaTrainingJob():
         print('#===========================#')
         print(output)
         print('#===========================#')
-        # Extract throughput per GPU as a list of numbers (strings), if multiple occurrences exist
-        training_result_dict['throughput_per_gpu'] = re.findall( \
-            'throughput per GPU:\s+([0-9\.]+)', output, re.I)
 
+        # Extract throughput per GPU as a list of numbers (strings), if multiple occurrences exist
+        #pattern = f'throughput per GPU \(TFLOP/s/GPU\):\s+([0-9\.]+)'
+        pattern = f'throughput per GPU:\s+([0-9\.]+)'
+        training_results_dict['throughput_per_gpu'] = re.findall( \
+                pattern, output, re.I)
+
+        pattern = f'tokens\/GPU\/s:\s+([0-9]+)'
         # Extract tokens per GPU per second (integers as strings)
-        training_result_dict['tokens_per_gpu'] = re.findall( \
-            'tokens\/GPU\/s:\s+([0-9]+)', output, re.I )
+        training_results_dict['tokens_per_gpu'] = re.findall( \
+            pattern, output, re.I )
 
         # Extract memory usage values (floats as strings)
-        training_result_dict['mem_usage'] = re.findall( \
-            'mem usages:\s+([0-9\.]+)', output, re.I )
+        pattern = f'mem usages:\s+([0-9\.]+)'
+        training_results_dict['mem_usage'] = re.findall( \
+            pattern, output, re.I )
 
         # Extract elapsed time per iteration (floats as strings)
-        training_result_dict['elapsed_time_per_iteration'] = re.findall( \
-            'elapsed time per iteration: \s+([0-9\.]+)', output, re.I)
+        pattern = f'elapsed time per iteration \(ms\):\s+([0-9\.]+)'
+        training_results_dict['elapsed_time_per_iteration'] = re.findall( \
+            pattern, output, re.I)
 
-        print(training_result_dict)
-        return training_result_dict
+        print(training_results_dict)
+        return training_results_dict
+
+
 
 
     def scan_for_training_errors(self, ):
@@ -571,18 +514,17 @@ class MegatronLlamaTrainingJob():
         return training_pass
           
   
-    def poll_for_training_completion( self, iterations=30, time_between_iters=60 ):
+    def poll_for_training_completion( self, time_between_iters=120 ):
 
         """
         Periodically poll training logs to detect completion, surface errors, and validate results.
 
         Args:
-        iterations (int): Maximum number of polling iterations before giving up.
         time_between_iters (int | float): Seconds to sleep between each polling iteration.
 
         Behavior:
         - Waits an initial 60s to allow training to start producing logs.
-        - For up to `iterations` loops:
+        - For up to `self.iterations` loops:
           * Invokes self.scan_for_training_errors(); aborts if it flags errors.
           * Reads the consolidated training log from the "last" node in self.host_list.
           * Checks for completion indicators (throughput per GPU or tokens/GPU/s).
@@ -597,7 +539,7 @@ class MegatronLlamaTrainingJob():
         - self.host_list is non-empty; last node contains authoritative training logs.
         - self.phdl.exec(cmd) returns {node: stdout_str}.
         - self.scan_for_training_errors() returns True when OK, False on error patterns.
-        - self.get_training_results_dict() parses known metrics into self.training_result_dict.
+        - self.get_training_results_dict() parses known metrics into self.training_results_dict.
         - re, time, and fail_test are available in scope.
 
         Notes:
@@ -613,7 +555,7 @@ class MegatronLlamaTrainingJob():
         last_node = self.host_list[len(self.host_list) -1]
         last_node_num = len(self.host_list) - 1
 
-        for i in range(1,int(iterations)+1):
+        for i in range(1,int(self.iterations)+1):
             print(f'Starting Iteration {i}')
             if not self.scan_for_training_errors():
                 fail_test('Failures seen in training logs, Aborting!!!')
@@ -621,8 +563,8 @@ class MegatronLlamaTrainingJob():
             out_dict = self.phdl.exec(f'sudo cat {self.log_dir}/megatron-logs/out-node{last_node_num}/training.log')
             output = out_dict[last_node]
             
-            if not re.search( 'throughput per GPU:|tokens\/GPU\/s\s+[0-9]+', \
-                output, re.I ):
+            #if not re.search( 'throughput per GPU:|tokens\/GPU\/s\s+[0-9]+', \
+            if not re.search( 'after training is done', output, re.I ):
                 print('Training still in progress')
             else:
                 if re.search( 'throughput per GPU:\s+[NaN|Inf]', output, re.I ) or \
@@ -631,7 +573,8 @@ class MegatronLlamaTrainingJob():
                     fail_test(f'ERROR - NaN or Inf values seen in training results {output}')
                     return
                 else:
-                    self.training_result_dict = self.get_training_results_dict()
+                    time.sleep(5)
+                    self.training_results_dict = self.get_training_results_dict()
                     print('Completed Training, returning !!!')
                     return
             # Wait secs between every iteration
@@ -646,7 +589,7 @@ class MegatronLlamaTrainingJob():
 
         Behavior:
         - Records end time of training for later log scanning.
-        - Scans parsed training_result_dict for NaN/Inf values in any reported metric.
+        - Scans parsed training_results_dict for NaN/Inf values in any reported metric.
         - If distributed training is enabled:
           * Collects RDMA and NIC (ethtool) stats after training.
           * Verifies selected error counters did not increase vs. their pre-training baselines.
@@ -656,7 +599,7 @@ class MegatronLlamaTrainingJob():
 
         Assumptions:
         - self.phdl.exec(cmd) returns a mapping of node -> command output (string).
-        - self.training_result_dict is populated before calling this method and structured
+        - self.training_results_dict is populated before calling this method and structured
           as: { metric_key: <iterable of metric lists/values> }.
         - self.distributed_training indicates whether to collect/compare network-related stats.
         - linux_utils.get_rdma_stats_dict and linux_utils.get_nic_ethtool_stats_dict return
@@ -685,14 +628,14 @@ class MegatronLlamaTrainingJob():
 
         print('#==================================================#')
         print('\t\tTraining Results')
-        print(self.training_result_dict)
+        print(self.training_results_dict)
         print('#==================================================#')
         # Check the parsed training results for invalid numeric values (NaN/Inf)
-        if not self.training_result_dict:
-            fail_test('Failed to populate training results, training_result_dict is empty - please check logs for failures')
+        if not self.training_results_dict:
+            fail_test('Failed to populate training results, training_results_dict is empty - please check logs for failures')
 
-        for result_key in self.training_result_dict.keys():
-            for result_list in self.training_result_dict[result_key]:
+        for result_key in self.training_results_dict.keys():
+            for result_list in self.training_results_dict[result_key]:
                 for result_val in result_list:
                     # Search for 'nan' or 'inf' (case-sensitive as written; add re.I if desired)
                     if re.search( 'nan|inf', result_val):
@@ -728,17 +671,16 @@ class MegatronLlamaTrainingJob():
         verify_dmesg_for_errors( self.phdl, self.training_start_time, self.training_end_time )
 
         print('^^^^^^^^^^^^^^^^^^^^')
-        print('training_result_dict')
+        print('training_results_dict')
         print('^^^^^^^^^^^^^^^^^^^^')
-        print(self.training_result_dict)
+        print(self.training_results_dict)
         # Compare perf expected numbers from input JSON file ..
-        for result_key in self.training_result_dict.keys():
+        for result_key in self.training_results_dict.keys():
             if result_key in self.expected_result_dict:
-                print(self.training_result_dict[result_key])
+                print(self.training_results_dict[result_key])
                 # check if all nodes have met the expected perf numbers
-                for actual_perf in self.training_result_dict[result_key]:
-                    if float(self.expected_result_dict[result_key]) < \
-                          float(actual_perf):
+                for actual_perf in self.training_results_dict[result_key]:
+                    if float(actual_perf) < float(self.expected_result_dict[result_key]):
                         fail_test(f'The Training performance numbers are below expected numbers for \
                            {result_key}, expected = {self.expected_result_dict[result_key]}, \
                            actual = {actual_perf}' )
