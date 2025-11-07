@@ -555,7 +555,8 @@ class MegatronLlamaTrainingJob():
         last_node = self.host_list[len(self.host_list) -1]
         last_node_num = len(self.host_list) - 1
 
-        for i in range(1,int(self.iterations)+1):
+        # 10 additional iterations in case time per iteration is longer ..
+        for i in range(1,int(self.iterations)+10):
             print(f'Starting Iteration {i}')
             if not self.scan_for_training_errors():
                 fail_test('Failures seen in training logs, Aborting!!!')
@@ -563,8 +564,8 @@ class MegatronLlamaTrainingJob():
             out_dict = self.phdl.exec(f'sudo cat {self.log_dir}/megatron-logs/out-node{last_node_num}/training.log')
             output = out_dict[last_node]
             
-            #if not re.search( 'throughput per GPU:|tokens\/GPU\/s\s+[0-9]+', \
-            if not re.search( 'after training is done', output, re.I ):
+            if not re.search( 'throughput per GPU:|tokens\/GPU\/s\s+[0-9]+', \
+                    output, re.I ):
                 print('Training still in progress')
             else:
                 if re.search( 'throughput per GPU:\s+[NaN|Inf]', output, re.I ) or \
