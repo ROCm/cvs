@@ -170,7 +170,7 @@
                      "scan_layers": "true",
                      "dataset_type": "synthetic",
                      "hf_path": "parquet",
-                     "hf_train_files": "/home/<change>/cache/maxtext/data/c4/000*.parquet",
+                     "hf_train_files": "/home/<changeme>/cache/maxtext/data/c4/000*.parquet",
                      "tokenizer_path": "/home/<changeme>/cache/maxtext/Meta-Llama-70-B",
                      "async_checkpointing": "false",
                      "logits_dot_in_fp32": "false",

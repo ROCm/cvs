@@ -113,12 +113,13 @@ def training_dict(training_config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def model_params_dict(training_config_file):
+def model_params_dict(training_config_file, cluster_dict):
     """
     Load and return the 'model_params' section from the training config JSON.
 
     Args:
       training_config_file (str): Path to the training configuration JSON.
+      cluster_dict: Cluster configuration (for placeholder resolution)
 
     Returns:
       dict: Model parameter presets stored under the 'model_params' key.
@@ -126,6 +127,10 @@ def model_params_dict(training_config_file):
     with open(training_config_file) as json_file:
         training_dict_t = json.load(json_file)
     model_params_dict = training_dict_t['model_params']
+
+    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
+    model_params_dict = resolve_test_config_placeholders(model_params_dict, cluster_dict)
+
     log.info(model_params_dict)
     return model_params_dict
 
@@ -181,7 +186,7 @@ def phdl(cluster_dict):
       - Extracts the list of nodes from cluster_dict['node_dict'] keys.
       - Initializes a Pssh handle with provided credentials.
     """
- 
+
     nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
@@ -244,7 +249,7 @@ def test_launch_jax_containers(phdl, training_dict ):
     container_name = training_dict['container_name']
     # Launch the containers ..
     docker_lib.launch_docker_container( phdl, container_name,
-          training_dict['container_image'], 
+          training_dict['container_image'],
           training_dict['container_config']['device_list'],
           training_dict['container_config']['volume_dict'],
           training_dict['container_config']['env_dict'],
@@ -254,7 +259,7 @@ def test_launch_jax_containers(phdl, training_dict ):
 
 
 
-    
+
 
 def test_llama_3_1_fp8_distributed(phdl, training_dict, model_params_dict, hf_token ):
     """

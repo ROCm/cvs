@@ -81,17 +81,22 @@ def cluster_dict(cluster_file):
     """
     with open(cluster_file) as json_file:
        cluster_dict = json.load(json_file)
+
+    # Resolve path placeholders like {user-id} in cluster config
+    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
+
     log.info(cluster_dict)
     return cluster_dict
 
 
 @pytest.fixture(scope="module")
-def training_dict(training_config_file):
+def training_dict(training_config_file, cluster_dict):
     """
     Load the training configuration section ('config') from the training JSON file.
 
     Args:
       training_config_file (str): Path to the training config JSON file.
+      cluster_dict: Cluster configuration (for placeholder resolution)
 
     Returns:
       dict: The 'config' nested dictionary with training/test parameters.
@@ -102,16 +107,21 @@ def training_dict(training_config_file):
     with open(training_config_file) as json_file:
        training_dict_t = json.load(json_file)
     training_dict = training_dict_t['config']
+
+    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
+    training_dict = resolve_test_config_placeholders(training_dict, cluster_dict)
+
     return training_dict
 
 
 @pytest.fixture(scope="module")
-def model_params_dict(training_config_file):
+def model_params_dict(training_config_file, cluster_dict):
     """
     Load model parameter presets from the training config JSON file.
 
     Args:
       training_config_file (str): Path to the training config JSON file.
+      cluster_dict: Cluster configuration (for placeholder resolution)
 
     Returns:
       dict: The 'model_params' nested dictionary (e.g., single_node/multi_node presets).
@@ -119,6 +129,10 @@ def model_params_dict(training_config_file):
     with open(training_config_file) as json_file:
        training_dict_t = json.load(json_file)
     model_params_dict = training_dict_t['model_params']
+
+    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
+    model_params_dict = resolve_test_config_placeholders(model_params_dict, cluster_dict)
+
     log.info(model_params_dict)
     return model_params_dict
 
@@ -263,7 +277,7 @@ def test_launch_megatron_containers(phdl, training_dict ):
     container_name = training_dict['container_name']
     # Launch the containers ..
     docker_lib.launch_docker_container( phdl, container_name,
-          training_dict['container_image'], 
+          training_dict['container_image'],
           training_dict['container_config']['device_list'],
           training_dict['container_config']['volume_dict'],
           shm_size='128G', timeout=60*20 )
@@ -305,7 +319,7 @@ def test_llama_3_1_fp8_single_node(phdl, gpu_type, training_dict, model_params_d
     mt_obj.verify_training_results()
     update_test_result()
 
- 
-    
+
+
 
 
