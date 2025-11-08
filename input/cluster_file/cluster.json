@@ -1,4 +1,7 @@
 {
+    "_comment": "Change <node_dir_name> to the dir name local to each Node. ex: 'home' or 'root' or 'root/cache'",
+    "node_dir_name": "root",
+
     "_comment1": "Change <home_mount_dir_name> to your home mount dir name if different ex: 'home' or 'root' ",
     "home_mount_dir_name": "home",
 

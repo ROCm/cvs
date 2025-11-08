@@ -363,6 +363,7 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     # Get username from cluster config or fallback to environment
     username = cluster_dict.get('username', os.getenv('USER', 'root'))
     home_mount_dir_name = cluster_dict.get('home_mount_dir_name', 'home')
+    node_dir_name = cluster_dict.get('node_dir_name', 'root')
 
     # Get home directory
     home_dir = os.path.expanduser(f'~{username}')
@@ -374,7 +375,8 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
         '{user-id}': username,
         '{user}': username,
         '{home}': home_dir,
-        '{home-mount-dir}': home_mount_dir_name
+        '{home-mount-dir}': home_mount_dir_name,
+        '{node-dir-name}':node_dir_name
     }
 
     resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")
