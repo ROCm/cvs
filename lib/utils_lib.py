@@ -250,6 +250,7 @@ def convert_hms_to_secs( time_string ):
 def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
     """
     Internal helper function to recursively resolve placeholders in a dictionary.
+    Also checks for unresolved manual placeholders like <changeme> and exits immediately.
 
     Args:
       target_dict: Dictionary (or nested dict/list/str) where placeholders should be replaced
@@ -260,6 +261,9 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
     Returns:
       dict/list/str: Input structure with all placeholders replaced
 
+    Raises:
+      SystemExit: If unresolved <changeme> or similar patterns are found
+
     Example:
       target = {"path": "/home/{user-id}/files", "user": "{user-id}"}
       replacements = {"{user-id}": "john"}
@@ -267,24 +271,41 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
       # Returns: {"path": "/home/john/files", "user": "john"}
     """
 
-    def replace_in_string(value):
-        """Replace all placeholders in a string."""
+    def replace_in_string(value, path=""):
+        """Replace all placeholders in a string and check for unresolved patterns."""
         if not isinstance(value, str):
             return value
 
+        # Check for unresolved <changeme> pattern BEFORE replacement
+        if re.search(r'<changeme>', value, re.IGNORECASE):
+            error_msg = f"\n{'='*70}\n"
+            error_msg += f"ERROR: Unresolved placeholder found in {context_name}!\n"
+            error_msg += f"{'='*70}\n\n"
+            error_msg += f"  {path}: {value}\n\n"
+            error_msg += f"{'='*70}\n"
+            error_msg += "ACTION REQUIRED:\n"
+            error_msg += "Please edit your configuration file and replace all the '<changeme>' placeholders\n"
+            error_msg += "with an appropriate value before running the tests.\n"
+            error_msg += f"{'='*70}\n"
+
+            log.error(error_msg)
+            # print(error_msg, file=sys.stderr)
+            sys.exit(1)
+
+        # Perform placeholder replacement
         result = value
         for placeholder, replacement in replacements.items():
             result = result.replace(placeholder, replacement)
         return result
 
-    def replace_recursive(obj):
+    def replace_recursive(obj, path=""):
         """Recursively replace placeholders in nested structures."""
         if isinstance(obj, dict):
-            return {k: replace_recursive(v) for k, v in obj.items()}
+            return {k: replace_recursive(v, f"{path}.{k}" if path else k) for k, v in obj.items()}
         elif isinstance(obj, list):
-            return [replace_recursive(item) for item in obj]
+            return [replace_recursive(item, f"{path}[{idx}]") for idx, item in enumerate(obj)]
         elif isinstance(obj, str):
-            return replace_in_string(obj)
+            return replace_in_string(obj, path)
         else:
             return obj
 
@@ -342,6 +363,7 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
       - {user-id} or {user}: Replaced with username from cluster_dict or current system user
       - {home}: Replaced with home directory of the user
       - {home-mount-dir}: Replaced with home mount directory name from cluster_dict
+      - {node-dir-name}: Replaced with node directory name from cluster_dict
 
     Args:
       config_dict: Configuration dictionary (can be nested dict/list/str)
@@ -349,6 +371,9 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
 
     Returns:
       dict/list/str: Configuration with resolved path placeholders
+
+    Raises:
+      SystemExit: If any <changeme> patterns are found
 
     Example:
       Input:  "/home/{user-id}/INSTALL"
@@ -376,7 +401,7 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
         '{user}': username,
         '{home}': home_dir,
         '{home-mount-dir}': home_mount_dir_name,
-        '{node-dir-name}':node_dir_name
+        '{node-dir-name}': node_dir_name
     }
 
     resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")
