@@ -23,12 +23,12 @@
         "_example_nccl_ib_gid_index": "3",
         "nccl_ib_gid_index": "<changeme>",
         "nccl_debug": "ERROR",
-        "hf_token_file": "/home/<changeme>/.hf_token",
+        "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "128G",
         "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
-        "data_cache_dir": "/home/<changeme>/cache",
+        "data_cache_dir": "/home/{user-id}/cache",
         "mock_data": "True",
-        "log_dir": "/home/<changeme>/LOG_DIR",
+        "log_dir": "/home/{user-id}/LOG_DIR",
         "dataset_source": 
         {
         },
@@ -37,7 +37,7 @@
             "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm" ],
             "volume_dict":
             {
-            "/home/<changeme>": "/home/<changeme>",
+            "/home/{user-id}": "/home/{user-id}",
             "/dev/infiniband": "/dev/infiniband",
             "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
             "/lib/libibverbs.d": "/lib/libibverbs.d",
