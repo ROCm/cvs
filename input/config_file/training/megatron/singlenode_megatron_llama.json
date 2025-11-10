@@ -23,7 +23,7 @@
             "device_list": [ "/dev/dri", "/dev/kfd" ],
             "volume_dict":
             {
-            "/home/{user-id}": "/home/{user-id}"
+            "/home/<changeme>": "/home/{user-id}"
             }
         }
     },
