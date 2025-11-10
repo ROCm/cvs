@@ -10,7 +10,7 @@ Following are the currently supported test suites
 
 This Pytest script can be run in the following fashion (for the details on arguments and their purpose, please refer the main README under the CVS parent folder
 
-In the config file, cvs/input/config_file/ibperf/ibperf_config.json, change the value of parameter "install_dir": "/home/linuxuser/" to the desired location.
+In the config file, cvs/input/config_file/ibperf/ibperf_config.json, change the value of parameter "install_dir": "/home/{user-id}/" to the desired location. Else {user-id} will be resolved as the current username at runtime.
 
 
 ```

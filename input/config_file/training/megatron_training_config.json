@@ -28,7 +28,7 @@
             "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm" ],
             "volume_dict":
             {
-            "/home/{user-id}": "/home/{user-id}",
+            "/home/<changeme>": "/home/{user-id}",
             "/dev/infiniband": "/dev/infiniband",
             "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
             "/lib/libibverbs.d": "/lib/libibverbs.d",

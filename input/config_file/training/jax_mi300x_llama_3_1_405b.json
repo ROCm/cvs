@@ -28,12 +28,12 @@
         "nvte_ck_v3_bf16_cvt": "2",
         "xla_python_client_mem_fraction": "0.975",
 	"xla_gpu_executable_warn_stuck_timeout": "90",
-        "hf_token_file": "/home/<changeme>/.hf_token",
+        "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "256G",
         "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
-        "data_cache_dir": "/home/<changeme>/cache",
+        "data_cache_dir": "/home/{user-id}/cache",
         "mock_data": "True",
-        "log_dir": "/home/<changeme>/LOGS",
+        "log_dir": "/home/{user-id}/LOGS",
         "dataset_source": 
         {
         },
@@ -42,7 +42,7 @@
             "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm" ],
             "volume_dict":
             {
-            "/home/<changeme>": "/home/<changeme>",
+            "/home/<changeme>": "/home/{user-id}",
             "/dev/infiniband": "/dev/infiniband",
             "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
             "/lib/libibverbs.d": "/lib/libibverbs.d",
@@ -85,8 +85,8 @@
                      "scan_layers": "true",
                      "dataset_type": "synthetic",
                      "hf_path": "parquet",
-                     "hf_train_files": "/home/<changeme>/cache/maxtext/data/c4/000*.parquet",
-                     "tokenizer_path": "/home/<changeme>/cache/maxtext/Meta-Llama-405-B",
+                     "hf_train_files": "/home/{user-id}/cache/maxtext/data/c4/000*.parquet",
+                     "tokenizer_path": "/home/{user-id}/cache/maxtext/Meta-Llama-405-B",
                      "async_checkpointing": "false",
                      "logits_dot_in_fp32": "false",
                      "megablox": "false",

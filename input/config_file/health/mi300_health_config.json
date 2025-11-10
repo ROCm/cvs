@@ -3,8 +3,8 @@
     "agfhc":
     {
         "path": "/opt/amd/agfhc",
-        "package_tar_ball": "/home/<changeme>/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
-        "install_dir": "/home/<changeme>/INSTALL/agfhc/",
+        "package_tar_ball": "/home/{user-id}/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
+        "install_dir": "/home/{user-id}/INSTALL/agfhc/",
         "_comments_log_dir": "log_dir has to be a NON NFS local file system",
         "log_dir": "/root/agfhc_logs",
         "nfs_install": "True",
@@ -12,15 +12,15 @@
     },
     "transferbench":
     {
-       "path": "/home/<changeme>/INSTALL/TransferBench",
-       "example_tests_path": "/home/<changeme>/cvs/INSTALL/TransferBench/examples",
-       "git_install_path": "/home/<changeme>/cvs/INSTALL/",
+       "path": "/home/{user-id}/INSTALL/TransferBench",
+       "example_tests_path": "/home/{user-id}/INSTALL/TransferBench/examples",
+       "git_install_path": "/home/{user-id}/INSTALL/",
        "git_url": "https://github.com/ROCm/TransferBench.git",
        "nfs_install": "True",
        "results":
        {
            "bytes_to_transfer": "268435456",
-           "path": "/home/<changeme>/cvs/INSTALL/TransferBench",
+           "path": "/home/{user-id}/INSTALL/TransferBench",
            "gpu_to_gpu_a2a_rtotal": "320.0",
            "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
            "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
@@ -45,8 +45,8 @@
     },
     "rocblas":
     {
-       "path": "/home/<changeme>/INSTALL/rocBLAS/build/release/clients/staging",
-       "git_install_path": "/home/<changeme>/INSTALL",
+       "path": "/home/{user-id}/INSTALL/rocBLAS/build/release/clients/staging",
+       "git_install_path": "/home/{user-id}/INSTALL",
        "git_url": "https://github.com/ROCm/rocBLAS.git",
        "rocm_version": "7.0.0",
        "nfs_install": "True",
@@ -59,7 +59,7 @@
     },
     "rochpl":
     {
-       "path": "/home/<changeme>/INSTALL/rocHPL",
+       "path": "/home/{user-id}/INSTALL/rocHPL",
        "git_install_path": "/root/cache/INSTALL",
        "git_url": "https://github.com/ROCm/rocHPL.git",
        "nfs_install": "True",
@@ -72,7 +72,7 @@
     },
     "babelstream":
     {
-       "path": "/home/<changeme>/INSTALL/BabelStream/build",
+       "path": "/home/{user-id}/INSTALL/BabelStream/build",
        "git_install_path": "/root/cache/INSTALL",
        "git_url": "https://github.com/UoB-HPC/BabelStream.git",
        "nfs_install": "True",
@@ -88,7 +88,7 @@
     "rvs":
     {
         "path": "/opt/rocm/bin",
-        "git_install_path": "/{home-mount-dir}/{user-id}/cvs_cache/INSTALL/rvs",
+        "git_install_path": "/home/{user-id}/INSTALL/rvs",
         "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
         "nfs_install": "True",
         "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",

@@ -2,7 +2,7 @@
     "ibperf":
     {
        "install_perf_package": "True",
-       "install_dir": "/home/linuxuser/",
+       "install_dir": "/home/{user-id}/",
        "rocm_dir": "/opt/rocm",
        "qp_count_list": [ "8", "16" ],
        "ib_bw_test_list": [ "ib_write_bw", "ib_send_bw"],
