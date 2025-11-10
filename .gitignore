@@ -1,0 +1,13 @@
+__pycache__/
+
+# Egg-info directories
+*.egg-info/
+
+# Virtual environments
+test_venv/
+
+# Build distributions
+dist/
+
+# Build artifacts in src
+src/*.egg-info/
