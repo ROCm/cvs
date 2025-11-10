@@ -1,0 +1,15 @@
+{
+  "username": "{{ username }}",
+  "priv_key_file": "{{ priv_key_file }}",
+  "head_node_dict": {
+    "mgmt_ip": "{{ head_node_ip }}"
+  },
+  "node_dict": {
+{% for node in node_list %}
+    "{{ node }}": {
+      "bmc_ip": "NA",
+      "vpc_ip": "{{ node }}"
+    }{% if not loop.last %},{% endif %}
+{% endfor %}
+  }
+}

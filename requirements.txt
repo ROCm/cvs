@@ -8,3 +8,5 @@ pytest-dependency
 xlsxwriter
 pydantic >= 2.0
 pandas
+netmiko
+jinja2

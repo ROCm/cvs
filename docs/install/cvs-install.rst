@@ -40,34 +40,50 @@ Run CVS from a node (head node), such as an Ubuntu virtual machine/bare metal wi
 It's recommended to run CVS from head node that is not a part of the test cluster. 
 This is to avoid loss of data if the node requires a reboot (such as during a system failure).
 
-1. Git clone the package:
+
+Recommended installation (pip)
+------------------------------
+
+CVS is packaged as a Python package and can be installed using pip. This is the recommended method.
+
+1. Clone the repository:
 
    .. code:: bash
 
      git clone https://github.com/ROCm/cvs
+     cd cvs
 
    The CVS GitHub repository is organized in these directories:
 
-   -	``tests``: This folder contains the PyTest scripts which internally call the library functions under the ``./lib`` directory. They're in native Python and can be invoked from any Python scripts for reusability. The ``tests`` directory contains a subfolder based on the nature of the tests, such as health, RCCL, training, and more.
-   -	``lib``: This is a collection of Python modules with utility functions that can be reused in other Python scripts.
-   -	``input``: This is a collection of the input JSON files that are provided to the PyTest scripts using the two arguments ``--cluster_file`` and the ``--config_file``. The ``--cluster_file`` is a JSON file which captures all the aspects of the cluster test bed, such as the IP address/hostnames, username, keyfile, and more. 
-   -	``utils``: This is a collection of standalone scripts that can be run natively without PyTest. They offer different utility functions.
+   -   ``tests``: This folder contains the PyTest scripts which internally call the library functions under the ``./lib`` directory. They're in native Python and can be invoked from any Python scripts for reusability. The ``tests`` directory contains a subfolder based on the nature of the tests, such as health, RCCL, training, and more.
+   -   ``lib``: This is a collection of Python modules with utility functions that can be reused in other Python scripts.
+   -   ``input``: This is a collection of the input JSON files that are provided to the PyTest scripts using the two arguments ``--cluster_file`` and the ``--config_file``. The ``--cluster_file`` is a JSON file which captures all the aspects of the cluster test bed, such as the IP address/hostnames, username, keyfile, and more.
+   -   ``utils``: This is a collection of standalone scripts that can be run natively without PyTest. They offer different utility functions.
 
-2. Navigate to the extracted directory and run the installation script:
+2. Build CVS:
 
    .. code:: bash
 
-     cd cvs
+     make build
 
-3. Set the environment:
+3. (Recommended) Create and activate a Python virtual environment, then install CVS:
 
-   .. code:: b3ash
+   .. code:: bash
 
-     python3 -m venv myenv
+     python3 -m venv cvs_env
+     source cvs_env/bin/activate
+     pip install dist/cvs*.tar.gz
 
-     source myenv/bin/activate
 
-     pip3 install -r requirements.txt  
+This will install CVS and its dependencies into your environment. For more details, see the README.md in the CVS repository.
+
+After installation, verify CVS is available:
+
+   .. code:: bash
+
+     cvs list
+
+If you see a list of available test suites, CVS is installed correctly.
 
 
 Configure the CVS cluster file
@@ -75,9 +91,14 @@ Configure the CVS cluster file
 
 The cluster file is a JSON file containing the cluster's IP addresses. You must configure the cluster file before you run any CVS tests. 
 
-1. Go to ``cvs/input/cluster_file/cluster.json`` in your cloned repo.
-2. Edit the management IP (``"mgmt_ip"``) and node dictionary (``"node_dict"``) with the list of IPs of the available cluster.
-3. Ensure the user-id (``"{user-id}"``) and ``priv_key_file`` match.
+1. Copy the cluster file template to your desired location:
+
+   .. code:: bash
+
+     cvs copy-config cluster.json --output ~/my_cluster.json
+
+2. Edit the management IP (``"mgmt_ip"``) and node dictionary (``"node_dict"``) with the list of IPs of your cluster.
+3. Ensure the user-id (``"{user-id}"``) and ``priv_key_file`` match your setup.
 
 Here's a code snippet of the ``cluster.json`` file for reference:
 
@@ -126,68 +147,113 @@ Set up your tests
 =================
 
 There are JSON configuration files for each CVS test. You must configure the JSON file for each test you want to run in CVS.
-The test configuration files are in the ``cvs/input/config_file`` directory of the cloned repo. 
+
+You can list all available configuration files using:
+
+.. code:: bash
+
+  cvs copy-config --list
 
 .. tip::
 
   See :doc:`Test configuration files <../reference/configuration-files/configure-config>` for code snippets and parameters of each configuration file.
 
-Follow these instructions for each test you'd like to conduct.
+For each test you'd like to conduct, copy the relevant configuration file and modify it for your use case.
 
 Platform
 --------
 
-In the ``cvs/input/config_file/platform/host_config.json`` file, modify these parameters to suit your use case: 
+1. Copy the platform configuration file:
 
-- ``os_version``
-- ``kernel_version``
-- ``rocm_version``
-- ``bios_version``
+   .. code:: bash
+
+     cvs copy-config platform/host_config.json --output ~/my_host_config.json
+
+2. Edit the file and modify these parameters to suit your use case:
+
+   - ``os_version``
+   - ``kernel_version``
+   - ``rocm_version``
+   - ``bios_version``
 
 Health
 ------
 
-In the ``cvs/input/config_file/health/mi300_health_config.json`` file, edit the paths to your desired location in these parameters:
+1. Copy the health configuration file:
 
-- Under ``agfhc``: 
+   .. code:: bash
 
-  - ``path``
-  - ``package_tar_ball``
-  - ``install_dir``
+     cvs copy-config health/mi300_health_config.json --output ~/my_health_config.json
 
--  Under ``transferbench``: 
+2. Edit the file and modify the paths to your desired location in these parameters:
 
-   - ``example_tests_path`` 
-   - ``git_install_path`` 
+   - Under ``agfhc``: 
 
-- Under ``rvs``:
+     - ``path``
+     - ``package_tar_ball``
+     - ``install_dir``
 
-  - ``git_install_path`` 
+   - Under ``transferbench``: 
+
+     - ``example_tests_path`` 
+     - ``git_install_path`` 
+
+   - Under ``rvs``:
+
+     - ``git_install_path`` 
 
 InfiniBand (IB Perf)
 --------------------
 
-In the ``cvs/input/config_file/ibperf/ibperf_config.json`` file, update the ``install_dir`` parameter to your desired location.
-Change any other parameters in the configuration file relevant to your testing requirements.
+1. Copy the IB performance configuration file:
+
+   .. code:: bash
+
+     cvs copy-config ibperf/ibperf_config.json --output ~/my_ibperf_config.json
+
+2. Edit the file and update the ``install_dir`` parameter to your desired location.
+3. Change any other parameters relevant to your testing requirements.
 
  
 ROCm Communication Collectives Library (RCCL)
 ---------------------------------------------
 
-In the ``cvs/input/config_file/rccl/rccl_config.json`` and ``cvs/input/config_file/rccl/single_node_mi355_rccl.json`` files, change the directory path to your desired location in these variables: 
+1. Copy the RCCL configuration file(s) you need:
 
-- ``rccl_dir``
-- ``rccl_tests_dir``
-- ``mpi_dir``
-- ``mpi_path_var`` 
-- ``rccl_path_var``
-- ``rocm_path_var``
+   .. code:: bash
+
+     cvs copy-config rccl/rccl_config.json --output ~/my_rccl_config.json
+     # Or for single node:
+     cvs copy-config rccl/single_node_mi355_rccl.json --output ~/my_single_node_rccl.json
+
+2. Edit the file(s) and change the directory paths to your desired location in these variables:
+
+   - ``rccl_dir``
+   - ``rccl_tests_dir``
+   - ``mpi_dir``
+   - ``mpi_path_var`` 
+   - ``rccl_path_var``
+   - ``rocm_path_var``
 
 JAX / Megatron training configuration files
---------------------------------
+--------------------------------------------
 
-Parameters with the ``<changeme>`` value must have that value modified to your specifications.
-Change any other parameters in the configuration file relevant to your testing requirements. 
+1. List available training configuration files:
+
+   .. code:: bash
+
+     cvs copy-config training --list
+
+2. Copy the configuration file you need:
+
+   .. code:: bash
+
+     cvs copy-config training/jax/mi300x_distributed_llama3_1_70b.json --output ~/my_training_config.json
+     # Or for Megatron:
+     cvs copy-config training/megatron/mi3xx_distributed_megatron_llama.json --output ~/my_megatron_config.json
+
+3. Edit the file and modify parameters with the ``<changeme>`` value to your specifications.
+4. Change any other parameters relevant to your testing requirements. 
 
 
 
