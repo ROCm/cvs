@@ -40,34 +40,50 @@ Run CVS from a node (head node), such as an Ubuntu virtual machine/bare metal wi
 It's recommended to run CVS from head node that is not a part of the test cluster. 
 This is to avoid loss of data if the node requires a reboot (such as during a system failure).
 
-1. Git clone the package:
+
+Recommended installation (pip)
+------------------------------
+
+CVS is packaged as a Python package and can be installed using pip. This is the recommended method.
+
+1. Clone the repository:
 
    .. code:: bash
 
      git clone https://github.com/ROCm/cvs
+     cd cvs
 
    The CVS GitHub repository is organized in these directories:
 
-   -	``tests``: This folder contains the PyTest scripts which internally call the library functions under the ``./lib`` directory. They're in native Python and can be invoked from any Python scripts for reusability. The ``tests`` directory contains a subfolder based on the nature of the tests, such as health, RCCL, training, and more.
-   -	``lib``: This is a collection of Python modules with utility functions that can be reused in other Python scripts.
-   -	``input``: This is a collection of the input JSON files that are provided to the PyTest scripts using the two arguments ``--cluster_file`` and the ``--config_file``. The ``--cluster_file`` is a JSON file which captures all the aspects of the cluster test bed, such as the IP address/hostnames, username, keyfile, and more. 
-   -	``utils``: This is a collection of standalone scripts that can be run natively without PyTest. They offer different utility functions.
+   -   ``tests``: This folder contains the PyTest scripts which internally call the library functions under the ``./lib`` directory. They're in native Python and can be invoked from any Python scripts for reusability. The ``tests`` directory contains a subfolder based on the nature of the tests, such as health, RCCL, training, and more.
+   -   ``lib``: This is a collection of Python modules with utility functions that can be reused in other Python scripts.
+   -   ``input``: This is a collection of the input JSON files that are provided to the PyTest scripts using the two arguments ``--cluster_file`` and the ``--config_file``. The ``--cluster_file`` is a JSON file which captures all the aspects of the cluster test bed, such as the IP address/hostnames, username, keyfile, and more.
+   -   ``utils``: This is a collection of standalone scripts that can be run natively without PyTest. They offer different utility functions.
 
-2. Navigate to the extracted directory and run the installation script:
+2. Build CVS:
 
    .. code:: bash
 
-     cd cvs
+     make build
 
-3. Set the environment:
+3. (Recommended) Create and activate a Python virtual environment, then install CVS:
 
-   .. code:: b3ash
+   .. code:: bash
 
-     python3 -m venv myenv
+     python3 -m venv cvs_env
+     source cvs_env/bin/activate
+     pip install dist/cvs*.tar.gz
 
-     source myenv/bin/activate
 
-     pip3 install -r requirements.txt  
+This will install CVS and its dependencies into your environment. For more details, see the README.md in the CVS repository.
+
+After installation, verify CVS is available:
+
+   .. code:: bash
+
+     cvs list
+
+If you see a list of available test suites, CVS is installed correctly.
 
 
 Configure the CVS cluster file

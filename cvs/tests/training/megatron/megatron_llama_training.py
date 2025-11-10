@@ -16,10 +16,12 @@ import json
 import logging
 import time
 
-from cvs.lib import parallel_ssh_lib
-from cvs.lib import utils_lib
+
+from cvs.lib.parallel_ssh_lib import *
+from cvs.lib.utils_lib import *
 from cvs.lib import docker_lib
-from cvs.lib import inference_max_lib
+from cvs.lib import megatron_training_lib
+
 from cvs.lib import globals
 log = globals.log
 
@@ -61,8 +63,6 @@ def training_config_file(pytestconfig):
     return pytestconfig.getoption("config_file")
 
 
-
-
 # Importing the cluster and cofig files to script to access node, switch, test config params
 @pytest.fixture(scope="module")
 def cluster_dict(cluster_file):
@@ -88,50 +88,70 @@ def cluster_dict(cluster_file):
 
 
 @pytest.fixture(scope="module")
-def inference_dict(training_config_file, cluster_dict):
+def training_dict(training_config_file, cluster_dict):
+    """
+    Load the training configuration section ('config') from the training JSON file.
+
+    Args:
+      training_config_file (str): Path to the training config JSON file.
+
+    Returns:
+      dict: The 'config' nested dictionary with training/test parameters.
+
+    Notes:
+      - Assumes the JSON root contains a 'config' key.
+    """
     with open(training_config_file) as json_file:
-       inference_dict_t = json.load(json_file)
-    inference_dict = inference_dict_t['config']
+       training_dict_t = json.load(json_file)
+    training_dict = training_dict_t['config']
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
-    inference_dict = resolve_test_config_placeholders(inference_dict, cluster_dict)
-    return inference_dict
+    training_dict = resolve_test_config_placeholders(training_dict, cluster_dict)
+    return training_dict
+
+
+@pytest.fixture(scope="module")
+def model_params_dict(training_config_file, cluster_dict):
+    """
+    Load model parameter presets from the training config JSON file.
+
+    Args:
+      training_config_file (str): Path to the training config JSON file.
+      cluster_dict: Cluster configuration (for placeholder resolution)
+
+    Returns:
+      dict: The 'model_params' nested dictionary (e.g., single_node/multi_node presets).
+    """
+    with open(training_config_file) as json_file:
+       training_dict_t = json.load(json_file)
+    model_params_dict = training_dict_t['model_params']
+
+    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
+    model_params_dict = resolve_test_config_placeholders(model_params_dict, cluster_dict)
+
+    log.info(model_params_dict)
+    return model_params_dict
 
 
 
 
 @pytest.fixture(scope="module")
-def benchmark_params_dict(training_config_file, cluster_dict):
-    with open(training_config_file) as json_file:
-       inference_dict_t = json.load(json_file)
-    benchmark_params_dict = inference_dict_t['benchmark_params']
-
-    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
-    benchmark_params_dict = resolve_test_config_placeholders(benchmark_params_dict, cluster_dict)
-
-    log.info(benchmark_params_dict)
-    return benchmark_params_dict
-
-
-
-
-@pytest.fixture(scope="module")
-def hf_token(inference_dict):
+def hf_token(training_dict):
     """
     Load the Hugging Face access token from the file path specified in the training config.
 
     Args:
-      inference_dict (dict): Training configuration dict that includes:
+      training_dict (dict): Training configuration dict that includes:
         - 'hf_token_file': Path to the file containing the HF token.
 
     Returns:
       str: The HF token string read from the file.
 
     Behavior:
-      - Reads the token from inference_dict['hf_token_file'] (already resolved for placeholders).
+      - Reads the token from training_dict['hf_token_file'] (already resolved for placeholders).
       - Strips the trailing newline from the token.
     """
-    hf_token_file = inference_dict['hf_token_file']
+    hf_token_file = training_dict['hf_token_file']
     try:
         with open(hf_token_file, 'r') as fp:
             hf_token = fp.read().rstrip("\n")
@@ -145,7 +165,7 @@ def hf_token(inference_dict):
 
 
 @pytest.fixture(scope="module")
-def s_phdl(cluster_dict):
+def phdl(cluster_dict):
     """
     Create and return a parallel SSH handle for all cluster nodes.
 
@@ -168,43 +188,14 @@ def s_phdl(cluster_dict):
     nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    s_phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
-    return s_phdl
-
-
-@pytest.fixture(scope="module")
-def c_phdl(cluster_dict):
-    """
-    Create and return a parallel SSH handle for all cluster nodes.
-
-    Args:
-      cluster_dict (dict): Cluster configuration loaded by another fixture. Expected keys:
-        - 'node_dict': dict of node_name -> node_details (used to derive the node list)
-        - 'username': SSH username for connecting to nodes
-        - 'priv_key_file': path to the SSH private key file
-
-    Returns:
-      Pssh: An initialized Pssh handle for issuing commands across all nodes.
-
-    Behavior:
-      - Prints the full cluster_dict for quick debugging (consider switching to log.debug to reduce noise).
-      - Collects all node names from cluster_dict['node_dict'] and constructs a Pssh handle.
-
-    Notes:
-      - This fixture has module scope, so a single connection handle is reused for all tests in the module.
-    """
-    nhdl_dict = {}
-    print(cluster_dict)
-    node_list = list(cluster_dict['node_dict'].keys())
-    c_phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
-    return c_phdl
-
+    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    return phdl
 
 
 
 
 @pytest.fixture(scope="module")
-def gpu_type(s_phdl, cluster_dict):
+def gpu_type(cluster_dict):
     """
     Provide the GPU type string for the test module.
 
@@ -218,29 +209,23 @@ def gpu_type(s_phdl, cluster_dict):
       - Module scope ensures this is evaluated once per test module.
       - Consider validating this value against an expected set of GPU types to catch typos early.
     """
-
-    print(s_phdl)
-    print(dir(s_phdl))
-    head_node = s_phdl.host_list[0]
-    smi_out_dict = s_phdl.exec('rocm-smi -a | head -30')
-    smi_out = smi_out_dict[head_node]
-    gpu_type=get_model_from_rocm_smi_output(smi_out)
+    gpu_type=cluster_dict['gpu_type']
     return gpu_type
 
 
 
 
-def test_cleanup_stale_containers( s_phdl, inference_dict ):
+def test_cleanup_stale_containers( phdl, training_dict ):
     """
     Pytest: Clean up potentially stale Docker containers and volumes before tests.
 
     Args:
-      s_phdl: Parallel SSH/process handle used by docker_lib to run commands on nodes.
-      inference_dict (dict): Training configuration dict that includes:
+      phdl: Parallel SSH/process handle used by docker_lib to run commands on nodes.
+      training_dict (dict): Training configuration dict that includes:
         - 'container_name': Name of the container to be killed if running.
 
     Behavior:
-      - Kills the specific container identified by inference_dict['container_name'].
+      - Kills the specific container identified by training_dict['container_name'].
       - Deletes all containers and volumes on the target nodes (broad cleanup).
 
     Notes:
@@ -249,49 +234,80 @@ def test_cleanup_stale_containers( s_phdl, inference_dict ):
       - Consider narrowing cleanup scope if other workloads may be present on the hosts.
     """
 
-    container_name = inference_dict['container_name']
-    docker_lib.kill_docker_container( s_phdl, container_name )
-    docker_lib.delete_all_containers_and_volumes( s_phdl )
+    container_name = training_dict['container_name']
+    docker_lib.kill_docker_container( phdl, container_name )
+    docker_lib.delete_all_containers_and_volumes( phdl )
 
 
 
-def test_launch_inference_containers( s_phdl, inference_dict ):
+
+def test_launch_megatron_containers(phdl, training_dict ):
     """
+    Pytest: Launch Megatron training containers and verify launch step.
+
+    Args:
+      phdl: Cluster handle for executing commands across nodes.
+      training_dict (dict): Training configuration including:
+        - 'container_name': Name for the container(s)
+        - 'container_image': Docker image to use
+        - 'container_config': {
+            'device_list': device pass-through config (GPUs, RDMA, etc),
+            'volume_dict': bind mounts for datasets, logs, etc
+          }
+
+    Behavior:
+      - Initializes the global error_list for fresh test pass/fail tracking.
+      - Launches the container(s) with a large shared memory segment (shm_size='128G').
+      - Uses a generous timeout (20 minutes) for image pulls/initialization.
+      - Calls update_test_result() to record the outcome based on accumulated errors.
+
     """
 
-    log.info('Testcase launch InferenceMax containers')
+    log.info('Testcase launch Megatron containers')
     globals.error_list = []
-    container_name = inference_dict['container_name']
+    container_name = training_dict['container_name']
     # Launch the containers ..
-    docker_lib.launch_docker_container( s_phdl, container_name,
-          inference_dict['container_image'],
-          inference_dict['container_config']['device_list'],
-          inference_dict['container_config']['volume_dict'],
-          inference_dict['container_config']['env_dict'],
-          shm_size='48G', timeout=60*20 )
+    docker_lib.launch_docker_container( phdl, container_name,
+          training_dict['container_image'],
+          training_dict['container_config']['device_list'],
+          training_dict['container_config']['volume_dict'],
+          shm_size='128G', timeout=60*20 )
     # ADD verifications ..
-    time.sleep(30)
-    print('Verify if the containers have been launched properly')
-    out_dict = s_phdl.exec('docker ps')
-    for node in out_dict.keys():
-        if not re.search( f'{container_name}', out_dict[node], re.I ):
-            fail_test(f'Failed to launch container on node {node}')
     update_test_result()
 
 
 
 
-def test_gpt_oss_120_single_node( c_phdl, s_phdl, gpu_type, inference_dict, benchmark_params_dict, hf_token ):
+def test_llama_3_1_fp8_single_node(phdl, gpu_type, training_dict, model_params_dict, hf_token ):
 
+    """
+    Pytest: Single-node Megatron Llama 3.1 FP8 training lifecycle test.
+
+    Args:
+      phdl: Cluster handle used by the training job to execute commands.
+      gpu_type (str): GPU identifier (e.g., 'mi300') used for selecting params.
+      training_dict (dict): Training configuration, volumes, environment, etc.
+      model_params_dict (dict): Model/hyperparameter presets (single_node/multi_node).
+      hf_token (str): Access token for Hugging Face datasets/models.
+
+    Behavior:
+      - Resets the global error list for a clean test run.
+      - Instantiates MegatronLlamaTrainingJob with tuned parameters disabled.
+      - Runs NIC setup (may apply vendor-specific workarounds).
+      - Builds training command/config inside the container.
+      - Starts training, polls for completion, and verifies results.
+      - Records final test outcome via update_test_result().
+
+    """
     globals.error_list = []
-    im_obj = inference_max_lib.InferenceMaxJob( c_phdl, s_phdl, 
-           'gpt-oss-120b', inference_dict, benchmark_params_dict,
-           hf_token, gpu_type, distributed_inference=False )
-    im_obj.build_server_inference_job_cmd()
-    im_obj.start_inference_server_job()
-    im_obj.start_inference_client_job()
-    im_obj.poll_for_inference_completion()
-    im_obj.verify_inference_results()
+    mt_obj = megatron_training_lib.MegatronLlamaTrainingJob( phdl,
+           'llama3_1_8b', training_dict, model_params_dict,
+           hf_token, gpu_type, tune_model_params=False )
+    mt_obj.exec_nic_setup_scripts()
+    mt_obj.build_training_job_cmd()
+    mt_obj.start_training_job()
+    mt_obj.poll_for_training_completion()
+    mt_obj.verify_training_results()
     update_test_result()
 
 

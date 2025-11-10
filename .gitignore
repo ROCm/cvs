@@ -1,3 +1,12 @@
 pycache/
 __pycache__/
 *.pyc
+
+# Egg-info directories
+*.egg-info/
+
+# Virtual environments
+test_venv/
+
+# Build distributions
+dist/
