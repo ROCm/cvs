@@ -813,7 +813,7 @@ Use the parameters in these tables to configure the training file.
      - "<changeme>"
      - NIC hardware type
    * - ``_example_nccl_ib_hca_list``
-      - Values:
+     - Values:
         - ``bnxt_re0``
         - ``bnxt_re1``
         - ``bnxt_re2``
@@ -891,14 +891,14 @@ Use the parameters in these tables to configure the training file.
    * - ``/dev/infiniband``
      - ``/dev/infiniband``
      - Expose InfiniBand device nodes into container
-   * - ``/usr/local/lib/libbnxt_re-rdmav34.so``
-     - ``/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host``
+   * - ``/usr/local/`` |br| ``lib/libbnxt_`` |br| ``re-rdmav34.so``
+     - ``/usr/lib/x86_64-`` |br| ``linux-gnu/libib`` |br| ``verbs/libbnxt_`` |br| ``re-rdmav34.so.host``
      - Mount host's Broadcom NIC driver library into container
    * - ``/lib/libibverbs.d``
      - ``/lib/libibverbs.d``
      - Mount InfiniBand verbs library configuration directory
    * - ``/tmp/TRAINING_LOGS``
-     - ``/workspace/Megatron-LM/output`` 
+     - ``/workspace/Megatr`` |br| ``on-LM/output`` 
      - Map host log directory to Megatron's expected output location inside container
 
 ``model_params/multi_node/llama3.1-8b/mi300x``
