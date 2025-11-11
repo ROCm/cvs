@@ -10,9 +10,9 @@ Megatron training enables scaling transformer models from millions to trillions 
 
 The Megatron tests check:
 
-- **Container orchestration**: Docker setup with ROCm/RDMA.
-- **Multi-node communication**: NCCL/RCCL initialization.
-- **Model convergence**: Loss decreases and no NaN/Inf values.
+- **Container orchestration**: Docker setup with ROCm/RDMA
+- **Multi-node communication**: NCCL/RCCL initialization
+- **Model convergence**: Loss decreases and no NaN/Inf values
 - **Performance targets**: Throughput and memory usage within expected ranges
 - **Result verification**: Expected tokens/sec and TFLOPS metrics
 
@@ -760,6 +760,10 @@ This is the multi-node ``distributed_megatron_llama.json`` configuration file:
 Parameters
 ----------
 
+.. |br| raw:: html
+
+    <br />
+
 Use the parameters in these tables to configure the training file.
 
 ``config``
@@ -869,10 +873,10 @@ Use the parameters in these tables to configure the training file.
    :widths: 3 3 5
    :header-rows: 1
 
-  * - Configuration parameters
+   * - Configuration parameters
      - Default values
      - Description
-* - ``device_list``
+   * - ``device_list``
      - Values:
         - ``"/dev/dri"``
         - ``"/dev/kfd"``
@@ -1313,10 +1317,10 @@ Use the parameters in these tables to configure the training file.
    :widths: 3 3 5
    :header-rows: 1
 
-  * - Configuration parameters
+   * - Configuration parameters
      - Default values
      - Description
-* - ``device_list``
+   * - ``device_list``
      - Values:
         - ``"/dev/dri"``
         - ``"/dev/kfd"``
