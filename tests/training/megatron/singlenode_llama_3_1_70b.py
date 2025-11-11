@@ -110,7 +110,6 @@ def training_dict(training_config_file, cluster_dict):
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     training_dict = resolve_test_config_placeholders(training_dict, cluster_dict)
-
     return training_dict
 
 
@@ -140,23 +139,22 @@ def model_params_dict(training_config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def hf_token(training_config_file):
+def hf_token(training_dict):
     """
     Load the Hugging Face access token from the file path specified in the training config.
 
     Args:
-      training_config_file (str): Path to the training config JSON file.
+      training_dict (dict): Training configuration dict that includes:
+        - 'hf_token_file': Path to the file containing the HF token.
 
     Returns:
       str: The HF token string read from the file.
 
     Behavior:
-      - Reads training_config_file, retrieves config.hf_token_file, then reads the token from that file.
+      - Reads the token from training_dict['hf_token_file'] (already resolved for placeholders).
       - Strips the trailing newline from the token.
     """
-    with open(training_config_file) as json_file:
-        training_dict_t = json.load(json_file)
-    hf_token_file = training_dict_t['config']['hf_token_file']
+    hf_token_file = training_dict['hf_token_file']
     try:
         with open(hf_token_file, 'r') as fp:
             hf_token = fp.read().rstrip("\n")
