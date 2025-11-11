@@ -32,125 +32,125 @@ This is the ``mi3xx_singlenode_megatron_llama.json`` configuration file:
 .. dropdown:: ``mi3xx_singlenode_megatron_llama.json``
 
   .. code:: json
+      
+    {
     
-  {
-  
-    "config":
-    {
-        "container_image": "rocm/megatron-lm:v25.5_py310",
-        "container_name": "megatron_llama3.1_310",
-        "_example_nnodes": "4",
-        "nnodes": "<changeme>-no of nodes to run singlenode training",
-        "master_address": "<changeme>",
-          "_example_training_iterations": "30",
-        "training_iterations": "<changeme>",
-        "hf_token_file": "/home/{user-id}/.hf_token",
-        "shm_size": "128G",
-        "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
-        "data_cache_dir": "/home/{user-id}/cache",
-        "mock_data": "True",
-        "log_dir": "/home/{user-id}/LOG_DIR",
-        "dataset_source": 
-        {
-        },
-        "container_config":
-        {
-            "device_list": [ "/dev/dri", "/dev/kfd" ],
-            "volume_dict":
-            {
-            "/home/{user-id}": "/home/{user-id}"
-            }
-        }
-    },
-    "model_params":
-    {
-        "single_node":
-        {
-              "llama3_1_8b":
+      "config":
+      {
+          "container_image": "rocm/megatron-lm:v25.5_py310",
+          "container_name": "megatron_llama3.1_310",
+          "_example_nnodes": "4",
+          "nnodes": "<changeme>-no of nodes to run singlenode training",
+          "master_address": "<changeme>",
+            "_example_training_iterations": "30",
+          "training_iterations": "<changeme>",
+          "hf_token_file": "/home/{user-id}/.hf_token",
+          "shm_size": "128G",
+          "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
+          "data_cache_dir": "/home/{user-id}/cache",
+          "mock_data": "True",
+          "log_dir": "/home/{user-id}/LOG_DIR",
+          "dataset_source": 
+          {
+          },
+          "container_config":
+          {
+              "device_list": [ "/dev/dri", "/dev/kfd" ],
+              "volume_dict":
               {
-                  "mi300x":
-                  {
-                      "tokenizer_model": "NousResearch/Meta-Llama-3-8B",
-                      "model_size": "8",
-                      "batch_size": "128",
-                      "micro_batch_size": "2",
-                      "precision": "TE_FP8",
-                      "sequence_length": "8192",
-                      "tensor_parallelism": "1",
-                      "pipeline_parallelism": "1",
-                      "recompute": "0",
-                      "fsdp": "0",
-                      "result_dict":
-                      {
-                          "throughput_per_gpu": "380.0",
-                          "tokens_per_gpu": "6500.0",
-                          "elapsed_time_per_iteration": "12000.0"
-                      }
-                  },
-                  "mi325":
-                  {
-                      "tokenizer_model": "NousResearch/Meta-Llama-3-8B",
-                      "model_size": "8",
-                      "batch_size": "128",
-                      "micro_batch_size": "2",
-                      "precision": "TE_FP8",
-                      "sequence_length": "8192",
-                      "tensor_parallelism": "1",
-                      "pipeline_parallelism": "1",
-                      "recompute": "0",
-                      "fsdp": "0",
-                      "result_dict":
-                      {
-                          "throughput_per_gpu": "380.0",
-                          "tokens_per_gpu": "6500.0",
-                          "elapsed_time_per_iteration": "12000.0"
-                      }
-                  }
-              },
-              "llama3_1_70b":
-              {
-                  "mi300x":
-                  {
-                      "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
-                      "model_size": "70",
-                      "batch_size": "128",
-                      "micro_batch_size": "1",
-                      "precision": "TE_FP8",
-                      "sequence_length": "8192",
-                      "tensor_parallelism": "8",
-                      "pipeline_parallelism": "1",
-                      "recompute": "0",
-                      "fsdp": "0",
-                      "result_dict":
-                      {
-                          "throughput_per_gpu": "500.0",
-                          "tokens_per_gpu": "1000.0"
-                      }
-                  },
-                  "mi325":
-                  {
-                      "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
-                      "model_size": "70",
-                      "batch_size": "128",
-                      "micro_batch_size": "1",
-                      "precision": "TE_FP8",
-                      "sequence_length": "8192",
-                      "tensor_parallelism": "8",
-                      "pipeline_parallelism": "1",
-                      "recompute": "0",
-                      "fsdp": "0",
-                      "result_dict":
-                      {
-                          "throughput_per_gpu": "520.0",
-                          "tokens_per_gpu": "1100.0"
-                      }
-                  }
+              "/home/{user-id}": "/home/{user-id}"
               }
-        }
+          }
+      },
+      "model_params":
+      {
+          "single_node":
+          {
+                "llama3_1_8b":
+                {
+                    "mi300x":
+                    {
+                        "tokenizer_model": "NousResearch/Meta-Llama-3-8B",
+                        "model_size": "8",
+                        "batch_size": "128",
+                        "micro_batch_size": "2",
+                        "precision": "TE_FP8",
+                        "sequence_length": "8192",
+                        "tensor_parallelism": "1",
+                        "pipeline_parallelism": "1",
+                        "recompute": "0",
+                        "fsdp": "0",
+                        "result_dict":
+                        {
+                            "throughput_per_gpu": "380.0",
+                            "tokens_per_gpu": "6500.0",
+                            "elapsed_time_per_iteration": "12000.0"
+                        }
+                    },
+                    "mi325":
+                    {
+                        "tokenizer_model": "NousResearch/Meta-Llama-3-8B",
+                        "model_size": "8",
+                        "batch_size": "128",
+                        "micro_batch_size": "2",
+                        "precision": "TE_FP8",
+                        "sequence_length": "8192",
+                        "tensor_parallelism": "1",
+                        "pipeline_parallelism": "1",
+                        "recompute": "0",
+                        "fsdp": "0",
+                        "result_dict":
+                        {
+                            "throughput_per_gpu": "380.0",
+                            "tokens_per_gpu": "6500.0",
+                            "elapsed_time_per_iteration": "12000.0"
+                        }
+                    }
+                },
+                "llama3_1_70b":
+                {
+                    "mi300x":
+                    {
+                        "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
+                        "model_size": "70",
+                        "batch_size": "128",
+                        "micro_batch_size": "1",
+                        "precision": "TE_FP8",
+                        "sequence_length": "8192",
+                        "tensor_parallelism": "8",
+                        "pipeline_parallelism": "1",
+                        "recompute": "0",
+                        "fsdp": "0",
+                        "result_dict":
+                        {
+                            "throughput_per_gpu": "500.0",
+                            "tokens_per_gpu": "1000.0"
+                        }
+                    },
+                    "mi325":
+                    {
+                        "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
+                        "model_size": "70",
+                        "batch_size": "128",
+                        "micro_batch_size": "1",
+                        "precision": "TE_FP8",
+                        "sequence_length": "8192",
+                        "tensor_parallelism": "8",
+                        "pipeline_parallelism": "1",
+                        "recompute": "0",
+                        "fsdp": "0",
+                        "result_dict":
+                        {
+                            "throughput_per_gpu": "520.0",
+                            "tokens_per_gpu": "1100.0"
+                        }
+                    }
+                }
+          }
 
-      }
-  
-  }
+        }
+    
+    }
 
 
 Parameters

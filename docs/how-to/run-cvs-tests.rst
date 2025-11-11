@@ -66,7 +66,13 @@ Here are the available tests:
 - `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/install/install.html#install-transferbench>`_
 - `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/install/installation.html>`_
 
-Here are the test cases for those tests:
+
+Use these scripts to run each health test. These CVS test scripts have two parts: installing the functionality and running the tests.
+
+AGFHC
+~~~~~
+
+These are the test cases for AGFHC:
 
 - ``test_agfhc_hbm``
 - ``test_agfhc_hbm1_lvl5``
@@ -80,18 +86,6 @@ Here are the test cases for those tests:
 - ``test_agfhc_xgmi_lvl1``
 - ``test_agfhc_all_perf``
 - ``test_agfhc_all_lvl5``
-- ``test_transfer_bench_example_tests_1_6_t``
-- ``test_transfer_bench_a2a``
-- ``test_transfer_bench_p2p``
-- ``test_transfer_bench_healthcheck``
-- ``test_transfer_bench_a2asweep``
-- ``test_transfer_bench_scaling``
-- ``test_transfer_bench_schmoo``
-
-Use these scripts to run each health test. These CVS test scripts have two parts: installing the functionality and running the tests.
-
-AGFHC
-~~~~~
 
 .. code:: bash
 
@@ -104,6 +98,16 @@ AGFHC
 TransferBench
 ~~~~~~~~~~~~~
 
+These are the test cases for TransferBench:
+
+- ``test_transfer_bench_example_tests_1_6_t``
+- ``test_transfer_bench_a2a``
+- ``test_transfer_bench_p2p``
+- ``test_transfer_bench_healthcheck``
+- ``test_transfer_bench_a2asweep``
+- ``test_transfer_bench_scaling``
+- ``test_transfer_bench_schmoo``
+
 .. code:: bash
 
   pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_transferbench.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html
@@ -113,6 +117,21 @@ TransferBench
 
 RVS
 ~~~
+
+These are the test cases for RVS:
+
+- ``gpup_single``
+- ``mem_test``
+- ``gst_single``
+- ``iet_single``
+- ``pebb_single``
+- ``pbqt_single``
+- ``peqt_single``
+- ``rcqt_single``
+- ``tst_single``
+- ``babel_stream``
+
+Here's the test script:
 
 .. code:: bash
 
