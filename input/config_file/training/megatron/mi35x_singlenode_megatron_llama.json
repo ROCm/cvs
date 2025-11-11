@@ -76,7 +76,7 @@
                      "model_size": "70",
                      "batch_size": "24",
                      "micro_batch_size": "3",
-                     "precision": "TE_FP8",
+                     "precision": "TE_FP16",
                      "sequence_length": "8192",
 		     "fsdp": "1",
                      "tensor_parallelism": "1",
@@ -84,7 +84,7 @@
                      "recompute": "1",
                      "result_dict":
                      {
-                         "tokens_per_gpu": "1300.0"
+                         "tokens_per_gpu": "2000.0"
                      }
                  },
                  "mi355":
@@ -93,7 +93,7 @@
                      "model_size": "70",
                      "batch_size": "24",
                      "micro_batch_size": "3",
-                     "precision": "TE_FP8",
+                     "precision": "TE_FP16",
                      "sequence_length": "8192",
 		     "fsdp": "1",
                      "tensor_parallelism": "1",
@@ -101,7 +101,7 @@
                      "recompute": "1",
                      "result_dict":
                      {
-                         "tokens_per_gpu": "1300.0"
+                         "tokens_per_gpu": "2100.0"
                      }
                  }
              }
