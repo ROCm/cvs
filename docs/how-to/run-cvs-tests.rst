@@ -87,9 +87,6 @@ Here are the test cases for those tests:
 - ``test_transfer_bench_a2asweep``
 - ``test_transfer_bench_scaling``
 - ``test_transfer_bench_schmoo``
-- ``test_rocblas_fp32_benchmark``
-- ``test_rocblas_bf16_benchmark``
-- ``test_rocblas_int8_benchmark``
 
 Use these scripts to run each health test. These CVS test scripts have two parts: installing the functionality and running the tests.
 
@@ -159,7 +156,7 @@ remote execution, and the project's JAX library.
 
 The file uses PyTest and parallel SSH to prepare the environment, launch containers, and run/verify a short distributed training job.
 
-These are the JAX training test scripts:
+These are the JAX training test cases:
 
 - ``test_llama_3_1_70b_distributed`` 
 - ``test_launch_jax_containers`` 
@@ -184,6 +181,8 @@ The Megatron tests check:
 - **Model convergence**: Loss decreases and no NaN/Inf values.
 - **Performance targets**: Throughput and memory usage within expected ranges
 - **Result verification**: Expected tokens/sec and TFLOPS metrics
+
+These are the Negatron training test cases:
 
 - ``test_disable_firewall``
 - ``test_cleanup_stale_containers``

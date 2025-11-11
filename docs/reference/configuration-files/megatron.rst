@@ -22,7 +22,7 @@ Further, you can configure the ``mi35x_singlenode_megatron_llama.json`` file to 
 
 .. note::
 
-  Parameters with the "<changeme>" value must have that value modified to your specifications.
+  Parameters with the ``<changeme>`` value must have that value modified to your specifications.
 
 Single node configuration
 =========================
@@ -182,16 +182,16 @@ Use the parameters in these tables to configure the training file.
      - 4
      - Example of number of cluster nodes participating in the job 
    * - ``Nnodes``
-     - "<changeme>-no of nodes to run singlenode training"
+     - "``<changeme>``-no of nodes to run singlenode training"
      - Number of nodes in the distributed job 
    * - ``master_address``
-     - <changeme>
+     - ``<changeme>``
      - IP of the master/coordinator node
    * - ``_example_training_iterations``
      - 30
      - Example of number of training iterations/steps to run in this test
    * - ``training_iterations``
-     - <changeme>
+     - ``<changeme>``
      - Number of training iterations/steps to run in this test
    * - ``hf_token_file``
      - ``/home/{user-id}/.hf_token``
@@ -646,25 +646,25 @@ Use the parameters in these tables to configure the training file.
      - 4
      - Example of number of cluster nodes participating in the job 
    * - ``Nnodes``
-     - <changeme>
+     - ``<changeme>``
      - Number of cluster nodes participating in the distributed job 
    * - ``_example_master_address``
      - "X.X.X.X"
      - Example IP of the master/coordinator node
    * - ``master_address``
-     - <changeme>
+     - ``<changeme>``
      - IP of the master/coordinator node
    * - ``_example_training_iterations``
      - 30
      - Example of number of training iterations/steps to run in this test
    * - ``training_iterations``
-     - <changeme> 
+     - ``<changeme>`` 
      - Number of training iterations/steps to run in this test
    * - ``_example_nic_type``
      - ``ainic|thor2|cx7``
      - Example of NIC hardware type
    * - ``nic_type``
-     - <changeme>
+     - ``<changeme>``
      - NIC hardware type
    * - ``_example_nccl_ib_hca_list``
      - Values:
@@ -678,22 +678,22 @@ Use the parameters in these tables to configure the training file.
         - ``bnxt_re7``
      - Example of a comma-separated list of InfiniBand HCA device names to use for NCCL/communication (multi-rail support)
    * - ``nccl_ib_hca_list``
-     - <changeme>
+     - ``<changeme>``
      - Comma-separated list of InfiniBand HCA device names to use for NCCL/communication (multi-rail support)
    * - ``_example_nccl_socket_ifname``
      - ``ens51f1np1``
      - Example of a network interface name used by NCCL Network interface name used by NCCL / control channels
    * - ``nccl_socket_ifname``
-     - <changeme>
+     - ``<changeme>``
      - Network interface name used by NCCL Network interface name used by NCCL / control channels
    * - ``_example_gloo_socket_ifname``
      - ``ens51f1np1`` 
      - Example of a network interface name used by Gloo control channels
    * - ``gloo_socket_ifname``
-     - <changeme>
+     - ``<changeme>``
      - Network interface name used by Gloo control channels
    * - ``nccl_ib_gid_index``
-     - <changeme>
+     - ``<changeme>``
      - GID index used for IB addressing (selects which GID)
    * - ``_example_nccl_ib_gid_index``
      - 3
@@ -1134,16 +1134,16 @@ Use the parameters in these tables to configure the training file.
      - 4
      - Example of number of cluster nodes participating in the job 
    * - ``Nnodes``
-     - "<changeme>-no of nodes to run singlenode training"
+     - "``<changeme>``-no of nodes to run singlenode training"
      - Number of nodes in the distributed job 
    * - ``master_address``
-     - <changeme>
+     - ``<changeme>``
      - IP of the master/coordinator node
    * - ``_example_training_iterations``
      - 30
      - Example of number of training iterations/steps to run in this test
    * - ``training_iterations``
-     - <changeme>
+     - ``<changeme>``
      - Number of training iterations/steps to run in this test
    * - ``hf_token_file``
      - ``/home/{user-id}/.hf_token``
