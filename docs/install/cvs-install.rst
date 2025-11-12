@@ -36,9 +36,9 @@ CVS supports these Linux distributions:
 Install CVS
 ===========
 
-Run CVS from a node (head node), such as an Ubuntu virtual machine/bare metal with or without GPU in that node.
- 
-It's recommended to run CVS from head node that is not a part of the test cluster. This is to avoid loss of data if the node requires a reboot (such as during a system failure).
+Run CVS from a node (head node), such as an Ubuntu virtual machine/bare metal with or without GPU in that node. 
+It's recommended to run CVS from head node that is not a part of the test cluster. 
+This is to avoid loss of data if the node requires a reboot (such as during a system failure).
 
 1. Git clone the package:
 
