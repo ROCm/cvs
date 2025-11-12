@@ -10,6 +10,10 @@ IB Perf and latency tests measure network performance. Perf tests measure throug
 
 Here's a code snippet of the ``ibperf_config.json`` file for reference:
 
+.. note::
+
+  In this configuration file, ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username. 
+
 .. dropdown:: ``ibperf_config.json``
 
   .. code:: json
