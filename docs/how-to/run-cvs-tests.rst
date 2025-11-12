@@ -88,13 +88,13 @@ Use these scripts to start the test:
 
      pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_agfhc.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
 
-2. Set the AGFHC test:
+2. Run the AGFHC test:
 
    .. code:: bash
     
      pytest -vvv --log-file=/tmp/test.log -s ./tests/health/agfhc_cvs.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
 
-3. Set the CSV qualification test:
+3. Run the CSP qualification test:
 
    .. code:: bash
     
@@ -216,12 +216,21 @@ Here are the RCCL test cases:
 
   You should already have your RCCL environment setup in all of the nodes. If not, see `Build collective tests <https://instinct.docs.amd.com/projects/gpu-cluster-networking/en/latest/how-to/multi-node-config.html#build-collective-tests>`_ for more information. 
 
-Here's the test script:
+Use these test scripts to run the JAX tests.
+
+Single node test MI35XX
+~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
-  pytest -vvv --log-file=/tmp/test.log -s ./tests/rccl/rccl_multinode_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl.html --capture=tee-sys --self-contained-html
+  pytest -vvv --log-file=/tmp/test.log -s ./tests/rccl/rccl_singlenode_cvs.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/single_node_mi355_rccl.json --html=/var/www/html/cvs/rccl.html --capture=tee-sys --self-contained-html
 
+Multi-node test MI3XX
+~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+  pytest -vvv --log-file=/tmp/test.log -s ./tests/rccl/rccl_multinode_cvs.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl.html --capture=tee-sys --self-contained-html
 
 JAX training test scripts
 -------------------------
