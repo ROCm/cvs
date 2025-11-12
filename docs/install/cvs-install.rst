@@ -36,8 +36,9 @@ CVS supports these Linux distributions:
 Install CVS
 ===========
 
-Run CVS from a runner machine, such as an Ubuntu virtual machine or bare metal. Alternatively, you can install and run CVS from the first host in your cluster. 
-It's recommended to run CVS from a dedicated runner machine to avoid loss of data if the host requires a reboot (such as during a system failure).
+Run CVS from a node (head node), such as an Ubuntu virtual machine/bare metal with or without GPU in that node.
+ 
+It's recommended to run CVS from head node that is not a part of the test cluster. This is to avoid loss of data if the node requires a reboot (such as during a system failure).
 
 1. Git clone the package:
 
@@ -173,7 +174,7 @@ Change any other parameters in the configuration file relevant to your testing r
 ROCm Communication Collectives Library (RCCL)
 ---------------------------------------------
 
-In the ``cvs/input/config_file/rccl/rccl_config.json`` and ``cvs/input/config_file/rccl/single_node_mi355_rccl.json``files, change the directory path to your desired location in these variables: 
+In the ``cvs/input/config_file/rccl/rccl_config.json`` and ``cvs/input/config_file/rccl/single_node_mi355_rccl.json`` files, change the directory path to your desired location in these variables: 
 
 - ``rccl_dir``
 - ``rccl_tests_dir``

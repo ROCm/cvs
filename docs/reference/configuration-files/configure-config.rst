@@ -53,13 +53,13 @@ If Passwordless is not enabled, use these commands to enable it (you can enable 
  
 3. Then check these settings:
 
-    .. code:: bash
+   .. code:: bash
 
-      ssh username@remote_host-ip
+    ssh username@remote_host-ip
 
     If the username is also the same in both nodes, then just use the IP address:
 
-    .. code:: bash
+   .. code:: bash
 
-      ssh remote-host-ip
+    ssh remote-host-ip
 

@@ -84,21 +84,21 @@ Use these scripts to start the test:
 
 1. Run the installation: 
 
-  .. code:: bash 
+   .. code:: bash 
 
-    pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_agfhc.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
+     pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_agfhc.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
 
 2. Set the AGFHC test:
 
-  .. code:: bash
+   .. code:: bash
     
-    pytest -vvv --log-file=/tmp/test.log -s ./tests/health/agfhc_cvs.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
+     pytest -vvv --log-file=/tmp/test.log -s ./tests/health/agfhc_cvs.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
 
 3. Set the CSV qualification test:
 
-  .. code:: bash
+   .. code:: bash
     
-    pytest -vvv --log-file=/tmp/test.log -s ./tests/health/csp_qual_agfhc.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
+     pytest -vvv --log-file=/tmp/test.log -s ./tests/health/csp_qual_agfhc.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
 
 TransferBench
 ~~~~~~~~~~~~~
@@ -119,15 +119,15 @@ Use these scripts to start the test:
 
 1. Run the installation: 
 
-  .. code:: bash
+   .. code:: bash
 
-    pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_transferbench.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html
+     pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_transferbench.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html
 
 2. Start the TransferBench test:
 
-  .. code:: bash
+   .. code:: bash
     
-    pytest -vvv --log-file=/tmp/test.log -s ./tests/health/transferbench_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html
+     pytest -vvv --log-file=/tmp/test.log -s ./tests/health/transferbench_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html
 
 
 RVS
@@ -152,15 +152,15 @@ Use these scripts to start the test:
 
 1. Run the installation: 
 
-  .. code:: bash
+   .. code:: bash
 
-    pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_rvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html
+     pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_rvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html
 
 2. Start the RVS test: 
 
-  .. code:: bash
+   .. code:: bash
     
-    pytest -vvv --log-file=/tmp/test.log -s ./tests/health/rvs_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html
+     pytest -vvv --log-file=/tmp/test.log -s ./tests/health/rvs_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html
 
 InfiniBand (IB Perf) test script
 --------------------------------
@@ -181,15 +181,15 @@ Use these scripts to start the test:
 
 1. Run the installation: 
 
-  .. code:: bash
+   .. code:: bash
 
-    pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/install_ibperf_tools.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
+     pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/install_ibperf_tools.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
 
 2. Start the IB Perf test:
 
-  .. code:: bash
+   .. code:: bash
 
-    pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/ib_perf_bw_test.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
+     pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/ib_perf_bw_test.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
 
 ROCm Communication Collectives Library (RCCL) test script
 ---------------------------------------------------------
