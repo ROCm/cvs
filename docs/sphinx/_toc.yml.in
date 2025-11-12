@@ -30,14 +30,14 @@ subtrees:
         title: Platform
       - file: reference/configuration-files/health
         title: Health
+      - file: reference/configuration-files/ib
+        title: IB Perf
       - file: reference/configuration-files/rccl
         title: RCCL
       - file: reference/configuration-files/jax
         title: JAX
       - file: reference/configuration-files/megatron
         title: Megatron
-      - file: reference/configuration-files/ib
-        title: IB Perf
 
 - caption: About
   entries:

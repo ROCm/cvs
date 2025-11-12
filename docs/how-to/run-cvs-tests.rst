@@ -24,8 +24,6 @@ You can also create a wrapper shell script to run multiple test suites sequentia
 Run CVS test scripts
 ====================
 
-Use these scripts to run the tests. 
-
 Platform test script
 --------------------
 
@@ -60,17 +58,12 @@ Burn-in health test scripts
 The burn-in health tests are single-node diagnostic tests that validate the hardware and firmware versions' functionality and performance. 
 For the performance validation, they use the reference bandwidth or latency numbers provided as part of the input ``config_file`` for the relevant test. 
 
-Here are the available tests:
-
-- `AGFHC (AMD GPU Field Health Check) <https://instinct.docs.amd.com/projects/gpu-operator/en/latest/test/agfhc.html>`_
-- `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/install/install.html#install-transferbench>`_
-- `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/install/installation.html>`_
-
-
 Use these scripts to run each health test. These CVS test scripts have two parts: installing the functionality and running the tests.
 
 AGFHC
 ~~~~~
+
+See the `AGFHC (AMD GPU Field Health Check) <https://instinct.docs.amd.com/projects/gpu-operator/en/latest/test/agfhc.html>`_ docs for more information.
 
 These are the test cases for AGFHC:
 
@@ -100,6 +93,8 @@ Here's the test script:
 TransferBench
 ~~~~~~~~~~~~~
 
+See the `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/install/install.html#install-transferbench>`_ docs for more information.
+
 These are the test cases for TransferBench:
 
 - ``test_transfer_bench_example_tests_1_6_t``
@@ -122,6 +117,8 @@ Here's the test script:
 RVS
 ~~~
 
+See the `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/install/installation.html>`_ docs for more information.
+
 These are the test cases for RVS:
 
 - ``gpup_single``
@@ -142,6 +139,29 @@ Here's the test script:
   pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_rvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html
 
   pytest -vvv --log-file=/tmp/test.log -s ./tests/health/rvs_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html
+
+InfiniBand (IB Perf) test script
+--------------------------------
+
+IB Perf and latency tests measure network performance. Perf tests measure throughput (bandwidth), and latency tests measure delay. 
+Perf tests, such as ``ib_write_bw``, evaluate the maximum data transfer rate under different message sizes. 
+Latency tests, such as ``ib_send_lat``, measure the time it takes for a message to travel between two nodes and often report results like minimum, median, and maximum latency.
+
+These are the IB Perf test cases:
+
+- ``test_install_ib_perf``
+- ``test_ib_bw_perf``
+- ``test_ib_lat_perf``
+- ``test_build_ib_bw_perf_chart``
+- ``test_build_ib_lat_perf_chart``
+
+Here's the test script:
+
+.. code:: bash
+
+  pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/install_ibperf_tools.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
+ 
+  pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/ib_perf_bw_test.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
 
 ROCm Communication Collectives Library (RCCL) test script
 ---------------------------------------------------------
@@ -279,29 +299,6 @@ Distributed 70b
 .. code:: bash
 
   pytest -vvv --log-file=/tmp/test.log -s ./tests/training/megatron/distributed_llama3_1_70b.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/training/megatron/ mi3xx_distributed_megatron_llama.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html
-
-InfiniBand (IB Perf) test script
---------------------------------
-
-IB Perf and latency tests measure network performance. Perf tests measure throughput (bandwidth), and latency tests measure delay. 
-Perf tests, such as ``ib_write_bw``, evaluate the maximum data transfer rate under different message sizes. 
-Latency tests, such as ``ib_send_lat``, measure the time it takes for a message to travel between two nodes and often report results like minimum, median, and maximum latency.
-
-These are the IB Perf test cases:
-
-- ``test_install_ib_perf``
-- ``test_ib_bw_perf``
-- ``test_ib_lat_perf``
-- ``test_build_ib_bw_perf_chart``
-- ``test_build_ib_lat_perf_chart``
-
-Here's the test script:
-
-.. code:: bash
-
-  pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/install_ibperf_tools.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
- 
-  pytest -vvv --log-file=/tmp/test.log -s ./tests/ibperf/ib_perf_bw_test.py --cluster_file input/cluster_file/cluster.json --config_file input/config_file/ibperf/ibperf_config.json --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html
 
 Test results
 ============

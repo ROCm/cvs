@@ -11,7 +11,7 @@ Monitor the health of your cluster with the Cluster Health Checker utility scrip
 The script doesn't require any agent/plugin/exporters to be installed or any controller virtual machines.
 
 The script identifies any hardware failure/degradation signatures like RAS errors, PCIe/XGMI errors, or network drop / error counters using `AMD SMI <https://rocm.docs.amd.com/projects/amdsmi/en/latest/install/install.html>`_. 
-It can also identify software failures by searching for failing signatures in the ``demsg`` and ``journlctl`` logs.
+It can also identify software failures by searching for failing signatures in the ``dmesg`` and ``journlctl`` logs.
 
 The script also acts as a triaging tool to troubleshoot any performance issues that may be related to the AI infrastructure. 
 You can use the script to take a snapshot of all counters (GPU/NIC) while your training/inference workloads are in progress, 

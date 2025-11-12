@@ -6,9 +6,6 @@
 Cluster Validation Suite (CVS) installation
 *******************************************
 
-Before using CVS, clone the `CVS GitHub repository <https://github.com/ROCm/cvs>`_ and set your environment. 
-Then configure the JSON cluster file and the script test configuration files according to your use case.
-
 System requirements
 ===================
 
@@ -26,12 +23,15 @@ CVS supports these Linux distributions:
    * - Operating system
      - Kernel
      - ROCm version (tested on)
+     - Python version (tested on)
    * - Ubuntu 24.04.3
      - 6.8 [GA], 6.14 [HWE]
      - 7.0.2
+     - 
    * - Ubuntu 22.04.5
      - 5.15 [GA], 6.8 [HWE]
      - 7.0.2
+     - 
 
 Install CVS
 ===========
@@ -62,11 +62,11 @@ It's recommended to run CVS from a dedicated runner machine to avoid loss of dat
 
    .. code:: b3ash
 
-     cvs $  python3 -m venv myenv
+     python3 -m venv myenv
 
-     cvs $  source myenv/bin/activate
+     source myenv/bin/activate
 
-     cvs $  pip3 install -r requirements.txt  
+     pip3 install -r requirements.txt  
 
 
 Configure the CVS cluster file
@@ -183,6 +183,7 @@ Change any other parameters in the configuration file relevant to your testing r
 InfiniBand (IB Perf)
 --------------------
 
-Change any parameters in the configuration file relevant to your testing requirements.
+In the ``cvs/input/config_file/ibperf/ibperf_config.json`` file, update the ``install_dir`` parameter to your desired location.
+Change any other parameters in the configuration file relevant to your testing requirements.
 
 
