@@ -29,7 +29,7 @@ Here's a code snippet of the ``rccl_config.json`` file for reference:
         "rccl_tests_dir": "/root/cache/INSTALL/rccl-tests/build",
         "mpi_dir": "/root/cache/INSTALL/ompi-4.1.6/install/bin",
         "mpi_path_var": "/root/cache/INSTALL/ompi-4.1.6/install",
-        "rocm_path_var": "/opt/rocm-6.4.1",
+        "rocm_path_var": "/opt/rocm-7.0.2/",
         "rccl_path_var": "/root/cache/INSTALL/rccl-tests",
         "cluster_snapshot_debug": "False",
         "env_source_script": "None",
@@ -187,7 +187,7 @@ Here's an exhaustive list of the available parameters in the ``rccl_config.json`
      - ``/usr``
      - Directory where mpi is located
    * - ``rocm_path_var``
-     - ``/opt/rocm-6.4.2/``
+     - ``/opt/rocm-7.0.2/``
      - Path to ROCm installation
    * - ``rccl_path_var``
      - ``/opt/rccl-tests/``
@@ -386,7 +386,7 @@ Here's a code snippet of the ``single_node_mi355_rccl.json`` file for reference:
         "no_of_local_ranks": "8",
         "rccl_dir": "/opt/rccl-tests/",
         "rccl_tests_dir": "/opt/rccl-tests/build",
-        "rocm_path_var": "/opt/rocm-6.4.2/",
+        "rocm_path_var": "/opt/rocm-7.0.2/",
         "rccl_path_var": "/opt/rccl-tests/",
         "env_source_script": "/root/env_source_file.sh",
         "rccl_collective": [ "all_reduce_perf", "all_gather_perf", "scatter_perf", "gather_perf", "reduce_scatter_perf", "sendrecv_perf", "alltoall_perf", "alltoallv_perf", "reduce_scatter_perf", "broadcast_perf" ],
@@ -487,7 +487,7 @@ Here's an exhaustive list of the available parameters in the ``single_node_mi355
      - ``/opt/rccl-tests/build``
      - Directory where RCCL tests are installed
    * - ``rocm_path_var``
-     - ``/opt/rocm-6.4.2/``
+     - ``/opt/rocm-7.0.2/``
      - Path to ROCm installation
    * - ``rccl_path_var``
      - ``/opt/rccl-tests/``

@@ -27,11 +27,11 @@ CVS supports these Linux distributions:
    * - Ubuntu 24.04.3
      - 6.8 [GA], 6.14 [HWE]
      - 7.0.2
-     - 
+     - 3.10
    * - Ubuntu 22.04.5
      - 5.15 [GA], 6.8 [HWE]
      - 7.0.2
-     - 
+     - 3.10
 
 Install CVS
 ===========
@@ -75,7 +75,8 @@ Configure the CVS cluster file
 The cluster file is a JSON file containing the cluster's IP addresses. You must configure the cluster file before you run any CVS tests. 
 
 1. Go to ``cvs/input/cluster_file/cluster.json`` in your cloned repo.
-2. Edit the management IP (``"mgmt_ip"``) and node dictionary (``"node_dict"``) with the list of IPs of the available cluster:
+2. Edit the management IP (``"mgmt_ip"``) and node dictionary (``"node_dict"``) with the list of IPs of the available cluster.
+3. Ensure the user-id (``"{user-id}"``) and ``priv_key_file`` match.
 
 Here's a code snippet of the ``cluster.json`` file for reference:
 
@@ -161,11 +162,18 @@ In the ``cvs/input/config_file/health/mi300_health_config.json`` file, edit the 
 - Under ``rvs``:
 
   - ``git_install_path`` 
+
+InfiniBand (IB Perf)
+--------------------
+
+In the ``cvs/input/config_file/ibperf/ibperf_config.json`` file, update the ``install_dir`` parameter to your desired location.
+Change any other parameters in the configuration file relevant to your testing requirements.
+
  
 ROCm Communication Collectives Library (RCCL)
 ---------------------------------------------
 
-In the ``cvs/input/config_file/rccl/rccl_config.json`` file, change the directory path to your desired location in these variables: 
+In the ``cvs/input/config_file/rccl/rccl_config.json`` and ``cvs/input/config_file/rccl/single_node_mi355_rccl.json``files, change the directory path to your desired location in these variables: 
 
 - ``rccl_dir``
 - ``rccl_tests_dir``
@@ -180,10 +188,5 @@ JAX / Megatron training configuration files
 Parameters with the ``<changeme>`` value must have that value modified to your specifications.
 Change any other parameters in the configuration file relevant to your testing requirements. 
 
-InfiniBand (IB Perf)
---------------------
-
-In the ``cvs/input/config_file/ibperf/ibperf_config.json`` file, update the ``install_dir`` parameter to your desired location.
-Change any other parameters in the configuration file relevant to your testing requirements.
 
 

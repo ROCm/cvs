@@ -65,7 +65,7 @@ Here's an exhaustive list of the available parameters in the Platform configurat
      - ``6.8.0-60-generic``
      - Version of kernel
    * - ``rocm_version``
-     - 6.4.1
+     - 7.0.2
      - ROCm version   
    * - ``bios_version``
      - ``20171212``

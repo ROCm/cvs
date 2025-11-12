@@ -65,7 +65,7 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
      - True
      - Enable automatic installation of InfiniBand performance tools
    * - ``install_dir``
-     - ``/home/linuxuser/``
+     - ``/home/{user-id}/``
      - Installation directory for performance testing tools
    * - ``rocm_dir``
      - ``/opt/rocm``
