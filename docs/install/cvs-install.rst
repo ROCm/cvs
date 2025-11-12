@@ -17,7 +17,7 @@ CVS supports these GPUs:
 CVS supports these Linux distributions:
 
 .. list-table::
-   :widths: 3 3 3
+   :widths: 3 3 3 3
    :header-rows: 1
 
    * - Operating system
