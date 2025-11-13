@@ -9,7 +9,7 @@
        "rccl_tests_dir": "/opt/rccl-tests/build",
        "mpi_dir": "/usr/bin",
        "mpi_path_var": "/usr",
-       "rocm_path_var": "/opt/rocm-6.4.2/",
+       "rocm_path_var": "/opt/rocm/",
        "rccl_path_var": "/opt/rccl-tests/",
        "cluster_snapshot_debug": "False",
        "env_source_script": "/root/env_source_file.sh",

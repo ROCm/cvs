@@ -4,7 +4,7 @@
        "no_of_local_ranks": "8",
        "rccl_dir": "/opt/rccl-tests/",
        "rccl_tests_dir": "/opt/rccl-tests/build",
-       "rocm_path_var": "/opt/rocm-6.4.2/",
+       "rocm_path_var": "/opt/rocm/",
        "rccl_path_var": "/opt/rccl-tests/",
        "env_source_script": "/root/env_source_file.sh",
        "rccl_collective": [ "all_reduce_perf", "all_gather_perf", "scatter_perf", "gather_perf", "reduce_scatter_perf", "sendrecv_perf", "alltoall_perf", "alltoallv_perf", "reduce_scatter_perf", "broadcast_perf" ],

@@ -4,7 +4,7 @@
     {
        "os_version": "Ubuntu 24.04.1 LTS",
        "kernel_version": "6.8.0-60-generic",
-       "rocm_version": "6.4.1",
+       "rocm_version": "7.0.2",
        "bios_version": "20171212",
        "pci_realloc": "off",
        "online_memory": "1.3T",
