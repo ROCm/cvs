@@ -409,6 +409,15 @@ def execute_rvs_test(phdl, config_dict, test_name):
     # Determine config path
     config_path = determine_rvs_config_path(phdl, config_dict, config_file)
 
+    # TEMP-FIX start
+    if test_name == 'gst_single':
+        # Check if MI355X string is present in the config_path
+        if config_path and ('MI355X' in config_path or 'MI350X' in config_path ):
+            # Use specific config file for MI355X gst_single test with absolute path
+            config_path = os.path.join(os.getcwd(), "input/config_file/health/rvs_mi355x_gst_single_edited.conf")
+            log.info(f'Using custom MI355X config path for gst_single test: {config_path}')
+    # TEMP-FIX  end
+
     if config_path is not None:
         # Run RVS test
         if test_name == 'peqt_single':
