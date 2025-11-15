@@ -412,10 +412,35 @@ def execute_rvs_test(phdl, config_dict, test_name):
     # TEMP-FIX start
     if test_name == 'gst_single':
         # Check if MI355X string is present in the config_path
-        if config_path and ('MI355X' in config_path or 'MI350X' in config_path ):
-            # Use specific config file for MI355X gst_single test with absolute path
-            config_path = os.path.join(os.getcwd(), "input/config_file/health/rvs_mi355x_gst_single_edited.conf")
-            log.info(f'Using custom MI355X config path for gst_single test: {config_path}')
+        if config_path and ('MI355X' in config_path or 'MI350X' in config_path):
+            # Copy and modify config file on remote nodes
+            source_config = config_path
+            temp_config = "/tmp/gst_single.conf"
+
+            # Step 1 & 2: Copy config file to /tmp (overwrite if exists)
+            copy_result = phdl.exec(f'cp {source_config} {temp_config}', timeout=30)
+
+            # Verify copy was successful
+            for node in copy_result.keys():
+                if copy_result[node].strip() and 'No such file' in copy_result[node]:
+                    fail_test(f'Failed to copy GST config file on node {node}: {copy_result[node]}')
+
+            # Step 4: Add compute_type parameter after specific action names using sed
+            sed_commands = [
+                f"sed -i '/^- name: gst-Tflops-8K-trig-fp64$/,/^- name:/{{ /^  data_type: fp64_r$/a\\\n  compute_type: fp64_r\n}}' {temp_config}",
+                f"sed -i '/^- name: gst-Tflops-8K-rand-fp64$/,/^- name:/{{ /^  data_type: fp64_r$/a\\\n  compute_type: fp64_r\n}}' {temp_config}"
+            ]
+
+            for sed_cmd in sed_commands:
+                sed_result = phdl.exec(sed_cmd, timeout=30)
+                for node in sed_result.keys():
+                    if sed_result[node].strip():
+                        log.warning(f'Node {node}: sed command output: {sed_result[node]}')
+
+            # Step 5: Use the modified temp config path
+            config_path = temp_config
+            log.info(f'Using custom modified MI355X config path for gst_single test: {config_path}')
+
     # TEMP-FIX  end
 
     if config_path is not None:
