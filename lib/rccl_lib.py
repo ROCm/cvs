@@ -317,6 +317,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
         -x NCCL_IB_HCA={ib_hca_list} \
+        -x NCCL_SOCKET_IFNAME={oob_port} \
         --mca btl ^vader,openib \
         --mca btl_tcp_if_include {oob_port}\
         -x UCX_NET_DEVICES={net_dev_list} \
@@ -484,6 +485,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
         -x NCCL_IB_HCA={ib_hca_list} \
+        -x NCCL_SOCKET_IFNAME={oob_port} \
         --mca btl ^vader,openib \
         --mca btl_tcp_if_include {oob_port}\
         -x UCX_NET_DEVICES={net_dev_list} \
