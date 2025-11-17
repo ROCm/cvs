@@ -5,17 +5,23 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+#Standard libraries
 import re
 import sys
 import os
+from typing import List, Dict
+from pathlib import Path
+
+#Third party libraries
+import pandas as pd
+from pydantic import ValidationError
 
 import globals
-
-log = globals.log
-
+from models.rccl import RcclTests,  RcclTestsAggregated, RcclTestsMultinodeRaw
 from utils_lib import *
 from verify_lib import *
 
+log = globals.log
 
 
 rccl_err_dict = {
@@ -209,8 +215,44 @@ def convert_to_graph_dict(result_dict):
 
 
 
-
-
+def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[RcclTestsAggregated]:
+    """
+    Aggregate multiple rccl-test results into mean/std per (name, size, type, inPlace)
+    Args: validated_results: List[RcclTests] - list of validated rccl-test results
+    Returns: List[RcclTestsAggregated] - list of aggregated rccl-test results with mean/std per (name, size, type, inPlace)
+    """
+    if not validated_results:
+        raise ValueError("validated_results list cannot be empty")
+    log.info(f"Aggregating {len(validated_results)} RCCL test results")
+    data = [result.model_dump() for result in validated_results]
+    df = pd.DataFrame(data)
+    agg_df = df.groupby(['name', 'size', 'type', 'inPlace'], as_index=False).agg(
+        busBw_mean=('busBw', 'mean'),
+        busBw_std=('busBw', 'std'),
+        algBw_mean=('algBw', 'mean'),
+        algBw_std=('algBw', 'std'),
+        time_mean=('time', 'mean'),
+        time_std=('time', 'std'),
+        num_runs=('numCycle', 'count')
+    )
+    agg_results = []
+    errors = []
+    
+    for row_dict in agg_df.to_dict('records'):
+        try:
+            agg_results.append(RcclTestsAggregated.model_validate(row_dict))
+        except ValidationError as e:
+            error_msg = f"Validation failed for row {row_dict}: {e}"
+            log.error(error_msg)
+            errors.append(error_msg)
+    
+    # Report any validation failures
+    if errors:
+        error_summary = "\n".join(errors)
+        fail_test(f"Aggregation validation failed:\n{error_summary}")
+    
+    log.info(f"Successfully validated {len(agg_results)} aggregated results")
+    return agg_results
 
 
 
@@ -544,7 +586,8 @@ def rccl_single_node_test( phdl, test_name, cluster_node_list, \
         step_function=2, warmup_iterations=10, no_of_iterations=1, \
         check_iteration_count=1, debug_level='INFO', \
         rccl_result_file='/tmp/rccl_result_output.json', no_of_local_ranks=8, \
-        verify_bus_bw=False, verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None ):
+        data_types=['float'], no_of_cycles=10, verify_bus_bw=False, verify_bw_dip=True, 
+        verify_lat_dip=True, exp_results_dict=None ) -> List[Dict]:
 
     """
     Run an Single Node RCCL collective test
@@ -580,47 +623,81 @@ def rccl_single_node_test( phdl, test_name, cluster_node_list, \
     LD_LIBRARY_PATH=f'{RCCL_PATH}:{ROCM_PATH}/lib:$LD_LIBRARY_PATH'
 
 
-        
-    cmd = f'''export NCCL_DEBUG={debug_level};  \
-           export PATH={PATH}; \
-           export LD_LIBRARY_PATH={LD_LIBRARY_PATH}; \
-           {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-           -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} \
-           -Z json -x {rccl_result_file}'''
+    # Run rccl test for each data type mentioned in the data_types list
+    all_raw_results = []
+    all_validated_results = []
+    base_path = Path(rccl_result_file)
+    for dtype in data_types:
+        # Create a unique result file for each data type
+        dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
+        cmd = f'''export NCCL_DEBUG={debug_level};  \
+            export PATH={PATH}; \
+            export LD_LIBRARY_PATH={LD_LIBRARY_PATH}; \
+            {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
+            -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} \
+            -d {dtype} -N {no_of_cycles} -Z json -x {dtype_result_file}'''
 
-    print('%%%%%%%%%%%%%%%%')
-    print(cmd)
-    print('%%%%%%%%%%%%%%%%')
+        print('%%%%%%%%%%%%%%%%')
+        print(cmd)
+        print('%%%%%%%%%%%%%%%%')
+        try:
+            out_dict = phdl.exec(cmd, timeout=500)
+            for node in out_dict.keys():
+                scan_rccl_logs(out_dict[node])
+        except Exception as e:
+            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
+            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
+
+        # Read the JSON results emitted by the RCCL test binary
+        result_dict_out = phdl.exec(f'cat {dtype_result_file}')
+        dtype_result_out = json.loads(result_dict_out[head_node].replace( '\n', '').replace( '\r', ''))
+        # Validate the results against the schema fail if results are not valid
+        try:
+            validated = [RcclTests.model_validate(test_result) for test_result in dtype_result_out]
+            log.info(f'Validation passed: {len(validated)} RcclTests schema validation passed')
+            all_validated_results.extend(validated)
+            all_raw_results.extend(dtype_result_out)
+        except ValidationError as e:
+            log.error(f'Validation Failed: {e}')
+            fail_test(f'RCCL Test {dtype} schema validation failed: {e}')
+
+    # Save the results to a main result file
+    with open(rccl_result_file, 'w') as f:
+        json.dump(all_raw_results, f, indent=2)
+    log.info(f'Saved combined results from all all data types to {rccl_result_file}')
+
+    # Validate the results against the schema and aggregate if multiple results are found, fail if results are not valid
     try:
-        out_dict = phdl.exec(cmd, timeout=500)
-        for node in out_dict.keys():
-            scan_rccl_logs(out_dict[node])
-    except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
-
-    # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = phdl.exec(f'cat {rccl_result_file}')
-    result_out = json.loads(result_dict_out[head_node].replace( '\n', '').replace( '\r', ''))
+        if (len(all_validated_results) > 1):
+            aggregated_rccl_tests = aggregate_rccl_test_results(all_validated_results)
+            log.info(f'Aggregation passed: {len(aggregated_rccl_tests)} RcclTestsAggregated schema validation passed')
+            # Note: current we are saving the aggregated results, but we could instead use this for final report generation
+            aggregated_path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
+            with open(aggregated_path, 'w') as f:
+                json.dump([result.model_dump() for result in aggregated_rccl_tests], f, indent=2)
+            log.info(f'Saved aggregated results to {aggregated_path}')
+        else:
+            log.info(f'Aggregation skipped: only one run found')
+    except ValidationError as e:
+        log.error(f'Validation Failed: {e}')
+        fail_test(f'RCCL Test schema validation failed: {e}')
+    except ValueError as e:
+        log.error(f'Aggregation failed: {e}')
+        fail_test(f'RCCL Test aggregation failed: {e}')
 
     # Collect basic GPU information via rocm-smi
     smi_out_dict = phdl.exec('rocm-smi -a | head -30')
 
+    # NOTE: the bw & lat verification functions could also be refractored into RcclTestsRaw model to avoid code duplication
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
     if re.search( 'True', verify_bus_bw, re.I ):
-        for node in result_dict_out.keys():
-            result_out = json.loads(result_dict_out[node].replace( '\n', '').replace( '\r', ''))
-            if test_name in exp_results_dict.keys():
-                check_bus_bw( test_name, result_out, exp_results_dict[test_name] )
+        if test_name in exp_results_dict.keys():
+            check_bus_bw( test_name, all_raw_results, exp_results_dict[test_name] )
 
     if re.search( 'True', verify_bw_dip, re.I ):
-        for node in result_dict_out.keys():
-            result_out = json.loads(result_dict_out[node].replace( '\n', '').replace( '\r', ''))
-            check_bw_dip( test_name, result_out, )
+        check_bw_dip( test_name, all_raw_results, )
 
     if re.search( 'True', verify_lat_dip, re.I ):
-        for node in result_dict_out.keys():
-            result_out = json.loads(result_dict_out[node].replace( '\n', '').replace( '\r', ''))
-            check_lat_dip( test_name, result_out, )
+        check_lat_dip( test_name, all_raw_results, )
 
-    return result_out
+    return all_raw_results
