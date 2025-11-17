@@ -433,6 +433,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         nccl_proto='simple', gid_index=1, qp_count=1, \
         start_msg_size=1024, end_msg_size='16g', \
         step_function=2, threads_per_gpu=1, warmup_iterations=10, no_of_iterations=1, \
+        data_types=['float'], no_of_cycles=10, \
         check_iteration_count=1, debug_level='INFO', \
         rccl_result_file='/tmp/rccl_result_output.json', no_of_local_ranks=8, \
         ib_rx_queue_len=8192, ucx_tls='tcp', hcoll_enable_mcast_all=0, \
@@ -516,7 +517,13 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     shdl.exec(cmd)
 
         
-    cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
+    all_raw_results = []
+    all_validated_results = []
+    base_path = Path(rccl_result_file)
+    for dtype in data_types:
+        # Create a unique result file for each data type
+        dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
+        cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
         -x NCCL_DEBUG={debug_level} \
@@ -535,24 +542,38 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
         {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-        -Z json -x {rccl_result_file}
+        -d {dtype} -N {no_of_cycles} -Z json -x {dtype_result_file}
         '''
 
-    print('%%%%%%%%%%%%%%%%')
-    print(cmd)
-    print('%%%%%%%%%%%%%%%%')
-    try:
-        out_dict = shdl.exec(cmd, timeout=500)
-        output = out_dict[head_node]
-        #print(output)
-        scan_rccl_logs(output)
-    except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
+        print('%%%%%%%%%%%%%%%%')
+        print(cmd)
+        print('%%%%%%%%%%%%%%%%')
+        try:
+            out_dict = shdl.exec(cmd, timeout=500)
+            output = out_dict[head_node]
+            #print(output)
+            scan_rccl_logs(output)
+        except Exception as e:
+            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
+            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
 
-    # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = shdl.exec(f'cat {rccl_result_file}')
-    result_out = json.loads(result_dict_out[head_node].replace( '\n', '').replace( '\r', ''))
+        # Read the JSON results emitted by the RCCL test binary
+        result_dict_out = shdl.exec(f'cat {dtype_result_file}')
+        dtype_result_out = json.loads(result_dict_out[head_node].replace( '\n', '').replace( '\r', ''))
+        # Validate the results against the schema fail if results are not valid
+        try:
+            validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
+            log.info(f'Validation passed: {len(validated)} RcclTests schema validation passed')
+            all_validated_results.extend(validated)
+            all_raw_results.extend(dtype_result_out)
+        except ValidationError as e:
+            log.error(f'Validation Failed: {e}')
+            fail_test(f'RCCL Test {dtype} schema validation failed: {e}')
+
+    # Save the results to a main result file
+    with open(rccl_result_file, 'w') as f:
+        json.dump(all_raw_results, f, indent=2)
+    log.info(f'Saved combined results from all data types to {rccl_result_file}')
 
 
     # Collect basic GPU information via rocm-smi
@@ -563,15 +584,15 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
     if re.search( 'True', verify_bus_bw, re.I ):
         if test_name in exp_results_dict.keys():
-            check_bus_bw( test_name, result_out, exp_results_dict[test_name] )
+            check_bus_bw( test_name, all_raw_results, exp_results_dict[test_name] )
 
     if re.search( 'True', verify_bw_dip, re.I ):
-        check_bw_dip( test_name, result_out, )
+        check_bw_dip( test_name, all_raw_results, )
 
     if re.search( 'True', verify_lat_dip, re.I ):
-        check_lat_dip( test_name, result_out, )
+        check_lat_dip( test_name, all_raw_results, )
 
-    return result_out
+    return all_raw_results
 
 
 
