@@ -223,9 +223,42 @@ def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[Rccl
     """
     if not validated_results:
         raise ValueError("validated_results list cannot be empty")
+    
+    # Check if these are multinode results and validate consistency
+    multinode_config = None
+    if isinstance(validated_results[0], RcclTestsMultinodeRaw):
+        # Extract config from first result
+        first = validated_results[0]
+        multinode_config = {
+            'nodes': first.nodes,
+            'ranks': first.ranks,
+            'ranksPerNode': first.ranksPerNode,
+            'gpusPerRank': first.gpusPerRank
+        }
+        
+        # Validate all results have same config
+        for i, result in enumerate(validated_results):
+            if not isinstance(result, RcclTestsMultinodeRaw):
+                raise ValueError(
+                    f"Mixed single-node and multi-node results at index {i}"
+                )
+            if (result.nodes != multinode_config['nodes'] or
+                result.ranks != multinode_config['ranks'] or
+                result.ranksPerNode != multinode_config['ranksPerNode'] or
+                result.gpusPerRank != multinode_config['gpusPerRank']):
+                raise ValueError(
+                    f"Inconsistent cluster config at index {i}: "
+                    f"expected {multinode_config}, got "
+                    f"nodes={result.nodes}, ranks={result.ranks}, "
+                    f"ranksPerNode={result.ranksPerNode}, gpusPerRank={result.gpusPerRank}"
+                )
+        log.info(f"Validated consistent multinode config: {multinode_config}")
+    
     log.info(f"Aggregating {len(validated_results)} RCCL test results")
     data = [result.model_dump() for result in validated_results]
     df = pd.DataFrame(data)
+    
+    # Group and aggregate
     agg_df = df.groupby(['name', 'size', 'type', 'inPlace'], as_index=False).agg(
         busBw_mean=('busBw', 'mean'),
         busBw_std=('busBw', 'std'),
@@ -235,6 +268,12 @@ def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[Rccl
         time_std=('time', 'std'),
         num_runs=('numCycle', 'count')
     )
+    
+    # Add multinode config if present
+    if multinode_config:
+        for key, value in multinode_config.items():
+            agg_df[key] = value
+    
     agg_results = []
     errors = []
     
