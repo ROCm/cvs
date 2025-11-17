@@ -1,6 +1,9 @@
-from pydantic import BaseModel, Field, model_validator, ConfigDict, field_validator
-from typing import Annotated, Literal 
+# std libs
+from typing import Annotated, Literal, Optional
 import math
+
+#pypdantic libs
+from pydantic import BaseModel, Field, model_validator, ConfigDict, field_validator
 
 NonNegativeInt = Annotated[int, Field(ge=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
@@ -81,6 +84,12 @@ class RcclTestsAggregated(BaseModel):
     algBw_std: NonNegativeFloat 
     time_mean: NonNegativeFloat 
     time_std: NonNegativeFloat 
+
+    # Multinode metadata (optional, None for single-node tests)
+    nodes: Optional[PositiveInt] = None
+    ranks: Optional[PositiveInt] = None
+    ranksPerNode: Optional[PositiveInt] = None
+    gpusPerRank: Optional[PositiveInt] = None
 
     @field_validator('busBw_std', 'algBw_std', 'time_std')
     @classmethod
