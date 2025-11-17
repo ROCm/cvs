@@ -16,12 +16,8 @@ Type = Literal[
 Redop = Literal['sum', 'prod', 'min', 'max', 'avg', 'all', 'none']
 InPlace = Literal[0, 1]
 
-class RcclTestsSingleNodeRaw(BaseModel):
-    """
-    This class represents the schema for single noderccl-test results, while serializing rccl-test input
-    if we don't adhere to this schema, we fail immediately preventing weird behaviour later on
-    in the processing pipeline
-    """
+
+class RcclTests(BaseModel):
     model_config = ConfigDict(frozen=True)
     numCycle: NonNegativeInt
     name: Collective
@@ -42,28 +38,16 @@ class RcclTestsSingleNodeRaw(BaseModel):
             raise ValueError(f'{info.field_name} cannot be NaN/Inf, got {v}')
         return v
 
-
-class RcclTestsMultinodeRaw(BaseModel):
+class RcclTestsMultinodeRaw(RcclTests):
     """
     This class represents the schema for multi node rccl-test results, while serializing rccl-test input
     if we don't adhere to this schema, we fail immediately preventing weird behaviour later on
     in the processing pipeline
     """
-    model_config = ConfigDict(frozen=True)
-    numCycle: NonNegativeInt
-    name: Collective
     nodes: PositiveInt
     ranks: PositiveInt
     ranksPerNode: PositiveInt
     gpusPerRank: PositiveInt
-    size: PositiveInt
-    type: Type
-    redop: Redop
-    inPlace: InPlace
-    time: NonNegativeFloat
-    algBw: NonNegativeFloat
-    busBw: NonNegativeFloat
-    wrong: int
 
     @model_validator(mode='after')
     def validate_ranks_relationship(self):
@@ -76,14 +60,6 @@ class RcclTestsMultinodeRaw(BaseModel):
             )
         return self
 
-    @field_validator('time', 'algBw', 'busBw')
-    @classmethod
-    def validate_not_nan_inf(cls, v: float, info) -> float:
-        """Ensure no NaN/Inf values in measurements."""
-        if math.isnan(v) or math.isinf(v):
-            raise ValueError(f'{info.field_name} cannot be NaN/Inf, got {v}')
-        return v
-
 class RcclTestsAggregated(BaseModel):
     """
     This class represents the aggregated schema for rccl-test results
@@ -93,17 +69,18 @@ class RcclTestsAggregated(BaseModel):
     name: Collective = Field(alias='collective')
     size: PositiveInt 
     type: Type 
-
-    # Aggregated metrics
-    busBw_mean: NonNegativeFloat = Field(alias='busbw_mean')
-    busBw_std: NonNegativeFloat = Field(alias='busbw_std')
-    algBw_mean: NonNegativeFloat = Field(alias='algbw_mean')
-    algBw_std: NonNegativeFloat = Field(alias='algbw_std')
-    time_mean: NonNegativeFloat = Field(alias='time_mean')
-    time_std: NonNegativeFloat = Field(alias='time_std')
+    inPlace: InPlace
 
     #Metadata
-    num_runs: NonNegativeInt = Field(alias='numCycles', description='Number of cycles aggregated')
+    num_runs: PositiveInt = Field(description='Number of cycles aggregated')
+
+    # Aggregated metrics
+    busBw_mean: NonNegativeFloat 
+    busBw_std: NonNegativeFloat 
+    algBw_mean: NonNegativeFloat 
+    algBw_std: NonNegativeFloat 
+    time_mean: NonNegativeFloat 
+    time_std: NonNegativeFloat 
 
     @field_validator('busBw_std', 'algBw_std', 'time_std')
     @classmethod
