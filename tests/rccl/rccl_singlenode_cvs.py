@@ -309,6 +309,8 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective ):
        debug_level             = config_dict['debug_level'], \
        rccl_result_file        = config_dict['rccl_result_file'], \
        no_of_local_ranks       = config_dict['no_of_local_ranks'], \
+       data_types              = config_dict['data_types'], \
+       no_of_cycles            = config_dict['no_of_cycles'], \
        verify_bus_bw           = config_dict['verify_bus_bw'], \
        verify_bw_dip           = config_dict['verify_bw_dip'], \
        verify_lat_dip          = config_dict['verify_lat_dip'], \

@@ -345,6 +345,8 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective ):
        end_msg_size            = config_dict['end_msg_size'], \
        step_function           = config_dict['step_function'], \
        threads_per_gpu         = config_dict['threads_per_gpu'], \
+       data_types              = config_dict['data_types'], \
+       no_of_cycles            = config_dict['no_of_cycles'], \
        warmup_iterations       = config_dict['warmup_iterations'], \
        no_of_iterations        = config_dict['no_of_iterations'], \
        check_iteration_count   = config_dict['check_iteration_count'], \

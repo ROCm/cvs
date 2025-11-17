@@ -25,6 +25,8 @@
        "end_msg_size": "16g",
        "step_function": "2",
        "threads_per_gpu": "1",
+       "data_types": [ "int8", "int32"],
+       "no_of_cycles": "10",
        "warmup_iterations": "10",
        "no_of_iterations": "1",
        "check_iteration_count": "1",
