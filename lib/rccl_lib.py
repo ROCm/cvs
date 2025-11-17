@@ -575,6 +575,25 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         json.dump(all_raw_results, f, indent=2)
     log.info(f'Saved combined results from all data types to {rccl_result_file}')
 
+    # Validate the results against the schema and aggregate if multiple results are found, fail if results are not valid
+    try:
+        if len(all_validated_results) >= 1:
+            aggregated_rccl_tests = aggregate_rccl_test_results(all_validated_results)
+            log.info(f'Aggregation passed: {len(aggregated_rccl_tests)} RcclTestsAggregated schema validation passed')
+            # Note: currently we are saving the aggregated results, but we could instead use this for final report generation
+            aggregated_path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
+            with open(aggregated_path, 'w') as f:
+                json.dump([result.model_dump() for result in aggregated_rccl_tests], f, indent=2)
+            log.info(f'Saved aggregated results to {aggregated_path}')
+        else:
+            log.info(f'Aggregation skipped: only one run found')
+    except ValidationError as e:
+        log.error(f'Validation Failed: {e}')
+        fail_test(f'RCCL Test schema validation failed: {e}')
+    except ValueError as e:
+        log.error(f'Aggregation failed: {e}')
+        fail_test(f'RCCL Test aggregation failed: {e}')
+
 
     # Collect basic GPU information via rocm-smi
     smi_out_dict = shdl.exec('rocm-smi -a | head -30')
@@ -689,10 +708,10 @@ def rccl_single_node_test( phdl, test_name, cluster_node_list, \
 
     # Validate the results against the schema and aggregate if multiple results are found, fail if results are not valid
     try:
-        if (len(all_validated_results) > 1):
+        if len(all_validated_results) >= 1:
             aggregated_rccl_tests = aggregate_rccl_test_results(all_validated_results)
             log.info(f'Aggregation passed: {len(aggregated_rccl_tests)} RcclTestsAggregated schema validation passed')
-            # Note: current we are saving the aggregated results, but we could instead use this for final report generation
+            # Note: currently we are saving the aggregated results, but we could instead use this for final report generation
             aggregated_path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
             with open(aggregated_path, 'w') as f:
                 json.dump([result.model_dump() for result in aggregated_rccl_tests], f, indent=2)
