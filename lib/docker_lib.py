@@ -112,6 +112,10 @@ def install_docker_on_ubuntu( phdl ):
 
 def install_docker_on_rhel(phdl):
     #Install Docker on RHEL/CentOS/Fedora
+    '''
+    docker ce comes distributed from Docker Inc repo for centos for rhel/alma and centos. 
+    hence we need to add the repo and then install via dnf, as there will be failures via default 
+    '''
     cmds = ['sudo dnf -y install dnf-plugins-core',
     'sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo',
     'sudo dnf -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin',
