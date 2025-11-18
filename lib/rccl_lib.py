@@ -230,6 +230,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         nccl_ib_tc=41, nccl_ib_split_data_on_qps=0, nccl_pxn_disable=1, \
         nccl_net_plugin=None, user_password=None, \
         min_channels=64, max_channels=64, \
+        data_type="float", \
         user_key_file=None, verify_bus_bw=False, \
         verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None ):
 
@@ -336,6 +337,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
         {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
+        -d {data_type} \
         -Z json -x {rccl_result_file}
         '''
 
