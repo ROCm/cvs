@@ -20,7 +20,13 @@ import time
 sys.path.insert( 0, './lib' )
 from parallel_ssh_lib import *
 from utils_lib import *
-
+from linux_utils import (
+    detect_distro,
+    install_package,
+    update_package_cache,
+    translate_package_name,
+    map_packages
+)
 import globals
 
 log = globals.log
@@ -210,7 +216,7 @@ def test_install_babelstream( phdl, shdl, config_dict ):
  
  
 
-def test_install_open_mpi(phdl, config_dict, ):
+def test_install_open_mpi(phdl, shdl, config_dict, ):
     """
     Install Open MPI across all nodes and verify that mpiexec is available.
 
@@ -238,8 +244,24 @@ def test_install_open_mpi(phdl, config_dict, ):
     else:
         hdl = phdl
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo apt update -y', timeout=200)
-    out_dict = phdl.exec(f'sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev', timeout=200)
+    #install via right package manager
+    distro = detect_distro(phdl)
+    print(f'Detected distro type: {distro}')
+
+    out_dict = update_package_cache(hdl, distro, timeout=200)
+    for node in out_dict.keys():
+        if re.search('error|failed', out_dict[node], re.I):
+            log.warning(f'Package update warning on {node}')
+
+    # Install packages with error checking after each one
+    packages = ['openmpi-bin', 'openmpi-common', 'libopenmpi-dev']
+    package_list = map_packages(distro, packages)
+    for package in package_list:
+        out_dict = install_package(hdl, package, distro, timeout=200)
+        for node in out_dict.keys():
+            if re.search('error|failed|unable to locate', out_dict[node], re.I):
+                fail_test(f'Failed to install {package} on {node}')
+    
     out_dict = phdl.exec('which mpiexec')
     for node in out_dict.keys():
         if not re.search( 'mpiexec', out_dict[node] ):
