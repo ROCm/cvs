@@ -495,9 +495,9 @@ def build_rccl_heatmap( filename, chart_name, title, act_data_json, ref_data_jso
 
 <!-- Styles -->
 <style>
-#chartdiv {
+#''' + str(chart_name) + '''{
   width: 120%;
-  height: 500px;
+  height: 1400px;
 }
 </style>
 
@@ -512,7 +512,7 @@ am5.ready(function() {
 
 // Create root element
 // https://www.amcharts.com/docs/v5/getting-started/#Root_element
-var root = am5.Root.new("chartdiv");
+var root = am5.Root.new("''' + str(chart_name) + '''");
 
 // Set themes
 // https://www.amcharts.com/docs/v5/concepts/themes/
@@ -600,7 +600,7 @@ var series = chart.series.push(
 );
 
 series.columns.template.setAll({
-  tooltipText: "{value}",
+  tooltipText: "{categoryY}:{categoryX} = {value}%",
   strokeOpacity: 1,
   strokeWidth: 2,
   cornerRadiusTL: 5,
@@ -667,16 +667,30 @@ var colors = {
 var data = [
          '''
          fp.write(html_lines)
+         print(act_data_dict)
          for collective_name in act_data_dict.keys():
+             print(collective_name)
+             # Skip if reference data doesn't have this collective
+             if collective_name not in ref_data_dict:
+                 print(f"Warning: {collective_name} not found in reference data, skipping")
+                 continue
              for msg_size in act_data_dict[collective_name].keys():
 
                  norm_msg_size = normalize_bytes(int(msg_size))
                  # calculate % diff between actual value and ref value
                  act_bus_bw = act_data_dict[collective_name][msg_size]['bus_bw']
-                 ref_bus_bw = ref_data_dict[collective_name][msg_size]['bus_bw']
-
-                 pct_incr = ( (act_bus_bw - ref_bus_bw)/ref_bus_bw ) * 100
-                 pct_val = round(float(pct_incr + 100), 2 )
+                 # Skip if reference data doesn't have this message size
+                 if msg_size not in ref_data_dict[collective_name]:
+                     print(f"Warning: msg_size {msg_size} not found in reference for {collective_name}, using actual as 100%")
+                     pct_val = 100.0
+                 else:
+                     ref_bus_bw = ref_data_dict[collective_name][msg_size]['bus_bw']
+                     print(act_bus_bw, ref_bus_bw )
+                     if ref_bus_bw == 0 or ref_bus_bw == 0.0:
+                         pct_val = 100
+                     else:
+                         pct_incr = ( (act_bus_bw - ref_bus_bw)/ref_bus_bw ) * 100
+                         pct_val = round(float(pct_incr + 100), 2 )
 
                  if pct_val > 100:
                      fill_color = "colors.verygood"
@@ -691,7 +705,7 @@ var data = [
                  else:
                      fill_color = "colors.bad"
 
-
+                 collect_graph_name = collective_name.replace( "_perf", "" )
                  html_lines = '''
   {
     y: "''' + str(collective_name) + '''",
@@ -699,7 +713,9 @@ var data = [
     columnSettings: {
       fill: ''' + fill_color + '''
     },
-    value: ''' + str(pct_val) + '''
+    value: ''' + str(pct_val) + ''',
+    value1: ''' + str(act_bus_bw) + ''',
+    value2: ''' + str(ref_bus_bw) + '''
   },
                  '''
                  fp.write(html_lines)
@@ -713,6 +729,7 @@ yAxis.data.setAll([
          '''
          fp.write(html_lines)
          for collective_name in act_data_dict.keys():
+             collect_graph_name = collective_name.replace( "_perf", "" )
              html_lines = '''
              { category: "''' + collective_name + '''"},
              '''
@@ -725,7 +742,7 @@ xAxis.data.setAll([
          fp.write(html_lines)
 
          first_collective = list(act_data_dict.keys())[0]
-         msg_size_list = list(act_data_dict[first_collective].keys())
+         msg_size_list = list(act_data_dict[first_collective])
 
          for msg_size in msg_size_list:
              norm_msg_size = normalize_bytes(int(msg_size))
@@ -744,7 +761,7 @@ chart.appear(1000, 100);
 </script>
 
 <!-- HTML -->
-<div id="chartdiv"></div>
+<div id="''' + str(chart_name) + '''"></div>
 
 
 
@@ -1126,6 +1143,101 @@ def build_rccl_result_table( filename, res_dict ):
          '''
          fp.write(html_lines)
 
+
+
+def build_rccl_heatmap_table( filename, title, act_data_json, ref_data_json ):
+
+    try:
+        with open( act_data_json, 'r') as fp1:
+             act_data_dict = json.load(fp1)
+    except Exception as e:
+        print(f'Error reading file {act_data_json} - {e}')
+
+
+    try:
+        with open( ref_data_json, 'r') as fp2:
+             ref_data_dict = json.load(fp2)
+    except Exception as e:
+        print(f'Error reading file {ref_data_json} - {e}')
+
+
+    print('Build HTML RCCL heatmap table')
+    with open(filename, 'a') as fp:
+         html_lines='''
+<h2 style="background-color: lightblue">''' + str(title) + '''</h2>
+<table id="rccltable" class="display cell-border">
+  <thead>
+  <tr>
+  <th>Collective</th>
+  <th>DataType</th>
+  <th>Number of GPUs</th>
+  <th>Result Algo BW GB/s</th>
+  <th>Golden Algo BW GB/s</th>
+  <th>Result Bus BW GB/s</th>
+  <th>Golden Bus BW GB/s</th>
+  <th>Result Latency us</th>
+  <th>Golden Latency us</th>
+  </tr>
+  </thead>'''
+         fp.write(html_lines)
+         for key_nam in act_data_dict.keys():
+             (collective,data_type,gpu_count) = key_nam.split("-")
+             # Skip if reference data doesn't have this test configuration
+             if key_nam not in ref_data_dict:
+                 print(f"Warning: {key_nam} not found in reference data, skipping from table")
+                 continue
+             last_bw = 0.0
+             last_time = 0
+             for msg_size in act_data_dict[key_nam].keys():
+                 act_bus_bw = act_data_dict[key_nam][msg_size]['bus_bw']
+                 act_alg_bw = act_data_dict[key_nam][msg_size]['alg_bw']
+                 act_time = act_data_dict[key_nam][msg_size]['time']
+                 # Skip if reference doesn't have this message size
+                 if msg_size not in ref_data_dict[key_nam]:
+                     print(f"Warning: msg_size {msg_size} not found in reference for {key_nam}, skipping from table")
+                     continue
+                 ref_bus_bw = ref_data_dict[key_nam][msg_size]['bus_bw']
+                 ref_alg_bw = ref_data_dict[key_nam][msg_size]['alg_bw']
+                 act_time = act_data_dict[key_nam][msg_size]['time']
+                 ref_time = ref_data_dict[key_nam][msg_size]['time']
+
+                 html_lines=f'''
+     <tr>
+     <td>{collective}</td>
+     <td>{data_type}</td>
+     <td>{gpu_count}</td>
+                 '''
+                 fp.write(html_lines)
+
+                 if float(act_alg_bw) < float(ref_alg_bw):
+                     html_lines = '''<td><span class="label label-danger">''' + str(act_alg_bw) + '''</td>\n'''
+                 else:
+                     html_lines = '''<td>''' + str(act_alg_bw) + '''</td>\n'''
+                 fp.write(html_lines)
+                 html_lines = '''<td>''' + str(ref_alg_bw) + '''</td>\n'''
+                 fp.write(html_lines)
+
+                 if float(act_bus_bw) < float(ref_bus_bw):
+                     html_lines = '''<td><span class="label label-danger">''' + str(act_bus_bw) + '''</td>\n'''
+                 else:
+                     html_lines = '''<td>''' + str(act_bus_bw) + '''</td>\n'''
+                 fp.write(html_lines)
+                 html_lines = '''<td>''' + str(ref_bus_bw) + '''</td>\n'''
+                 fp.write(html_lines)
+
+                 if float(act_time) > float(ref_time):
+                     html_lines = '''<td><span class="label label-danger">''' + str(act_time) + '''</td>\n'''
+                 else:
+                     html_lines = '''<td>''' + str(act_time) + '''</td>\n'''
+                 fp.write(html_lines)
+                 html_lines = '''<td>''' + str(ref_time) + '''</td>\n'''
+                 fp.write(html_lines)
+
+         html_lines='''
+         </table>
+         <br><br>
+         '''
+         fp.write(html_lines)
 
 
 

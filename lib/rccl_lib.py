@@ -5,17 +5,24 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+#Standard libraries
 import re
 import sys
 import os
+import json
+from typing import List, Dict
+from pathlib import Path
+
+#Third party libraries
+import pandas as pd
+from pydantic import ValidationError
 
 import globals
-
-log = globals.log
-
+from models.rccl import RcclTests,  RcclTestsAggregated, RcclTestsMultinodeRaw
 from utils_lib import *
 from verify_lib import *
 
+log = globals.log
 
 
 rccl_err_dict = {
@@ -210,6 +217,83 @@ def convert_to_graph_dict(result_dict):
 
 
 
+def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[RcclTestsAggregated]:
+    """
+    Aggregate multiple rccl-test results into mean/std per (name, size, type, inPlace)
+    Args: validated_results: List[RcclTests] - list of validated rccl-test results
+    Returns: List[RcclTestsAggregated] - list of aggregated rccl-test results with mean/std per (name, size, type, inPlace)
+    """
+    if not validated_results:
+        raise ValueError("validated_results list cannot be empty")
+    
+    # Check if these are multinode results and validate consistency
+    multinode_config = None
+    if isinstance(validated_results[0], RcclTestsMultinodeRaw):
+        # Extract config from first result
+        first = validated_results[0]
+        multinode_config = {
+            'nodes': first.nodes,
+            'ranks': first.ranks,
+            'ranksPerNode': first.ranksPerNode,
+            'gpusPerRank': first.gpusPerRank
+        }
+        
+        # Validate all results have same config
+        for i, result in enumerate(validated_results):
+            if not isinstance(result, RcclTestsMultinodeRaw):
+                raise ValueError(
+                    f"Mixed single-node and multi-node results at index {i}"
+                )
+            if (result.nodes != multinode_config['nodes'] or
+                result.ranks != multinode_config['ranks'] or
+                result.ranksPerNode != multinode_config['ranksPerNode'] or
+                result.gpusPerRank != multinode_config['gpusPerRank']):
+                raise ValueError(
+                    f"Inconsistent cluster config at index {i}: "
+                    f"expected {multinode_config}, got "
+                    f"nodes={result.nodes}, ranks={result.ranks}, "
+                    f"ranksPerNode={result.ranksPerNode}, gpusPerRank={result.gpusPerRank}"
+                )
+        log.info(f"Validated consistent multinode config: {multinode_config}")
+    
+    log.info(f"Aggregating {len(validated_results)} RCCL test results")
+    data = [result.model_dump() for result in validated_results]
+    df = pd.DataFrame(data)
+    
+    # Group and aggregate
+    agg_df = df.groupby(['name', 'size', 'type', 'inPlace'], as_index=False).agg(
+        busBw_mean=('busBw', 'mean'),
+        busBw_std=('busBw', 'std'),
+        algBw_mean=('algBw', 'mean'),
+        algBw_std=('algBw', 'std'),
+        time_mean=('time', 'mean'),
+        time_std=('time', 'std'),
+        num_runs=('numCycle', 'count')
+    )
+    
+    # Add multinode config if present
+    if multinode_config:
+        for key, value in multinode_config.items():
+            agg_df[key] = value
+    
+    agg_results = []
+    errors = []
+    
+    for row_dict in agg_df.to_dict('records'):
+        try:
+            agg_results.append(RcclTestsAggregated.model_validate(row_dict))
+        except ValidationError as e:
+            error_msg = f"Validation failed for row {row_dict}: {e}"
+            log.error(error_msg)
+            errors.append(error_msg)
+    
+    # Report any validation failures
+    if errors:
+        error_summary = "\n".join(errors)
+        fail_test(f"Aggregation validation failed:\n{error_summary}")
+    
+    log.info(f"Successfully validated {len(agg_results)} aggregated results")
+    return agg_results
 
 
 
@@ -390,6 +474,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         nccl_proto='simple', gid_index=1, qp_count=1, \
         start_msg_size=1024, end_msg_size='16g', \
         step_function=2, threads_per_gpu=1, warmup_iterations=10, no_of_iterations=1, \
+        data_types=['float'], no_of_cycles=10, \
         check_iteration_count=1, debug_level='INFO', \
         rccl_result_file='/tmp/rccl_result_output.json', no_of_local_ranks=8, \
         ib_rx_queue_len=8192, ucx_tls='tcp', hcoll_enable_mcast_all=0, \
@@ -420,13 +505,15 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
       nccl_algo, nccl_proto, gid_index, qp_count, ...: NCCL/UCX/MPI tuning parameters.
       start_msg_size, end_msg_size, step_function: Message size sweep setup.
       threads_per_gpu, warmup_iterations, check_iteration_count: Test execution tuning.
+      data_types: List of data types to test (e.g., ['float', 'half']).
+      no_of_cycles: Number of cycles to run for each data type.
       debug_level: NCCL_DEBUG level.
       rccl_result_file: Path where the RCCL test writes JSON results (-Z json -x file).
       verify_bus_bw: If 'True' (string), compare bus BW vs expected thresholds.
       exp_results_dict: Dict of expected results per test for verification.
 
     Returns:
-      result_out: The raw JSON string read from rccl_result_file on the head node.
+      all_raw_results: List of dictionaries containing all test results from all data types.
     """
 
     print(f'Starting RCCL Test ..........................................{test_name}')
@@ -473,7 +560,13 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     shdl.exec(cmd)
 
         
-    cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
+    all_raw_results = []
+    all_validated_results = []
+    base_path = Path(rccl_result_file)
+    for dtype in data_types:
+        # Create a unique result file for each data type
+        dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
+        cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
         -x NCCL_DEBUG={debug_level} \
@@ -484,31 +577,65 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
         -x NCCL_IB_HCA={ib_hca_list} \
-        --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {oob_port}\
+        -x NCCL_SOCKET_IFNAME={oob_port} \
+        --mca btl self,tcp \
+        --mca btl_tcp_if_exclude lo,docker0,usb0 \
         -x UCX_NET_DEVICES={net_dev_list} \
         -x UCX_TLS={ucx_tls} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
         {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-        -Z json -x {rccl_result_file}
+        -d {dtype} -N {no_of_cycles} -Z json -x {dtype_result_file}
         '''
 
-    print('%%%%%%%%%%%%%%%%')
-    print(cmd)
-    print('%%%%%%%%%%%%%%%%')
-    try:
-        out_dict = shdl.exec(cmd, timeout=500)
-        output = out_dict[head_node]
-        #print(output)
-        scan_rccl_logs(output)
-    except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
+        print('%%%%%%%%%%%%%%%%')
+        print(cmd)
+        print('%%%%%%%%%%%%%%%%')
+        try:
+            out_dict = shdl.exec(cmd, timeout=500)
+            output = out_dict[head_node]
+            #print(output)
+            scan_rccl_logs(output)
+        except Exception as e:
+            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
+            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
 
-    # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = shdl.exec(f'cat {rccl_result_file}')
-    result_out = json.loads(result_dict_out[head_node].replace( '\n', '').replace( '\r', ''))
+        # Read the JSON results emitted by the RCCL test binary
+        result_dict_out = shdl.exec(f'cat {dtype_result_file}')
+        dtype_result_out = json.loads(result_dict_out[head_node].replace( '\n', '').replace( '\r', ''))
+        # Validate the results against the schema fail if results are not valid
+        try:
+            validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
+            log.info(f'Validation passed: {len(validated)} RcclTests schema validation passed')
+            all_validated_results.extend(validated)
+            all_raw_results.extend(dtype_result_out)
+        except ValidationError as e:
+            log.error(f'Validation Failed: {e}')
+            fail_test(f'RCCL Test {dtype} schema validation failed: {e}')
+
+    # Save the results to a main result file
+    with open(rccl_result_file, 'w') as f:
+        json.dump(all_raw_results, f, indent=2)
+    log.info(f'Saved combined results from all data types to {rccl_result_file}')
+
+    # Validate the results against the schema and aggregate if multiple results are found, fail if results are not valid
+    try:
+        if len(all_validated_results) >= 1:
+            aggregated_rccl_tests = aggregate_rccl_test_results(all_validated_results)
+            log.info(f'Aggregation passed: {len(aggregated_rccl_tests)} RcclTestsAggregated schema validation passed')
+            # Note: currently we are saving the aggregated results, but we could instead use this for final report generation
+            aggregated_path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
+            with open(aggregated_path, 'w') as f:
+                json.dump([result.model_dump() for result in aggregated_rccl_tests], f, indent=2)
+            log.info(f'Saved aggregated results to {aggregated_path}')
+        else:
+            log.info(f'Aggregation skipped: only one run found')
+    except ValidationError as e:
+        log.error(f'Validation Failed: {e}')
+        fail_test(f'RCCL Test schema validation failed: {e}')
+    except ValueError as e:
+        log.error(f'Aggregation failed: {e}')
+        fail_test(f'RCCL Test aggregation failed: {e}')
 
 
     # Collect basic GPU information via rocm-smi
@@ -519,15 +646,15 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
     if re.search( 'True', verify_bus_bw, re.I ):
         if test_name in exp_results_dict.keys():
-            check_bus_bw( test_name, result_out, exp_results_dict[test_name] )
+            check_bus_bw( test_name, all_raw_results, exp_results_dict[test_name] )
 
     if re.search( 'True', verify_bw_dip, re.I ):
-        check_bw_dip( test_name, result_out, )
+        check_bw_dip( test_name, all_raw_results, )
 
     if re.search( 'True', verify_lat_dip, re.I ):
-        check_lat_dip( test_name, result_out, )
+        check_lat_dip( test_name, all_raw_results, )
 
-    return result_out
+    return all_raw_results
 
 
 
