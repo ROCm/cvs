@@ -45,7 +45,7 @@ scrape_configs:
     # Metric relabeling (optional filtering)
     metric_relabel_configs:
       - source_labels: [__name__]
-        regex: 'amdgpu_.*'
+        regex: 'gpu_.*'
         action: keep
 
   # Prometheus self-monitoring
