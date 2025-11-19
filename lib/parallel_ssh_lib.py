@@ -28,7 +28,7 @@ class Pssh():
     mandatory args =  user, password (or) 'private_key': load_private_key('my_key.pem')
     """
 
-    def __init__(self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False ):
+    def __init__(self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True ):
 
         self.log            = log
         self.host_list      = host_list
@@ -36,6 +36,7 @@ class Pssh():
         self.pkey           = pkey
         self.password       = password
         self.host_key_check = host_key_check
+        self.stop_on_errors = stop_on_errors
 
         if self.password is None:
             print(self.host_list)
@@ -53,9 +54,9 @@ class Pssh():
         cmd_output = {}
         print(f'cmd = {cmd}')
         if timeout is None:
-            output = self.client.run_command(cmd )
+            output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors )
         else:
-            output = self.client.run_command(cmd, read_timeout=timeout )
+            output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors )
         for item in output:
             print('#----------------------------------------------------------#')
             print(f'Host == {item.host} ==')
@@ -71,6 +72,10 @@ class Pssh():
                     print(line)
                     cmd_out_str = cmd_out_str + line.replace( '\t', '   ')
                     cmd_out_str = cmd_out_str + '\n'
+            if item.exception:
+                exc_str = str(item.exception).replace('\t', '   ')
+                print(exc_str)
+                cmd_out_str += exc_str + '\n'
             cmd_output[item.host] = cmd_out_str
 
         return cmd_output
@@ -85,9 +90,9 @@ class Pssh():
         cmd_output = {}
         print(cmd_list)
         if timeout is None:
-            output = self.client.run_command( '%s', host_args=cmd_list )
+            output = self.client.run_command( '%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors )
         else:
-            output = self.client.run_command( '%s', host_args=cmd_list, read_timeout=timeout )
+            output = self.client.run_command( '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors )
         i = 0
         for item in output:
             print('#----------------------------------------------------------#')
@@ -105,6 +110,10 @@ class Pssh():
                     print(line)
                     cmd_out_str = cmd_out_str + line.replace( '\t', '   ')
                     cmd_out_str = cmd_out_str + '\n'
+            if item.exception:
+                exc_str = str(item.exception).replace('\t', '   ')
+                print(exc_str)
+                cmd_out_str += exc_str + '\n'
             i=i+1
             cmd_output[item.host] = cmd_out_str
 
@@ -126,7 +135,7 @@ class Pssh():
 
     def reboot_connections(self ):
         print('Rebooting Connections')
-        self.client.run_command( 'reboot -f' ) 
+        self.client.run_command( 'reboot -f', stop_on_errors=self.stop_on_errors )
 
     def destroy_clients(self ):
         print('Destroying Current phdl connections ..')
