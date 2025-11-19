@@ -1,0 +1,54 @@
+# Prometheus Configuration for CVS Device Metrics Monitoring
+# This file configures Prometheus to scrape AMD GPU metrics from Device Metrics Exporter
+
+global:
+  scrape_interval: 15s           # How often to scrape targets
+  evaluation_interval: 15s       # How often to evaluate rules
+  scrape_timeout: 10s            # Timeout for scraping
+  external_labels:
+    cluster: 'cvs-cluster'
+    monitor: 'gpu-monitoring'
+
+# Load alert rules
+rule_files:
+  - 'alert_rules.yml'
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - 'localhost:9093'
+
+# Scrape configurations
+scrape_configs:
+  # Job for AMD Device Metrics Exporter running on all GPU nodes
+  - job_name: 'device-metrics-exporter'
+    static_configs:
+      - targets:
+          # ===== UPDATE THESE WITH YOUR ACTUAL NODE HOSTNAMES/IPs =====
+          #- 'node1:5000'
+          #- 'node2:5000'
+          # Add more nodes as needed
+          # For local testing use: - 'localhost:5000'
+          - 'localhost:5000'
+        labels:
+          cluster: 'cvs-cluster'
+    
+    # Relabel to extract node name from target
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '([^:]+):.*'
+        target_label: node
+        replacement: '$1'
+    
+    # Metric relabeling (optional filtering)
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'amdgpu_.*'
+        action: keep
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

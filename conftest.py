@@ -10,12 +10,17 @@ import sys
 
 # Add all additional cmd line arguments for the script
 def pytest_addoption(parser):
-    parser.addoption( "--cluster_file", action="store", required=True, help="Input file with all the details of the cluster, nodes, switches in JSON format" )
-    parser.addoption( "--config_file", action="store", required=True, help="Input file with all configurations and parameters for tests in JSON format" )
-
+    parser.addoption("--cluster_file", action="store", default=None,
+                     help="Path to the cluster JSON file")
+    parser.addoption("--config_file", action="store", default=None,
+                     help="Path to the config JSON file")
+    parser.addoption("--prometheus-url", action="store", default=None,
+                     help="Prometheus server URL (optional)")
+    parser.addoption("--grafana-url", action="store", default=None,
+                     help="Grafana server URL (optional)")
+    
 def pytest_metadata(metadata):
     """Add CVS version metadata for both console output and HTML report."""
-
     # Read CVS version from version.txt
     cvs_version = "Unknown"
     version_file = os.path.join(os.path.dirname(__file__), "version.txt")

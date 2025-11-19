@@ -418,3 +418,78 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")
 
     return resolved_config
+
+
+def resolve_placeholder_with_fallback(value, fallback):
+    """
+    Resolve placeholder strings, returning fallback if unresolved.
+    
+    Args:
+        value: Value that may contain unresolved placeholders like {prometheus-host}
+        fallback: Default value to use if placeholder is unresolved
+    
+    Returns:
+        Resolved value or fallback if value is None/empty/unresolved placeholder
+    
+    Examples:
+        >>> resolve_placeholder_with_fallback("{prometheus-host}", "localhost")
+        'localhost'
+        >>> resolve_placeholder_with_fallback("10.0.0.5", "localhost")
+        '10.0.0.5'
+        >>> resolve_placeholder_with_fallback(None, "localhost")
+        'localhost'
+    """
+    if value is None:
+        return fallback
+    
+    # Convert to string
+    value_str = str(value).strip()
+    
+    # Empty or unresolved placeholder (starts with { and ends with })
+    if not value_str or (value_str.startswith("{") and value_str.endswith("}")):
+        return fallback
+    
+    return value_str
+
+
+def apply_monitoring_defaults(config_dict):
+    """
+    Apply default fallback values for monitoring configuration.
+    Ensures localhost/default ports/versions when placeholders aren't resolved.
+    
+    Args:
+        config_dict: Monitoring configuration dictionary
+    
+    Returns:
+        dict: Configuration with defaults applied
+    """
+    defaults = {
+        'prometheus_host': 'localhost',
+        'prometheus_port': 9090,
+        'prometheus_version': 'v2.55.0',
+        'grafana_host': 'localhost',
+        'grafana_port': 3000,
+        'grafana_version': '10.4.1',
+        'device_metrics_exporter_version': 'v1.4.0',
+        'device_metrics_exporter_port': 5000,
+        'device_metrics_exporter_host': 'localhost',
+    }
+    
+    result = config_dict.copy()
+    
+    for key, default_value in defaults.items():
+        current_value = result.get(key)
+        result[key] = resolve_placeholder_with_fallback(current_value, default_value)
+    
+    # Build derived URLs with resolved values
+    if 'prometheus_url' in result:
+        prom_host = result['prometheus_host']
+        prom_port = result['prometheus_port']
+        result['prometheus_url'] = f"http://{prom_host}:{prom_port}"
+    
+    if 'grafana_url' in result:
+        graf_host = result['grafana_host']
+        graf_port = result['grafana_port']
+        result['grafana_url'] = f"http://{graf_host}:{graf_port}"
+    
+    return result
