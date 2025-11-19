@@ -6,3 +6,5 @@ pytest-html
 pytest-repeat
 pytest-dependency
 xlsxwriter
+pydantic >= 2.0
+pandas
