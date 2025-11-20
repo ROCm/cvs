@@ -79,6 +79,15 @@ echo ""
 # Step 2: Setup Prometheus on management node
 echo "Step 2: Setting up Prometheus..."
 echo "------------------------------------------------------------"
+# Stop existing Prometheus if running
+if systemctl is-active --quiet prometheus 2>/dev/null; then
+    echo "Stopping existing Prometheus service..."
+    sudo systemctl stop prometheus
+    sleep 2
+fi
+
+sudo pkill -9 prometheus 2>/dev/null || true
+sleep 2
 
 if ! command -v prometheus &> /dev/null; then
     echo "Prometheus not found. Installing..."
