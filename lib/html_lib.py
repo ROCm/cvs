@@ -670,18 +670,27 @@ var data = [
          print(act_data_dict)
          for collective_name in act_data_dict.keys():
              print(collective_name)
+             # Skip if reference data doesn't have this collective
+             if collective_name not in ref_data_dict:
+                 print(f"Warning: {collective_name} not found in reference data, skipping")
+                 continue
              for msg_size in act_data_dict[collective_name].keys():
 
                  norm_msg_size = normalize_bytes(int(msg_size))
                  # calculate % diff between actual value and ref value
                  act_bus_bw = act_data_dict[collective_name][msg_size]['bus_bw']
-                 ref_bus_bw = ref_data_dict[collective_name][msg_size]['bus_bw']
-                 print(act_bus_bw, ref_bus_bw )
-                 if ref_bus_bw == 0 or ref_bus_bw == 0.0:
-                     pct_val = 100
+                 # Skip if reference data doesn't have this message size
+                 if msg_size not in ref_data_dict[collective_name]:
+                     print(f"Warning: msg_size {msg_size} not found in reference for {collective_name}, using actual as 100%")
+                     pct_val = 100.0
                  else:
-                     pct_incr = ( (act_bus_bw - ref_bus_bw)/ref_bus_bw ) * 100
-                 pct_val = round(float(pct_incr + 100), 2 )
+                     ref_bus_bw = ref_data_dict[collective_name][msg_size]['bus_bw']
+                     print(act_bus_bw, ref_bus_bw )
+                     if ref_bus_bw == 0 or ref_bus_bw == 0.0:
+                         pct_val = 100
+                     else:
+                         pct_incr = ( (act_bus_bw - ref_bus_bw)/ref_bus_bw ) * 100
+                         pct_val = round(float(pct_incr + 100), 2 )
 
                  if pct_val > 100:
                      fill_color = "colors.verygood"
@@ -1173,12 +1182,20 @@ def build_rccl_heatmap_table( filename, title, act_data_json, ref_data_json ):
          fp.write(html_lines)
          for key_nam in act_data_dict.keys():
              (collective,data_type,gpu_count) = key_nam.split("-")
+             # Skip if reference data doesn't have this test configuration
+             if key_nam not in ref_data_dict:
+                 print(f"Warning: {key_nam} not found in reference data, skipping from table")
+                 continue
              last_bw = 0.0
              last_time = 0
              for msg_size in act_data_dict[key_nam].keys():
                  act_bus_bw = act_data_dict[key_nam][msg_size]['bus_bw']
                  act_alg_bw = act_data_dict[key_nam][msg_size]['alg_bw']
                  act_time = act_data_dict[key_nam][msg_size]['time']
+                 # Skip if reference doesn't have this message size
+                 if msg_size not in ref_data_dict[key_nam]:
+                     print(f"Warning: msg_size {msg_size} not found in reference for {key_nam}, skipping from table")
+                     continue
                  ref_bus_bw = ref_data_dict[key_nam][msg_size]['bus_bw']
                  ref_alg_bw = ref_data_dict[key_nam][msg_size]['alg_bw']
                  act_time = act_data_dict[key_nam][msg_size]['time']
