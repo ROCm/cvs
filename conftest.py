@@ -14,10 +14,6 @@ def pytest_addoption(parser):
                      help="Path to the cluster JSON file")
     parser.addoption("--config_file", action="store", default=None,
                      help="Path to the config JSON file")
-    parser.addoption("--prometheus-url", action="store", default=None,
-                     help="Prometheus server URL (optional)")
-    parser.addoption("--grafana-url", action="store", default=None,
-                     help="Grafana server URL (optional)")
     
 def pytest_metadata(metadata):
     """Add CVS version metadata for both console output and HTML report."""
