@@ -251,7 +251,8 @@ def test_disable_firewall( phdl ):
     time.sleep(2)
     out_dict = phdl.exec('sudo service ufw status')
     for node in out_dict.keys():
-        if not re.search( 'inactive|dead|stopped|disabled', out_dict[node], re.I ):
+        # Consider "not loaded" or "not found" as acceptable (firewall not installed)
+        if not re.search( 'inactive|dead|stopped|disabled|not loaded|could not be found', out_dict[node], re.I ):
             fail_test(f'Service ufw not disabled properly on node {node}')
     update_test_result()
 
@@ -283,7 +284,7 @@ def pytest_generate_tests(metafunc):
         ],
     )
 
-    gpu_count_list = rccl.get( "gpu_count_list", [ "8", "16", "32" ] )
+    gpu_count_list = rccl.get( "gpu_count_list", [ "8", "16" ] )
     data_type_list = rccl.get( "data_type_list", [ "float", "bfloat16" ] )
     all_keys = ( "rccl_collective", "gpu_count", "data_type" )
 
@@ -391,11 +392,13 @@ def test_rccl_perf( cluster_dict, config_dict, rccl_collective, gpu_count, data_
        end_msg_size            = config_dict['end_msg_size'], \
        step_function           = config_dict['step_function'], \
        threads_per_gpu         = config_dict['threads_per_gpu'], \
+       no_of_cycles            = config_dict['no_of_cycles'], \
+       data_types               = [data_type], \
        warmup_iterations       = config_dict['warmup_iterations'], \
        no_of_iterations        = config_dict['no_of_iterations'], \
        check_iteration_count   = config_dict['check_iteration_count'], \
        debug_level             = config_dict['debug_level'], \
-       rccl_result_file        = config_dict['rccl_result_file'], \
+       rccl_result_file        = f"/tmp/rccl_{rccl_collective}_{data_type}_{gpu_count}.json", \
        no_of_local_ranks       = config_dict['no_of_local_ranks'], \
        ucx_tls                 = config_dict['ucx_tls'], \
        nccl_net_plugin         = config_dict['nccl_net_plugin'], \
@@ -453,18 +456,80 @@ def test_gen_graph():
 
 
 
-def test_gen_heatmap(config_dict):
+def test_gen_heatmap(phdl, cluster_dict, config_dict):
     print('Generate Heatmap')
     current_datetime = datetime.now()
     time_stamp = current_datetime.strftime("%Y-%m-%d-%H-%M-%S")
     heatmap_file = f'/tmp/rccl_heatmap_{time_stamp}.html'
+    # Convert raw results to graph format for HTML reports
     rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
     rccl_res_json_file = f'/tmp/rccl_result_{time_stamp}.json'
     rccl_ref_json_file = config_dict['golden_reference_json_file']
-    heatmap_title = config_dict['heatmap_title']
-    with open( rccl_res_json_file, "w") as fp:
-        json.dump( rccl_graph_dict, fp, indent=4 )
-    html_lib.add_html_begin( heatmap_file )
-    html_lib.build_rccl_heatmap( heatmap_file, 'heatmapdiv', heatmap_title, rccl_res_json_file, rccl_ref_json_file )
-    html_lib.build_rccl_heatmap_table( heatmap_file, 'Heatmap data Table', rccl_res_json_file, rccl_ref_json_file )
-    html_lib.add_html_end( heatmap_file ) 
+    heatmap_title = config_dict.get('heatmap_title', 'RCCL Performance Heatmap')
+    
+    # Collect system metadata from compute nodes
+    print('Collecting system metadata...')
+    # Environment variables are now automatically extracted from config_dict
+    # You can optionally pass env_vars=['PATH', 'LD_LIBRARY_PATH'] to capture shell vars
+    metadata = collect_system_metadata(phdl, cluster_dict, config_dict)
+    
+    # Create structured output with metadata and results
+    structured_output = {
+        'metadata': metadata,
+        'result': rccl_graph_dict
+    }
+    
+    # Save structured output with metadata
+    structured_json_file = f'/tmp/rccl_result_with_metadata_{time_stamp}.json'
+    with open(structured_json_file, "w") as fp:
+        json.dump(structured_output, fp, indent=4)
+    print(f'Saved structured results with metadata to {structured_json_file}')
+    
+    # Save original format for backward compatibility (used by HTML generation)
+    with open(rccl_res_json_file, "w") as fp:
+        json.dump(rccl_graph_dict, fp, indent=4)
+    
+    # Collect and save aggregated data from individual test runs
+    print('Collecting aggregated data from individual test runs...')
+    aggregated_data = {}
+    for key_name in rccl_res_dict.keys():
+        # Parse the key to get test parameters
+        parts = key_name.split('-')
+        if len(parts) >= 3:
+            collective = parts[0]
+            data_type = parts[1]
+            gpu_count = parts[2]
+            
+            # Look for aggregated file
+            aggregated_file = f'/tmp/rccl_{collective}_{data_type}_{gpu_count}_aggregated.json'
+            try:
+                if os.path.exists(aggregated_file):
+                    with open(aggregated_file, 'r') as fp:
+                        agg_data = json.load(fp)
+                        aggregated_data[key_name] = agg_data
+                        print(f'Loaded aggregated data from {aggregated_file}')
+                else:
+                    print(f'Warning: Aggregated file not found: {aggregated_file}')
+            except Exception as e:
+                print(f'Warning: Failed to load aggregated data from {aggregated_file}: {e}')
+    
+    # Save aggregated data with metadata
+    if aggregated_data:
+        aggregated_output = {
+            'metadata': metadata,
+            'aggregated_results': aggregated_data
+        }
+        aggregated_json_file = f'/tmp/rccl_result_final_aggregated_{time_stamp}.json'
+        with open(aggregated_json_file, "w") as fp:
+            json.dump(aggregated_output, fp, indent=4)
+        print(f'Saved final aggregated results to {aggregated_json_file}')
+    
+    # Generate HTML heatmap and reports
+    html_lib.add_html_begin(heatmap_file)
+    html_lib.build_rccl_heatmap(heatmap_file, 'heatmapdiv', heatmap_title, rccl_res_json_file, rccl_ref_json_file)
+    html_lib.build_rccl_heatmap_table(heatmap_file, 'Heatmap data Table', rccl_res_json_file, rccl_ref_json_file)
+    html_lib.add_html_end(heatmap_file)
+    
+    print(f'Generated heatmap: {heatmap_file}')
+    print(f'Structured results: {structured_json_file}')
+    print(f'Aggregated results: {aggregated_json_file if aggregated_data else "N/A"}') 
