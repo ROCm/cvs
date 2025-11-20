@@ -9,9 +9,9 @@ import re
 import sys
 import os
 import json
-from . import rocm_plib
+import rocm_plib
 
-from .utils_lib import *
+from utils_lib import *
 
 
 

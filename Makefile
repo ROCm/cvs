@@ -1,10 +1,9 @@
 VENV_DIR = test_venv
-PYTHON = python
+PYTHON := $(shell command -v python3 || command -v python)
 PIP = $(VENV_DIR)/bin/pip
 
-.PHONY: help venv build install test clean all clean_venv clean_build
-
-all: build venv install test
+.PHONY: help venv install test clean all clean_venv
+all: venv install test
 
 help:
 	@echo "Available targets:"
@@ -18,7 +17,7 @@ venv: clean_venv
 	@echo "Creating virtual environment..."
 	$(PYTHON) -m venv $(VENV_DIR)
 
-install: venv build
+install: venv
 	@echo "Installing from built distribution..."
 	$(PIP) install -r requirements.txt
 

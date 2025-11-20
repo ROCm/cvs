@@ -11,7 +11,7 @@ import sys
 import json
 
 import pytest
-from . import globals
+import globals
 
 log = globals.log
 
