@@ -205,6 +205,9 @@ class InferenceMaxJob():
                     export TP={self.bp_dict['tensor_parallelism']}
                     export CONC={self.bp_dict['max_concurrency']}
                     export HF_TOKEN={self.hf_token}
+                    export VLLM_USE_AITER_UNIFIED_ATTENTION=1
+                    export VLLM_ROCM_USE_AITER_MHA=0
+                    export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1
                     export PORT={self.bp_dict['port_no']}'  > /tmp/server_env_script.sh"
                     '''
         time.sleep(3)
