@@ -1484,7 +1484,7 @@ def build_snapshot_stats_diff_table( filename, d_dict, title, table_name, id_nam
                          fp.write(f'<tr><td>{eth_device}</td><td>Before</td><td>After</td><td>Diff</td></tr>\n')
                          for stats_key in stats_dict.keys():
                              if int(stats_dict[stats_key]['diff']) > 0:
-                                 fp.write(f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]['before']}</td><td>{stats_dict[stats_key]['after']}</td><td><span class="label label-danger">{stats_dict[stats_key]['diff']}</td></tr>\n')
+                                 fp.write(f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]["before"]}</td><td>{stats_dict[stats_key]["after"]}</td><td><span class="label label-danger">{stats_dict[stats_key]["diff"]}</td></tr>\n')
                          fp.write(f'</table></td>\n')
                      else:
                          fp.write('<td></td>')
