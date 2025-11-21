@@ -15,6 +15,8 @@ import time
 import json
 import logging
 import itertools
+import shutil
+import socket
 
 from datetime import datetime
 
@@ -369,7 +371,7 @@ def test_rccl_perf( cluster_dict, config_dict, rccl_collective, gpu_count, data_
 
     # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
     if not re.search( 'None', config_dict['env_source_script'], re.I ):
-        phdl.exec(f'bash {config_dict['env_source_script']}')
+        phdl.exec(f'bash {config_dict["env_source_script"]}')
 
     # Execute the RCCL cluster test with parameters sourced from config_dict
     result_dict = rccl_lib.rccl_cluster_test_default( phdl, shdl, \
@@ -530,6 +532,103 @@ def test_gen_heatmap(phdl, cluster_dict, config_dict):
     html_lib.build_rccl_heatmap_table(heatmap_file, 'Heatmap data Table', rccl_res_json_file, rccl_ref_json_file)
     html_lib.add_html_end(heatmap_file)
     
-    print(f'Generated heatmap: {heatmap_file}')
-    print(f'Structured results: {structured_json_file}')
-    print(f'Aggregated results: {aggregated_json_file if aggregated_data else "N/A"}') 
+    # Get management/login node IP from cluster config
+    mgmt_node = cluster_dict.get('head_node_dict', {}).get('mgmt_ip', None)
+    
+    # Get current hostname/IP to check if we're on the management node
+    current_host = socket.gethostname()
+    
+    # Get output directory from config
+    output_dir = config_dict.get('output_dir', '/tmp')
+    
+    # List of files to copy
+    files_to_copy = [
+        heatmap_file,
+        structured_json_file,
+        rccl_res_json_file
+    ]
+    if aggregated_data:
+        files_to_copy.append(aggregated_json_file)
+    
+    copied_files = {}
+    is_remote_copy = False
+    
+    # Determine if we're on a compute node (not the management node)
+    on_compute_node = False
+    if mgmt_node:
+        # Check if current host matches management node
+        try:
+            mgmt_ip = socket.gethostbyname(mgmt_node)
+            current_ip = socket.gethostbyname(current_host)
+            on_compute_node = (mgmt_ip != current_ip and current_host != mgmt_node)
+        except:
+            # If resolution fails, assume different if names don't match
+            on_compute_node = (current_host != mgmt_node)
+    
+    # If on compute node, copy files to management node
+    if on_compute_node and mgmt_node:
+        print(f'Running on compute node: {current_host}')
+        print(f'Copying results to management node: {mgmt_node}:{output_dir}/')
+        is_remote_copy = True
+        
+        # Get SSH key and username from cluster config
+        ssh_key = cluster_dict.get('priv_key_file', '')
+        username = cluster_dict.get('username', os.getenv('USER', 'root'))
+        ssh_options = '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+        if ssh_key:
+            ssh_options += f' -i {ssh_key}'
+        
+        # Copy each file to the management node
+        for src_file in files_to_copy:
+            if os.path.exists(src_file):
+                dst_path = f'{output_dir}/{os.path.basename(src_file)}'
+                scp_cmd = f'scp {ssh_options} {src_file} {username}@{mgmt_node}:{dst_path}'
+                
+                try:
+                    result = os.system(scp_cmd)
+                    if result == 0:
+                        copied_files[os.path.basename(src_file)] = dst_path
+                        print(f'Copied {os.path.basename(src_file)} to {mgmt_node}:{dst_path}')
+                    else:
+                        print(f'Failed to copy {os.path.basename(src_file)} (exit code: {result})')
+                except Exception as e:
+                    print(f'Error copying {src_file}: {e}')
+    else:
+        # On management node or no mgmt_node configured - copy locally
+        print(f'Running on management node: {current_host}')
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except Exception as e:
+            print(f'Warning: Could not create {output_dir}: {e}')
+            output_dir = '/tmp'
+        
+        for src_file in files_to_copy:
+            if os.path.exists(src_file):
+                dst_file = os.path.join(output_dir, os.path.basename(src_file))
+                try:
+                    shutil.copy2(src_file, dst_file)
+                    copied_files[os.path.basename(src_file)] = dst_file
+                    print(f'Copied {os.path.basename(src_file)} to {dst_file}')
+                except Exception as e:
+                    print(f'Failed to copy {src_file}: {e}')
+    
+    print(f'\n=== RCCL Test Results ===')
+    print(f'Generated files:')
+    print(f'  - Heatmap: {heatmap_file}')
+    print(f'  - Structured results: {structured_json_file}')
+    print(f'  - Aggregated results: {aggregated_json_file if aggregated_data else "N/A"}')
+    
+    if copied_files:
+        if is_remote_copy:
+            print(f'\n Results copied to management node ({mgmt_node}):')
+            print(f'  Location: {output_dir}/')
+            print(f'  Files:')
+            for filename in copied_files.keys():
+                print(f'    - {filename}')
+            print(f'\nAccess results on {mgmt_node} with:')
+            print(f'  ls {output_dir}/rccl_*{time_stamp}*')
+        else:
+            print(f'\n Files available in: {output_dir}/')
+            for filename in copied_files.keys():
+                print(f'    - {filename}')
+    print(f'=========================\n') 

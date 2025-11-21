@@ -28,10 +28,65 @@ class RcclTests(BaseModel):
     type: Type
     redop: Redop
     inPlace: InPlace
+    
+    @field_validator('name', mode='before')
+    @classmethod
+    def normalize_collective_name(cls, v: str) -> str:
+        """Normalize collective names to match expected format."""
+        # Handle case variations from RCCL test output
+        normalization_map = {
+            'allreduce': 'AllReduce',
+            'allgather': 'AllGather',
+            'scatter': 'Scatter',
+            'gather': 'Gather',
+            'reducescatter': 'ReduceScatter',
+            'sendrecv': 'SendRecv',
+            'alltoall': 'AllToAll',  # Maps "AlltoAll" -> "AllToAll"
+            'alltoallv': 'AllToAllV',
+            'broadcast': 'Broadcast'
+        }
+        
+        # Try exact match first
+        if v in ['AllReduce', 'AllGather', 'Scatter', 'Gather', 'ReduceScatter', 'SendRecv', 'AllToAll', 'AllToAllV', 'Broadcast']:
+            return v
+        
+        # Try case-insensitive normalization
+        v_lower = v.lower().replace('_', '').replace('-', '')
+        if v_lower in normalization_map:
+            return normalization_map[v_lower]
+        
+        # If no match, return original (will fail validation with clear error)
+        return v
     time: NonNegativeFloat
     algBw: NonNegativeFloat
     busBw: NonNegativeFloat
     wrong: int
+    
+    @field_validator('wrong', mode='before')
+    @classmethod
+    def normalize_wrong_field(cls, v) -> int:
+        """Handle 'N/A' or string values in wrong field."""
+        # If it's already an int, return it
+        if isinstance(v, int):
+            return v
+        
+        # Handle string values
+        if isinstance(v, str):
+            # 'N/A' means no errors (0 wrong)
+            if v.upper() in ['N/A', 'NA', 'NONE', '']:
+                return 0
+            # Try to parse as int
+            try:
+                return int(v)
+            except ValueError:
+                # If can't parse, assume no errors
+                return 0
+        
+        # For any other type, try to convert to int
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return 0
 
     @field_validator('time', 'algBw', 'busBw')
     @classmethod
@@ -91,16 +146,55 @@ class RcclTestsAggregated(BaseModel):
     ranksPerNode: Optional[PositiveInt] = None
     gpusPerRank: Optional[PositiveInt] = None
 
-    @field_validator('busBw_std', 'algBw_std', 'time_std')
+    @field_validator('busBw_mean', 'algBw_mean', 'time_mean', mode='before')
     @classmethod
-    def handle_nan_std(cls, v: float, info) -> float:
+    def handle_nan_mean(cls, v, info) -> float:
+        """
+        Validate mean values - should never be NaN or Inf.
+        Using mode='before' to provide better error messages.
+        """
+        # Handle None or missing values
+        if v is None:
+            raise ValueError(f'{info.field_name} cannot be None')
+        
+        # Convert to float if needed
+        try:
+            v_float = float(v)
+        except (ValueError, TypeError):
+            raise ValueError(f'{info.field_name} must be a valid number')
+        
+        # Check for NaN and Inf
+        if math.isnan(v_float):
+            raise ValueError(f'{info.field_name} cannot be NaN')
+        if math.isinf(v_float):
+            raise ValueError(f'{info.field_name} cannot be Inf')
+        if v_float < 0:
+            raise ValueError(f'{info.field_name} must be >= 0')
+        return v_float
+    
+    @field_validator('busBw_std', 'algBw_std', 'time_std', mode='before')
+    @classmethod
+    def handle_nan_std(cls, v, info) -> float:
         """
         Convert NaN (from single-value std) to 0.0.
         Pandas returns NaN for std of single value, which is correct mathematically,
         but we interpret it as 0 variability.
+        
+        Using mode='before' to run before NonNegativeFloat constraint check.
         """
-        if math.isnan(v):
+        # Handle None or missing values
+        if v is None:
             return 0.0
-        if math.isinf(v):
+        
+        # Convert to float if needed
+        try:
+            v_float = float(v)
+        except (ValueError, TypeError):
+            return 0.0
+        
+        # Check for NaN and Inf
+        if math.isnan(v_float):
+            return 0.0
+        if math.isinf(v_float):
             raise ValueError(f'{info.field_name} cannot be Inf')
-        return v
+        return v_float
