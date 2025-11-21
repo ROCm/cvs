@@ -600,7 +600,7 @@ var series = chart.series.push(
 );
 
 series.columns.template.setAll({
-  tooltipText: "{categoryY}:{categoryX} = {value}%",
+  tooltipText: "{categoryY}: {categoryX} - act = {value1} ref = {value2} GB/s",
   strokeOpacity: 1,
   strokeWidth: 2,
   cornerRadiusTL: 5,
@@ -1002,6 +1002,9 @@ def add_html_end( filename ):
 <script>
   // Initialize DataTable
   $(document).ready(function() {
+    $('#metatable').DataTable({
+      "autoWidth": true
+    });
     $('#rccltable').DataTable({
      "pageLength": 100,
      "autoWidth": true
@@ -1033,7 +1036,9 @@ def add_json_data( filename, json_data ):
 
 
 
-def build_rccl_result_default_table( filename, res_dict ):
+def build_rccl_result_default_table( filename, res_dict, \
+        bw_dip_threshold=10.0, time_dip_threshold=10.0 ):
+
     print('Build HTML RCCL Result default table')
     with open(filename, 'a') as fp:
          html_lines='''
@@ -1063,15 +1068,30 @@ def build_rccl_result_default_table( filename, res_dict ):
      <td>{res_dict[key_nam][msg_size]['alg_bw']}</td>
                  '''
                  fp.write(html_lines)
-                 if float(bus_bw) < float(last_bw):
+
+                 # For dip_bw_check and dip_lat_check - mark red only if it is greater than some
+                 # threshold - by default 10.0 % from earlier message size.
+                 bw_change_pct = 0.0
+                 time_change_pct = 0.0
+                 # percent increase for BW
+                 if float(last_bw) > 0.0:
+                     bw_change_pct = ((float(bus_bw)-float(last_bw))/float(last_bw)) * 100.0
+
+                 # percent decrease for latency
+                 if float(last_time) > 0.0:
+                     time_change_pct = ((float(time)-float(last_time))/float(last_time)) * 100.0
+
+                 print(bus_bw, last_bw, bw_change_pct, bw_dip_threshold)
+                 print(time, last_time, time_change_pct, time_dip_threshold)
+
+                 if bw_change_pct < -(bw_dip_threshold):
                      html_lines = '''<td><span class="label label-danger">''' + str(bus_bw) + '''</td>\n'''
                  else:
                      html_lines = '''<td>''' + str(bus_bw) + '''</td>\n'''
                  fp.write(html_lines)
-                 if float(time) < float(last_time):
-                     html_lines = '''<td><span class="label label-danger">''' + str(time) + '''</td>\n'''
-                 else:
-                     html_lines = '''<td>''' + str(time) + '''</td>\n'''
+
+                 # latency dip check add later
+                 html_lines = '''<td>''' + str(time) + '''</td>\n'''
                  fp.write(html_lines)
                  last_bw = bus_bw
                  last_time = time
@@ -1145,6 +1165,138 @@ def build_rccl_result_table( filename, res_dict ):
 
 
 
+def build_rccl_heatmap_metadata_table( filename, act_data_json, ref_data_json ):
+    try:
+        with open( act_data_json, 'r') as fp1:
+             act_data_dict = json.load(fp1)
+    except Exception as e:
+        print(f'Error reading file {act_data_json} - {e}')
+
+
+    try:
+        with open( ref_data_json, 'r') as fp2:
+             ref_data_dict = json.load(fp2)
+    except Exception as e:
+        print(f'Error reading file {ref_data_json} - {e}')
+
+
+    print('Build HTML RCCL heatmap Metadata table')
+    with open(filename, 'a') as fp:
+         html_lines='''
+         <br><br>
+<table id="metatable" class="display cell-border">
+  <thead>
+  <tr>
+  <th>Item</th>
+  <th>GPU Model</th>
+  <th>NIC Model</th>
+  <th>Collection Date</th>
+  <th>BKC Version</th>
+  <th>ROCM/CUDA Version</th>
+  <th>RCCL/NCCL Commit/Date</th>
+  </tr>
+  </thead>'''
+         fp.write(html_lines)
+         html_lines='<tr>'
+         fp.write(html_lines)
+         html_lines='<td>Current</td>'
+         fp.write(html_lines)
+         for key_nam in act_data_dict.keys():
+             if 'metadata' in key_nam:
+                 print(act_data_dict['metadata'].keys())
+                 if 'gpu_model' in act_data_dict[key_nam].keys():
+                     html_lines = f'<td>{act_data_dict['metadata']['gpu_model']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+
+                 if 'nic_model' in act_data_dict[key_nam].keys():
+                     html_lines = f'<td>{act_data_dict['metadata']['nic_model']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+
+                 if 'date' in act_data_dict[key_nam].keys():
+                     html_lines = f'<td>{act_data_dict['metadata']['date']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+
+                 if 'bkc_version' in act_data_dict[key_nam].keys():
+                     html_lines = f'<td>{act_data_dict['metadata']['bkc_version']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+
+                 if 'rocm_version' in act_data_dict[key_nam].keys():
+                     html_lines = f'<td>{act_data_dict['metadata']['rocm_version']}</td>'
+                     fp.write(html_lines)
+                 elif 'cuda_version' in act_data_dict[key_nam].keys():
+                     html_lines = f'<td>{act_data_dict['metadata']['cuda_version']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+
+                 if 'rccl_commit' in act_data_dict[key_nam].keys():
+                     html_lines = f'<td>{act_data_dict['metadata']['rccl_commit']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+         html_lines='</tr>'
+         fp.write(html_lines)
+
+
+         for key_nam in ref_data_dict.keys():
+             if 'metadata' in key_nam:
+                 html_lines='<tr>'
+                 fp.write(html_lines)
+                 html_lines='<td>Golden</td>'
+                 fp.write(html_lines)
+                 print(ref_data_dict[key_nam].keys())
+                 if 'gpu_model' in ref_data_dict[key_nam].keys():
+                     html_lines = f'<td>{ref_data_dict['metadata']['gpu_model']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+                 if 'nic_model' in ref_data_dict[key_nam].keys():
+                     html_lines = f'<td>{ref_data_dict['metadata']['nic_model']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+                 if 'date' in ref_data_dict[key_nam].keys():
+                     html_lines = f'<td>{ref_data_dict['metadata']['nic_model']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+                 if 'bkc_version' in ref_data_dict[key_nam].keys():
+                     html_lines = f'<td>{ref_data_dict['metadata']['bkc_version']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+                 if 'rocm_version' in ref_data_dict[key_nam].keys():
+                     html_lines = f'<td>{ref_data_dict['metadata']['rocm_version']}</td>'
+                     fp.write(html_lines)
+                 elif 'cuda_version' in ref_data_dict[key_nam].keys():
+                     html_lines = f'<td>{ref_data_dict['metadata']['cuda_version']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+                 if 'rccl_commit' in ref_data_dict[key_nam].keys():
+                     html_lines = f'<td>{ref_data_dict['metadata']['rccl_commit']}</td>'
+                     fp.write(html_lines)
+                 else:
+                     fp.write('<td>-</td>')
+                 html_lines='</tr>'
+                 fp.write(html_lines)
+
+         html_lines='''
+         </table>'''
+         fp.write(html_lines)
+
+
+
+
+
 def build_rccl_heatmap_table( filename, title, act_data_json, ref_data_json ):
 
     try:
@@ -1171,6 +1323,7 @@ def build_rccl_heatmap_table( filename, title, act_data_json, ref_data_json ):
   <th>Collective</th>
   <th>DataType</th>
   <th>Number of GPUs</th>
+  <th>Msg Size</th>
   <th>Result Algo BW GB/s</th>
   <th>Golden Algo BW GB/s</th>
   <th>Result Bus BW GB/s</th>
@@ -1206,6 +1359,7 @@ def build_rccl_heatmap_table( filename, title, act_data_json, ref_data_json ):
      <td>{collective}</td>
      <td>{data_type}</td>
      <td>{gpu_count}</td>
+     <td>{msg_size}</td>
                  '''
                  fp.write(html_lines)
 

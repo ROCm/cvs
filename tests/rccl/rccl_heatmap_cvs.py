@@ -408,7 +408,8 @@ def test_rccl_perf( cluster_dict, config_dict, rccl_collective, gpu_count, data_
        verify_bus_bw           = config_dict['verify_bus_bw'], \
        verify_bw_dip           = config_dict['verify_bw_dip'], \
        verify_lat_dip          = config_dict['verify_lat_dip'], \
-       exp_results_dict        = config_dict['results']
+       nic_model               = config_dict['nic_model'], \
+       exp_results_dict        = config_dict['expected_results']
     )
 
 
@@ -525,10 +526,11 @@ def test_gen_heatmap(phdl, cluster_dict, config_dict):
         with open(aggregated_json_file, "w") as fp:
             json.dump(aggregated_output, fp, indent=4)
         print(f'Saved final aggregated results to {aggregated_json_file}')
-    
+   
     # Generate HTML heatmap and reports
     html_lib.add_html_begin(heatmap_file)
     html_lib.build_rccl_heatmap(heatmap_file, 'heatmapdiv', heatmap_title, rccl_res_json_file, rccl_ref_json_file)
+    html_lib.build_rccl_heatmap_metadata_table(heatmap_file, structured_json_file, rccl_ref_json_file)
     html_lib.build_rccl_heatmap_table(heatmap_file, 'Heatmap data Table', rccl_res_json_file, rccl_ref_json_file)
     html_lib.add_html_end(heatmap_file)
     

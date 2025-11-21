@@ -118,8 +118,11 @@ def check_bus_bw( test_name, output, exp_res_dict ):
       - Message sizes are compared as strings to avoid type mismatches between JSON and expectations.
       - Assumes fail_test(...) is available in scope to signal test failure.
     """
+
+    print( f'exp_res_dict = {exp_res_dict}')
+
     actual_bw_dict = {}
-    msg_size_list = list(exp_res_dict['bus_bw'].keys())
+    msg_size_list = list(exp_res_dict.keys())
     print(test_name)
     #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
@@ -128,15 +131,17 @@ def check_bus_bw( test_name, output, exp_res_dict ):
             if act_dict['inPlace'] == 0:
                 for msg_size in msg_size_list:
                     if str(msg_size) == str(act_dict['size']):
-                        if float(act_dict['busBw']) < float(exp_res_dict['bus_bw'][msg_size]):
-                            fail_test(f"The actual out-of-place bus BW {act_dict['busBw']} for msg size {act_dict['size']} is lower than expected bus BW {exp_res_dict['bus_bw'][msg_size]}")
+                        print(act_dict['busBw'] , exp_res_dict[msg_size]['bus_bw'])
+                        if float(act_dict['busBw']) < float(exp_res_dict[msg_size]['bus_bw']):
+                            fail_test(f"The actual out-of-place bus BW {act_dict['busBw']} for msg size {act_dict['size']} is lower than expected bus BW {exp_res_dict[msg_size]['bus_bw']}")
     else:
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 1:
                 for msg_size in msg_size_list:
                     if str(msg_size) == str(act_dict['size']):
-                        if float(act_dict['busBw']) < float(exp_res_dict['bus_bw'][msg_size]):
-                            fail_test(f"The actual out-of-place bus BW {act_dict['busBw']} for msg size {act_dict['size']} is lower than expected bus BW {exp_res_dict['bus_bw'][msg_size]}")
+                        print(act_dict['busBw'] , exp_res_dict[msg_size]['bus_bw'])
+                        if float(act_dict['busBw']) < float(exp_res_dict[msg_size]['bus_bw']):
+                            fail_test(f"The actual out-of-place bus BW {act_dict['busBw']} for msg size {act_dict['size']} is lower than expected bus BW {exp_res_dict[msg_size]['bus_bw']}")
 
  
 
@@ -485,7 +490,8 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         nccl_net_plugin=None, user_password=None, \
         min_channels=64, max_channels=64, \
         user_key_file=None, verify_bus_bw=False, \
-        verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None ):
+        verify_bw_dip=True, verify_lat_dip=True, \
+        nic_model='ainic', exp_results_dict=None ):
 
 
     """
@@ -645,16 +651,25 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     smi_out = smi_out_dict[head_node]
     model=get_model_from_rocm_smi_output(smi_out)
 
+    if re.search( 'ainic|pensando|amd', nic_model, re.I ):
+        nic_type = 'ainic'
+    elif re.search( 'broadcom|thor|bnxt', nic_model, re.I ):
+        nic_type = 'thor'
+    elif re.search( 'mellanox|cx|nvidia', nic_model, re.I ):
+        nic_type = 'connectx'
+    else:
+        nic_type = 'ainic'
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
+    result_key = f'{test_name}-{dtype}-{no_of_global_ranks}'
     if re.search( 'True', verify_bus_bw, re.I ):
-        if test_name in exp_results_dict.keys():
-            check_bus_bw( test_name, all_raw_results, exp_results_dict[test_name] )
+        if result_key in exp_results_dict[nic_type].keys():
+            check_bus_bw( result_key, all_raw_results, exp_results_dict[nic_type][result_key] )
 
     if re.search( 'True', verify_bw_dip, re.I ):
-        check_bw_dip( test_name, all_raw_results, )
+        check_bw_dip( result_key, all_raw_results, )
 
     if re.search( 'True', verify_lat_dip, re.I ):
-        check_lat_dip( test_name, all_raw_results, )
+        check_lat_dip( result_key, all_raw_results, )
 
     return all_raw_results
 
