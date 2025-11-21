@@ -110,7 +110,7 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
                 {
                     "name": "iet_stress",
                     "config_file": "iet_stress.conf",
-                    "description": "Power Stress Test",
+                    "description": "Peak Power Test",
                     "timeout": 3600,
                     "expected_pass": true,
                     "fail_regex_pattern": "pass:\\s*FALSE|RVS-ERROR"
@@ -364,7 +364,7 @@ ROCm Validation Suite (RVS)
      - ``iet_stress.conf``
      - Test config file
    * - ``description``
-     - Power Stress Test
+     - Peak Power Test
      - Test description
    * - ``timeout``
      - 3600

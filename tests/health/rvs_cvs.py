@@ -633,7 +633,7 @@ def test_rvs_gst_single(phdl, config_dict, rvs_version, rvs_test_level):
 
 def test_rvs_iet_stress(phdl, config_dict, rvs_version, rvs_test_level):
     """
-    Run RVS IET (Power Stress Test) - Single GPU validation test.
+    Run RVS IET (Peak Power Test) - Single GPU validation test.
     This test validates power consumption and thermal behavior under load.
 
     Args:

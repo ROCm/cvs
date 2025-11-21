@@ -90,7 +90,7 @@
             {
                 "name": "iet_stress",
                 "config_file": "iet_stress.conf",
-                "description": "Input Power Stress Test",
+                "description": "Peak Power Test",
                 "timeout": 3600,
                 "expected_pass": true,
                 "fail_regex_pattern": "pass:\\s*FALSE|RVS-ERROR"
