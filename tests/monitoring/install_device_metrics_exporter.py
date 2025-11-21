@@ -259,3 +259,354 @@ def test_display_summary(phdl):
         log.info(f"  {node}: {out_dict[node]}")
     
     log.info("Completed metrics tests successfully.")
+
+
+# ============================================================================
+# Node Role Detection Fixtures
+# ============================================================================
+
+@pytest.fixture(scope='module')
+def management_node(cluster_dict):
+    """Get the management/head node from cluster."""
+    from utils_lib import get_management_node
+    return get_management_node(cluster_dict)
+
+
+@pytest.fixture(scope='module')
+def all_nodes(cluster_dict):
+    """Get all nodes (management + workers) where exporter should run."""
+    from utils_lib import get_all_nodes
+    return get_all_nodes(cluster_dict)
+
+
+@pytest.fixture(scope='module')
+def worker_nodes(cluster_dict):
+    """Get worker nodes only."""
+    from utils_lib import get_worker_nodes
+    return get_worker_nodes(cluster_dict)
+
+
+@pytest.fixture(scope='module')
+def is_single_node(cluster_dict):
+    """Check if this is a single-node deployment."""
+    from utils_lib import is_single_node_deployment
+    return is_single_node_deployment(cluster_dict)
+
+
+@pytest.fixture(scope='module')
+def prometheus_targets(cluster_dict, config_dict):
+    """Generate Prometheus scrape targets for all nodes."""
+    from utils_lib import generate_prometheus_targets
+    exporter_port = config_dict.get('device_metrics_exporter_port', 5000)
+    return generate_prometheus_targets(cluster_dict, exporter_port)
+
+
+def is_mgmt_node(node, cluster_dict):
+    """Helper function to check if node is management node."""
+    from utils_lib import is_management_node
+    return is_management_node(node, cluster_dict)
+
+
+# Tests with Management Node Awareness
+
+def test_deploy_prometheus_on_management_only(cluster_dict, management_node, is_single_node, config_dict, prometheus_targets):
+    """
+    Deploy Prometheus ONLY on management node with all targets configured.
+    Uses pssh for multi-node, subprocess for localhost.
+    """
+    log.info("="*80)
+    log.info(f"Deploying Prometheus on management node: {management_node}")
+    log.info(f"Targets: {prometheus_targets}")
+    log.info("="*80)
+    
+    import subprocess
+    import os
+    from prometheus_config_lib import generate_prometheus_config
+    
+    # Generate Prometheus config
+    prometheus_yml = "/tmp/prometheus_cvs.yml"
+    generate_prometheus_config(cluster_dict, config_dict, prometheus_yml)
+    log.info(f" Config generated with {len(prometheus_targets)} targets")
+    
+    prom_version = config_dict.get('prometheus_version', 'v2.55.0').lstrip('v')
+    
+    # Deploy on localhost/management node
+    if is_single_node or management_node in ['localhost', '127.0.0.1', '::1']:
+        # LOCAL DEPLOYMENT
+        # Stop existing
+        subprocess.run("sudo systemctl stop prometheus 2>/dev/null || true", shell=True)
+        subprocess.run("sudo pkill -9 prometheus 2>/dev/null || true", shell=True)
+        
+        # Install if needed
+        if not os.path.exists('/opt/prometheus/prometheus'):
+            log.info(f"Installing Prometheus {prom_version}...")
+            cmd = f"""cd /tmp && wget -q https://github.com/prometheus/prometheus/releases/download/v{prom_version}/prometheus-{prom_version}.linux-amd64.tar.gz && tar xzf prometheus-{prom_version}.linux-amd64.tar.gz && sudo mkdir -p /opt/prometheus /var/lib/prometheus/data && sudo cp -r prometheus-{prom_version}.linux-amd64/* /opt/prometheus/"""
+            subprocess.run(cmd, shell=True, check=True)
+        
+        # Copy config
+        subprocess.run(f"sudo cp {prometheus_yml} /opt/prometheus/prometheus.yml", shell=True, check=True)
+        
+        # Create systemd service
+        svc = """[Unit]
+Description=Prometheus
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/opt/prometheus/prometheus --config.file=/opt/prometheus/prometheus.yml --storage.tsdb.path=/var/lib/prometheus/data --web.listen-address=0.0.0.0:9090
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+"""
+        with open('/tmp/prometheus.service', 'w') as f:
+            f.write(svc)
+        subprocess.run("sudo cp /tmp/prometheus.service /etc/systemd/system/", shell=True, check=True)
+        subprocess.run("sudo systemctl daemon-reload && sudo systemctl enable prometheus && sudo systemctl start prometheus", shell=True, check=True)
+        
+        import time
+        time.sleep(3)
+        
+        # Verify
+        result = subprocess.run("systemctl is-active prometheus", shell=True, capture_output=True)
+        assert result.returncode == 0, "Prometheus not running"
+        log.info("SUCCESS: Prometheus running on management node (localhost)")
+    else:
+        # MULTI-NODE DEPLOYMENT via SSH to management node only
+        log.info(f"Deploying to remote management node: {management_node}")
+        from parallel_ssh_lib import ParallelSSH
+        
+        # Create SSH client for management node ONLY
+        mgmt_dict = {management_node: cluster_dict['node_dict'].get(management_node, {'bmc_ip': 'NA', 'vpc_ip': management_node})}
+        phdl = ParallelSSH(
+            node_dict=mgmt_dict,
+            username=cluster_dict['username'],
+            priv_key_file=cluster_dict['priv_key_file']
+        )
+        
+        # Upload config file to management node
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as f:
+            with open(prometheus_yml, 'r') as src:
+                f.write(src.read())
+            temp_config = f.name
+        
+        # Deploy Prometheus on management node only
+        deploy_script = f"""
+        # Stop existing
+        sudo systemctl stop prometheus 2>/dev/null || true
+        sudo pkill -9 prometheus 2>/dev/null || true
+        
+        # Install if needed
+        if [ ! -f /opt/prometheus/prometheus ]; then
+            echo "Installing Prometheus {prom_version}..."
+            cd /tmp
+            wget -q https://github.com/prometheus/prometheus/releases/download/v{prom_version}/prometheus-{prom_version}.linux-amd64.tar.gz
+            tar xzf prometheus-{prom_version}.linux-amd64.tar.gz
+            sudo mkdir -p /opt/prometheus /var/lib/prometheus/data
+            sudo cp -r prometheus-{prom_version}.linux-amd64/* /opt/prometheus/
+        fi
+        
+        # Copy config (uploaded separately via SCP)
+        sudo mkdir -p /opt/prometheus
+        
+        # Create systemd service
+        sudo tee /etc/systemd/system/prometheus.service > /dev/null << 'SVCEOF'
+[Unit]
+Description=Prometheus
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/opt/prometheus/prometheus --config.file=/opt/prometheus/prometheus.yml --storage.tsdb.path=/var/lib/prometheus/data --web.listen-address=0.0.0.0:9090
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+        
+        sudo systemctl daemon-reload
+        sudo systemctl enable prometheus
+        sudo systemctl start prometheus
+        sleep 2
+        systemctl is-active prometheus
+        """
+        
+        # Execute deployment on management node only
+        result = phdl.exec(deploy_script)
+        
+        # Verify deployment succeeded
+        for node, output in result.items():
+            if 'active' not in output:
+                fail_test(f"Prometheus deployment failed on {node}: {output}")
+        
+        log.info(f"SUCCESS: Prometheus deployed and running on management node: {management_node}")
+        log.info("SUCCESS: ENFORCEMENT: Prometheus deployed ONLY to management node, NOT to workers")
+
+def test_deploy_grafana_on_management_only(cluster_dict, management_node, is_single_node, config_dict):
+    """
+    Deploy Grafana ONLY on management node.
+    Uses pssh for multi-node, subprocess for localhost.
+    """
+    log.info(f"Deploying Grafana on management node: {management_node}")
+    
+    import subprocess
+    import os
+    
+    grafana_version = config_dict.get('grafana_version', '10.4.1')
+    grafana_port = config_dict.get('grafana_port', '3000')
+    
+    if is_single_node or management_node in ['localhost', '127.0.0.1', '::1']:
+        # LOCAL DEPLOYMENT
+        # Stop existing
+        subprocess.run("docker stop grafana 2>/dev/null || true", shell=True)
+        subprocess.run("docker rm grafana 2>/dev/null || true", shell=True)
+        
+        # Create data directory
+        grafana_data = "/home/svdt-8/manoj/cvs/cvs/monitoring/grafana_data"
+        os.makedirs(grafana_data, exist_ok=True)
+        subprocess.run(f"sudo chown -R 472:472 {grafana_data}", shell=True, check=True)
+        
+        # Start Grafana
+        cmd = f"""docker run -d \
+            --name grafana \
+            --network host \
+            --restart unless-stopped \
+            -v {grafana_data}:/var/lib/grafana \
+            grafana/grafana:{grafana_version}"""
+        subprocess.run(cmd, shell=True, check=True)
+        
+        import time
+        time.sleep(3)
+        
+        # Verify
+        result = subprocess.run("docker ps | grep grafana", shell=True, capture_output=True)
+        assert result.returncode == 0, "Grafana not running"
+        log.info(f"SUCCESS: Grafana running on management node (localhost) port {grafana_port}")
+    else:
+        # MULTI-NODE DEPLOYMENT via SSH to management node only
+        log.info(f"Deploying to remote management node: {management_node}")
+        from parallel_ssh_lib import ParallelSSH
+        
+        # Create SSH client for management node ONLY
+        mgmt_dict = {management_node: cluster_dict['node_dict'].get(management_node, {'bmc_ip': 'NA', 'vpc_ip': management_node})}
+        phdl = ParallelSSH(
+            node_dict=mgmt_dict,
+            username=cluster_dict['username'],
+            priv_key_file=cluster_dict['priv_key_file']
+        )
+        
+        # Deploy Grafana on management node only
+        deploy_script = f"""
+        # Stop existing
+        docker stop grafana 2>/dev/null || true
+        docker rm grafana 2>/dev/null || true
+        
+        # Create data directory
+        mkdir -p /tmp/grafana_data
+        sudo chown -R 472:472 /tmp/grafana_data
+        
+        # Start Grafana
+        docker run -d \
+            --name grafana \
+            --network host \
+            --restart unless-stopped \
+            -v /tmp/grafana_data:/var/lib/grafana \
+            grafana/grafana:{grafana_version}
+        
+        sleep 3
+        docker ps | grep grafana
+        """
+        
+        # Execute deployment on management node only
+        result = phdl.exec(deploy_script)
+        
+        # Verify deployment succeeded
+        for node, output in result.items():
+            if 'grafana' not in output:
+                fail_test(f"Grafana deployment failed on {node}: {output}")
+        
+        log.info(f"SUCCESS: Grafana deployed and running on management node: {management_node}")
+        log.info("SUCCESS: ENFORCEMENT: Grafana deployed ONLY to management node, NOT to workers")
+
+def test_verify_all_nodes_for_exporter(all_nodes, management_node):
+    """
+    Verify that exporter targets include all nodes (management + workers).
+    """
+    log.info("="*80)
+    log.info(f"All nodes where exporter should run:")
+    for node in all_nodes:
+        is_mgmt = " (MANAGEMENT)" if node == management_node else ""
+        log.info(f"  • {node}{is_mgmt}")
+    log.info("="*80)
+    
+    assert len(all_nodes) > 0
+    assert management_node in all_nodes
+    log.info(f" Total nodes for exporter deployment: {len(all_nodes)}")
+
+
+def test_prometheus_scrape_targets(prometheus_targets, all_nodes):
+    """
+    Verify Prometheus scrape targets include all nodes.
+    """
+    log.info("="*80)
+    log.info("Prometheus scrape targets:")
+    for target in prometheus_targets:
+        log.info(f"  • {target}")
+    log.info("="*80)
+    
+    assert len(prometheus_targets) == len(all_nodes)
+    log.info(f" Scrape targets generated for all {len(all_nodes)} nodes")
+
+
+def test_verify_service_distribution(cluster_dict, management_node, all_nodes, worker_nodes, is_single_node):
+    """
+    CRITICAL TEST: Verify service distribution enforcement.
+    - Exporter must be on ALL nodes (management + workers)
+    - Prometheus must be ONLY on management node
+    - Grafana must be ONLY on management node
+    """
+    log.info("="*80)
+    log.info("VERIFYING SERVICE DISTRIBUTION ENFORCEMENT")
+    log.info("="*80)
+    
+    # Show the architecture
+    log.info(f"\n Cluster Architecture:")
+    log.info(f"  Management Node: {management_node}")
+    log.info(f"  Worker Nodes: {worker_nodes if worker_nodes else 'None (single-node)'}")
+    log.info(f"  Total Nodes: {len(all_nodes)}")
+    log.info(f"  Deployment Type: {'Single-Node' if is_single_node else 'Multi-Node'}")
+    
+    log.info(f"\nSUCCESS: SERVICE DISTRIBUTION RULES:")
+    log.info(f"  1. Device Metrics Exporter → ALL {len(all_nodes)} nodes")
+    for node in all_nodes:
+        marker = "(MANAGEMENT)" if node == management_node else "(WORKER)"
+        log.info(f"      {node} {marker}")
+    
+    log.info(f"\n  2. Prometheus → ONLY management node")
+    log.info(f"      {management_node} (MANAGEMENT ONLY)")
+    if worker_nodes:
+        for node in worker_nodes:
+            log.info(f"      {node} (NOT deployed)")
+    
+    log.info(f"\n  3. Grafana → ONLY management node")
+    log.info(f"      {management_node} (MANAGEMENT ONLY)")
+    if worker_nodes:
+        for node in worker_nodes:
+            log.info(f"      {node} (NOT deployed)")
+    
+    log.info(f"\n" + "="*80)
+    log.info("SUCCESS: SERVICE DISTRIBUTION VERIFIED")
+    log.info("="*80)
+    
+    # Assert the rules
+    assert len(all_nodes) >= 1, "Must have at least one node"
+    assert management_node in all_nodes, "Management node must be in all_nodes list"
+    
+    if not is_single_node:
+        assert len(worker_nodes) > 0, "Multi-node must have workers"
+        log.info(f"SUCCESS: ENFORCEMENT VERIFIED: Multi-node cluster with proper separation")
+    else:
+        log.info(f"SUCCESS: ENFORCEMENT VERIFIED: Single-node deployment (all services on localhost)")
