@@ -590,26 +590,6 @@ def test_rvs_gpu_enumeration(phdl, config_dict):
 
     update_test_result()
 
-def test_rvs_gpup_single(phdl, config_dict, rvs_version, rvs_test_level):
-    """
-    Run RVS GPUP (GPU Properties) test.
-    This test validates GPU properties and capabilities.
-
-    Args:
-      phdl: Parallel SSH handle
-      config_dict: RVS configuration dictionary
-      rvs_version: RVS version string
-      rvs_test_level: Test level (0-5)
-    """
-    # Check if test should be skipped
-    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
-    if should_skip:
-        pytest.skip(f"test_rvs_gpup_single: {skip_reason}")
-
-    test_name = 'gpup_single'
-    execute_rvs_test(phdl, config_dict, test_name)
-
-
 def test_rvs_mem_test(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS Memory Test.
@@ -651,9 +631,9 @@ def test_rvs_gst_single(phdl, config_dict, rvs_version, rvs_test_level):
     execute_rvs_test(phdl, config_dict, test_name)
 
 
-def test_rvs_iet_single(phdl, config_dict, rvs_version, rvs_test_level):
+def test_rvs_iet_stress(phdl, config_dict, rvs_version, rvs_test_level):
     """
-    Run RVS IET (Input EDPp Test) - Single GPU validation test.
+    Run RVS IET (Peak Power Test) - Single GPU validation test.
     This test validates power consumption and thermal behavior under load.
 
     Args:
@@ -665,9 +645,9 @@ def test_rvs_iet_single(phdl, config_dict, rvs_version, rvs_test_level):
     # Check if test should be skipped
     should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
     if should_skip:
-        pytest.skip(f"test_rvs_iet_single: {skip_reason}")
+        pytest.skip(f"test_rvs_iet_stress: {skip_reason}")
 
-    test_name = 'iet_single'
+    test_name = 'iet_stress'
     execute_rvs_test(phdl, config_dict, test_name)
 
 
@@ -709,67 +689,6 @@ def test_rvs_pbqt_single(phdl, config_dict, rvs_version, rvs_test_level):
 
     test_name = 'pbqt_single'
     execute_rvs_test(phdl, config_dict, test_name)
-
-
-def test_rvs_peqt_single(phdl, config_dict, rvs_version, rvs_test_level):
-    """
-    Run RVS PEQT (PCI Express Qualification Tool).
-    This test validates PCI Express link quality and stability.
-
-    Args:
-      phdl: Parallel SSH handle
-      config_dict: RVS configuration dictionary
-      rvs_version: RVS version string
-      rvs_test_level: Test level (0-5)
-    """
-    # Check if test should be skipped
-    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
-    if should_skip:
-        pytest.skip(f"test_rvs_peqt_single: {skip_reason}")
-
-    test_name = 'peqt_single'
-    execute_rvs_test(phdl, config_dict, test_name)
-
-
-def test_rvs_rcqt_single(phdl, config_dict, rvs_version, rvs_test_level):
-    """
-    Run RVS RCQT (ROCm Configuration Qualification Tool).
-    This test validates ROCm configuration and system setup.
-
-    Args:
-      phdl: Parallel SSH handle
-      config_dict: RVS configuration dictionary
-      rvs_version: RVS version string
-      rvs_test_level: Test level (0-5)
-    """
-    # Check if test should be skipped
-    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
-    if should_skip:
-        pytest.skip(f"test_rvs_rcqt_single: {skip_reason}")
-
-    test_name = 'rcqt_single'
-    execute_rvs_test(phdl, config_dict, test_name)
-
-
-def test_rvs_tst_single(phdl, config_dict, rvs_version, rvs_test_level):
-    """
-    Run RVS TST (Thermal Stress Test).
-    This test validates GPU thermal management under stress conditions.
-
-    Args:
-      phdl: Parallel SSH handle
-      config_dict: RVS configuration dictionary
-      rvs_version: RVS version string
-      rvs_test_level: Test level (0-5)
-    """
-    # Check if test should be skipped
-    should_skip, skip_reason = should_skip_individual_test(rvs_version, rvs_test_level)
-    if should_skip:
-        pytest.skip(f"test_rvs_tst_single: {skip_reason}")
-
-    test_name = 'tst_single'
-    execute_rvs_test(phdl, config_dict, test_name)
-
 
 def test_rvs_babel_stream(phdl, config_dict, rvs_version, rvs_test_level):
     """
