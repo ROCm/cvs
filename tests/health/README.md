@@ -62,15 +62,11 @@ RVS provides comprehensive GPU validation through multiple test modules. The tes
 #### Supported Test Modules
 
 Individual test modules include:
-- **GPUP** (GPU Properties Test) - Validates GPU properties and capabilities
 - **MEM** (Memory Test) - Validates GPU memory functionality and integrity
 - **GST** (GPU Stress Test) - Validates GPU functionality and performance under load
-- **IET** (Input EDPp Test) - Validates power consumption and thermal behavior
+- **IET** (Peak Power Test) - Validates power consumption and thermal behavior
 - **PEBB** (PCI Express Bandwidth Benchmark) - Measures and validates PCIe bandwidth performance
 - **PBQT** (P2P Benchmark and Qualification Tool) - Validates peer-to-peer communication between GPUs
-- **PEQT** (PCI Express Qualification Tool) - Validates PCIe link quality and stability
-- **RCQT** (ROCm Configuration Qualification Tool) - Validates ROCm configuration and system setup
-- **TST** (Thermal Stress Test) - Validates GPU thermal management under stress
 - **BABEL** (BABEL Benchmark) - GPU memory bandwidth validation using BABEL streaming benchmark
 - **GPU Enumeration** - Basic GPU detection test
 
