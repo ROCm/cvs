@@ -92,14 +92,6 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
                     ]
                 },
                 {
-                    "name": "gpup_single",
-                    "config_file": "gpup_single.conf",
-                    "description": "GPU Properties Test",
-                    "timeout": 1800,
-                    "expected_pass": true,
-                    "fail_regex_pattern": "FAIL|ERROR|RVS-ERROR"
-                },
-                {
                     "name": "mem_test",
                     "config_file": "mem.conf",
                     "description": "Memory Test",
@@ -116,9 +108,9 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
                     "fail_regex_pattern": "met:\\s*FALSE|RVS-ERROR"
                 },
                 {
-                    "name": "iet_single",
-                    "config_file": "iet_single.conf",
-                    "description": "Input EDPp Test",
+                    "name": "iet_stress",
+                    "config_file": "iet_stress.conf",
+                    "description": "Peak Power Test",
                     "timeout": 3600,
                     "expected_pass": true,
                     "fail_regex_pattern": "pass:\\s*FALSE|RVS-ERROR"
@@ -138,30 +130,6 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
                     "timeout": 3600,
                     "expected_pass": true,
                     "fail_regex_pattern": "FAIL|ERROR:|RVS-ERROR"
-                },
-                {
-                    "name": "peqt_single",
-                    "config_file": "peqt_single.conf",
-                    "description": "PCI Express Qualification Tool",
-                    "timeout": 1800,
-                    "expected_pass": true,
-                    "fail_regex_pattern": "peqt false|RVS-ERROR"
-                },
-                {
-                    "name": "rcqt_single",
-                    "config_file": "rcqt_single.conf",
-                    "description": "ROCm Configuration Qualification Tool",
-                    "timeout": 1800,
-                    "expected_pass": "true",
-                    "fail_regex_pattern": "\\[ERROR\\s*\\]|RVS-ERROR|Missing packages\\s*:\\s*([1-9]\\d*)|Version mismatch packages\\s*:\\s*([1-9]\\d*)"
-                },
-                {
-                    "name": "tst_single",
-                    "config_file": "tst_single.conf",
-                    "description": "Thermal Stress Test",
-                    "timeout": 1800,
-                    "expected_pass": true,
-                    "fail_regex_pattern": "pass: FLASE|RVS-ERROR"
                 },
                 {
                     "name": "babel_stream",
@@ -354,24 +322,6 @@ ROCm Validation Suite (RVS)
         - ``"Version mismatch packages\\s*:\\s*([1-9]\\d*)"``
      - Regular expressions
    * - ``name``
-     - ``gpup_single``
-     - Test name
-   * - ``config_file``
-     - ``gpup_single.conf``
-     - Test config file
-   * - ``description``
-     - GPU Properties Test
-     - Test description
-   * - ``timeout``
-     - 1800
-     - Timeout in secs
-   * - ``expected_pass``
-     - True
-     - Result
-   * - ``fail_regex_pattern``
-     - ``FAIL|ERROR|RVS-ERROR``
-     - Failure expression
-   * - ``name``
      - ``mem_test``
      - Test name
    * - ``config_file``
@@ -408,13 +358,13 @@ ROCm Validation Suite (RVS)
      - ``met:\\s*FALSE|RVS-ERROR``
      - Failure expression
    * - ``name``
-     - ``iet_single``
+     - ``iet_stress``
      - Test name
    * - ``config_file``
-     - ``iet_single.conf``
+     - ``iet_stress.conf``
      - Test config file
    * - ``description``
-     - Input EDPp Test
+     - Peak Power Test
      - Test description
    * - ``timeout``
      - 3600
@@ -442,60 +392,6 @@ ROCm Validation Suite (RVS)
      - Result
    * - ``fail_regex_pattern``
      - ``FAIL|ERROR:|RVS-ERROR``
-     - Failure expression
-   * - ``name``
-     - ``peqt_single``
-     - Test name
-   * - ``config_file``
-     - ``peqt_single.conf``
-     - Test config file
-   * - ``description``
-     - PCI Express Qualification Tool
-     - Test description
-   * - ``timeout``
-     - 1800
-     - Timeout in secs
-   * - ``expected_pass``
-     - True
-     - Result
-   * - ``fail_regex_pattern``
-     - ``peqt false|RVS-ERROR``
-     - Failure expression
-   * - ``name``
-     - ``rcqt_single``
-     - Test name
-   * - ``config_file``
-     - ``rcqt_single.conf``
-     - Test config file
-   * - ``description``
-     - ROCm Configuration Qualification Tool
-     - Test description
-   * - ``timeout``
-     - 1800
-     - Timeout in secs
-   * - ``expected_pass``
-     - True
-     - Result
-   * - ``fail_regex_pattern``
-     - ``\\[ERROR\\s*\\]|RVS-ERROR|`` |br| ``Missing packages\\s*:`` |br| ``\\s*([1-9]\\d*)|Version`` |br| ``mismatch packages`` |br| ``\\s*:\\s*([1-9]\\d*)``
-     - Failure expression
-   * - ``name``
-     - ``tst_single``
-     - Test name
-   * - ``config_file``
-     - ``tst_single.conf``
-     - Test config file
-   * - ``description``
-     - Thermal Stress Test
-     - Test description
-   * - ``timeout``
-     - 1800
-     - Timeout in secs
-   * - ``expected_pass``
-     - True
-     - Result
-   * - ``fail_regex_pattern``
-     - ``pass: FLASE|RVS-ERROR``
      - Failure expression
    * - ``name``
      - ``babel_stream``

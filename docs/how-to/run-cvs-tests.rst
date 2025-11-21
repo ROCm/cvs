@@ -137,15 +137,11 @@ See the `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmVal
 
 These are the test cases for RVS:
 
-- ``gpup_single``
 - ``mem_test``
 - ``gst_single``
-- ``iet_single``
+- ``iet_stress``
 - ``pebb_single``
 - ``pbqt_single``
-- ``peqt_single``
-- ``rcqt_single``
-- ``tst_single``
 - ``babel_stream``
 
 Use these scripts to start the test:
