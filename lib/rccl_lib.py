@@ -312,7 +312,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         ib_rx_queue_len=8192, ucx_tls='tcp', hcoll_enable_mcast_all=0, \
         nccl_cumem_enable=0, nccl_ib_timeout=30, nccl_ib_sl=0, \
         nccl_ib_tc=41, nccl_ib_split_data_on_qps=0, nccl_pxn_disable=1, \
-        nccl_net_plugin=None, user_password=None, \
+        nccl_p2p_batch_enable=1, nccl_net_plugin=None, user_password=None, \
         min_channels=64, max_channels=64, \
         data_type="float", \
         user_key_file=None, verify_bus_bw=False, \
@@ -418,6 +418,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         -x NCCL_IB_TC={nccl_ib_tc} \
         -x NCCL_IB_SPLIT_DATA_ON_QPS={nccl_ib_split_data_on_qps} \
         -x NCCL_PXN_DISABLE={nccl_pxn_disable} \
+        -x RCCL_P2P_BATCH_ENABLE={nccl_p2p_batch_enable} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
         {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
@@ -482,7 +483,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         ib_rx_queue_len=8192, ucx_tls='tcp', hcoll_enable_mcast_all=0, \
         nccl_cumem_enable=0, nccl_ib_timeout=30, nccl_ib_sl=0, \
         nccl_ib_tc=41, nccl_ib_split_data_on_qps=0, nccl_pxn_disable=1, \
-        nccl_net_plugin=None, user_password=None, \
+        nccl_p2p_batch_enable=1, nccl_net_plugin=None, user_password=None, \
         min_channels=64, max_channels=64, \
         user_key_file=None, verify_bus_bw=False, \
         verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None ):
@@ -584,6 +585,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         --mca btl_tcp_if_exclude lo,docker0,usb0 \
         -x UCX_NET_DEVICES={net_dev_list} \
         -x UCX_TLS={ucx_tls} \
+        -x RCCL_P2P_BATCH_ENABLE={nccl_p2p_batch_enable} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
         {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
