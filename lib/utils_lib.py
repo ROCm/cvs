@@ -482,7 +482,35 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
     try:
         gpu_dict = phdl.exec('rocm-smi --showproductname 2>/dev/null | grep "GPU" | head -1')
         if head_node and head_node in gpu_dict:
-            metadata['gpu'] = gpu_dict[head_node].strip()
+            gpu_line = gpu_dict[head_node].strip()
+            # Extract just the GPU model name (everything after "Card Series:" or similar)
+            # Format: "GPU[0]      : Card Series:       AMD Instinct MI300X"
+            if ':' in gpu_line:
+                # Split by colon and get the last part
+                parts = gpu_line.split(':')
+                if len(parts) >= 2:
+                    # Get everything after the last colon and clean it up
+                    gpu_model = parts[-1].strip()
+                    if gpu_model:
+                        metadata['gpu_model'] = gpu_model
+                    else:
+                        # Fallback: try second-to-last part
+                        gpu_model = parts[-2].strip() if len(parts) >= 3 else gpu_line
+                        metadata['gpu_model'] = gpu_model
+                else:
+                    metadata['gpu_model'] = gpu_line
+            else:
+                metadata['gpu_model'] = gpu_line
+                
+            # Also get GPU count
+            gpu_count_dict = phdl.exec('rocm-smi --showproductname 2>/dev/null | grep "GPU\\[" | wc -l')
+            if head_node and head_node in gpu_count_dict:
+                try:
+                    gpu_count = int(gpu_count_dict[head_node].strip())
+                    if gpu_count > 0:
+                        metadata['gpu_count'] = gpu_count
+                except:
+                    pass
     except Exception as e:
         log.warning(f'Failed to get GPU info: {e}')
     
@@ -520,22 +548,56 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
     except Exception as e:
         log.warning(f'Failed to get RDMA NIC info: {e}')
     
-    # Get NIC model from lspci for Mellanox/InfiniBand devices
+    # Get NIC model from lspci for RDMA devices (Mellanox, AMD Thor2, InfiniBand)
     try:
-        nic_model_dict = phdl.exec('lspci 2>/dev/null | grep -i "mellanox\|infiniband" | head -5')
+        # Expanded grep to catch Mellanox, Thor2/RDMA, and other RDMA devices
+        nic_model_dict = phdl.exec('lspci 2>/dev/null | grep -iE "mellanox|infiniband|network.*amd|rdma.*amd|thor" | grep -vE "usb|audio"')
         if head_node and head_node in nic_model_dict:
             nic_models = nic_model_dict[head_node].strip()
             if nic_models:
-                # Extract just the model names, clean format
+                # Extract and categorize NIC models
                 models = []
+                mellanox_nics = []
+                amd_nics = []
+                other_nics = []
+                
                 for line in nic_models.split('\n'):
                     if line.strip():
-                        # Extract everything after the first colon
+                        # Extract device description (everything after the last colon)
                         if ':' in line:
-                            model = line.split(':', 2)[-1].strip()
+                            parts = line.split(':', 2)
+                            if len(parts) >= 3:
+                                model = parts[2].strip()
+                            elif len(parts) == 2:
+                                model = parts[1].strip()
+                            else:
+                                continue
+                            
                             models.append(model)
+                            
+                            # Categorize by vendor
+                            model_lower = model.lower()
+                            if 'mellanox' in model_lower or 'connectx' in model_lower:
+                                mellanox_nics.append(model)
+                            elif 'amd' in model_lower or 'thor' in model_lower or 'rdma' in model_lower:
+                                amd_nics.append(model)
+                            else:
+                                other_nics.append(model)
+                
                 if models:
-                    metadata['rdma_nic_models'] = models
+                    # Provide categorized view
+                    nic_summary = {}
+                    if mellanox_nics:
+                        nic_summary['mellanox'] = mellanox_nics
+                    if amd_nics:
+                        nic_summary['amd'] = amd_nics
+                    if other_nics:
+                        nic_summary['other'] = other_nics
+                    
+                    metadata['rdma_nic_models'] = nic_summary
+                    
+                    # Also provide flat list for backward compatibility
+                    metadata['rdma_nic_models_list'] = models
     except Exception as e:
         log.warning(f'Failed to get NIC models from lspci: {e}')
     
