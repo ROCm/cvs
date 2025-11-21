@@ -227,6 +227,9 @@ def pytest_generate_tests(metafunc):
         cfg = json.load(fp)
     rccl = cfg.get("rccl", {})
 
+    # Get node count for P2P batching restriction
+    num_nodes = int(rccl.get("no_of_nodes", "2"))
+
     # Defaults (dedup'd)
     rccl_collective_list = rccl.get(
         "rccl_collective",
@@ -243,8 +246,14 @@ def pytest_generate_tests(metafunc):
     qp_scale_list = rccl.get("qp_scale", ["1", "2"])
     nccl_pxn_disable_list = rccl.get("nccl_pxn_disable", [ "1", "0" ])
 
+    # P2P batching is only safe and effective for <=32 nodes
+    if num_nodes <= 32:
+        nccl_p2p_batch_enable_list = ["0", "1"]
+    else:
+        nccl_p2p_batch_enable_list = ["0"]  # Only test disabled to avoid hangs
+
     # Only parametrize fixtures used by this test
-    all_keys = ("rccl_collective", "rccl_algo", "rccl_protocol", "qp_scale", "nccl_pxn_disable")
+    all_keys = ("rccl_collective", "rccl_algo", "rccl_protocol", "qp_scale", "nccl_pxn_disable", "nccl_p2p_batch_enable")
 
     active = [k for k in all_keys if k in metafunc.fixturenames]
     if not active:
@@ -256,6 +265,7 @@ def pytest_generate_tests(metafunc):
         "rccl_protocol": rccl_protocol_list,
         "qp_scale": qp_scale_list,
         "nccl_pxn_disable": nccl_pxn_disable_list,
+        "nccl_p2p_batch_enable": nccl_p2p_batch_enable_list,
     }
     domains = [domain_by_key[k] for k in active]
 
@@ -329,7 +339,7 @@ def test_disable_firewall( phdl ):
 
 
 def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, rccl_algo, \
-       rccl_protocol, qp_scale, nccl_pxn_disable ):
+       rccl_protocol, qp_scale, nccl_pxn_disable, nccl_p2p_batch_enable ):
 
     """
     Execute RCCL performance test across the cluster with given parameters.
@@ -422,6 +432,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, rccl_
        nccl_ib_tc              = config_dict['nccl_ib_tc'], \
        nccl_ib_split_data_on_qps  = config_dict['nccl_ib_split_data_on_qps'], \
        nccl_pxn_disable        = nccl_pxn_disable, \
+       nccl_p2p_batch_enable   = nccl_p2p_batch_enable, \
        nccl_net_plugin         = config_dict['nccl_net_plugin'], \
        user_key_file           = cluster_dict['priv_key_file'], \
        verify_bus_bw           = config_dict['verify_bus_bw'], \
@@ -432,7 +443,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, rccl_
 
 
     print(result_dict)
-    key_name = f'{rccl_collective}-{rccl_algo}-{rccl_protocol}-{qp_scale}-{nccl_pxn_disable}'
+    key_name = f'{rccl_collective}-{rccl_algo}-{rccl_protocol}-{qp_scale}-{nccl_pxn_disable}-{nccl_p2p_batch_enable}'
     rccl_res_dict[key_name] = result_dict
 
     # Scan dmesg between start and end times cluster wide ..
