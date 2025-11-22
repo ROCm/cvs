@@ -1,0 +1,13 @@
+{
+    "username": "svdt-8",
+    "priv_key_file": "/home/svdt-8/.ssh/id_rsa",
+    "head_node_dict": {
+        "mgmt_ip": "localhost"
+    },
+    "node_dict": {
+        "localhost": {
+            "bmc_ip": "NA",
+            "vpc_ip": "localhost"
+        }
+    }
+}
