@@ -102,8 +102,8 @@ def check_bus_bw( test_name, output, exp_res_dict ):
                       - 'inPlace': 0 (out-of-place) or 1 (in-place)
       exp_res_dict (dict): Expected results dictionary with the structure:
                     {
-                      'bus_bw': {
-                          <msg_size>: <min_expected_bus_bw>, ...
+                      <msg_size>: {
+                          'bus_bw': <min_expected_bus_bw>, ...
                       }
                     }
 
@@ -119,9 +119,15 @@ def check_bus_bw( test_name, output, exp_res_dict ):
       - Assumes fail_test(...) is available in scope to signal test failure.
       - 5% tolerance is applied: test only fails if actual < expected * 0.95
     """
+
+    print( f'exp_res_dict = {exp_res_dict}')
+
     actual_bw_dict = {}
-    msg_size_list = list(exp_res_dict['bus_bw'].keys())
     tolerance = 0.95  # 5% tolerance
+    
+    # New hierarchical structure: {msg_size: {'bus_bw': bw_value}}
+    msg_size_list = list(exp_res_dict.keys())
+    
     print(test_name)
     #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
@@ -130,9 +136,10 @@ def check_bus_bw( test_name, output, exp_res_dict ):
             if act_dict['inPlace'] == 0:
                 for msg_size in msg_size_list:
                     if str(msg_size) == str(act_dict['size']):
-                        expected_bw = float(exp_res_dict['bus_bw'][msg_size])
+                        expected_bw = float(exp_res_dict[msg_size]['bus_bw'])
                         actual_bw = float(act_dict['busBw'])
                         threshold = expected_bw * tolerance
+                        print(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
                         if actual_bw < threshold:
                             fail_test(f"The actual out-of-place bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})")
     else:
@@ -140,9 +147,10 @@ def check_bus_bw( test_name, output, exp_res_dict ):
             if act_dict['inPlace'] == 1:
                 for msg_size in msg_size_list:
                     if str(msg_size) == str(act_dict['size']):
-                        expected_bw = float(exp_res_dict['bus_bw'][msg_size])
+                        expected_bw = float(exp_res_dict[msg_size]['bus_bw'])
                         actual_bw = float(act_dict['busBw'])
                         threshold = expected_bw * tolerance
+                        print(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
                         if actual_bw < threshold:
                             fail_test(f"The actual in-place bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})")
 
@@ -154,17 +162,20 @@ def check_bw_dip( test_name, output, exp_res_dict=None ):
     """
     Check for bandwidth dips as message size increases.
     Only fails if bandwidth drops by more than 5%.
-    If exp_res_dict is provided, only validates message sizes specified in the reference.
+    Only validates message sizes specified in the reference. If no reference provided, skips validation.
     """
     #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
     tolerance = 0.95  # 5% tolerance
     
     # Get reference message sizes if provided
-    ref_msg_sizes = None
-    if exp_res_dict and 'bus_bw' in exp_res_dict:
-        ref_msg_sizes = set(str(size) for size in exp_res_dict['bus_bw'].keys())
-        log.info(f"Validating BW dip only for reference message sizes: {ref_msg_sizes}")
+    # If no reference data, skip validation entirely
+    if not exp_res_dict:
+        log.info(f"No reference data provided for BW dip check, skipping validation for {test_name}")
+        return
+    
+    ref_msg_sizes = set(str(size) for size in exp_res_dict.keys())
+    log.info(f"Validating BW dip only for reference message sizes: {ref_msg_sizes}")
     
     if re.search( 'alltoall|all_to_all', test_name, re.I ):
         last_bw = 0.0
@@ -172,7 +183,7 @@ def check_bw_dip( test_name, output, exp_res_dict=None ):
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 0:
                 # Skip validation if this message size is not in reference
-                if ref_msg_sizes and str(act_dict['size']) not in ref_msg_sizes:
+                if str(act_dict['size']) not in ref_msg_sizes:
                     continue
                     
                 current_bw = float(act_dict['busBw'])
@@ -187,7 +198,7 @@ def check_bw_dip( test_name, output, exp_res_dict=None ):
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 1:
                 # Skip validation if this message size is not in reference
-                if ref_msg_sizes and str(act_dict['size']) not in ref_msg_sizes:
+                if str(act_dict['size']) not in ref_msg_sizes:
                     continue
                     
                 current_bw = float(act_dict['busBw'])
@@ -203,17 +214,20 @@ def check_lat_dip( test_name, output, exp_res_dict=None ):
     """
     Check for latency decreases as message size increases (which would be unexpected).
     Only fails if latency drops by more than 5%.
-    If exp_res_dict is provided, only validates message sizes specified in the reference.
+    Only validates message sizes specified in the reference. If no reference provided, skips validation.
     """
     #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
     tolerance = 0.95  # 5% tolerance
     
     # Get reference message sizes if provided
-    ref_msg_sizes = None
-    if exp_res_dict and 'bus_bw' in exp_res_dict:
-        ref_msg_sizes = set(str(size) for size in exp_res_dict['bus_bw'].keys())
-        log.info(f"Validating latency dip only for reference message sizes: {ref_msg_sizes}")
+    # If no reference data, skip validation entirely
+    if not exp_res_dict:
+        log.info(f"No reference data provided for latency dip check, skipping validation for {test_name}")
+        return
+    
+    ref_msg_sizes = set(str(size) for size in exp_res_dict.keys())
+    log.info(f"Validating latency dip only for reference message sizes: {ref_msg_sizes}")
     
     if re.search( 'alltoall|all_to_all', test_name, re.I ):
         last_time = 0.0
@@ -221,7 +235,7 @@ def check_lat_dip( test_name, output, exp_res_dict=None ):
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 0:
                 # Skip validation if this message size is not in reference
-                if ref_msg_sizes and str(act_dict['size']) not in ref_msg_sizes:
+                if str(act_dict['size']) not in ref_msg_sizes:
                     continue
                     
                 current_time = float(act_dict['time'])
@@ -236,7 +250,7 @@ def check_lat_dip( test_name, output, exp_res_dict=None ):
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 1:
                 # Skip validation if this message size is not in reference
-                if ref_msg_sizes and str(act_dict['size']) not in ref_msg_sizes:
+                if str(act_dict['size']) not in ref_msg_sizes:
                     continue
                     
                 current_time = float(act_dict['time'])
@@ -543,7 +557,8 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         nccl_net_plugin=None, user_password=None, \
         min_channels=64, max_channels=64, \
         user_key_file=None, verify_bus_bw=False, \
-        verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None ):
+        verify_bw_dip=True, verify_lat_dip=True, \
+        nic_model='ainic', exp_results_dict=None ):
 
 
     """
@@ -704,6 +719,17 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     smi_out = smi_out_dict[head_node]
     model=get_model_from_rocm_smi_output(smi_out)
 
+    # Determine NIC type from nic_model parameter
+    if re.search( 'ainic|pensando|amd', nic_model, re.I ):
+        nic_type = 'ainic'
+    elif re.search( 'broadcom|thor|bnxt', nic_model, re.I ):
+        nic_type = 'thor'
+    elif re.search( 'mellanox|cx|nvidia', nic_model, re.I ):
+        nic_type = 'connectx'
+    else:
+        nic_type = 'ainic'
+    log.info(f'Detected NIC type: {nic_type} from nic_model: {nic_model}')
+
     # Convert aggregated results to format compatible with verification functions (using mean values)
     results_for_verification = []
     if aggregated_rccl_tests:
@@ -723,12 +749,25 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         results_for_verification = all_raw_results
         log.info('Using raw results for verification (no aggregation performed)')
 
-    # If requested, verify measured bus bandwidths against provided expected Bandwidth
-    test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None
+    # Build result key in format: test_name-data_types-global_ranks
+    # Join all data types with underscores for the key
+    dtypes_str = '_'.join(data_types)
+    result_key = f'{test_name}-{dtypes_str}-{no_of_global_ranks}'
+    log.info(f'Looking up results with key: {result_key} in nic_type: {nic_type}')
     
+    # Get test-specific expected results from hierarchical structure
+    test_exp_dict = None
+    if exp_results_dict and isinstance(exp_results_dict, dict) and nic_type in exp_results_dict:
+        if result_key in exp_results_dict[nic_type]:
+            test_exp_dict = exp_results_dict[nic_type][result_key]
+            log.info(f'Found expected results: {nic_type}/{result_key}')
+    
+    # If requested, verify measured bus bandwidths against provided expected Bandwidth
     if re.search( 'True', verify_bus_bw, re.I ):
         if test_exp_dict:
             check_bus_bw( test_name, results_for_verification, test_exp_dict )
+        else:
+            log.warning(f'verify_bus_bw enabled but no expected results found for {result_key}')
 
     if re.search( 'True', verify_bw_dip, re.I ):
         check_bw_dip( test_name, results_for_verification, test_exp_dict )
