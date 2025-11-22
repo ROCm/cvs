@@ -10,7 +10,7 @@ import sys
 import re
 import json
 
-from rocm_plib import *
+from .rocm_plib import *
 
 
 def build_html_page_header(filename):

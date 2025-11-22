@@ -7,12 +7,14 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from __future__ import print_function
 from pssh.clients import ParallelSSHClient
+from pssh.exceptions import Timeout
 
 import sys
 import os
 import re
 import ast
 import json
+import time
 
 # Following used only for scp of file
 import paramiko
@@ -28,22 +30,71 @@ class Pssh():
     mandatory args =  user, password (or) 'private_key': load_private_key('my_key.pem')
     """
 
-    def __init__(self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False ):
+    def __init__(self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True ):
 
-        self.log            = log
-        self.host_list      = host_list
-        self.user           = user
-        self.pkey           = pkey
-        self.password       = password
+        self.log = log
+        self.host_list = host_list
+        self.reachable_hosts = host_list
+        self.user = user
+        self.pkey = pkey
+        self.password = password
         self.host_key_check = host_key_check
+        self.stop_on_errors = stop_on_errors
+        self.unreachable_hosts = []
 
         if self.password is None:
-            print(self.host_list)
+            print(self.reachable_hosts)
             print(self.user)
             print(self.pkey)
-            self.client         = ParallelSSHClient( self.host_list, user=self.user, pkey=self.pkey, keepalive_seconds=30 )
+            self.client = ParallelSSHClient( self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30 )
         else:
-            self.client         = ParallelSSHClient( self.host_list, user=self.user, password=self.password, keepalive_seconds=30 )
+            self.client = ParallelSSHClient( self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30 )
+
+
+    def check_connectivity(self, host):
+        """
+        Check if a host is reachable via SSH by attempting a simple command.
+        """
+        try:
+            temp_client = ParallelSSHClient([host], user=self.user, pkey=self.pkey if self.password is None else None, password=self.password, keepalive_seconds=30)
+            temp_client.run_command('echo 1', stop_on_errors=True, read_timeout=5)
+            return True
+        except Exception:
+            return False
+
+    def prune_unreachable_hosts(self, output):
+        """
+        Prune unreachable hosts from self.reachable_hosts if they have Timeout exceptions and also fails connectivity check.
+
+        Targeted pruning: Only Timeout exceptions trigger pruning to avoid removing hosts for transient failures
+        like authentication errors or SSH protocol issues, which may succeed on next try. Timeouts are indicative
+        of potential unreachability, so we perform an additional connectivity check before pruning. This ensures
+        that hosts are not permanently removed from the list for recoverable errors.
+        """
+        initial_unreachable_len = len(self.unreachable_hosts)
+        # Only prune on Timeout exceptions to avoid removing hosts for transient issues like auth failures.
+        # Timeouts indicate potential unreachability, so we check connectivity and prune if confirmed.
+        failed_hosts = [item.host for item in output if item.exception and isinstance(item.exception, Timeout)]
+        for host in failed_hosts:
+            if not self.check_connectivity(host):
+                print(f"Host {host} is unreachable, pruning from reachable hosts list.")
+                self.unreachable_hosts.append(host)
+                self.reachable_hosts.remove(host)
+        if len(self.unreachable_hosts) > initial_unreachable_len:
+            # Recreate client with filtered reachable_hosts, only if hosts were actually pruned
+            if self.password is None:
+                self.client = ParallelSSHClient(self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30)
+            else:
+                self.client = ParallelSSHClient(self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30)
+
+
+    def inform_unreachability(self, cmd_output):
+        """
+        Update cmd_output with "Host Unreachable" for all hosts in self.unreachable_hosts.
+        This ensures that the output dictionary reflects the status of pruned hosts.
+        """
+        for host in self.unreachable_hosts:
+            cmd_output[host] = "Host Unreachable"
 
 
     def exec(self, cmd, timeout=None ):
@@ -53,9 +104,9 @@ class Pssh():
         cmd_output = {}
         print(f'cmd = {cmd}')
         if timeout is None:
-            output = self.client.run_command(cmd )
+            output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors )
         else:
-            output = self.client.run_command(cmd, read_timeout=timeout )
+            output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors )
         for item in output:
             print('#----------------------------------------------------------#')
             print(f'Host == {item.host} ==')
@@ -71,7 +122,15 @@ class Pssh():
                     print(line)
                     cmd_out_str = cmd_out_str + line.replace( '\t', '   ')
                     cmd_out_str = cmd_out_str + '\n'
+            if item.exception:
+                exc_str = str(item.exception).replace('\t', '   ')
+                print(exc_str)
+                cmd_out_str += exc_str + '\n'
             cmd_output[item.host] = cmd_out_str
+
+        if not self.stop_on_errors:
+            self.prune_unreachable_hosts(output)
+            self.inform_unreachability(cmd_output)
 
         return cmd_output
 
@@ -85,9 +144,9 @@ class Pssh():
         cmd_output = {}
         print(cmd_list)
         if timeout is None:
-            output = self.client.run_command( '%s', host_args=cmd_list )
+            output = self.client.run_command( '%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors )
         else:
-            output = self.client.run_command( '%s', host_args=cmd_list, read_timeout=timeout )
+            output = self.client.run_command( '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors )
         i = 0
         for item in output:
             print('#----------------------------------------------------------#')
@@ -105,8 +164,16 @@ class Pssh():
                     print(line)
                     cmd_out_str = cmd_out_str + line.replace( '\t', '   ')
                     cmd_out_str = cmd_out_str + '\n'
+            if item.exception:
+                exc_str = str(item.exception).replace('\t', '   ')
+                print(exc_str)
+                cmd_out_str += exc_str + '\n'
             i=i+1
             cmd_output[item.host] = cmd_out_str
+
+        if not self.stop_on_errors:
+            self.prune_unreachable_hosts(output)
+            self.inform_unreachability(cmd_output)
 
         return cmd_output
 
@@ -126,7 +193,7 @@ class Pssh():
 
     def reboot_connections(self ):
         print('Rebooting Connections')
-        self.client.run_command( 'reboot -f' ) 
+        self.client.run_command( 'reboot -f', stop_on_errors=self.stop_on_errors )
 
     def destroy_clients(self ):
         print('Destroying Current phdl connections ..')
