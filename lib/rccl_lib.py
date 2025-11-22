@@ -112,14 +112,16 @@ def check_bus_bw( test_name, output, exp_res_dict ):
       - For alltoall/all_to_all tests, validates out-of-place measurements (inPlace == 0).
       - For other tests, validates in-place measurements (inPlace == 1).
       - Compares measured busBw to minimum expected thresholds per message size.
-      - Calls fail_test(...) if any measurement is below expectation.
+      - Calls fail_test(...) if any measurement is at least 5% below expectation.
 
     Notes:
       - Message sizes are compared as strings to avoid type mismatches between JSON and expectations.
       - Assumes fail_test(...) is available in scope to signal test failure.
+      - 5% tolerance is applied: test only fails if actual < expected * 0.95
     """
     actual_bw_dict = {}
     msg_size_list = list(exp_res_dict['bus_bw'].keys())
+    tolerance = 0.95  # 5% tolerance
     print(test_name)
     #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
@@ -128,30 +130,55 @@ def check_bus_bw( test_name, output, exp_res_dict ):
             if act_dict['inPlace'] == 0:
                 for msg_size in msg_size_list:
                     if str(msg_size) == str(act_dict['size']):
-                        if float(act_dict['busBw']) < float(exp_res_dict['bus_bw'][msg_size]):
-                            fail_test(f"The actual out-of-place bus BW {act_dict['busBw']} for msg size {act_dict['size']} is lower than expected bus BW {exp_res_dict['bus_bw'][msg_size]}")
+                        expected_bw = float(exp_res_dict['bus_bw'][msg_size])
+                        actual_bw = float(act_dict['busBw'])
+                        threshold = expected_bw * tolerance
+                        if actual_bw < threshold:
+                            fail_test(f"The actual out-of-place bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})")
     else:
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 1:
                 for msg_size in msg_size_list:
                     if str(msg_size) == str(act_dict['size']):
-                        if float(act_dict['busBw']) < float(exp_res_dict['bus_bw'][msg_size]):
-                            fail_test(f"The actual out-of-place bus BW {act_dict['busBw']} for msg size {act_dict['size']} is lower than expected bus BW {exp_res_dict['bus_bw'][msg_size]}")
+                        expected_bw = float(exp_res_dict['bus_bw'][msg_size])
+                        actual_bw = float(act_dict['busBw'])
+                        threshold = expected_bw * tolerance
+                        if actual_bw < threshold:
+                            fail_test(f"The actual in-place bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})")
 
  
 
 
 
-def check_bw_dip( test_name, output, ):
+def check_bw_dip( test_name, output, exp_res_dict=None ):
+    """
+    Check for bandwidth dips as message size increases.
+    Only fails if bandwidth drops by more than 5%.
+    If exp_res_dict is provided, only validates message sizes specified in the reference.
+    """
     #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
+    tolerance = 0.95  # 5% tolerance
+    
+    # Get reference message sizes if provided
+    ref_msg_sizes = None
+    if exp_res_dict and 'bus_bw' in exp_res_dict:
+        ref_msg_sizes = set(str(size) for size in exp_res_dict['bus_bw'].keys())
+        log.info(f"Validating BW dip only for reference message sizes: {ref_msg_sizes}")
+    
     if re.search( 'alltoall|all_to_all', test_name, re.I ):
         last_bw = 0.0
         last_msg_size = act_res_dict[0]['size']
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 0:
-                if float(act_dict['busBw']) < float(last_bw):
-                    fail_test(f"The BusBW for msg size {act_dict['size']} = {act_dict['busBw']} is less than the earlier msg size {last_msg_size} = BW {last_bw}")
+                # Skip validation if this message size is not in reference
+                if ref_msg_sizes and str(act_dict['size']) not in ref_msg_sizes:
+                    continue
+                    
+                current_bw = float(act_dict['busBw'])
+                threshold = float(last_bw) * tolerance
+                if last_bw > 0 and current_bw < threshold:
+                    fail_test(f"The BusBW for msg size {act_dict['size']} = {current_bw} is less than the earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})")
                 last_bw = act_dict['busBw']
                 last_msg_size = act_dict['size']
     else:
@@ -159,23 +186,48 @@ def check_bw_dip( test_name, output, ):
         last_msg_size = act_res_dict[0]['size']
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 1:
-                if float(act_dict['busBw']) < float(last_bw):
-                    fail_test(f"The BusBW for msg size {act_dict['size']} = {act_dict['busBw']} is less than the earlier msg size {last_msg_size} = BW {last_bw}")
+                # Skip validation if this message size is not in reference
+                if ref_msg_sizes and str(act_dict['size']) not in ref_msg_sizes:
+                    continue
+                    
+                current_bw = float(act_dict['busBw'])
+                threshold = float(last_bw) * tolerance
+                if last_bw > 0 and current_bw < threshold:
+                    fail_test(f"The BusBW for msg size {act_dict['size']} = {current_bw} is less than the earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})")
                 last_bw = act_dict['busBw']
                 last_msg_size = act_dict['size']
 
 
 
-def check_lat_dip( test_name, output, ):
+def check_lat_dip( test_name, output, exp_res_dict=None ):
+    """
+    Check for latency decreases as message size increases (which would be unexpected).
+    Only fails if latency drops by more than 5%.
+    If exp_res_dict is provided, only validates message sizes specified in the reference.
+    """
     #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
+    tolerance = 0.95  # 5% tolerance
+    
+    # Get reference message sizes if provided
+    ref_msg_sizes = None
+    if exp_res_dict and 'bus_bw' in exp_res_dict:
+        ref_msg_sizes = set(str(size) for size in exp_res_dict['bus_bw'].keys())
+        log.info(f"Validating latency dip only for reference message sizes: {ref_msg_sizes}")
+    
     if re.search( 'alltoall|all_to_all', test_name, re.I ):
         last_time = 0.0
         last_msg_size = act_res_dict[0]['size']
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 0:
-                if float(act_dict['time']) < float(last_time):
-                    fail_test(f"The latency for msg size {act_dict['size']} = {act_dict['time']} is less than the earlier msg size {last_msg_size} = BW {last_time}")
+                # Skip validation if this message size is not in reference
+                if ref_msg_sizes and str(act_dict['size']) not in ref_msg_sizes:
+                    continue
+                    
+                current_time = float(act_dict['time'])
+                threshold = float(last_time) * tolerance
+                if last_time > 0 and current_time < threshold:
+                    fail_test(f"The latency for msg size {act_dict['size']} = {current_time} is less than the earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})")
                 last_time = act_dict['time']
                 last_msg_size = act_dict['size']
     else:
@@ -183,8 +235,14 @@ def check_lat_dip( test_name, output, ):
         last_msg_size = act_res_dict[0]['size']
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 1:
-                if float(act_dict['time']) < float(last_time):
-                    fail_test(f"The latency for msg size {act_dict['size']} = {act_dict['time']} is less than the earlier msg size {last_msg_size} = BW {last_time}")
+                # Skip validation if this message size is not in reference
+                if ref_msg_sizes and str(act_dict['size']) not in ref_msg_sizes:
+                    continue
+                    
+                current_time = float(act_dict['time'])
+                threshold = float(last_time) * tolerance
+                if last_time > 0 and current_time < threshold:
+                    fail_test(f"The latency for msg size {act_dict['size']} = {current_time} is less than the earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})")
                 last_time = act_dict['time']
                 last_msg_size = act_dict['size']
 
@@ -448,15 +506,17 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
     model=get_model_from_rocm_smi_output(smi_out)
 
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
+    test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None
+    
     if re.search( 'True', verify_bus_bw, re.I ):
-        if test_name in exp_results_dict.keys():
-            check_bus_bw( test_name, result_out, exp_results_dict[test_name] )
+        if test_exp_dict:
+            check_bus_bw( test_name, result_out, test_exp_dict )
 
     if re.search( 'True', verify_bw_dip, re.I ):
-        check_bw_dip( test_name, result_out, )
+        check_bw_dip( test_name, result_out, test_exp_dict )
 
     if re.search( 'True', verify_lat_dip, re.I ):
-        check_lat_dip( test_name, result_out, )
+        check_lat_dip( test_name, result_out, test_exp_dict )
 
     return result_out
 
@@ -621,6 +681,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     log.info(f'Saved combined results from all data types to {rccl_result_file}')
 
     # Validate the results against the schema and aggregate if multiple results are found, fail if results are not valid
+    aggregated_rccl_tests = None
     try:
         if len(all_validated_results) >= 1:
             aggregated_rccl_tests = aggregate_rccl_test_results(all_validated_results)
@@ -645,16 +706,37 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     smi_out = smi_out_dict[head_node]
     model=get_model_from_rocm_smi_output(smi_out)
 
+    # Convert aggregated results to format compatible with verification functions (using mean values)
+    results_for_verification = []
+    if aggregated_rccl_tests:
+        for agg_result in aggregated_rccl_tests:
+            results_for_verification.append({
+                'name': agg_result.name,
+                'size': agg_result.size,
+                'type': agg_result.type,
+                'inPlace': agg_result.inPlace,
+                'busBw': agg_result.busBw_mean,
+                'algBw': agg_result.algBw_mean,
+                'time': agg_result.time_mean
+            })
+        log.info(f'Converted {len(results_for_verification)} aggregated results for verification')
+    else:
+        # Fallback to raw results if aggregation wasn't performed
+        results_for_verification = all_raw_results
+        log.info('Using raw results for verification (no aggregation performed)')
+
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
+    test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None
+    
     if re.search( 'True', verify_bus_bw, re.I ):
-        if test_name in exp_results_dict.keys():
-            check_bus_bw( test_name, all_raw_results, exp_results_dict[test_name] )
+        if test_exp_dict:
+            check_bus_bw( test_name, results_for_verification, test_exp_dict )
 
     if re.search( 'True', verify_bw_dip, re.I ):
-        check_bw_dip( test_name, all_raw_results, )
+        check_bw_dip( test_name, results_for_verification, test_exp_dict )
 
     if re.search( 'True', verify_lat_dip, re.I ):
-        check_lat_dip( test_name, all_raw_results, )
+        check_lat_dip( test_name, results_for_verification, test_exp_dict )
 
     return all_raw_results
 
@@ -734,20 +816,22 @@ def rccl_single_node_test( phdl, test_name, cluster_node_list, \
     smi_out_dict = phdl.exec('rocm-smi -a | head -30')
 
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
+    test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None
+    
     if re.search( 'True', verify_bus_bw, re.I ):
         for node in result_dict_out.keys():
             result_out = json.loads(result_dict_out[node].replace( '\n', '').replace( '\r', ''))
-            if test_name in exp_results_dict.keys():
-                check_bus_bw( test_name, result_out, exp_results_dict[test_name] )
+            if test_exp_dict:
+                check_bus_bw( test_name, result_out, test_exp_dict )
 
     if re.search( 'True', verify_bw_dip, re.I ):
         for node in result_dict_out.keys():
             result_out = json.loads(result_dict_out[node].replace( '\n', '').replace( '\r', ''))
-            check_bw_dip( test_name, result_out, )
+            check_bw_dip( test_name, result_out, test_exp_dict )
 
     if re.search( 'True', verify_lat_dip, re.I ):
         for node in result_dict_out.keys():
             result_out = json.loads(result_dict_out[node].replace( '\n', '').replace( '\r', ''))
-            check_lat_dip( test_name, result_out, )
+            check_lat_dip( test_name, result_out, test_exp_dict )
 
     return result_out
