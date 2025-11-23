@@ -1308,10 +1308,15 @@ def build_rccl_heatmap_table( filename, title, act_data_json, ref_data_json ):
 
     try:
         with open( ref_data_json, 'r') as fp2:
-             ref_data_dict = json.load(fp2)
+             ref_data_dict_t = json.load(fp2)
     except Exception as e:
         print(f'Error reading file {ref_data_json} - {e}')
 
+    if 'result' in ref_data_dict_t.keys():
+        ref_data_dict = ref_data_dict_t['result']
+    else:
+        fail_test(f'Error the reference JSON file {ref_data_json} is not in the expected format, \
+                need metadata and result as top level keys')
 
     print('Build HTML RCCL heatmap table')
     with open(filename, 'a') as fp:
