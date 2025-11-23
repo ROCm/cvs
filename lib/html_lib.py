@@ -1120,6 +1120,7 @@ def build_rccl_result_table( filename, res_dict ):
   <th>Protocol</th>
   <th>QP_count</th>
   <th>PXN_DISABLE</th>
+  <th>P2P_BATCH_ENABLE</th>
   <th>Msg Size</th>
   <th>Algo BW GB/s</th>
   <th>Bus BW GB/s</th>
@@ -1128,7 +1129,7 @@ def build_rccl_result_table( filename, res_dict ):
   </thead>'''
          fp.write(html_lines)
          for key_nam in res_dict.keys():
-             (collective,algo,protocol,qp_count,pxn_disable) = key_nam.split("-")
+             (collective,algo,protocol,qp_count,pxn_disable,p2p_batch_enable) = key_nam.split("-")
              last_bw = 0.0
              last_time = 0
              for msg_size in res_dict[key_nam].keys():
@@ -1141,6 +1142,7 @@ def build_rccl_result_table( filename, res_dict ):
      <td>{protocol}</td>
      <td>{qp_count}</td>
      <td>{pxn_disable}</td>
+     <td>{p2p_batch_enable}</td>
      <td>{msg_size}</td>
      <td>{res_dict[key_nam][msg_size]['alg_bw']}</td>
                  '''

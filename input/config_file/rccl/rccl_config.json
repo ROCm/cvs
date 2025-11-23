@@ -41,6 +41,7 @@
        "nccl_ib_tc": "0",
        "nccl_ib_split_data_on_qps": "0",
        "nccl_pxn_disable": [ "0", "1" ],
+       "nccl_p2p_batch_enable": [ "0", "1" ],
        "nccl_net_plugin": "none",
        "verify_bus_bw": "False",
        "verify_bw_dip": "True",
