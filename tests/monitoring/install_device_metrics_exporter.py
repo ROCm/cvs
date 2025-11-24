@@ -363,7 +363,7 @@ WantedBy=multi-user.target
         with open('/tmp/prometheus.service', 'w') as f:
             f.write(svc)
         subprocess.run("sudo cp /tmp/prometheus.service /etc/systemd/system/", shell=True, check=True)
-        subprocess.run("sudo systemctl daemon-reload && sudo systemctl enable prometheus && sudo systemctl start prometheus", shell=True, check=True)
+        subprocess.run("sudo systemctl daemon-reload && sudo systemctl enable prometheus && sudo systemctl restart prometheus", shell=True, check=True)
         
         import time
         time.sleep(3)
@@ -375,15 +375,11 @@ WantedBy=multi-user.target
     else:
         # MULTI-NODE DEPLOYMENT via SSH to management node only
         log.info(f"Deploying to remote management node: {management_node}")
-        from parallel_ssh_lib import ParallelSSH
+        from parallel_ssh_lib import Pssh
         
         # Create SSH client for management node ONLY
         mgmt_dict = {management_node: cluster_dict['node_dict'].get(management_node, {'bmc_ip': 'NA', 'vpc_ip': management_node})}
-        phdl = ParallelSSH(
-            node_dict=mgmt_dict,
-            username=cluster_dict['username'],
-            priv_key_file=cluster_dict['priv_key_file']
-        )
+        phdl = Pssh(log, list(mgmt_dict.keys()), user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
         
         # Upload config file to management node
         import tempfile
@@ -488,15 +484,11 @@ def test_deploy_grafana_on_management_only(cluster_dict, management_node, is_sin
     else:
         # MULTI-NODE DEPLOYMENT via SSH to management node only
         log.info(f"Deploying to remote management node: {management_node}")
-        from parallel_ssh_lib import ParallelSSH
+        from parallel_ssh_lib import Pssh
         
         # Create SSH client for management node ONLY
         mgmt_dict = {management_node: cluster_dict['node_dict'].get(management_node, {'bmc_ip': 'NA', 'vpc_ip': management_node})}
-        phdl = ParallelSSH(
-            node_dict=mgmt_dict,
-            username=cluster_dict['username'],
-            priv_key_file=cluster_dict['priv_key_file']
-        )
+        phdl = Pssh(log, list(mgmt_dict.keys()), user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
         
         # Deploy Grafana on management node only
         deploy_script = f"""
