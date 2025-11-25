@@ -331,7 +331,7 @@ def test_deploy_prometheus_on_management_only(cluster_dict, management_node, is_
     prom_version = config_dict.get('prometheus_version', 'v2.55.0').lstrip('v')
     
     # Deploy on localhost/management node
-    if is_single_node or management_node in ['localhost', '127.0.0.1', '::1']:
+    if is_single_node or is_localhost(management_node):
         # LOCAL DEPLOYMENT
         # Stop existing
         subprocess.run("sudo systemctl stop prometheus 2>/dev/null || true", shell=True)
@@ -448,13 +448,17 @@ def test_deploy_grafana_on_management_only(cluster_dict, management_node, is_sin
     """
     log.info(f"Deploying Grafana on management node: {management_node}")
     
+    # Create provisioning configs and dashboard BEFORE starting Grafana
+    create_grafana_provisioning_configs()
+    create_grafana_dashboard_file()
+    
     import subprocess
     import os
     
     grafana_version = config_dict.get('grafana_version', '10.4.1')
     grafana_port = config_dict.get('grafana_port', '3000')
     
-    if is_single_node or management_node in ['localhost', '127.0.0.1', '::1']:
+    if is_single_node or is_localhost(management_node):
         # LOCAL DEPLOYMENT
         # Stop existing
         subprocess.run("docker stop grafana 2>/dev/null || true", shell=True)
@@ -471,6 +475,8 @@ def test_deploy_grafana_on_management_only(cluster_dict, management_node, is_sin
             --network host \
             --restart unless-stopped \
             -v {grafana_data}:/var/lib/grafana \
+            -v $(pwd)/monitoring/provisioning:/etc/grafana/provisioning \
+            -v $(pwd)/monitoring/dashboards:/var/lib/grafana/dashboards \
             grafana/grafana:{grafana_version}"""
         subprocess.run(cmd, shell=True, check=True)
         
@@ -602,3 +608,331 @@ def test_verify_service_distribution(cluster_dict, management_node, all_nodes, w
         log.info(f"SUCCESS: ENFORCEMENT VERIFIED: Multi-node cluster with proper separation")
     else:
         log.info(f"SUCCESS: ENFORCEMENT VERIFIED: Single-node deployment (all services on localhost)")
+
+
+def is_localhost(node):
+    """Check if a node IP/hostname refers to localhost."""
+    import socket
+    import subprocess
+    
+    # Obvious localhost values
+    if node in ['localhost', '127.0.0.1', '::1', 'localhost.localdomain']:
+        return True
+    
+    # Get all local IPs
+    local_ips = set(['127.0.0.1', '::1', 'localhost'])
+    
+    try:
+        # Get hostname and its IP
+        hostname = socket.gethostname()
+        local_ips.add(hostname)
+        
+        # Get primary IP
+        try:
+            local_ip = socket.gethostbyname(hostname)
+            local_ips.add(local_ip)
+        except:
+            pass
+        
+        # Get all IPs from hostname -I
+        try:
+            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
+            if result.returncode == 0:
+                for ip in result.stdout.strip().split():
+                    local_ips.add(ip.strip())
+        except:
+            pass
+        
+        # Get all IPs from ip addr
+        try:
+            result = subprocess.run(['ip', 'addr'], capture_output=True, text=True, timeout=2)
+            if result.returncode == 0:
+                import re
+                for match in re.finditer(r'inet\s+(\d+\.\d+\.\d+\.\d+)', result.stdout):
+                    local_ips.add(match.group(1))
+        except:
+            pass
+            
+    except Exception as e:
+        log.warning(f"Error detecting local IPs: {e}")
+    
+    log.info(f"Local IPs detected: {local_ips}")
+    log.info(f"Checking if {node} is localhost: {node in local_ips}")
+    
+    return node in local_ips
+
+
+def create_grafana_dashboard_file():
+    """Create GPU dashboard with correct metric names."""
+    import os
+    import json
+    
+    dashboard_dir = "monitoring/dashboards"
+    os.makedirs(dashboard_dir, exist_ok=True)
+    
+    dashboard = {
+        "annotations": {"list": []},
+        "editable": True,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 0,
+        "id": None,
+        "links": [],
+        "panels": [
+            {
+                "datasource": "prometheus",
+                "fieldConfig": {
+                    "defaults": {
+                        "color": {"mode": "palette-classic"},
+                        "custom": {
+                            "axisCenteredZero": False,
+                            "axisColorMode": "text",
+                            "axisPlacement": "auto",
+                            "barAlignment": 0,
+                            "drawStyle": "line",
+                            "fillOpacity": 10,
+                            "gradientMode": "none",
+                            "lineInterpolation": "linear",
+                            "lineWidth": 1,
+                            "pointSize": 5,
+                            "showPoints": "never"
+                        },
+                        "mappings": [],
+                        "thresholds": {
+                            "mode": "absolute",
+                            "steps": [
+                                {"color": "green", "value": None},
+                                {"color": "yellow", "value": 70},
+                                {"color": "red", "value": 85}
+                            ]
+                        },
+                        "unit": "celsius"
+                    }
+                },
+                "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
+                "id": 1,
+                "options": {
+                    "legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+                    "tooltip": {"mode": "multi"}
+                },
+                "targets": [
+                    {
+                        "datasource": "prometheus",
+                        "expr": "gpu_edge_temperature",
+                        "legendFormat": "{{hostname}} GPU{{gpu_id}} Edge",
+                        "refId": "A"
+                    },
+                    {
+                        "datasource": "prometheus",
+                        "expr": "gpu_junction_temperature",
+                        "legendFormat": "{{hostname}} GPU{{gpu_id}} Junction",
+                        "refId": "B"
+                    }
+                ],
+                "title": "GPU Temperature",
+                "type": "timeseries"
+            },
+            {
+                "datasource": "prometheus",
+                "fieldConfig": {
+                    "defaults": {
+                        "color": {"mode": "palette-classic"},
+                        "custom": {
+                            "axisCenteredZero": False,
+                            "axisColorMode": "text",
+                            "axisPlacement": "auto",
+                            "drawStyle": "line",
+                            "fillOpacity": 10,
+                            "lineInterpolation": "linear",
+                            "lineWidth": 1
+                        },
+                        "mappings": [],
+                        "unit": "watt"
+                    }
+                },
+                "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0},
+                "id": 2,
+                "options": {
+                    "legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+                    "tooltip": {"mode": "multi"}
+                },
+                "targets": [
+                    {
+                        "datasource": "prometheus",
+                        "expr": "gpu_power_usage",
+                        "legendFormat": "{{hostname}} GPU{{gpu_id}}",
+                        "refId": "A"
+                    }
+                ],
+                "title": "GPU Power Usage",
+                "type": "timeseries"
+            },
+            {
+                "datasource": "prometheus",
+                "fieldConfig": {
+                    "defaults": {
+                        "color": {"mode": "palette-classic"},
+                        "custom": {
+                            "axisCenteredZero": False,
+                            "axisColorMode": "text",
+                            "axisPlacement": "auto",
+                            "drawStyle": "line",
+                            "fillOpacity": 10,
+                            "lineInterpolation": "linear",
+                            "lineWidth": 1
+                        },
+                        "mappings": [],
+                        "unit": "watt"
+                    }
+                },
+                "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
+                "id": 3,
+                "options": {
+                    "legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+                    "tooltip": {"mode": "multi"}
+                },
+                "targets": [
+                    {
+                        "datasource": "prometheus",
+                        "expr": "gpu_average_package_power",
+                        "legendFormat": "{{hostname}} GPU{{gpu_id}}",
+                        "refId": "A"
+                    }
+                ],
+                "title": "GPU Average Package Power",
+                "type": "timeseries"
+            },
+            {
+                "datasource": "prometheus",
+                "fieldConfig": {
+                    "defaults": {
+                        "color": {"mode": "palette-classic"},
+                        "custom": {
+                            "axisCenteredZero": False,
+                            "axisColorMode": "text",
+                            "axisPlacement": "auto",
+                            "drawStyle": "line",
+                            "fillOpacity": 10,
+                            "lineInterpolation": "linear",
+                            "lineWidth": 1
+                        },
+                        "mappings": [],
+                        "unit": "hertz"
+                    }
+                },
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+                "id": 4,
+                "options": {
+                    "legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+                    "tooltip": {"mode": "multi"}
+                },
+                "targets": [
+                    {
+                        "datasource": "prometheus",
+                        "expr": "gpu_clock{clock_type=\"GPU_CLOCK_TYPE_SYSTEM\"}",
+                        "legendFormat": "{{hostname}} GPU{{gpu_id}}",
+                        "refId": "A"
+                    }
+                ],
+                "title": "GPU Clock Speed",
+                "type": "timeseries"
+            },
+            {
+                "datasource": "prometheus",
+                "fieldConfig": {
+                    "defaults": {
+                        "color": {"mode": "palette-classic"},
+                        "custom": {
+                            "axisCenteredZero": False,
+                            "axisColorMode": "text",
+                            "axisPlacement": "auto",
+                            "drawStyle": "line",
+                            "fillOpacity": 10,
+                            "lineInterpolation": "linear",
+                            "lineWidth": 1
+                        },
+                        "mappings": [],
+                        "unit": "celsius"
+                    }
+                },
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+                "id": 5,
+                "options": {
+                    "legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+                    "tooltip": {"mode": "multi"}
+                },
+                "targets": [
+                    {
+                        "datasource": "prometheus",
+                        "expr": "gpu_memory_temperature",
+                        "legendFormat": "{{hostname}} GPU{{gpu_id}}",
+                        "refId": "A"
+                    }
+                ],
+                "title": "GPU Memory Temperature",
+                "type": "timeseries"
+            }
+        ],
+        "refresh": "5s",
+        "schemaVersion": 39,
+        "tags": ["gpu", "amd", "rocm"],
+        "templating": {"list": []},
+        "time": {"from": "now-15m", "to": "now"},
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "AMD GPU Metrics Dashboard",
+        "uid": "amd-gpu-metrics",
+        "version": 1
+    }
+    
+    dashboard_file = f"{dashboard_dir}/gpu-metrics-dashboard.json"
+    with open(dashboard_file, 'w') as f:
+        json.dump(dashboard, f, indent=2)
+    
+    log.info(f"✓ Created dashboard: {dashboard_file}")
+    return dashboard_file
+
+
+def create_grafana_provisioning_configs():
+    """Create Grafana provisioning configs for datasources and dashboards."""
+    import os
+    
+    # Create directories
+    os.makedirs("monitoring/provisioning/datasources", exist_ok=True)
+    os.makedirs("monitoring/provisioning/dashboards", exist_ok=True)
+    
+    # Datasource config
+    datasource_config = """apiVersion: 1
+
+datasources:
+  - name: prometheus
+    type: prometheus
+    access: proxy
+    url: http://localhost:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "5s"
+"""
+    
+    with open("monitoring/provisioning/datasources/prometheus.yml", 'w') as f:
+        f.write(datasource_config)
+    
+    # Dashboard provisioning config
+    dashboard_config = """apiVersion: 1
+
+providers:
+  - name: 'Default'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+"""
+    
+    with open("monitoring/provisioning/dashboards/default.yml", 'w') as f:
+        f.write(dashboard_config)
+    
+    log.info("✓ Created Grafana provisioning configs")
