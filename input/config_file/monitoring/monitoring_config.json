@@ -1,0 +1,38 @@
+{
+  "monitoring": {
+    "device_metrics_exporter_version": "{device-metrics-version}",
+    "device_metrics_exporter_image": "rocm/device-metrics-exporter:{device-metrics-version}",
+    "device_metrics_exporter_port": 5000,
+
+    "prometheus_host": "{prometheus-host}",
+    "prometheus_port": 9090,
+    "prometheus_version": "{prometheus-version}",
+    "prometheus_url": "http://{prometheus-host}:{prometheus-port}",
+
+    "grafana_host": "{grafana-host}",
+    "grafana_port": 3000,
+    "grafana_version": "{grafana-version}",
+    "grafana_url": "http://{grafana-host}:{grafana-port}",
+    "grafana_username": "admin",
+    "grafana_password": "{grafana-password}",
+    "grafana_api_key": "{grafana-api-key}",
+
+    "scrape_interval": "15s",
+    "scrape_timeout": "10s",
+    "retention_days": 30,
+
+    "alert_thresholds": {
+      "temperature_warning": 95,
+      "temperature_critical": 105,
+      "power_warning": 700,
+      "ecc_error_rate_warning": 10,
+      "memory_usage_warning": 90
+    },
+
+    "deployment": {
+      "docker_network": "host",
+      "restart_policy": "unless-stopped",
+      "log_level": "INFO"
+    }
+  }
+}
