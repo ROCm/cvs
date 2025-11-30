@@ -1205,40 +1205,40 @@ def build_rccl_heatmap_metadata_table( filename, act_data_json, ref_data_json ):
              if 'metadata' in key_nam:
                  print(act_data_dict['metadata'].keys())
                  if 'gpu_model' in act_data_dict[key_nam].keys():
-                     html_lines = f'<td>{act_data_dict['metadata']['gpu_model']}</td>'
+                     html_lines = f"<td>{act_data_dict['metadata']['gpu_model']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')
 
                  if 'nic_model' in act_data_dict[key_nam].keys():
-                     html_lines = f'<td>{act_data_dict['metadata']['nic_model']}</td>'
+                     html_lines = f"<td>{act_data_dict['metadata']['nic_model']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')
 
                  if 'date' in act_data_dict[key_nam].keys():
-                     html_lines = f'<td>{act_data_dict['metadata']['date']}</td>'
+                     html_lines = f"<td>{act_data_dict['metadata']['date']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')
 
                  if 'bkc_version' in act_data_dict[key_nam].keys():
-                     html_lines = f'<td>{act_data_dict['metadata']['bkc_version']}</td>'
+                     html_lines = f"<td>{act_data_dict['metadata']['bkc_version']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')
 
                  if 'rocm_version' in act_data_dict[key_nam].keys():
-                     html_lines = f'<td>{act_data_dict['metadata']['rocm_version']}</td>'
+                     html_lines = f"<td>{act_data_dict['metadata']['rocm_version']}</td>"
                      fp.write(html_lines)
                  elif 'cuda_version' in act_data_dict[key_nam].keys():
-                     html_lines = f'<td>{act_data_dict['metadata']['cuda_version']}</td>'
+                     html_lines = f"<td>{act_data_dict['metadata']['cuda_version']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')
 
                  if 'rccl_commit' in act_data_dict[key_nam].keys():
-                     html_lines = f'<td>{act_data_dict['metadata']['rccl_commit']}</td>'
+                     html_lines = f"<td>{act_data_dict['metadata']['rccl_commit']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')
@@ -1254,35 +1254,35 @@ def build_rccl_heatmap_metadata_table( filename, act_data_json, ref_data_json ):
                  fp.write(html_lines)
                  print(ref_data_dict[key_nam].keys())
                  if 'gpu_model' in ref_data_dict[key_nam].keys():
-                     html_lines = f'<td>{ref_data_dict['metadata']['gpu_model']}</td>'
+                     html_lines = f"<td>{ref_data_dict['metadata']['gpu_model']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')
                  if 'nic_model' in ref_data_dict[key_nam].keys():
-                     html_lines = f'<td>{ref_data_dict['metadata']['nic_model']}</td>'
+                     html_lines = f"<td>{ref_data_dict['metadata']['nic_model']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')
                  if 'date' in ref_data_dict[key_nam].keys():
-                     html_lines = f'<td>{ref_data_dict['metadata']['nic_model']}</td>'
+                     html_lines = f"<td>{ref_data_dict['metadata']['nic_model']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')
                  if 'bkc_version' in ref_data_dict[key_nam].keys():
-                     html_lines = f'<td>{ref_data_dict['metadata']['bkc_version']}</td>'
+                     html_lines = f"<td>{ref_data_dict['metadata']['bkc_version']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')
                  if 'rocm_version' in ref_data_dict[key_nam].keys():
-                     html_lines = f'<td>{ref_data_dict['metadata']['rocm_version']}</td>'
+                     html_lines = f"<td>{ref_data_dict['metadata']['rocm_version']}</td>"
                      fp.write(html_lines)
                  elif 'cuda_version' in ref_data_dict[key_nam].keys():
-                     html_lines = f'<td>{ref_data_dict['metadata']['cuda_version']}</td>'
+                     html_lines = f"<td>{ref_data_dict['metadata']['cuda_version']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')
                  if 'rccl_commit' in ref_data_dict[key_nam].keys():
-                     html_lines = f'<td>{ref_data_dict['metadata']['rccl_commit']}</td>'
+                     html_lines = f"<td>{ref_data_dict['metadata']['rccl_commit']}</td>"
                      fp.write(html_lines)
                  else:
                      fp.write('<td>-</td>')

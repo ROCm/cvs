@@ -40,7 +40,7 @@ def get_ib_bw_pps(phdl, msg_size, cmd ):
                 match = re.search( pattern, out_dict[node] )
                 res_dict[node]['bw'] = match.group(1)
                 res_dict[node]['pps'] = match.group(2)
-                print(f'Node {node} BW - {res_dict[node]['bw']}, MPPS - {res_dict[node]['pps']}')
+                print(f"Node {node} BW - {res_dict[node]['bw']}, MPPS - {res_dict[node]['pps']}")
                 continue
             else:
                 print('Sleeping 10 secs for test to complete')
