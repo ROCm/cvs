@@ -219,7 +219,7 @@ def test_install_ib_perf(phdl, shdl, config_dict ):
         phdl.exec( 'sudo apt install -y numactl' )
         shdl.exec( f'cd {config_dict["install_dir"]}; git clone https://github.com/linux-rdma/perftest' )
         shdl.exec( f'cd {config_dict["install_dir"]}/perftest; ./autogen.sh', timeout=100 )
-        shdl.exec( f'cd {config_dict["install_dir"]}/perftest; ./configure --prefix={config_dict['install_dir']}/perftest --with-rocm={config_dict["rocm_dir"]} --enable-rocm', timeout=200 )
+        shdl.exec( f'cd {config_dict["install_dir"]}/perftest; ./configure --prefix={config_dict["install_dir"]}/perftest --with-rocm={config_dict["rocm_dir"]} --enable-rocm', timeout=200 )
         shdl.exec( f'cd {config_dict["install_dir"]}/perftest; make', timeout=100 )
         shdl.exec( f'cd {config_dict["install_dir"]}/perftest; make install', timeout=100 )
 
