@@ -36,7 +36,7 @@ def check_if_docker_client_running( phdl ):
     out_dict = phdl.exec('docker ps')
     for node in out_dict.keys():
         if not re.search( 'CONTAINER', out_dict[node], re.I ):
-            fail_test('Docker Not running on node {node} .. pls check')
+            fail_test(f'Docker Not running on node {node} .. pls check')
             return False
     return True
         
