@@ -227,7 +227,7 @@ def test_install_ib_perf(phdl, shdl, config_dict ):
         out_dict = phdl.exec( f'{config_dict["install_dir"]}/perftest/ib_write_bw -h | grep -i rocm --color=never' )
         for node in out_dict.keys():
             if not re.search( 'GPUDirect RDMA', out_dict[node], re.I ):
-                fail_test('IB Perf package installation on node {node} failed, ib_write_bw not showing expected use_rocm output')
+                fail_test( f'IB Perf package installation on node {node} failed, ib_write_bw not showing expected use_rocm output')
     update_test_result()
 
 

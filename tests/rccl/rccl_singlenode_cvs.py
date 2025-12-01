@@ -289,7 +289,7 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective ):
 
     # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
     if not re.search( 'None', config_dict['env_source_script'], re.I ):
-        phdl.exec(f'bash {config_dict['env_source_script']}')
+        phdl.exec(f"bash {config_dict['env_source_script']}")
 
 
     # Execute the RCCL cluster test with parameters sourced from config_dict
