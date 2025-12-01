@@ -563,7 +563,7 @@ def test_check_pci_acs( phdl, config_dict ):
     out_dict = phdl.exec('sudo lspci -vv | grep ACSCtl | grep SrcValid+ --color=never')
     for node in out_dict.keys():
         if re.search( 'ACSCtl:', out_dict[node], re.I ):
-            fail_test('PCIe ACS not disabled on node {node}')
+            fail_test(f'PCIe ACS not disabled on node {node}')
     update_test_result()
 
 
