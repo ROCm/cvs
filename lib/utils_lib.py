@@ -420,6 +420,80 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     return resolved_config
 
 
+def resolve_placeholder_with_fallback(value, fallback):
+    """
+    Resolve placeholder strings, returning fallback if unresolved.
+    
+    Args:
+        value: Value that may contain unresolved placeholders like {prometheus-host}
+        fallback: Default value to use if placeholder is unresolved
+    
+    Returns:
+        Resolved value or fallback if value is None/empty/unresolved placeholder
+    
+    Examples:
+        >>> resolve_placeholder_with_fallback("{prometheus-host}", "localhost")
+        'localhost'
+        >>> resolve_placeholder_with_fallback("10.0.0.5", "localhost")
+        '10.0.0.5'
+        >>> resolve_placeholder_with_fallback(None, "localhost")
+        'localhost'
+    """
+    if value is None:
+        return fallback
+    
+    # Convert to string
+    value_str = str(value).strip()
+    
+    # Empty or unresolved placeholder (starts with { and ends with })
+    if not value_str or (value_str.startswith("{") and value_str.endswith("}")):
+        return fallback
+    
+    return value_str
+
+
+def apply_monitoring_defaults(config_dict):
+    """
+    Apply default fallback values for monitoring configuration.
+    Ensures localhost/default ports/versions when placeholders aren't resolved.
+    
+    Args:
+        config_dict: Monitoring configuration dictionary
+    
+    Returns:
+        dict: Configuration with defaults applied
+    """
+    defaults = {
+        'prometheus_host': 'localhost',
+        'prometheus_port': 9090,
+        'prometheus_version': 'v2.55.0',
+        'grafana_host': 'localhost',
+        'grafana_port': 3000,
+        'grafana_version': '10.4.1',
+        'device_metrics_exporter_version': 'v1.4.0',
+        'device_metrics_exporter_port': 5000,
+        'device_metrics_exporter_host': 'localhost',
+    }
+    
+    result = config_dict.copy()
+    
+    for key, default_value in defaults.items():
+        current_value = result.get(key)
+        result[key] = resolve_placeholder_with_fallback(current_value, default_value)
+    
+    # Build derived URLs with resolved values
+    if 'prometheus_url' in result:
+        prom_host = result['prometheus_host']
+        prom_port = result['prometheus_port']
+        result['prometheus_url'] = f"http://{prom_host}:{prom_port}"
+    
+    if 'grafana_url' in result:
+        graf_host = result['grafana_host']
+        graf_port = result['grafana_port']
+        result['grafana_url'] = f"http://{graf_host}:{graf_port}"
+    
+    return result
+  
 def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, env_vars=None):
     """
     Collect comprehensive system metadata from compute nodes for test reporting.
@@ -749,3 +823,138 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
     
     log.info(f'Collected metadata: {list(metadata.keys())}')
     return metadata
+
+
+def get_management_node(cluster_dict):
+    """
+    Get the management/head node from cluster configuration.
+    
+    Args:
+        cluster_dict: Cluster configuration dictionary
+    
+    Returns:
+        str: Management node IP/hostname
+    
+    Example:
+        >>> cluster = {'head_node_dict': {'mgmt_ip': '10.0.0.100'}}
+        >>> get_management_node(cluster)
+        '10.0.0.100'
+    """
+    return cluster_dict.get('head_node_dict', {}).get('mgmt_ip', 'localhost')
+
+
+def get_all_nodes(cluster_dict):
+    """
+    Get all nodes (workers + management) from cluster configuration.
+    
+    Args:
+        cluster_dict: Cluster configuration dictionary
+    
+    Returns:
+        list: All node IPs/hostnames including management node
+    
+    Example:
+        >>> cluster = {
+        ...     'head_node_dict': {'mgmt_ip': '10.0.0.100'},
+        ...     'node_dict': {'10.0.0.101': {...}, '10.0.0.102': {...}}
+        ... }
+        >>> get_all_nodes(cluster)
+        ['10.0.0.100', '10.0.0.101', '10.0.0.102']
+    """
+    mgmt_node = get_management_node(cluster_dict)
+    worker_nodes = list(cluster_dict.get('node_dict', {}).keys())
+    
+    # Management node + all workers
+    all_nodes = [mgmt_node] + worker_nodes
+    
+    # Remove duplicates (in case mgmt is also in node_dict)
+    return list(dict.fromkeys(all_nodes))
+
+
+def get_worker_nodes(cluster_dict):
+    """
+    Get worker nodes only (excluding management node).
+    
+    Args:
+        cluster_dict: Cluster configuration dictionary
+    
+    Returns:
+        list: Worker node IPs/hostnames
+    """
+    return list(cluster_dict.get('node_dict', {}).keys())
+
+
+def is_management_node(node, cluster_dict):
+    """
+    Check if a node is the management/head node.
+    
+    Args:
+        node: Node IP/hostname to check
+        cluster_dict: Cluster configuration dictionary
+    
+    Returns:
+        bool: True if node is management node
+    
+    Example:
+        >>> cluster = {'head_node_dict': {'mgmt_ip': 'localhost'}}
+        >>> is_management_node('localhost', cluster)
+        True
+        >>> is_management_node('10.0.0.101', cluster)
+        False
+    """
+    mgmt_node = get_management_node(cluster_dict)
+    
+    # Handle localhost aliases
+    if mgmt_node in ['localhost', '127.0.0.1'] and node in ['localhost', '127.0.0.1']:
+        return True
+    
+    return node == mgmt_node
+
+
+def is_single_node_deployment(cluster_dict):
+    """
+    Detect if this is a single-node (localhost) deployment.
+    
+    Args:
+        cluster_dict: Cluster configuration dictionary
+    
+    Returns:
+        bool: True if single-node deployment
+    
+    Example:
+        >>> cluster = {'head_node_dict': {'mgmt_ip': 'localhost'}, 'node_dict': {'localhost': {}}}
+        >>> is_single_node_deployment(cluster)
+        True
+    """
+    all_nodes = get_all_nodes(cluster_dict)
+    
+    # Single node if only one unique node
+    if len(set(all_nodes)) == 1:
+        return True
+    
+    # Also single node if all nodes are localhost variants
+    localhost_variants = {'localhost', '127.0.0.1', '::1'}
+    return all(node in localhost_variants for node in all_nodes)
+
+
+def generate_prometheus_targets(cluster_dict, exporter_port=5000):
+    """
+    Generate Prometheus scrape targets for all nodes.
+    
+    Args:
+        cluster_dict: Cluster configuration dictionary
+        exporter_port: Port where Device Metrics Exporter runs (default: 5000)
+    
+    Returns:
+        list: Prometheus target strings in format "host:port"
+    
+    Example:
+        >>> cluster = {
+        ...     'head_node_dict': {'mgmt_ip': '10.0.0.100'},
+        ...     'node_dict': {'10.0.0.101': {}, '10.0.0.102': {}}
+        ... }
+        >>> generate_prometheus_targets(cluster)
+        ['10.0.0.100:5000', '10.0.0.101:5000', '10.0.0.102:5000']
+    """
+    all_nodes = get_all_nodes(cluster_dict)
+    return [f"{node}:{exporter_port}" for node in all_nodes]

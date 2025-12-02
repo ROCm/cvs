@@ -1,0 +1,74 @@
+# Prometheus Alert Rules for AMD GPU Health Monitoring
+
+groups:
+  - name: gpu_health_alerts
+    interval: 30s
+    rules:
+      # GPU Temperature Alerts
+      - alert: GPUTemperatureWarning
+        expr: amdgpu_temperature_celsius{sensor="edge"} > 95
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU temperature high on {{ $labels.node }}"
+          description: "GPU {{ $labels.gpu }} on node {{ $labels.node }} has temperature {{ $value }}°C (threshold: 95°C)"
+
+      - alert: GPUTemperatureCritical
+        expr: amdgpu_temperature_celsius{sensor="edge"} > 105
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU temperature critical on {{ $labels.node }}"
+          description: "GPU {{ $labels.gpu }} on node {{ $labels.node }} has temperature {{ $value }}°C (threshold: 105°C)"
+
+      # GPU Power Alerts
+      - alert: GPUPowerHigh
+        expr: amdgpu_power_watts > 700
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU power consumption high on {{ $labels.node }}"
+          description: "GPU {{ $labels.gpu }} on node {{ $labels.node }} consuming {{ $value }}W (threshold: 700W)"
+
+      # ECC Error Alerts
+      - alert: GPUECCErrors
+        expr: rate(amdgpu_ecc_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU ECC errors detected on {{ $labels.node }}"
+          description: "GPU {{ $labels.gpu }} on node {{ $labels.node }} reporting ECC errors"
+
+      # PCIe Replay Errors
+      - alert: PCIeReplayErrors
+        expr: rate(amdgpu_pcie_replay_count[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PCIe replay errors on {{ $labels.node }}"
+          description: "GPU {{ $labels.gpu }} on node {{ $labels.node }} experiencing PCIe replay errors"
+
+      # Exporter Health
+      - alert: DeviceMetricsExporterDown
+        expr: up{job="device-metrics-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Device Metrics Exporter down on {{ $labels.node }}"
+          description: "Cannot scrape metrics from {{ $labels.node }} - exporter may be down"
+
+      # Cluster-wide alerts
+      - alert: MultipleGPUsOverheating
+        expr: count(amdgpu_temperature_celsius{sensor="edge"} > 95) > 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Multiple GPUs overheating in cluster"
+          description: "{{ $value }} GPUs are above 95°C - possible cooling issue"
