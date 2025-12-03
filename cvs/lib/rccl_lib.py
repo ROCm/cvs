@@ -21,6 +21,7 @@ from cvs.lib import globals
 from cvs.models.rccl import RcclTests,  RcclTestsAggregated, RcclTestsMultinodeRaw
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
+from cvs.lib.rccl_retry import rccl_retry_if_enabled
 
 log = globals.log
 
@@ -70,7 +71,7 @@ def scan_rccl_logs( output ):
         print('#============#')
         print(warn_list)
         print('#============#')
-    if not re.search('#\sAvg bus bandwidth', output ):
+    if not re.search(r'#\sAvg bus bandwidth', output ):
         fail_test('RCCL test did not complete successfully, no bandwidth numbers printed - pls check')
   
 
@@ -79,8 +80,8 @@ def scan_rccl_logs( output ):
 
 # Not using the avg bus bandwidth verification currently ..
 def check_avg_bus_bw( output, exp_res_dict ):
-    if re.search('#\sAvg bus bandwidth\s+:\s+[0-9\.]+', output, re.I ):
-        match = re.search('#\sAvg bus bandwidth\s+:\s+([0-9\.]+)', output, re.I )
+    if re.search(r'#\sAvg bus bandwidth\s+:\s+[0-9\.]+', output, re.I ):
+        match = re.search(r'#\sAvg bus bandwidth\s+:\s+([0-9\.]+)', output, re.I )
         actual_bw = float(match.group(1))
         if actual_bw < float(exp_res_dict['avg_bus_bw']):
             fail_test(f"Actual Avg Bus BW {actual_bw} is less than the expected Avg BW {exp_res_dict['avg_bus_bw']}") 
@@ -167,16 +168,16 @@ def check_bw_dip( test_name, output, exp_res_dict=None ):
     #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
     tolerance = 0.95  # 5% tolerance
-    
+
     # Get reference message sizes if provided
     # If no reference data, skip validation entirely
     if not exp_res_dict:
-        log.info(f"No reference data provided for BW dip check, skipping validation for {test_name}")
+        log.info(f"No reference data provided for bandwidth dip check, skipping validation for {test_name}")
         return
-    
+
     ref_msg_sizes = set(str(size) for size in exp_res_dict.keys())
-    log.info(f"Validating BW dip only for reference message sizes: {ref_msg_sizes}")
-    
+    log.info(f"Validating bandwidth dip only for reference message sizes: {ref_msg_sizes}")
+
     if re.search( 'alltoall|all_to_all', test_name, re.I ):
         last_bw = 0.0
         last_msg_size = act_res_dict[0]['size']
@@ -185,7 +186,7 @@ def check_bw_dip( test_name, output, exp_res_dict=None ):
                 # Skip validation if this message size is not in reference
                 if str(act_dict['size']) not in ref_msg_sizes:
                     continue
-                    
+
                 current_bw = float(act_dict['busBw'])
                 threshold = float(last_bw) * tolerance
                 if last_bw > 0 and current_bw < threshold:
@@ -200,7 +201,7 @@ def check_bw_dip( test_name, output, exp_res_dict=None ):
                 # Skip validation if this message size is not in reference
                 if str(act_dict['size']) not in ref_msg_sizes:
                     continue
-                    
+
                 current_bw = float(act_dict['busBw'])
                 threshold = float(last_bw) * tolerance
                 if last_bw > 0 and current_bw < threshold:
@@ -373,6 +374,7 @@ def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[Rccl
 # Main RCCL Test library which gets invoked from cvs/test/rccl tests and accepts most of the 
 # standard NCCL environment variables ..
 #
+@rccl_retry_if_enabled
 def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, user_name, ib_hca_list, \
         net_dev_list, oob_port, no_of_global_ranks, rocm_path_var, mpi_dir, mpi_path_var, \
         rccl_dir, rccl_path_var, rccl_tests_dir, nccl_algo='ring', \
@@ -388,7 +390,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         min_channels=64, max_channels=64, \
         data_type="float", \
         user_key_file=None, verify_bus_bw=False, \
-        verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None ):
+        verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None, retry_config=None ):
 
 
     """
@@ -544,6 +546,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
 # Main RCCL Test library which gets invoked from cvs/test/rccl tests and accepts most of the 
 # standard NCCL environment variables ..
 #
+@rccl_retry_if_enabled
 def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_node_list, user_name, ib_hca_list, \
         net_dev_list, oob_port, no_of_global_ranks, rocm_path_var, mpi_dir, mpi_path_var, \
         rccl_dir, rccl_path_var, rccl_tests_dir, nccl_algo='ring', \
@@ -560,7 +563,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         min_channels=64, max_channels=64, \
         user_key_file=None, verify_bus_bw=False, \
         verify_bw_dip=True, verify_lat_dip=True, \
-        nic_model='ainic', exp_results_dict=None ):
+        nic_model='ainic', exp_results_dict=None, retry_config=None ):
 
 
     """
@@ -792,7 +795,7 @@ def rccl_single_node_test( phdl, test_name, cluster_node_list, \
         step_function=2, warmup_iterations=10, no_of_iterations=1, \
         check_iteration_count=1, debug_level='INFO', \
         rccl_result_file='/tmp/rccl_result_output.json', no_of_local_ranks=8, \
-        verify_bus_bw=False, verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None ):
+        verify_bus_bw=False, verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None, retry_config=None ):
 
     """
     Run an Single Node RCCL collective test

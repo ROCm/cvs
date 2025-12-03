@@ -371,6 +371,13 @@ def test_rccl_perf( cluster_dict, config_dict, rccl_collective, gpu_count, data_
     if not re.search( 'None', config_dict['env_source_script'], re.I ):
         phdl.exec(f'bash {config_dict["env_source_script"]}')
 
+    # Extract RCCL retry config with defaults
+    retry_config = {
+        'cvs_retry_on_failure': config_dict.get('cvs_retry_on_failure', False),
+        'cvs_max_retries': config_dict.get('cvs_max_retries', 1),
+        'cvs_retry_delay_seconds': config_dict.get('cvs_retry_delay_seconds', 0)
+    }
+
     # Execute the RCCL cluster test with parameters sourced from config_dict
     result_dict = rccl_lib.rccl_cluster_test_default( phdl, shdl, \
        test_name               = rccl_collective, \
@@ -407,7 +414,8 @@ def test_rccl_perf( cluster_dict, config_dict, rccl_collective, gpu_count, data_
        verify_bw_dip           = config_dict['verify_bw_dip'], \
        verify_lat_dip          = config_dict['verify_lat_dip'], \
        nic_model               = config_dict['nic_model'], \
-       exp_results_dict        = config_dict['expected_results']
+       exp_results_dict        = config_dict['expected_results'],
+       retry_config            = retry_config
     )
 
 

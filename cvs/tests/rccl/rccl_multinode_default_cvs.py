@@ -175,6 +175,17 @@ def shdl(cluster_dict):
     return shdl
 
 
+@pytest.fixture(scope="module", autouse=True)
+def setup_rccl_retry(config_dict):
+    """
+    DEPRECATED: This fixture is no longer needed.
+    
+    RCCL retry config is now extracted directly in test functions.
+    Keeping for backwards compatibility but can be removed.
+    """
+    pass
+
+
 
 
 @pytest.fixture(scope="module")
@@ -297,6 +308,13 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective ):
       - cluster_snapshot_debug controls whether before/after snapshots are taken.
     """
 
+    # Extract RCCL retry config with defaults
+    retry_config = {
+        'cvs_retry_on_failure': config_dict.get('cvs_retry_on_failure', False),
+        'cvs_max_retries': config_dict.get('cvs_max_retries', 1),
+        'cvs_retry_delay_seconds': config_dict.get('cvs_retry_delay_seconds', 0)
+    }
+
     # Log a message to Dmesg to create a timestamp record
     phdl.exec( f'sudo echo "Starting Test {rccl_collective}" | sudo tee /dev/kmsg' )
 
@@ -356,7 +374,8 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective ):
        verify_bus_bw           = config_dict['verify_bus_bw'], \
        verify_bw_dip           = config_dict['verify_bw_dip'], \
        verify_lat_dip          = config_dict['verify_lat_dip'], \
-       exp_results_dict        = config_dict['results']
+       exp_results_dict        = config_dict['results'], \
+       retry_config            = retry_config  # Pass retry configuration
     )
 
 
