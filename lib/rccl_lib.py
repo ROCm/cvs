@@ -475,7 +475,8 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
         -x NCCL_IB_HCA={ib_hca_list} \
         --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {oob_port}\
+        --mca btl_tcp_if_include {oob_port} \
+        --mca oob_tcp_if_include {oob_port} \
         -x UCX_NET_DEVICES={net_dev_list} \
         -x NCCL_ALGO={nccl_algo} \
         -x NCCL_MIN_NCHANNELS={min_channels} \
@@ -491,6 +492,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         -x NCCL_IB_SPLIT_DATA_ON_QPS={nccl_ib_split_data_on_qps} \
         -x NCCL_PXN_DISABLE={nccl_pxn_disable} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
+        -x NCCL_SOCKET_IFNAME={oob_port} \
         {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
         -d {data_type} \
