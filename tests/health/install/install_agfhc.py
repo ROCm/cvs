@@ -190,7 +190,7 @@ def test_install_agfhc(phdl, shdl, config_dict, ):
 
 
     # verify agfhc path exists after installation ..
-    out_dict = phdl.exec(f'ls -l {config_dict['path']}/agfhc')
+    out_dict = phdl.exec(f'ls -l {config_dict["path"]}/agfhc')
     for node in out_dict.keys():
         print(out_dict[node])
         if re.search( 'No such file', out_dict[node], re.I ):

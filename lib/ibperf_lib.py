@@ -24,10 +24,10 @@ def get_ib_bw_pps(phdl, msg_size, cmd ):
     err_pattern = "Couldn\'t initialize ROCm device|Failed to init|Unable to open file descriptor|ERROR|FAIL|Segmentation fault"
     for node in out_dict.keys():
         if not re.search( 'bytes of GPU buffer', out_dict[node], re.I ):
-            fail_test('GPU Buffer allocation failed or Connection not setup for IB Test on node {node}')
+            fail_test(f'GPU Buffer allocation failed or Connection not setup for IB Test on node {node}')
 
         if re.search( err_pattern, out_dict[node], re.I ):
-            fail_test('IB Test failed - Error patterns seen on node {node}')
+            fail_test(f'IB Test failed - Error patterns seen on node {node}')
 
     # Collect the BW, PPS numbers 
     for i in range(1,10):
@@ -40,7 +40,7 @@ def get_ib_bw_pps(phdl, msg_size, cmd ):
                 match = re.search( pattern, out_dict[node] )
                 res_dict[node]['bw'] = match.group(1)
                 res_dict[node]['pps'] = match.group(2)
-                print(f'Node {node} BW - {res_dict[node]['bw']}, MPPS - {res_dict[node]['pps']}')
+                print(f"Node {node} BW - {res_dict[node]['bw']}, MPPS - {res_dict[node]['pps']}")
                 continue
             else:
                 print('Sleeping 10 secs for test to complete')
@@ -60,10 +60,10 @@ def get_ib_lat_numb(phdl, msg_size, cmd ):
     for node in out_dict.keys():
         res_dict[node] = {}
         if not re.search( 'bytes of GPU buffer', out_dict[node], re.I ):
-            fail_test('GPU Buffer allocation failed or Connection not setup for IB Test on node {node}')
+            fail_test(f'GPU Buffer allocation failed or Connection not setup for IB Test on node {node}')
 
         if re.search( err_pattern, out_dict[node], re.I ):
-            fail_test('IB Test failed - Error patterns seen on node {node}')
+            fail_test(f'IB Test failed - Error patterns seen on node {node}')
 
     # Collect the BW, PPS numbers 
     for i in range(1,4):
