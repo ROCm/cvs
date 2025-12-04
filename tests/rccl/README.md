@@ -11,3 +11,8 @@ This Pytest script can be run in the following fashion (for the details on argum
 (myenv) [user@host]~/cvs:(main)$pytest -vvv --log-file=/tmp/test.log -s ./tests/rccl/rccl_multinode_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl.html --capture=tee-sys --self-contained-html
 
 ```
+
+## P2P Batching Restrictions
+
+- `RCCL_P2P_BATCH_ENABLE=1` is only tested on clusters with ≤32 nodes to avoid hangs observed with alltoall/alltoallv operations in larger clusters.
+- For clusters >32 nodes, only `RCCL_P2P_BATCH_ENABLE=0` is tested.
