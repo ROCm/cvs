@@ -24,7 +24,12 @@ from netmiko import redispatch
 sys.path.insert( 0, './lib' )
 from parallel_ssh_lib import *
 from utils_lib import *
-
+from linux_utils import (
+    detect_distro,
+    install_package,
+    update_package_cache,
+    map_packages
+)
 import globals
 
 log = globals.log
@@ -127,11 +132,16 @@ def test_rocblas_install( hdl, phdl, config_dict, ):
     phdl.exec('sudo rm -rf /home/venksrin/rocBLAS')
     time.sleep(5)
     git_url = config_dict['git_url']
-    out_dict = phdl.exec('sudo apt update -y', timeout=200)
-    out_dict = phdl.exec('sudo apt install -y libgtest-dev', timeout=200)
-    out_dict = phdl.exec('sudo apt install -y cmake', timeout=200)
-    out_dict = phdl.exec('sudo apt install -y gfortran', timeout=200)
-    time.sleep(3)
+    packages = ['libgtest-dev', 'cmake', 'gfortran']
+    distro = detect_distro( phdl )
+    log.info(f'Detected Distro : {distro}')
+    out_dict = update_package_cache( phdl, distro, timeout=300 )
+    log.info(f'Updated package cache : {out_dict}')
+    package_list = map_packages( distro,packages )
+    for pkg in package_list:
+        out_dict = install_package( phdl, pkg, distro, timeout=300 )
+        log.info(f'Installed package {pkg} : {out_dict}')
+    
     log.info(out_dict)
     log.info(f'Inputs - {package_path}, {path}, {git_url}')
     print('%%%%%%%%%%%%%%%%%')

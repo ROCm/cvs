@@ -23,7 +23,12 @@ import ibperf_lib
 from parallel_ssh_lib import *
 from utils_lib import *
 from verify_lib import *
-
+from linux_utils import (
+    detect_distro,
+    install_package,
+    update_package_cache,
+    map_packages
+)
 import globals
 
 log = globals.log
@@ -211,12 +216,23 @@ def test_install_ib_perf(phdl, shdl, config_dict ):
 
     if re.search( 'true', config_dict['install_perf_package'], re.I ):
         shdl.exec( f'mkdir -p {config_dict["install_dir"]}')
-        phdl.exec( 'sudo apt update -y', timeout=200 )
-        phdl.exec( 'sudo apt install -y git build-essential autoconf automake libtool pkg-config', timeout=200 )
-        phdl.exec( 'sudo apt install -y libibverbs-dev librdmacm-dev ibverbs-providers rdma-core', timeout=200 )
-        phdl.exec( 'sudo apt install -y libibumad-dev' )
-        phdl.exec( 'sudo apt install -y libpci-dev' )
-        phdl.exec( 'sudo apt install -y numactl' )
+        distro = detect_distro(phdl)
+        out_dict = update_package_cache(phdl, distro, timeout=600)
+        # Check for errors if needed
+        for node in out_dict.keys():
+            if re.search('error|failed', out_dict[node], re.I):
+                log.warning(f'Package update warning on {node}')
+
+        packages = ['git', 'build-essential', 'autoconf', 'automake', 'libtool', 
+            'pkg-config', 'libibverbs-dev', 'librdmacm-dev', 
+            'ibverbs-providers', 'rdma-core', 'libibumad-dev', 
+            'libpci-dev', 'numactl']
+        package_list = map_packages(distro, packages)
+        for package in package_list:
+            out_dict = install_package(phdl, package, distro, timeout=200)
+            for node in out_dict.keys():
+                if re.search('error|failed|unable to locate', out_dict[node], re.I):
+                    fail_test(f'Failed to install {package} on {node}')
         shdl.exec( f'cd {config_dict["install_dir"]}; git clone https://github.com/linux-rdma/perftest' )
         shdl.exec( f'cd {config_dict["install_dir"]}/perftest; ./autogen.sh', timeout=100 )
         shdl.exec( f'cd {config_dict["install_dir"]}/perftest; ./configure --prefix={config_dict["install_dir"]}/perftest --with-rocm={config_dict["rocm_dir"]} --enable-rocm', timeout=200 )

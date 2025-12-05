@@ -17,7 +17,7 @@ log = globals.log
 
 from utils_lib import *
 from verify_lib import *
-
+from linux_utils import detect_distro
 
 
 def get_running_docker_containers(phdl):
@@ -86,21 +86,67 @@ def old_install_docker_on_ubuntu( phdl ):
 
 
 def install_docker_on_ubuntu( phdl ):
-    phdl.exec('sudo rm /etc/apt/keyrings/docker.gpg')
-    phdl.exec('sudo rm /etc/apt/sources.list.d/docker.list')
-    phdl.exec('sudo apt-get -y update')
-    phdl.exec('sudo apt install -y apt-transport-https ca-certificates curl software-properties-common')
-    phdl.exec('curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -')
-    phdl.exec('sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable"')
-    phdl.exec('apt-cache policy docker-ce')
-    phdl.exec('sudo apt install -y docker-ce')
-    time.sleep(3)
-    phdl.exec('sudo systemctl start docker')
-    time.sleep(3)
-    phdl.exec('sudo systemctl status docker')
+    cmds = ['sudo rm /etc/apt/keyrings/docker.gpg',
+    'sudo rm /etc/apt/sources.list.d/docker.list',
+    'sudo apt-get -y update',
+    'sudo apt install -y apt-transport-https ca-certificates curl software-properties-common',
+    'curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -', 
+    'sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable"',
+    'apt-cache policy docker-ce',
+    'sudo apt install -y docker-ce']
+    for cmd in cmds:
+        out_dict = phdl.exec(cmd)
+        for node in out_dict.keys():
+            if re.search( 'error|fail', out_dict[node], re.I ):
+                fail_test(f'Failed to execute "{cmd}" on node {node}, please check logs')
+        
+    sysctl_cmds = ['sudo systemctl start docker',
+    'sudo systemctl enable docker']
+    for cmd in sysctl_cmds: 
+        out_dict = phdl.exec(cmd)
+        for node in out_dict.keys():
+            if re.search( 'error|fail', out_dict[node], re.I ):
+                fail_test(f'Failed to execute "{cmd}" on node {node}, please check logs')
+        time.sleep(3)    
 
 
+def install_docker_on_rhel(phdl):
+    #Install Docker on RHEL/CentOS/Fedora
+    '''
+    docker ce comes distributed from Docker Inc repo for centos for rhel/alma and centos. 
+    hence we need to add the repo and then install via dnf, as there will be failures via default 
+    '''
+    cmds = ['sudo dnf -y install dnf-plugins-core',
+    'sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo',
+    'sudo dnf -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin',
+    'sudo systemctl start docker',
+    'sudo systemctl enable docker']
+    for cmd in cmds:
+        out_dict = phdl.exec(cmd)
+        for node in out_dict.keys():
+            if re.search( 'error|fail', out_dict[node], re.I ):
+                fail_test(f'Failed to execute "{cmd}" on node {node}, please check logs')
+        time.sleep(3)
 
+def install_docker_on_suse(phdl):
+    #Install Docker on SLES
+    cmds = ['sudo zypper refresh', 'sudo zypper -n install docker',
+            'sudo systemctl start docker', 'sudo systemctl enable docker']
+    for cmd in cmds:
+        out_dict = phdl.exec(cmd)
+        for node in out_dict.keys():
+            if re.search( 'error|fail', out_dict[node], re.I ):
+                fail_test(f'Failed to execute "{cmd}" on node {node}, please check logs')
+        time.sleep(3)
+
+def install_docker(phdl):
+    distro = detect_distro(phdl)
+    if distro == 'debian':
+        install_docker_on_ubuntu(phdl)
+    elif distro == 'rhel':
+        install_docker_on_rhel(phdl)
+    elif distro == 'suse':
+        install_docker_on_suse(phdl)
 
 def launch_docker_container( phdl, container_name, image, device_list=[], volume_dict={}, 
        env_dict={}, network='host',
