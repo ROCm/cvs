@@ -5,9 +5,23 @@ import os
 import importlib
 import pkgutil
 import importlib.resources as resources
+import importlib.metadata as metadata
 import pytest
 
 PLUGIN_DIR = os.path.join(os.path.dirname(__file__), 'cli_plugins')
+
+
+def get_version():
+    """Get the version from importlib.metadata or fallback to version.txt file."""
+    try:
+        return metadata.version('cvs')
+    except metadata.PackageNotFoundError:
+        # Fallback for development
+        version_file = os.path.join(os.path.dirname(__file__), '..', 'version.txt')
+        if os.path.exists(version_file):
+            with open(version_file) as f:
+                return f.read().strip()
+    return 'unknown'
 
 
 def discover_plugins():
@@ -21,7 +35,7 @@ def discover_plugins():
     avoid duplicates from relative imports.
 
     Returns:
-        list: A list of instantiated plugin objects.
+        list: A list of instantiated plugin objects, sorted by order then alphabetically by name.
     """
     plugins = []
     from cvs.cli_plugins.base import SubcommandPlugin
@@ -40,7 +54,9 @@ def discover_plugins():
                         continue
             except Exception as e:
                 print(f"Warning: Failed to load plugin {name}: {e}")
-    return plugins
+    
+    # Sort plugins by order first, then by name
+    return sorted(plugins, key=lambda p: (p.get_order(), p.get_name()))
 
 def build_arg_parser(plugins):
     """Build the main argument parser for the CVS CLI.
@@ -64,6 +80,7 @@ def build_arg_parser(plugins):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=epilog
     )
+    parser.add_argument('--version', action='version', version=get_version())
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     for plugin in plugins:
         plugin.get_parser(subparsers)

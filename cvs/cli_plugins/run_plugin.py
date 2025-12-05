@@ -1,5 +1,6 @@
 import pytest
 import sys
+import os
 
 from .list_plugin import ListPlugin
 
@@ -10,14 +11,14 @@ class RunPlugin(ListPlugin):
     def get_parser(self, subparsers):
         parser = subparsers.add_parser('run', help='Run a specific test (wrapper over pytest)')
         parser.add_argument('test', nargs='?', help='Name of the test file to run (omit to list available tests)')
-        parser.add_argument('function', nargs='?', help='Optional: specific test function to run')
-        parser.add_argument('--cluster_file', help='Path to cluster configuration JSON file')
-        parser.add_argument('--config_file', help='Path to test configuration JSON file')
+        parser.add_argument('function', nargs='*', help='Optional: specific test functions to run')
+        parser.add_argument('--cluster_file', required=True, help='Path to cluster configuration JSON file (required)')
+        parser.add_argument('--config_file', required=True, help='Path to test configuration JSON file (required)')
         parser.add_argument('--html', help='Pytest: Create HTML report file at given path')
         parser.add_argument('--self-contained-html', action='store_true',
                           help='Pytest: Create a self-contained HTML file containing all the HTML report')
-        parser.add_argument('--log-file', default='/tmp/test.log',
-                          help='Pytest: Path to file for logging output (default: /tmp/test.log)')
+        parser.add_argument('--log-file', default='/tmp/cvs/test.log',
+                          help='Pytest: Path to file for logging output (default: /tmp/cvs/test.log)')
         parser.add_argument('--log-level',
                           choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                           help='Pytest: Level of messages to catch/display')
@@ -31,9 +32,12 @@ class RunPlugin(ListPlugin):
         return """
 Run Commands:
   cvs run agfhc                      Run all tests in agfhc
-  cvs run agfhc test_function        Run specific test function
+  cvs run agfhc test1                Run specific test function
+  cvs run agfhc test1 test2 test3    Run multiple specific test functions
   cvs run agfhc --html report.html   Run test and generate HTML report
-  cvs run                            List all available test files"""
+  cvs run                            List all available test files
+
+  Note: --cluster_file and --config_file are required for running tests."""
 
     def run(self, args):
         if args.test is None:
@@ -52,7 +56,7 @@ Run Commands:
                 getattr(args, 'extra_pytest_args', [])
             )
 
-    def run_test(self, test_name, test_function, cluster_file, config_file, html, self_contained_html,
+    def run_test(self, test_name, test_functions, cluster_file, config_file, html, self_contained_html,
                  log_file, log_level, capture, extra_pytest_args):
         if test_name not in self.test_map:
             print(f"Error: Unknown test '{test_name}'")
@@ -63,14 +67,13 @@ Run Commands:
         test_file = self.get_test_file(module_path)
 
         # Build pytest arguments
-        if test_function:
-            # Run specific test function
-            test_target = f"{test_file}::{test_function}"
+        if test_functions:
+            # Run specific test functions - add each as a separate pytest target
+            for func in test_functions:
+                pytest_args.append(f"{test_file}::{func}")
         else:
             # Run all tests in the file
-            test_target = test_file
-
-        pytest_args = [test_target]
+            pytest_args.append(test_file)
 
         # Add CVS-specific arguments
         if cluster_file:
@@ -82,6 +85,11 @@ Run Commands:
             pytest_args.append(f"--config_file={config_file}")
         elif "--collect-only" in extra_pytest_args:
             pytest_args.append("--config_file=dummy")
+
+        # Ensure log directory exists
+        if log_file:
+            log_dir = os.path.dirname(log_file)
+            os.makedirs(log_dir, exist_ok=True)
 
         # Add pytest arguments
         if html:

@@ -15,6 +15,10 @@ class SubcommandPlugin:
         """Return examples or help text for this subcommand. Default is empty."""
         return ""
 
+    def get_order(self):
+        """Return the display order for this plugin. Lower numbers appear first. Default is 0."""
+        return 0
+
     def run(self, args):
         """Run the subcommand logic."""
         raise NotImplementedError

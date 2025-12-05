@@ -101,20 +101,34 @@ cvs --version
 
 Before running tests, you need to set up your cluster and test configuration files. Sample configuration files are included with the CVS installation.
 
-### Find and Copy Sample Configuration Files
+### Copy Sample Configuration Files
+
+CVS provides a convenient `cvs copy-config` command to copy sample configuration files. This is the recommended method for setting up your configuration files.
+
+First, list available configuration files:
 
 ```bash
-# Find the location of installed CVS input files
-CVS_INPUT_DIR=$(python -c "import cvs.input; print(cvs.input.__path__[0])")
-echo "CVS input files are located at: $CVS_INPUT_DIR"
-
-# Copy sample files to your home directory
-mkdir -p ~/CVS/INPUT
-cp -r $CVS_INPUT_DIR/* ~/CVS/INPUT/
-
-# List the copied files
-ls -la ~/CVS/INPUT/
+cvs copy-config --list
 ```
+
+Then copy specific files as needed:
+
+```bash
+# Copy cluster configuration
+cvs copy-config cluster.json --output /tmp/cvs/input/cluster_file/cluster.json
+
+# Copy test-specific configurations
+cvs copy-config rccl/rccl_config.json --output /tmp/cvs/input/config_file/rccl_config.json
+cvs copy-config health/mi300_health_config.json --output /tmp/cvs/input/config_file/health_config.json
+```
+
+Or copy all configuration files at once:
+
+```bash
+cvs copy-config --all --output /tmp/cvs/input/
+```
+
+**Note**: The `cvs copy-config` command automatically creates output directories as needed and preserves the original directory structure when copying all files.
 
 ### Modify Configuration Files
 
@@ -122,10 +136,10 @@ Edit the copied files to match your cluster setup:
 
 ```bash
 # Edit cluster configuration
-vi ~/CVS/INPUT/cluster_file/cluster.json
+vi /tmp/cvs/input/cluster_file/cluster.json
 
 # Edit test-specific configuration (example for RCCL)
-vi ~/CVS/INPUT/config_file/rccl/rccl_config.json
+vi /tmp/cvs/input/config_file/rccl/rccl_config.json
 ```
 
 **Important**: Update the following in your configuration files:
@@ -135,9 +149,9 @@ vi ~/CVS/INPUT/config_file/rccl/rccl_config.json
 ### Example Configuration File Locations
 
 After setup, your files will be at:
-- Cluster config: `~/CVS/INPUT/cluster_file/cluster.json`
-- RCCL config: `~/CVS/INPUT/config_file/rccl/rccl_config.json`
-- Other configs: `~/CVS/INPUT/config_file/*.json`
+- Cluster config: `/tmp/cvs/input/cluster_file/cluster.json`
+- RCCL config: `/tmp/cvs/input/config_file/rccl/rccl_config.json`
+- Other configs: `/tmp/cvs/input/config_file/*/*.json`
 
 ## Running Tests
 
@@ -147,14 +161,20 @@ Once your configuration files are set up, you can run CVS tests using the conven
 # List all available test suites
 cvs list
 
+# List sub-tests within a specific test suite
+cvs list rccl_multinode_cvs
+
 # Run all tests from a specific test suite
-cvs run rccl_multinode_cvs --cluster_file ./input/cluster_file/cluster.json --config_file ./input/config_file/rccl_config.json --html=/var/www/html/cvs/rccl_test_report.html --self-contained-html --capture=tee-sys
+cvs run rccl_multinode_cvs --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_test_report.html --self-contained-html --capture=tee-sys
 
 # Run a specific test from a test suite
-cvs run rccl_multinode_cvs test_collect_hostinfo --cluster_file ./input/cluster_file/cluster.json --config_file ./input/config_file/rccl_config.json --html=/var/www/html/cvs/rccl_test_report.html --self-contained-html --capture=tee-sys
+cvs run rccl_multinode_cvs test_collect_hostinfo --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_test_report.html --self-contained-html --capture=tee-sys
+
+# Run multiple specific tests from a test suite
+cvs run rccl_multinode_cvs test_collect_hostinfo test_basic_ring --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_test_report.html --self-contained-html --capture=tee-sys
 
 # Run without HTML reporting
-cvs run rccl_multinode_cvs --cluster_file ./input/cluster_file/cluster.json --config_file ./input/config_file/rccl_config.json
+cvs run rccl_multinode_cvs --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json
 ```
 
 ## Command Line Options
@@ -163,7 +183,7 @@ The `cvs run` command supports common pytest options directly:
 
 - `--html`: Create HTML report file at given path
 - `--self-contained-html`: Create a self-contained HTML file containing all the HTML report
-- `--log-file`: Path to file for logging output (default: /tmp/test.log)
+- `--log-file`: Path to file for logging output (default: /tmp/cvs/test.log)
 - `--log-level`: Level of messages to catch/display (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 - `--capture`: Per-test capturing method for stdout/stderr (no, tee-sys, tee-merged, fd, sys)
 
@@ -171,8 +191,45 @@ All other pytest arguments are supported and passed transparently to pytest. For
 
 ## CVS-Specific Options
 
-- `--cluster_file`: Path to cluster configuration JSON file
-- `--config_file`: Path to test configuration JSON file
+**Note**: The `--cluster_file` and `--config_file` arguments are **mandatory** for running tests. These files contain the cluster configuration and test-specific settings required by CVS tests.
+
+- `--cluster_file`: Path to cluster configuration JSON file (required)
+- `--config_file`: Path to test configuration JSON file (required)
+
+## Command Help
+
+```bash
+$ cvs run --help
+usage: cvs run [-h] --cluster_file CLUSTER_FILE --config_file
+               CONFIG_FILE [--html HTML] [--self-contained-html]
+               [--log-file LOG_FILE]
+               [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}]
+               [--capture {no,tee-sys,tee-merged,fd,sys}]
+               [test] [function]
+
+positional arguments:
+  test                  Name of the test file to run (omit to list
+                        available tests)
+  function              Optional: specific test function to run
+
+options:
+  -h, --help            show this help message and exit
+  --cluster_file CLUSTER_FILE
+                        Path to cluster configuration JSON file
+                        (required)
+  --config_file CONFIG_FILE
+                        Path to test configuration JSON file (required)
+  --html HTML           Pytest: Create HTML report file at given path
+  --self-contained-html
+                        Pytest: Create a self-contained HTML file
+                        containing all the HTML report
+  --log-file LOG_FILE   Pytest: Path to file for logging output
+                        (default: /tmp/cvs/test.log)
+  --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
+                        Pytest: Level of messages to catch/display
+  --capture {no,tee-sys,tee-merged,fd,sys}
+                        Per-test capturing method for stdout/stderr
+```
 
 ## Example with full options
 
