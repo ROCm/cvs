@@ -1,0 +1,66 @@
+# Aorta Benchmark Configuration
+# 
+# This configuration controls the CVS benchmark runner for Aorta distributed training.
+# The runner will bind-mount the aorta repository and apply these overrides.
+
+# Aorta installation path (bind-mounted into container)
+aorta_path: /home/AMD/speriasw/projects/aorta
+
+# Container mount point
+container_mount_path: /mnt
+
+# Aorta's base config file (relative to aorta_path)
+base_config: config/distributed.yaml
+
+# Docker container settings
+docker:
+  image: jeffdaily/pytorch:torchrec-dlrm-complete
+  container_name: aorta-benchmark
+  shm_size: 17G
+  network_mode: host
+  privileged: true
+
+# RCCL build configuration
+rccl:
+  clone_url: https://github.com/ROCmSoftwarePlatform/rccl.git
+  branch: develop
+  build_path: /mnt/rccl
+
+# NCCL/RCCL environment variables
+environment:
+  NCCL_MAX_NCHANNELS: 112
+  NCCL_MAX_P2P_NCHANNELS: 112
+  # TENSILE_STREAMK_MAX_CUS is computed as 256 - NCCL_MAX_NCHANNELS
+  NCCL_DEBUG: VERSION
+  TORCH_NCCL_HIGH_PRIORITY: 1
+  OMP_NUM_THREADS: 1
+  RCCL_MSCCL_ENABLE: 0
+
+# Aorta training config overrides (passed via --override)
+# These override values in config/distributed.yaml
+training_overrides:
+  training.max_steps: 100
+  profiling.active: 10
+  # training.output_dir is set dynamically by the runner
+
+# Scripts to execute (relative to container_mount_path)
+build_script: scripts/build_rccl.sh
+experiment_script: scripts/rccl_exp.sh
+
+# Hardware configuration
+gpus_per_node: 8
+
+# Execution settings
+timeout_seconds: 10800  # 3 hours
+skip_rccl_build: false  # Set to true if RCCL is already built
+
+# Expected results for validation
+# NOTE: TraceLens reports TOTAL trace time for all profiled iterations (profiling.active=10)
+# So max_avg_iteration_ms should be ~total_time, not per-iteration time
+# Per-iteration would be: total_time / profiling.active = ~6200ms / 10 = ~620ms
+expected_results:
+  max_avg_iteration_ms: 7000   # Total trace time threshold (~6200ms actual)
+  min_compute_ratio: 0.8       # Expect 80%+ compute utilization
+  min_overlap_ratio: 0.0       # Current metric uses exposed_comm, so overlap shows low
+  max_time_variance_ratio: 0.2 # Allow 20% variance between ranks
+
