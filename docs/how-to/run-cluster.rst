@@ -1,56 +1,62 @@
 .. meta::
-  :description: Run the Cluster Health Checker utility script to generate a health report of your GPU cluster
+  :description: Run the Cluster Health Check monitor to generate a health report of your GPU cluster
   :keywords: CVS, health, network, tests, RCCL 
 
 **********************************
 Monitor the health of GPU clusters
 **********************************
 
-Monitor the health of your cluster with the Cluster Health Checker utility script (``check_cluster_health.py`` in the ``utils`` folder of the CVS GitHub repo), a standalone Python utility script that generates an overall health report by collecting logs and metrics of the GPU nodes cluster-wide.
+Monitor the health of your cluster with the Cluster Health Check monitor, a utility that generates an overall health report by collecting logs and metrics of the GPU nodes cluster-wide.
 
-The script doesn't require any agent/plugin/exporters to be installed or any controller virtual machines.
+The monitor doesn't require any agent/plugin/exporters to be installed or any controller virtual machines.
 
-The script identifies any hardware failure/degradation signatures like RAS errors, PCIe/XGMI errors, or network drop / error counters using `AMD SMI <https://rocm.docs.amd.com/projects/amdsmi/en/latest/install/install.html>`_. 
+The monitor identifies any hardware failure/degradation signatures like RAS errors, PCIe/XGMI errors, or network drop / error counters using `AMD SMI <https://rocm.docs.amd.com/projects/amdsmi/en/latest/install/install.html>`_. 
 It can also identify software failures by searching for failing signatures in the ``dmesg`` and ``journlctl`` logs.
 
-The script also acts as a triaging tool to troubleshoot any performance issues that may be related to the AI infrastructure. 
-You can use the script to take a snapshot of all counters (GPU/NIC) while your training/inference workloads are in progress, 
+The monitor also acts as a triaging tool to troubleshoot any performance issues that may be related to the AI infrastructure. 
+You can use it to take a snapshot of all counters (GPU/NIC) while your training/inference workloads are in progress, 
 then compare the counters and identify any increment of unexpected counters across all nodes in the cluster to find issues.
 
 Generate a health report
 ========================
 
-Run the Cluster Health Checker utility script to generate a health report for your clusters with Python commands. 
+Run the Cluster Health Check monitor to generate a health report for your clusters using the CVS CLI. 
 
-To run the script and generate a health report for a cluster:
+To run the monitor and generate a health report for a cluster:
 
 1. Ensure you've completed the :doc:`Cluster Validation Suite installation </install/cvs-install>`.
-2. Open a new Terminal and CD into the cloned ``cvs`` repo.
-3. Type this Python command:
+2. Open a new Terminal.
+3. List available monitors:
 
-   .. code:: Python
+   .. code:: bash
 
-    python3 ./utils/check_cluster_health.py 
+    cvs monitor
 
-   Then set the applicable arguments for your use case:
+4. View help for the check_cluster_health monitor:
 
-   - ``--hosts``: Direct the script to the file with the list of host IP addresses you want the script to check.
+   .. code:: bash
+
+    cvs monitor check_cluster_health --help
+
+5. Run the monitor with the applicable arguments for your use case:
+
+   - ``--hosts``: Direct the monitor to the file with the list of host IP addresses you want to check.
    - ``--username``: Enter the username to SSH to the hosts.
    - ``--password``: Enter the password to SSH to the hosts
    - ``--key_file``: Enter the private Keyfile for the username.
    - ``--iterations``: Enter the number of check iterations you want to run.
-   - ``--time_between_iters``: Enter the time the script should wait between run iterations.
+   - ``--time_between_iters``: Enter the time to wait between run iterations.
    - ``--report_file``: Enter the directory you want the generated health file to save to. If you leave this argument empty, the file saves as ``cluster_report.html`` to the local directory.  
 
    Here's an example command with some arguments set:
 
-   .. code:: Python
+   .. code:: bash
 
-    python3 ./utils/check_cluster_health.py --hosts /home/user/input/host_file.txt --username myusername --key_file /home/user/input/.ssh/id_test --iterations 2
+    cvs monitor check_cluster_health --hosts /home/user/input/host_file.txt --username myusername --key_file /home/user/input/.ssh/id_test --iterations 2
 
-   The script logs into the nodes based on the hosts specified and captures information on potential error conditions or anomalies. 
+   The monitor logs into the nodes based on the hosts specified and captures information on potential error conditions or anomalies. 
 
-4. Open the ``cluster_report.html`` file to view the generated health report for the cluster.
+6. Open the ``cluster_report.html`` file to view the generated health report for the cluster.
 
 Review the health report
 ========================
@@ -79,7 +85,7 @@ Use the logs in the health report to diagnose and triage node errors in your GPU
 
 These values in these reports are captured using these ROCm AMD SMI commands:
 
-.. code:: python
+.. code:: bash
 
   sudo rocm-smi -a --json
   sudo amd-smi partition --json
@@ -101,7 +107,7 @@ These values in these reports are captured using these ROCm AMD SMI commands:
 
 .. tip::
 
-  See the `AMD SMI Commands reference <https://rocm.docs.amd.com/projects/amdsmi/en/latest/how-to/amdsmi-cli-tool.html#commands>`_ for more information on how the Cluster Health Checker script captures these metrics and their definitions.
+  See the `AMD SMI Commands reference <https://rocm.docs.amd.com/projects/amdsmi/en/latest/how-to/amdsmi-cli-tool.html#commands>`_ for more information on how the Cluster Health Check monitor captures these metrics and their definitions.
 
 
 

@@ -1,0 +1,9 @@
+include README.md
+include LICENSE
+include pytest.ini
+include requirements.txt
+include version.txt
+recursive-include cvs *
+global-exclude __pycache__
+global-exclude *.pyc
+global-exclude *.pyo
