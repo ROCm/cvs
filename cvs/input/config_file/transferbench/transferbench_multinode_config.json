@@ -1,0 +1,38 @@
+{
+  "transferbench": {
+    "rocm_path_var": "/opt/rocm",
+    "mpi_dir": "/opt/ompi",
+    "mpi_path_var": "/opt/ompi",
+    "transferbench_dir": "/path/to/TransferBench",
+    "transferbench_path_var": "/path/to/TransferBench",
+    "transferbench_bin_dir": "/path/to/TransferBench",
+    "num_iterations": 10,
+    "num_warmups": 5,
+    "transferbench_result_file": "/tmp/transferbench_result_output.json",
+    "verify_bus_bw": "False",
+    "verify_bw_dip": "True",
+    "verify_lat_dip": "True",
+    "cluster_snapshot_debug": "False",
+    "env_source_script": "None",
+    "transfer_scale": [1, 2, 4, 8],
+    "executor_scale": [1, 2, 4],
+    "source_executor_destination": [
+      "G0->G0->G1",
+      "C0->D0->G0",
+      "G0->N0->G1",
+      "F0->F0->F1",
+      "C0->C0->C1"
+    ],
+    "start_num_bytes": "1024",
+    "end_num_bytes": "16g", 
+    "step_function": "2",
+    "results": {
+      "1048576": {
+        "bus_bw": 50.0
+      },
+      "2097152": {
+        "bus_bw": 48.0
+      }
+    }
+  }
+}
