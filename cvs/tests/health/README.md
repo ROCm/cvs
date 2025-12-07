@@ -14,7 +14,7 @@ These are Pytest scripts and can be run in the following fashion (for the detail
 ```
 (myenv) [user@host]~/cvs:(main)$
 (myenv) [user@host]~/cvs:(main)$pwd
-/home/user/cvs
+/home/user/cvs/cvs
 (myenv) [user@host]~/cvs:(main)$pytest -vvv -log-file=/tmp/agfhc_test.log -s ./tests/health/agfhc_cvs.py --cluster_file ./input/cluster.json --config_file ./input/health/mi300_config.json --html=/var/www/html/cvs/agfhc_health_report.html --capture=tee-sys --self-contained-html
 ```
 ## Example: Running AGFHC Tests

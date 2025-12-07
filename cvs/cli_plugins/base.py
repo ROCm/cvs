@@ -1,9 +1,6 @@
-import os
-import sys
-import importlib.resources as resources
-
 class SubcommandPlugin:
     """Base class for CLI subcommand plugins."""
+
     def get_name(self):
         raise NotImplementedError
 

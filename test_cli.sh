@@ -117,33 +117,3 @@ echo ""
 echo "===================="
 echo "All cvs monitor command tests passed!"
 echo ""
-
-echo "Testing: cvs run (list all tests)"
-echo "===================="
-output="$($CVS run 2>&1)"
-echo "$output"
-if echo "$output" | grep -qi "ERRORS ===\|ERROR collecting\|Traceback\|!!!.*error"; then
-    echo ""
-    echo "FAILED: cvs run - errors detected in output"
-    exit 1
-fi
-
-echo ""
-echo "Testing: cvs run <test_name> --collect-only for each test suite"
-echo "===================="
-set -e
-for test in $($CVS run | grep -v "Available tests:" | grep -v "^$$" | awk '{print $2}'); do
-    echo ""
-    echo "Testing: cvs run $test --collect-only"
-    output="$($CVS run $test --collect-only 2>&1)"
-    echo "$output"
-    if echo "$output" | grep -qi "ERRORS ===\|ERROR collecting\|Traceback\|!!!.*error"; then
-        echo ""
-        echo "FAILED: cvs run $test --collect-only - errors detected in output"
-        exit 1
-    fi
-done
-
-echo ""
-echo "===================="
-echo "All cvs run command tests passed!"

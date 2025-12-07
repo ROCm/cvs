@@ -117,6 +117,8 @@ Then copy specific files as needed:
 # Copy cluster configuration
 cvs copy-config cluster.json --output /tmp/cvs/input/cluster_file/cluster.json
 
+# Alternatively, generate cluster configuration for multiple hosts (see 'Generate Cluster Configuration File' section below)
+
 # Copy test-specific configurations
 cvs copy-config rccl/rccl_config.json --output /tmp/cvs/input/config_file/rccl_config.json
 cvs copy-config health/mi300_health_config.json --output /tmp/cvs/input/config_file/health_config.json
@@ -128,14 +130,53 @@ Or copy all configuration files at once:
 cvs copy-config --all --output /tmp/cvs/input/
 ```
 
-**Note**: The `cvs copy-config` command automatically creates output directories as needed and preserves the original directory structure when copying all files.
+To force overwrite existing files:
+
+```bash
+cvs copy-config --all --output /tmp/cvs/input/ --force
+```
+
+**Note**: The `cvs copy-config` command automatically creates output directories as needed, preserves the original directory structure when copying all files, and can overwrite existing files with the `--force` option.
+
+### Generate Cluster Configuration File
+
+Alternatively, you can generate the cluster JSON file for N number of hosts using the `cvs generate cluster_json` command. This is useful for automatically creating cluster configurations from a list of host IPs.
+
+First, create a hosts file with one IP address per line (supports IP ranges like `192.168.1.10-20`, comments with `#`, and blank lines are ignored):
+
+```bash
+# Example hosts file: /tmp/hosts.txt
+# Single host
+192.168.1.10
+
+# IP range (expands to 192.168.1.11 through 192.168.1.15)
+192.168.1.11-15
+
+# Another single host
+192.168.1.20
+
+# Additional hosts can be added here
+```
+
+Then generate the cluster JSON:
+
+```bash
+cvs generate cluster_json --input_hosts_file /tmp/hosts.txt --output_json_file /tmp/cvs/input/cluster_file/cluster.json --username myuser --key_file ~/.ssh/id_rsa --head_node 192.168.1.10
+```
+
+**Command options**:
+- `--input_hosts_file`: Path to file with host IPs (one per line, supports ranges)
+- `--output_json_file`: Path to output cluster JSON file
+- `--username`: SSH username for the hosts
+- `--key_file`: Path to SSH private key file
+- `--head_node`: IP of the head node (optional, defaults to first host in the list; can be different from the hosts in the file)
 
 ### Modify Configuration Files
 
-Edit the copied files to match your cluster setup:
+Edit the copied files to match your cluster setup. If you generated the cluster.json using the `cvs generate cluster_json` command above, it should already be properly configured and may require no editing.
 
 ```bash
-# Edit cluster configuration
+# Edit cluster configuration (skip if generated above)
 vi /tmp/cvs/input/cluster_file/cluster.json
 
 # Edit test-specific configuration (example for RCCL)

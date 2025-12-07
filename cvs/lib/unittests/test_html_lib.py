@@ -5,8 +5,8 @@ import os
 # Import the module under test
 import cvs.lib.html_lib as html_lib
 
-class TestNormalizeBytes(unittest.TestCase):
 
+class TestNormalizeBytes(unittest.TestCase):
     def test_bytes_only(self):
         self.assertEqual(html_lib.normalize_bytes(932), "932 B")
 
@@ -34,9 +34,8 @@ class TestNormalizeBytes(unittest.TestCase):
 
 
 class TestBuildHtmlMemUtilizationTable(unittest.TestCase):
-
     def setUp(self):
-        self.tmp_file = tempfile.NamedTemporaryFile(delete=False, mode='w+', encoding='utf-8')
+        self.tmp_file = tempfile.NamedTemporaryFile(delete=False, mode="w+", encoding="utf-8")
         self.filename = self.tmp_file.name
 
     def tearDown(self):
@@ -46,12 +45,15 @@ class TestBuildHtmlMemUtilizationTable(unittest.TestCase):
     def test_single_node_valid_input(self):
         use_dict = {
             "node1": {
-                **{f"card{i}": {
-                    "GPU Memory Allocated (VRAM%)": f"{i*10}%",
-                    "GPU Memory Read/Write Activity (%)": f"{i*5}%",
-                    "Memory Activity": f"{i*3}%",
-                    "Avg. Memory Bandwidth": f"{i*2} GB/s"
-                } for i in range(8)}
+                **{
+                    f"card{i}": {
+                        "GPU Memory Allocated (VRAM%)": f"{i * 10}%",
+                        "GPU Memory Read/Write Activity (%)": f"{i * 5}%",
+                        "Memory Activity": f"{i * 3}%",
+                        "Avg. Memory Bandwidth": f"{i * 2} GB/s",
+                    }
+                    for i in range(8)
+                }
             }
         }
 
@@ -61,14 +63,15 @@ class TestBuildHtmlMemUtilizationTable(unittest.TestCase):
                     "mem_usage": {
                         "total_vram": {"value": "16384"},
                         "used_vram": {"value": "8192"},
-                        "free_vram": {"value": "8192"}
+                        "free_vram": {"value": "8192"},
                     }
-                } for _ in range(8)
+                }
+                for _ in range(8)
             ]
         }
 
         html_lib.build_html_mem_utilization_table(self.filename, use_dict, amd_dict)
-        with open(self.filename, 'r', encoding='utf-8') as f:
+        with open(self.filename, "r", encoding="utf-8") as f:
             content = f.read()
             self.assertIn("GPU Memory Utilization", content)
             self.assertIn("G0 Tot VRAM MB", content)
@@ -79,13 +82,17 @@ class TestBuildHtmlMemUtilizationTable(unittest.TestCase):
     def test_multiple_nodes(self):
         use_dict = {
             f"node{i}": {
-                **{f"card{j}": {
-                    "GPU Memory Allocated (VRAM%)": f"{j*10}%",
-                    "GPU Memory Read/Write Activity (%)": f"{j*5}%",
-                    "Memory Activity": f"{j*3}%",
-                    "Avg. Memory Bandwidth": f"{j*2} GB/s"
-                } for j in range(8)}
-            } for i in range(2)
+                **{
+                    f"card{j}": {
+                        "GPU Memory Allocated (VRAM%)": f"{j * 10}%",
+                        "GPU Memory Read/Write Activity (%)": f"{j * 5}%",
+                        "Memory Activity": f"{j * 3}%",
+                        "Avg. Memory Bandwidth": f"{j * 2} GB/s",
+                    }
+                    for j in range(8)
+                }
+            }
+            for i in range(2)
         }
 
         amd_dict = {
@@ -94,14 +101,16 @@ class TestBuildHtmlMemUtilizationTable(unittest.TestCase):
                     "mem_usage": {
                         "total_vram": {"value": "16384"},
                         "used_vram": {"value": "8192"},
-                        "free_vram": {"value": "8192"}
+                        "free_vram": {"value": "8192"},
                     }
-                } for _ in range(8)
-            ] for i in range(2)
+                }
+                for _ in range(8)
+            ]
+            for i in range(2)
         }
 
         html_lib.build_html_mem_utilization_table(self.filename, use_dict, amd_dict)
-        with open(self.filename, 'r', encoding='utf-8') as f:
+        with open(self.filename, "r", encoding="utf-8") as f:
             content = f.read()
             self.assertIn("node0", content)
             self.assertIn("node1", content)
@@ -109,12 +118,15 @@ class TestBuildHtmlMemUtilizationTable(unittest.TestCase):
     def test_rocm7_style_gpu_data(self):
         use_dict = {
             "node1": {
-                **{f"card{i}": {
-                    "GPU Memory Allocated (VRAM%)": f"{i*10}%",
-                    "GPU Memory Read/Write Activity (%)": f"{i*5}%",
-                    "Memory Activity": f"{i*3}%",
-                    "Avg. Memory Bandwidth": f"{i*2} GB/s"
-                } for i in range(8)}
+                **{
+                    f"card{i}": {
+                        "GPU Memory Allocated (VRAM%)": f"{i * 10}%",
+                        "GPU Memory Read/Write Activity (%)": f"{i * 5}%",
+                        "Memory Activity": f"{i * 3}%",
+                        "Avg. Memory Bandwidth": f"{i * 2} GB/s",
+                    }
+                    for i in range(8)
+                }
             }
         }
 
@@ -125,15 +137,16 @@ class TestBuildHtmlMemUtilizationTable(unittest.TestCase):
                         "mem_usage": {
                             "total_vram": {"value": "16384"},
                             "used_vram": {"value": "8192"},
-                            "free_vram": {"value": "8192"}
+                            "free_vram": {"value": "8192"},
                         }
-                    } for _ in range(8)
+                    }
+                    for _ in range(8)
                 ]
             }
         }
 
         html_lib.build_html_mem_utilization_table(self.filename, use_dict, amd_dict)
-        with open(self.filename, 'r', encoding='utf-8') as f:
+        with open(self.filename, "r", encoding="utf-8") as f:
             content = f.read()
             self.assertIn("GPU Memory Utilization", content)
             self.assertIn("G0 Tot VRAM MB", content)
@@ -146,7 +159,7 @@ class TestBuildHtmlMemUtilizationTable(unittest.TestCase):
                     "GPU Memory Allocated (VRAM%)": "10%",
                     "GPU Memory Read/Write Activity (%)": "20%",
                     "Memory Activity": "30%",
-                    "Avg. Memory Bandwidth": "40 GB/s"
+                    "Avg. Memory Bandwidth": "40 GB/s",
                 }
                 # Missing card1 to card7
             }
@@ -158,9 +171,10 @@ class TestBuildHtmlMemUtilizationTable(unittest.TestCase):
                     "mem_usage": {
                         "total_vram": {"value": "16384"},
                         "used_vram": {"value": "8192"},
-                        "free_vram": {"value": "8192"}
+                        "free_vram": {"value": "8192"},
                     }
-                } for _ in range(8)
+                }
+                for _ in range(8)
             ]
         }
 
@@ -168,5 +182,5 @@ class TestBuildHtmlMemUtilizationTable(unittest.TestCase):
             html_lib.build_html_mem_utilization_table(self.filename, use_dict, amd_dict)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

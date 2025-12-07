@@ -77,7 +77,7 @@ class ClusterJsonGenerator(GeneratorPlugin):
         with open(filename, "r") as f:
             for line in f:
                 line = line.strip()
-                if not line:
+                if not line or line.startswith('#'):
                     continue
                 # Expand ranges
                 expanded = self.expand_ip_range(line)
@@ -89,10 +89,11 @@ class ClusterJsonGenerator(GeneratorPlugin):
         """Determine the head node IP from node list and optional specification"""
         if specified_head_node:
             head_node_ip = specified_head_node
-            # Ensure head node is in the node list
-            if head_node_ip not in node_list:
-                print(f"WARNING: Head node {head_node_ip} not found in hosts file, adding it to node list")
+            # If head node is in the node list, move it to the front
+            if head_node_ip in node_list:
+                node_list.remove(head_node_ip)
                 node_list.insert(0, head_node_ip)
+            # If head node is not in the list, keep it separate (don't add to node_list)
         else:
             head_node_ip = node_list[0]
         

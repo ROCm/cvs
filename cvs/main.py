@@ -4,24 +4,23 @@ import sys
 import os
 import importlib
 import pkgutil
-import importlib.resources as resources
 import importlib.metadata as metadata
-import pytest
+from cvs.cli_plugins.base import SubcommandPlugin
 
-PLUGIN_DIR = os.path.join(os.path.dirname(__file__), 'cli_plugins')
+PLUGIN_DIR = os.path.join(os.path.dirname(__file__), "cli_plugins")
 
 
 def get_version():
     """Get the version from importlib.metadata or fallback to version.txt file."""
     try:
-        return metadata.version('cvs')
+        return metadata.version("cvs")
     except metadata.PackageNotFoundError:
         # Fallback for development
-        version_file = os.path.join(os.path.dirname(__file__), '..', 'version.txt')
+        version_file = os.path.join(os.path.dirname(__file__), "..", "version.txt")
         if os.path.exists(version_file):
             with open(version_file) as f:
                 return f.read().strip()
-    return 'unknown'
+    return "unknown"
 
 
 def discover_plugins():
@@ -38,25 +37,30 @@ def discover_plugins():
         list: A list of instantiated plugin objects, sorted by order then alphabetically by name.
     """
     plugins = []
-    from cvs.cli_plugins.base import SubcommandPlugin
     for _, name, ispkg in pkgutil.iter_modules([PLUGIN_DIR]):
         if not ispkg:
             try:
-                mod = importlib.import_module(f'cvs.cli_plugins.{name}')
+                mod = importlib.import_module(f"cvs.cli_plugins.{name}")
                 for attr in dir(mod):
                     obj = getattr(mod, attr)
                     try:
                         # Check if obj is a plugin class: must be a class, subclass of SubcommandPlugin,
                         # not the base class itself, and defined in this module (not imported)
-                        if isinstance(obj, type) and issubclass(obj, SubcommandPlugin) and obj is not SubcommandPlugin and obj.__module__ == mod.__name__:
+                        if (
+                            isinstance(obj, type)
+                            and issubclass(obj, SubcommandPlugin)
+                            and obj is not SubcommandPlugin
+                            and obj.__module__ == mod.__name__
+                        ):
                             plugins.append(obj())
                     except Exception:
                         continue
             except Exception as e:
                 print(f"Warning: Failed to load plugin {name}: {e}")
-    
+
     # Sort plugins by order first, then by name
     return sorted(plugins, key=lambda p: (p.get_order(), p.get_name()))
+
 
 def build_arg_parser(plugins):
     """Build the main argument parser for the CVS CLI.
@@ -78,26 +82,29 @@ def build_arg_parser(plugins):
     parser = argparse.ArgumentParser(
         description="Cluster Validation Suite (CVS)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=epilog
+        epilog=epilog,
     )
-    parser.add_argument('--version', action='version', version=get_version())
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    parser.add_argument("--version", action="version", version=get_version())
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
     for plugin in plugins:
         plugin.get_parser(subparsers)
     return parser
 
-def main():
-    plugins = discover_plugins()
+
+def main(plugins=None):
+    if plugins is None:
+        plugins = discover_plugins()
     parser = build_arg_parser(plugins)
     args, extra_pytest_args = parser.parse_known_args()
     args.extra_pytest_args = extra_pytest_args
 
     # Dispatch to plugin
-    if hasattr(args, '_plugin'):
+    if hasattr(args, "_plugin"):
         args._plugin.run(args)
     else:
         parser.print_help()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

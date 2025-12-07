@@ -1,22 +1,22 @@
 from setuptools import setup, find_packages
 
 # Read dependencies from requirements.txt
-with open('requirements.txt') as f:
-    install_requires = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+with open("requirements.txt") as f:
+    install_requires = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
 # Read version from version.txt
-with open('version.txt') as f:
+with open("version.txt") as f:
     version = f.read().strip()
 
 setup(
     name="cvs",
     version=version,
-    packages=['cvs'] + ['cvs.' + pkg for pkg in find_packages(where='cvs')],
-    package_dir={'cvs': 'cvs'},
+    packages=["cvs"] + ["cvs." + pkg for pkg in find_packages(where="cvs")],
+    package_dir={"cvs": "cvs"},
     install_requires=install_requires,
     entry_points={
-        'console_scripts': [
-            'cvs=cvs.main:main',
+        "console_scripts": [
+            "cvs=cvs.main:main",
         ],
     },
     include_package_data=True,
@@ -34,5 +34,5 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.6',
+    python_requires=">=3.9",
 )

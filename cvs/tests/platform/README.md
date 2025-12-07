@@ -9,7 +9,7 @@ This Pytest script can be run in the following fashion (for the details on argum
 ```
 (myenv) [user@host]~/cvs:(main)$
 (myenv) [user@host]~/cvs:(main)$pwd
-/home/user/cvs
+/home/user/cvs/cvs
 (myenv) [user@host]~/cvs:(main)$pytest -vvv --log-file=/tmp/test.log -s ./tests/platform/host_configs_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/platform/host_config.json --html=/var/www/html/cvs/rochpl.html --capture=tee-sys --self-contained-html
 
 ```

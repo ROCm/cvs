@@ -7,7 +7,7 @@ This Pytest script can be run in the following fashion (for the details on argum
 ```
 (myenv) [user@host]~/cvs:(main)$
 (myenv) [user@host]~/cvs:(main)$pwd
-/home/user/cvs
+/home/user/cvs/cvs
 (myenv) [user@host]~/cvs:(main)$pytest -vvv --log-file=/tmp/test.log -s ./tests/rccl/rccl_multinode_cvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl.html --capture=tee-sys --self-contained-html
 
 ```

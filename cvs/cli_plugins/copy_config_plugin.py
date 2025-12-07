@@ -2,16 +2,26 @@ from .base import SubcommandPlugin
 import os
 import shutil
 
+
 class CopyConfigPlugin(SubcommandPlugin):
     def get_name(self):
         return "copy-config"
 
     def get_parser(self, subparsers):
-        parser = subparsers.add_parser('copy-config', help='List or copy config files from CVS package. Lists configs if --output not specified.')
-        parser.add_argument('path', nargs='?', help='Path to config file (e.g. training/jax/mi300x_distributed_llama_3_1_405b.json)')
-        parser.add_argument('--all', action='store_true', help='Copy all config files preserving directory structure')
-        parser.add_argument('--output', help='Destination path to copy config file(s)')
-        parser.add_argument('--list', action='store_true', help='List available config files at the given path (lists all if no path specified)')
+        parser = subparsers.add_parser(
+            "copy-config", help="List or copy config files from CVS package. Lists configs if --output not specified."
+        )
+        parser.add_argument(
+            "path", nargs="?", help="Path to config file (e.g. training/jax/mi300x_distributed_llama_3_1_405b.json)"
+        )
+        parser.add_argument("--all", action="store_true", help="Copy all config files preserving directory structure")
+        parser.add_argument("--output", help="Destination path to copy config file(s)")
+        parser.add_argument(
+            "--list",
+            action="store_true",
+            help="List available config files at the given path (lists all if no path specified)",
+        )
+        parser.add_argument("--force", action="store_true", help="Force overwrite of existing files")
         parser.set_defaults(_plugin=self)
         return parser
 
@@ -27,14 +37,15 @@ Copy-Config Commands:
   Note: --list is optional, same behavior without it
   
   cvs copy-config --all --output /tmp/cvs/input/                          Copy all config files preserving directory structure
-  cvs copy-config training/jax/mi300x_config.json --output ~/mi300.json   Copy specific config file"""
+  cvs copy-config training/jax/mi300x_config.json --output ~/mi300.json   Copy specific config file
+  cvs copy-config --all --output /tmp/cvs/input/ --force                  Force overwrite existing files"""
 
     def _find_config_root(self):
         # Use the directory relative to this plugin file
         plugin_dir = os.path.dirname(__file__)
         cvs_dir = os.path.dirname(plugin_dir)  # cvs/
-        config_root = os.path.join(cvs_dir, 'input', 'config_file')
-        cluster_root = os.path.join(cvs_dir, 'input', 'cluster_file')
+        config_root = os.path.join(cvs_dir, "input", "config_file")
+        cluster_root = os.path.join(cvs_dir, "input", "cluster_file")
         roots = []
         if os.path.exists(config_root):
             roots.append(config_root)
@@ -49,7 +60,7 @@ Copy-Config Commands:
         result = []
         for dirpath, dirs, files in os.walk(base):
             for f in files:
-                if f.endswith('.json'):
+                if f.endswith(".json"):
                     rel = os.path.relpath(os.path.join(dirpath, f), root)
                     result.append(rel)
         return sorted(result)
@@ -63,27 +74,38 @@ Copy-Config Commands:
 
     def run(self, args):
         roots = self._find_config_root()
-        path = args.path or ''
-        
+        path = args.path or ""
+
         if args.all:
             if not args.output:
                 print("Error: --output required when using --all")
                 return
-            if not os.path.isdir(args.output):
-                print(f"Error: output must be a directory when copying all files: {args.output}")
+            # Create output directory if it doesn't exist
+            try:
+                os.makedirs(args.output, exist_ok=True)
+            except Exception as e:
+                print(f"Error creating output directory {args.output}: {e}")
                 return
             copied_count = 0
             for root in roots:
-                configs = self._list_configs(root, '')
+                root_name = os.path.basename(root)
+                configs = self._list_configs(root, "")
                 for config in configs:
                     src = os.path.join(root, config)
-                    dest = os.path.join(args.output, config)
+                    dest = os.path.join(args.output, root_name, config)
                     os.makedirs(os.path.dirname(dest), exist_ok=True)
-                    shutil.copyfile(src, dest)
-                    copied_count += 1
+                    # Check for existing files
+                    if os.path.exists(dest) and not args.force:
+                        print(f"Error: File {dest} already exists. Use --force to overwrite.")
+                        return
+                    try:
+                        shutil.copyfile(src, dest)
+                        copied_count += 1
+                    except Exception as e:
+                        print(f"Error copying {src} to {dest}: {e}")
             print(f"Copied {copied_count} config files to {args.output}")
             return
-        
+
         if args.list or not args.output:
             found = False
             for root in roots:
@@ -101,7 +123,7 @@ Copy-Config Commands:
             if not path:
                 print("Error: path to config file required for copying")
                 return
-            
+
             config_file = self._find_config_file(roots, path)
             if not config_file:
                 print(f"Config file not found: {path}")
@@ -111,5 +133,12 @@ Copy-Config Commands:
             else:
                 dest = args.output
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            shutil.copyfile(config_file, dest)
-            print(f"Copied {config_file} to {dest}")
+            # Check for existing files
+            if os.path.exists(dest) and not args.force:
+                print(f"Error: File {dest} already exists. Use --force to overwrite.")
+                return
+            try:
+                shutil.copyfile(config_file, dest)
+                print(f"Copied {config_file} to {dest}")
+            except Exception as e:
+                print(f"Error copying {config_file} to {dest}: {e}")

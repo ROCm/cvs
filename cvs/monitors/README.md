@@ -25,7 +25,7 @@ napshot of all counters (GPU/NIC) while your training/inference workloads are in
 
 ```
 (myenv) [ubuntu-host]~/cvs:(main)$
-(myenv) [ubuntu-host]~/cvs:(main)$python3 ./utils/check_cluster_health.py -h
+(myenv) [ubuntu-host]~/cvs:(main)$python3 ./cvs/monitors/check_cluster_health.py -h
 usage: check_cluster_health.py [-h] --hosts_file HOSTS_FILE --username USERNAME (--password PASSWORD | --key_file KEY_FILE)
                                [--iterations ITERATIONS] [--time_between_iters TIME_BETWEEN_ITERS] [--report_file REPORT_FILE]
 
@@ -44,9 +44,9 @@ options:
                         Time duration to sleep between iterations ..
   --report_file REPORT_FILE
 (myenv) [ubuntu-host]~/cvs:(main)$
-(myenv) [ubuntu-host]~/cvs:(main)$
-(myenv) [ubuntu-host]~/cvs/utils:(main)$
-(myenv) [ubuntu-host]~/cvs/utils:(main)$python3 ./utils/check_cluster_health.py --hosts_file /home/user1/hosts_file.txt --username user1  --key_file /home/user1/.ssh/id_rsa --iterations 2
+(myenv) [ubuntu-host]~/cvs/cvs:(main)$
+(myenv) [ubuntu-host]~/cvs/cvs/monitors:(main)$
+(myenv) [ubuntu-host]~/cvs/cvs/monitors:(main)$python3 ./check_cluster_health.py --hosts_file /home/user1/hosts_file.txt --username user1  --key_file /home/user1/.ssh/id_rsa --iterations 2
 
 ```
 
