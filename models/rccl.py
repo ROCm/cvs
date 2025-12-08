@@ -24,7 +24,7 @@ class RcclTests(BaseModel):
     model_config = ConfigDict(frozen=True)
     numCycle: NonNegativeInt
     name: Collective
-    size: PositiveInt
+    size: NonNegativeInt
     type: Type
     redop: Redop
     inPlace: InPlace
@@ -125,7 +125,7 @@ class RcclTestsAggregated(BaseModel):
     # Grouping keys
     model_config = ConfigDict(frozen=True, populate_by_name=True)
     name: Collective = Field(alias='collective')
-    size: PositiveInt 
+    size: NonNegativeInt 
     type: Type 
     inPlace: InPlace
 
