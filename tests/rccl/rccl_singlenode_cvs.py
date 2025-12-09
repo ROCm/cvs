@@ -312,7 +312,8 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective ):
        verify_bus_bw           = config_dict['verify_bus_bw'], \
        verify_bw_dip           = config_dict['verify_bw_dip'], \
        verify_lat_dip          = config_dict['verify_lat_dip'], \
-       exp_results_dict        = config_dict['results']
+       exp_results_dict        = config_dict['results'], \
+       env_source_script       = config_dict['env_source_script']
     )
 
 
