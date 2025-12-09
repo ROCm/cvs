@@ -295,6 +295,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
     if not re.search('None', config_dict['env_source_script'], re.I):
         phdl.exec(f"bash {config_dict['env_source_script']}")
+        shdl.exec(f"bash {config_dict['env_source_script']}")
 
     # Execute the RCCL cluster test with parameters sourced from config_dict
     result_dict = rccl_lib.rccl_cluster_test_default(
@@ -332,6 +333,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         verify_bw_dip=config_dict['verify_bw_dip'],
         verify_lat_dip=config_dict['verify_lat_dip'],
         exp_results_dict=config_dict['results'],
+        env_source_script=config_dict['env_source_script'],
     )
 
     print(result_dict)

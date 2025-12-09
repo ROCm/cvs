@@ -415,6 +415,7 @@ def rccl_cluster_test(
     verify_bw_dip=True,
     verify_lat_dip=True,
     exp_results_dict=None,
+    env_source_script=None,
 ):
     """
     Run an RCCL collective test across a cluster via MPI and verify results.
@@ -484,6 +485,15 @@ def rccl_cluster_test(
     cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
+    # Wrap test binary in shell to source env script if provided
+    test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
+        -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
+        -d {data_type} \
+        -Z json -x {rccl_result_file}'
+
+    if env_source_script:
+        test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+
     cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
@@ -512,10 +522,7 @@ def rccl_cluster_test(
         -x NCCL_IB_SPLIT_DATA_ON_QPS={nccl_ib_split_data_on_qps} \
         -x NCCL_PXN_DISABLE={nccl_pxn_disable} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
-        {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-        -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-        -d {data_type} \
-        -Z json -x {rccl_result_file}
+        {test_cmd}
         '''
 
     print('%%%%%%%%%%%%%%%%')
@@ -610,6 +617,7 @@ def rccl_cluster_test_default(
     verify_lat_dip=True,
     nic_model='ainic',
     exp_results_dict=None,
+    env_source_script=None,
 ):
     """
     Run an RCCL collective test across a cluster via MPI and verify results.
@@ -687,6 +695,17 @@ def rccl_cluster_test_default(
     for dtype in data_types:
         # Create a unique result file for each data type
         dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
+
+        # Wrap test binary in shell to source env script if provided
+        test_cmd = (
+            f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
+            -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
+            -d {dtype} -N {no_of_cycles} -Z json -x {dtype_result_file}'
+        )
+
+        if env_source_script:
+            test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+
         cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
@@ -704,9 +723,7 @@ def rccl_cluster_test_default(
         -x UCX_NET_DEVICES={net_dev_list} \
         -x UCX_TLS={ucx_tls} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
-        {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-        -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-        -d {dtype} -N {no_of_cycles} -Z json -x {dtype_result_file}
+        {test_cmd}
         '''
 
         print('%%%%%%%%%%%%%%%%')
@@ -848,6 +865,7 @@ def rccl_single_node_test(
     verify_bw_dip=True,
     verify_lat_dip=True,
     exp_results_dict=None,
+    env_source_script=None,
 ):
     """
     Run an Single Node RCCL collective test
@@ -881,12 +899,19 @@ def rccl_single_node_test(
     PATH = f'{ROCM_PATH}/bin:$PATH'
     LD_LIBRARY_PATH = f'{RCCL_PATH}:{ROCM_PATH}/lib:$LD_LIBRARY_PATH'
 
+    # Build the test command
+    # Wrap test binary in shell to source env script if provided
+    test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
+        -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} \
+        -Z json -x {rccl_result_file}'
+
+    if env_source_script:
+        test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+
     cmd = f'''export NCCL_DEBUG={debug_level};  \
            export PATH={PATH}; \
            export LD_LIBRARY_PATH={LD_LIBRARY_PATH}; \
-           {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-           -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} \
-           -Z json -x {rccl_result_file}'''
+           {test_cmd}'''
 
     print('%%%%%%%%%%%%%%%%')
     print(cmd)
