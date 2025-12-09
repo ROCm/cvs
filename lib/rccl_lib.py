@@ -231,7 +231,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         nccl_net_plugin=None, user_password=None, \
         min_channels=64, max_channels=64, \
         user_key_file=None, verify_bus_bw=False, \
-        verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None ):
+        verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None, env_source_script=None ):
 
 
     """
@@ -305,7 +305,14 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
     cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
-        
+    # Wrap test binary in shell to source env script if provided
+    test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
+        -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
+        -Z json -x {rccl_result_file}'
+
+    if env_source_script:
+        test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+
     cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
@@ -334,14 +341,13 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         -x NCCL_IB_SPLIT_DATA_ON_QPS={nccl_ib_split_data_on_qps} \
         -x NCCL_PXN_DISABLE={nccl_pxn_disable} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
-        {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-        -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-        -Z json -x {rccl_result_file}
+        {test_cmd}
         '''
 
     print('%%%%%%%%%%%%%%%%')
     print(cmd)
     print('%%%%%%%%%%%%%%%%')
+
     try:
         out_dict = shdl.exec(cmd, timeout=500)
         output = out_dict[head_node]
@@ -398,7 +404,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         nccl_net_plugin=None, user_password=None, \
         min_channels=64, max_channels=64, \
         user_key_file=None, verify_bus_bw=False, \
-        verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None ):
+        verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None, env_source_script=None ):
 
 
     """
@@ -472,7 +478,14 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
-        
+    # Wrap test binary in shell to source env script if provided
+    test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
+        -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
+        -Z json -x {rccl_result_file}'
+
+    if env_source_script:
+        test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+
     cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
@@ -489,9 +502,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         -x UCX_NET_DEVICES={net_dev_list} \
         -x UCX_TLS={ucx_tls} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
-        {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-        -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-        -Z json -x {rccl_result_file}
+        {test_cmd}
         '''
 
     print('%%%%%%%%%%%%%%%%')
@@ -542,7 +553,7 @@ def rccl_single_node_test( phdl, test_name, cluster_node_list, \
         step_function=2, warmup_iterations=10, no_of_iterations=1, \
         check_iteration_count=1, debug_level='INFO', \
         rccl_result_file='/tmp/rccl_result_output.json', no_of_local_ranks=8, \
-        verify_bus_bw=False, verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None ):
+        verify_bus_bw=False, verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None, env_source_script=None ):
 
     """
     Run an Single Node RCCL collective test
@@ -558,6 +569,7 @@ def rccl_single_node_test( phdl, test_name, cluster_node_list, \
       rccl_result_file: Path where the RCCL test writes JSON results (-Z json -x file).
       verify_bus_bw: If 'True' (string), compare bus BW vs expected thresholds.
       exp_results_dict: Dict of expected results per test for verification.
+      env_source_script: Path to script to source additional environment variables.
 
     Returns:
       result_out: The raw JSON string read from rccl_result_file on all nodes
@@ -578,13 +590,19 @@ def rccl_single_node_test( phdl, test_name, cluster_node_list, \
     LD_LIBRARY_PATH=f'{RCCL_PATH}:{ROCM_PATH}/lib:$LD_LIBRARY_PATH'
 
 
+    # Build the test command
+    # Wrap test binary in shell to source env script if provided
+    test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
+        -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} \
+        -Z json -x {rccl_result_file}'
+
+    if env_source_script:
+        test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
         
     cmd = f'''export NCCL_DEBUG={debug_level};  \
            export PATH={PATH}; \
            export LD_LIBRARY_PATH={LD_LIBRARY_PATH}; \
-           {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-           -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} \
-           -Z json -x {rccl_result_file}'''
+           {test_cmd}'''
 
     print('%%%%%%%%%%%%%%%%')
     print(cmd)
