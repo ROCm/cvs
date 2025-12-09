@@ -418,3 +418,334 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")
 
     return resolved_config
+
+
+def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, env_vars=None):
+    """
+    Collect comprehensive system metadata from compute nodes for test reporting.
+    
+    Args:
+        phdl: Parallel SSH handle to execute commands on all nodes
+        cluster_dict: Cluster configuration dictionary
+        config_dict: Test configuration dictionary
+        test_command: Optional test command string that was run
+        env_vars: Optional list of environment variable names to capture
+        
+    Returns:
+        dict: Metadata dictionary with system information
+    """
+    from datetime import datetime
+    
+    metadata = {}
+    
+    # Get first node for representative info
+    node_list = list(cluster_dict['node_dict'].keys())
+    head_node = node_list[0] if node_list else None
+    
+    # Capture date/time
+    metadata['date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    metadata['timestamp'] = datetime.now().isoformat()
+    
+    # Capture hostname(s)
+    try:
+        hostname_dict = phdl.exec('hostname')
+        metadata['hostnames'] = {node: hostname_dict[node].strip() for node in hostname_dict.keys()}
+    except Exception as e:
+        log.warning(f'Failed to get hostnames: {e}')
+    
+    # Capture ROCm version
+    try:
+        rocm_dict = phdl.exec('cat /opt/rocm/.info/version 2>/dev/null || cat /opt/rocm*/share/doc/rocm/version 2>/dev/null || echo "unknown"')
+        if head_node and head_node in rocm_dict:
+            metadata['rocm_version'] = rocm_dict[head_node].strip()
+    except Exception as e:
+        log.warning(f'Failed to get ROCm version: {e}')
+    
+    # Capture OS info
+    try:
+        os_dict = phdl.exec('cat /etc/os-release 2>/dev/null | grep -E "^(NAME|VERSION)=" | head -2')
+        if head_node and head_node in os_dict:
+            os_info = os_dict[head_node].strip()
+            metadata['os'] = os_info.replace('\n', ', ')
+    except Exception as e:
+        log.warning(f'Failed to get OS info: {e}')
+    
+    # Capture kernel version
+    try:
+        kernel_dict = phdl.exec('uname -r')
+        if head_node and head_node in kernel_dict:
+            metadata['kernel'] = kernel_dict[head_node].strip()
+    except Exception as e:
+        log.warning(f'Failed to get kernel version: {e}')
+    
+    # Capture GPU info
+    try:
+        gpu_dict = phdl.exec('rocm-smi --showproductname 2>/dev/null | grep "GPU" | head -1')
+        if head_node and head_node in gpu_dict:
+            gpu_line = gpu_dict[head_node].strip()
+            # Extract just the GPU model name (everything after "Card Series:" or similar)
+            # Format: "GPU[0]      : Card Series:       AMD Instinct MI300X"
+            if ':' in gpu_line:
+                # Split by colon and get the last part
+                parts = gpu_line.split(':')
+                if len(parts) >= 2:
+                    # Get everything after the last colon and clean it up
+                    gpu_model = parts[-1].strip()
+                    if gpu_model:
+                        metadata['gpu_model'] = gpu_model
+                    else:
+                        # Fallback: try second-to-last part
+                        gpu_model = parts[-2].strip() if len(parts) >= 3 else gpu_line
+                        metadata['gpu_model'] = gpu_model
+                else:
+                    metadata['gpu_model'] = gpu_line
+            else:
+                metadata['gpu_model'] = gpu_line
+                
+            # Also get GPU count
+            gpu_count_dict = phdl.exec('rocm-smi --showproductname 2>/dev/null | grep "GPU\\[" | wc -l')
+            if head_node and head_node in gpu_count_dict:
+                try:
+                    gpu_count = int(gpu_count_dict[head_node].strip())
+                    if gpu_count > 0:
+                        metadata['gpu_count'] = gpu_count
+                except:
+                    pass
+    except Exception as e:
+        log.warning(f'Failed to get GPU info: {e}')
+    
+    # Capture RDMA NIC info (InfiniBand/RoCE adapters used for RCCL)
+    try:
+        # Get list of IB devices
+        ib_devices_dict = phdl.exec('ibv_devinfo -l 2>/dev/null')
+        if head_node and head_node in ib_devices_dict:
+            ib_devices = [dev.strip() for dev in ib_devices_dict[head_node].strip().split('\n') if dev.strip()]
+            if ib_devices:
+                metadata['rdma_devices'] = ib_devices
+                
+                # Get detailed info for each device
+                nic_details = []
+                for device in ib_devices[:8]:  # Limit to first 8 devices
+                    try:
+                        # Get device info including board_id (model), fw_ver, and node_guid
+                        dev_info_dict = phdl.exec(f'ibv_devinfo -d {device} 2>/dev/null | grep -E "board_id|fw_ver|node_guid|sys_image_guid" | head -4')
+                        if head_node and head_node in dev_info_dict:
+                            dev_info = dev_info_dict[head_node].strip()
+                            if dev_info:
+                                # Parse and clean the output
+                                lines = [line.strip() for line in dev_info.split('\n') if line.strip()]
+                                dev_dict = {'device': device}
+                                for line in lines:
+                                    if ':' in line:
+                                        key, value = line.split(':', 1)
+                                        dev_dict[key.strip()] = value.strip()
+                                nic_details.append(dev_dict)
+                    except Exception as e:
+                        log.warning(f'Failed to get details for device {device}: {e}')
+                
+                if nic_details:
+                    metadata['rdma_nic_details'] = nic_details
+    except Exception as e:
+        log.warning(f'Failed to get RDMA NIC info: {e}')
+    
+    # Get NIC model from lspci for RDMA devices (Mellanox, AMD Thor2, InfiniBand)
+    try:
+        # Expanded grep to catch Mellanox, Thor2/RDMA, and other RDMA devices
+        nic_model_dict = phdl.exec('lspci 2>/dev/null | grep -iE "mellanox|infiniband|network.*amd|rdma.*amd|thor" | grep -vE "usb|audio"')
+        if head_node and head_node in nic_model_dict:
+            nic_models = nic_model_dict[head_node].strip()
+            if nic_models:
+                # Extract and categorize NIC models
+                models = []
+                mellanox_nics = []
+                amd_nics = []
+                other_nics = []
+                
+                for line in nic_models.split('\n'):
+                    if line.strip():
+                        # Extract device description (everything after the last colon)
+                        if ':' in line:
+                            parts = line.split(':', 2)
+                            if len(parts) >= 3:
+                                model = parts[2].strip()
+                            elif len(parts) == 2:
+                                model = parts[1].strip()
+                            else:
+                                continue
+                            
+                            models.append(model)
+                            
+                            # Categorize by vendor
+                            model_lower = model.lower()
+                            if 'mellanox' in model_lower or 'connectx' in model_lower:
+                                mellanox_nics.append(model)
+                            elif 'amd' in model_lower or 'thor' in model_lower or 'rdma' in model_lower:
+                                amd_nics.append(model)
+                            else:
+                                other_nics.append(model)
+                
+                if models:
+                    # Provide categorized view
+                    nic_summary = {}
+                    if mellanox_nics:
+                        nic_summary['mellanox'] = mellanox_nics
+                    if amd_nics:
+                        nic_summary['amd'] = amd_nics
+                    if other_nics:
+                        nic_summary['other'] = other_nics
+                    
+                    metadata['rdma_nic_models'] = nic_summary
+                    
+                    # Also provide flat list for backward compatibility
+                    metadata['rdma_nic_models_list'] = models
+    except Exception as e:
+        log.warning(f'Failed to get NIC models from lspci: {e}')
+    
+    # Get RDMA driver information
+    try:
+        # Get loaded RDMA modules
+        rdma_modules_dict = phdl.exec('lsmod 2>/dev/null | grep -E "^mlx|^ib_" | awk \'{print $1}\' | sort | head -10')
+        if head_node and head_node in rdma_modules_dict:
+            modules = rdma_modules_dict[head_node].strip()
+            if modules:
+                module_list = [m.strip() for m in modules.split('\n') if m.strip()]
+                if module_list:
+                    metadata['rdma_drivers'] = module_list
+        
+        # Get driver version for mlx5_core (primary Mellanox driver)
+        mlx5_version_dict = phdl.exec('modinfo mlx5_core 2>/dev/null | grep "^version:" | head -1')
+        if head_node and head_node in mlx5_version_dict:
+            mlx5_ver = mlx5_version_dict[head_node].strip()
+            if mlx5_ver and ':' in mlx5_ver:
+                version = mlx5_ver.split(':', 1)[1].strip()
+                if version:
+                    metadata['mlx5_driver_version'] = version
+    except Exception as e:
+        log.warning(f'Failed to get RDMA driver info: {e}')
+    
+    # Capture BIOS/IFWI version
+    try:
+        bios_dict = phdl.exec('sudo dmidecode -s bios-version 2>/dev/null || echo "unknown"')
+        if head_node and head_node in bios_dict:
+            metadata['bios_version'] = bios_dict[head_node].strip()
+    except Exception as e:
+        log.warning(f'Failed to get BIOS version: {e}')
+    
+    # Capture RCCL info if available
+    try:
+        if 'rccl_dir' in config_dict and config_dict['rccl_dir']:
+            rccl_dir = config_dict['rccl_dir']
+            
+            # Get RCCL commit hash
+            rccl_hash_dict = phdl.exec(f'cd {rccl_dir} 2>/dev/null && git rev-parse HEAD 2>/dev/null || echo "unknown"')
+            if head_node and head_node in rccl_hash_dict:
+                rccl_hash = rccl_hash_dict[head_node].strip()
+                if 'unknown' not in rccl_hash and len(rccl_hash) >= 7:  # Valid git hash (short or long)
+                    metadata['rccl_commit'] = rccl_hash
+            
+            # Get RCCL branch name
+            rccl_branch_dict = phdl.exec(f'cd {rccl_dir} 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"')
+            if head_node and head_node in rccl_branch_dict:
+                rccl_branch = rccl_branch_dict[head_node].strip()
+                if 'unknown' not in rccl_branch and rccl_branch:
+                    metadata['rccl_branch'] = rccl_branch
+    except Exception as e:
+        log.warning(f'Failed to get RCCL info: {e}')
+    
+    # Capture RCCL-tests info if available
+    try:
+        if 'rccl_tests_dir' in config_dict and config_dict['rccl_tests_dir']:
+            rccl_tests_dir = config_dict['rccl_tests_dir']
+            
+            # Get RCCL-tests commit hash
+            tests_hash_dict = phdl.exec(f'cd {rccl_tests_dir} 2>/dev/null && git rev-parse HEAD 2>/dev/null || echo "unknown"')
+            if head_node and head_node in tests_hash_dict:
+                tests_hash = tests_hash_dict[head_node].strip()
+                if 'unknown' not in tests_hash and len(tests_hash) >= 7:
+                    metadata['rccl_tests_commit'] = tests_hash
+            
+            # Get RCCL-tests branch name
+            tests_branch_dict = phdl.exec(f'cd {rccl_tests_dir} 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"')
+            if head_node and head_node in tests_branch_dict:
+                tests_branch = tests_branch_dict[head_node].strip()
+                if 'unknown' not in tests_branch and tests_branch:
+                    metadata['rccl_tests_branch'] = tests_branch
+    except Exception as e:
+        log.warning(f'Failed to get RCCL-tests info: {e}')
+    
+    # Capture MPI info if available
+    try:
+        if 'mpi_dir' in config_dict and config_dict['mpi_dir']:
+            mpi_dir = config_dict['mpi_dir']
+            # Try multiple ways to get MPI version
+            mpi_version_dict = phdl.exec(f'{mpi_dir}/bin/mpirun --version 2>/dev/null | head -1 || {mpi_dir}/mpirun --version 2>/dev/null | head -1 || mpirun --version 2>/dev/null | head -1 || echo "unknown"')
+            if head_node and head_node in mpi_version_dict:
+                mpi_ver = mpi_version_dict[head_node].strip()
+                if mpi_ver and 'unknown' not in mpi_ver:
+                    metadata['mpi_version'] = mpi_ver
+    except Exception as e:
+        log.warning(f'Failed to get MPI version: {e}')
+    
+    # Capture test command if provided
+    if test_command:
+        metadata['test_command'] = test_command
+    
+    # Capture RCCL/NCCL environment variables from config (these are set via mpirun -x)
+    rccl_env_vars = {}
+    env_var_mapping = {
+        'debug_level': 'NCCL_DEBUG',
+        'ib_hca_list': 'NCCL_IB_HCA',
+        'net_dev_list': 'UCX_NET_DEVICES',
+        'ucx_tls': 'UCX_TLS',
+        'nccl_net_plugin': 'NCCL_NET_PLUGIN',
+        'gid_index': 'NCCL_IB_GID_INDEX',
+        'oob_port': 'NCCL_SOCKET_IFNAME',
+        'rocm_path_var': 'ROCM_PATH',
+        'mpi_path_var': 'MPI_PATH',
+        'rccl_path_var': 'RCCL_PATH'
+    }
+    
+    for config_key, env_name in env_var_mapping.items():
+        if config_key in config_dict and config_dict[config_key]:
+            value = config_dict[config_key]
+            if value and str(value).lower() not in ['none', 'null', '']:
+                rccl_env_vars[env_name] = str(value)
+    
+    # Also capture shell environment variables if requested
+    if env_vars:
+        for var_name in env_vars:
+            # Skip if already captured from config
+            if var_name in rccl_env_vars:
+                continue
+            try:
+                var_dict = phdl.exec(f'echo ${var_name}')
+                if head_node and head_node in var_dict:
+                    value = var_dict[head_node].strip()
+                    if value and value != var_name:  # Not just echoing the variable name
+                        rccl_env_vars[var_name] = value
+            except Exception as e:
+                log.warning(f'Failed to get env var {var_name}: {e}')
+    
+    if rccl_env_vars:
+        metadata['environment_variables'] = rccl_env_vars
+    
+    # Add cluster configuration summary
+    metadata['cluster_info'] = {
+        'num_nodes': len(node_list),
+        'node_names': node_list
+    }
+    
+    # Add test configuration summary
+    if config_dict:
+        test_config_summary = {}
+        # Include key test parameters
+        for key in ['data_type_list', 'gpu_count_list', 'start_msg_size', 'end_msg_size', 
+                    'no_of_cycles', 'warmup_iterations', 'no_of_iterations']:
+            if key in config_dict:
+                test_config_summary[key] = config_dict[key]
+        
+        if test_config_summary:
+            metadata['test_config'] = test_config_summary
+    
+    log.info(f'Collected metadata: {list(metadata.keys())}')
+    return metadata

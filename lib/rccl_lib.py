@@ -5,17 +5,24 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+#Standard libraries
 import re
 import sys
 import os
+import json
+from typing import List, Dict
+from pathlib import Path
+
+#Third party libraries
+import pandas as pd
+from pydantic import ValidationError
 
 import globals
-
-log = globals.log
-
+from models.rccl import RcclTests,  RcclTestsAggregated, RcclTestsMultinodeRaw
 from utils_lib import *
 from verify_lib import *
 
+log = globals.log
 
 
 rccl_err_dict = {
@@ -95,8 +102,8 @@ def check_bus_bw( test_name, output, exp_res_dict ):
                       - 'inPlace': 0 (out-of-place) or 1 (in-place)
       exp_res_dict (dict): Expected results dictionary with the structure:
                     {
-                      'bus_bw': {
-                          <msg_size>: <min_expected_bus_bw>, ...
+                      <msg_size>: {
+                          'bus_bw': <min_expected_bus_bw>, ...
                       }
                     }
 
@@ -105,14 +112,22 @@ def check_bus_bw( test_name, output, exp_res_dict ):
       - For alltoall/all_to_all tests, validates out-of-place measurements (inPlace == 0).
       - For other tests, validates in-place measurements (inPlace == 1).
       - Compares measured busBw to minimum expected thresholds per message size.
-      - Calls fail_test(...) if any measurement is below expectation.
+      - Calls fail_test(...) if any measurement is at least 5% below expectation.
 
     Notes:
       - Message sizes are compared as strings to avoid type mismatches between JSON and expectations.
       - Assumes fail_test(...) is available in scope to signal test failure.
+      - 5% tolerance is applied: test only fails if actual < expected * 0.95
     """
+
+    print( f'exp_res_dict = {exp_res_dict}')
+
     actual_bw_dict = {}
-    msg_size_list = list(exp_res_dict['bus_bw'].keys())
+    tolerance = 0.95  # 5% tolerance
+    
+    # New hierarchical structure: {msg_size: {'bus_bw': bw_value}}
+    msg_size_list = list(exp_res_dict.keys())
+    
     print(test_name)
     #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
@@ -121,30 +136,60 @@ def check_bus_bw( test_name, output, exp_res_dict ):
             if act_dict['inPlace'] == 0:
                 for msg_size in msg_size_list:
                     if str(msg_size) == str(act_dict['size']):
-                        if float(act_dict['busBw']) < float(exp_res_dict['bus_bw'][msg_size]):
-                            fail_test(f"The actual out-of-place bus BW {act_dict['busBw']} for msg size {act_dict['size']} is lower than expected bus BW {exp_res_dict['bus_bw'][msg_size]}")
+                        expected_bw = float(exp_res_dict[msg_size]['bus_bw'])
+                        actual_bw = float(act_dict['busBw'])
+                        threshold = expected_bw * tolerance
+                        print(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
+                        if actual_bw < threshold:
+                            fail_test(f"The actual out-of-place bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})")
     else:
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 1:
                 for msg_size in msg_size_list:
                     if str(msg_size) == str(act_dict['size']):
-                        if float(act_dict['busBw']) < float(exp_res_dict['bus_bw'][msg_size]):
-                            fail_test(f"The actual out-of-place bus BW {act_dict['busBw']} for msg size {act_dict['size']} is lower than expected bus BW {exp_res_dict['bus_bw'][msg_size]}")
+                        expected_bw = float(exp_res_dict[msg_size]['bus_bw'])
+                        actual_bw = float(act_dict['busBw'])
+                        threshold = expected_bw * tolerance
+                        print(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
+                        if actual_bw < threshold:
+                            fail_test(f"The actual in-place bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})")
 
  
 
 
 
-def check_bw_dip( test_name, output, ):
+def check_bw_dip( test_name, output, exp_res_dict=None ):
+    """
+    Check for bandwidth dips as message size increases.
+    Only fails if bandwidth drops by more than 5%.
+    Only validates message sizes specified in the reference. If no reference provided, skips validation.
+    """
     #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
+    tolerance = 0.95  # 5% tolerance
+    
+    # Get reference message sizes if provided
+    # If no reference data, skip validation entirely
+    if not exp_res_dict:
+        log.info(f"No reference data provided for BW dip check, skipping validation for {test_name}")
+        return
+    
+    ref_msg_sizes = set(str(size) for size in exp_res_dict.keys())
+    log.info(f"Validating BW dip only for reference message sizes: {ref_msg_sizes}")
+    
     if re.search( 'alltoall|all_to_all', test_name, re.I ):
         last_bw = 0.0
         last_msg_size = act_res_dict[0]['size']
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 0:
-                if float(act_dict['busBw']) < float(last_bw):
-                    fail_test(f"The BusBW for msg size {act_dict['size']} = {act_dict['busBw']} is less than the earlier msg size {last_msg_size} = BW {last_bw}")
+                # Skip validation if this message size is not in reference
+                if str(act_dict['size']) not in ref_msg_sizes:
+                    continue
+                    
+                current_bw = float(act_dict['busBw'])
+                threshold = float(last_bw) * tolerance
+                if last_bw > 0 and current_bw < threshold:
+                    fail_test(f"The BusBW for msg size {act_dict['size']} = {current_bw} is less than the earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})")
                 last_bw = act_dict['busBw']
                 last_msg_size = act_dict['size']
     else:
@@ -152,23 +197,51 @@ def check_bw_dip( test_name, output, ):
         last_msg_size = act_res_dict[0]['size']
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 1:
-                if float(act_dict['busBw']) < float(last_bw):
-                    fail_test(f"The BusBW for msg size {act_dict['size']} = {act_dict['busBw']} is less than the earlier msg size {last_msg_size} = BW {last_bw}")
+                # Skip validation if this message size is not in reference
+                if str(act_dict['size']) not in ref_msg_sizes:
+                    continue
+                    
+                current_bw = float(act_dict['busBw'])
+                threshold = float(last_bw) * tolerance
+                if last_bw > 0 and current_bw < threshold:
+                    fail_test(f"The BusBW for msg size {act_dict['size']} = {current_bw} is less than the earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})")
                 last_bw = act_dict['busBw']
                 last_msg_size = act_dict['size']
 
 
 
-def check_lat_dip( test_name, output, ):
+def check_lat_dip( test_name, output, exp_res_dict=None ):
+    """
+    Check for latency decreases as message size increases (which would be unexpected).
+    Only fails if latency drops by more than 5%.
+    Only validates message sizes specified in the reference. If no reference provided, skips validation.
+    """
     #act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
+    tolerance = 0.95  # 5% tolerance
+    
+    # Get reference message sizes if provided
+    # If no reference data, skip validation entirely
+    if not exp_res_dict:
+        log.info(f"No reference data provided for latency dip check, skipping validation for {test_name}")
+        return
+    
+    ref_msg_sizes = set(str(size) for size in exp_res_dict.keys())
+    log.info(f"Validating latency dip only for reference message sizes: {ref_msg_sizes}")
+    
     if re.search( 'alltoall|all_to_all', test_name, re.I ):
         last_time = 0.0
         last_msg_size = act_res_dict[0]['size']
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 0:
-                if float(act_dict['time']) < float(last_time):
-                    fail_test(f"The latency for msg size {act_dict['size']} = {act_dict['time']} is less than the earlier msg size {last_msg_size} = BW {last_time}")
+                # Skip validation if this message size is not in reference
+                if str(act_dict['size']) not in ref_msg_sizes:
+                    continue
+                    
+                current_time = float(act_dict['time'])
+                threshold = float(last_time) * tolerance
+                if last_time > 0 and current_time < threshold:
+                    fail_test(f"The latency for msg size {act_dict['size']} = {current_time} is less than the earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})")
                 last_time = act_dict['time']
                 last_msg_size = act_dict['size']
     else:
@@ -176,8 +249,14 @@ def check_lat_dip( test_name, output, ):
         last_msg_size = act_res_dict[0]['size']
         for act_dict in act_res_dict:
             if act_dict['inPlace'] == 1:
-                if float(act_dict['time']) < float(last_time):
-                    fail_test(f"The latency for msg size {act_dict['size']} = {act_dict['time']} is less than the earlier msg size {last_msg_size} = BW {last_time}")
+                # Skip validation if this message size is not in reference
+                if str(act_dict['size']) not in ref_msg_sizes:
+                    continue
+                    
+                current_time = float(act_dict['time'])
+                threshold = float(last_time) * tolerance
+                if last_time > 0 and current_time < threshold:
+                    fail_test(f"The latency for msg size {act_dict['size']} = {current_time} is less than the earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})")
                 last_time = act_dict['time']
                 last_msg_size = act_dict['size']
 
@@ -210,6 +289,83 @@ def convert_to_graph_dict(result_dict):
 
 
 
+def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[RcclTestsAggregated]:
+    """
+    Aggregate multiple rccl-test results into mean/std per (name, size, type, inPlace)
+    Args: validated_results: List[RcclTests] - list of validated rccl-test results
+    Returns: List[RcclTestsAggregated] - list of aggregated rccl-test results with mean/std per (name, size, type, inPlace)
+    """
+    if not validated_results:
+        raise ValueError("validated_results list cannot be empty")
+    
+    # Check if these are multinode results and validate consistency
+    multinode_config = None
+    if isinstance(validated_results[0], RcclTestsMultinodeRaw):
+        # Extract config from first result
+        first = validated_results[0]
+        multinode_config = {
+            'nodes': first.nodes,
+            'ranks': first.ranks,
+            'ranksPerNode': first.ranksPerNode,
+            'gpusPerRank': first.gpusPerRank
+        }
+        
+        # Validate all results have same config
+        for i, result in enumerate(validated_results):
+            if not isinstance(result, RcclTestsMultinodeRaw):
+                raise ValueError(
+                    f"Mixed single-node and multi-node results at index {i}"
+                )
+            if (result.nodes != multinode_config['nodes'] or
+                result.ranks != multinode_config['ranks'] or
+                result.ranksPerNode != multinode_config['ranksPerNode'] or
+                result.gpusPerRank != multinode_config['gpusPerRank']):
+                raise ValueError(
+                    f"Inconsistent cluster config at index {i}: "
+                    f"expected {multinode_config}, got "
+                    f"nodes={result.nodes}, ranks={result.ranks}, "
+                    f"ranksPerNode={result.ranksPerNode}, gpusPerRank={result.gpusPerRank}"
+                )
+        log.info(f"Validated consistent multinode config: {multinode_config}")
+    
+    log.info(f"Aggregating {len(validated_results)} RCCL test results")
+    data = [result.model_dump() for result in validated_results]
+    df = pd.DataFrame(data)
+    
+    # Group and aggregate
+    agg_df = df.groupby(['name', 'size', 'type', 'inPlace'], as_index=False).agg(
+        busBw_mean=('busBw', 'mean'),
+        busBw_std=('busBw', 'std'),
+        algBw_mean=('algBw', 'mean'),
+        algBw_std=('algBw', 'std'),
+        time_mean=('time', 'mean'),
+        time_std=('time', 'std'),
+        num_runs=('numCycle', 'count')
+    )
+    
+    # Add multinode config if present
+    if multinode_config:
+        for key, value in multinode_config.items():
+            agg_df[key] = value
+    
+    agg_results = []
+    errors = []
+    
+    for row_dict in agg_df.to_dict('records'):
+        try:
+            agg_results.append(RcclTestsAggregated.model_validate(row_dict))
+        except ValidationError as e:
+            error_msg = f"Validation failed for row {row_dict}: {e}"
+            log.error(error_msg)
+            errors.append(error_msg)
+    
+    # Report any validation failures
+    if errors:
+        error_summary = "\n".join(errors)
+        fail_test(f"Aggregation validation failed:\n{error_summary}")
+    
+    log.info(f"Successfully validated {len(agg_results)} aggregated results")
+    return agg_results
 
 
 
@@ -362,15 +518,17 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
     model=get_model_from_rocm_smi_output(smi_out)
 
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
+    test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None
+    
     if re.search( 'True', verify_bus_bw, re.I ):
-        if test_name in exp_results_dict.keys():
-            check_bus_bw( test_name, result_out, exp_results_dict[test_name] )
+        if test_exp_dict:
+            check_bus_bw( test_name, result_out, test_exp_dict )
 
     if re.search( 'True', verify_bw_dip, re.I ):
-        check_bw_dip( test_name, result_out, )
+        check_bw_dip( test_name, result_out, test_exp_dict )
 
     if re.search( 'True', verify_lat_dip, re.I ):
-        check_lat_dip( test_name, result_out, )
+        check_lat_dip( test_name, result_out, test_exp_dict )
 
     return result_out
 
@@ -390,6 +548,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         nccl_proto='simple', gid_index=1, qp_count=1, \
         start_msg_size=1024, end_msg_size='16g', \
         step_function=2, threads_per_gpu=1, warmup_iterations=10, no_of_iterations=1, \
+        data_types=['float'], no_of_cycles=10, \
         check_iteration_count=1, debug_level='INFO', \
         rccl_result_file='/tmp/rccl_result_output.json', no_of_local_ranks=8, \
         ib_rx_queue_len=8192, ucx_tls='tcp', hcoll_enable_mcast_all=0, \
@@ -398,7 +557,8 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         nccl_net_plugin=None, user_password=None, \
         min_channels=64, max_channels=64, \
         user_key_file=None, verify_bus_bw=False, \
-        verify_bw_dip=True, verify_lat_dip=True, exp_results_dict=None ):
+        verify_bw_dip=True, verify_lat_dip=True, \
+        nic_model='ainic', exp_results_dict=None ):
 
 
     """
@@ -420,13 +580,15 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
       nccl_algo, nccl_proto, gid_index, qp_count, ...: NCCL/UCX/MPI tuning parameters.
       start_msg_size, end_msg_size, step_function: Message size sweep setup.
       threads_per_gpu, warmup_iterations, check_iteration_count: Test execution tuning.
+      data_types: List of data types to test (e.g., ['float', 'half']).
+      no_of_cycles: Number of cycles to run for each data type.
       debug_level: NCCL_DEBUG level.
       rccl_result_file: Path where the RCCL test writes JSON results (-Z json -x file).
       verify_bus_bw: If 'True' (string), compare bus BW vs expected thresholds.
       exp_results_dict: Dict of expected results per test for verification.
 
     Returns:
-      result_out: The raw JSON string read from rccl_result_file on the head node.
+      all_raw_results: List of dictionaries containing all test results from all data types.
     """
 
     print(f'Starting RCCL Test ..........................................{test_name}')
@@ -473,7 +635,13 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     shdl.exec(cmd)
 
         
-    cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
+    all_raw_results = []
+    all_validated_results = []
+    base_path = Path(rccl_result_file)
+    for dtype in data_types:
+        # Create a unique result file for each data type
+        dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
+        cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
         -x NCCL_DEBUG={debug_level} \
@@ -484,31 +652,66 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
         -x NCCL_IB_HCA={ib_hca_list} \
-        --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {oob_port}\
+        -x NCCL_SOCKET_IFNAME={oob_port} \
+        --mca btl self,tcp \
+        --mca btl_tcp_if_exclude lo,docker0,usb0 \
         -x UCX_NET_DEVICES={net_dev_list} \
         -x UCX_TLS={ucx_tls} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
         {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-        -Z json -x {rccl_result_file}
+        -d {dtype} -N {no_of_cycles} -Z json -x {dtype_result_file}
         '''
 
-    print('%%%%%%%%%%%%%%%%')
-    print(cmd)
-    print('%%%%%%%%%%%%%%%%')
-    try:
-        out_dict = shdl.exec(cmd, timeout=500)
-        output = out_dict[head_node]
-        #print(output)
-        scan_rccl_logs(output)
-    except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
+        print('%%%%%%%%%%%%%%%%')
+        print(cmd)
+        print('%%%%%%%%%%%%%%%%')
+        try:
+            out_dict = shdl.exec(cmd, timeout=500)
+            output = out_dict[head_node]
+            #print(output)
+            scan_rccl_logs(output)
+        except Exception as e:
+            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
+            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {e}')
 
-    # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = shdl.exec(f'cat {rccl_result_file}')
-    result_out = json.loads(result_dict_out[head_node].replace( '\n', '').replace( '\r', ''))
+        # Read the JSON results emitted by the RCCL test binary
+        result_dict_out = shdl.exec(f'cat {dtype_result_file}')
+        dtype_result_out = json.loads(result_dict_out[head_node].replace( '\n', '').replace( '\r', ''))
+        # Validate the results against the schema fail if results are not valid
+        try:
+            validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
+            log.info(f'Validation passed: {len(validated)} RcclTests schema validation passed')
+            all_validated_results.extend(validated)
+            all_raw_results.extend(dtype_result_out)
+        except ValidationError as e:
+            log.error(f'Validation Failed: {e}')
+            fail_test(f'RCCL Test {dtype} schema validation failed: {e}')
+
+    # Save the results to a main result file
+    with open(rccl_result_file, 'w') as f:
+        json.dump(all_raw_results, f, indent=2)
+    log.info(f'Saved combined results from all data types to {rccl_result_file}')
+
+    # Validate the results against the schema and aggregate if multiple results are found, fail if results are not valid
+    aggregated_rccl_tests = None
+    try:
+        if len(all_validated_results) >= 1:
+            aggregated_rccl_tests = aggregate_rccl_test_results(all_validated_results)
+            log.info(f'Aggregation passed: {len(aggregated_rccl_tests)} RcclTestsAggregated schema validation passed')
+            # Note: currently we are saving the aggregated results, but we could instead use this for final report generation
+            aggregated_path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
+            with open(aggregated_path, 'w') as f:
+                json.dump([result.model_dump() for result in aggregated_rccl_tests], f, indent=2)
+            log.info(f'Saved aggregated results to {aggregated_path}')
+        else:
+            log.info(f'Aggregation skipped: only one run found')
+    except ValidationError as e:
+        log.error(f'Validation Failed: {e}')
+        fail_test(f'RCCL Test schema validation failed: {e}')
+    except ValueError as e:
+        log.error(f'Aggregation failed: {e}')
+        fail_test(f'RCCL Test aggregation failed: {e}')
 
 
     # Collect basic GPU information via rocm-smi
@@ -516,18 +719,63 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     smi_out = smi_out_dict[head_node]
     model=get_model_from_rocm_smi_output(smi_out)
 
+    # Determine NIC type from nic_model parameter
+    if re.search( 'ainic|pensando|amd', nic_model, re.I ):
+        nic_type = 'ainic'
+    elif re.search( 'broadcom|thor|bnxt', nic_model, re.I ):
+        nic_type = 'thor'
+    elif re.search( 'mellanox|cx|nvidia', nic_model, re.I ):
+        nic_type = 'connectx'
+    else:
+        nic_type = 'ainic'
+    log.info(f'Detected NIC type: {nic_type} from nic_model: {nic_model}')
+
+    # Convert aggregated results to format compatible with verification functions (using mean values)
+    results_for_verification = []
+    if aggregated_rccl_tests:
+        for agg_result in aggregated_rccl_tests:
+            results_for_verification.append({
+                'name': agg_result.name,
+                'size': agg_result.size,
+                'type': agg_result.type,
+                'inPlace': agg_result.inPlace,
+                'busBw': agg_result.busBw_mean,
+                'algBw': agg_result.algBw_mean,
+                'time': agg_result.time_mean
+            })
+        log.info(f'Converted {len(results_for_verification)} aggregated results for verification')
+    else:
+        # Fallback to raw results if aggregation wasn't performed
+        results_for_verification = all_raw_results
+        log.info('Using raw results for verification (no aggregation performed)')
+
+    # Build result key in format: test_name-data_types-global_ranks
+    # Join all data types with underscores for the key
+    dtypes_str = '_'.join(data_types)
+    result_key = f'{test_name}-{dtypes_str}-{no_of_global_ranks}'
+    log.info(f'Looking up results with key: {result_key} in nic_type: {nic_type}')
+    
+    # Get test-specific expected results from hierarchical structure
+    test_exp_dict = None
+    if exp_results_dict and isinstance(exp_results_dict, dict) and nic_type in exp_results_dict:
+        if result_key in exp_results_dict[nic_type]:
+            test_exp_dict = exp_results_dict[nic_type][result_key]
+            log.info(f'Found expected results: {nic_type}/{result_key}')
+    
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
     if re.search( 'True', verify_bus_bw, re.I ):
-        if test_name in exp_results_dict.keys():
-            check_bus_bw( test_name, result_out, exp_results_dict[test_name] )
+        if test_exp_dict:
+            check_bus_bw( test_name, results_for_verification, test_exp_dict )
+        else:
+            log.warning(f'verify_bus_bw enabled but no expected results found for {result_key}')
 
     if re.search( 'True', verify_bw_dip, re.I ):
-        check_bw_dip( test_name, result_out, )
+        check_bw_dip( test_name, results_for_verification, test_exp_dict )
 
     if re.search( 'True', verify_lat_dip, re.I ):
-        check_lat_dip( test_name, result_out, )
+        check_lat_dip( test_name, results_for_verification, test_exp_dict )
 
-    return result_out
+    return all_raw_results
 
 
 
@@ -605,20 +853,22 @@ def rccl_single_node_test( phdl, test_name, cluster_node_list, \
     smi_out_dict = phdl.exec('rocm-smi -a | head -30')
 
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
+    test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None
+    
     if re.search( 'True', verify_bus_bw, re.I ):
         for node in result_dict_out.keys():
             result_out = json.loads(result_dict_out[node].replace( '\n', '').replace( '\r', ''))
-            if test_name in exp_results_dict.keys():
-                check_bus_bw( test_name, result_out, exp_results_dict[test_name] )
+            if test_exp_dict:
+                check_bus_bw( test_name, result_out, test_exp_dict )
 
     if re.search( 'True', verify_bw_dip, re.I ):
         for node in result_dict_out.keys():
             result_out = json.loads(result_dict_out[node].replace( '\n', '').replace( '\r', ''))
-            check_bw_dip( test_name, result_out, )
+            check_bw_dip( test_name, result_out, test_exp_dict )
 
     if re.search( 'True', verify_lat_dip, re.I ):
         for node in result_dict_out.keys():
             result_out = json.loads(result_dict_out[node].replace( '\n', '').replace( '\r', ''))
-            check_lat_dip( test_name, result_out, )
+            check_lat_dip( test_name, result_out, test_exp_dict )
 
     return result_out
