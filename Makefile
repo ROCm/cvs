@@ -55,7 +55,7 @@ test: ut
 
 lint: ruff-venv
 	@echo "Running ruff linter..."
-	@if ! $(RUFF) check . ; then \
+	@if ! $(RUFF) check . --unsafe-fixes ; then \
 		echo "\n\nLinting failed. Run 'make lint-fix' to auto-fix issues.\n"; exit 1; \
 	fi
 	@if ! $(RUFF) format --check . ; then \

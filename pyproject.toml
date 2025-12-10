@@ -1,0 +1,22 @@
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+[tool.ruff.lint]
+ignore = [
+    "F403",  # Star imports (`from module import *`) used in test files
+    "F405",  # Undefined names from star imports
+    "E722",  # Bare `except` clauses
+]
+exclude = [
+    "docs/**",          # Documentation
+    "dist/**",          # Build artifacts
+    "*.egg-info/**",    # Package info
+    "__pycache__/**",   # Cache files
+    ".git/**",          # Git files
+    "test_venv/**",     # Virtual environments
+    "ruff_venv/**",     # Ruff environment
+]
