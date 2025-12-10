@@ -11,7 +11,6 @@ import re
 import json
 
 
-
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *

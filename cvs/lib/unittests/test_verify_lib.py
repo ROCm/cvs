@@ -75,5 +75,26 @@ class TestVerifyGpuPcieErrors(unittest.TestCase):
         mock_fail_test.assert_called()
 
 
+class TestVerifyHostLspci(unittest.TestCase):
+    def setUp(self):
+        self.mock_phdl = MagicMock()
+
+    @patch('cvs.lib.verify_lib.fail_test')
+    def test_verify_host_lspci_success(self, mock_fail_test):
+        # Mock successful lspci output
+        self.mock_phdl.exec.return_value = {'node1': 'BDF: 0000:01:00.0'}
+        self.mock_phdl.exec_cmd_list.return_value = {'node1': 'LnkSta: Speed 32GT/s, Width x16'}
+        verify_lib.verify_host_lspci(self.mock_phdl, 32, 16)
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.verify_lib.fail_test')
+    def test_verify_host_lspci_failure(self, mock_fail_test):
+        # Mock failing output
+        self.mock_phdl.exec.return_value = {'node1': 'BDF: 0000:01:00.0'}
+        self.mock_phdl.exec_cmd_list.return_value = {'node1': 'LnkSta: Speed 16GT/s, Width x8'}
+        verify_lib.verify_host_lspci(self.mock_phdl, 32, 16)
+        mock_fail_test.assert_called()
+
+
 if __name__ == "__main__":
     unittest.main()

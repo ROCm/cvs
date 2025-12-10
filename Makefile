@@ -71,6 +71,30 @@ lint-fix: ruff-venv
 	$(RUFF) check . --fix
 	$(RUFF) format .
 
+unsafe-lint-fix: ruff-venv
+	@echo "WARNING: This will apply unsafe fixes that may remove unused variables or make other potentially breaking changes."
+	@echo "You can fix these issues manually after careful review, or proceed with per-file confirmation."
+	@echo "Getting list of files with unsafe fixes..."
+	@files=$$($(RUFF) check . --unsafe-fixes | awk '/ --> / {split($$2, a, ":"); print a[1]}' | sort | uniq); \
+	if [ -z "$$files" ]; then \
+		echo "No unsafe fixes needed."; \
+		exit 0; \
+	fi; \
+	for file in $$files; do \
+		echo "File: $$file has unsafe fixes."; \
+		$(RUFF) check $$file --unsafe-fixes --diff; \
+		echo "Apply fixes to this file? (y/N)"; \
+		read -p "" confirm; \
+		if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+			echo "Applying unsafe fixes to $$file..."; \
+			$(RUFF) check $$file --fix --unsafe-fixes; \
+		else \
+			echo "Skipping $$file."; \
+		fi; \
+	done
+	@echo "Running formatter..."
+	$(RUFF) format .
+
 clean_venv:
 	@echo "Removing virtual environment..."
 	@if [ -n "$$VIRTUAL_ENV" ] && [ "$$VIRTUAL_ENV" = "$$(pwd)/$(VENV_DIR)" ]; then \
