@@ -21,6 +21,7 @@ from cvs.lib.utils_lib import *
 from cvs.lib import docker_lib
 from cvs.lib import inference_max_lib
 from cvs.lib import globals
+
 log = globals.log
 
 
@@ -61,8 +62,6 @@ def training_config_file(pytestconfig):
     return pytestconfig.getoption("config_file")
 
 
-
-
 # Importing the cluster and cofig files to script to access node, switch, test config params
 @pytest.fixture(scope="module")
 def cluster_dict(cluster_file):
@@ -79,7 +78,7 @@ def cluster_dict(cluster_file):
       - Logs the loaded structure for visibility; consider using log.debug if verbose.
     """
     with open(cluster_file) as json_file:
-       cluster_dict = json.load(json_file)
+        cluster_dict = json.load(json_file)
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
@@ -90,7 +89,7 @@ def cluster_dict(cluster_file):
 @pytest.fixture(scope="module")
 def inference_dict(training_config_file, cluster_dict):
     with open(training_config_file) as json_file:
-       inference_dict_t = json.load(json_file)
+        inference_dict_t = json.load(json_file)
     inference_dict = inference_dict_t['config']
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
@@ -98,12 +97,10 @@ def inference_dict(training_config_file, cluster_dict):
     return inference_dict
 
 
-
-
 @pytest.fixture(scope="module")
 def benchmark_params_dict(training_config_file, cluster_dict):
     with open(training_config_file) as json_file:
-       inference_dict_t = json.load(json_file)
+        inference_dict_t = json.load(json_file)
     benchmark_params_dict = inference_dict_t['benchmark_params']
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
@@ -111,8 +108,6 @@ def benchmark_params_dict(training_config_file, cluster_dict):
 
     log.info(benchmark_params_dict)
     return benchmark_params_dict
-
-
 
 
 @pytest.fixture(scope="module")
@@ -142,8 +137,6 @@ def hf_token(inference_dict):
     return hf_token
 
 
-
-
 @pytest.fixture(scope="module")
 def s_phdl(cluster_dict):
     """
@@ -168,7 +161,7 @@ def s_phdl(cluster_dict):
     nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    s_phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    s_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return s_phdl
 
 
@@ -196,11 +189,8 @@ def c_phdl(cluster_dict):
     nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    c_phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    c_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return c_phdl
-
-
-
 
 
 @pytest.fixture(scope="module")
@@ -224,13 +214,11 @@ def gpu_type(s_phdl, cluster_dict):
     head_node = s_phdl.host_list[0]
     smi_out_dict = s_phdl.exec('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
-    gpu_type=get_model_from_rocm_smi_output(smi_out)
+    gpu_type = get_model_from_rocm_smi_output(smi_out)
     return gpu_type
 
 
-
-
-def test_cleanup_stale_containers( s_phdl, inference_dict ):
+def test_cleanup_stale_containers(s_phdl, inference_dict):
     """
     Pytest: Clean up potentially stale Docker containers and volumes before tests.
 
@@ -250,51 +238,52 @@ def test_cleanup_stale_containers( s_phdl, inference_dict ):
     """
 
     container_name = inference_dict['container_name']
-    docker_lib.kill_docker_container( s_phdl, container_name )
-    docker_lib.delete_all_containers_and_volumes( s_phdl )
+    docker_lib.kill_docker_container(s_phdl, container_name)
+    docker_lib.delete_all_containers_and_volumes(s_phdl)
 
 
-
-def test_launch_inference_containers( s_phdl, inference_dict ):
-    """
-    """
+def test_launch_inference_containers(s_phdl, inference_dict):
+    """ """
 
     log.info('Testcase launch InferenceMax containers')
     globals.error_list = []
     container_name = inference_dict['container_name']
     # Launch the containers ..
-    docker_lib.launch_docker_container( s_phdl, container_name,
-          inference_dict['container_image'],
-          inference_dict['container_config']['device_list'],
-          inference_dict['container_config']['volume_dict'],
-          inference_dict['container_config']['env_dict'],
-          shm_size='48G', timeout=60*20 )
+    docker_lib.launch_docker_container(
+        s_phdl,
+        container_name,
+        inference_dict['container_image'],
+        inference_dict['container_config']['device_list'],
+        inference_dict['container_config']['volume_dict'],
+        inference_dict['container_config']['env_dict'],
+        shm_size='48G',
+        timeout=60 * 20,
+    )
     # ADD verifications ..
     time.sleep(30)
     print('Verify if the containers have been launched properly')
     out_dict = s_phdl.exec('docker ps')
     for node in out_dict.keys():
-        if not re.search( f'{container_name}', out_dict[node], re.I ):
+        if not re.search(f'{container_name}', out_dict[node], re.I):
             fail_test(f'Failed to launch container on node {node}')
     update_test_result()
 
 
-
-
-def test_gpt_oss_120_single_node( c_phdl, s_phdl, gpu_type, inference_dict, benchmark_params_dict, hf_token ):
-
+def test_gpt_oss_120_single_node(c_phdl, s_phdl, gpu_type, inference_dict, benchmark_params_dict, hf_token):
     globals.error_list = []
-    im_obj = inference_max_lib.InferenceMaxJob( c_phdl, s_phdl, 
-           'gpt-oss-120b', inference_dict, benchmark_params_dict,
-           hf_token, gpu_type, distributed_inference=False )
+    im_obj = inference_max_lib.InferenceMaxJob(
+        c_phdl,
+        s_phdl,
+        'gpt-oss-120b',
+        inference_dict,
+        benchmark_params_dict,
+        hf_token,
+        gpu_type,
+        distributed_inference=False,
+    )
     im_obj.build_server_inference_job_cmd()
     im_obj.start_inference_server_job()
     im_obj.start_inference_client_job()
     im_obj.poll_for_inference_completion()
     im_obj.verify_inference_results()
     update_test_result()
-
-
-
-
-

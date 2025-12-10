@@ -69,8 +69,8 @@ def config_file(pytestconfig):
 
 
 @pytest.fixture(scope="module")
-def  cluster_dict(cluster_file):
-     """
+def cluster_dict(cluster_file):
+    """
     Load and expose full cluster configuration for the test module.
 
     Behavior:
@@ -87,15 +87,13 @@ def  cluster_dict(cluster_file):
             - 'username': SSH username
             - 'priv_key_file': Path to SSH private key
     """
-     with open(cluster_file) as json_file:
+    with open(cluster_file) as json_file:
         cluster_dict = json.load(json_file)
 
-     # Resolve path placeholders like {user-id} in cluster config
-     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-     log.info(cluster_dict)
-     return cluster_dict
-
-
+    # Resolve path placeholders like {user-id} in cluster config
+    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
+    log.info(cluster_dict)
+    return cluster_dict
 
 
 @pytest.fixture(scope="module")
@@ -109,17 +107,15 @@ def config_dict(config_file, cluster_dict):
     Notes:
       - Expects the JSON file to contain a top-level key "ibperf".
       - Uses module scope so the config is parsed once per test module.
-     """
+    """
     with open(config_file) as json_file:
-       config_dict_t = json.load(json_file)
+        config_dict_t = json.load(json_file)
     config_dict = config_dict_t['ibperf']
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
     log.info(config_dict)
     return config_dict
-
-
 
 
 @pytest.fixture(scope="module")
@@ -145,9 +141,9 @@ def phdl(cluster_dict):
     nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    if len(node_list)%2 != 0:
+    if len(node_list) % 2 != 0:
         node_list.pop()
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
 
 
@@ -170,10 +166,8 @@ def shdl(cluster_dict):
     nhdl_dict = {}
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
-    shdl = Pssh( log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return shdl
-
-
 
 
 @pytest.fixture(scope="module")
@@ -193,42 +187,40 @@ def vpc_node_list(cluster_dict):
     """
     vpc_node_list = []
     node_list = list(cluster_dict['node_dict'].keys())
-    if len(node_list)%2 != 0:
+    if len(node_list) % 2 != 0:
         node_list.pop()
     for node in node_list:
-        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip']) 
+        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
     return vpc_node_list
 
 
-
-
-
-def test_install_ib_perf(phdl, shdl, config_dict ):
+def test_install_ib_perf(phdl, shdl, config_dict):
     # We install on the first node using shdl handle
     # install standard rdma packages
     globals.error_list = []
 
-    if re.search( 'true', config_dict['install_perf_package'], re.I ):
-        shdl.exec( f'mkdir -p {config_dict["install_dir"]}')
-        phdl.exec( 'sudo apt update -y', timeout=200 )
-        phdl.exec( 'sudo apt install -y git build-essential autoconf automake libtool pkg-config', timeout=200 )
-        phdl.exec( 'sudo apt install -y libibverbs-dev librdmacm-dev ibverbs-providers rdma-core', timeout=200 )
-        phdl.exec( 'sudo apt install -y libibumad-dev' )
-        phdl.exec( 'sudo apt install -y libpci-dev' )
-        phdl.exec( 'sudo apt install -y numactl' )
-        shdl.exec( f'cd {config_dict["install_dir"]}; git clone https://github.com/linux-rdma/perftest' )
-        shdl.exec( f'cd {config_dict["install_dir"]}/perftest; ./autogen.sh', timeout=100 )
-        shdl.exec( f'cd {config_dict["install_dir"]}/perftest; ./configure --prefix={config_dict["install_dir"]}/perftest --with-rocm={config_dict["rocm_dir"]} --enable-rocm', timeout=200 )
-        shdl.exec( f'cd {config_dict["install_dir"]}/perftest; make', timeout=100 )
-        shdl.exec( f'cd {config_dict["install_dir"]}/perftest; make install', timeout=100 )
+    if re.search('true', config_dict['install_perf_package'], re.I):
+        shdl.exec(f'mkdir -p {config_dict["install_dir"]}')
+        phdl.exec('sudo apt update -y', timeout=200)
+        phdl.exec('sudo apt install -y git build-essential autoconf automake libtool pkg-config', timeout=200)
+        phdl.exec('sudo apt install -y libibverbs-dev librdmacm-dev ibverbs-providers rdma-core', timeout=200)
+        phdl.exec('sudo apt install -y libibumad-dev')
+        phdl.exec('sudo apt install -y libpci-dev')
+        phdl.exec('sudo apt install -y numactl')
+        shdl.exec(f'cd {config_dict["install_dir"]}; git clone https://github.com/linux-rdma/perftest')
+        shdl.exec(f'cd {config_dict["install_dir"]}/perftest; ./autogen.sh', timeout=100)
+        shdl.exec(
+            f'cd {config_dict["install_dir"]}/perftest; ./configure --prefix={config_dict["install_dir"]}/perftest --with-rocm={config_dict["rocm_dir"]} --enable-rocm',
+            timeout=200,
+        )
+        shdl.exec(f'cd {config_dict["install_dir"]}/perftest; make', timeout=100)
+        shdl.exec(f'cd {config_dict["install_dir"]}/perftest; make install', timeout=100)
 
         # Verify if the installation went fine ..
-        out_dict = phdl.exec( f'{config_dict["install_dir"]}/perftest/ib_write_bw -h | grep -i rocm --color=never' )
+        out_dict = phdl.exec(f'{config_dict["install_dir"]}/perftest/ib_write_bw -h | grep -i rocm --color=never')
         for node in out_dict.keys():
-            if not re.search( 'GPUDirect RDMA', out_dict[node], re.I ):
-                fail_test( f'IB Perf package installation on node {node} failed, ib_write_bw not showing expected use_rocm output')
+            if not re.search('GPUDirect RDMA', out_dict[node], re.I):
+                fail_test(
+                    f'IB Perf package installation on node {node} failed, ib_write_bw not showing expected use_rocm output'
+                )
     update_test_result()
-
-
-
-

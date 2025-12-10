@@ -15,26 +15,23 @@ from cvs.lib import linux_utils
 
 
 err_patterns_dict = {
-
     'gpu_reset': 'GPU reset begin|GPU hang|cp might be in an unrecoverable state|fence wait loop timeout expired',
     'crash': 'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|fault ',
     'test_fail': 'Test failure',
     'fault': 'no-retry page fault|Illegal register access|PROTECTION_FAULT_STATUS',
     'driver': 'Queue preemption failed for queue|Failed to evict process queues|Runlist is getting oversubscribed|No more SDMA queue to allocate|Expect reduced ROCm performance|amdgpu: process pid',
     'hardware': 'hardware error|hardware fail|ras error|uncorrectable|correctable err',
-    'network': 'NIC Link is Down|link is down|ib_uverb|CQE|queue catastrophic|CQ error'
-
+    'network': 'NIC Link is Down|link is down|ib_uverb|CQE|queue catastrophic|CQ error',
 }
 
 
 err_stats_pattern = 'err|drop|discard|overflow|fcs|nak|uncorrect|loss'
 warn_stats_pattern = 'retry|timeout|exceeded|ooo|retransmit'
 threshold_stats_pattern = 'cnp|ecn'
-threshold_counter_val=1000
+threshold_counter_val = 1000
 
 
-
-def verify_gpu_pcie_bus_width( phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pcie_width=16):
+def verify_gpu_pcie_bus_width(phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pcie_width=16):
     """
     Verify that all GPUs across nodes are operating at the expected PCIe link speed and width.
 
@@ -69,7 +66,7 @@ def verify_gpu_pcie_bus_width( phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pc
 
     err_dict = {}
     # Query per-node GPU PCIe bus mapping (node -> card -> PCI attributes)
-    out_dict = get_gpu_pcie_bus_dict( phdl )
+    out_dict = get_gpu_pcie_bus_dict(phdl)
     for node in out_dict.keys():
         err_dict[node] = []
     cmd_list = []
@@ -81,7 +78,7 @@ def verify_gpu_pcie_bus_width( phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pc
     # Check each node has the expected number of GPUs
     for node in out_dict.keys():
         card_list = out_dict[node].keys()
-        if len(card_list)!= expected_cards:
+        if len(card_list) != expected_cards:
             fail_test(f'ERROR !! Number of cards not matching expected no {expected_cards} on node {node}')
 
     # Let us take the last card_list for further checks ..
@@ -91,36 +88,34 @@ def verify_gpu_pcie_bus_width( phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pc
         cmd_list = []
 
         # Build lspci commands for the same card index across all nodes
-        for node in out_dict.keys(): 
+        for node in out_dict.keys():
             bus_no = out_dict[node][card_no]['PCI Bus']
             cmd_list.append(f'sudo lspci -vvv -s {bus_no} | grep "LnkSta:" --color=never')
 
         # Execute all commands; expect dict mapping node -> command output text
-        pci_dict = phdl.exec_cmd_list( cmd_list )
+        pci_dict = phdl.exec_cmd_list(cmd_list)
 
         # Validate each node's output for speed, width, and downgraded status
         for p_node in pci_dict.keys():
             # Validate negotiated speed (e.g., "Speed 32GT/s")
-            if not re.search( f'Speed {gpu_pcie_speed}GT', pci_dict[p_node] ):
+            if not re.search(f'Speed {gpu_pcie_speed}GT', pci_dict[p_node]):
                 msg = f'ERROR !! PCIe speed not matching for bus {bus_no} on node {p_node}, expected {gpu_pcie_speed}GT/s but got {pci_dict[p_node]}'
                 fail_test(msg)
                 err_dict[node].append(msg)
             # Validate negotiated width (e.g., "Width x16")
-            if not re.search( f'Width x{gpu_pcie_width}', pci_dict[p_node] ):
+            if not re.search(f'Width x{gpu_pcie_width}', pci_dict[p_node]):
                 msg = f'ERROR !! PCIe width not matching for bus {bus_no} on node {p_node}, expected {gpu_pcie_width} but got {pci_dict[p_node]}'
                 fail_test(msg)
                 err_dict[node].append(msg)
             # Check for link downgrade indications
-            if re.search( 'downgrade', pci_dict[p_node] ):
+            if re.search('downgrade', pci_dict[p_node]):
                 msg = f'ERROR !! PCIe in downgraded state for bus {bus_no} on node {p_node}'
                 fail_test(f'ERROR !! PCIe in downgraded state for bus {bus_no} on node {p_node}')
                 err_dict[node].append(msg)
     return err_dict
 
 
-
-
-def verify_gpu_pcie_errors( phdl ):
+def verify_gpu_pcie_errors(phdl):
     """
     Check PCIe error-related GPU metrics across nodes and fail if thresholds are exceeded.
 
@@ -144,17 +139,16 @@ def verify_gpu_pcie_errors( phdl ):
     err_dict = {}
     # Query a nested dict of GPU metrics per node:
     # { node: { card: { 'metric_name': 'value_str', ... }, ... }, ... }
-    metrics_dict = get_gpu_metrics_dict( phdl )
+    metrics_dict = get_gpu_metrics_dict(phdl)
     for node in metrics_dict.keys():
         err_dict[node] = []
 
-     # Iterate through each node's metrics
+    # Iterate through each node's metrics
     for node in metrics_dict.keys():
         d_dict = metrics_dict[node]
 
         # Check each GPU's (card) PCIe-related counters
         for card in d_dict.keys():
-
             # Count of transitions from L0 to Recovery; high counts may indicate link instability
             if int(d_dict[card]['pcie_l0_to_recov_count_acc (Count)']) > 100:
                 msg = f"ERROR !! Node {node} card {card} having higher L0 to recovery counter - \
@@ -179,10 +173,7 @@ def verify_gpu_pcie_errors( phdl ):
     return err_dict
 
 
-
-
-def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=True ):
-   
+def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=True):
     """
     Scan kernel logs (dmesg) between given start and end timestamps across nodes
     and fail if any known error patterns are detected.
@@ -210,7 +201,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
       - If start/end times are not aligned with dmesg -T formatting, the awk range may be empty.
       - Consider handling cases where regex extraction fails (no match) to avoid attribute errors.
     """
- 
+
     print('scan dmesg')
 
     err_dict = {}
@@ -222,21 +213,25 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
 
     # Extract the "Mon Jan  2 03:04:05" style prefix from the provided timestamps
     pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)"
-    match = re.search( pattern, start_time)
+    match = re.search(pattern, start_time)
     start_pattern = match.group(1)
 
     # Extract end timestamp prefix similarly
     pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)"
-    match = re.search( pattern, end_time)
+    match = re.search(pattern, end_time)
     end_pattern = match.group(1)
 
     # Pull human-readable dmesg and slice the lines between start and end timestamps.
     # Filter out allowed/denied lines to reduce noise. Return is a dict keyed by node.
     if till_end_flag:
-        output_dict = phdl.exec(f"sudo dmesg -T | sed -n '/{start_pattern}/,$p' | egrep -v 'ALLOWED|DENIED' --color=never")
+        output_dict = phdl.exec(
+            f"sudo dmesg -T | sed -n '/{start_pattern}/,$p' | egrep -v 'ALLOWED|DENIED' --color=never"
+        )
     else:
-        output_dict = phdl.exec(f"sudo dmesg -T | awk '/{start_pattern}.*/,/{end_pattern}.*/' | egrep -v 'ALLOWED|DENIED' --color=never")
-    #print(output_dict)
+        output_dict = phdl.exec(
+            f"sudo dmesg -T | awk '/{start_pattern}.*/,/{end_pattern}.*/' | egrep -v 'ALLOWED|DENIED' --color=never"
+        )
+    # print(output_dict)
     for node in output_dict.keys():
         err_dict[node] = []
 
@@ -244,18 +239,14 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     for node in output_dict.keys():
         for line in output_dict[node].split("\n"):
             for err_key in err_patterns_dict.keys():
-                if re.search( f'{err_patterns_dict[err_key]}', line, re.I ):
+                if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
                     fail_test(f'ERROR - Failue pattern ** {line} ** seen in Dmesg')
                     err_dict[node].append(line)
 
     return err_dict
 
 
-
-
-
-def verify_nic_link_flap( phdl ):
-
+def verify_nic_link_flap(phdl):
     """
     Verify NIC health by checking link flap/reset/down counters from ethtool stats
     and scanning dmesg for link-down events across all nodes.
@@ -289,7 +280,7 @@ def verify_nic_link_flap( phdl ):
     err_dict = {}
 
     # Gather NIC stats per node and per interface using ethtool
-    nic_stats_dict = linux_utils.get_nic_ethtool_stats_dict( phdl )
+    nic_stats_dict = linux_utils.get_nic_ethtool_stats_dict(phdl)
     for node in nic_stats_dict:
         err_dict[node] = []
 
@@ -298,7 +289,7 @@ def verify_nic_link_flap( phdl ):
         for intf in nic_stats_dict[node].keys():
             for counter in nic_stats_dict[node][intf].keys():
                 # Consider counters indicating resets, link down, or flaps
-                if re.search( 'reset|down|flap', counter, re.I ):
+                if re.search('reset|down|flap', counter, re.I):
                     # Fail if any of those counters is non-zero
                     if int(nic_stats_dict[node][intf][counter]) > 0:
                         msg = f'ERROR !! {node} {intf} {counter} {nic_stats_dict[node][intf][counter]}'
@@ -306,21 +297,18 @@ def verify_nic_link_flap( phdl ):
                         err_dict[node].append(msg)
 
     # Scan dmesg for link-related messages across nodes
-    nic_dmesg_dict = phdl.exec( 'sudo dmesg -T | grep -i link --color=never')
+    nic_dmesg_dict = phdl.exec('sudo dmesg -T | grep -i link --color=never')
 
     # If the kernel logs show link down messages, fail the test
     for node in nic_dmesg_dict.keys():
-        if re.search( 'NIC Link is down', nic_dmesg_dict[node], re.I ):
+        if re.search('NIC Link is down', nic_dmesg_dict[node], re.I):
             msg = f'ERROR !! NIC Link down dmesg logs seen on node {node}'
             fail_test(msg)
             err_dict[node].append(msg)
     return err_dict
 
 
-
-
-def verify_host_lspci( phdl, pcie_speed=32, pcie_width=16 ):
-
+def verify_host_lspci(phdl, pcie_speed=32, pcie_width=16):
     """
     Verify host-side PCIe link attributes for AMD GPUs against expected speed/width and
     check for PCIe error indications using lspci.
@@ -358,15 +346,15 @@ def verify_host_lspci( phdl, pcie_speed=32, pcie_width=16 ):
 
     bdf_dict = {}
     for node in out_dict.keys():
-        bdf_list_out =  out_dict[node]
+        bdf_list_out = out_dict[node]
         pattern = r"BDF:\s+([0-9a-f\:\.]+)"
         # Extract all BDF tokens from the amd-smi output for this node
-        bdf_list = re.findall( pattern, out_dict[node], re.I )
+        bdf_list = re.findall(pattern, out_dict[node], re.I)
         bdf_dict[node] = bdf_list
 
     # Iterate over BDFs using the most recently assigned bdf_list
     # Note: This assumes all nodes share the same BDF indices; see note above.
-    for i in range(0,len(bdf_list)):
+    for i in range(0, len(bdf_list)):
         cmd_list = []
 
         # Build lspci queries (one per node) for the current BDF slot
@@ -380,14 +368,14 @@ def verify_host_lspci( phdl, pcie_speed=32, pcie_width=16 ):
         for lnode in lspci_dict.keys():
             # Check negotiated link speed (e.g., "LnkSta: Speed 32GT/s")
             pattern = r"LnkSta:\s+Speed\s+" + str(pcie_speed) + "GT"
-            if not re.search( pattern, lspci_dict[lnode], re.I ):
+            if not re.search(pattern, lspci_dict[lnode], re.I):
                 msg = f'ERROR !! PCIe Link speed not matching with expected output on node {lnode} - expected {pcie_speed}'
                 fail_test(msg)
                 err_dict[node].append(msg)
 
             # Check negotiated link width (e.g., "Width x16")
             pattern = r"Width\s+x" + str(pcie_width)
-            if not re.search( pattern, lspci_dict[lnode], re.I ):
+            if not re.search(pattern, lspci_dict[lnode], re.I):
                 msg = f'ERROR !! PCIe Link width not matching with expected output on node {lnode} - expected {pcie_width}'
                 fail_test(msg)
                 err_dict[node].append(msg)
@@ -395,7 +383,9 @@ def verify_host_lspci( phdl, pcie_speed=32, pcie_width=16 ):
             # Check for PCIe error indications (correctable/uncorrectable, etc.)
             # NOTE: Logic seems inverted: this fails when none of these tokens are present.
             # If the intent is to fail when ANY are present, remove the 'not'.
-            if not re.search( 'CorrErr+|FatalErr+|RxErr+|BadTLP+|BadDLLP+|DLP+|SDES+|ExOF+|TLP+|MalfTLP+', lspci_dict[lnode], re.I ):
+            if not re.search(
+                'CorrErr+|FatalErr+|RxErr+|BadTLP+|BadDLLP+|DLP+|SDES+|ExOF+|TLP+|MalfTLP+', lspci_dict[lnode], re.I
+            ):
                 msg = f'ERROR !! PCIe corretable or uncorrectable error indications on Host side on node {lnode}'
                 fail_test(msg)
                 err_dict[node].append(msg)
@@ -403,9 +393,7 @@ def verify_host_lspci( phdl, pcie_speed=32, pcie_width=16 ):
     return err_dict
 
 
-
-def full_journalctl_scan( phdl ):
-
+def full_journalctl_scan(phdl):
     """
     Scan kernel logs via journalctl across nodes for GPU/interrupt/error-related issues
     and fail if any known error patterns are detected.
@@ -440,7 +428,7 @@ def full_journalctl_scan( phdl ):
 
     err_dict = {}
     # Fetch kernel logs filtered for likely error indicators across nodes
-    out_dict = phdl.exec( 'sudo journalctl -k | egrep "amdgpu|interrupt|error|fail|timeout|fault"')
+    out_dict = phdl.exec('sudo journalctl -k | egrep "amdgpu|interrupt|error|fail|timeout|fault"')
     for node in out_dict.keys():
         err_dict[node] = []
 
@@ -449,18 +437,16 @@ def full_journalctl_scan( phdl ):
         for line in out_dict[node].split("\n"):
             for err_key in err_patterns_dict.keys():
                 # Case-insensitive match against the configured error patterns
-                if re.search( f'{err_patterns_dict[err_key]}', line, re.I ):
+                if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
                     msg = f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}'
                     fail_test(msg)
                     err_dict[node].append(line)
     return err_dict
 
 
-
-
-
-
-def full_dmesg_scan(phdl,):
+def full_dmesg_scan(
+    phdl,
+):
     """
     Scan dmesg across nodes for known error patterns and fail on first match.
 
@@ -503,21 +489,18 @@ def full_dmesg_scan(phdl,):
 
     # Iterate node-by-node through the filtered dmesg output
     for node in output_dict.keys():
-        # Examine each line for any known failure pattern 
+        # Examine each line for any known failure pattern
         for line in output_dict[node].split("\n"):
             for err_key in err_patterns_dict.keys():
                 # Case-insensitive match against configured error regexes
-                if re.search( f'{err_patterns_dict[err_key]}', line, re.I ):
+                if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
                     msg = f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}'
                     fail_test(msg)
                     err_dict[node].append(line)
     return err_dict
 
 
-
-
-
-def verify_driver_errors( phdl ):
+def verify_driver_errors(phdl):
     """
     Scan dmesg for AMDGPU driver-related errors across nodes and fail on detection.
 
@@ -557,20 +540,19 @@ def verify_driver_errors( phdl ):
     for node in out_dict.keys():
         err_dict[node] = []
 
-
     # For each node, if the filtered output contains 'fail' or 'error', mark test as failed.
     for node in out_dict.keys():
         for line in out_dict[node].split("\n"):
-            if re.search( 'fail|error', line, re.I ):
+            if re.search('fail|error', line, re.I):
                 msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
                 fail_test(msg)
                 err_dict[node].append(line)
     return err_dict
 
 
-
-
-def create_cluster_metrics_snapshot( phdl, ):
+def create_cluster_metrics_snapshot(
+    phdl,
+):
     """
     Collect a point-in-time snapshot of key cluster metrics across nodes.
 
@@ -591,26 +573,22 @@ def create_cluster_metrics_snapshot( phdl, ):
     s_dict = {}
 
     # Gather Ethernet interface statistics via ethtool across all nodes
-    s_dict['eth_stats'] = linux_utils.get_nic_ethtool_stats_dict( phdl )
+    s_dict['eth_stats'] = linux_utils.get_nic_ethtool_stats_dict(phdl)
 
     # Gather RDMA device statistics (e.g., counters per HCA/NIC) across all nodes
-    s_dict['rdma_stats'] = linux_utils.get_rdma_stats_dict( phdl )
+    s_dict['rdma_stats'] = linux_utils.get_rdma_stats_dict(phdl)
 
     # Gather GPU RAS metrics from amd-smi (e.g., ECC, XGMI, memory error counters)
-    s_dict['gpu_ras_stats'] = get_amd_smi_ras_metrics_dict( phdl )
+    s_dict['gpu_ras_stats'] = get_amd_smi_ras_metrics_dict(phdl)
 
     # Gather GPU PCIe metrics from amd-smi (e.g., link speed/width, errors)
-    s_dict['gpu_pcie_stats'] = get_amd_smi_pcie_metrics_dict( phdl )
+    s_dict['gpu_pcie_stats'] = get_amd_smi_pcie_metrics_dict(phdl)
 
-    #s_dict['gpu_stats'] = get_gpu_metrics_dict( phdl )
+    # s_dict['gpu_stats'] = get_gpu_metrics_dict( phdl )
     return s_dict
 
 
-
-
-
-def get_metrics_snapshot_diff_dict( s_dict_before, s_dict_after ):
-
+def get_metrics_snapshot_diff_dict(s_dict_before, s_dict_after):
     """
     Compute a nested dictionary of deltas between two cluster metrics snapshots.
 
@@ -649,32 +627,29 @@ def get_metrics_snapshot_diff_dict( s_dict_before, s_dict_after ):
         for node in s_dict_before[key_nam].keys():
             for dev_nam in s_dict_before[key_nam][node].keys():
                 for stat_nam in s_dict_before[key_nam][node][dev_nam].keys():
-
                     # Skip lists entirely (no delta computed for list-type stats)
-                    if not isinstance( s_dict_before[key_nam][node][dev_nam][stat_nam], list ):
-
+                    if not isinstance(s_dict_before[key_nam][node][dev_nam][stat_nam], list):
                         # If value is a string, only diff when it looks numeric (not textual)
-                        if isinstance( s_dict_before[key_nam][node][dev_nam][stat_nam], str ):
+                        if isinstance(s_dict_before[key_nam][node][dev_nam][stat_nam], str):
                             # Pattern matches alphabetic/._- tokens; if found, treat as textual and skip
                             pattern = r"[a-z\.\_\-]+"
-                            if not re.search( pattern, s_dict_before[key_nam][node][dev_nam][stat_nam], re.I ):
+                            if not re.search(pattern, s_dict_before[key_nam][node][dev_nam][stat_nam], re.I):
                                 # Treat as numeric string; compute integer delta
-                                diff_dict[key_nam][node][dev_nam][stat_nam] =  \
-                                       int(s_dict_after[key_nam][node][dev_nam][stat_nam]) - \
-                                       int(s_dict_before[key_nam][node][dev_nam][stat_nam])
+                                diff_dict[key_nam][node][dev_nam][stat_nam] = int(
+                                    s_dict_after[key_nam][node][dev_nam][stat_nam]
+                                ) - int(s_dict_before[key_nam][node][dev_nam][stat_nam])
                         # If value is an integer, compute direct delta
-                        elif isinstance( s_dict_before[key_nam][node][dev_nam][stat_nam], int ): 
-                            diff_dict[key_nam][node][dev_nam][stat_nam] =  \
-                                s_dict_after[key_nam][node][dev_nam][stat_nam] - \
-                                s_dict_before[key_nam][node][dev_nam][stat_nam]
+                        elif isinstance(s_dict_before[key_nam][node][dev_nam][stat_nam], int):
+                            diff_dict[key_nam][node][dev_nam][stat_nam] = (
+                                s_dict_after[key_nam][node][dev_nam][stat_nam]
+                                - s_dict_before[key_nam][node][dev_nam][stat_nam]
+                            )
 
     return diff_dict
-                      
-            
 
 
 # top level key_nam is type like eth_stats, rdma_stats
-def compare_cluster_metrics_snapshots( s_dict_before, s_dict_after ):
+def compare_cluster_metrics_snapshots(s_dict_before, s_dict_after):
     """
     Compare two cluster metrics snapshots and report counters that increased,
     classifying them as warnings, errors, or threshold-based warnings.
@@ -703,12 +678,12 @@ def compare_cluster_metrics_snapshots( s_dict_before, s_dict_after ):
     """
 
     print('Compare 2 cluster snapshots')
-    # err_dict will capture the ERROR, WARN log messages at a node level which have seen 
+    # err_dict will capture the ERROR, WARN log messages at a node level which have seen
     # increment in values for any error or warning counters. The same can be obtained
     # from the complete test log by doing a grep on ERROR|WARN and snapshot
     err_dict = {}
 
-    # err_stats_diff_dict is a collection of node, device level error/warning metrics which 
+    # err_stats_diff_dict is a collection of node, device level error/warning metrics which
     # have actually incremented during the snapshot period with the values of before and
     # after for each of those metrics. This will be used to display the values before and
     # after in the snaphot Diff tables for GPU and NIC metrics
@@ -716,70 +691,71 @@ def compare_cluster_metrics_snapshots( s_dict_before, s_dict_after ):
 
     # Compute per-stat deltas between the two snapshots:
     # diff_dict mirrors the structure {category -> node -> device -> stat_name -> delta}.
-    diff_dict = get_metrics_snapshot_diff_dict( s_dict_before, s_dict_after )
+    diff_dict = get_metrics_snapshot_diff_dict(s_dict_before, s_dict_after)
 
     # Walk the nested structure and evaluate each stat's delta against patterns/thresholds.
-    for key_nam in diff_dict.keys():                                      # category (e.g., eth_stats, rdma_stats)
+    for key_nam in diff_dict.keys():  # category (e.g., eth_stats, rdma_stats)
         err_dict[key_nam] = {}
         err_stats_diff_dict[key_nam] = {}
-        for node in diff_dict[key_nam].keys():                            # node identifier
+        for node in diff_dict[key_nam].keys():  # node identifier
             err_dict[key_nam][node] = []
             err_stats_diff_dict[key_nam][node] = {}
-            for dev_nam in diff_dict[key_nam][node].keys():               # device/interface identifier
+            for dev_nam in diff_dict[key_nam][node].keys():  # device/interface identifier
                 err_stats_diff_dict[key_nam][node][dev_nam] = {}
-                for stat_nam in diff_dict[key_nam][node][dev_nam].keys(): # metric/statistic identifier
-
+                for stat_nam in diff_dict[key_nam][node][dev_nam].keys():  # metric/statistic identifier
                     # Warning counters: log when any positive increase occurs
-                    if re.search( f'{warn_stats_pattern}', stat_nam, re.I ):
+                    if re.search(f'{warn_stats_pattern}', stat_nam, re.I):
                         if int(diff_dict[key_nam][node][dev_nam][stat_nam]) > 0:
                             msg = f'WARN !! cluster snapshot showing some warning counters going up - {key_nam} {node} {dev_nam} {stat_nam} have incremented by {diff_dict[key_nam][node][dev_nam][stat_nam]} Before = {s_dict_before[key_nam][node][dev_nam][stat_nam]} After = {s_dict_after[key_nam][node][dev_nam][stat_nam]}'
                             log.warn(msg)
                             print(msg)
                             err_dict[key_nam][node].append(msg)
                         err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
-                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = \
-                               s_dict_before[key_nam][node][dev_nam][stat_nam]
-                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = \
-                               s_dict_after[key_nam][node][dev_nam][stat_nam]
-                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['diff'] = \
-                               int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after']) - \
-                               int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'])
-
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = s_dict_before[key_nam][node][
+                            dev_nam
+                        ][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = s_dict_after[key_nam][node][
+                            dev_nam
+                        ][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['diff'] = int(
+                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after']
+                        ) - int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'])
 
                     # Error counters: log when any positive increase occurs
-                    elif re.search( f'{err_stats_pattern}', stat_nam, re.I ):
+                    elif re.search(f'{err_stats_pattern}', stat_nam, re.I):
                         if int(diff_dict[key_nam][node][dev_nam][stat_nam]) > 0:
                             msg = f'ERROR !! cluster snapshot showing some error counters going up - {key_nam} {node} {dev_nam} {stat_nam} have incremented by {diff_dict[key_nam][node][dev_nam][stat_nam]} Before = {s_dict_before[key_nam][node][dev_nam][stat_nam]} After = {s_dict_after[key_nam][node][dev_nam][stat_nam]}'
                             log.error(msg)
                             print(msg)
                             err_dict[key_nam][node].append(msg)
                         err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
-                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = \
-                            s_dict_before[key_nam][node][dev_nam][stat_nam]
-                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = \
-                            s_dict_after[key_nam][node][dev_nam][stat_nam]
-                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['diff'] = \
-                            int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after']) - \
-                            int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'])
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = s_dict_before[key_nam][node][
+                            dev_nam
+                        ][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = s_dict_after[key_nam][node][
+                            dev_nam
+                        ][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['diff'] = int(
+                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after']
+                        ) - int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'])
 
                     # Threshold-based warning counters: require delta to exceed a configured threshold
-                    elif re.search( f'{threshold_stats_pattern}', stat_nam, re.I ):
+                    elif re.search(f'{threshold_stats_pattern}', stat_nam, re.I):
                         if int(diff_dict[key_nam][node][dev_nam][stat_nam]) > threshold_counter_val:
                             msg = f'WARN !! cluster snapshot showing some threshold warn counters going up - {key_nam} {node} {dev_nam} {stat_nam} have incremented by {diff_dict[key_nam][node][dev_nam][stat_nam]} Before = {s_dict_before[key_nam][node][dev_nam][stat_nam]} After = {s_dict_after[key_nam][node][dev_nam][stat_nam]}'
                             log.warn(msg)
                             print(msg)
                             err_dict[key_nam][node].append(msg)
                         err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
-                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = \
-                            s_dict_before[key_nam][node][dev_nam][stat_nam]
-                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = \
-                            s_dict_after[key_nam][node][dev_nam][stat_nam]
-                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['diff'] = \
-                            int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after']) - \
-                            int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'])
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = s_dict_before[key_nam][node][
+                            dev_nam
+                        ][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after'] = s_dict_after[key_nam][node][
+                            dev_nam
+                        ][stat_nam]
+                        err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['diff'] = int(
+                            err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after']
+                        ) - int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'])
 
     print('Completed comparing the cluster snapshots')
     return err_dict, err_stats_diff_dict
-
-
-

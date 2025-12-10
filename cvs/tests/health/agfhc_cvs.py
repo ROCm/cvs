@@ -23,7 +23,6 @@ from cvs.lib import globals
 log = globals.log
 
 
-
 # NOTE: This module assumes the following symbols are available in scope:
 # - log: a configured logger
 # - Pssh: parallel SSH helper class
@@ -76,7 +75,6 @@ def cluster_dict(cluster_file):
     return cluster_dict
 
 
-
 @pytest.fixture(scope="module")
 def config_dict(config_file, cluster_dict):
     """
@@ -96,10 +94,7 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-
-
 def scan_agfc_results(out_dict):
-
     """
     Parse AGFHC run outputs from all nodes and fail on unexpected patterns.
 
@@ -112,14 +107,11 @@ def scan_agfc_results(out_dict):
     """
 
     for host in out_dict.keys():
-        if not re.search( 'code AGFHC_SUCCESS', out_dict[host], re.I ):
+        if not re.search('code AGFHC_SUCCESS', out_dict[host], re.I):
             fail_test(f'Test failed on node {host} - AGFHC_SUCCESS code NOT seen in test result')
 
-        if re.search( 'FAIL|ERROR|ABORT', out_dict[host], re.I ):
+        if re.search('FAIL|ERROR|ABORT', out_dict[host], re.I):
             fail_test(f'Test failed on node {host} - FAIL or ERROR or ABORT patterns seen')
-
-
-
 
 
 # Create connection to DUTs and export for later use ..
@@ -134,14 +126,14 @@ def phdl(cluster_dict):
     nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], stop_on_errors=False )
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], stop_on_errors=False)
     return phdl
 
 
-
-
-
-def test_agfhc_hbm(phdl, config_dict, ):
+def test_agfhc_hbm(
+    phdl,
+    config_dict,
+):
     """
     Run AGFHC HBM test for a duration specified in config (HH:MM:SS).
 
@@ -160,15 +152,18 @@ def test_agfhc_hbm(phdl, config_dict, ):
     log.info('Testcase Run HBM Test')
     path = config_dict['path']
     duration = convert_hms_to_secs(config_dict['hbm_test_duration'])
-    (hours,mins,secs) = config_dict['hbm_test_duration'].split(":")
-    out_dict = phdl.exec(f'sudo {path}/agfhc -t hbm:d={hours}h{mins}m{secs}s --simple-output', timeout=duration+120)
+    (hours, mins, secs) = config_dict['hbm_test_duration'].split(":")
+    out_dict = phdl.exec(f'sudo {path}/agfhc -t hbm:d={hours}h{mins}m{secs}s --simple-output', timeout=duration + 120)
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
 # 2 hrs
-def test_agfhc_hbm1_lvl5(phdl, config_dict, ):
+def test_agfhc_hbm1_lvl5(
+    phdl,
+    config_dict,
+):
     """
     Run AGFHC HBM1 level 5 recipe.
 
@@ -180,15 +175,17 @@ def test_agfhc_hbm1_lvl5(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run HBM1 Test - hbm_lvl5')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm1 -r hbm_lvl5', timeout=(60*300))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm1 -r hbm_lvl5', timeout=(60 * 300))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
 # 2 hrs
-def test_agfhc_hbm2_lvl5(phdl, config_dict, ):
-
+def test_agfhc_hbm2_lvl5(
+    phdl,
+    config_dict,
+):
     """
     Run AGFHC HBM2 level 5 recipe:
       - 'agfhc -s hbm2 -r hbm_lvl5'
@@ -197,15 +194,17 @@ def test_agfhc_hbm2_lvl5(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run HBM2 Test - hbm_lvl5')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm2 -r hbm_lvl5', timeout=(60*300))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm2 -r hbm_lvl5', timeout=(60 * 300))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
-
 # 30 min
-def test_agfhc_hbm3_lvl3(phdl, config_dict, ):
+def test_agfhc_hbm3_lvl3(
+    phdl,
+    config_dict,
+):
     """
     Run AGFHC HBM3 level 3 recipe:
       - 'agfhc -s hbm3 -r hbm_lvl3'
@@ -214,15 +213,16 @@ def test_agfhc_hbm3_lvl3(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run HBM3 Test - hbm_lvl3')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm3 -r hbm_lvl3', timeout=(60*100))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm3 -r hbm_lvl3', timeout=(60 * 100))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
-
-
-def test_agfhc_dma_all_lvl1(phdl, config_dict, ):
+def test_agfhc_dma_all_lvl1(
+    phdl,
+    config_dict,
+):
     """
     Run AGFHC aggregate level 1 recipe:
       - 'agfhc -r all_lvl1'
@@ -231,13 +231,16 @@ def test_agfhc_dma_all_lvl1(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run all_lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r all_lvl1', timeout=(60*30))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r all_lvl1', timeout=(60 * 30))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
-def test_agfhc_dma_lvl1(phdl, config_dict, ):
+def test_agfhc_dma_lvl1(
+    phdl,
+    config_dict,
+):
     """
     Run AGFHC DMA level 1 recipe:
       - 'agfhc -r dma_lvl1'
@@ -246,13 +249,16 @@ def test_agfhc_dma_lvl1(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run DMA lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r dma_lvl1', timeout=(60*30))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r dma_lvl1', timeout=(60 * 30))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
-def test_agfhc_gfx_lvl1(phdl, config_dict, ):
+def test_agfhc_gfx_lvl1(
+    phdl,
+    config_dict,
+):
     """
     Run AGFHC GFX level 1 recipe:
       - 'agfhc -r gfx_lvl1'
@@ -261,13 +267,16 @@ def test_agfhc_gfx_lvl1(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run GFX lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r gfx_lvl1', timeout=(60*60))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r gfx_lvl1', timeout=(60 * 60))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
-def test_agfhc_pcie_lvl1(phdl, config_dict, ):
+def test_agfhc_pcie_lvl1(
+    phdl,
+    config_dict,
+):
     """
     Pytest: Run the AGFHC PCIe level-1 recipe on all nodes and validate results.
 
@@ -290,13 +299,16 @@ def test_agfhc_pcie_lvl1(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run PCIe lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl1', timeout=(60*60))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl1', timeout=(60 * 60))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
-def test_agfhc_pcie_lvl3(phdl, config_dict, ):
+def test_agfhc_pcie_lvl3(
+    phdl,
+    config_dict,
+):
     """
     Pytest: Run the AGFHC PCIe level-3 recipe on all nodes and validate results.
 
@@ -313,15 +325,16 @@ def test_agfhc_pcie_lvl3(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run PCIe lvl3')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl3', timeout=(60*60))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl3', timeout=(60 * 60))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
-
-
-def test_agfhc_xgmi_lvl1(phdl, config_dict, ):
+def test_agfhc_xgmi_lvl1(
+    phdl,
+    config_dict,
+):
     """
     Pytest: Run the AGFHC XGMI level-1 recipe and validate outputs.
 
@@ -338,13 +351,16 @@ def test_agfhc_xgmi_lvl1(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run XGMI lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r xgmi_lvl1', timeout=(60*90))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r xgmi_lvl1', timeout=(60 * 90))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
-def test_agfhc_all_perf(phdl, config_dict, ):
+def test_agfhc_all_perf(
+    phdl,
+    config_dict,
+):
     """
     Pytest: Run the AGFHC 'all_perf' performance recipe across nodes.
 
@@ -361,14 +377,16 @@ def test_agfhc_all_perf(phdl, config_dict, ):
     globals.error_list = []
     log.info('Testcase Run all_perf')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r all_perf', timeout=(60*90))
+    out_dict = phdl.exec(f'sudo {path}/agfhc -r all_perf', timeout=(60 * 90))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
-
-def test_agfhc_all_lvl5(phdl, config_dict, ):
+def test_agfhc_all_lvl5(
+    phdl,
+    config_dict,
+):
     """
     Pytest: Query/validate the AGFHC 'all_lvl5' recipe information.
 
@@ -383,15 +401,15 @@ def test_agfhc_all_lvl5(phdl, config_dict, ):
     """
     log.info('Testcase all lvl5')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc --recipe-info all_lvl5', timeout=(60*260))
+    out_dict = phdl.exec(f'sudo {path}/agfhc --recipe-info all_lvl5', timeout=(60 * 260))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
-#180m
-#@pytest.mark.dependency(depends=["init"])
-#def test_agfhc_rochpl(phdl, config_dict, ):
+# 180m
+# @pytest.mark.dependency(depends=["init"])
+# def test_agfhc_rochpl(phdl, config_dict, ):
 #    log.info('Testcase rochpl for 180 min')
 #    path = config_dict['path']
 #    out_dict = phdl.exec(f'sudo {path}/agfhc rochpl:d=180m', timeout=(60*650))

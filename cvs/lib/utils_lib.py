@@ -15,6 +15,7 @@ from cvs.lib import globals
 
 log = globals.log
 
+
 def fail_test(msg):
     """
     Record and report a test failure without immediately raising an exception.
@@ -44,7 +45,6 @@ def fail_test(msg):
     globals.error_list.append(msg)
 
 
-
 def update_test_result():
     # For every Pytest test case, we will initialize the global.error_list to empty and
     # whenever fail_test is executed, it would add the error messages and if this is
@@ -54,7 +54,6 @@ def update_test_result():
         pytest.fail('Following FAILURES seen - {}'.format(globals.error_list))
 
 
-
 def print_test_output(log, out_dict):
     print('#========================================================#')
     print('\t\t ** Test Output **')
@@ -62,7 +61,6 @@ def print_test_output(log, out_dict):
     for node in out_dict.keys():
         print(f'==== {node} ====')
         print(out_dict[node])
-
 
 
 def scan_test_results(out_dict):
@@ -94,7 +92,7 @@ def scan_test_results(out_dict):
     # Iterate over each host's output
     for host in out_dict.keys():
         # Search for any high-level failure pattern in the raw output
-        match = re.search( 'test FAIL |test ERROR |ABORT|Traceback|No such file|FATAL', out_dict[host], re.I )
+        match = re.search('test FAIL |test ERROR |ABORT|Traceback|No such file|FATAL', out_dict[host], re.I)
         if match:
             # Record the span of the first match (currently unused; could help with slicing)
             start_index = match.start()
@@ -105,7 +103,7 @@ def scan_test_results(out_dict):
             target_word_index = -1
             for i, word in enumerate(words):
                 # Check if this token contains any of the target substrings
-                if re.search('FAIL|ERR|ABORT|Traceback', word, re.I): # Check if the pattern is part of the word
+                if re.search('FAIL|ERR|ABORT|Traceback', word, re.I):  # Check if the pattern is part of the word
                     target_word_index = i
                     actual_word = word
                     break
@@ -119,9 +117,9 @@ def scan_test_results(out_dict):
                 print(f"Words before: {before_words}")
                 print(f"Words after: {after_words}")
                 print(f'Test failed in scan_result on node {host} due to pattern ')
-            fail_test(f'Test failed in scan_result on node {host} due to pattern {before_words} {actual_word} {after_words}')
-
-
+            fail_test(
+                f'Test failed in scan_result on node {host} due to pattern {before_words} {actual_word} {after_words}'
+            )
 
 
 def json_to_dict(json_string):
@@ -130,8 +128,7 @@ def json_to_dict(json_string):
     return json.loads(json_string)
 
 
-def convert_phdl_json_to_dict( dict_json ):
-
+def convert_phdl_json_to_dict(dict_json):
     """
     Convert a per-node JSON payload map into a per-node Python dict map.
 
@@ -155,19 +152,18 @@ def convert_phdl_json_to_dict( dict_json ):
       - dict_json keys are node identifiers; values are JSON strings or compatible objects.
     """
 
-    out_dict = {}   # Will hold node -> parsed dict
+    out_dict = {}  # Will hold node -> parsed dict
 
     # Process each node's JSON blob and convert to a Python dict
     for node in dict_json.keys():
         try:
             # Parse the JSON content for this node
-            out_dict[node] = json_to_dict( dict_json[node] )
+            out_dict[node] = json_to_dict(dict_json[node])
         except Exception as e:
             print(f'ERROR converting Json output to dict for node {node}')
             fail_test(f'ERROR converting Json output to dict for node {node}')
             out_dict[node] = {}
     return out_dict
-
 
 
 def get_model_from_rocm_smi_output(smi_output):
@@ -191,21 +187,20 @@ def get_model_from_rocm_smi_output(smi_output):
       - Falls back to 'mi300x' if no pattern matches (conservative default).
 
     """
-    if re.search( 'MI300X', smi_output, re.I ):
+    if re.search('MI300X', smi_output, re.I):
         model = 'mi300x'
-    elif re.search( 'MI325', smi_output, re.I ):
+    elif re.search('MI325', smi_output, re.I):
         model = 'mi325'
-    elif re.search( 'MI350', smi_output, re.I ):
+    elif re.search('MI350', smi_output, re.I):
         model = 'mi350'
-    elif re.search( 'MI355', smi_output, re.I ):
+    elif re.search('MI355', smi_output, re.I):
         model = 'mi355'
     else:
         model = 'mi300x'
     return model
 
 
-
-def convert_hms_to_secs( time_string ):
+def convert_hms_to_secs(time_string):
     """
     Convert a time string in 'HH:MM:SS' format to total seconds.
 
@@ -277,20 +272,17 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
             return value
 
         # Check for unresolved <changeme> pattern BEFORE replacement
-        has_changeme = (
-            '<changeme>' in value.lower() or
-            '<changeme>' in path.lower()
-        )
+        has_changeme = '<changeme>' in value.lower() or '<changeme>' in path.lower()
         if has_changeme:
-            error_msg = f"\n{'='*70}\n"
+            error_msg = f"\n{'=' * 70}\n"
             error_msg += f"ERROR: Unresolved placeholder found in {context_name}!\n"
-            error_msg += f"{'='*70}\n\n"
+            error_msg += f"{'=' * 70}\n\n"
             error_msg += f"  {path}: {value}\n\n"
-            error_msg += f"{'='*70}\n"
+            error_msg += f"{'=' * 70}\n"
             error_msg += "ACTION REQUIRED:\n"
             error_msg += "Please edit your configuration file and replace all the '<changeme>' placeholders\n"
             error_msg += "with an appropriate value before running the tests.\n"
-            error_msg += f"{'='*70}\n"
+            error_msg += f"{'=' * 70}\n"
 
             log.error(error_msg)
             # print(error_msg, file=sys.stderr)
@@ -404,7 +396,9 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     # Get home directory
     home_dir = os.path.expanduser(f'~{username}')
 
-    log.info(f'Resolving config path placeholders with username: {username}, home: {home_dir}, home_mount_dir: {home_mount_dir_name}')
+    log.info(
+        f'Resolving config path placeholders with username: {username}, home: {home_dir}, home_mount_dir: {home_mount_dir_name}'
+    )
 
     # Define replacement mapping - resolve all placeholders in config
     replacements = {
@@ -412,7 +406,7 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
         '{user}': username,
         '{home}': home_dir,
         '{home-mount-dir}': home_mount_dir_name,
-        '{node-dir-name}': node_dir_name
+        '{node-dir-name}': node_dir_name,
     }
 
     resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")
@@ -423,44 +417,46 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
 def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, env_vars=None):
     """
     Collect comprehensive system metadata from compute nodes for test reporting.
-    
+
     Args:
         phdl: Parallel SSH handle to execute commands on all nodes
         cluster_dict: Cluster configuration dictionary
         config_dict: Test configuration dictionary
         test_command: Optional test command string that was run
         env_vars: Optional list of environment variable names to capture
-        
+
     Returns:
         dict: Metadata dictionary with system information
     """
     from datetime import datetime
-    
+
     metadata = {}
-    
+
     # Get first node for representative info
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0] if node_list else None
-    
+
     # Capture date/time
     metadata['date'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     metadata['timestamp'] = datetime.now().isoformat()
-    
+
     # Capture hostname(s)
     try:
         hostname_dict = phdl.exec('hostname')
         metadata['hostnames'] = {node: hostname_dict[node].strip() for node in hostname_dict.keys()}
     except Exception as e:
         log.warning(f'Failed to get hostnames: {e}')
-    
+
     # Capture ROCm version
     try:
-        rocm_dict = phdl.exec('cat /opt/rocm/.info/version 2>/dev/null || cat /opt/rocm*/share/doc/rocm/version 2>/dev/null || echo "unknown"')
+        rocm_dict = phdl.exec(
+            'cat /opt/rocm/.info/version 2>/dev/null || cat /opt/rocm*/share/doc/rocm/version 2>/dev/null || echo "unknown"'
+        )
         if head_node and head_node in rocm_dict:
             metadata['rocm_version'] = rocm_dict[head_node].strip()
     except Exception as e:
         log.warning(f'Failed to get ROCm version: {e}')
-    
+
     # Capture OS info
     try:
         os_dict = phdl.exec('cat /etc/os-release 2>/dev/null | grep -E "^(NAME|VERSION)=" | head -2')
@@ -469,7 +465,7 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
             metadata['os'] = os_info.replace('\n', ', ')
     except Exception as e:
         log.warning(f'Failed to get OS info: {e}')
-    
+
     # Capture kernel version
     try:
         kernel_dict = phdl.exec('uname -r')
@@ -477,7 +473,7 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
             metadata['kernel'] = kernel_dict[head_node].strip()
     except Exception as e:
         log.warning(f'Failed to get kernel version: {e}')
-    
+
     # Capture GPU info
     try:
         gpu_dict = phdl.exec('rocm-smi --showproductname 2>/dev/null | grep "GPU" | head -1')
@@ -501,7 +497,7 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
                     metadata['gpu_model'] = gpu_line
             else:
                 metadata['gpu_model'] = gpu_line
-                
+
             # Also get GPU count
             gpu_count_dict = phdl.exec('rocm-smi --showproductname 2>/dev/null | grep "GPU\\[" | wc -l')
             if head_node and head_node in gpu_count_dict:
@@ -513,7 +509,7 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
                     pass
     except Exception as e:
         log.warning(f'Failed to get GPU info: {e}')
-    
+
     # Capture RDMA NIC info (InfiniBand/RoCE adapters used for RCCL)
     try:
         # Get list of IB devices
@@ -522,13 +518,15 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
             ib_devices = [dev.strip() for dev in ib_devices_dict[head_node].strip().split('\n') if dev.strip()]
             if ib_devices:
                 metadata['rdma_devices'] = ib_devices
-                
+
                 # Get detailed info for each device
                 nic_details = []
                 for device in ib_devices[:8]:  # Limit to first 8 devices
                     try:
                         # Get device info including board_id (model), fw_ver, and node_guid
-                        dev_info_dict = phdl.exec(f'ibv_devinfo -d {device} 2>/dev/null | grep -E "board_id|fw_ver|node_guid|sys_image_guid" | head -4')
+                        dev_info_dict = phdl.exec(
+                            f'ibv_devinfo -d {device} 2>/dev/null | grep -E "board_id|fw_ver|node_guid|sys_image_guid" | head -4'
+                        )
                         if head_node and head_node in dev_info_dict:
                             dev_info = dev_info_dict[head_node].strip()
                             if dev_info:
@@ -542,16 +540,18 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
                                 nic_details.append(dev_dict)
                     except Exception as e:
                         log.warning(f'Failed to get details for device {device}: {e}')
-                
+
                 if nic_details:
                     metadata['rdma_nic_details'] = nic_details
     except Exception as e:
         log.warning(f'Failed to get RDMA NIC info: {e}')
-    
+
     # Get NIC model from lspci for RDMA devices (Mellanox, AMD Thor2, InfiniBand)
     try:
         # Expanded grep to catch Mellanox, Thor2/RDMA, and other RDMA devices
-        nic_model_dict = phdl.exec('lspci 2>/dev/null | grep -iE "mellanox|infiniband|network.*amd|rdma.*amd|thor" | grep -vE "usb|audio"')
+        nic_model_dict = phdl.exec(
+            'lspci 2>/dev/null | grep -iE "mellanox|infiniband|network.*amd|rdma.*amd|thor" | grep -vE "usb|audio"'
+        )
         if head_node and head_node in nic_model_dict:
             nic_models = nic_model_dict[head_node].strip()
             if nic_models:
@@ -560,7 +560,7 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
                 mellanox_nics = []
                 amd_nics = []
                 other_nics = []
-                
+
                 for line in nic_models.split('\n'):
                     if line.strip():
                         # Extract device description (everything after the last colon)
@@ -572,9 +572,9 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
                                 model = parts[1].strip()
                             else:
                                 continue
-                            
+
                             models.append(model)
-                            
+
                             # Categorize by vendor
                             model_lower = model.lower()
                             if 'mellanox' in model_lower or 'connectx' in model_lower:
@@ -583,7 +583,7 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
                                 amd_nics.append(model)
                             else:
                                 other_nics.append(model)
-                
+
                 if models:
                     # Provide categorized view
                     nic_summary = {}
@@ -593,14 +593,14 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
                         nic_summary['amd'] = amd_nics
                     if other_nics:
                         nic_summary['other'] = other_nics
-                    
+
                     metadata['rdma_nic_models'] = nic_summary
-                    
+
                     # Also provide flat list for backward compatibility
                     metadata['rdma_nic_models_list'] = models
     except Exception as e:
         log.warning(f'Failed to get NIC models from lspci: {e}')
-    
+
     # Get RDMA driver information
     try:
         # Get loaded RDMA modules
@@ -611,7 +611,7 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
                 module_list = [m.strip() for m in modules.split('\n') if m.strip()]
                 if module_list:
                     metadata['rdma_drivers'] = module_list
-        
+
         # Get driver version for mlx5_core (primary Mellanox driver)
         mlx5_version_dict = phdl.exec('modinfo mlx5_core 2>/dev/null | grep "^version:" | head -1')
         if head_node and head_node in mlx5_version_dict:
@@ -622,7 +622,7 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
                     metadata['mlx5_driver_version'] = version
     except Exception as e:
         log.warning(f'Failed to get RDMA driver info: {e}')
-    
+
     # Capture BIOS/IFWI version
     try:
         bios_dict = phdl.exec('sudo dmidecode -s bios-version 2>/dev/null || echo "unknown"')
@@ -630,66 +630,74 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
             metadata['bios_version'] = bios_dict[head_node].strip()
     except Exception as e:
         log.warning(f'Failed to get BIOS version: {e}')
-    
+
     # Capture RCCL info if available
     try:
         if 'rccl_dir' in config_dict and config_dict['rccl_dir']:
             rccl_dir = config_dict['rccl_dir']
-            
+
             # Get RCCL commit hash
             rccl_hash_dict = phdl.exec(f'cd {rccl_dir} 2>/dev/null && git rev-parse HEAD 2>/dev/null || echo "unknown"')
             if head_node and head_node in rccl_hash_dict:
                 rccl_hash = rccl_hash_dict[head_node].strip()
                 if 'unknown' not in rccl_hash and len(rccl_hash) >= 7:  # Valid git hash (short or long)
                     metadata['rccl_commit'] = rccl_hash
-            
+
             # Get RCCL branch name
-            rccl_branch_dict = phdl.exec(f'cd {rccl_dir} 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"')
+            rccl_branch_dict = phdl.exec(
+                f'cd {rccl_dir} 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"'
+            )
             if head_node and head_node in rccl_branch_dict:
                 rccl_branch = rccl_branch_dict[head_node].strip()
                 if 'unknown' not in rccl_branch and rccl_branch:
                     metadata['rccl_branch'] = rccl_branch
     except Exception as e:
         log.warning(f'Failed to get RCCL info: {e}')
-    
+
     # Capture RCCL-tests info if available
     try:
         if 'rccl_tests_dir' in config_dict and config_dict['rccl_tests_dir']:
             rccl_tests_dir = config_dict['rccl_tests_dir']
-            
+
             # Get RCCL-tests commit hash
-            tests_hash_dict = phdl.exec(f'cd {rccl_tests_dir} 2>/dev/null && git rev-parse HEAD 2>/dev/null || echo "unknown"')
+            tests_hash_dict = phdl.exec(
+                f'cd {rccl_tests_dir} 2>/dev/null && git rev-parse HEAD 2>/dev/null || echo "unknown"'
+            )
             if head_node and head_node in tests_hash_dict:
                 tests_hash = tests_hash_dict[head_node].strip()
                 if 'unknown' not in tests_hash and len(tests_hash) >= 7:
                     metadata['rccl_tests_commit'] = tests_hash
-            
+
             # Get RCCL-tests branch name
-            tests_branch_dict = phdl.exec(f'cd {rccl_tests_dir} 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"')
+            tests_branch_dict = phdl.exec(
+                f'cd {rccl_tests_dir} 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"'
+            )
             if head_node and head_node in tests_branch_dict:
                 tests_branch = tests_branch_dict[head_node].strip()
                 if 'unknown' not in tests_branch and tests_branch:
                     metadata['rccl_tests_branch'] = tests_branch
     except Exception as e:
         log.warning(f'Failed to get RCCL-tests info: {e}')
-    
+
     # Capture MPI info if available
     try:
         if 'mpi_dir' in config_dict and config_dict['mpi_dir']:
             mpi_dir = config_dict['mpi_dir']
             # Try multiple ways to get MPI version
-            mpi_version_dict = phdl.exec(f'{mpi_dir}/bin/mpirun --version 2>/dev/null | head -1 || {mpi_dir}/mpirun --version 2>/dev/null | head -1 || mpirun --version 2>/dev/null | head -1 || echo "unknown"')
+            mpi_version_dict = phdl.exec(
+                f'{mpi_dir}/bin/mpirun --version 2>/dev/null | head -1 || {mpi_dir}/mpirun --version 2>/dev/null | head -1 || mpirun --version 2>/dev/null | head -1 || echo "unknown"'
+            )
             if head_node and head_node in mpi_version_dict:
                 mpi_ver = mpi_version_dict[head_node].strip()
                 if mpi_ver and 'unknown' not in mpi_ver:
                     metadata['mpi_version'] = mpi_ver
     except Exception as e:
         log.warning(f'Failed to get MPI version: {e}')
-    
+
     # Capture test command if provided
     if test_command:
         metadata['test_command'] = test_command
-    
+
     # Capture RCCL/NCCL environment variables from config (these are set via mpirun -x)
     rccl_env_vars = {}
     env_var_mapping = {
@@ -702,15 +710,15 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
         'oob_port': 'NCCL_SOCKET_IFNAME',
         'rocm_path_var': 'ROCM_PATH',
         'mpi_path_var': 'MPI_PATH',
-        'rccl_path_var': 'RCCL_PATH'
+        'rccl_path_var': 'RCCL_PATH',
     }
-    
+
     for config_key, env_name in env_var_mapping.items():
         if config_key in config_dict and config_dict[config_key]:
             value = config_dict[config_key]
             if value and str(value).lower() not in ['none', 'null', '']:
                 rccl_env_vars[env_name] = str(value)
-    
+
     # Also capture shell environment variables if requested
     if env_vars:
         for var_name in env_vars:
@@ -725,27 +733,31 @@ def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, 
                         rccl_env_vars[var_name] = value
             except Exception as e:
                 log.warning(f'Failed to get env var {var_name}: {e}')
-    
+
     if rccl_env_vars:
         metadata['environment_variables'] = rccl_env_vars
-    
+
     # Add cluster configuration summary
-    metadata['cluster_info'] = {
-        'num_nodes': len(node_list),
-        'node_names': node_list
-    }
-    
+    metadata['cluster_info'] = {'num_nodes': len(node_list), 'node_names': node_list}
+
     # Add test configuration summary
     if config_dict:
         test_config_summary = {}
         # Include key test parameters
-        for key in ['data_type_list', 'gpu_count_list', 'start_msg_size', 'end_msg_size', 
-                    'no_of_cycles', 'warmup_iterations', 'no_of_iterations']:
+        for key in [
+            'data_type_list',
+            'gpu_count_list',
+            'start_msg_size',
+            'end_msg_size',
+            'no_of_cycles',
+            'warmup_iterations',
+            'no_of_iterations',
+        ]:
             if key in config_dict:
                 test_config_summary[key] = config_dict[key]
-        
+
         if test_config_summary:
             metadata['test_config'] = test_config_summary
-    
+
     log.info(f'Collected metadata: {list(metadata.keys())}')
     return metadata

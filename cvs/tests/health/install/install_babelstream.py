@@ -54,7 +54,7 @@ def config_file(pytestconfig):
     Notes:
       - Ensure your pytest invocation includes: --config_file=/path/to/config.json
       - Module scope ensures this runs once per module to avoid repeated lookups.
-    """ 
+    """
     return pytestconfig.getoption("config_file")
 
 
@@ -79,6 +79,7 @@ def cluster_dict(cluster_file):
     log.info(cluster_dict)
     return cluster_dict
 
+
 @pytest.fixture(scope="module")
 def config_dict(config_file, cluster_dict):
     """
@@ -93,7 +94,7 @@ def config_dict(config_file, cluster_dict):
         - git_install_path: directory to clone and build BabelStream
         - git_url: BabelStream repository URL
         - results: expected performance thresholds for kernels (copy/add/mul/triad/dot)
-    """ 
+    """
     with open(config_file) as json_file:
         config_dict_t = json.load(json_file)
     config_dict = config_dict_t['babelstream']
@@ -105,9 +106,6 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-
-
-
 @pytest.fixture(scope="module")
 def shdl(cluster_dict):
     """
@@ -115,7 +113,7 @@ def shdl(cluster_dict):
 
     Args:
       cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-    
+
     Returns:
       Pssh: Handle configured for the first node (head node) in node_dict.
 
@@ -127,9 +125,8 @@ def shdl(cluster_dict):
     nhdl_dict = {}
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
-    shdl = Pssh( log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return shdl
-
 
 
 @pytest.fixture(scope="module")
@@ -149,16 +146,12 @@ def phdl(cluster_dict):
     """
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
 
 
-
-
-
-
 @pytest.mark.dependency(name="init")
-def test_install_babelstream( phdl, shdl, config_dict ):
+def test_install_babelstream(phdl, shdl, config_dict):
     """
     Install BabelStream (HIP model) across nodes if not already present, and verify the hip-stream binary.
 
@@ -192,24 +185,27 @@ def test_install_babelstream( phdl, shdl, config_dict ):
     else:
         hdl = phdl
 
-    out_dict = shdl.exec( f'ls -l {path}')
+    out_dict = shdl.exec(f'ls -l {path}')
     for node in out_dict.keys():
         output = out_dict[node]
-    if re.search( 'No such file', output, re.I ):
+    if re.search('No such file', output, re.I):
         out_dict = hdl.exec(f'cd {git_install_path};git clone {git_url};cd')
-        out_dict = hdl.exec(f'cd {git_install_path}/BabelStream;cmake -Bbuild -H. -DMODEL=hip -DCMAKE_CXX_COMPILER=hipcc')
+        out_dict = hdl.exec(
+            f'cd {git_install_path}/BabelStream;cmake -Bbuild -H. -DMODEL=hip -DCMAKE_CXX_COMPILER=hipcc'
+        )
         out_dict = hdl.exec(f'cd {git_install_path}/BabelStream;cmake --build build')
         out_dict = phdl.exec(f'ls -l {path}')
         for node in out_dict.keys():
-            if not re.search('hip-stream', out_dict[node], re.I ):
-                fail_test(f'Installation of BabelStream failed, hip-stream file not found on node {node}' )
+            if not re.search('hip-stream', out_dict[node], re.I):
+                fail_test(f'Installation of BabelStream failed, hip-stream file not found on node {node}')
         phdl.exec(f'export PATH={git_install_path}/BabelStream/build:$PATH')
     update_test_result()
 
- 
- 
 
-def test_install_open_mpi(phdl, config_dict, ):
+def test_install_open_mpi(
+    phdl,
+    config_dict,
+):
     """
     Install Open MPI across all nodes and verify that mpiexec is available.
 
@@ -229,7 +225,7 @@ def test_install_open_mpi(phdl, config_dict, ):
       - Target systems are Debian/Ubuntu-based (uses apt/apt-get). Adapt for RHEL/CentOS if needed.
       - phdl.exec supports a 'timeout' parameter and returns a dict of node outputs.
       - fail_test and update_test_result are available in the test environment.
-    """  
+    """
     globals.error_list = []
     log.info('Testcase install openmpi')
     if config_dict['nfs_install'] is True:
@@ -241,6 +237,6 @@ def test_install_open_mpi(phdl, config_dict, ):
     out_dict = phdl.exec(f'sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev', timeout=200)
     out_dict = phdl.exec('which mpiexec')
     for node in out_dict.keys():
-        if not re.search( 'mpiexec', out_dict[node] ):
+        if not re.search('mpiexec', out_dict[node]):
             fail_test(f'Open MPI installation failed on node {node}')
     update_test_result()

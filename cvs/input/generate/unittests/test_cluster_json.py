@@ -11,7 +11,6 @@ from cvs.input.generate.cluster_json import ClusterJsonGenerator
 
 
 class TestClusterJsonGenerator(unittest.TestCase):
-
     def setUp(self):
         self.generator = ClusterJsonGenerator()
 
@@ -42,10 +41,7 @@ class TestClusterJsonGenerator(unittest.TestCase):
     def test_expand_ip_range_valid_range(self):
         """Test expanding valid IP range"""
         result = self.generator.expand_ip_range("192.168.1.10-15")
-        expected = [
-            "192.168.1.10", "192.168.1.11", "192.168.1.12",
-            "192.168.1.13", "192.168.1.14", "192.168.1.15"
-        ]
+        expected = ["192.168.1.10", "192.168.1.11", "192.168.1.12", "192.168.1.13", "192.168.1.14", "192.168.1.15"]
         self.assertEqual(result, expected)
 
     def test_expand_ip_range_invalid_range(self):
@@ -63,22 +59,12 @@ class TestClusterJsonGenerator(unittest.TestCase):
         """Test parsing hosts file with ranges"""
         mock_file = MagicMock()
         mock_file.__enter__.return_value = mock_file
-        mock_file.__iter__.return_value = [
-            "192.168.1.10",
-            "# comment",
-            "",
-            "192.168.1.11-13",
-            "192.168.2.1"
-        ]
+        mock_file.__iter__.return_value = ["192.168.1.10", "# comment", "", "192.168.1.11-13", "192.168.2.1"]
         mock_open.return_value = mock_file
 
         result = self.generator.parse_hosts_file("/fake/hosts.txt")
 
-        expected = [
-            "192.168.1.10",
-            "192.168.1.11", "192.168.1.12", "192.168.1.13",
-            "192.168.2.1"
-        ]
+        expected = ["192.168.1.10", "192.168.1.11", "192.168.1.12", "192.168.1.13", "192.168.2.1"]
         self.assertEqual(result, expected)
 
     def test_determine_head_node_specified(self):
@@ -147,15 +133,16 @@ class TestClusterJsonGenerator(unittest.TestCase):
                         username="testuser",
                         priv_key_file="/fake/key",
                         head_node_ip="192.168.1.10",
-                        node_list=["192.168.1.10", "192.168.1.11"]
+                        node_list=["192.168.1.10", "192.168.1.11"],
                     )
 
                     # Verify file was written
                     mock_file.write.assert_called_once_with('{"test": "json"}')
 
                     # Verify success messages
-                    success_calls = [call for call in mock_print.call_args_list
-                                   if "Generated cluster JSON file" in str(call)]
+                    success_calls = [
+                        call for call in mock_print.call_args_list if "Generated cluster JSON file" in str(call)
+                    ]
                     self.assertTrue(len(success_calls) > 0)
 
     @patch('builtins.open', side_effect=FileNotFoundError("Hosts file not found"))

@@ -69,8 +69,8 @@ def config_file(pytestconfig):
 
 
 @pytest.fixture(scope="module")
-def  cluster_dict(cluster_file):
-     """
+def cluster_dict(cluster_file):
+    """
     Load and expose full cluster configuration for the test module.
 
     Behavior:
@@ -87,15 +87,13 @@ def  cluster_dict(cluster_file):
             - 'username': SSH username
             - 'priv_key_file': Path to SSH private key
     """
-     with open(cluster_file) as json_file:
+    with open(cluster_file) as json_file:
         cluster_dict = json.load(json_file)
 
-     # Resolve path placeholders like {user-id} in cluster config
-     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-     log.info(cluster_dict)
-     return cluster_dict
-
-
+    # Resolve path placeholders like {user-id} in cluster config
+    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
+    log.info(cluster_dict)
+    return cluster_dict
 
 
 @pytest.fixture(scope="module")
@@ -109,17 +107,15 @@ def config_dict(config_file, cluster_dict):
     Notes:
       - Expects the JSON file to contain a top-level key "ibperf".
       - Uses module scope so the config is parsed once per test module.
-     """
+    """
     with open(config_file) as json_file:
-       config_dict_t = json.load(json_file)
+        config_dict_t = json.load(json_file)
     config_dict = config_dict_t['ibperf']
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
     log.info(config_dict)
     return config_dict
-
-
 
 
 @pytest.fixture(scope="module")
@@ -145,9 +141,9 @@ def phdl(cluster_dict):
     nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    if len(node_list)%2 != 0:
+    if len(node_list) % 2 != 0:
         node_list.pop()
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
 
 
@@ -170,10 +166,8 @@ def shdl(cluster_dict):
     nhdl_dict = {}
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
-    shdl = Pssh( log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return shdl
-
-
 
 
 @pytest.fixture(scope="module")
@@ -193,23 +187,18 @@ def vpc_node_list(cluster_dict):
     """
     vpc_node_list = []
     node_list = list(cluster_dict['node_dict'].keys())
-    if len(node_list)%2 != 0:
+    if len(node_list) % 2 != 0:
         node_list.pop()
     for node in node_list:
-        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip']) 
+        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
     return vpc_node_list
-
-
-
 
 
 # Start of test cases.
 
-@pytest.mark.parametrize( "bw_test", [ "ib_write_bw", "ib_read_bw", "ib_send_bw" ] )
 
-
-def test_ib_bw_perf( phdl, bw_test, config_dict ):
-
+@pytest.mark.parametrize("bw_test", ["ib_write_bw", "ib_read_bw", "ib_send_bw"])
+def test_ib_bw_perf(phdl, bw_test, config_dict):
     # Get IB_backend_nics for each node
     # Get the NIC to GPU mapping dict
     # Generate the command list for all nodes
@@ -220,11 +209,11 @@ def test_ib_bw_perf( phdl, bw_test, config_dict ):
     ib_bw_dict[bw_test] = {}
 
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
-    gpu_numa_dict = linux_utils.get_gpu_numa_dict( phdl )
+    gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
 
     print(gpu_nic_dict)
-    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict( phdl )
-    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict( phdl )
+    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(phdl)
+    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(phdl)
 
     bck_nic_dict = {}
     for node in rdma_nic_dict.keys():
@@ -234,48 +223,52 @@ def test_ib_bw_perf( phdl, bw_test, config_dict ):
             if rdma_nic_dict[node][rdma_dev]['eth_device'] in bck_nic_dict_lshw[node]:
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
-
     for msg_size in config_dict['msg_size_list']:
         ib_bw_dict[bw_test][msg_size] = {}
         for qp_count in config_dict['qp_count_list']:
             # Log a message to Dmesg to create a timestamp record
             start_time = phdl.exec('date +"%a %b %e %H:%M"')
-            phdl.exec( f'Starting Test {bw_test} for {msg_size} and QP count {qp_count} | sudo tee /dev/kmsg' )
-            ib_bw_dict[bw_test][msg_size][qp_count] = ibperf_lib.run_ib_perf_bw_test( \
-                    phdl, bw_test, gpu_numa_dict, \
-                    gpu_nic_dict, bck_nic_dict, f'{config_dict["install_dir"]}/perftest/bin', \
-                    msg_size, config_dict['gid_index'], qp_count, int(config_dict['port_no']), \
-                    int(config_dict['duration']) )
+            phdl.exec(f'Starting Test {bw_test} for {msg_size} and QP count {qp_count} | sudo tee /dev/kmsg')
+            ib_bw_dict[bw_test][msg_size][qp_count] = ibperf_lib.run_ib_perf_bw_test(
+                phdl,
+                bw_test,
+                gpu_numa_dict,
+                gpu_nic_dict,
+                bck_nic_dict,
+                f'{config_dict["install_dir"]}/perftest/bin',
+                msg_size,
+                config_dict['gid_index'],
+                qp_count,
+                int(config_dict['port_no']),
+                int(config_dict['duration']),
+            )
             end_time = phdl.exec('date +"%a %b %e %H:%M"')
-            verify_dmesg_for_errors( phdl, start_time, end_time, till_end_flag=True )
-            if re.search( 'True', config_dict['verify_bw'], re.I ):
-                ibperf_lib.verify_expected_bw( bw_test, msg_size, qp_count, \
-                        ib_bw_dict[bw_test][msg_size][qp_count], \
-                        config_dict['expected_results'])
+            verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
+            if re.search('True', config_dict['verify_bw'], re.I):
+                ibperf_lib.verify_expected_bw(
+                    bw_test,
+                    msg_size,
+                    qp_count,
+                    ib_bw_dict[bw_test][msg_size][qp_count],
+                    config_dict['expected_results'],
+                )
 
     print('%%%%%%%%% ib_bw_dict %%%%%%%%%%')
     print(ib_bw_dict)
     update_test_result()
 
 
-
-
-
-
-@pytest.mark.parametrize( "lat_test", [ "ib_write_lat", "ib_send_lat" ] )
-
-
-def test_ib_lat_perf( phdl, lat_test, config_dict ):
-
+@pytest.mark.parametrize("lat_test", ["ib_write_lat", "ib_send_lat"])
+def test_ib_lat_perf(phdl, lat_test, config_dict):
     globals.error_list = []
     ib_lat_dict[lat_test] = {}
 
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
-    gpu_numa_dict = linux_utils.get_gpu_numa_dict( phdl )
+    gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
 
-    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict( phdl )
-    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict( phdl )
-    
+    bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(phdl)
+    rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(phdl)
+
     bck_nic_dict = {}
     for node in rdma_nic_dict.keys():
         bck_nic_dict[node] = {}
@@ -292,37 +285,41 @@ def test_ib_lat_perf( phdl, lat_test, config_dict ):
         ib_lat_dict[lat_test][msg_size] = {}
         # Log a message to Dmesg to create a timestamp record
         start_time = phdl.exec('date +"%a %b %e %H:%M"')
-        phdl.exec( f'sudo echo "Starting Test {lat_test} for {msg_size} | sudo tee /dev/kmsg"' )
-        ib_lat_dict[lat_test][msg_size] = ibperf_lib.run_ib_perf_lat_test( phdl, lat_test, gpu_numa_dict, \
-              gpu_nic_dict, bck_nic_dict, f'{config_dict["install_dir"]}/perftest/bin', \
-              msg_size, config_dict['gid_index'], int(config_dict['port_no']) )
+        phdl.exec(f'sudo echo "Starting Test {lat_test} for {msg_size} | sudo tee /dev/kmsg"')
+        ib_lat_dict[lat_test][msg_size] = ibperf_lib.run_ib_perf_lat_test(
+            phdl,
+            lat_test,
+            gpu_numa_dict,
+            gpu_nic_dict,
+            bck_nic_dict,
+            f'{config_dict["install_dir"]}/perftest/bin',
+            msg_size,
+            config_dict['gid_index'],
+            int(config_dict['port_no']),
+        )
         end_time = phdl.exec('date +"%a %b %e %H:%M"')
-        verify_dmesg_for_errors( phdl, start_time, end_time, till_end_flag=True )
-        if re.search( 'True', config_dict['verify_bw'], re.I ):
-            ibperf_lib.verify_expected_lat( lat_test, msg_size, ib_lat_dict[lat_test][msg_size], \
-                 config_dict['expected_results'])
+        verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
+        if re.search('True', config_dict['verify_bw'], re.I):
+            ibperf_lib.verify_expected_lat(
+                lat_test, msg_size, ib_lat_dict[lat_test][msg_size], config_dict['expected_results']
+            )
 
     print('%%%%%%%%%%% ib_lat_dict %%%%%%%%%')
     print(ib_lat_dict)
     update_test_result()
 
 
-
-
-
-def test_build_ib_bw_perf_chart( phdl,  ):
-
+def test_build_ib_bw_perf_chart(
+    phdl,
+):
     globals.error_list = []
-    ibperf_lib.generate_ibperf_bw_chart( ib_bw_dict, excel_file='ib_bw_pps_perf.xlsx'  )
+    ibperf_lib.generate_ibperf_bw_chart(ib_bw_dict, excel_file='ib_bw_pps_perf.xlsx')
     update_test_result()
 
 
-
-def test_build_ib_lat_perf_chart( phdl,  ):
-
+def test_build_ib_lat_perf_chart(
+    phdl,
+):
     globals.error_list = []
-    ibperf_lib.generate_ibperf_lat_chart( ib_lat_dict, excel_file='ib_lat_perf.xlsx' )
+    ibperf_lib.generate_ibperf_lat_chart(ib_lat_dict, excel_file='ib_lat_perf.xlsx')
     update_test_result()
-
-
-

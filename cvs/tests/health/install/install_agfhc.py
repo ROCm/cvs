@@ -24,7 +24,6 @@ from cvs.lib import globals
 log = globals.log
 
 
-
 # NOTE: This module assumes the following symbols are available in scope:
 # - log: a configured logger
 # - Pssh: parallel SSH helper class
@@ -77,7 +76,6 @@ def cluster_dict(cluster_file):
     return cluster_dict
 
 
-
 @pytest.fixture(scope="module")
 def config_dict(config_file, cluster_dict):
     """
@@ -104,7 +102,7 @@ def shdl(cluster_dict):
 
     Args:
       cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-    
+
     Returns:
       Pssh: Handle configured for the first node (head node) in node_dict.
 
@@ -116,7 +114,7 @@ def shdl(cluster_dict):
     nhdl_dict = {}
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
-    shdl = Pssh( log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return shdl
 
 
@@ -132,13 +130,16 @@ def phdl(cluster_dict):
     nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
 
 
-
 @pytest.mark.dependency(name="init")
-def test_install_agfhc(phdl, shdl, config_dict, ):
+def test_install_agfhc(
+    phdl,
+    shdl,
+    config_dict,
+):
     """
     Install AGFHC from the tarball package provided in the input config_file.json - package_tar_ball
     under the directory specified in the config_file - install_dir
@@ -154,24 +155,22 @@ def test_install_agfhc(phdl, shdl, config_dict, ):
     install_dir = config_dict['install_dir']
     package_tar_ball = config_dict['package_tar_ball']
 
-    if re.search( 'True', config_dict['nfs_install'], re.I ):
+    if re.search('True', config_dict['nfs_install'], re.I):
         hdl = shdl
     else:
         hdl = phdl
 
-
     # Check if install directory exists, otherwise create.
-    out_dict = phdl.exec( f'ls -ld {install_dir}' )
+    out_dict = phdl.exec(f'ls -ld {install_dir}')
     for node in out_dict.keys():
         print(f'node ip {node}')
         print(out_dict[node])
-        if re.search( 'No such file or directory', out_dict[node], re.I ):
+        if re.search('No such file or directory', out_dict[node], re.I):
             print(f'Install directory {install_dir} does not exist, creating')
             hdl.exec(f'mkdir -p {install_dir}')
 
-
     # Copy the package to the install directory and untar
-    hdl.exec( f'cd {install_dir};cp {package_tar_ball} . && tar -xvf {package_tar_ball}' )
+    hdl.exec(f'cd {install_dir};cp {package_tar_ball} . && tar -xvf {package_tar_ball}')
 
     time.sleep(10)
     # Set hdl to parallel fleet wide
@@ -182,16 +181,15 @@ def test_install_agfhc(phdl, shdl, config_dict, ):
         out_dict = hdl.exec(f'cd {install_dir};sudo ./install', timeout=90)
         for node in out_dict.keys():
             print(out_dict[node])
-            if re.search( 'Error|No such file', out_dict[node], re.I ):
+            if re.search('Error|No such file', out_dict[node], re.I):
                 fail_test(f'Installation of AGFHC failed on node {node}')
     except Exception as e:
         print(f'Install of AGFHC failed, hit exception {e}')
-
 
     # verify agfhc path exists after installation ..
     out_dict = phdl.exec(f'ls -l {config_dict["path"]}/agfhc')
     for node in out_dict.keys():
         print(out_dict[node])
-        if re.search( 'No such file', out_dict[node], re.I ):
+        if re.search('No such file', out_dict[node], re.I):
             fail_test(f'Installation of AGFHC failed on node {node}')
     update_test_result()

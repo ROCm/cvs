@@ -19,9 +19,7 @@ docs_header_version is used to manually configure the version in the header. If
 there exists a non-null value mapped to docs_header_version, then the header in
 the documentation page will contain the given version string.
 '''
-html_context = {
-    "docs_header_version": "3.15"
-}
+html_context = {"docs_header_version": "3.15"}
 
 
 # This section turns on/off article info
@@ -31,9 +29,10 @@ all_article_info_author = ""
 
 # Dynamically extract component version
 with open('../CMakeLists.txt', encoding='utf-8') as f:
-    pattern = r'.*\brocm_setup_version\(VERSION\s+([0-9.]+)[^0-9.]+' # Update according to each component's CMakeLists.txt
-    match = re.search(pattern,
-                      f.read())
+    pattern = (
+        r'.*\brocm_setup_version\(VERSION\s+([0-9.]+)[^0-9.]+'  # Update according to each component's CMakeLists.txt
+    )
+    match = re.search(pattern, f.read())
     if not match:
         raise ValueError("VERSION not found!")
     version_number = match[1]
@@ -45,13 +44,12 @@ copyright = "Copyright (c) 2025 Advanced Micro Devices, Inc. All rights reserved
 version = version_number
 release = version_number
 
-external_toc_path = "./sphinx/_toc.yml" # Defines Table of Content structure definition path
+external_toc_path = "./sphinx/_toc.yml"  # Defines Table of Content structure definition path
 
 # Add more addtional package accordingly
 extensions = [
-    "rocm_docs", 
-
-] 
+    "rocm_docs",
+]
 
 html_title = f"{project} {version_number} documentation"
 

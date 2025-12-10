@@ -40,8 +40,6 @@ def cluster_file(pytestconfig):
     return pytestconfig.getoption("cluster_file")
 
 
-
-
 @pytest.fixture(scope="module")
 def config_file(pytestconfig):
     """
@@ -54,8 +52,6 @@ def config_file(pytestconfig):
       str: Path to the test configuration JSON file.
     """
     return pytestconfig.getoption("config_file")
-
-
 
 
 @pytest.fixture(scope="module")
@@ -78,8 +74,6 @@ def cluster_dict(cluster_file):
 
     log.info(cluster_dict)
     return cluster_dict
-
-
 
 
 @pytest.fixture(scope="module")
@@ -106,8 +100,6 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-
-
 @pytest.fixture(scope="module")
 def shdl(cluster_dict):
     """
@@ -115,7 +107,7 @@ def shdl(cluster_dict):
 
     Args:
       cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-    
+
     Returns:
       Pssh: Handle configured for the first node (head node) in node_dict.
 
@@ -127,11 +119,8 @@ def shdl(cluster_dict):
     nhdl_dict = {}
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
-    shdl = Pssh( log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return shdl
-
-
-
 
 
 @pytest.fixture(scope="module")
@@ -152,15 +141,16 @@ def phdl(cluster_dict):
     nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
 
 
-
-
-
 @pytest.mark.dependency(name="init")
-def test_rocblas_install( phdl, shdl, config_dict, ):
+def test_rocblas_install(
+    phdl,
+    shdl,
+    config_dict,
+):
     """
     Install rocBLAS (clients only) from source and verify rocblas-bench presence.
 
@@ -190,7 +180,6 @@ def test_rocblas_install( phdl, shdl, config_dict, ):
     else:
         hdl = phdl
 
-
     path = config_dict['path']
     git_install_path = config_dict['git_install_path']
     rocm_version = config_dict['rocm_version']
@@ -204,19 +193,20 @@ def test_rocblas_install( phdl, shdl, config_dict, ):
     out_dict = hdl.exec('sudo apt install -y hipblaslt-dev', timeout=200)
 
     time.sleep(2)
-    #out_dict = phdl.exec('git init')
-    out_dict = hdl.exec(f'cd {git_install_path};git clone {git_url}', timeout=100 )
+    # out_dict = phdl.exec('git init')
+    out_dict = hdl.exec(f'cd {git_install_path};git clone {git_url}', timeout=100)
     time.sleep(2)
 
     out_dict = hdl.exec(f'cd {git_install_path}/rocBLAS;git checkout rocm-{rocm_version}', timeout=60)
 
     time.sleep(2)
-    #out_dict = hdl.exec(f'cd {git_install_path}/rocBLAS;./install.sh --clients-only --library-path /opt/rocm-{rocm_version}', timeout=700 )
-    out_dict = phdl.exec(f'cd {git_install_path}/rocBLAS;sudo ./install.sh -dc --clients-only --library-path /opt/rocm-{rocm_version}', timeout=700 )
+    # out_dict = hdl.exec(f'cd {git_install_path}/rocBLAS;./install.sh --clients-only --library-path /opt/rocm-{rocm_version}', timeout=700 )
+    out_dict = phdl.exec(
+        f'cd {git_install_path}/rocBLAS;sudo ./install.sh -dc --clients-only --library-path /opt/rocm-{rocm_version}',
+        timeout=700,
+    )
     out_dict = phdl.exec(f'ls -l {path}')
     for node in out_dict.keys():
-        if not re.search('rocblas-bench', out_dict[node], re.I ):
+        if not re.search('rocblas-bench', out_dict[node], re.I):
             fail_test(f'rocblas installation failed, rocblas-bench not found on node {node}')
     update_test_result()
-
-

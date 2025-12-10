@@ -23,6 +23,7 @@ from cvs.lib import docker_lib
 from cvs.lib import jax_training_lib
 
 from cvs.lib import globals
+
 log = globals.log
 
 
@@ -153,16 +154,12 @@ def hf_token(training_dict):
     hf_token_file = training_dict['hf_token_file']
     try:
         with open(hf_token_file, 'r') as fp:
-             hf_token = fp.read().rstrip("\n")
+            hf_token = fp.read().rstrip("\n")
     except FileNotFoundError:
         print(f"Error: The file '{hf_token_file}' was not found.")
     except Exception as e:
         print(f"An error occurred: {e}")
     return hf_token
-
-
-
-
 
 
 @pytest.fixture(scope="module")
@@ -188,13 +185,11 @@ def phdl(cluster_dict):
     nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
 
 
-
-
-def test_cleanup_stale_containers( phdl, training_dict ):
+def test_cleanup_stale_containers(phdl, training_dict):
     """
     Pytest: Clean up any stale Docker containers/volumes before running training tests.
 
@@ -211,14 +206,11 @@ def test_cleanup_stale_containers( phdl, training_dict ):
       - we do broad cleanup (delete_all_containers_and_volumes); ensure the test environment
     """
     container_name = training_dict['container_name']
-    docker_lib.kill_docker_container( phdl, container_name )
-    docker_lib.delete_all_containers_and_volumes( phdl )
+    docker_lib.kill_docker_container(phdl, container_name)
+    docker_lib.delete_all_containers_and_volumes(phdl)
 
 
-
-
-def test_launch_jax_containers(phdl, training_dict ):
-
+def test_launch_jax_containers(phdl, training_dict):
     """
     Pytest: Launch JAX training containers and record the outcome.
 
@@ -246,20 +238,21 @@ def test_launch_jax_containers(phdl, training_dict ):
     globals.error_list = []
     container_name = training_dict['container_name']
     # Launch the containers ..
-    docker_lib.launch_docker_container( phdl, container_name,
-          training_dict['container_image'],
-          training_dict['container_config']['device_list'],
-          training_dict['container_config']['volume_dict'],
-          training_dict['container_config']['env_dict'],
-          shm_size='256G', timeout=60*20 )
+    docker_lib.launch_docker_container(
+        phdl,
+        container_name,
+        training_dict['container_image'],
+        training_dict['container_config']['device_list'],
+        training_dict['container_config']['volume_dict'],
+        training_dict['container_config']['env_dict'],
+        shm_size='256G',
+        timeout=60 * 20,
+    )
     # ADD verifications ..
     update_test_result()
 
 
-
-
-
-def test_llama_3_1_fp8_distributed(phdl, training_dict, model_params_dict, hf_token ):
+def test_llama_3_1_fp8_distributed(phdl, training_dict, model_params_dict, hf_token):
     """
     Pytest: Distributed end-to-end JAX training test for Llama 3.1 FP8.
 
@@ -283,14 +276,13 @@ def test_llama_3_1_fp8_distributed(phdl, training_dict, model_params_dict, hf_to
     head_node = phdl.host_list[0]
     smi_out_dict = phdl.exec('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
-    gpu_type=get_model_from_rocm_smi_output(smi_out)
-    jx_obj = jax_training_lib.JaxTrainingJob( phdl,
-           'llama3.1-405b', training_dict, model_params_dict,
-           hf_token, gpu_type, tune_model_params=False )
+    gpu_type = get_model_from_rocm_smi_output(smi_out)
+    jx_obj = jax_training_lib.JaxTrainingJob(
+        phdl, 'llama3.1-405b', training_dict, model_params_dict, hf_token, gpu_type, tune_model_params=False
+    )
     jx_obj.exec_nic_setup_scripts()
     jx_obj.build_training_job_cmd()
     jx_obj.start_training_job()
     jx_obj.poll_for_training_completion()
     jx_obj.verify_training_results()
     update_test_result()
-

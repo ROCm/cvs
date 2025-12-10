@@ -18,7 +18,6 @@ from cvs.lib import linux_utils
 log = globals.log
 
 
-
 training_err_dict = {
     'cache_err': 'Unable to save MockGPTDataset indexes because path_to_cache is None',
     'NCCL ERROR': 'NCCL ERROR|NCCL timeout|local work queue catastrophic error',
@@ -27,20 +26,17 @@ training_err_dict = {
     'rocm Err': 'FAILED_PRECONDITION: No visible GPU devices|failed call to hipInit: HIP_ERROR_NoDevice|librocm reported version is: NOT_FOUND',
     'python err': 'ModuleNotFoundError: No module named|Fatal Python error:',
     'tensorflow': 'tensorflow.CoordinationServiceError|tensorflow.BarrierError|CoordinationServiceError',
-    'resource': 'RESOURCE_EXHAUSTED: Out of memory|failed: RESOURCE_EXHAUSTED'
-
+    'resource': 'RESOURCE_EXHAUSTED: Out of memory|failed: RESOURCE_EXHAUSTED',
 }
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
 
 
+def textwrap_for_yml(msg_string):
+    return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
 
-def textwrap_for_yml( msg_string ):
-    return ('\n'.join([m.lstrip() for m in msg_string.split('\n')]))
 
-
-class JaxTrainingJob():
-
+class JaxTrainingJob:
     """
     JAX training class for running training of popular models like Llama on AMD GPU cluster.
 
@@ -72,75 +68,79 @@ class JaxTrainingJob():
       (plus defaulted entries placed into self.tc_dict, such as networking/NCCL knobs)
     """
 
-    def __init__( self,  phdl, model_name,
-        training_config_dict, model_params_dict,
-        hf_token, gpu_type='mi300',
+    def __init__(
+        self,
+        phdl,
+        model_name,
+        training_config_dict,
+        model_params_dict,
+        hf_token,
+        gpu_type='mi300',
         distributed_training=True,
-        tune_model_params=True, scripts_dir=os.path.expanduser("~") + '/SCRIPTS'  ):
-
-        self.phdl                        = phdl
-        self.host_list                   = phdl.host_list
-        self.model_name                  = model_name
-        self.hf_token                    = hf_token
-        self.gpu_type                    = gpu_type
+        tune_model_params=True,
+        scripts_dir=os.path.expanduser("~") + '/SCRIPTS',
+    ):
+        self.phdl = phdl
+        self.host_list = phdl.host_list
+        self.model_name = model_name
+        self.hf_token = hf_token
+        self.gpu_type = gpu_type
 
         # Sample training config and model params dict saved above
-        self.training_config_dict        = training_config_dict
-        self.tc_dict                     = training_config_dict
-        self.model_params_dict           = model_params_dict
-        self.tune_model_params           = tune_model_params
+        self.training_config_dict = training_config_dict
+        self.tc_dict = training_config_dict
+        self.model_params_dict = model_params_dict
+        self.tune_model_params = tune_model_params
 
-        self.scripts_dir                 = scripts_dir
+        self.scripts_dir = scripts_dir
 
-        self.job_cmd                     = ''
-        self.job_cmd_list                = []
-        self.training_result_dict        = {}
+        self.job_cmd = ''
+        self.job_cmd_list = []
+        self.training_result_dict = {}
         print(self.gpu_type)
 
         # Intialize cluster stats dicts ..
-        self.rdma_stats_dict_before      = {}
-        self.ethtool_stats_dict_before   = {}
-        self.rdma_stats_dict_after       = {}
-        self.training_start_time         = phdl.exec('date +"%a %b %e %H:%M"')
-        self.training_end_time           = None
-
+        self.rdma_stats_dict_before = {}
+        self.ethtool_stats_dict_before = {}
+        self.rdma_stats_dict_after = {}
+        self.training_start_time = phdl.exec('date +"%a %b %e %H:%M"')
+        self.training_end_time = None
 
         # Training configs - let us set defaults if not defined in input json file
-        self.home_dir                   = os.path.expanduser("~")
-        self.tc_dict.setdefault( 'container_image', 'rocm/jax-training:maxtext-v25.5' )
-        self.tc_dict.setdefault( 'container_name', 'jax_container' )
-        self.tc_dict.setdefault( 'distributed_training', True )
-        self.tc_dict.setdefault( 'training_steps', 10 )
-        self.tc_dict.setdefault( 'nnodes', 2 )
-        self.tc_dict.setdefault( 'nic_type', 'thor2' )
-        self.tc_dict.setdefault( 'nccl_ib_hca_list', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
-        self.tc_dict.setdefault( 'nccl_ib_hca', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
-        self.tc_dict.setdefault( 'nccl_socket_ifname', 'ens51f1np1' )
-        self.tc_dict.setdefault( 'gloo_socket_ifname', 'ens51f1np1' )
-        self.tc_dict.setdefault( 'nccl_ib_gid_index', '3' )
-        self.tc_dict.setdefault( 'nccl_debug', 'ERROR' )
-        self.tc_dict.setdefault( 'data_cache_dir', f'{self.home_dir}/cache' )
-        self.tc_dict.setdefault( 'log_dir', f'{self.home_dir}/LOG_DIR' )
-        self.tc_dict.setdefault( 'master_address', '127.0.0.1' )
+        self.home_dir = os.path.expanduser("~")
+        self.tc_dict.setdefault('container_image', 'rocm/jax-training:maxtext-v25.5')
+        self.tc_dict.setdefault('container_name', 'jax_container')
+        self.tc_dict.setdefault('distributed_training', True)
+        self.tc_dict.setdefault('training_steps', 10)
+        self.tc_dict.setdefault('nnodes', 2)
+        self.tc_dict.setdefault('nic_type', 'thor2')
+        self.tc_dict.setdefault('nccl_ib_hca_list', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
+        self.tc_dict.setdefault('nccl_ib_hca', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
+        self.tc_dict.setdefault('nccl_socket_ifname', 'ens51f1np1')
+        self.tc_dict.setdefault('gloo_socket_ifname', 'ens51f1np1')
+        self.tc_dict.setdefault('nccl_ib_gid_index', '3')
+        self.tc_dict.setdefault('nccl_debug', 'ERROR')
+        self.tc_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
+        self.tc_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
+        self.tc_dict.setdefault('master_address', '127.0.0.1')
 
-        self.container_image       = self.tc_dict['container_image']
-        self.container_name        = self.tc_dict['container_name']
+        self.container_image = self.tc_dict['container_image']
+        self.container_name = self.tc_dict['container_name']
 
-        self.distributed_training  = distributed_training
+        self.distributed_training = distributed_training
 
-        self.training_steps        = int(self.tc_dict['training_steps'])
-        self.nnodes                = self.tc_dict['nnodes']
-        self.nic_type              = self.tc_dict['nic_type']
-        self.nccl_ib_hca_list      = self.tc_dict['nccl_ib_hca_list']
-        self.nccl_ib_hca           = self.tc_dict['nccl_ib_hca']
-        self.nccl_socket_ifname    = self.tc_dict['nccl_socket_ifname']
-        self.gloo_socket_ifname    = self.tc_dict['gloo_socket_ifname']
-        self.nccl_ib_gid_index     = self.tc_dict['nccl_ib_gid_index']
-        self.nccl_debug            = self.tc_dict['nccl_debug']
-        self.data_cache_dir        = self.tc_dict['data_cache_dir']
-        self.log_dir               = self.tc_dict['log_dir']
-        self.coordinator_ip        = self.tc_dict['coordinator_ip']
-
+        self.training_steps = int(self.tc_dict['training_steps'])
+        self.nnodes = self.tc_dict['nnodes']
+        self.nic_type = self.tc_dict['nic_type']
+        self.nccl_ib_hca_list = self.tc_dict['nccl_ib_hca_list']
+        self.nccl_ib_hca = self.tc_dict['nccl_ib_hca']
+        self.nccl_socket_ifname = self.tc_dict['nccl_socket_ifname']
+        self.gloo_socket_ifname = self.tc_dict['gloo_socket_ifname']
+        self.nccl_ib_gid_index = self.tc_dict['nccl_ib_gid_index']
+        self.nccl_debug = self.tc_dict['nccl_debug']
+        self.data_cache_dir = self.tc_dict['data_cache_dir']
+        self.log_dir = self.tc_dict['log_dir']
+        self.coordinator_ip = self.tc_dict['coordinator_ip']
 
         # Let us assume 1 training step can complete in 10 polling iterations
         self.training_poll_iterations = int(self.training_steps * 10)
@@ -148,13 +148,14 @@ class JaxTrainingJob():
         # Get the model parameters dict
         if not self.distributed_training:
             self.mp_dict = self.model_params_dict['single_node'][self.model_name][self.gpu_type]
-            self.expected_result_dict  = \
-               self.model_params_dict['single_node'][self.model_name][self.gpu_type]['result_dict']
+            self.expected_result_dict = self.model_params_dict['single_node'][self.model_name][self.gpu_type][
+                'result_dict'
+            ]
         else:
             self.mp_dict = self.model_params_dict['multi_node'][self.model_name][self.gpu_type]
-            self.expected_result_dict  = \
-               self.model_params_dict['multi_node'][self.model_name][self.gpu_type]['result_dict']
-
+            self.expected_result_dict = self.model_params_dict['multi_node'][self.model_name][self.gpu_type][
+                'result_dict'
+            ]
 
         # Remove and recreate the scripts dir
         self.phdl.exec(f'rm -rf {self.scripts_dir}')
@@ -166,33 +167,30 @@ class JaxTrainingJob():
         # Let us override some of the params based on number of nodes and platform
         # if override flag set ..
         if self.tune_model_params:
-            #Assuming the training json configs were built with 4 nodes = 32 gpus
+            # Assuming the training json configs were built with 4 nodes = 32 gpus
             if int(self.batch_size) > 32:
-                if int(self.batch_size)%32 == 0:
-                    per_gpu_batch_size = int(self.batch_size)/32
+                if int(self.batch_size) % 32 == 0:
+                    per_gpu_batch_size = int(self.batch_size) / 32
                     self.batch_size = per_gpu_batch_size * int(self.nnodes) * 8
 
-
-
-    def run_pretraining_tasks(self, ):
+    def run_pretraining_tasks(
+        self,
+    ):
         if self.distributed_training is True:
             self.rdma_stats_dict_before = linux_utils.get_rdma_stats_dict(self.phdl)
             self.ethtool_stats_dict_before = linux_utils.get_nic_ethtool_stats_dict(self.phdl)
 
-
-    def launch_docker_container(self, container_name, image, device_list, volume_dict, env_dict ):
+    def launch_docker_container(self, container_name, image, device_list, volume_dict, env_dict):
         if self.distributed_training is True:
-            docker_lib.launch_docker_container( self.phdl, container_name, image, 
-               device_list, volume_dict, env_dict )
+            docker_lib.launch_docker_container(self.phdl, container_name, image, device_list, volume_dict, env_dict)
         else:
             env_dict['JAX_COORDINATOR_IP'] = 'localhost'
             env_dict['NNODES'] = 1
-            docker_lib.launch_docker_container( self.phdl, container_name, image, 
-               device_list, volume_dict, env_dict )
+            docker_lib.launch_docker_container(self.phdl, container_name, image, device_list, volume_dict, env_dict)
 
-
-
-    def exec_nic_setup_scripts( self, ):
+    def exec_nic_setup_scripts(
+        self,
+    ):
         """
         Execute NIC-related setup steps inside the training container.
 
@@ -209,25 +207,26 @@ class JaxTrainingJob():
         - The bnxt library file paths exist in the container base image.
         """
 
-        # Run all your backend NIC related bringups for containers here .. 
+        # Run all your backend NIC related bringups for containers here ..
         if self.distributed_training is True:
             # This is a temporary hack needed for broadcom nics to work within containers ..
-            if re.search( 'broadcom|thor', self.nic_type, re.I ):
+            if re.search('broadcom|thor', self.nic_type, re.I):
                 # override the gid_index to 3 for broadcom
-                self.nccl_ib_gid_index=3
-                out_dict = self.phdl.exec(f'docker exec {self.container_name} /bin/bash -c "sudo \
+                self.nccl_ib_gid_index = 3
+                out_dict = self.phdl.exec(
+                    f'docker exec {self.container_name} /bin/bash -c "sudo \
                     cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
                     /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
-                    sleep 2;ibv_devinfo;sleep 2;"')
+                    sleep 2;ibv_devinfo;sleep 2;"'
+                )
                 for node in out_dict.keys():
-                    if not re.search( 'hca_id:\s+bnxt_', out_dict[node], re.I ):
+                    if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
                         print(out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
-
-
-    def build_training_job_cmd( self, ):
-
+    def build_training_job_cmd(
+        self,
+    ):
         """
         Generate MaxText YAML config files and environment variables inside the container,
         then generate a per-node training wrapper script and logging directories.
@@ -321,11 +320,10 @@ class JaxTrainingJob():
 
         time.sleep(5)
 
-
         # Need check for Single Node vs Double node ..
         if self.distributed_training is not True:
             cmd_list = []
-            for i in range(0,int(self.nnodes)):
+            for i in range(0, int(self.nnodes)):
                 cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES=1
                       export NODE_RANK=0
@@ -351,7 +349,7 @@ class JaxTrainingJob():
                 cmd_list.append(formatted_cmd)
         else:
             cmd_list = []
-            for i in range(0,int(self.nnodes)):
+            for i in range(0, int(self.nnodes)):
                 cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={int(self.nnodes)}
                       export NODE_RANK={i}
@@ -387,14 +385,13 @@ class JaxTrainingJob():
         self.phdl.exec_cmd_list(cmd_list)
 
         cmd_list = []
-        for i in range(0,int(self.nnodes)):
+        for i in range(0, int(self.nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {self.log_dir}/jax-logs/out-node{i}"'''
             cmd_list.append(cmd)
         self.phdl.exec_cmd_list(cmd_list)
 
-
         cmd_list = []
-        for i in range(0,int(self.nnodes)):
+        for i in range(0, int(self.nnodes)):
             # Take a reference config yml like llama2_70b
             cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                       mkdir -p {self.log_dir}/jax-logs/out-node{i}
@@ -407,10 +404,9 @@ class JaxTrainingJob():
         cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i -e "s/llama2_70b_gpu_bs7.yml/training_config_for_jax.yml/g"  /workspace/maxtext/training_wrapper_script.sh'  '''
         self.phdl.exec(cmd)
 
-
-
-    def start_training_job( self, ):
-
+    def start_training_job(
+        self,
+    ):
         """
         Launch the JAX training job inside the container on all nodes.
 
@@ -435,7 +431,7 @@ class JaxTrainingJob():
         cmd_list = []
 
         # Build a docker exec command per node/rank
-        for i in range(0,int(self.nnodes)):
+        for i in range(0, int(self.nnodes)):
             # Source the env file, then launch training in background with nohup, redirecting output to a per-node log
             cmd = f'''docker exec {self.container_name} /bin/bash -c "source /workspace/maxtext/maxtext_xla_env.sh && source /workspace/maxtext/maxtext_env.sh && nohup bash /workspace/maxtext/training_wrapper_script.sh > {self.log_dir}/jax-logs/out-node{i}/training_redirect_logs"'''
             cmd_list.append(cmd)
@@ -446,11 +442,7 @@ class JaxTrainingJob():
         # Allow time for processes to come up and begin writing logs
         time.sleep(60)
 
-
-
-
-    def check_deviation_from_median(self, training_results_dict, metric_name, percentage_off ):
-       
+    def check_deviation_from_median(self, training_results_dict, metric_name, percentage_off):
         """
         Validate that a per-step training metric stays within a percentage band around the median.
 
@@ -473,10 +465,10 @@ class JaxTrainingJob():
         - statistics module is imported (statistics.median).
         - fail_test is available in scope to record failures.
         """
- 
+
         list_of_values = []
-        #To avoid any outliers, we exclude the first couple of steps ..
-        for i in range(2, self.training_steps ):
+        # To avoid any outliers, we exclude the first couple of steps ..
+        for i in range(2, self.training_steps):
             list_of_values.append(float(training_results_dict[i][metric_name]))
 
         # Compute the central tendency of the metric across the stable range of steps
@@ -484,18 +476,19 @@ class JaxTrainingJob():
         print(f'%%%% median_value = {median_value}')
 
         # Define acceptable bounds around the median based on the allowed percentage deviation
-        upper_bound = median_value * (1 + percentage_off )
-        lower_bound = median_value * (1 - percentage_off )
-        for i in range(2, self.training_steps ):
+        upper_bound = median_value * (1 + percentage_off)
+        lower_bound = median_value * (1 - percentage_off)
+        for i in range(2, self.training_steps):
             if lower_bound <= float(training_results_dict[i][metric_name]) <= upper_bound:
                 print(f'Training step {i} training metric {metric_name} is in expected range')
             else:
-                fail_test(f'FAIL Training step {i} training metric {metric_name} is over {percentage_off}% from median value {median_value} - actual value {training_results_dict[i][metric_name]}')
-       
-            
+                fail_test(
+                    f'FAIL Training step {i} training metric {metric_name} is over {percentage_off}% from median value {median_value} - actual value {training_results_dict[i][metric_name]}'
+                )
 
-    def get_training_results_dict(self, ):
-
+    def get_training_results_dict(
+        self,
+    ):
         """
         Parse per-step training metrics from the aggregated training log and run sanity checks.
 
@@ -532,7 +525,7 @@ class JaxTrainingJob():
         percentage_off = 10
 
         # Read the training log output from the "last" node (assumed authoritative)
-        last_node = self.host_list[len(self.host_list) -1]
+        last_node = self.host_list[len(self.host_list) - 1]
         last_node_num = len(self.host_list) - 1
         out_dict = self.phdl.exec(f'cat {self.log_dir}/jax-logs/out-node{last_node_num}/training.log')
         output = out_dict[last_node]
@@ -542,7 +535,7 @@ class JaxTrainingJob():
             training_results_dict[i] = {}
 
             pattern = f'completed step:\s+{i},\s+seconds:\s+([0-9\.]+),\s+TFLOP\/s\/device:\s+([0-9\.]+),\s+Tokens\/s\/device:\s+([0-9\.]+),\s+total_weights:\s+([0-9\\.]+),\s+loss:\s([0-9\.]+)'
-            match = re.search( pattern, output, re.I )
+            match = re.search(pattern, output, re.I)
 
             # Guard against missing or malformed lines to avoid AttributeError on match.group(...)
             if not match:
@@ -557,17 +550,16 @@ class JaxTrainingJob():
             training_results_dict[i]['loss'] = match.group(5)
 
         # Check if the Loss function is not growing by over 10%
-        self.check_deviation_from_median( training_results_dict, 'tflops_per_sec_per_gpu', percentage_off )    
-        self.check_deviation_from_median( training_results_dict, 'tokens_per_sec_per_gpu', percentage_off )    
-        #self.check_deviation_from_median( training_results_dict, 'loss', percentage_off )    
-            
+        self.check_deviation_from_median(training_results_dict, 'tflops_per_sec_per_gpu', percentage_off)
+        self.check_deviation_from_median(training_results_dict, 'tokens_per_sec_per_gpu', percentage_off)
+        # self.check_deviation_from_median( training_results_dict, 'loss', percentage_off )
+
         print(training_results_dict)
         return training_results_dict
 
-
-
-    def scan_for_training_errors(self, ):
-
+    def scan_for_training_errors(
+        self,
+    ):
         """
         Scan training logs for known error patterns and report status.
 
@@ -595,35 +587,31 @@ class JaxTrainingJob():
         """
 
         print('Scan for training errors')
-        training_pass=True
+        training_pass = True
 
         # Identify which node's output will be used (currently "last" node only)
-        last_node = self.host_list[len(self.host_list) -1]
+        last_node = self.host_list[len(self.host_list) - 1]
 
         # Build the list of commands to read each node's training log file
         cmd_list = []
 
         # Execute the commands across nodes; returns a mapping of node -> command output
-        for j in range(0,int(self.nnodes)):
+        for j in range(0, int(self.nnodes)):
             cmd = f"sudo cat {self.log_dir}/jax-logs/out-node{j}/training.log"
             cmd_list.append(cmd)
         out_dict = self.phdl.exec_cmd_list(cmd_list)
-
 
         output = out_dict[last_node]
 
         # Check the log content against all known training error patterns
         for err_key in training_err_dict:
-            if re.search( f'{training_err_dict[err_key]}', output ):
+            if re.search(f'{training_err_dict[err_key]}', output):
                 fail_test(f'ERROR {training_err_dict[err_key]} seen in training logs ..')
                 log.error(f'Aborting training log polling')
-                training_pass=False
+                training_pass = False
         return training_pass
 
-
-    def poll_for_training_completion( self, waittime_between_iters=60,  \
-        total_timeout = 3600, require_all_nodes=True ):
-
+    def poll_for_training_completion(self, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True):
         """
         Periodically poll training logs to detect completion or failure, with robust checks and a hard timeout.
 
@@ -668,6 +656,7 @@ class JaxTrainingJob():
 
         # Track wall-clock timeout if specified
         start_time = time.time()
+
         def timed_out() -> bool:
             return total_timeout is not None and (time.time() - start_time) >= float(total_timeout)
 
@@ -732,10 +721,9 @@ class JaxTrainingJob():
             # Parse/store final results and report success
             self.training_result_dict = self.get_training_results_dict()
             print('Completed Training, returning !!!')
-            return { "status": "success", "results": self.training_result_dict}
+            return {"status": "success", "results": self.training_result_dict}
 
             # If we reached here, it means poll for training completion failed
-
 
         # If we exhaust the iteration cap without completing, treat as timeout (or in_progress if no wall-clock limit)
         if timed_out():
@@ -748,31 +736,36 @@ class JaxTrainingJob():
             print(msg)
             return {"status": "stuck_in_progress", "reason": msg}
 
-
-
-    def verify_training_results( self, ):
+    def verify_training_results(
+        self,
+    ):
         print('Verify Training Completion Msg')
-        last_node = self.host_list[len(self.host_list) -1]
+        last_node = self.host_list[len(self.host_list) - 1]
         last_node_num = len(self.host_list) - 1
         out_dict = self.phdl.exec(f'cat {self.log_dir}/jax-logs/out-node{last_node_num}/training.log')
-        if not re.search( 'Distributed task shutdown result: OK', out_dict[last_node], re.I ):
+        if not re.search('Distributed task shutdown result: OK', out_dict[last_node], re.I):
             fail_test('JAX Distributed training job did not complete or shutdown properly, test failed')
         for i in self.training_result_dict.keys():
             if int(i) > 5:
-                if float(self.training_result_dict[i]['tflops_per_sec_per_gpu']) < \
-                        float(self.expected_result_dict['tflops_per_sec_per_gpu']):
-                    fail_test(f"FAIL - The TFLOPS/s/device is not matching expected number. \
+                if float(self.training_result_dict[i]['tflops_per_sec_per_gpu']) < float(
+                    self.expected_result_dict['tflops_per_sec_per_gpu']
+                ):
+                    fail_test(
+                        f"FAIL - The TFLOPS/s/device is not matching expected number. \
                             Expected = {self.expected_result_dict['tflops_per_sec_per_gpu']}, \
-                            Actual = {self.training_result_dict[i]['tflops_per_sec_per_gpu']}")
-                if float(self.training_result_dict[i]['tokens_per_sec_per_gpu']) < \
-                        float(self.expected_result_dict['tokens_per_sec_per_gpu']):
-                    fail_test(f"FAIL - The tokens_per_sec_per_gpu is not matching expected number. \
+                            Actual = {self.training_result_dict[i]['tflops_per_sec_per_gpu']}"
+                    )
+                if float(self.training_result_dict[i]['tokens_per_sec_per_gpu']) < float(
+                    self.expected_result_dict['tokens_per_sec_per_gpu']
+                ):
+                    fail_test(
+                        f"FAIL - The tokens_per_sec_per_gpu is not matching expected number. \
                             Expected = {self.expected_result_dict['tokens_per_sec_per_gpu']} \
-                            Actual = {self.training_result_dict[i]['tokens_per_sec_per_gpu']}" )
+                            Actual = {self.training_result_dict[i]['tokens_per_sec_per_gpu']}"
+                    )
 
         # Scan Dmesg for errors ..
         self.training_end_time = self.phdl.exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
-        verify_dmesg_for_errors( self.phdl, self.training_start_time, self.training_end_time )
+        verify_dmesg_for_errors(self.phdl, self.training_start_time, self.training_end_time)
         print(self.training_result_dict)
-
