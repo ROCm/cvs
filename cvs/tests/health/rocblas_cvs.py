@@ -21,6 +21,7 @@ from netmiko import ConnectHandler
 from netmiko import redispatch
 
 
+sys.path.insert( 0, './lib' )
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.linux_utils import (
@@ -29,7 +30,6 @@ from cvs.lib.linux_utils import (
     update_package_cache,
     map_packages
 )
-
 from cvs.lib import globals
 
 log = globals.log
@@ -49,31 +49,31 @@ def config_file(pytestconfig):
 # Importing the cluster and cofig files to script to access node, switch, test config params
 @pytest.fixture(scope="module")
 def  cluster_dict(cluster_file):
-    with open(cluster_file) as json_file:
+     with open(cluster_file) as json_file:
         cluster_dict = json.load(json_file)
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
 
-    log.info(cluster_dict)
-    return cluster_dict
+     log.info(cluster_dict)
+     return cluster_dict
 
 @pytest.fixture(scope="module")
 def  config_dict(config_file, cluster_dict):
-    with open(config_file) as json_file:
+     with open(config_file) as json_file:
         config_dict_t = json.load(json_file)
-    config_dict = config_dict_t['rocblas']
+     config_dict = config_dict_t['rocblas']
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
 
-    log.info(config_dict)
-    return config_dict
+     log.info(config_dict)
+     return config_dict
 
 
 def parse_rocblas_fp32( out_dict, exp_dict, ):
     for node in out_dict.keys():
-        match = re.search( r'N,T,4000,4000,4000,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
+        match = re.search( 'N,T,4000,4000,4000,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
         fp32_gflops = float(match.group(1))
         if float(fp32_gflops) < float(exp_dict['fp32_gflops']):
             fail_test(f"Node {node} Actual GFLOPs for rocblas with FP32 {fp32_gflops} is lower than the expected GFLOPs {exp_dict['fp32_gflops']}") 
@@ -82,7 +82,7 @@ def parse_rocblas_fp32( out_dict, exp_dict, ):
 
 def parse_rocblas_bf16( out_dict, exp_dict ):
     for node in out_dict.keys():
-        match = re.search( r'N,T,1024,2048,512,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
+        match = re.search( 'N,T,1024,2048,512,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
         bf16_gflops = float(match.group(1))
         if float(bf16_gflops) < float(exp_dict['bf16_gflops']):
             fail_test(f"Node {node} Actual GFLOPs for rocblas with BF16 {bf16_gflops} is lower than the expected GFLOPs {exp_dict['bf16_gflops']}") 
@@ -90,7 +90,7 @@ def parse_rocblas_bf16( out_dict, exp_dict ):
 
 def parse_rocblas_int8( out_dict, exp_dict ):
     for node in out_dict.keys():
-        match = re.search( r'N,T,1024,2048,512,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
+        match = re.search( 'N,T,1024,2048,512,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
         int8_gflops = float(match.group(1))
         if float(int8_gflops) < float(exp_dict['int8_gflops']):
             fail_test(f"Node {node} Actual GFLOPs for rocblas with INT8 {int8_gflops} is lower than the expected GFLOPs {exp_dict['int8_gflops']}") 
@@ -132,11 +132,16 @@ def test_rocblas_install( hdl, phdl, config_dict, ):
     phdl.exec('sudo rm -rf /home/venksrin/rocBLAS')
     time.sleep(5)
     git_url = config_dict['git_url']
-    out_dict = phdl.exec('sudo apt update -y', timeout=200)
-    out_dict = phdl.exec('sudo apt install -y libgtest-dev', timeout=200)
-    out_dict = phdl.exec('sudo apt install -y cmake', timeout=200)
-    out_dict = phdl.exec('sudo apt install -y gfortran', timeout=200)
-    time.sleep(3)
+    packages = ['libgtest-dev', 'cmake', 'gfortran']
+    distro = detect_distro( phdl )
+    log.info(f'Detected Distro : {distro}')
+    out_dict = update_package_cache( phdl, distro, timeout=300 )
+    log.info(f'Updated package cache : {out_dict}')
+    package_list = map_packages( distro,packages )
+    for pkg in package_list:
+        out_dict = install_package( phdl, pkg, distro, timeout=300 )
+        log.info(f'Installed package {pkg} : {out_dict}')
+    
     log.info(out_dict)
     log.info(f'Inputs - {package_path}, {path}, {git_url}')
     print('%%%%%%%%%%%%%%%%%')

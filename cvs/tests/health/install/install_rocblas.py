@@ -10,15 +10,10 @@ import pytest
 import re
 import sys
 import os
-import sys
 import time
 import json
 import logging
-import time
 
-
-from cvs.lib.parallel_ssh_lib import *
-from cvs.lib.utils_lib import *
 from cvs.lib.linux_utils import (
     detect_distro,
     install_package,
@@ -26,6 +21,10 @@ from cvs.lib.linux_utils import (
     translate_package_name,
     map_packages
 )
+
+sys.path.insert( 0, './lib' )
+from cvs.lib.parallel_ssh_lib import *
+from cvs.lib.utils_lib import *
 
 from cvs.lib import globals
 
@@ -109,7 +108,7 @@ def config_dict(config_file, cluster_dict):
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
 
-    log.info(config_dict)
+   log.info(config_dict)
     return config_dict
 
 
@@ -204,12 +203,24 @@ def test_rocblas_install( phdl, shdl, config_dict, ):
     hdl.exec(f'sudo rm -rf {git_install_path}/rocBLAS')
 
     git_url = config_dict['git_url']
-    out_dict = hdl.exec('sudo apt update -y', timeout=200)
-    out_dict = hdl.exec('sudo apt install -y libgtest-dev', timeout=200)
-    out_dict = hdl.exec('sudo apt install -y cmake', timeout=200)
-    out_dict = hdl.exec('sudo apt install -y gfortran', timeout=200)
-    out_dict = hdl.exec('sudo apt install -y hipblaslt-dev', timeout=200)
+    #install via right package manager
+    distro = detect_distro(phdl)
+    print(f'Detected distro type: {distro}')
 
+    out_dict = update_package_cache(hdl, distro, timeout=200)
+    for node in out_dict.keys():
+        if re.search('error|failed', out_dict[node], re.I):
+            log.warning(f'Package update warning on {node}')
+
+    # Install packages with error checking after each one
+    packages = ['libgtest-dev', 'cmake', 'gfortran', 'hipblaslt-dev']
+    package_list = map_packages(distro, packages)
+    for package in package_list:
+        out_dict = install_package(hdl, package, distro, timeout=200)
+        for node in out_dict.keys():
+            if re.search('error|failed|unable to locate', out_dict[node], re.I):
+                fail_test(f'Failed to install {package} on {node}')
+    
     time.sleep(2)
     #out_dict = phdl.exec('git init')
     out_dict = hdl.exec(f'cd {git_install_path};git clone {git_url}', timeout=100 )
