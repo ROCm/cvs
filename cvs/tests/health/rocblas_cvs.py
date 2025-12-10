@@ -23,6 +23,12 @@ from netmiko import redispatch
 
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
+from cvs.lib.linux_utils import (
+    detect_distro,
+    install_package,
+    update_package_cache,
+    map_packages
+)
 
 from cvs.lib import globals
 
