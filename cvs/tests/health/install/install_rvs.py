@@ -68,7 +68,7 @@ def cluster_dict(cluster_file):
 
     Returns:
       dict: Parsed cluster configuration (nodes, credentials, etc).
-    """ 
+    """
     with open(cluster_file) as json_file:
         cluster_dict = json.load(json_file)
 
@@ -108,7 +108,7 @@ def shdl(cluster_dict):
 
     Args:
       cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-    
+
     Returns:
       Pssh: Handle configured for the first node (head node) in node_dict.
 
@@ -119,7 +119,7 @@ def shdl(cluster_dict):
     nhdl_dict = {}
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
-    shdl = Pssh( log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return shdl
 
 
@@ -140,7 +140,7 @@ def phdl(cluster_dict):
     """
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
 
 
@@ -192,7 +192,10 @@ def test_install_rvs(phdl, shdl, config_dict):
             rvs_found = True
 
     # Check if RVS config files exist
-    out_dict = phdl.exec(f'ls -l {config_dict["config_path_default"]}/gst_single.conf || ls -l {config_dict["config_path_mi300x"]}/gst_single.conf', timeout=30)
+    out_dict = phdl.exec(
+        f'ls -l {config_dict["config_path_default"]}/gst_single.conf || ls -l {config_dict["config_path_mi300x"]}/gst_single.conf',
+        timeout=30,
+    )
     config_found = False
     for node in out_dict.keys():
         if not re.search('No such file', out_dict[node], re.I):
@@ -206,12 +209,16 @@ def test_install_rvs(phdl, shdl, config_dict):
         # First try to install from artifactory repo
         package_installed = False
         out_dict = hdl.exec('sudo apt-get update -y', timeout=600)
-        out_dict = hdl.exec('sudo apt-get install -y libpci3 libpci-dev doxygen unzip cmake git libyaml-cpp-dev', timeout=600)
+        out_dict = hdl.exec(
+            'sudo apt-get install -y libpci3 libpci-dev doxygen unzip cmake git libyaml-cpp-dev', timeout=600
+        )
         out_dict = hdl.exec('sudo apt-get install -y rocblas rocm-smi-lib', timeout=600)
         out_dict = hdl.exec('sudo apt-get install -y rocm-validation-suite', timeout=600)
 
         for node in out_dict.keys():
-            if re.search('Unable to locate package|Package.*not found|E: Could not get lock|dpkg: error', out_dict[node], re.I):
+            if re.search(
+                'Unable to locate package|Package.*not found|E: Could not get lock|dpkg: error', out_dict[node], re.I
+            ):
                 log.info(f'RVS package installation failed on node {node}, will try building from source')
             else:
                 log.info(f'RVS package installation successful on node {node}')
@@ -220,7 +227,7 @@ def test_install_rvs(phdl, shdl, config_dict):
         # If package installation failed, build from source
         if not package_installed:
             log.info('Installing RVS from source')
-            
+
             # Check if install directory exists, otherwise create
             out_dict = hdl.exec(f'ls -ld {git_install_path}')
             for node in out_dict.keys():
@@ -233,9 +240,17 @@ def test_install_rvs(phdl, shdl, config_dict):
 
             # Build and install RVS
             try:
-                out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite; cmake -B ./build -DROCM_PATH=/opt/rocm -DCMAKE_INSTALL_PREFIX=/opt/rocm -DCPACK_PACKAGING_INSTALL_PREFIX=/opt/rocm', timeout=600)
-                out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc) package', timeout=600)
-                out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite/build; sudo dpkg -i rocm-validation-suite_*.deb', timeout=600)
+                out_dict = hdl.exec(
+                    f'cd {git_install_path}/ROCmValidationSuite; cmake -B ./build -DROCM_PATH=/opt/rocm -DCMAKE_INSTALL_PREFIX=/opt/rocm -DCPACK_PACKAGING_INSTALL_PREFIX=/opt/rocm',
+                    timeout=600,
+                )
+                out_dict = hdl.exec(
+                    f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc) package', timeout=600
+                )
+                out_dict = hdl.exec(
+                    f'cd {git_install_path}/ROCmValidationSuite/build; sudo dpkg -i rocm-validation-suite_*.deb',
+                    timeout=600,
+                )
 
                 for node in out_dict.keys():
                     if re.search('Error|FAILED|No such file', out_dict[node], re.I):
@@ -251,7 +266,10 @@ def test_install_rvs(phdl, shdl, config_dict):
             fail_test(f'RVS installation verification failed on node {node}')
 
     # Verify config files are accessible
-    out_dict = phdl.exec(f'ls -l {config_dict["config_path_mi300x"]}/gst_single.conf || ls -l {config_dict["config_path_default"]}/gst_single.conf', timeout=60)
+    out_dict = phdl.exec(
+        f'ls -l {config_dict["config_path_mi300x"]}/gst_single.conf || ls -l {config_dict["config_path_default"]}/gst_single.conf',
+        timeout=60,
+    )
     for node in out_dict.keys():
         if re.search('No such file', out_dict[node], re.I):
             fail_test(f'RVS configuration files not found on node {node}')

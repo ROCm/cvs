@@ -23,6 +23,7 @@ from cvs.lib import docker_lib
 from cvs.lib import megatron_training_lib
 
 from cvs.lib import globals
+
 log = globals.log
 
 
@@ -79,7 +80,7 @@ def cluster_dict(cluster_file):
       - Logs the loaded structure for visibility; consider using log.debug if verbose.
     """
     with open(cluster_file) as json_file:
-       cluster_dict = json.load(json_file)
+        cluster_dict = json.load(json_file)
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
@@ -102,7 +103,7 @@ def training_dict(training_config_file, cluster_dict):
       - Assumes the JSON root contains a 'config' key.
     """
     with open(training_config_file) as json_file:
-       training_dict_t = json.load(json_file)
+        training_dict_t = json.load(json_file)
     training_dict = training_dict_t['config']
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
@@ -123,7 +124,7 @@ def model_params_dict(training_config_file, cluster_dict):
       dict: The 'model_params' nested dictionary (e.g., single_node/multi_node presets).
     """
     with open(training_config_file) as json_file:
-       training_dict_t = json.load(json_file)
+        training_dict_t = json.load(json_file)
     model_params_dict = training_dict_t['model_params']
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
@@ -131,8 +132,6 @@ def model_params_dict(training_config_file, cluster_dict):
 
     log.info(model_params_dict)
     return model_params_dict
-
-
 
 
 @pytest.fixture(scope="module")
@@ -162,8 +161,6 @@ def hf_token(training_dict):
     return hf_token
 
 
-
-
 @pytest.fixture(scope="module")
 def phdl(cluster_dict):
     """
@@ -188,10 +185,8 @@ def phdl(cluster_dict):
     nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
-
-
 
 
 @pytest.fixture(scope="module")
@@ -209,13 +204,11 @@ def gpu_type(cluster_dict):
       - Module scope ensures this is evaluated once per test module.
       - Consider validating this value against an expected set of GPU types to catch typos early.
     """
-    gpu_type=cluster_dict['gpu_type']
+    gpu_type = cluster_dict['gpu_type']
     return gpu_type
 
 
-
-
-def test_cleanup_stale_containers( phdl, training_dict ):
+def test_cleanup_stale_containers(phdl, training_dict):
     """
     Pytest: Clean up potentially stale Docker containers and volumes before tests.
 
@@ -235,13 +228,11 @@ def test_cleanup_stale_containers( phdl, training_dict ):
     """
 
     container_name = training_dict['container_name']
-    docker_lib.kill_docker_container( phdl, container_name )
-    docker_lib.delete_all_containers_and_volumes( phdl )
+    docker_lib.kill_docker_container(phdl, container_name)
+    docker_lib.delete_all_containers_and_volumes(phdl)
 
 
-
-
-def test_launch_megatron_containers(phdl, training_dict ):
+def test_launch_megatron_containers(phdl, training_dict):
     """
     Pytest: Launch Megatron training containers and verify launch step.
 
@@ -267,19 +258,20 @@ def test_launch_megatron_containers(phdl, training_dict ):
     globals.error_list = []
     container_name = training_dict['container_name']
     # Launch the containers ..
-    docker_lib.launch_docker_container( phdl, container_name,
-          training_dict['container_image'],
-          training_dict['container_config']['device_list'],
-          training_dict['container_config']['volume_dict'],
-          shm_size='128G', timeout=60*20 )
+    docker_lib.launch_docker_container(
+        phdl,
+        container_name,
+        training_dict['container_image'],
+        training_dict['container_config']['device_list'],
+        training_dict['container_config']['volume_dict'],
+        shm_size='128G',
+        timeout=60 * 20,
+    )
     # ADD verifications ..
     update_test_result()
 
 
-
-
-def test_llama_3_1_fp8_single_node(phdl, gpu_type, training_dict, model_params_dict, hf_token ):
-
+def test_llama_3_1_fp8_single_node(phdl, gpu_type, training_dict, model_params_dict, hf_token):
     """
     Pytest: Single-node Megatron Llama 3.1 FP8 training lifecycle test.
 
@@ -300,17 +292,12 @@ def test_llama_3_1_fp8_single_node(phdl, gpu_type, training_dict, model_params_d
 
     """
     globals.error_list = []
-    mt_obj = megatron_training_lib.MegatronLlamaTrainingJob( phdl,
-           'llama3_1_8b', training_dict, model_params_dict,
-           hf_token, gpu_type, tune_model_params=False )
+    mt_obj = megatron_training_lib.MegatronLlamaTrainingJob(
+        phdl, 'llama3_1_8b', training_dict, model_params_dict, hf_token, gpu_type, tune_model_params=False
+    )
     mt_obj.exec_nic_setup_scripts()
     mt_obj.build_training_job_cmd()
     mt_obj.start_training_job()
     mt_obj.poll_for_training_completion()
     mt_obj.verify_training_results()
     update_test_result()
-
-
-
-
-

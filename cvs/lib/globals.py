@@ -9,4 +9,4 @@ import logging
 
 log = logging.getLogger()
 
-error_list=[]
+error_list = []

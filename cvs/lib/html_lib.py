@@ -46,8 +46,8 @@ def build_html_page_header(filename):
     # Open the file in write mode; this truncates any existing file.
     # Use a context manager to ensure the file is properly closed even if an exception occurs.
     with open(filename, 'w') as fp:
-         # Static HTML header content including basic document structure and CSS references
-         html_lines='''
+        # Static HTML header content including basic document structure and CSS references
+        html_lines = '''
 <!DOCTYPE html>
 <html>
 <head>
@@ -268,14 +268,13 @@ def build_html_page_header(filename):
 
 
          '''
-         fp.write(html_lines)
-         fp.close()
-
- 
+        fp.write(html_lines)
+        fp.close()
 
 
-def build_html_page_footer( filename, ):
-
+def build_html_page_footer(
+    filename,
+):
     """
     Append a standard HTML footer section with JS dependencies and DataTables initialization.
 
@@ -301,8 +300,8 @@ def build_html_page_footer( filename, ):
 
     print('Build HTML Page header')
     with open(filename, 'a') as fp:
-         # Open the file in append mode; footer content is added at the end of the document.
-         html_lines='''
+        # Open the file in append mode; footer content is added at the end of the document.
+        html_lines = '''
 <!-- jQuery -->
 <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
 <!-- DataTables JS -->
@@ -428,13 +427,11 @@ def build_html_page_footer( filename, ):
 </body>
 </html>
          '''
-         fp.write(html_lines)
-         fp.close()
+        fp.write(html_lines)
+        fp.close()
 
 
-
-
-def normalize_bytes(n_bytes, si=False, precision=2 ):
+def normalize_bytes(n_bytes, si=False, precision=2):
     """
     Convert a byte count to a human string using B, KB, MB, or GB.
 
@@ -470,32 +467,32 @@ def normalize_bytes(n_bytes, si=False, precision=2 ):
     return f"{sign}{s} {unit}"
 
 
-
-
-def build_rccl_heatmap( filename, chart_name, title, act_data_json, ref_data_json ):
-
+def build_rccl_heatmap(filename, chart_name, title, act_data_json, ref_data_json):
     try:
-        with open( act_data_json, 'r') as fp1:
-             act_data_dict = json.load(fp1)
+        with open(act_data_json, 'r') as fp1:
+            act_data_dict = json.load(fp1)
     except Exception as e:
         print(f'Error reading file {act_data_json} - {e}')
 
-
     try:
-        with open( ref_data_json, 'r') as fp2:
-             ref_data_dict = json.load(fp2)
+        with open(ref_data_json, 'r') as fp2:
+            ref_data_dict = json.load(fp2)
     except Exception as e:
         print(f'Error reading file {ref_data_json} - {e}')
 
-
     with open(filename, 'a') as fp:
-         html_lines='''
-         <h2 style="background-color: lightblue">''' + str(title) + '''</h2>
+        html_lines = (
+            '''
+         <h2 style="background-color: lightblue">'''
+            + str(title)
+            + '''</h2>
 
 
 <!-- Styles -->
 <style>
-#''' + str(chart_name) + '''{
+#'''
+            + str(chart_name)
+            + '''{
   width: 120%;
   height: 1400px;
 }
@@ -512,7 +509,9 @@ am5.ready(function() {
 
 // Create root element
 // https://www.amcharts.com/docs/v5/getting-started/#Root_element
-var root = am5.Root.new("''' + str(chart_name) + '''");
+var root = am5.Root.new("'''
+            + str(chart_name)
+            + '''");
 
 // Set themes
 // https://www.amcharts.com/docs/v5/concepts/themes/
@@ -666,91 +665,116 @@ var colors = {
 // https://www.amcharts.com/docs/v5/charts/xy-chart/#Setting_data
 var data = [
          '''
-         fp.write(html_lines)
-         print(act_data_dict)
-         for collective_name in act_data_dict.keys():
-             print(collective_name)
-             # Skip if reference data doesn't have this collective
-             if collective_name not in ref_data_dict:
-                 print(f"Warning: {collective_name} not found in reference data, skipping")
-                 continue
-             for msg_size in act_data_dict[collective_name].keys():
+        )
+        fp.write(html_lines)
+        print(act_data_dict)
+        for collective_name in act_data_dict.keys():
+            print(collective_name)
+            # Skip if reference data doesn't have this collective
+            if collective_name not in ref_data_dict:
+                print(f"Warning: {collective_name} not found in reference data, skipping")
+                continue
+            for msg_size in act_data_dict[collective_name].keys():
+                norm_msg_size = normalize_bytes(int(msg_size))
+                # calculate % diff between actual value and ref value
+                act_bus_bw = act_data_dict[collective_name][msg_size]['bus_bw']
+                # Skip if reference data doesn't have this message size
+                if msg_size not in ref_data_dict[collective_name]:
+                    print(
+                        f"Warning: msg_size {msg_size} not found in reference for {collective_name}, using actual as 100%"
+                    )
+                    pct_val = 100.0
+                else:
+                    ref_bus_bw = ref_data_dict[collective_name][msg_size]['bus_bw']
+                    print(act_bus_bw, ref_bus_bw)
+                    if ref_bus_bw == 0 or ref_bus_bw == 0.0:
+                        pct_val = 100
+                    else:
+                        pct_incr = ((act_bus_bw - ref_bus_bw) / ref_bus_bw) * 100
+                        pct_val = round(float(pct_incr + 100), 2)
 
-                 norm_msg_size = normalize_bytes(int(msg_size))
-                 # calculate % diff between actual value and ref value
-                 act_bus_bw = act_data_dict[collective_name][msg_size]['bus_bw']
-                 # Skip if reference data doesn't have this message size
-                 if msg_size not in ref_data_dict[collective_name]:
-                     print(f"Warning: msg_size {msg_size} not found in reference for {collective_name}, using actual as 100%")
-                     pct_val = 100.0
-                 else:
-                     ref_bus_bw = ref_data_dict[collective_name][msg_size]['bus_bw']
-                     print(act_bus_bw, ref_bus_bw )
-                     if ref_bus_bw == 0 or ref_bus_bw == 0.0:
-                         pct_val = 100
-                     else:
-                         pct_incr = ( (act_bus_bw - ref_bus_bw)/ref_bus_bw ) * 100
-                         pct_val = round(float(pct_incr + 100), 2 )
+                if pct_val > 100:
+                    fill_color = "colors.verygood"
+                elif pct_val == 100:
+                    fill_color = "colors.good"
+                elif (pct_val < 100) and (pct_val > 95):
+                    fill_color = "colors.good"
+                elif (pct_val < 95) and (pct_val > 75):
+                    fill_color = "colors.medium"
+                elif pct_val < 75:
+                    fill_color = "colors.critical"
+                else:
+                    fill_color = "colors.bad"
 
-                 if pct_val > 100:
-                     fill_color = "colors.verygood"
-                 elif pct_val == 100:
-                     fill_color = "colors.good"
-                 elif (pct_val < 100) and (pct_val > 95):
-                     fill_color = "colors.good"
-                 elif (pct_val < 95) and (pct_val > 75):
-                     fill_color = "colors.medium"
-                 elif pct_val < 75:
-                     fill_color = "colors.critical"
-                 else:
-                     fill_color = "colors.bad"
-
-                 collect_graph_name = collective_name.replace( "_perf", "" )
-                 html_lines = '''
+                collect_graph_name = collective_name.replace("_perf", "")
+                html_lines = (
+                    '''
   {
-    y: "''' + str(collective_name) + '''",
-    x: "''' + str(norm_msg_size) + '''",
+    y: "'''
+                    + str(collective_name)
+                    + '''",
+    x: "'''
+                    + str(norm_msg_size)
+                    + '''",
     columnSettings: {
-      fill: ''' + fill_color + '''
+      fill: '''
+                    + fill_color
+                    + '''
     },
-    value: ''' + str(pct_val) + ''',
-    value1: ''' + str(act_bus_bw) + ''',
-    value2: ''' + str(ref_bus_bw) + '''
+    value: '''
+                    + str(pct_val)
+                    + ''',
+    value1: '''
+                    + str(act_bus_bw)
+                    + ''',
+    value2: '''
+                    + str(ref_bus_bw)
+                    + '''
   },
                  '''
-                 fp.write(html_lines)
+                )
+                fp.write(html_lines)
 
-         html_lines = '''
+        html_lines = '''
 ];
 
 series.data.setAll(data);
 
 yAxis.data.setAll([
          '''
-         fp.write(html_lines)
-         for collective_name in act_data_dict.keys():
-             collect_graph_name = collective_name.replace( "_perf", "" )
-             html_lines = '''
-             { category: "''' + collective_name + '''"},
+        fp.write(html_lines)
+        for collective_name in act_data_dict.keys():
+            collect_graph_name = collective_name.replace("_perf", "")
+            html_lines = (
+                '''
+             { category: "'''
+                + collective_name
+                + '''"},
              '''
-             fp.write(html_lines)
-         html_lines = '''
+            )
+            fp.write(html_lines)
+        html_lines = '''
 ]);
 
 xAxis.data.setAll([
          '''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
-         first_collective = list(act_data_dict.keys())[0]
-         msg_size_list = list(act_data_dict[first_collective])
+        first_collective = list(act_data_dict.keys())[0]
+        msg_size_list = list(act_data_dict[first_collective])
 
-         for msg_size in msg_size_list:
-             norm_msg_size = normalize_bytes(int(msg_size))
-             html_lines = '''
-             { category: "''' + str(norm_msg_size) + '''"},
+        for msg_size in msg_size_list:
+            norm_msg_size = normalize_bytes(int(msg_size))
+            html_lines = (
+                '''
+             { category: "'''
+                + str(norm_msg_size)
+                + '''"},
              '''
-             fp.write(html_lines)
-         html_lines = '''
+            )
+            fp.write(html_lines)
+        html_lines = (
+            '''
 ]);
 
 // Make stuff animate on load
@@ -761,20 +785,22 @@ chart.appear(1000, 100);
 </script>
 
 <!-- HTML -->
-<div id="''' + str(chart_name) + '''"></div>
+<div id="'''
+            + str(chart_name)
+            + '''"></div>
 
 
 
 </script>
          '''
-         fp.write(html_lines)
+        )
+        fp.write(html_lines)
 
 
-
-
-def build_rccl_amcharts_graph( filename, chart_name, rccl_dict ):
+def build_rccl_amcharts_graph(filename, chart_name, rccl_dict):
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = (
+            '''
          <h2 style="background-color: lightblue">RCCL Perf Results Bandwidth Graph</h2>
 <style>
 
@@ -786,7 +812,9 @@ def build_rccl_amcharts_graph( filename, chart_name, rccl_dict ):
 }
 
 
-#''' + str(chart_name) + '''{
+#'''
+            + str(chart_name)
+            + '''{
   width: 120%;
   height: 550px;
   max-width: 120%;
@@ -804,7 +832,9 @@ am5.ready(function() {
 
 // Create root element
 // https://www.amcharts.com/docs/v5/getting-started/#Root_element 
-var root = am5.Root.new("''' + str(chart_name) + '''");
+var root = am5.Root.new("'''
+            + str(chart_name)
+            + '''");
 
 const myTheme = am5.Theme.new(root);
 
@@ -857,12 +887,16 @@ xAxis.set("numberFormatter", am5.NumberFormatter.new(root, {
 }));
 
          '''
-         fp.write(html_lines)
+        )
+        fp.write(html_lines)
 
-         for series_name in rccl_dict.keys():
-             html_lines='''
+        for series_name in rccl_dict.keys():
+            html_lines = (
+                '''
 var series = chart.series.push(am5xy.LineSeries.new(root, {
-    name: "''' + str(series_name) + '''",
+    name: "'''
+                + str(series_name)
+                + '''",
     xAxis: xAxis,
     yAxis: yAxis,
     valueYField: "bus_bw",
@@ -874,19 +908,20 @@ var series = chart.series.push(am5xy.LineSeries.new(root, {
     })
    }));
              '''
-             fp.write(html_lines)
-             data_list = []
-             for msg_size in rccl_dict[series_name].keys():
-                 data_list.append( { 'msg_size': msg_size, 'bus_bw': rccl_dict[series_name][msg_size]['bus_bw'] } )
-             html_lines=f'''
+            )
+            fp.write(html_lines)
+            data_list = []
+            for msg_size in rccl_dict[series_name].keys():
+                data_list.append({'msg_size': msg_size, 'bus_bw': rccl_dict[series_name][msg_size]['bus_bw']})
+            html_lines = f'''
    data = {data_list}
    series.data.setAll(data);
    // Make stuff animate on load
    // https://www.amcharts.com/docs/v5/concepts/animations/
    series.appear();
              '''
-             fp.write(html_lines)
-         html_lines='''
+            fp.write(html_lines)
+        html_lines = '''
 // Add cursor
 // https://www.amcharts.com/docs/v5/charts/xy-chart/cursor/
 var cursor = chart.set("cursor", am5xy.XYCursor.new(root, {
@@ -976,24 +1011,21 @@ chart.appear(1000, 100);
 }); // end am5.ready()
 </script>
              '''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
 
-
-
-
-def add_html_begin( filename ):
+def add_html_begin(filename):
     with open(filename, 'w') as fp:
-         html_lines='''
+        html_lines = '''
          <html>
          <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
          '''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
 
-def add_html_end( filename ):
+def add_html_end(filename):
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 <!-- jQuery -->
 <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
 <!-- DataTables JS -->
@@ -1015,33 +1047,30 @@ def add_html_end( filename ):
 
          </html>
          '''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
 
-
-
-
-def add_json_data( filename, json_data ):
-
+def add_json_data(filename, json_data):
     with open(filename, 'a') as fp:
-         html_lines = '''
+        html_lines = (
+            '''
          <h2 style="background-color: lightblue">RCCL Results JSON Format</h2>
          <pre id="json-display"></pre>
          <script>
-         formatted_json = JSON.stringify( ''' + str(json_data) + ''', null, 4 )
+         formatted_json = JSON.stringify( '''
+            + str(json_data)
+            + ''', null, 4 )
          document.getElementById('json-display').textContent = formatted_json
          </script>
          '''
-         fp.write(html_lines)
+        )
+        fp.write(html_lines)
 
 
-
-def build_rccl_result_default_table( filename, res_dict, \
-        bw_dip_threshold=10.0, time_dip_threshold=10.0 ):
-
+def build_rccl_result_default_table(filename, res_dict, bw_dip_threshold=10.0, time_dip_threshold=10.0):
     print('Build HTML RCCL Result default table')
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 <h2 style="background-color: lightblue">RCCL Results Table</h2>
 <table id="rccltable" class="display cell-border">
   <thead>
@@ -1053,64 +1082,60 @@ def build_rccl_result_default_table( filename, res_dict, \
   <th>Latency us</th>
   </tr>
   </thead>'''
-         fp.write(html_lines)
-         for key_nam in res_dict.keys():
-             collective=key_nam
-             last_bw = 0.0
-             last_time = 0
-             for msg_size in res_dict[key_nam].keys():
-                 bus_bw = res_dict[key_nam][msg_size]['bus_bw']
-                 time = res_dict[key_nam][msg_size]['time']
-                 html_lines=f'''
+        fp.write(html_lines)
+        for key_nam in res_dict.keys():
+            collective = key_nam
+            last_bw = 0.0
+            last_time = 0
+            for msg_size in res_dict[key_nam].keys():
+                bus_bw = res_dict[key_nam][msg_size]['bus_bw']
+                time = res_dict[key_nam][msg_size]['time']
+                html_lines = f'''
      <tr>
      <td>{collective}</td>
      <td>{msg_size}</td>
      <td>{res_dict[key_nam][msg_size]['alg_bw']}</td>
                  '''
-                 fp.write(html_lines)
+                fp.write(html_lines)
 
-                 # For dip_bw_check and dip_lat_check - mark red only if it is greater than some
-                 # threshold - by default 10.0 % from earlier message size.
-                 bw_change_pct = 0.0
-                 time_change_pct = 0.0
-                 # percent increase for BW
-                 if float(last_bw) > 0.0:
-                     bw_change_pct = ((float(bus_bw)-float(last_bw))/float(last_bw)) * 100.0
+                # For dip_bw_check and dip_lat_check - mark red only if it is greater than some
+                # threshold - by default 10.0 % from earlier message size.
+                bw_change_pct = 0.0
+                time_change_pct = 0.0
+                # percent increase for BW
+                if float(last_bw) > 0.0:
+                    bw_change_pct = ((float(bus_bw) - float(last_bw)) / float(last_bw)) * 100.0
 
-                 # percent decrease for latency
-                 if float(last_time) > 0.0:
-                     time_change_pct = ((float(time)-float(last_time))/float(last_time)) * 100.0
+                # percent decrease for latency
+                if float(last_time) > 0.0:
+                    time_change_pct = ((float(time) - float(last_time)) / float(last_time)) * 100.0
 
-                 print(bus_bw, last_bw, bw_change_pct, bw_dip_threshold)
-                 print(time, last_time, time_change_pct, time_dip_threshold)
+                print(bus_bw, last_bw, bw_change_pct, bw_dip_threshold)
+                print(time, last_time, time_change_pct, time_dip_threshold)
 
-                 if bw_change_pct < -(bw_dip_threshold):
-                     html_lines = '''<td><span class="label label-danger">''' + str(bus_bw) + '''</td>\n'''
-                 else:
-                     html_lines = '''<td>''' + str(bus_bw) + '''</td>\n'''
-                 fp.write(html_lines)
+                if bw_change_pct < -(bw_dip_threshold):
+                    html_lines = '''<td><span class="label label-danger">''' + str(bus_bw) + '''</td>\n'''
+                else:
+                    html_lines = '''<td>''' + str(bus_bw) + '''</td>\n'''
+                fp.write(html_lines)
 
-                 # latency dip check add later
-                 html_lines = '''<td>''' + str(time) + '''</td>\n'''
-                 fp.write(html_lines)
-                 last_bw = bus_bw
-                 last_time = time
+                # latency dip check add later
+                html_lines = '''<td>''' + str(time) + '''</td>\n'''
+                fp.write(html_lines)
+                last_bw = bus_bw
+                last_time = time
 
-         html_lines='''
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
 
-
-
-
-
-def build_rccl_result_table( filename, res_dict ):
+def build_rccl_result_table(filename, res_dict):
     print('Build HTML RCCL Result table')
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 <h2 style="background-color: lightblue">RCCL Results Table</h2>
 <table id="rccltable" class="display cell-border">
   <thead>
@@ -1126,15 +1151,15 @@ def build_rccl_result_table( filename, res_dict ):
   <th>Latency us</th>
   </tr>
   </thead>'''
-         fp.write(html_lines)
-         for key_nam in res_dict.keys():
-             (collective,algo,protocol,qp_count,pxn_disable) = key_nam.split("-")
-             last_bw = 0.0
-             last_time = 0
-             for msg_size in res_dict[key_nam].keys():
-                 bus_bw = res_dict[key_nam][msg_size]['bus_bw']
-                 time = res_dict[key_nam][msg_size]['time']
-                 html_lines=f'''
+        fp.write(html_lines)
+        for key_nam in res_dict.keys():
+            (collective, algo, protocol, qp_count, pxn_disable) = key_nam.split("-")
+            last_bw = 0.0
+            last_time = 0
+            for msg_size in res_dict[key_nam].keys():
+                bus_bw = res_dict[key_nam][msg_size]['bus_bw']
+                time = res_dict[key_nam][msg_size]['time']
+                html_lines = f'''
      <tr>
      <td>{collective}</td>
      <td>{algo}</td>
@@ -1144,45 +1169,42 @@ def build_rccl_result_table( filename, res_dict ):
      <td>{msg_size}</td>
      <td>{res_dict[key_nam][msg_size]['alg_bw']}</td>
                  '''
-                 fp.write(html_lines)
-                 if float(bus_bw) < float(last_bw):
-                     html_lines = '''<td><span class="label label-danger">''' + str(bus_bw) + '''</td>\n'''
-                 else:
-                     html_lines = '''<td>''' + str(bus_bw) + '''</td>\n'''
-                 fp.write(html_lines)
-                 if float(time) < float(last_time):
-                     html_lines = '''<td><span class="label label-danger">''' + str(time) + '''</td>\n'''
-                 else:
-                     html_lines = '''<td>''' + str(time) + '''</td>\n'''
-                 fp.write(html_lines)
-                 last_bw = bus_bw
-                 last_time = time
-         html_lines='''
+                fp.write(html_lines)
+                if float(bus_bw) < float(last_bw):
+                    html_lines = '''<td><span class="label label-danger">''' + str(bus_bw) + '''</td>\n'''
+                else:
+                    html_lines = '''<td>''' + str(bus_bw) + '''</td>\n'''
+                fp.write(html_lines)
+                if float(time) < float(last_time):
+                    html_lines = '''<td><span class="label label-danger">''' + str(time) + '''</td>\n'''
+                else:
+                    html_lines = '''<td>''' + str(time) + '''</td>\n'''
+                fp.write(html_lines)
+                last_bw = bus_bw
+                last_time = time
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
 
-
-def build_rccl_heatmap_metadata_table( filename, act_data_json, ref_data_json ):
+def build_rccl_heatmap_metadata_table(filename, act_data_json, ref_data_json):
     try:
-        with open( act_data_json, 'r') as fp1:
-             act_data_dict = json.load(fp1)
+        with open(act_data_json, 'r') as fp1:
+            act_data_dict = json.load(fp1)
     except Exception as e:
         print(f'Error reading file {act_data_json} - {e}')
 
-
     try:
-        with open( ref_data_json, 'r') as fp2:
-             ref_data_dict = json.load(fp2)
+        with open(ref_data_json, 'r') as fp2:
+            ref_data_dict = json.load(fp2)
     except Exception as e:
         print(f'Error reading file {ref_data_json} - {e}')
 
-
     print('Build HTML RCCL heatmap Metadata table')
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
          <br><br>
 <table id="metatable" class="display cell-border">
   <thead>
@@ -1196,132 +1218,131 @@ def build_rccl_heatmap_metadata_table( filename, act_data_json, ref_data_json ):
   <th>RCCL/NCCL Commit/Date</th>
   </tr>
   </thead>'''
-         fp.write(html_lines)
-         html_lines='<tr>'
-         fp.write(html_lines)
-         html_lines='<td>Current</td>'
-         fp.write(html_lines)
-         for key_nam in act_data_dict.keys():
-             if 'metadata' in key_nam:
-                 print(act_data_dict['metadata'].keys())
-                 if 'gpu_model' in act_data_dict[key_nam].keys():
-                     html_lines = f"<td>{act_data_dict['metadata']['gpu_model']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
+        fp.write(html_lines)
+        html_lines = '<tr>'
+        fp.write(html_lines)
+        html_lines = '<td>Current</td>'
+        fp.write(html_lines)
+        for key_nam in act_data_dict.keys():
+            if 'metadata' in key_nam:
+                print(act_data_dict['metadata'].keys())
+                if 'gpu_model' in act_data_dict[key_nam].keys():
+                    html_lines = f"<td>{act_data_dict['metadata']['gpu_model']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
 
-                 if 'nic_model' in act_data_dict[key_nam].keys():
-                     html_lines = f"<td>{act_data_dict['metadata']['nic_model']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
+                if 'nic_model' in act_data_dict[key_nam].keys():
+                    html_lines = f"<td>{act_data_dict['metadata']['nic_model']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
 
-                 if 'date' in act_data_dict[key_nam].keys():
-                     html_lines = f"<td>{act_data_dict['metadata']['date']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
+                if 'date' in act_data_dict[key_nam].keys():
+                    html_lines = f"<td>{act_data_dict['metadata']['date']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
 
-                 if 'bkc_version' in act_data_dict[key_nam].keys():
-                     html_lines = f"<td>{act_data_dict['metadata']['bkc_version']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
+                if 'bkc_version' in act_data_dict[key_nam].keys():
+                    html_lines = f"<td>{act_data_dict['metadata']['bkc_version']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
 
-                 if 'rocm_version' in act_data_dict[key_nam].keys():
-                     html_lines = f"<td>{act_data_dict['metadata']['rocm_version']}</td>"
-                     fp.write(html_lines)
-                 elif 'cuda_version' in act_data_dict[key_nam].keys():
-                     html_lines = f"<td>{act_data_dict['metadata']['cuda_version']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
+                if 'rocm_version' in act_data_dict[key_nam].keys():
+                    html_lines = f"<td>{act_data_dict['metadata']['rocm_version']}</td>"
+                    fp.write(html_lines)
+                elif 'cuda_version' in act_data_dict[key_nam].keys():
+                    html_lines = f"<td>{act_data_dict['metadata']['cuda_version']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
 
-                 if 'rccl_commit' in act_data_dict[key_nam].keys():
-                     html_lines = f"<td>{act_data_dict['metadata']['rccl_commit']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
-         html_lines='</tr>'
-         fp.write(html_lines)
+                if 'rccl_commit' in act_data_dict[key_nam].keys():
+                    html_lines = f"<td>{act_data_dict['metadata']['rccl_commit']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
+        html_lines = '</tr>'
+        fp.write(html_lines)
 
+        for key_nam in ref_data_dict.keys():
+            if 'metadata' in key_nam:
+                html_lines = '<tr>'
+                fp.write(html_lines)
+                html_lines = '<td>Golden</td>'
+                fp.write(html_lines)
+                print(ref_data_dict[key_nam].keys())
+                if 'gpu_model' in ref_data_dict[key_nam].keys():
+                    html_lines = f"<td>{ref_data_dict['metadata']['gpu_model']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
+                if 'nic_model' in ref_data_dict[key_nam].keys():
+                    html_lines = f"<td>{ref_data_dict['metadata']['nic_model']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
+                if 'date' in ref_data_dict[key_nam].keys():
+                    html_lines = f"<td>{ref_data_dict['metadata']['nic_model']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
+                if 'bkc_version' in ref_data_dict[key_nam].keys():
+                    html_lines = f"<td>{ref_data_dict['metadata']['bkc_version']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
+                if 'rocm_version' in ref_data_dict[key_nam].keys():
+                    html_lines = f"<td>{ref_data_dict['metadata']['rocm_version']}</td>"
+                    fp.write(html_lines)
+                elif 'cuda_version' in ref_data_dict[key_nam].keys():
+                    html_lines = f"<td>{ref_data_dict['metadata']['cuda_version']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
+                if 'rccl_commit' in ref_data_dict[key_nam].keys():
+                    html_lines = f"<td>{ref_data_dict['metadata']['rccl_commit']}</td>"
+                    fp.write(html_lines)
+                else:
+                    fp.write('<td>-</td>')
+                html_lines = '</tr>'
+                fp.write(html_lines)
 
-         for key_nam in ref_data_dict.keys():
-             if 'metadata' in key_nam:
-                 html_lines='<tr>'
-                 fp.write(html_lines)
-                 html_lines='<td>Golden</td>'
-                 fp.write(html_lines)
-                 print(ref_data_dict[key_nam].keys())
-                 if 'gpu_model' in ref_data_dict[key_nam].keys():
-                     html_lines = f"<td>{ref_data_dict['metadata']['gpu_model']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
-                 if 'nic_model' in ref_data_dict[key_nam].keys():
-                     html_lines = f"<td>{ref_data_dict['metadata']['nic_model']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
-                 if 'date' in ref_data_dict[key_nam].keys():
-                     html_lines = f"<td>{ref_data_dict['metadata']['nic_model']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
-                 if 'bkc_version' in ref_data_dict[key_nam].keys():
-                     html_lines = f"<td>{ref_data_dict['metadata']['bkc_version']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
-                 if 'rocm_version' in ref_data_dict[key_nam].keys():
-                     html_lines = f"<td>{ref_data_dict['metadata']['rocm_version']}</td>"
-                     fp.write(html_lines)
-                 elif 'cuda_version' in ref_data_dict[key_nam].keys():
-                     html_lines = f"<td>{ref_data_dict['metadata']['cuda_version']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
-                 if 'rccl_commit' in ref_data_dict[key_nam].keys():
-                     html_lines = f"<td>{ref_data_dict['metadata']['rccl_commit']}</td>"
-                     fp.write(html_lines)
-                 else:
-                     fp.write('<td>-</td>')
-                 html_lines='</tr>'
-                 fp.write(html_lines)
-
-         html_lines='''
+        html_lines = '''
          </table>'''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
 
-
-
-
-def build_rccl_heatmap_table( filename, title, act_data_json, ref_data_json ):
-
+def build_rccl_heatmap_table(filename, title, act_data_json, ref_data_json):
     try:
-        with open( act_data_json, 'r') as fp1:
-             act_data_dict = json.load(fp1)
+        with open(act_data_json, 'r') as fp1:
+            act_data_dict = json.load(fp1)
     except Exception as e:
         print(f'Error reading file {act_data_json} - {e}')
 
-
     try:
-        with open( ref_data_json, 'r') as fp2:
-             ref_data_dict_t = json.load(fp2)
+        with open(ref_data_json, 'r') as fp2:
+            ref_data_dict_t = json.load(fp2)
     except Exception as e:
         print(f'Error reading file {ref_data_json} - {e}')
 
     if 'result' in ref_data_dict_t.keys():
         ref_data_dict = ref_data_dict_t['result']
     else:
-        fail_test(f'Error the reference JSON file {ref_data_json} is not in the expected format, \
-                need metadata and result as top level keys')
+        fail_test(
+            f'Error the reference JSON file {ref_data_json} is not in the expected format, \
+                need metadata and result as top level keys'
+        )
 
     print('Build HTML RCCL heatmap table')
     with open(filename, 'a') as fp:
-         html_lines='''
-<h2 style="background-color: lightblue">''' + str(title) + '''</h2>
+        html_lines = (
+            '''
+<h2 style="background-color: lightblue">'''
+            + str(title)
+            + '''</h2>
 <table id="rccltable" class="display cell-border">
   <thead>
   <tr>
@@ -1337,81 +1358,79 @@ def build_rccl_heatmap_table( filename, title, act_data_json, ref_data_json ):
   <th>Golden Latency us</th>
   </tr>
   </thead>'''
-         fp.write(html_lines)
-         for key_nam in act_data_dict.keys():
-             (collective,data_type,gpu_count) = key_nam.split("-")
-             # Skip if reference data doesn't have this test configuration
-             if key_nam not in ref_data_dict:
-                 print(f"Warning: {key_nam} not found in reference data, skipping from table")
-                 continue
-             last_bw = 0.0
-             last_time = 0
-             for msg_size in act_data_dict[key_nam].keys():
-                 act_bus_bw = act_data_dict[key_nam][msg_size]['bus_bw']
-                 act_alg_bw = act_data_dict[key_nam][msg_size]['alg_bw']
-                 act_time = act_data_dict[key_nam][msg_size]['time']
-                 # Skip if reference doesn't have this message size
-                 if msg_size not in ref_data_dict[key_nam]:
-                     print(f"Warning: msg_size {msg_size} not found in reference for {key_nam}, skipping from table")
-                     continue
-                 ref_bus_bw = ref_data_dict[key_nam][msg_size]['bus_bw']
-                 ref_alg_bw = ref_data_dict[key_nam][msg_size]['alg_bw']
-                 act_time = act_data_dict[key_nam][msg_size]['time']
-                 ref_time = ref_data_dict[key_nam][msg_size]['time']
+        )
+        fp.write(html_lines)
+        for key_nam in act_data_dict.keys():
+            (collective, data_type, gpu_count) = key_nam.split("-")
+            # Skip if reference data doesn't have this test configuration
+            if key_nam not in ref_data_dict:
+                print(f"Warning: {key_nam} not found in reference data, skipping from table")
+                continue
+            last_bw = 0.0
+            last_time = 0
+            for msg_size in act_data_dict[key_nam].keys():
+                act_bus_bw = act_data_dict[key_nam][msg_size]['bus_bw']
+                act_alg_bw = act_data_dict[key_nam][msg_size]['alg_bw']
+                act_time = act_data_dict[key_nam][msg_size]['time']
+                # Skip if reference doesn't have this message size
+                if msg_size not in ref_data_dict[key_nam]:
+                    print(f"Warning: msg_size {msg_size} not found in reference for {key_nam}, skipping from table")
+                    continue
+                ref_bus_bw = ref_data_dict[key_nam][msg_size]['bus_bw']
+                ref_alg_bw = ref_data_dict[key_nam][msg_size]['alg_bw']
+                act_time = act_data_dict[key_nam][msg_size]['time']
+                ref_time = ref_data_dict[key_nam][msg_size]['time']
 
-                 html_lines=f'''
+                html_lines = f'''
      <tr>
      <td>{collective}</td>
      <td>{data_type}</td>
      <td>{gpu_count}</td>
      <td>{msg_size}</td>
                  '''
-                 fp.write(html_lines)
+                fp.write(html_lines)
 
-                 if float(act_alg_bw) < float(ref_alg_bw):
-                     html_lines = '''<td><span class="label label-danger">''' + str(act_alg_bw) + '''</td>\n'''
-                 else:
-                     html_lines = '''<td>''' + str(act_alg_bw) + '''</td>\n'''
-                 fp.write(html_lines)
-                 html_lines = '''<td>''' + str(ref_alg_bw) + '''</td>\n'''
-                 fp.write(html_lines)
+                if float(act_alg_bw) < float(ref_alg_bw):
+                    html_lines = '''<td><span class="label label-danger">''' + str(act_alg_bw) + '''</td>\n'''
+                else:
+                    html_lines = '''<td>''' + str(act_alg_bw) + '''</td>\n'''
+                fp.write(html_lines)
+                html_lines = '''<td>''' + str(ref_alg_bw) + '''</td>\n'''
+                fp.write(html_lines)
 
-                 if float(act_bus_bw) < float(ref_bus_bw):
-                     html_lines = '''<td><span class="label label-danger">''' + str(act_bus_bw) + '''</td>\n'''
-                 else:
-                     html_lines = '''<td>''' + str(act_bus_bw) + '''</td>\n'''
-                 fp.write(html_lines)
-                 html_lines = '''<td>''' + str(ref_bus_bw) + '''</td>\n'''
-                 fp.write(html_lines)
+                if float(act_bus_bw) < float(ref_bus_bw):
+                    html_lines = '''<td><span class="label label-danger">''' + str(act_bus_bw) + '''</td>\n'''
+                else:
+                    html_lines = '''<td>''' + str(act_bus_bw) + '''</td>\n'''
+                fp.write(html_lines)
+                html_lines = '''<td>''' + str(ref_bus_bw) + '''</td>\n'''
+                fp.write(html_lines)
 
-                 if float(act_time) > float(ref_time):
-                     html_lines = '''<td><span class="label label-danger">''' + str(act_time) + '''</td>\n'''
-                 else:
-                     html_lines = '''<td>''' + str(act_time) + '''</td>\n'''
-                 fp.write(html_lines)
-                 html_lines = '''<td>''' + str(ref_time) + '''</td>\n'''
-                 fp.write(html_lines)
+                if float(act_time) > float(ref_time):
+                    html_lines = '''<td><span class="label label-danger">''' + str(act_time) + '''</td>\n'''
+                else:
+                    html_lines = '''<td>''' + str(act_time) + '''</td>\n'''
+                fp.write(html_lines)
+                html_lines = '''<td>''' + str(ref_time) + '''</td>\n'''
+                fp.write(html_lines)
 
-         html_lines='''
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
 
-
-
-
-def insert_chart(filename, chart_name):           
+def insert_chart(filename, chart_name):
     with open(filename, 'a') as fp:
-         html_lines=f'''<div id="{chart_name}"></div>'''
-         fp.write(html_lines)
-       
+        html_lines = f'''<div id="{chart_name}"></div>'''
+        fp.write(html_lines)
 
 
-
-def build_rdma_stats_table( filename, rdma_dict, ):
-
+def build_rdma_stats_table(
+    filename,
+    rdma_dict,
+):
     """
     Append an HTML table summarizing RDMA statistics to the given file.
 
@@ -1458,54 +1477,57 @@ def build_rdma_stats_table( filename, rdma_dict, ):
 
     # Open the HTML file in append mode; we assume header/body already started elsewhere
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 <h2 id="rdmastatsid"></h2><br>
 <h2 style="background-color: lightblue">RDMA Statistics Table</h2>
 <table id="rdmastatstable" class="display cell-border">
   <thead>
   <tr>
   <th>Node</th>'''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
-         # Create one column header per RDMA device index from the first node
-         for j in range(0,len(rdma_device_list)):
-             fp.write(f'<th>rdma_device_{j}</th>\n')
-         fp.write('</tr></thead>\n')
-         # End or header, let us start data rows ..
+        # Create one column header per RDMA device index from the first node
+        for j in range(0, len(rdma_device_list)):
+            fp.write(f'<th>rdma_device_{j}</th>\n')
+        fp.write('</tr></thead>\n')
+        # End or header, let us start data rows ..
 
-         # Begin writing data rows, one per node
-         for node in rdma_dict.keys():
-             # begin each node row
-             fp.write(f'<tr><td>{node}</td>\n')
-             # For each RDMA device on this node, render a nested table of non-zero counters
-             for rdma_device in rdma_dict[node].keys():
-                 fp.write(f'<td><table border=1>\n')
-                 stats_dict = rdma_dict[node][rdma_device]
-                 fp.write(f'<tr><td>rdma_device</td><td>{rdma_device}</td></tr>\n')
-                 for stats_key in stats_dict.keys():
-                     if stats_key != "ifname":
-                         # Convert the value to int to check if it is non-zero
-                         # NOTE: Will raise if value is not numeric; sanitize inputs as needed.
-                         if int(stats_dict[stats_key]) > 0:
-                             # If the counter name looks like an error, apply a red label for emphasis
-                             if re.search( f'{err_pattern}', stats_key, re.I ):
-                                 fp.write(f'<tr><td>{stats_key}</td><td><span class="label label-danger">{stats_dict[stats_key]}</td></tr>\n')
-                             else: 
-                                 fp.write(f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]}</td></tr>\n')
-                 fp.write(f'</table></td>\n')
-             #End of each node row
-             fp.write(f'</tr>\n')
-         html_lines='''
+        # Begin writing data rows, one per node
+        for node in rdma_dict.keys():
+            # begin each node row
+            fp.write(f'<tr><td>{node}</td>\n')
+            # For each RDMA device on this node, render a nested table of non-zero counters
+            for rdma_device in rdma_dict[node].keys():
+                fp.write(f'<td><table border=1>\n')
+                stats_dict = rdma_dict[node][rdma_device]
+                fp.write(f'<tr><td>rdma_device</td><td>{rdma_device}</td></tr>\n')
+                for stats_key in stats_dict.keys():
+                    if stats_key != "ifname":
+                        # Convert the value to int to check if it is non-zero
+                        # NOTE: Will raise if value is not numeric; sanitize inputs as needed.
+                        if int(stats_dict[stats_key]) > 0:
+                            # If the counter name looks like an error, apply a red label for emphasis
+                            if re.search(f'{err_pattern}', stats_key, re.I):
+                                fp.write(
+                                    f'<tr><td>{stats_key}</td><td><span class="label label-danger">{stats_dict[stats_key]}</td></tr>\n'
+                                )
+                            else:
+                                fp.write(f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]}</td></tr>\n')
+                fp.write(f'</table></td>\n')
+            # End of each node row
+            fp.write(f'</tr>\n')
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
-             
-        
+        fp.write(html_lines)
+        fp.close()
 
-def build_ethtool_stats_table( filename, d_dict, ):
 
+def build_ethtool_stats_table(
+    filename,
+    d_dict,
+):
     """
     Append an HTML table summarizing per-node ethtool statistics.
 
@@ -1545,58 +1567,56 @@ def build_ethtool_stats_table( filename, d_dict, ):
     # Regex to detect "error-like" counters for highlighting
     err_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|collision|reset|uncorrect'
 
-    # Append to the HTML file (assumes an HTML <body> is already open) 
+    # Append to the HTML file (assumes an HTML <body> is already open)
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 <h2 id="ethtoolstatsid"></h2><br>
 <h2 style="background-color: lightblue">Ethtool Statistics Table</h2>
 <table id="ethtoolstatstable" class="display cell-border">
   <thead>
   <tr>
   <th>Node</th>'''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
-         # Create device columns based on the first node's device count
-         for j in range(0,device_count):
-             fp.write(f'<th>eth_device_{j}</th>\n')
-         fp.write('</tr></thead>\n')
-         # End or header, let us start data rows ..
+        # Create device columns based on the first node's device count
+        for j in range(0, device_count):
+            fp.write(f'<th>eth_device_{j}</th>\n')
+        fp.write('</tr></thead>\n')
+        # End or header, let us start data rows ..
 
+        # Start writing table rows, one per node
+        for node in d_dict.keys():
+            # begin each node row
+            fp.write(f'<tr><td>{node}</td>\n')
 
-         # Start writing table rows, one per node
-         for node in d_dict.keys():
-
-             # begin each node row
-             fp.write(f'<tr><td>{node}</td>\n')
-
-             # For each NIC on this node, render a nested table of non-zero counters
-             for eth_device in d_dict[node].keys():
-                 fp.write(f'<td><table border=1>\n')
-                 fp.write(f'<tr><td>eth_device</td><td>{eth_device}</td></tr>\n')
-                 stats_dict = d_dict[node][eth_device]
-                 for stats_key in stats_dict.keys():
-                     # Show only counters with non-zero values to reduce noise
-                     if int(stats_dict[stats_key]) > 0:
-                         # Error-like counters: highlight in red
-                         # NOTE: consider closing </span> to keep HTML well-formed.
-                         if re.search( f'{err_pattern}', stats_key, re.I ):
-                             fp.write(f'<tr><td>{stats_key}</td><td><span class="label label-danger">{stats_dict[stats_key]}</td></tr>\n')
-                         else: 
-                             fp.write(f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]}</td></tr>\n')
-                 fp.write(f'</table></td>\n')
-             #End of each node row
-             fp.write(f'</tr>\n')
-         html_lines='''
+            # For each NIC on this node, render a nested table of non-zero counters
+            for eth_device in d_dict[node].keys():
+                fp.write(f'<td><table border=1>\n')
+                fp.write(f'<tr><td>eth_device</td><td>{eth_device}</td></tr>\n')
+                stats_dict = d_dict[node][eth_device]
+                for stats_key in stats_dict.keys():
+                    # Show only counters with non-zero values to reduce noise
+                    if int(stats_dict[stats_key]) > 0:
+                        # Error-like counters: highlight in red
+                        # NOTE: consider closing </span> to keep HTML well-formed.
+                        if re.search(f'{err_pattern}', stats_key, re.I):
+                            fp.write(
+                                f'<tr><td>{stats_key}</td><td><span class="label label-danger">{stats_dict[stats_key]}</td></tr>\n'
+                            )
+                        else:
+                            fp.write(f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]}</td></tr>\n')
+                fp.write(f'</table></td>\n')
+            # End of each node row
+            fp.write(f'</tr>\n')
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
-             
-        
+        fp.write(html_lines)
+        fp.close()
 
 
-def build_snapshot_stats_diff_table( filename, d_dict, title, table_name, id_name ):
+def build_snapshot_stats_diff_table(filename, d_dict, title, table_name, id_name):
     # Use the first node to derive the table column layout and device count (one column per device index)
     node_0 = list(d_dict.keys())[0]
     eth_device_list = d_dict[node_0].keys()
@@ -1605,72 +1625,64 @@ def build_snapshot_stats_diff_table( filename, d_dict, title, table_name, id_nam
     # Regex to detect "error-like" counters for highlighting
     err_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|collision|reset|uncorrect'
 
-    # Append to the HTML file (assumes an HTML <body> is already open) 
+    # Append to the HTML file (assumes an HTML <body> is already open)
     with open(filename, 'a') as fp:
-         html_lines=f'''
+        html_lines = f'''
 <h2 id="{id_name}"></h2><br>
 <h2 style="background-color: lightblue">{title}</h2>
 <table id="{table_name}" class="display cell-border">
   <thead>
   <tr>
   <th>Node</th>'''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
-         # Create device columns based on the first node's device count
-         for j in range(0,device_count):
-             fp.write(f'<th>device_{j}</th>\n')
-         fp.write('</tr></thead>\n')
-         # End or header, let us start data rows ..
+        # Create device columns based on the first node's device count
+        for j in range(0, device_count):
+            fp.write(f'<th>device_{j}</th>\n')
+        fp.write('</tr></thead>\n')
+        # End or header, let us start data rows ..
 
+        # Start writing table rows, one per node
+        for node in d_dict.keys():
+            # begin each node row
+            fp.write(f'<tr><td>{node}</td>\n')
 
-         # Start writing table rows, one per node
-         for node in d_dict.keys():
-
-             # begin each node row
-             fp.write(f'<tr><td>{node}</td>\n')
-
-             # For each NIC on this node, render a nested table of non-zero counters
-             for eth_device in d_dict[node].keys():
-                 # Write the inside stats table only if err diff is seen
-                 if d_dict[node][eth_device]:
-                     stats_dict = d_dict[node][eth_device]
-                     non_zero_diff = False
-                     for stats_key in stats_dict.keys():
-                         if int(stats_dict[stats_key]['diff']) > 0:
-                             non_zero_diff = True
-                     if non_zero_diff:
-                         fp.write(f'<td><table border=1>\n')
-                         fp.write(f'<tr><td>{eth_device}</td><td>Before</td><td>After</td><td>Diff</td></tr>\n')
-                         for stats_key in stats_dict.keys():
-                             if int(stats_dict[stats_key]['diff']) > 0:
-                                 fp.write(f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]["before"]}</td><td>{stats_dict[stats_key]["after"]}</td><td><span class="label label-danger">{stats_dict[stats_key]["diff"]}</td></tr>\n')
-                         fp.write(f'</table></td>\n')
-                     else:
-                         fp.write('<td></td>')
-                 else:
-                     fp.write('<td> </td>')
-             #End of each node row
-             fp.write(f'</tr>\n')
-         html_lines='''
+            # For each NIC on this node, render a nested table of non-zero counters
+            for eth_device in d_dict[node].keys():
+                # Write the inside stats table only if err diff is seen
+                if d_dict[node][eth_device]:
+                    stats_dict = d_dict[node][eth_device]
+                    non_zero_diff = False
+                    for stats_key in stats_dict.keys():
+                        if int(stats_dict[stats_key]['diff']) > 0:
+                            non_zero_diff = True
+                    if non_zero_diff:
+                        fp.write(f'<td><table border=1>\n')
+                        fp.write(f'<tr><td>{eth_device}</td><td>Before</td><td>After</td><td>Diff</td></tr>\n')
+                        for stats_key in stats_dict.keys():
+                            if int(stats_dict[stats_key]['diff']) > 0:
+                                fp.write(
+                                    f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]["before"]}</td><td>{stats_dict[stats_key]["after"]}</td><td><span class="label label-danger">{stats_dict[stats_key]["diff"]}</td></tr>\n'
+                                )
+                        fp.write(f'</table></td>\n')
+                    else:
+                        fp.write('<td></td>')
+                else:
+                    fp.write('<td> </td>')
+            # End of each node row
+            fp.write(f'</tr>\n')
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
-             
-        
+        fp.write(html_lines)
+        fp.close()
 
 
-
-
-
-
-
-
-def build_lldp_table( filename, lldp_dict ):
+def build_lldp_table(filename, lldp_dict):
     print('Build HTML training table')
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 <h2 id="lldpid"></h2><br>
 <h2 style="background-color: lightblue">Cluster LLDP Table</h2>
 <table id="lldptable" class="display cell-border">
@@ -1686,18 +1698,18 @@ def build_lldp_table( filename, lldp_dict ):
   </tr>
   </thead>
   '''
-         fp.write(html_lines)
-         for node in lldp_dict.keys():
-             if 'lldp' in lldp_dict[node].keys():
-                 l_dict_list = lldp_dict[node]['lldp']['interface']
-                 for l_dict in l_dict_list:
-                     intf = list(l_dict.keys())[0]
-                     print(intf)
-                     print(l_dict)
-                     chassis_key = list(l_dict[intf]['chassis'].keys())[0]
-                     chassis_dict = l_dict[intf]['chassis'][chassis_key]
-                     if 'descr' in chassis_dict:
-                         html_lines=f'''
+        fp.write(html_lines)
+        for node in lldp_dict.keys():
+            if 'lldp' in lldp_dict[node].keys():
+                l_dict_list = lldp_dict[node]['lldp']['interface']
+                for l_dict in l_dict_list:
+                    intf = list(l_dict.keys())[0]
+                    print(intf)
+                    print(l_dict)
+                    chassis_key = list(l_dict[intf]['chassis'].keys())[0]
+                    chassis_dict = l_dict[intf]['chassis'][chassis_key]
+                    if 'descr' in chassis_dict:
+                        html_lines = f'''
                          <tr>
                          <td>{node}</td>
                          <td>{intf}</td>
@@ -1707,22 +1719,16 @@ def build_lldp_table( filename, lldp_dict ):
                          <td>{chassis_dict['mgmt-ip']}</td>
                          <td>{l_dict[intf]['port']['id']['value']}</td>
                          </tr>'''
-                         fp.write(html_lines)
-         html_lines='''
+                        fp.write(html_lines)
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
+        fp.write(html_lines)
+        fp.close()
 
 
-
-
-
-
-
-def build_training_results_table( filename, out_dict, title ):
-
+def build_training_results_table(filename, out_dict, title):
     """
     Append an HTML table summarizing per-node training results.
 
@@ -1759,9 +1765,12 @@ def build_training_results_table( filename, out_dict, title ):
 
     print('Build HTML training table')
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = (
+            '''
 <h2 id="trainingid"></h2><br>
-<h2 style="background-color: lightblue">''' + title + '''</h2>
+<h2 style="background-color: lightblue">'''
+            + title
+            + '''</h2>
 <table id="trainingtable" class="display cell-border">
   <thead>
   <tr>
@@ -1773,10 +1782,11 @@ def build_training_results_table( filename, out_dict, title ):
   <th>Mem usage</th>
   <tr>
   </thead>'''
-         fp.write(html_lines)
-         for node in out_dict.keys():
-             d_dict = out_dict[node]
-             html_lines='''
+        )
+        fp.write(html_lines)
+        for node in out_dict.keys():
+            d_dict = out_dict[node]
+            html_lines = '''
   <tr>
   <td>{}</td>
   <td>{}</td>
@@ -1784,26 +1794,27 @@ def build_training_results_table( filename, out_dict, title ):
   <td>{}</td>
   <td>{}</td>
   <td>{}</td>
-  </tr>'''.format( node, d_dict['throughput_per_gpu'],
-             d_dict['tokens_per_gpu'], d_dict['elapsed_time_per_iteration'],
-             d_dict['nan_iterations'], d_dict['mem_usages'] )
-             fp.write(html_lines)
-         html_lines='''
+  </tr>'''.format(
+                node,
+                d_dict['throughput_per_gpu'],
+                d_dict['tokens_per_gpu'],
+                d_dict['elapsed_time_per_iteration'],
+                d_dict['nan_iterations'],
+                d_dict['mem_usages'],
+            )
+            fp.write(html_lines)
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
+        fp.write(html_lines)
+        fp.close()
 
 
-
-
-
-
-def build_err_log_table( filename, d_dict, title, table_name, id_name ):
+def build_err_log_table(filename, d_dict, title, table_name, id_name):
     print(f'Build HTML Historic error table {title}')
     with open(filename, 'a') as fp:
-         html_lines=f'''
+        html_lines = f'''
 <h2 id="{id_name}"></h2><br>
 <h2 style="background-color: lightblue">{title}</h2>
 <table id="{table_name}" class="display cell-border">
@@ -1813,31 +1824,27 @@ def build_err_log_table( filename, d_dict, title, table_name, id_name ):
   <th>Error Logs</th>
   </tr>
   </thead>'''
-         fp.write(html_lines)
-         for node in d_dict.keys():
-             html_lines = f'''
+        fp.write(html_lines)
+        for node in d_dict.keys():
+            html_lines = f'''
              <tr>
              <td>{node}</td>
              '''
-             fp.write(html_lines)
-             html_lines = '<td><span class="label label-danger">'
-             for err_line in d_dict[node]:
-                 html_lines = html_lines + err_line + '<br>'
-             html_lines = html_lines + '</td></tr>'
-             fp.write(html_lines)
-         html_lines='''
+            fp.write(html_lines)
+            html_lines = '<td><span class="label label-danger">'
+            for err_line in d_dict[node]:
+                html_lines = html_lines + err_line + '<br>'
+            html_lines = html_lines + '</td></tr>'
+            fp.write(html_lines)
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
-
-             
+        fp.write(html_lines)
+        fp.close()
 
 
-
-
-def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
+def build_html_nic_table(filename, rdma_dict, lshw_dict, ip_dict):
     print('Build HTML product table')
     """
     Append a Network Info HTML table to the given file, summarizing NIC and RDMA device state per node.
@@ -1889,7 +1896,7 @@ def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
     """
 
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 
 <h2 id="nicid"></h2><br>
 <h2 style="background-color: lightblue">Network Info</h2>
@@ -1907,30 +1914,30 @@ def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
   <th>IPv6 Addr List</th>
   </tr>
   </thead>'''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
-         # For each node, collect NIC/RDMA properties into lists (one row per node)
-         for node in rdma_dict.keys():
-             rdma_dev_list = list(rdma_dict[node].keys())
-             eth_dev_list = []
-             dev_status_list = []
-             link_status_list = []
-             pcie_bus_list = []
-             mtu_list = []
-             ip_list = []
-             ip6_list = []
+        # For each node, collect NIC/RDMA properties into lists (one row per node)
+        for node in rdma_dict.keys():
+            rdma_dev_list = list(rdma_dict[node].keys())
+            eth_dev_list = []
+            dev_status_list = []
+            link_status_list = []
+            pcie_bus_list = []
+            mtu_list = []
+            ip_list = []
+            ip6_list = []
 
-             # Build each list by walking RDMA devices mapped to Ethernet interfaces
-             for rdma_dev in rdma_dev_list:
-                 eth_dev = rdma_dict[node][rdma_dev]['eth_device']
-                 eth_dev_list.append(eth_dev)
-                 dev_status_list.append(rdma_dict[node][rdma_dev]['device_status'])
-                 link_status_list.append(rdma_dict[node][rdma_dev]['link_status'])
-                 pcie_bus_list.append(lshw_dict[node][eth_dev]['pci_bus'])
-                 mtu_list.append(ip_dict[node][eth_dev]['mtu'])
-                 ip_list.append(ip_dict[node][eth_dev]['ipv4_addr_list'])
-                 ip6_list.append(ip_dict[node][eth_dev]['ipv6_addr_list'])
-             html_lines='''
+            # Build each list by walking RDMA devices mapped to Ethernet interfaces
+            for rdma_dev in rdma_dev_list:
+                eth_dev = rdma_dict[node][rdma_dev]['eth_device']
+                eth_dev_list.append(eth_dev)
+                dev_status_list.append(rdma_dict[node][rdma_dev]['device_status'])
+                link_status_list.append(rdma_dict[node][rdma_dev]['link_status'])
+                pcie_bus_list.append(lshw_dict[node][eth_dev]['pci_bus'])
+                mtu_list.append(ip_dict[node][eth_dev]['mtu'])
+                ip_list.append(ip_dict[node][eth_dev]['ipv4_addr_list'])
+                ip6_list.append(ip_dict[node][eth_dev]['ipv6_addr_list'])
+            html_lines = '''
   <tr>
   <td>{}</td>
   <td>{}</td>
@@ -1942,21 +1949,27 @@ def build_html_nic_table( filename, rdma_dict, lshw_dict, ip_dict ):
   <td>{}</td>
   <td>{}</td>
   </tr>
-  '''.format( node,
-             eth_dev_list, rdma_dev_list, link_status_list,
-             dev_status_list, pcie_bus_list, mtu_list, ip_list, ip6_list )
-             fp.write(html_lines)
-         html_lines='''
+  '''.format(
+                node,
+                eth_dev_list,
+                rdma_dev_list,
+                link_status_list,
+                dev_status_list,
+                pcie_bus_list,
+                mtu_list,
+                ip_list,
+                ip6_list,
+            )
+            fp.write(html_lines)
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
+        fp.write(html_lines)
+        fp.close()
 
 
-
-def build_html_cluster_product_table( filename, model_dict, fw_dict ):
-
+def build_html_cluster_product_table(filename, model_dict, fw_dict):
     """
     Append a 'Product Info' HTML table to the given file, summarizing GPU model and firmware info per node.
 
@@ -2028,7 +2041,7 @@ def build_html_cluster_product_table( filename, model_dict, fw_dict ):
 
     # Append to the existing HTML file (assumes <body> already opened elsewhere)
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 
 <h2 id="prodid"></h2><br>
 <h2 style="background-color: lightblue">Firmware Info</h2>
@@ -2049,15 +2062,15 @@ def build_html_cluster_product_table( filename, model_dict, fw_dict ):
   <th>VCN Fw</th>
   </tr>
   </thead>'''
-         fp.write(html_lines)
-         # Emit one row per node
-         # Only printing for card0, gpu0 .. assuming all GPUs running same version, otherwise the table size is so huge
-         for node in model_dict.keys():
-             m_dict = model_dict[node]["card0"]
-             f_dict = fw_dict[node]["card0"]
-             if not 'SOS firmware version' in f_dict:
-                 f_dict['SOS firmware version'] = "-"
-             html_lines='''
+        fp.write(html_lines)
+        # Emit one row per node
+        # Only printing for card0, gpu0 .. assuming all GPUs running same version, otherwise the table size is so huge
+        for node in model_dict.keys():
+            m_dict = model_dict[node]["card0"]
+            f_dict = fw_dict[node]["card0"]
+            if not 'SOS firmware version' in f_dict:
+                f_dict['SOS firmware version'] = "-"
+            html_lines = '''
   <tr>
   <td>{}</td>
   <td>{}</td>
@@ -2072,26 +2085,33 @@ def build_html_cluster_product_table( filename, model_dict, fw_dict ):
   <td>{}</td>
   <td>{}</td>
   </tr>
-  '''.format( node, m_dict['Card Series'], m_dict['GFX Version'], m_dict['Card SKU'],
-             f_dict['MEC firmware version'], f_dict['RLC firmware version'],
-             f_dict['RLC SRLC firmware version'], f_dict['RLC SRLG firmware version'],
-             f_dict['RLC SRLS firmware version'], f_dict['SDMA firmware version'],
-             f_dict['SMC firmware version'], f_dict['SOS firmware version'],
-             f_dict['TA RAS firmware version'], f_dict['TA XGMI firmware version'],
-             f_dict['VCN firmware version']
-             )
-             fp.write(html_lines)
-         html_lines='''
+  '''.format(
+                node,
+                m_dict['Card Series'],
+                m_dict['GFX Version'],
+                m_dict['Card SKU'],
+                f_dict['MEC firmware version'],
+                f_dict['RLC firmware version'],
+                f_dict['RLC SRLC firmware version'],
+                f_dict['RLC SRLG firmware version'],
+                f_dict['RLC SRLS firmware version'],
+                f_dict['SDMA firmware version'],
+                f_dict['SMC firmware version'],
+                f_dict['SOS firmware version'],
+                f_dict['TA RAS firmware version'],
+                f_dict['TA XGMI firmware version'],
+                f_dict['VCN firmware version'],
+            )
+            fp.write(html_lines)
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
+        fp.write(html_lines)
+        fp.close()
 
- 
 
-def build_html_gpu_utilization_table( filename, use_dict ):
-
+def build_html_gpu_utilization_table(filename, use_dict):
     """
     Append a 'GPU Utilization' HTML table to the given file, summarizing per-GPU usage per node.
 
@@ -2129,7 +2149,7 @@ def build_html_gpu_utilization_table( filename, use_dict ):
 
     print('Build HTML utilization table')
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 <h2 id="gpuuseid"></h2><br>
 <h2 style="background-color: lightblue">GPU Utilization</h2>
 <table id="gpuusetable" class="display cell-border">
@@ -2154,12 +2174,12 @@ def build_html_gpu_utilization_table( filename, use_dict ):
   <th>GPU7 GFX Activ</th>
   </tr>
   </thead>'''
-         fp.write(html_lines)
+        fp.write(html_lines)
 
-         # Emit one data row per node with utilization and activity for GPUs 0..7.
-         for node in use_dict.keys():
-             u_dict = use_dict[node]       # Per-node GPU metrics (expects card0..card7 with required keys)
-             html_lines='''
+        # Emit one data row per node with utilization and activity for GPUs 0..7.
+        for node in use_dict.keys():
+            u_dict = use_dict[node]  # Per-node GPU metrics (expects card0..card7 with required keys)
+            html_lines = '''
   <tr>
   <td>{}</td>
   <td>{}</td>
@@ -2179,29 +2199,34 @@ def build_html_gpu_utilization_table( filename, use_dict ):
   <td>{}</td>
   <td>{}</td>
   </tr>'''.format(
-             node,
-             u_dict['card0']['GPU use (%)'], u_dict['card0']['GFX Activity'],
-             u_dict['card1']['GPU use (%)'], u_dict['card1']['GFX Activity'],
-             u_dict['card2']['GPU use (%)'], u_dict['card2']['GFX Activity'],
-             u_dict['card3']['GPU use (%)'], u_dict['card3']['GFX Activity'],
-             u_dict['card4']['GPU use (%)'], u_dict['card4']['GFX Activity'],
-             u_dict['card5']['GPU use (%)'], u_dict['card5']['GFX Activity'],
-             u_dict['card6']['GPU use (%)'], u_dict['card6']['GFX Activity'],
-             u_dict['card7']['GPU use (%)'], u_dict['card7']['GFX Activity'],
-             )
-             fp.write(html_lines)
-         html_lines='''
+                node,
+                u_dict['card0']['GPU use (%)'],
+                u_dict['card0']['GFX Activity'],
+                u_dict['card1']['GPU use (%)'],
+                u_dict['card1']['GFX Activity'],
+                u_dict['card2']['GPU use (%)'],
+                u_dict['card2']['GFX Activity'],
+                u_dict['card3']['GPU use (%)'],
+                u_dict['card3']['GFX Activity'],
+                u_dict['card4']['GPU use (%)'],
+                u_dict['card4']['GFX Activity'],
+                u_dict['card5']['GPU use (%)'],
+                u_dict['card5']['GFX Activity'],
+                u_dict['card6']['GPU use (%)'],
+                u_dict['card6']['GFX Activity'],
+                u_dict['card7']['GPU use (%)'],
+                u_dict['card7']['GFX Activity'],
+            )
+            fp.write(html_lines)
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
+        fp.write(html_lines)
+        fp.close()
 
 
-
-
-def build_html_mem_utilization_table( filename, use_dict, amd_dict ):
-
+def build_html_mem_utilization_table(filename, use_dict, amd_dict):
     """
     Append a 'GPU Memory Utilization' HTML table to the given file, summarizing per-GPU
     memory usage and activity metrics per node.
@@ -2252,7 +2277,7 @@ def build_html_mem_utilization_table( filename, use_dict, amd_dict ):
 
     print('Build HTML mem utilization table')
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 <h2 id="memuseid"></h2><br>
 <h2 style="background-color: lightblue">GPU Memory Utilization</h2>
 <table id="memusetable" class="display cell-border">
@@ -2260,9 +2285,9 @@ def build_html_mem_utilization_table( filename, use_dict, amd_dict ):
   <tr>
   <th>Node</th>
          '''
-         fp.write(html_lines)
-         for i in range(0,8):
-             html_lines=f'''
+        fp.write(html_lines)
+        for i in range(0, 8):
+            html_lines = f'''
   <th>G{i} Tot VRAM MB</th>
   <th>G{i} Used VRAM MB</th>
   <th>G{i} Free VRAM MB</th>
@@ -2271,32 +2296,32 @@ def build_html_mem_utilization_table( filename, use_dict, amd_dict ):
   <th>G{i} Mem Acti</th>
   <th>G{i} Mem BW</th>
              '''
-             fp.write(html_lines)
-         html_lines='''
+            fp.write(html_lines)
+        html_lines = '''
   </tr>
   </thead>'''
-         fp.write(html_lines)
-         for node in use_dict.keys():
-             html_lines='''
+        fp.write(html_lines)
+        for node in use_dict.keys():
+            html_lines = '''
   <tr>
   <td>{}</td>
              '''.format(node)
-             fp.write(html_lines)
-             u_dict = use_dict[node]
-             #a_list = amd_dict[node]
-             # Normalize amd_dict shape across ROCm versions:
-             # - For ROCm 7.x: expect dict with "gpu_data" list
-             # - For ROCm 6.x: expect list directly
-             if isinstance( amd_dict[node], dict ):
-                 # handling different between rocm6.x and 7.x
-                 if 'gpu_data' in amd_dict[node].keys():
-                     a_list = amd_dict[node]['gpu_data']
-             else:
-                 a_list = amd_dict[node]
-             for j in range(0,8):
-                 card = 'card' + str(j)
-                 a_dict = a_list[j]
-                 html_lines='''
+            fp.write(html_lines)
+            u_dict = use_dict[node]
+            # a_list = amd_dict[node]
+            # Normalize amd_dict shape across ROCm versions:
+            # - For ROCm 7.x: expect dict with "gpu_data" list
+            # - For ROCm 6.x: expect list directly
+            if isinstance(amd_dict[node], dict):
+                # handling different between rocm6.x and 7.x
+                if 'gpu_data' in amd_dict[node].keys():
+                    a_list = amd_dict[node]['gpu_data']
+            else:
+                a_list = amd_dict[node]
+            for j in range(0, 8):
+                card = 'card' + str(j)
+                a_dict = a_list[j]
+                html_lines = '''
   <td>{}</td>
   <td>{}</td>
   <td>{}</td>
@@ -2305,30 +2330,28 @@ def build_html_mem_utilization_table( filename, use_dict, amd_dict ):
   <td>{}</td>
   <td>{}</td>
   '''.format(
-                 a_dict['mem_usage']['total_vram']['value'],
-                 a_dict['mem_usage']['used_vram']['value'],
-                 a_dict['mem_usage']['free_vram']['value'],
-                 u_dict[card]['GPU Memory Allocated (VRAM%)'],
-                 u_dict[card]['GPU Memory Read/Write Activity (%)'],
-                 u_dict[card]['Memory Activity'],
-                 u_dict[card]['Avg. Memory Bandwidth']
-                 )
-                 fp.write(html_lines)
-             html_lines='''
+                    a_dict['mem_usage']['total_vram']['value'],
+                    a_dict['mem_usage']['used_vram']['value'],
+                    a_dict['mem_usage']['free_vram']['value'],
+                    u_dict[card]['GPU Memory Allocated (VRAM%)'],
+                    u_dict[card]['GPU Memory Read/Write Activity (%)'],
+                    u_dict[card]['Memory Activity'],
+                    u_dict[card]['Avg. Memory Bandwidth'],
+                )
+                fp.write(html_lines)
+            html_lines = '''
   </tr>
              '''
-             fp.write(html_lines)
-         html_lines='''
+            fp.write(html_lines)
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
+        fp.write(html_lines)
+        fp.close()
 
 
-
-def build_html_pcie_xgmi_metrics_table( filename, metrics_dict, amd_dict ):
-
+def build_html_pcie_xgmi_metrics_table(filename, metrics_dict, amd_dict):
     """
     Append a 'GPU PCIe XGMI Metrics' HTML table to the given file.
 
@@ -2390,7 +2413,7 @@ def build_html_pcie_xgmi_metrics_table( filename, metrics_dict, amd_dict ):
 
     print('Build HTML PCIe metrics table')
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 <h2 id="pciexgmimetid"></h2><br>
 <h2 style="background-color: lightblue">GPU PCIe XGMI Metrics Table</h2>
 <table id="pciexgmimettable" class="display cell-border">
@@ -2398,9 +2421,9 @@ def build_html_pcie_xgmi_metrics_table( filename, metrics_dict, amd_dict ):
   <tr>
   <th>Node</th>
          '''
-         fp.write(html_lines)
-         for i in range(0,8):
-             html_lines=f'''
+        fp.write(html_lines)
+        for i in range(0, 8):
+            html_lines = f'''
   <th>G{i} pcie lanes</th>
   <th>G{i} pcie lane speed GT/s:</th>
   <th>G{i} PCIe BW inst Mb/s</th>
@@ -2414,110 +2437,102 @@ def build_html_pcie_xgmi_metrics_table( filename, metrics_dict, amd_dict ):
   <th>G{i} XGMI link status toggle up/down</th>
   <th>G{i} VRAM max BW GB/s</th>
              '''
-             fp.write(html_lines)
-         html_lines='''
+            fp.write(html_lines)
+        html_lines = '''
   </tr>
   </thead>'''
-         fp.write(html_lines)
-         for node in metrics_dict.keys():
-             html_lines='''
+        fp.write(html_lines)
+        for node in metrics_dict.keys():
+            html_lines = '''
   <tr>
   <td>{}</td>
              '''.format(node)
-             fp.write(html_lines)
-             d_dict = metrics_dict[node]
-             if isinstance( amd_dict[node], dict ):
-                 # handling different between rocm6.x and 7.x
-                 if 'gpu_data' in amd_dict[node].keys():
-                      a_list = amd_dict[node]['gpu_data']
-             else:
-                 a_list = amd_dict[node]
-             for j in range(0,8):
-                 card = 'card' + str(j)
-                 a_dict = a_list[j]
-                 html_lines='''
+            fp.write(html_lines)
+            d_dict = metrics_dict[node]
+            if isinstance(amd_dict[node], dict):
+                # handling different between rocm6.x and 7.x
+                if 'gpu_data' in amd_dict[node].keys():
+                    a_list = amd_dict[node]['gpu_data']
+            else:
+                a_list = amd_dict[node]
+            for j in range(0, 8):
+                card = 'card' + str(j)
+                a_dict = a_list[j]
+                html_lines = '''
   <td>{}</td>
   <td>{}</td>
   <td>{}</td>
-  '''.format(
-                 a_dict['pcie']['width'],
-                 a_dict['pcie']['speed']['value'],
-                 a_dict['pcie']['bandwidth']['value'] )
-                 fp.write(html_lines)
+  '''.format(a_dict['pcie']['width'], a_dict['pcie']['speed']['value'], a_dict['pcie']['bandwidth']['value'])
+                fp.write(html_lines)
 
-                 if int(d_dict[card]['pcie_l0_to_recov_count_acc (Count)']) > 100:
-                     html_lines='''<td><span class="label label-danger">{}</td>'''.format(
-                         d_dict[card]['pcie_l0_to_recov_count_acc (Count)'])
-                 else:
-                     html_lines='''<td>{}</td>'''.format(
-                         d_dict[card]['pcie_l0_to_recov_count_acc (Count)'])
-                 fp.write(html_lines)
+                if int(d_dict[card]['pcie_l0_to_recov_count_acc (Count)']) > 100:
+                    html_lines = '''<td><span class="label label-danger">{}</td>'''.format(
+                        d_dict[card]['pcie_l0_to_recov_count_acc (Count)']
+                    )
+                else:
+                    html_lines = '''<td>{}</td>'''.format(d_dict[card]['pcie_l0_to_recov_count_acc (Count)'])
+                fp.write(html_lines)
 
-                 html_lines='''
+                html_lines = '''
   <td>{}</td>
   <td>{}</td>'''.format(
-                 d_dict[card]['pcie_replay_count_acc (Count)'],
-                 d_dict[card]['pcie_replay_rover_count_acc (Count)']
-                 )
-                 fp.write(html_lines)
+                    d_dict[card]['pcie_replay_count_acc (Count)'], d_dict[card]['pcie_replay_rover_count_acc (Count)']
+                )
+                fp.write(html_lines)
 
-                 if int( d_dict[card]['pcie_nak_sent_count_acc (Count)'] ) > 5:
-                     html_lines='''<td><span class="label label-danger">{}</td>'''.format(
-                         d_dict[card]['pcie_nak_sent_count_acc (Count)'] )
-                 else:
-                     html_lines='''<td>{}</td>'''.format(
-                         d_dict[card]['pcie_nak_sent_count_acc (Count)'] )
-                 fp.write(html_lines)
+                if int(d_dict[card]['pcie_nak_sent_count_acc (Count)']) > 5:
+                    html_lines = '''<td><span class="label label-danger">{}</td>'''.format(
+                        d_dict[card]['pcie_nak_sent_count_acc (Count)']
+                    )
+                else:
+                    html_lines = '''<td>{}</td>'''.format(d_dict[card]['pcie_nak_sent_count_acc (Count)'])
+                fp.write(html_lines)
 
-                 if int( d_dict[card]['pcie_nak_rcvd_count_acc (Count)'] ) > 5:
-                     html_lines='''<td><span class="label label-danger">{}</td>'''.format(
-                         d_dict[card]['pcie_nak_rcvd_count_acc (Count)'] )
-                 else:
-                     html_lines='''<td>{}</td>'''.format(
-                         d_dict[card]['pcie_nak_rcvd_count_acc (Count)'] )
-                 fp.write(html_lines)
+                if int(d_dict[card]['pcie_nak_rcvd_count_acc (Count)']) > 5:
+                    html_lines = '''<td><span class="label label-danger">{}</td>'''.format(
+                        d_dict[card]['pcie_nak_rcvd_count_acc (Count)']
+                    )
+                else:
+                    html_lines = '''<td>{}</td>'''.format(d_dict[card]['pcie_nak_rcvd_count_acc (Count)'])
+                fp.write(html_lines)
 
-                 if int( d_dict[card]['xgmi_link_width'] ) < 16:
-                     html_lines='''<td><span class="label label-danger">{}</td>'''.format(
-                         d_dict[card]['xgmi_link_width'] )
-                 else:
-                     html_lines='''<td>{}</td>'''.format(
-                         d_dict[card]['xgmi_link_width'] )
-                 fp.write(html_lines)
+                if int(d_dict[card]['xgmi_link_width']) < 16:
+                    html_lines = '''<td><span class="label label-danger">{}</td>'''.format(
+                        d_dict[card]['xgmi_link_width']
+                    )
+                else:
+                    html_lines = '''<td>{}</td>'''.format(d_dict[card]['xgmi_link_width'])
+                fp.write(html_lines)
 
-                 if int( d_dict[card]['xgmi_link_speed (Gbps)'] ) < 32:
-                     html_lines='''<td><span class="label label-danger">{}</td>'''.format(
-                         d_dict[card]['xgmi_link_speed (Gbps)'] )
-                 else:
-                     html_lines='''<td>{}</td>'''.format(
-                         d_dict[card]['xgmi_link_speed (Gbps)'] )
-                 fp.write(html_lines)
+                if int(d_dict[card]['xgmi_link_speed (Gbps)']) < 32:
+                    html_lines = '''<td><span class="label label-danger">{}</td>'''.format(
+                        d_dict[card]['xgmi_link_speed (Gbps)']
+                    )
+                else:
+                    html_lines = '''<td>{}</td>'''.format(d_dict[card]['xgmi_link_speed (Gbps)'])
+                fp.write(html_lines)
 
-                 html_lines='''
+                html_lines = '''
   <td>{}</td>
   <td>{}</td>
   '''.format(
-                 d_dict[card]['xgmi_link_status (Up/Down)'],
-                 d_dict[card]['vram_max_bandwidth (GB/s)'],
-                 )
-                 fp.write(html_lines)
-             html_lines='''
+                    d_dict[card]['xgmi_link_status (Up/Down)'],
+                    d_dict[card]['vram_max_bandwidth (GB/s)'],
+                )
+                fp.write(html_lines)
+            html_lines = '''
   </tr>
              '''
-             fp.write(html_lines)
-         html_lines='''
+            fp.write(html_lines)
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
-
- 
+        fp.write(html_lines)
+        fp.close()
 
 
-
-def build_html_error_table( filename, metrics_dict, amd_dict ):
-
+def build_html_error_table(filename, metrics_dict, amd_dict):
     """
     Append a 'GPU Error Metrics' HTML table to the given file, summarizing ECC and PCIe error counters
     per GPU (assumes 8 GPUs per node).
@@ -2577,7 +2592,7 @@ def build_html_error_table( filename, metrics_dict, amd_dict ):
 
     print('Build HTML Error table')
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 <h2 id="gpuerrorid"></h2><br>
 <h2 style="background-color: lightblue">GPU Error Metrics Table</h2>
 <table id="gpuerrortable" class="display cell-border">
@@ -2585,9 +2600,9 @@ def build_html_error_table( filename, metrics_dict, amd_dict ):
   <tr>
   <th>Node</th>
          '''
-         fp.write(html_lines)
-         for i in range(0,8):
-             html_lines=f'''
+        fp.write(html_lines)
+        for i in range(0, 8):
+            html_lines = f'''
   <th>G{i} ECC correct</th>
   <th>G{i} ECC uncorrect</th>
   <th>G{i} ECC deferred</th>
@@ -2599,150 +2614,144 @@ def build_html_error_table( filename, metrics_dict, amd_dict ):
   <th>G{i} PCIe nak sent count acc</th>
   <th>G{i} PCIe nak rcvd count acc</th>
              '''
-             fp.write(html_lines)
-         html_lines='''
+            fp.write(html_lines)
+        html_lines = '''
   </tr>
   </thead>'''
-         fp.write(html_lines)
-         for node in metrics_dict.keys():
-             html_lines='''
+        fp.write(html_lines)
+        for node in metrics_dict.keys():
+            html_lines = '''
   <tr>
   <td>{}</td>
              '''.format(node)
-             fp.write(html_lines)
-             d_dict = metrics_dict[node]
-             if isinstance( amd_dict[node], dict ):
-                 # handling different between rocm6.x and 7.x
-                 if 'gpu_data' in amd_dict[node].keys():
-                     a_list = amd_dict[node]['gpu_data']
-             else:
-                 a_list = amd_dict[node]
-             for j in range(0,8):
-                 card = 'card' + str(j)
-                 a_dict = a_list[j]
-                 if int(a_dict['ecc']['total_correctable_count']) > 0:
-                     html_lines='''
+            fp.write(html_lines)
+            d_dict = metrics_dict[node]
+            if isinstance(amd_dict[node], dict):
+                # handling different between rocm6.x and 7.x
+                if 'gpu_data' in amd_dict[node].keys():
+                    a_list = amd_dict[node]['gpu_data']
+            else:
+                a_list = amd_dict[node]
+            for j in range(0, 8):
+                card = 'card' + str(j)
+                a_dict = a_list[j]
+                if int(a_dict['ecc']['total_correctable_count']) > 0:
+                    html_lines = '''
                      <td><span class="label label-danger">{}</td>
                      '''.format(a_dict['ecc']['total_correctable_count'])
-                 else:
-                     html_lines='''
+                else:
+                    html_lines = '''
                      <td>{}</td>
                      '''.format(a_dict['ecc']['total_correctable_count'])
-                 fp.write(html_lines)
-                 
-                 if int(a_dict['ecc']['total_uncorrectable_count']) > 0:
-                     html_lines='''
+                fp.write(html_lines)
+
+                if int(a_dict['ecc']['total_uncorrectable_count']) > 0:
+                    html_lines = '''
                      <td><span class="label label-danger">{}</td>
                      '''.format(a_dict['ecc']['total_uncorrectable_count'])
-                 else:
-                     html_lines='''
+                else:
+                    html_lines = '''
                      <td>{}</td>
                      '''.format(a_dict['ecc']['total_uncorrectable_count'])
-                 fp.write(html_lines)
-                 
-                 if int(a_dict['ecc']['total_deferred_count']) > 0:
-                     html_lines='''
+                fp.write(html_lines)
+
+                if int(a_dict['ecc']['total_deferred_count']) > 0:
+                    html_lines = '''
                      <td><span class="label label-danger">{}</td>
                      '''.format(a_dict['ecc']['total_deferred_count'])
-                 else:
-                     html_lines='''
+                else:
+                    html_lines = '''
                      <td>{}</td>
                      '''.format(a_dict['ecc']['total_deferred_count'])
-                 fp.write(html_lines)
-                 
-                 if int(a_dict['ecc']['cache_correctable_count']) > 0:
-                     html_lines='''
+                fp.write(html_lines)
+
+                if int(a_dict['ecc']['cache_correctable_count']) > 0:
+                    html_lines = '''
                      <td><span class="label label-danger">{}</td>
                      '''.format(a_dict['ecc']['cache_correctable_count'])
-                 else:
-                     html_lines='''
+                else:
+                    html_lines = '''
                      <td>{}</td>
                      '''.format(a_dict['ecc']['cache_correctable_count'])
-                 fp.write(html_lines)
-                 
-                 if int(a_dict['ecc']['cache_uncorrectable_count']) > 0:
-                     html_lines='''
+                fp.write(html_lines)
+
+                if int(a_dict['ecc']['cache_uncorrectable_count']) > 0:
+                    html_lines = '''
                      <td><span class="label label-danger">{}</td>
                      '''.format(a_dict['ecc']['cache_uncorrectable_count'])
-                 else:
-                     html_lines='''
+                else:
+                    html_lines = '''
                      <td>{}</td>
                      '''.format(a_dict['ecc']['cache_uncorrectable_count'])
-                 fp.write(html_lines)
-  
-                 if int(d_dict[card]['pcie_l0_to_recov_count_acc (Count)']) > 4:
-                     html_lines='''
+                fp.write(html_lines)
+
+                if int(d_dict[card]['pcie_l0_to_recov_count_acc (Count)']) > 4:
+                    html_lines = '''
                      <td><span class="label label-danger">{}</td>
                      '''.format(d_dict[card]['pcie_l0_to_recov_count_acc (Count)'])
-                 else:
-                     html_lines='''
+                else:
+                    html_lines = '''
                      <td>{}</td>
                      '''.format(d_dict[card]['pcie_l0_to_recov_count_acc (Count)'])
-                 fp.write(html_lines)
+                fp.write(html_lines)
 
-                 if int(d_dict[card]['pcie_replay_count_acc (Count)']) > 0:
-                     html_lines='''
+                if int(d_dict[card]['pcie_replay_count_acc (Count)']) > 0:
+                    html_lines = '''
                      <td><span class="label label-danger">{}</td>
                      '''.format(d_dict[card]['pcie_replay_count_acc (Count)'])
-                 else:
-                     html_lines='''
+                else:
+                    html_lines = '''
                      <td>{}</td>
                      '''.format(d_dict[card]['pcie_replay_count_acc (Count)'])
-                 fp.write(html_lines)
+                fp.write(html_lines)
 
-                 if int(d_dict[card]['pcie_replay_rover_count_acc (Count)']) > 0:
-                     html_lines='''
+                if int(d_dict[card]['pcie_replay_rover_count_acc (Count)']) > 0:
+                    html_lines = '''
                      <td><span class="label label-danger">{}</td>
                      '''.format(d_dict[card]['pcie_replay_rover_count_acc (Count)'])
-                 else:
-                     html_lines='''
+                else:
+                    html_lines = '''
                      <td>{}</td>
                      '''.format(d_dict[card]['pcie_replay_rover_count_acc (Count)'])
-                 fp.write(html_lines)
+                fp.write(html_lines)
 
-
-                 if int(d_dict[card]['pcie_nak_sent_count_acc (Count)']) > 0:
-                     html_lines='''
+                if int(d_dict[card]['pcie_nak_sent_count_acc (Count)']) > 0:
+                    html_lines = '''
                      <td><span class="label label-danger">{}</td>
                      '''.format(d_dict[card]['pcie_nak_sent_count_acc (Count)'])
-                 else:
-                     html_lines='''
+                else:
+                    html_lines = '''
                      <td>{}</td>
                      '''.format(d_dict[card]['pcie_nak_sent_count_acc (Count)'])
-                 fp.write(html_lines)
+                fp.write(html_lines)
 
-                 if int(d_dict[card]['pcie_nak_rcvd_count_acc (Count)']) > 0:
-                     html_lines='''
+                if int(d_dict[card]['pcie_nak_rcvd_count_acc (Count)']) > 0:
+                    html_lines = '''
                      <td><span class="label label-danger">{}</td>
                      '''.format(d_dict[card]['pcie_nak_rcvd_count_acc (Count)'])
-                 else:
-                     html_lines='''
+                else:
+                    html_lines = '''
                      <td>{}</td>
                      '''.format(d_dict[card]['pcie_nak_rcvd_count_acc (Count)'])
-                 fp.write(html_lines)
+                fp.write(html_lines)
 
-  
-             html_lines='''
+            html_lines = '''
   </tr>
              '''
-             fp.write(html_lines)
-         html_lines='''
+            fp.write(html_lines)
+        html_lines = '''
          </table>
          <br><br>
          '''
-         fp.write(html_lines)
-         fp.close()
-
- 
-    
+        fp.write(html_lines)
+        fp.close()
 
 
-
-#TO BE DONE
+# TO BE DONE
 def build_html_env_metrics_table():
     print('Build HTML env metrics table')
     with open(filename, 'a') as fp:
-         html_lines='''
+        html_lines = '''
 <h2 id="envmetricsid"></h2><br>
 <h2 style="background-color: lightblue">GPU Environmental Metrics Table</h2>
 <table id="envmetricstable" class="display cell-border">
@@ -2771,11 +2780,5 @@ def build_html_env_metrics_table():
          '''
 
 
-
-
-
 def build_html_config_table():
     print('Build config table')
-
-
-

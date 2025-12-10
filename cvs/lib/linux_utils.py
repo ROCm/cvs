@@ -13,9 +13,7 @@ from cvs.lib import rocm_plib
 from cvs.lib.utils_lib import *
 
 
-
-
-def get_lshw_network_dict( phdl ):
+def get_lshw_network_dict(phdl):
     """
     Parse `lshw -class network -businfo` output (per node) into a nested dictionary.
 
@@ -60,13 +58,12 @@ def get_lshw_network_dict( phdl ):
 
     # Execute lshw on all nodes via the provided handle. The expectation is that
     # out_dict is like: { node_name: "command stdout as string", ... }
- 
+
     out_dict = phdl.exec('sudo lshw -class network -businfo')
     for node in out_dict.keys():
         lshw_dict[node] = {}
         # Process the output line-by-line. split("\n") assumes LF newlines from lshw.
         for line in out_dict[node].split("\n"):
-
             # Pattern 1: lines with pci bus, device name, then the 'network' class and description
             # Example: "pci@0000:03:00.0 enp3s0 network 8411 PCI Express Gigabit Ethernet Controller"
             pattern = r"pci\@([0-9a-f\:\.]+)\s+([a-z0-9\-\.]+)\s+network\s+([a-z0-9\s\[\]\/\-\_]+)"
@@ -75,33 +72,30 @@ def get_lshw_network_dict( phdl ):
             # Example: "pci@0000:00:03.0 network Virtio network device"
             pattern_else = r"pci\@([0-9a-f\:\.]+)\s+network\s+([a-z0-9\s\[\]\/\-\_]+)"
 
-            if re.search( pattern, line, re.I ):
-                match = re.search( pattern, line, re.I )
+            if re.search(pattern, line, re.I):
+                match = re.search(pattern, line, re.I)
                 # Extract fields from the matched groups
-                pci_bus = match.group(1)          # e.g., "0000:03:00.0"
-                dev_name = match.group(2)         # e.g., "enp3s0"
-                dev_descr = match.group(3)        # e.g., AMD PCI Express ..
+                pci_bus = match.group(1)  # e.g., "0000:03:00.0"
+                dev_name = match.group(2)  # e.g., "enp3s0"
+                dev_descr = match.group(3)  # e.g., AMD PCI Express ..
                 lshw_dict[node][dev_name] = {}
                 lshw_dict[node][dev_name]['pci_bus'] = pci_bus
                 lshw_dict[node][dev_name]['description'] = dev_descr
 
             # If no device name is present, use the fallback pattern
-            elif re.search( pattern_else, line, re.I ):
-                match = re.search( pattern_else, line, re.I )
-                pci_bus = match.group(1)          # e.g., "0000:00:03.0"
-                dev_name = 'virtio'               # Fallback key when the device name is missing
-                dev_descr = match.group(2)        # e.g., "Virtio network device"
+            elif re.search(pattern_else, line, re.I):
+                match = re.search(pattern_else, line, re.I)
+                pci_bus = match.group(1)  # e.g., "0000:00:03.0"
+                dev_name = 'virtio'  # Fallback key when the device name is missing
+                dev_descr = match.group(2)  # e.g., "Virtio network device"
                 lshw_dict[node][dev_name] = {}
                 lshw_dict[node][dev_name]['pci_bus'] = pci_bus
                 lshw_dict[node][dev_name]['description'] = dev_descr
-                
+
     return lshw_dict
-              
-     
 
 
-
-def get_ip_addr_dict( phdl ):
+def get_ip_addr_dict(phdl):
     """
     Parse `ip addr show` output (per node) into a structured dictionary.
 
@@ -156,8 +150,8 @@ def get_ip_addr_dict( phdl ):
             # Example:
             #   2: enp3s0: <BROADCAST,MULTICAST,UP,LOWER_UP>
             pattern = r"[0-9]+\:\s+([0-9a-z\.\_\-\/]+):\s+([\<\>\,A-Z0-9]+)"
-            if re.search( pattern, line ):
-                match = re.search( pattern, line )
+            if re.search(pattern, line):
+                match = re.search(pattern, line)
                 int_nam = match.group(1)
                 # Initialize interface dict with lists for multiple addresses
                 ip_dict[node][int_nam] = {}
@@ -166,41 +160,37 @@ def get_ip_addr_dict( phdl ):
                 ip_dict[node][int_nam]['flags'] = match.group(2)
 
             # Capture MTU value, e.g., "mtu 1500"
-            if re.search( 'mtu ([0-9]+)', line ):
-                match = re.search( 'mtu ([0-9]+)', line )
+            if re.search('mtu ([0-9]+)', line):
+                match = re.search('mtu ([0-9]+)', line)
                 ip_dict[node][int_nam]['mtu'] = match.group(1)
 
             # Capture state, e.g., "state UP"
-            if re.search( 'state ([A-Z]+)', line ):
-                match = re.search( 'state ([A-Z]+)', line )
+            if re.search('state ([A-Z]+)', line):
+                match = re.search('state ([A-Z]+)', line)
                 ip_dict[node][int_nam]['state'] = match.group(1)
 
-
-            # Capture MAC address line, e.g., "link/ether aa:bb:cc:dd:ee:ff" 
+            # Capture MAC address line, e.g., "link/ether aa:bb:cc:dd:ee:ff"
             pattern = r"link\/ether\s+([a-f0-9\:]+)"
-            if re.search( pattern, line ):
-                match = re.search( pattern, line )
+            if re.search(pattern, line):
+                match = re.search(pattern, line)
                 ip_dict[node][int_nam]['mac_addr'] = match.group(1)
 
             # Capture IPv4 addresses, e.g., "inet 192.168.1.10/24 ..."
             pattern = r"inet\s+([0-9\.\/]+)"
-            if re.search( pattern, line ):
-                match = re.search( pattern, line )
+            if re.search(pattern, line):
+                match = re.search(pattern, line)
                 ip_dict[node][int_nam]['ipv4_addr_list'].append(match.group(1))
 
             # Capture IPv6 addresses, e.g., "inet6 fe80::abcd/64 ..."
             pattern = r"inet6\s+([a-f0-9\:\/]+)"
-            if re.search( pattern, line ):
-                match = re.search( pattern, line )
+            if re.search(pattern, line):
+                match = re.search(pattern, line)
                 ip_dict[node][int_nam]['ipv6_addr_list'].append(match.group(1))
 
     return ip_dict
 
 
-
-
-
-def get_rdma_nic_dict( phdl ):
+def get_rdma_nic_dict(phdl):
     """
     Execute `rdma link` on one or more nodes via the provided handle and parse the
     output into a nested dictionary of RDMA NIC information.
@@ -235,33 +225,31 @@ def get_rdma_nic_dict( phdl ):
         the same device key (since the device name is used as the key). If per-port
         granularity is required, consider using a composite key (e.g., "<dev>/<port>").
     """
- 
+
     rdma_dict = {}
 
     # Run 'rdma link' across node(s); expect a dict: { node_name: "<multiline stdout>", ... }
     out_dict = phdl.exec('sudo rdma link')
-    #gid_dict_t = phdl.exec('sudo show_gids | grep -i v2 --color=never')
+    # gid_dict_t = phdl.exec('sudo show_gids | grep -i v2 --color=never')
     for node in out_dict.keys():
         rdma_dict[node] = {}
         for line in out_dict[node].split("\n"):
-            if re.search( '^link', line ):
+            if re.search('^link', line):
                 pattern = r"link\s+([a-zA-Z0-9\_\-\.]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z\_]+)\s+netdev\s+([a-z0-9A-Z\.]+)"
-                match = re.search( pattern, line)
+                match = re.search(pattern, line)
                 dev = match.group(1)
                 rdma_dict[node][dev] = {}
-                rdma_dict[node][dev]['port'] = match.group(2)                # Port number (string)
-                rdma_dict[node][dev]['device_status'] = match.group(3)       # Device state (e.g., ACTIVE)
-                rdma_dict[node][dev]['link_status'] = match.group(4)         # Physical link state (e.g., LinkUp)
-                rdma_dict[node][dev]['eth_device'] = match.group(5)          # Associated netdev (e.g., eth0)
+                rdma_dict[node][dev]['port'] = match.group(2)  # Port number (string)
+                rdma_dict[node][dev]['device_status'] = match.group(3)  # Device state (e.g., ACTIVE)
+                rdma_dict[node][dev]['link_status'] = match.group(4)  # Physical link state (e.g., LinkUp)
+                rdma_dict[node][dev]['eth_device'] = match.group(5)  # Associated netdev (e.g., eth0)
     return rdma_dict
 
 
-
-            
-def get_active_rdma_nic_dict( phdl ):
+def get_active_rdma_nic_dict(phdl):
     """
     Execute `rdma link` on one or more nodes via the provided handle and parse the
-    output into a nested dictionary of RDMA NIC information and build only for 
+    output into a nested dictionary of RDMA NIC information and build only for
     ACTIVE Interfaces
 
     Expected behavior:
@@ -297,16 +285,16 @@ def get_active_rdma_nic_dict( phdl ):
 
     rdma_dict = {}
     out_dict = phdl.exec('sudo rdma link')
-    #gid_dict_t = phdl.exec('sudo show_gids | grep -i v2 --color=never')
+    # gid_dict_t = phdl.exec('sudo show_gids | grep -i v2 --color=never')
     for node in out_dict.keys():
         rdma_dict[node] = {}
         for line in out_dict[node].split("\n"):
-            if re.search( '^link', line ):
+            if re.search('^link', line):
                 pattern = r"link\s+([a-zA-Z0-9\_\-\.]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z\_]+)\s+netdev\s+([a-z0-9A-Z\.]+)"
-                match = re.search( pattern, line)
+                match = re.search(pattern, line)
                 dev = match.group(1)
                 status = match.group(3)
-                if re.search( 'ACTIVE', status, re.I ):
+                if re.search('ACTIVE', status, re.I):
                     rdma_dict[node][dev] = {}
                     rdma_dict[node][dev]['port'] = match.group(2)
                     rdma_dict[node][dev]['device_status'] = status
@@ -314,11 +302,9 @@ def get_active_rdma_nic_dict( phdl ):
                     rdma_dict[node][dev]['eth_device'] = match.group(5)
     return rdma_dict
 
-            
-   
 
-def get_backend_nic_dict( phdl ):
-    lshw_dict = get_lshw_network_dict( phdl )
+def get_backend_nic_dict(phdl):
+    lshw_dict = get_lshw_network_dict(phdl)
     bck_net_dict = {}
     for node in lshw_dict.keys():
         bck_net_dict[node] = []
@@ -340,9 +326,9 @@ def get_backend_nic_dict( phdl ):
         else:
             bck_net_dict[node] = list_b
     return bck_net_dict
-    
 
-def get_backend_rdma_nic_dict( phdl ):
+
+def get_backend_rdma_nic_dict(phdl):
     """
     Build a per-node dictionary of RDMA devices that map to backend NICs.
 
@@ -370,16 +356,15 @@ def get_backend_rdma_nic_dict( phdl ):
           }
     """
     bck_rdma_nic_dict = {}
-   
-    # Gather backend NICs per node (e.g., NICs designated for backend traffic) 
-    bck_nic_dict = get_backend_nic_dict( phdl )
+
+    # Gather backend NICs per node (e.g., NICs designated for backend traffic)
+    bck_nic_dict = get_backend_nic_dict(phdl)
 
     # Gather active RDMA NIC information per node
-    rdma_nic_dict = get_active_rdma_nic_dict( phdl )
+    rdma_nic_dict = get_active_rdma_nic_dict(phdl)
 
     # Iterate over nodes that have RDMA NIC info
     for node in rdma_nic_dict.keys():
-
         # Backend NIC list for this node (e.g., ["eth0", "eth1"])
         bck_rdma_nic_dict[node] = {}
         bck_nic_list = bck_nic_dict[node]
@@ -392,10 +377,7 @@ def get_backend_rdma_nic_dict( phdl ):
     return bck_rdma_nic_dict
 
 
-
-
-def convert_ethtool_out_to_dict( ethtool_out, vendor=None ):
-
+def convert_ethtool_out_to_dict(ethtool_out, vendor=None):
     """
     Parse ethtool -S output into a flat dictionary of total (non per-queue) stats.
 
@@ -424,23 +406,22 @@ def convert_ethtool_out_to_dict( ethtool_out, vendor=None ):
     out_dict = {}
     # For now, let us ignore the per queue stats and just collect total stats
     pattern = r"([a-z\_\-]+\:\s+[0-9]+)"
-    match_list = re.findall( pattern, ethtool_out, re.I )
+    match_list = re.findall(pattern, ethtool_out, re.I)
 
-    #print(match_list)
+    # print(match_list)
 
     # Convert each "<name>: <number>" into dict entries
     for match_item in match_list:
         pattern = r"([a-z\_\-]+)\:\s+([0-9]+)"
-        match = re.search( pattern, match_item, re.I )
+        match = re.search(pattern, match_item, re.I)
         out_dict[match.group(1)] = match.group(2)
     return out_dict
 
 
-
 # stats_dict will be indexed by node_ip, followed by interface name of backend NICs
- 
-def get_nic_ethtool_stats_dict( phdl, vendor=None ):
 
+
+def get_nic_ethtool_stats_dict(phdl, vendor=None):
     """
     Collect per-interface ethtool statistics from backend RDMA NICs across nodes.
 
@@ -487,7 +468,7 @@ def get_nic_ethtool_stats_dict( phdl, vendor=None ):
     # bck_nic_dict structure example:
     #   { node: { rdma_dev: { 'eth_device': '<iface>' , ... }, ... }, ... }
 
-    bck_nic_dict = get_backend_rdma_nic_dict( phdl )
+    bck_nic_dict = get_backend_rdma_nic_dict(phdl)
 
     # Derive node list and infer NIC count from the first node
     node_list = list(bck_nic_dict.keys())
@@ -498,7 +479,7 @@ def get_nic_ethtool_stats_dict( phdl, vendor=None ):
     for node in node_list:
         stats_dict[node] = {}
 
-    # Build a list of list of cmds with the assumptions that NICs can be with different 
+    # Build a list of list of cmds with the assumptions that NICs can be with different
     # interface names across nodes and we still want to do parallel execution ..
     # cmd_dict is a dict with key as nodes and value as list of cmds
 
@@ -530,23 +511,20 @@ def get_nic_ethtool_stats_dict( phdl, vendor=None ):
         stats_dict_out = phdl.exec_cmd_list(cmd_list)
         for node in stats_dict_out:
             intf_nam = eth_dev_dict[node][i]
-            stats_dict[node][intf_nam] = convert_ethtool_out_to_dict(stats_dict_out[node], vendor )
+            stats_dict[node][intf_nam] = convert_ethtool_out_to_dict(stats_dict_out[node], vendor)
 
     # Emit warnings for any non-zero error-like counters
     for node in stats_dict.keys():
         for intf in stats_dict[node].keys():
             for counter in stats_dict[node][intf].keys():
-                if re.search( 'err|discard|drop|crc|fcs|reset', counter, re.I ):
+                if re.search('err|discard|drop|crc|fcs|reset', counter, re.I):
                     if int(stats_dict[node][intf][counter]) > 0:
                         print(f'WARN !! {node} {intf} {counter} {stats_dict[node][intf][counter]}')
 
     return stats_dict
-            
 
 
-
-def get_lldp_dict( phdl ):
-
+def get_lldp_dict(phdl):
     """
     Retrieve LLDP neighbor information from one or more nodes and return it as a dict.
 
@@ -575,18 +553,18 @@ def get_lldp_dict( phdl ):
     """
 
     lldp_dict = {}
-    lldp_installed=True
+    lldp_installed = True
     out_dict = phdl.exec('which lldpcli')
     for node in out_dict.keys():
-        if not re.search( 'lldpcli', out_dict[node] ):
-            lldp_installed=False
+        if not re.search('lldpcli', out_dict[node]):
+            lldp_installed = False
     if lldp_installed is not True:
         print('Cannot get LLDP Dict as lldpcli is missing')
         return {}
-        #try:
+        # try:
         #    phdl.exec('sudo apt update -y')
         #    phdl.exec('sudo DEBIAN_FRONTEND=noninteractive apt install -yq lldpd')
-        #except Exception as e:
+        # except Exception as e:
         #    print('Error installing LLDP with apt install - {}'.format(e))
         #    return lldp_dict
 
@@ -597,33 +575,30 @@ def get_lldp_dict( phdl ):
 
     # Convert each node's JSON string into a Python dictionary
     for node in out_dict.keys():
-        lldp_dict[node] = json_to_dict(out_dict[node])     
+        lldp_dict[node] = json_to_dict(out_dict[node])
     return lldp_dict
 
 
-
-
-def get_dns_dict( phdl ):
+def get_dns_dict(phdl):
     dns_dict = {}
     out_dict = phdl.exec('sudo resolvectl status | head -7')
     for node in out_dict.keys():
         dns_dict[node] = {}
         for line in out_dict[node].split("\n"):
-            if re.search( 'Protocols', line, re.I ):
+            if re.search('Protocols', line, re.I):
                 print('')
-            elif re.search( 'Protocols', line, re.I ):
+            elif re.search('Protocols', line, re.I):
                 print('')
-            elif re.search( 'Current DNS Server', line, re.I ):
+            elif re.search('Current DNS Server', line, re.I):
                 print('')
-            elif re.search( 'DNS Servers', line, re.I ):
+            elif re.search('DNS Servers', line, re.I):
                 print('')
-            elif re.search( 'DNS Domain', line, re.I ):
+            elif re.search('DNS Domain', line, re.I):
                 print('')
     return dns_dict
 
 
-def get_rdma_stats_dict( phdl ):
-
+def get_rdma_stats_dict(phdl):
     """
     Collect per-node RDMA statistics (JSON) and return only those for backend RDMA NICs.
 
@@ -686,11 +661,7 @@ def get_rdma_stats_dict( phdl ):
     return rdma_stats_dict
 
 
-
-
-
-def get_linux_perf_tuning_dict( phdl ):
-
+def get_linux_perf_tuning_dict(phdl):
     """
     Collect key Linux performance-related settings and return them in a dictionary.
 
@@ -736,13 +707,10 @@ def get_linux_perf_tuning_dict( phdl ):
     out_dict['cpu_power_profile'] = phdl.exec('sudo cpupower info')
 
 
-
-
-
-def get_lshw_backend_nic_dict( phdl ):
+def get_lshw_backend_nic_dict(phdl):
     lshw_bck_nic_dict = {}
-    lshw_dict = get_lshw_network_dict( phdl )
-    rdma_nic_dict = get_backend_rdma_nic_dict( phdl )
+    lshw_dict = get_lshw_network_dict(phdl)
+    rdma_nic_dict = get_backend_rdma_nic_dict(phdl)
     for node in rdma_nic_dict.keys():
         lshw_bck_nic_dict[node] = {}
         for rdma_dev in rdma_nic_dict[node].keys():
@@ -754,8 +722,6 @@ def get_lshw_backend_nic_dict( phdl ):
     return lshw_bck_nic_dict
 
 
-
-
 def get_nearest_bus_no(target_hex: str, candidates: list[str]) -> str:
     """
     Return the nearest matching hex value (as one of the candidate strings).
@@ -765,25 +731,22 @@ def get_nearest_bus_no(target_hex: str, candidates: list[str]) -> str:
     if not candidates:
         raise ValueError("candidates must be non-empty")
     t = int(target_hex, 16)
-    return min(
-        candidates,
-        key=lambda s: (abs(int(s, 16) - t), int(s, 16))
-    )
+    return min(candidates, key=lambda s: (abs(int(s, 16) - t), int(s, 16)))
 
 
-
-def get_gpu_nic_mapping_dict( phdl,):
-
+def get_gpu_nic_mapping_dict(
+    phdl,
+):
     gpu_nic_dict = {}
-    gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict( phdl )
-    lshw_dict = get_lshw_backend_nic_dict( phdl )
+    gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict(phdl)
+    lshw_dict = get_lshw_backend_nic_dict(phdl)
 
     nic_bus_dict = {}
     for node in lshw_dict.keys():
         nic_bus_dict[node] = []
         for eth_dev in lshw_dict[node].keys():
             nic_pci = lshw_dict[node][eth_dev]['pci_bus']
-            match = re.search( '[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', nic_pci, re.I )
+            match = re.search('[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', nic_pci, re.I)
             nic_bus_no = match.group(1)
             nic_bus_dict[node].append(nic_bus_no)
 
@@ -793,23 +756,24 @@ def get_gpu_nic_mapping_dict( phdl,):
             gpu_nic_dict[node][card] = {}
             gpu_bdf = gpu_pcie_dict[node][card]['PCI Bus']
             gpu_nic_dict[node][card]['gpu_bdf'] = gpu_bdf
-            match = re.search( '[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', gpu_bdf, re.I )
+            match = re.search('[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', gpu_bdf, re.I)
             bus_no = match.group(1)
 
-            #find nearest nic bus no.
+            # find nearest nic bus no.
             nic_bus_list = nic_bus_dict[node]
             print(f'nic_bus_list = {nic_bus_list}')
             print(f'bus_no = {bus_no}')
 
-            nearest_nic_bus_no = get_nearest_bus_no( bus_no, nic_bus_list )
+            nearest_nic_bus_no = get_nearest_bus_no(bus_no, nic_bus_list)
 
             print(f'nic_bus_list = {nic_bus_list}')
             print(f'nearest_nic_bus_no = {nearest_nic_bus_no}')
             for eth_dev in lshw_dict[node].keys():
-                match = re.search( '[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', \
-                        lshw_dict[node][eth_dev]['pci_bus'], re.I )
+                match = re.search(
+                    '[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', lshw_dict[node][eth_dev]['pci_bus'], re.I
+                )
                 lshw_bus_no = match.group(1)
-                if hex(int(nearest_nic_bus_no, 16)) == hex(int(lshw_bus_no,16 )):
+                if hex(int(nearest_nic_bus_no, 16)) == hex(int(lshw_bus_no, 16)):
                     gpu_nic_dict[node][card]['eth_dev'] = eth_dev
                     gpu_nic_dict[node][card]['rdma_dev'] = lshw_dict[node][eth_dev]['rdma_dev']
                     gpu_nic_dict[node][card]['nic_bdf'] = lshw_dict[node][eth_dev]['pci_bus']
@@ -818,12 +782,9 @@ def get_gpu_nic_mapping_dict( phdl,):
     return gpu_nic_dict
 
 
-
-
-
-def get_gpu_numa_dict( phdl ):
+def get_gpu_numa_dict(phdl):
     gpu_numa_dict = {}
-    gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict( phdl )
+    gpu_pcie_dict = rocm_plib.get_gpu_pcie_bus_dict(phdl)
 
     first_node = list(gpu_pcie_dict.keys())[0]
     card_list = list(gpu_pcie_dict[first_node].keys())
@@ -837,7 +798,7 @@ def get_gpu_numa_dict( phdl ):
         cmd_list = []
         for node in gpu_pcie_dict.keys():
             gpu_bdf = str(gpu_pcie_dict[node][card]['PCI Bus']).lower()
-            cmd_list.append( f'cat /sys/bus/pci/devices/{gpu_bdf}/local_cpulist' )
+            cmd_list.append(f'cat /sys/bus/pci/devices/{gpu_bdf}/local_cpulist')
 
         out_dict = phdl.exec_cmd_list(cmd_list)
         for node in out_dict.keys():
@@ -848,7 +809,7 @@ def get_gpu_numa_dict( phdl ):
         cmd_list = []
         for node in gpu_pcie_dict.keys():
             gpu_bdf = str(gpu_pcie_dict[node][card]['PCI Bus']).lower()
-            cmd_list.append( f'cat /sys/bus/pci/devices/{gpu_bdf}/numa_node' )
+            cmd_list.append(f'cat /sys/bus/pci/devices/{gpu_bdf}/numa_node')
 
         out_dict = phdl.exec_cmd_list(cmd_list)
         for node in out_dict.keys():

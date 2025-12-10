@@ -13,24 +13,25 @@ import pkgutil
 import importlib
 from abc import ABC, abstractmethod
 
+
 class GeneratorPlugin(ABC):
     """Base class for all generator plugins"""
-    
+
     @abstractmethod
     def get_name(self):
         """Return the name of this generator"""
         pass
-    
+
     @abstractmethod
     def get_description(self):
         """Return a description of this generator"""
         pass
-    
+
     @abstractmethod
     def get_parser(self):
         """Return an argparse parser for this generator's arguments"""
         pass
-    
+
     @abstractmethod
     def generate(self, args):
         """Generate the output based on parsed arguments"""
@@ -43,29 +44,31 @@ def _discover_generators():
     Returns a dict mapping generator names to plugin instances.
     """
     generators = {}
-    
+
     # Get the directory containing this module (where generator plugins are located)
     generate_dir = os.path.dirname(__file__)
-    
+
     if not os.path.exists(generate_dir):
         return generators
-    
+
     for module_info in pkgutil.iter_modules([generate_dir]):
         try:
             # Import the module using the full package path
             module = importlib.import_module(f"cvs.input.generate.{module_info.name}")
-            
+
             # Find classes that inherit from GeneratorPlugin
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)
-                if (isinstance(attr, type) and 
-                    issubclass(attr, GeneratorPlugin) and 
-                    attr != GeneratorPlugin and
-                    (not hasattr(attr, '__abstractmethods__') or not attr.__abstractmethods__)):  # Allow if no abstract methods left
+                if (
+                    isinstance(attr, type)
+                    and issubclass(attr, GeneratorPlugin)
+                    and attr != GeneratorPlugin
+                    and (not hasattr(attr, '__abstractmethods__') or not attr.__abstractmethods__)
+                ):  # Allow if no abstract methods left
                     # Instantiate the plugin
                     plugin_instance = attr()
                     generators[plugin_instance.get_name()] = plugin_instance
-                    
+
         except Exception as e:
             print(f"Warning: Failed to load generator {module_info.name}: {e}")
             continue
@@ -78,13 +81,13 @@ def _run_generator(generator_name, args):
     Run a generator plugin with the provided arguments.
     """
     generators = _discover_generators()
-    
+
     if generator_name not in generators:
         print(f"Error: Generator '{generator_name}' not found.")
         sys.exit(1)
-    
+
     plugin = generators[generator_name]
-    
+
     # Parse arguments using the plugin's parser
     parser = plugin.get_parser()
     # Set the program name to include the full command context

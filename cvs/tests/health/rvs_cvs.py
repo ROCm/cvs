@@ -35,6 +35,7 @@ def cluster_file(pytestconfig):
 def config_file(pytestconfig):
     return pytestconfig.getoption("config_file")
 
+
 # Importing the cluster and cofig files to script to access node, switch, test config params
 @pytest.fixture(scope="module")
 def cluster_dict(cluster_file):
@@ -65,7 +66,7 @@ def config_dict(config_file, cluster_dict):
 def phdl(cluster_dict):
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], stop_on_errors=False )
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], stop_on_errors=False)
     return phdl
 
 
@@ -195,7 +196,6 @@ def should_skip_individual_test(rvs_version_str, rvs_test_level):
 
     # Skip individual tests if RVS >= 1.3.0 and level != 0
     return (True, f"RVS version {rvs_version_str} >= 1.3.0: Running LEVEL-{rvs_test_level} test instead")
-
 
 
 def get_gpu_device_name(phdl):
@@ -330,7 +330,9 @@ def determine_rvs_config_path(phdl, config_dict, config_file):
                 device_specific_exists = True
                 chosen_path = device_specific_path
             else:
-                log.info(f'Node {node}: Device-specific folder exists but config file not found: {device_specific_path}')
+                log.info(
+                    f'Node {node}: Device-specific folder exists but config file not found: {device_specific_path}'
+                )
         else:
             log.info(f'Node {node}: No device-specific folder match for device: {device_name}')
 
@@ -359,6 +361,7 @@ def determine_rvs_config_path(phdl, config_dict, config_file):
     log.error(f'Configuration file {config_file} not found in either device-specific or default location on any node')
     return None
 
+
 def parse_rvs_test_results(test_config, out_dict):
     """
     Generic parser for RVS test results that validates against expected patterns.
@@ -377,7 +380,6 @@ def parse_rvs_test_results(test_config, out_dict):
             fail_test(f'RVS {test_name} test failed on node {node}')
         else:
             log.info(f'RVS {test_name} test passed on node {node}')
-
 
 
 def execute_rvs_test(phdl, config_dict, test_name):
@@ -427,7 +429,7 @@ def execute_rvs_test(phdl, config_dict, test_name):
             # Step 4: Add compute_type parameter after specific action names using sed
             sed_commands = [
                 f"sed -i '/^- name: gst-Tflops-8K-trig-fp64$/,/^- name:/{{ /^  data_type: fp64_r$/a\\\n  compute_type: fp64_r\n}}' {temp_config}",
-                f"sed -i '/^- name: gst-Tflops-8K-rand-fp64$/,/^- name:/{{ /^  data_type: fp64_r$/a\\\n  compute_type: fp64_r\n}}' {temp_config}"
+                f"sed -i '/^- name: gst-Tflops-8K-rand-fp64$/,/^- name:/{{ /^  data_type: fp64_r$/a\\\n  compute_type: fp64_r\n}}' {temp_config}",
             ]
 
             for sed_cmd in sed_commands:
@@ -462,8 +464,6 @@ def execute_rvs_test(phdl, config_dict, test_name):
     update_test_result()
 
 
-
-
 def parse_rvs_level_results(test_config, out_dict, level):
     """
     Parser for RVS LEVEL-based test results.
@@ -494,7 +494,9 @@ def parse_rvs_level_results(test_config, out_dict, level):
 
         # Report results
         if not node_passed:
-            fail_msg = f'RVS LEVEL-{level} test failed on node {node}. Failure patterns found: {", ".join(failures_found)}'
+            fail_msg = (
+                f'RVS LEVEL-{level} test failed on node {node}. Failure patterns found: {", ".join(failures_found)}'
+            )
             fail_test(fail_msg)
         else:
             log.info(f'RVS LEVEL-{level} test passed on node {node}: All module checks passed')
@@ -503,6 +505,7 @@ def parse_rvs_level_results(test_config, out_dict, level):
 ################################################################################
 # Testcases for RVS modules
 ################################################################################
+
 
 def test_rvs_level_config(phdl, config_dict, rvs_version, rvs_test_level):
     """
@@ -542,7 +545,7 @@ def test_rvs_level_config(phdl, config_dict, rvs_version, rvs_test_level):
             'description': f'RVS LEVEL-{rvs_test_level} Comprehensive Test',
             'timeout': 7200,
             'fail_regex_patterns': [],
-            'expected_pass_patterns': []
+            'expected_pass_patterns': [],
         }
 
     rvs_path = config_dict['path']
@@ -588,6 +591,7 @@ def test_rvs_gpu_enumeration(phdl, config_dict):
             fail_test(f'No GPUs detected in RVS enumeration on node {node}')
 
     update_test_result()
+
 
 def test_rvs_mem_test(phdl, config_dict, rvs_version, rvs_test_level):
     """
@@ -689,6 +693,7 @@ def test_rvs_pbqt_single(phdl, config_dict, rvs_version, rvs_test_level):
     test_name = 'pbqt_single'
     execute_rvs_test(phdl, config_dict, test_name)
 
+
 def test_rvs_babel_stream(phdl, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS BABEL Benchmark test.
@@ -707,4 +712,3 @@ def test_rvs_babel_stream(phdl, config_dict, rvs_version, rvs_test_level):
 
     test_name = 'babel_stream'
     execute_rvs_test(phdl, config_dict, test_name)
-

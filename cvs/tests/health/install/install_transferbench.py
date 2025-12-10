@@ -24,7 +24,6 @@ from cvs.lib import globals
 log = globals.log
 
 
-
 # Importing additional cmd line args to script ..
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
@@ -71,7 +70,7 @@ def cluster_dict(cluster_file):
     Returns:
       dict: Parsed cluster configuration (nodes, credentials, etc).
 
-    """ 
+    """
     with open(cluster_file) as json_file:
         cluster_dict = json.load(json_file)
 
@@ -80,8 +79,6 @@ def cluster_dict(cluster_file):
 
     log.info(cluster_dict)
     return cluster_dict
-
-
 
 
 @pytest.fixture(scope="module")
@@ -107,9 +104,6 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-
-
-
 @pytest.fixture(scope="module")
 def shdl(cluster_dict):
     """
@@ -117,7 +111,7 @@ def shdl(cluster_dict):
 
     Args:
       cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-    
+
     Returns:
       Pssh: Handle configured for the first node (head node) in node_dict.
 
@@ -129,11 +123,8 @@ def shdl(cluster_dict):
     nhdl_dict = {}
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
-    shdl = Pssh( log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return shdl
-
-
-
 
 
 # Create connection to DUT, MTPs, Switches and export for later use ..
@@ -154,16 +145,11 @@ def phdl(cluster_dict):
     """
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh( log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'] )
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
 
 
-
-
-
-
-
-def test_install_transferbench(phdl, shdl, config_dict ):
+def test_install_transferbench(phdl, shdl, config_dict):
     """
     Install/Build TransferBench and verify installation on all nodes.
 
@@ -188,15 +174,13 @@ def test_install_transferbench(phdl, shdl, config_dict ):
         - git_url: repository URL
     """
 
-
     globals.error_list = []
 
-    # For install case, if the systems are using NFS, use single connection to 
+    # For install case, if the systems are using NFS, use single connection to
     if config_dict['nfs_install'] is True:
         hdl = shdl
     else:
         hdl = phdl
-
 
     log.info('Testcase install transferbench')
     git_install_path = config_dict['git_install_path']
@@ -204,20 +188,18 @@ def test_install_transferbench(phdl, shdl, config_dict ):
 
     out_dict = shdl.exec(f'ls -ld {git_install_path}')
     for node in out_dict.keys():
-        if re.search( 'No such file', out_dict[node] ):
+        if re.search('No such file', out_dict[node]):
             hdl.exec(f'mkdir -p {git_install_path}')
 
     out_dict = hdl.exec(f'rm -rf {git_install_path}/TransferBench')
     out_dict = hdl.exec(f'cd {git_install_path};git clone {git_url}', timeout=120)
 
     # Build
-    out_dict = hdl.exec(f'cd {git_install_path}/TransferBench;CC=hipcc make', timeout=500 )
+    out_dict = hdl.exec(f'cd {git_install_path}/TransferBench;CC=hipcc make', timeout=500)
 
     # Verify installation happened fine on all nodes
     out_dict = phdl.exec(f'ls -l {git_install_path}/TransferBench')
     for node in out_dict.keys():
-        if not re.search( 'TransferBench', out_dict[node] ):
+        if not re.search('TransferBench', out_dict[node]):
             fail_test(f'Transfer bench installation failed on node {node}')
-    update_test_result()   
- 
-
+    update_test_result()

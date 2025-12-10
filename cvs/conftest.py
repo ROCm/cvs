@@ -4,15 +4,28 @@ All rights reserved. This notice is intended as a precaution against inadvertent
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
+
 import importlib.metadata
 import os
 import pytest
 import sys
 
+
 # Add all additional cmd line arguments for the script
 def pytest_addoption(parser):
-    parser.addoption( "--cluster_file", action="store", required=True, help="Input file with all the details of the cluster, nodes, switches in JSON format" )
-    parser.addoption( "--config_file", action="store", required=True, help="Input file with all configurations and parameters for tests in JSON format" )
+    parser.addoption(
+        "--cluster_file",
+        action="store",
+        required=True,
+        help="Input file with all the details of the cluster, nodes, switches in JSON format",
+    )
+    parser.addoption(
+        "--config_file",
+        action="store",
+        required=True,
+        help="Input file with all configurations and parameters for tests in JSON format",
+    )
+
 
 def pytest_metadata(metadata):
     """Add CVS version metadata for both console output and HTML report."""
