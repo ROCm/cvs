@@ -14,6 +14,13 @@ import json
 
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
+from cvs.lib.linux_utils import (
+    detect_distro,
+    install_package,
+    update_package_cache,
+    translate_package_name,
+    map_packages
+)
 
 from cvs.lib import globals
 
