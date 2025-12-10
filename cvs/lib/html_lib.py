@@ -5,8 +5,6 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import os
-import sys
 import re
 import json
 
@@ -1498,7 +1496,7 @@ def build_rdma_stats_table(
             fp.write(f'<tr><td>{node}</td>\n')
             # For each RDMA device on this node, render a nested table of non-zero counters
             for rdma_device in rdma_dict[node].keys():
-                fp.write(f'<td><table border=1>\n')
+                fp.write('<td><table border=1>\n')
                 stats_dict = rdma_dict[node][rdma_device]
                 fp.write(f'<tr><td>rdma_device</td><td>{rdma_device}</td></tr>\n')
                 for stats_key in stats_dict.keys():
@@ -1513,9 +1511,9 @@ def build_rdma_stats_table(
                                 )
                             else:
                                 fp.write(f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]}</td></tr>\n')
-                fp.write(f'</table></td>\n')
+                fp.write('</table></td>\n')
             # End of each node row
-            fp.write(f'</tr>\n')
+            fp.write('</tr>\n')
         html_lines = '''
          </table>
          <br><br>
@@ -1591,7 +1589,7 @@ def build_ethtool_stats_table(
 
             # For each NIC on this node, render a nested table of non-zero counters
             for eth_device in d_dict[node].keys():
-                fp.write(f'<td><table border=1>\n')
+                fp.write('<td><table border=1>\n')
                 fp.write(f'<tr><td>eth_device</td><td>{eth_device}</td></tr>\n')
                 stats_dict = d_dict[node][eth_device]
                 for stats_key in stats_dict.keys():
@@ -1605,9 +1603,9 @@ def build_ethtool_stats_table(
                             )
                         else:
                             fp.write(f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]}</td></tr>\n')
-                fp.write(f'</table></td>\n')
+                fp.write('</table></td>\n')
             # End of each node row
-            fp.write(f'</tr>\n')
+            fp.write('</tr>\n')
         html_lines = '''
          </table>
          <br><br>
@@ -1657,20 +1655,20 @@ def build_snapshot_stats_diff_table(filename, d_dict, title, table_name, id_name
                         if int(stats_dict[stats_key]['diff']) > 0:
                             non_zero_diff = True
                     if non_zero_diff:
-                        fp.write(f'<td><table border=1>\n')
+                        fp.write('<td><table border=1>\n')
                         fp.write(f'<tr><td>{eth_device}</td><td>Before</td><td>After</td><td>Diff</td></tr>\n')
                         for stats_key in stats_dict.keys():
                             if int(stats_dict[stats_key]['diff']) > 0:
                                 fp.write(
                                     f'<tr><td>{stats_key}</td><td>{stats_dict[stats_key]["before"]}</td><td>{stats_dict[stats_key]["after"]}</td><td><span class="label label-danger">{stats_dict[stats_key]["diff"]}</td></tr>\n'
                                 )
-                        fp.write(f'</table></td>\n')
+                        fp.write('</table></td>\n')
                     else:
                         fp.write('<td></td>')
                 else:
                     fp.write('<td> </td>')
             # End of each node row
-            fp.write(f'</tr>\n')
+            fp.write('</tr>\n')
         html_lines = '''
          </table>
          <br><br>
@@ -2068,7 +2066,7 @@ def build_html_cluster_product_table(filename, model_dict, fw_dict):
         for node in model_dict.keys():
             m_dict = model_dict[node]["card0"]
             f_dict = fw_dict[node]["card0"]
-            if not 'SOS firmware version' in f_dict:
+            if 'SOS firmware version' not in f_dict:
                 f_dict['SOS firmware version'] = "-"
             html_lines = '''
   <tr>

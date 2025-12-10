@@ -5,8 +5,6 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import os
-import sys
 import re
 import time
 import xlsxwriter
@@ -206,7 +204,7 @@ def run_ib_perf_bw_test(
                 result_dict[node][instance_no] = {}
                 result_dict[node][instance_no]['pps'] = bw_pps_dict[node]['pps']
                 result_dict[node][instance_no]['bw'] = bw_pps_dict[node]['bw']
-        except Exception as e:
+        except Exception:
             print('FAILED to get BW, PPS numbers for size - {} qp_count {}'.format(msg_size, qp_count))
 
     print('%%%%%%%%%% BW result_dict %%%%%%%%%%')
@@ -292,7 +290,7 @@ def run_ib_perf_lat_test(
                 result_dict[node][instance_no]['t_99_pct'] = lat_dict[node]['t_99_pct']
                 result_dict[node][instance_no]['t_99_9_pct'] = lat_dict[node]['t_99_9_pct']
                 print('***** result_dict for lat = {result_dict[node][instance_no]')
-        except Exception as e:
+        except Exception:
             print(
                 'FAILED to get latency numbers for size - {}'.format(
                     msg_size,

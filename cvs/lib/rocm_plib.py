@@ -5,10 +5,6 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import re
-import os
-import sys
-from cvs.lib import parallel_ssh_lib
 from cvs.lib.utils_lib import *
 
 

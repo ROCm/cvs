@@ -8,12 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 
 import re
-import sys
-import os
-import sys
-import time
 import json
-import logging
 
 
 from cvs.lib.parallel_ssh_lib import *

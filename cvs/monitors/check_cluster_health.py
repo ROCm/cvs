@@ -5,9 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import os
 import sys
-import re
 import logging
 import argparse
 import time

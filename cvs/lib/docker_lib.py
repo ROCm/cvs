@@ -5,9 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import os
 import re
-import sys
 import json
 import time
 
@@ -120,7 +118,7 @@ def launch_docker_container(
     for env_var in env_dict.keys():
         cmd = cmd + f' -e {env_var}={env_dict[env_var]}'
     cmd = cmd + f' --shm-size {shm_size} --name {container_name} {image} '
-    cmd = cmd + f'tail -f /dev/null'
+    cmd = cmd + 'tail -f /dev/null'
 
     print(f'cmd = {cmd}')
     out_dict = phdl.exec(cmd, timeout=timeout)

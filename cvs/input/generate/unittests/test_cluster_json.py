@@ -1,8 +1,7 @@
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 import sys
 import os
-import tempfile
 
 # Add the parent directory to sys.path to import generate modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))

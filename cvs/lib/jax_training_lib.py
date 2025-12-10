@@ -5,7 +5,6 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import sys
 import os
 import re
 import time
@@ -607,7 +606,7 @@ class JaxTrainingJob:
         for err_key in training_err_dict:
             if re.search(f'{training_err_dict[err_key]}', output):
                 fail_test(f'ERROR {training_err_dict[err_key]} seen in training logs ..')
-                log.error(f'Aborting training log polling')
+                log.error('Aborting training log polling')
                 training_pass = False
         return training_pass
 
