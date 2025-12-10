@@ -9,11 +9,6 @@ from __future__ import print_function
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError
 
-import sys
-import os
-import re
-import ast
-import json
 import time
 
 # Following used only for scp of file

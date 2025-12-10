@@ -5,7 +5,6 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import sys
 import os
 import re
 import time
@@ -271,14 +270,14 @@ class MegatronLlamaTrainingJob:
 
         cmd = (
             cmd
-            + f'cd /workspace/Megatron-LM; export MOCK_DATA=1; '
+            + 'cd /workspace/Megatron-LM; export MOCK_DATA=1; '
             + f'export IMAGE={self.container_image}; '
             + f'export HF_TOKEN="{self.hf_token}"; '
             + f'export DATA_CACHE_PATH={self.data_cache_dir}; '
             + f'export TOKENIZER_MODEL={self.tokenizer_model}; '
-            + f'export LD_LIBRARY_PATH=/usr/local/lib/:/opt/rocm/lib:$LD_LIBRARY_PATH; '
+            + 'export LD_LIBRARY_PATH=/usr/local/lib/:/opt/rocm/lib:$LD_LIBRARY_PATH; '
             + f'export LOG_DIR={self.log_dir}; '
-            + f'export EXP_NAME="megatron_training"; '
+            + 'export EXP_NAME="megatron_training"; '
         )
 
         if self.distributed_training is True:
@@ -450,19 +449,19 @@ class MegatronLlamaTrainingJob:
 
         # Extract throughput per GPU as a list of numbers (strings), if multiple occurrences exist
         # pattern = f'throughput per GPU \(TFLOP/s/GPU\):\s+([0-9\.]+)'
-        pattern = f'throughput per GPU:\s+([0-9\.]+)'
+        pattern = 'throughput per GPU:\s+([0-9\.]+)'
         training_results_dict['throughput_per_gpu'] = re.findall(pattern, output, re.I)
 
-        pattern = f'tokens\/GPU\/s:\s+([0-9]+)'
+        pattern = 'tokens\/GPU\/s:\s+([0-9]+)'
         # Extract tokens per GPU per second (integers as strings)
         training_results_dict['tokens_per_gpu'] = re.findall(pattern, output, re.I)
 
         # Extract memory usage values (floats as strings)
-        pattern = f'mem usages:\s+([0-9\.]+)'
+        pattern = 'mem usages:\s+([0-9\.]+)'
         training_results_dict['mem_usage'] = re.findall(pattern, output, re.I)
 
         # Extract elapsed time per iteration (floats as strings)
-        pattern = f'elapsed time per iteration \(ms\):\s+([0-9\.]+)'
+        pattern = 'elapsed time per iteration \(ms\):\s+([0-9\.]+)'
         training_results_dict['elapsed_time_per_iteration'] = re.findall(pattern, output, re.I)
 
         print(training_results_dict)
@@ -518,7 +517,7 @@ class MegatronLlamaTrainingJob:
             if re.search(f'{training_err_dict[err_key]}', output):
                 # Record failure and log an error for visibility
                 fail_test(f'ERROR {training_err_dict[err_key]} seen in training logs ..')
-                log.error(f'Aborting training log polling')
+                log.error('Aborting training log polling')
                 training_pass = False
         return training_pass
 

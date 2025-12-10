@@ -7,10 +7,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 # Standard libraries
 import re
-import sys
-import os
 import json
-from typing import List, Dict
+from typing import List
 from pathlib import Path
 
 # Third party libraries
@@ -756,7 +754,7 @@ def rccl_cluster_test_default(
                 json.dump([result.model_dump() for result in aggregated_rccl_tests], f, indent=2)
             log.info(f'Saved aggregated results to {aggregated_path}')
         else:
-            log.info(f'Aggregation skipped: only one run found')
+            log.info('Aggregation skipped: only one run found')
     except ValidationError as e:
         log.error(f'Validation Failed: {e}')
         fail_test(f'RCCL Test schema validation failed: {e}')

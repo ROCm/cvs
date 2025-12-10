@@ -5,9 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import os
 import re
-import sys
 
 from cvs.lib.utils_lib import *
 from cvs.lib.rocm_plib import *
@@ -483,7 +481,7 @@ def full_dmesg_scan(
     err_dict = {}
 
     # Pull human-readable kernel logs and filter out common noise
-    output_dict = phdl.exec(f"sudo dmesg -T | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never")
+    output_dict = phdl.exec("sudo dmesg -T | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never")
     for node in output_dict.keys():
         err_dict[node] = []
 

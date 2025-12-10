@@ -8,13 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 
 import re
-import sys
-import os
-import sys
-import time
 import json
-import logging
-import time
 
 
 from cvs.lib.parallel_ssh_lib import *
@@ -233,8 +227,8 @@ def test_install_open_mpi(
     else:
         hdl = phdl
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo apt update -y', timeout=200)
-    out_dict = phdl.exec(f'sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev', timeout=200)
+    out_dict = phdl.exec('sudo apt update -y', timeout=200)
+    out_dict = phdl.exec('sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev', timeout=200)
     out_dict = phdl.exec('which mpiexec')
     for node in out_dict.keys():
         if not re.search('mpiexec', out_dict[node]):

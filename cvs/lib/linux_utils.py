@@ -6,9 +6,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import re
-import sys
-import os
-import json
 from cvs.lib import rocm_plib
 from cvs.lib.utils_lib import *
 

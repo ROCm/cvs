@@ -8,12 +8,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 
 import re
-import sys
 import os
-import sys
 import time
 import json
-import logging
 import itertools
 import shutil
 import socket
@@ -586,8 +583,8 @@ def test_gen_heatmap(phdl, cluster_dict, config_dict):
                 except Exception as e:
                     print(f'Failed to copy {src_file}: {e}')
 
-    print(f'\n=== RCCL Test Results ===')
-    print(f'Generated files:')
+    print('\n=== RCCL Test Results ===')
+    print('Generated files:')
     print(f'  - Heatmap: {heatmap_file}')
     print(f'  - Structured results: {structured_json_file}')
     print(f'  - Aggregated results: {aggregated_json_file if aggregated_data else "N/A"}')
@@ -596,7 +593,7 @@ def test_gen_heatmap(phdl, cluster_dict, config_dict):
         if is_remote_copy:
             print(f'\n Results copied to management node ({mgmt_node}):')
             print(f'  Location: {output_dir}/')
-            print(f'  Files:')
+            print('  Files:')
             for filename in copied_files.keys():
                 print(f'    - {filename}')
             print(f'\nAccess results on {mgmt_node} with:')
@@ -605,4 +602,4 @@ def test_gen_heatmap(phdl, cluster_dict, config_dict):
             print(f'\n Files available in: {output_dir}/')
             for filename in copied_files.keys():
                 print(f'    - {filename}')
-    print(f'=========================\n')
+    print('=========================\n')

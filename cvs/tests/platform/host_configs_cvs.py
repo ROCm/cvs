@@ -8,12 +8,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 
 import re
-import sys
-import os
-import sys
-import time
-import json
-import logging
 import json
 
 from cvs.lib.parallel_ssh_lib import *
@@ -372,7 +366,7 @@ def test_check_iommu_pt(phdl, config_dict):
     log.info('Testcase check IOMMU PT')
     out_dict = phdl.exec('cat /proc/cmdline')
     for node in out_dict.keys():
-        if not re.search(f'iommu=pt', out_dict[node], re.I):
+        if not re.search('iommu=pt', out_dict[node], re.I):
             fail_test(f'IOMMU not set to pt on node {node}')
     update_test_result()
 
@@ -399,7 +393,7 @@ def test_check_numa_balancing(phdl, config_dict):
     log.info('Testcase check NUMA balancing')
     out_dict = phdl.exec('sudo sysctl kernel.numa_balancing')
     for node in out_dict.keys():
-        if not re.search(f'=0|= 0', out_dict[node], re.I):
+        if not re.search('=0|= 0', out_dict[node], re.I):
             fail_test(f'NUMA balancing not disabled on node {node}')
     update_test_result()
 

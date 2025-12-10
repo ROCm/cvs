@@ -8,12 +8,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 
 import re
-import sys
-import os
-import sys
 import time
 import json
-import logging
 
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
@@ -167,7 +163,7 @@ def test_version_check(phdl, config_dict):
         phdl.exec(f'sudo rm -rf {log_dir}')
         time.sleep(2)
         phdl.exec(f'sudo mkdir {log_dir}')
-    except Exception as e:
+    except Exception:
         print(f'Error creating log directory {log_dir}')
     out_dict = phdl.exec(f'sudo ls -ld {log_dir}')
     for node in out_dict.keys():

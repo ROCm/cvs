@@ -5,11 +5,9 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import sys
 import os
 import re
 import time
-import statistics
 from cvs.lib import globals
 
 log = globals.log
@@ -254,7 +252,7 @@ class InferenceMaxJob:
         out_dict = self.s_phdl.exec(cmd)
         for node in out_dict.keys():
             if re.search('error|fail', out_dict[node], re.I):
-                fail_test(f'Errors or failures seen in pulling inference max repo from Github, pls check')
+                fail_test('Errors or failures seen in pulling inference max repo from Github, pls check')
 
         time.sleep(3)
 
@@ -295,7 +293,7 @@ class InferenceMaxJob:
         out_dict = self.c_phdl.exec(cmd)
         for node in out_dict.keys():
             if re.search('error|fail', out_dict[node], re.I):
-                fail_test(f'Errors or failures seen in pulling inference max repo from Github, pls check')
+                fail_test('Errors or failures seen in pulling inference max repo from Github, pls check')
 
         time.sleep(3)
 
@@ -434,7 +432,7 @@ class InferenceMaxJob:
             for err_key in inference_err_dict:
                 if re.search(f'{inference_err_dict[err_key]}', out_dict[node]):
                     fail_test(f'ERROR {inference_err_dict[err_key]} seen in inference logs ..')
-                    log.error(f'Aborting inference log polling')
+                    log.error('Aborting inference log polling')
                     inference_pass = False
         return inference_pass
 

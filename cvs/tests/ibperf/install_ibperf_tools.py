@@ -8,16 +8,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 
 import re
-import sys
-import os
-import sys
-import time
 import json
-import logging
-import itertools
 
 
-from cvs.lib import ibperf_lib
 
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *

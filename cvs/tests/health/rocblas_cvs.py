@@ -8,17 +8,10 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 
 import re
-import sys
-import os
-import sys
 import time
 import json
-import logging
-import time
 
-import netmiko
 from netmiko import ConnectHandler
-from netmiko import redispatch
 
 
 from cvs.lib.parallel_ssh_lib import *
@@ -160,7 +153,7 @@ def test_rocblas_install(
     print('%%%%%%%%%%%%%%%%%')
     # hdl.write_channel('git init')
     # hdl.write_channel(f'cd {package_path};git clone {git_url};cd\r\r' )
-    print(f"cmd = git init")
+    print("cmd = git init")
     out_dict = phdl.exec('git init')
     time.sleep(5)
     print(f'cmd = cd {package_path};git clone {git_url};cd')

@@ -7,7 +7,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import importlib.metadata
 import os
-import pytest
 import sys
 
 

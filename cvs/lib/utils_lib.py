@@ -159,7 +159,7 @@ def convert_phdl_json_to_dict(dict_json):
         try:
             # Parse the JSON content for this node
             out_dict[node] = json_to_dict(dict_json[node])
-        except Exception as e:
+        except Exception:
             print(f'ERROR converting Json output to dict for node {node}')
             fail_test(f'ERROR converting Json output to dict for node {node}')
             out_dict[node] = {}

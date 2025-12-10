@@ -9,12 +9,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 
 import re
-import sys
-import os
-import sys
-import time
 import json
-import logging
 from packaging import version
 
 from cvs.lib.parallel_ssh_lib import *
@@ -342,7 +337,7 @@ def determine_rvs_config_path(phdl, config_dict, config_file):
         return chosen_path
 
     # Step 4: Fall back to default config (no device subfolder)
-    log.info(f'Falling back to default config path')
+    log.info('Falling back to default config path')
     out_dict = phdl.exec(f'ls -l {default_path}', timeout=30)
 
     for node in out_dict.keys():
