@@ -10,8 +10,10 @@ import pytest
 import re
 import json
 
+sys.path.insert( 0, './lib' )
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
+from verify_lib import *
 from cvs.lib.linux_utils import (
     detect_distro,
     install_package,
@@ -19,8 +21,6 @@ from cvs.lib.linux_utils import (
     translate_package_name,
     map_packages
 )
-from cvs.lib.verify_lib import *
-
 from cvs.lib import globals
 
 log = globals.log
@@ -205,15 +205,23 @@ def test_install_rvs(phdl, shdl, config_dict):
     # If RVS is not found or configs are missing, install it
     if not rvs_found or not config_found:
         log.info('RVS not found, attempting to install from artifactory repo first')
-
         # First try to install from artifactory repo
         package_installed = False
-        out_dict = hdl.exec('sudo apt-get update -y', timeout=600)
-        out_dict = hdl.exec(
-            'sudo apt-get install -y libpci3 libpci-dev doxygen unzip cmake git libyaml-cpp-dev', timeout=600
-        )
-        out_dict = hdl.exec('sudo apt-get install -y rocblas rocm-smi-lib', timeout=600)
-        out_dict = hdl.exec('sudo apt-get install -y rocm-validation-suite', timeout=600)
+        packages = ['libpci3', 'libpci-dev', 'doxygen', 'unzip', 'cmake', 
+            'git', 'libyaml-cpp-dev', 'rocblas', 'rocm-smi-lib']
+        distro = detect_distro(hdl)
+        package_list = map_packages(distro, packages)
+        out_dict = update_package_cache(hdl, distro, timeout=200)
+        for node in out_dict.keys():
+            if re.search('error|failed', out_dict[node], re.I):
+                log.warning(f'Package update warning on {node}')
+
+        for package in package_list:
+            out_dict = install_package(hdl, package, distro, timeout=200)
+            for node in out_dict.keys():
+                if re.search('error|failed|unable to locate', out_dict[node], re.I):
+                    fail_test(f'Failed to install {package} on {node}')
+        
 
         for node in out_dict.keys():
             if re.search(
