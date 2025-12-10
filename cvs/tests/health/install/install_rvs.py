@@ -208,7 +208,7 @@ def test_install_rvs(phdl, shdl, config_dict):
         # First try to install from artifactory repo
         package_installed = False
         packages = ['libpci3', 'libpci-dev', 'doxygen', 'unzip', 'cmake', 
-            'git', 'libyaml-cpp-dev', 'rocblas', 'rocm-smi-lib']
+            'git', 'libyaml-cpp-dev', 'rocblas', 'rocm-smi-lib', 'rocm-validation-suite']
         distro = detect_distro(hdl)
         package_list = map_packages(distro, packages)
         out_dict = update_package_cache(hdl, distro, timeout=200)
