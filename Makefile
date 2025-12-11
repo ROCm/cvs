@@ -19,13 +19,15 @@ help:
 	@echo "  install    - Install from built distribution"
 	@echo "  ut         - Execute all Unittests"
 	@echo "  test       - Execute all UTs and cvs cli tests"
-	@echo "  lint       - Run ruff linter"
-	@echo "  format     - Run ruff formatter"
-	@echo "  lint-fix   - Run ruff linter with auto-fix"
+	@echo "  lint       - Run ruff linter (checks code quality, not formatting)"
+	@echo "  fmt        - Run ruff formatter"
+	@echo "  fmt-check  - Check ruff formatting without modifying files"
+	@echo "  lint-fix   - Run ruff linter with auto-fix (fixes code quality issues, not formatting)"
+	@echo "  unsafe-lint-fix - Interactive unsafe lint fixes"
 	@echo "  all        - Run build, venv, install, and test"
 	@echo "  clean      - Remove virtual environment, build artifacts, and Python cache files"
 
-build: clean_build lint
+build: clean_build fmt-check lint
 	@echo "Building source distribution..."
 	$(PYTHON) setup.py sdist
 
@@ -58,38 +60,56 @@ lint: ruff-venv
 	@if ! $(RUFF) check . --unsafe-fixes ; then \
 		echo "\n\nLinting failed. Run 'make lint-fix' to auto-fix issues.\n"; exit 1; \
 	fi
-	@if ! $(RUFF) format --check . ; then \
-		echo "\n\nFormatting failed. Run 'make format' to auto-fix issues.\n"; exit 1; \
-	fi
 
-format: ruff-venv
+fmt: ruff-venv
 	@echo "Running ruff formatter..."
 	$(RUFF) format .
+
+fmt-check: ruff-venv
+	@echo "Checking ruff formatting..."
+	@if ! $(RUFF) format --check . ; then \
+		echo "\n\nFormatting check failed. Run 'make fmt' to auto-fix formatting issues.\n"; exit 1; \
+	fi
 
 lint-fix: ruff-venv
 	@echo "Running ruff linter with auto-fix..."
 	$(RUFF) check . --fix
-	$(RUFF) format .
 
 unsafe-lint-fix: ruff-venv
+	@echo ""
 	@echo "WARNING: This will apply unsafe fixes that may remove unused variables or make other potentially breaking changes."
 	@echo "You can fix these issues manually after careful review, or proceed with per-file confirmation."
+	@echo ""
 	@echo "Getting list of files with unsafe fixes..."
 	@files=$$($(RUFF) check . --unsafe-fixes | awk '/ --> / {split($$2, a, ":"); print a[1]}' | sort | uniq); \
+	echo "Files with unsafe fixes:"; \
+	for file in $$files; do \
+		echo "  - $$file"; \
+	done; \
+	echo ""; \
 	if [ -z "$$files" ]; then \
 		echo "No unsafe fixes needed."; \
 		exit 0; \
 	fi; \
 	for file in $$files; do \
 		echo "File: $$file has unsafe fixes."; \
-		$(RUFF) check $$file --unsafe-fixes --diff; \
-		echo "Apply fixes to this file? (y/N)"; \
-		read -p "" confirm; \
-		if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
-			echo "Applying unsafe fixes to $$file..."; \
-			$(RUFF) check $$file --fix --unsafe-fixes; \
+		echo "=== DIFF for $$file ==="; \
+		diff_output=$$($(RUFF) check $$file --unsafe-fixes --diff); \
+		if [ -n "$$diff_output" ]; then \
+			echo "$$diff_output"; \
+			echo "=== END DIFF ==="; \
+			echo "Apply fixes to this file? (y/N)"; \
+			read -p "" confirm; \
+			if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+				echo "Applying unsafe fixes to $$file..."; \
+				$(RUFF) check $$file --fix --unsafe-fixes; \
+			else \
+				echo "Skipping $$file."; \
+			fi; \
 		else \
-			echo "Skipping $$file."; \
+			echo "No unsafe fixes available for this file."; \
+			echo "If you want to fix issues manually, run: $(RUFF) check $$file --unsafe-fixes"; \
+			echo "=== END DIFF ==="; \
 		fi; \
 	done
 	@echo "Running formatter..."

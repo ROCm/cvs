@@ -344,7 +344,6 @@ def verify_host_lspci(phdl, pcie_speed=32, pcie_width=16):
 
     bdf_dict = {}
     for node in out_dict.keys():
-        bdf_list_out = out_dict[node]
         pattern = r"BDF:\s+([0-9a-f\:\.]+)"
         # Extract all BDF tokens from the amd-smi output for this node
         bdf_list = re.findall(pattern, out_dict[node], re.I)

@@ -116,7 +116,6 @@ def shdl(cluster_dict):
       - Module scope ensures a single connection context for the duration of the module.
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
     """
-    nhdl_dict = {}
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
     shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
@@ -222,11 +221,6 @@ def test_install_open_mpi(
     """
     globals.error_list = []
     log.info('Testcase install openmpi')
-    if config_dict['nfs_install'] is True:
-        hdl = shdl
-    else:
-        hdl = phdl
-    path = config_dict['path']
     out_dict = phdl.exec('sudo apt update -y', timeout=200)
     out_dict = phdl.exec('sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev', timeout=200)
     out_dict = phdl.exec('which mpiexec')

@@ -95,8 +95,8 @@ def scan_test_results(out_dict):
         match = re.search('test FAIL |test ERROR |ABORT|Traceback|No such file|FATAL', out_dict[host], re.I)
         if match:
             # Record the span of the first match (currently unused; could help with slicing)
-            start_index = match.start()
-            end_index = match.end()
+            # start_index = match.start()
+            # end_index = match.end()
             # Tokenize the entire output into words for contextual extraction
             words = out_dict[host].split()
             # Find the index of the target word in the list of words

@@ -264,10 +264,8 @@ def scp(src, dst, srcusername, srcpassword, dstusername=None, dstpassword=None):
             dstpassword = srcpassword
         # This is to handle if ssh keys in the known_hosts is empty or incorrect
         # Need better way to handle in the future
-        output = ssh.exec_command('ssh-keygen -R %s' % (dstip))
-        # print('ssh-keygen output is {0}'.format(output))
+        ssh.exec_command('ssh-keygen -R %s' % (dstip))
         time.sleep(1)
-        output = ssh.exec_command('ssh-keyscan %s >> ~/.ssh/known_hosts' % (dstip))
-        # print('ssh-keyscan output is {0}'.format(output))
+        ssh.exec_command('ssh-keyscan %s >> ~/.ssh/known_hosts' % (dstip))
         time.sleep(1)
-        output = ssh.exec_command('sshpass -p %s scp %s %s@%s:%s' % (dstpassword, srcfile, dstusername, dstip, dstfile))
+        ssh.exec_command('sshpass -p %s scp %s %s@%s:%s' % (dstpassword, srcfile, dstusername, dstip, dstfile))

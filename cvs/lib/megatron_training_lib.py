@@ -382,7 +382,7 @@ class MegatronLlamaTrainingJob:
             # Run any required NIC setup steps inside containers (e.g., Broadcom workaround)
             self.exec_nic_setup_scripts()
             # Following creates the training script
-            out_dict = self.phdl.exec_cmd_list(self.job_cmd_list)
+            self.phdl.exec_cmd_list(self.job_cmd_list)
 
             cmd_list = []
             for i in range(0, int(self.nnodes)):
@@ -390,9 +390,9 @@ class MegatronLlamaTrainingJob:
                       {self.scripts_dir}/distributed_wrapper_script_{i}.sh > \
                       {self.log_dir}/megatron-logs/out-node{i}/training.log 2>&1 &"'
                 cmd_list.append(cmd)
-            out_dict = self.phdl.exec_cmd_list(cmd_list)
+            self.phdl.exec_cmd_list(cmd_list)
         else:
-            out_dict = self.phdl.exec(
+            self.phdl.exec(
                 f'echo "{self.job_cmd}" > \
                {self.scripts_dir}/single_node_wrapper_script.sh; \
                chmod 777 {self.scripts_dir}/single_node_wrapper_script.sh'
@@ -403,7 +403,7 @@ class MegatronLlamaTrainingJob:
                       {self.scripts_dir}/single_node_wrapper_script.sh > \
                       {self.log_dir}/megatron-logs/out-node{i}/training.log 2>&1 &"'
                 cmd_list.append(cmd)
-            out_dict = self.phdl.exec_cmd_list(cmd_list)
+            self.phdl.exec_cmd_list(cmd_list)
         time.sleep(50)
 
     def get_training_results_dict(

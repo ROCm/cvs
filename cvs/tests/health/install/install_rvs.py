@@ -111,7 +111,6 @@ def shdl(cluster_dict):
       - Useful when commands should be executed only from a designated head node.
       - Module scope ensures a single connection context for the duration of the module.
     """
-    nhdl_dict = {}
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
     shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
@@ -176,7 +175,6 @@ def test_install_rvs(phdl, shdl, config_dict):
     log.info('Testcase install RVS (ROCmValidationSuite)')
     git_install_path = config_dict['git_install_path']
     git_url = config_dict['git_url']
-    rvs_path = config_dict['path']
 
     # Check if RVS is already installed via system packages
     out_dict = phdl.exec('which rvs', timeout=30)

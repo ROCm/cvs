@@ -115,7 +115,6 @@ def check_bus_bw(test_name, output, exp_res_dict):
 
     print(f'exp_res_dict = {exp_res_dict}')
 
-    actual_bw_dict = {}
     tolerance = 0.95  # 5% tolerance
 
     # New hierarchical structure: {msg_size: {'bus_bw': bw_value}}
@@ -453,7 +452,6 @@ def rccl_cluster_test(
     # MPI_PATH=f'{mpi_path}/install/bin'
     MPI_PATH = f'{mpi_path_var}'
     MPI_INSTALL_DIR = f'{mpi_dir}'
-    RCCL_INSTALL_DIR = f'{rccl_dir}'
     RCCL_PATH = f'{rccl_path_var}'
     RCCL_TESTS_INSTALL_DIR = f'{rccl_tests_dir}'
 
@@ -539,7 +537,7 @@ def rccl_cluster_test(
     # Collect basic GPU information via rocm-smi
     smi_out_dict = shdl.exec('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
-    model = get_model_from_rocm_smi_output(smi_out)
+    get_model_from_rocm_smi_output(smi_out)
 
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
     test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None
@@ -651,7 +649,6 @@ def rccl_cluster_test_default(
     # MPI_PATH=f'{mpi_path}/install/bin'
     MPI_PATH = f'{mpi_path_var}'
     MPI_INSTALL_DIR = f'{mpi_dir}'
-    RCCL_INSTALL_DIR = f'{rccl_dir}'
     RCCL_PATH = f'{rccl_path_var}'
     RCCL_TESTS_INSTALL_DIR = f'{rccl_tests_dir}'
 
@@ -765,7 +762,7 @@ def rccl_cluster_test_default(
     # Collect basic GPU information via rocm-smi
     smi_out_dict = shdl.exec('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
-    model = get_model_from_rocm_smi_output(smi_out)
+    get_model_from_rocm_smi_output(smi_out)
 
     # Determine NIC type from nic_model parameter
     if re.search('ainic|pensando|amd', nic_model, re.I):
@@ -875,7 +872,6 @@ def rccl_single_node_test(
     # Base ROCm path as provided by caller
     ROCM_PATH = rocm_path_var
 
-    RCCL_INSTALL_DIR = f'{rccl_dir}'
     RCCL_PATH = f'{rccl_path_var}'
     RCCL_TESTS_INSTALL_DIR = f'{rccl_tests_dir}'
 
@@ -908,7 +904,7 @@ def rccl_single_node_test(
     result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
 
     # Collect basic GPU information via rocm-smi
-    smi_out_dict = phdl.exec('rocm-smi -a | head -30')
+    phdl.exec('rocm-smi -a | head -30')
 
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
     test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None

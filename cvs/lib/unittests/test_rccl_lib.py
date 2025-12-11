@@ -27,7 +27,9 @@ class TestRcclLib(unittest.TestCase):
 
     def test_convert_to_graph_dict(self):
         # Test with sample data
-        result_dict = {'allreduce': {'bw': 100.0}}
+        result_dict = {
+            'allreduce': [{'size': 1024, 'name': 'allreduce', 'inPlace': 0, 'busBw': 100.0, 'algBw': 90.0, 'time': 1.0}]
+        }
         result = rccl_lib.convert_to_graph_dict(result_dict)
         self.assertIsInstance(result, dict)
 

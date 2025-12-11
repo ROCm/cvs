@@ -370,12 +370,6 @@ def round_vals(list_a):
 def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
     workbook = xlsxwriter.Workbook(excel_file)
 
-    colors = [
-        "#E41A1C",
-        "#377EB8",
-        "#4DAF4A",
-    ]
-
     app_list = list(res_dict.keys())
 
     merge_format = workbook.add_format(
@@ -415,7 +409,6 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
                         node_list.append(node)
 
     for app_name in app_list:
-        data = []
         for qp_count in qp_count_list:
             sheet_name = app_name + "_qp_" + str(qp_count)
             worksheet = workbook.add_worksheet(sheet_name)
@@ -423,11 +416,8 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
 
             heading = "Test {} - BW, MPPS Numbers for {} QPs".format(app_name, qp_count)
             worksheet.merge_range("A1:T1", heading, merge_format)
-            row_pos = 2
-            col_pos = 1
 
             # Init data lists
-            d_node_list = node_list
             d_msg_size_list = []
             d_bw_gpu_0_list = []
             d_bw_gpu_1_list = []
@@ -539,17 +529,6 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
             avg_pps_gpu7_data = average_of_lists(split_pps_gpu7_list)
 
             print(f'avg is {avg_bw_data}')
-            data = [
-                node_list,
-                d_msg_size_list,
-                d_bw_gpu_0_list,
-                d_bw_gpu_1_list,
-                d_bw_gpu_2_list,
-                d_bw_gpu_3_list,
-                d_bw_gpu_4_list,
-                d_bw_gpu_5_list,
-                d_bw_gpu_6_list,
-            ]
             # Merge cols for Node IP
             worksheet.merge_range("A2:A3", "Node IP", bold)
             worksheet.merge_range("B2:B3", "Msg Size", bold)
@@ -656,12 +635,6 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
 def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
     workbook = xlsxwriter.Workbook(excel_file)
 
-    colors = [
-        "#E41A1C",
-        "#377EB8",
-        "#4DAF4A",
-    ]
-
     app_list = list(res_dict.keys())
 
     merge_format = workbook.add_format(
@@ -696,18 +669,14 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
                         node_list.append(node)
 
     for app_name in app_list:
-        data = []
         sheet_name = app_name + "_lat"
         worksheet = workbook.add_worksheet(sheet_name)
         bold = workbook.add_format({"bold": 1})
 
         heading = "Test {} - latency results".format(app_name)
         worksheet.merge_range("A1:Z1", heading, merge_format)
-        row_pos = 2
-        col_pos = 1
 
         # Init data lists
-        d_node_list = node_list
         d_msg_size_list = []
         d_tmin_gpu_0_list = []
         d_tmin_gpu_1_list = []

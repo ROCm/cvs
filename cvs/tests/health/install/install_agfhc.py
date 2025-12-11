@@ -107,7 +107,6 @@ def shdl(cluster_dict):
       - Module scope ensures a single connection context for the duration of the module.
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
     """
-    nhdl_dict = {}
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
     shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
@@ -123,7 +122,6 @@ def phdl(cluster_dict):
     Returns:
     Pssh: A handle to execute commands across all nodes.
     """
-    nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])

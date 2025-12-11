@@ -128,8 +128,8 @@ def get_log_results(phdl, out_dict):
         if not re.search(pattern, res_dict[node], re.I):
             fail_test(f'Total failed tests in results.json is not zero on node {node}')
             print('Dumping journal log from all nodes for reference')
-            jrl_dict = phdl.exec_cmd_list(jrl_cmd_list)
-            err_dict = phdl.exec_cmd_list(err_cmd_list)
+            phdl.exec_cmd_list(jrl_cmd_list)
+            phdl.exec_cmd_list(err_cmd_list)
 
 
 # Create connection to DUTs and export for later use ..
@@ -141,7 +141,6 @@ def phdl(cluster_dict):
     Returns:
     Pssh: A handle to execute commands across all nodes.
     """
-    nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])

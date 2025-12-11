@@ -661,7 +661,6 @@ class JaxTrainingJob:
 
         final_step = int(self.training_steps) - 1
         completed_step_pattern = re.compile(rf'completed step:\s+{final_step},', re.I)
-        invalid_value_pattern = re.compile(r'(NaN|Inf)', re.I)
         tflops_pattern = re.compile(r'TFLOPS\/s\/device:\s+(NaN|Inf)', re.I)
         tokens_pattern = re.compile(r'Tokens\/s\/device:\s+(NaN|Inf)', re.I)
 
