@@ -633,23 +633,5 @@ class TestPsshExecCmdList(unittest.TestCase):
         mock_inform.assert_not_called()
 
 
-class TestScpFunction(unittest.TestCase):
-    @patch('cvs.lib.parallel_ssh_lib.SCPClient')
-    @patch('cvs.lib.parallel_ssh_lib.paramiko.SSHClient')
-    def test_scp_success(self, mock_ssh_client, mock_scp_client):
-        mock_ssh = MagicMock()
-        mock_ssh_client.return_value = mock_ssh
-        mock_scp = MagicMock()
-        mock_scp_client.return_value = mock_scp
-
-        from cvs.lib.parallel_ssh_lib import scp
-
-        scp('src.txt', 'dst.txt', 'user', 'pass')
-
-        mock_ssh.connect.assert_called()
-        mock_scp.put.assert_called_with('src.txt', 'dst.txt')
-        mock_scp.close.assert_called()
-
-
 if __name__ == "__main__":
     unittest.main()

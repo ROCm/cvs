@@ -113,7 +113,6 @@ def phdl(cluster_dict):
       - Scope is module-level so the connection is reused for all tests in this module.
       - Assumes Pssh is available in scope and accepts (log, node_list, user, pkey) in its constructor.
     """
-    nhdl_dict = {}
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])

@@ -709,7 +709,7 @@ var data = [
                     '''
   {
     y: "'''
-                    + str(collective_name)
+                    + str(collect_graph_name)
                     + '''",
     x: "'''
                     + str(norm_msg_size)
@@ -746,7 +746,7 @@ yAxis.data.setAll([
             html_lines = (
                 '''
              { category: "'''
-                + collective_name
+                + collect_graph_name
                 + '''"},
              '''
             )
@@ -1364,8 +1364,6 @@ def build_rccl_heatmap_table(filename, title, act_data_json, ref_data_json):
             if key_nam not in ref_data_dict:
                 print(f"Warning: {key_nam} not found in reference data, skipping from table")
                 continue
-            last_bw = 0.0
-            last_time = 0
             for msg_size in act_data_dict[key_nam].keys():
                 act_bus_bw = act_data_dict[key_nam][msg_size]['bus_bw']
                 act_alg_bw = act_data_dict[key_nam][msg_size]['alg_bw']
@@ -1485,7 +1483,7 @@ def build_rdma_stats_table(
         fp.write(html_lines)
 
         # Create one column header per RDMA device index from the first node
-        for j in range(0, len(rdma_device_list)):
+        for j in range(0, device_count):
             fp.write(f'<th>rdma_device_{j}</th>\n')
         fp.write('</tr></thead>\n')
         # End or header, let us start data rows ..
@@ -1619,9 +1617,6 @@ def build_snapshot_stats_diff_table(filename, d_dict, title, table_name, id_name
     node_0 = list(d_dict.keys())[0]
     eth_device_list = d_dict[node_0].keys()
     device_count = len(eth_device_list)
-
-    # Regex to detect "error-like" counters for highlighting
-    err_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|collision|reset|uncorrect'
 
     # Append to the HTML file (assumes an HTML <body> is already open)
     with open(filename, 'a') as fp:
@@ -2090,9 +2085,6 @@ def build_html_cluster_product_table(filename, model_dict, fw_dict):
                 m_dict['Card SKU'],
                 f_dict['MEC firmware version'],
                 f_dict['RLC firmware version'],
-                f_dict['RLC SRLC firmware version'],
-                f_dict['RLC SRLG firmware version'],
-                f_dict['RLC SRLS firmware version'],
                 f_dict['SDMA firmware version'],
                 f_dict['SMC firmware version'],
                 f_dict['SOS firmware version'],
@@ -2746,6 +2738,7 @@ def build_html_error_table(filename, metrics_dict, amd_dict):
 
 
 # TO BE DONE
+"""
 def build_html_env_metrics_table():
     print('Build HTML env metrics table')
     with open(filename, 'a') as fp:
@@ -2776,6 +2769,7 @@ def build_html_env_metrics_table():
   <th>G0 PCIe nak rcvd count acc</th>
   <th>G0 VRAM max BW GB/s</th>
          '''
+"""
 
 
 def build_html_config_table():

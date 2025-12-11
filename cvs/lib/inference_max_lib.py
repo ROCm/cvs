@@ -8,14 +8,14 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import os
 import re
 import time
+
 from cvs.lib import globals
-
-log = globals.log
-
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
 
+
+log = globals.log
 
 inference_err_dict = {
     'NCCL ERROR': 'NCCL ERROR|NCCL timeout|local work queue catastrophic error',
@@ -300,7 +300,6 @@ class InferenceMaxJob:
         if self.distributed_inference:
             print('To be done - TBD')
         else:
-            num_prompts = int(self.bp_dict['max_concurrency']) * 10
             cmd_list = []
             for i in range(0, int(self.nnodes)):
                 client_cmd = f'''source /tmp/server_env_script.sh; cd /app; \

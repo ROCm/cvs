@@ -37,22 +37,22 @@ def check_if_docker_client_running(phdl):
 
 
 def killall_docker_containers(phdl):
-    out_dict = phdl.exec('docker kill $(docker ps -q)')
+    phdl.exec('docker kill $(docker ps -q)')
 
 
 def kill_docker_container(phdl, container_name):
-    out_dict = phdl.exec(f'docker kill {container_name}')
+    phdl.exec(f'docker kill {container_name}')
 
 
 def delete_all_containers_and_volumes(phdl):
     # out_dict = phdl.exec('docker rm -vf $(docker ps -aq)')
     print('Deleting all containers and volumes')
     # out_dict = phdl.exec('docker system prune -a --volumes --force', timeout=60*10)
-    out_dict = phdl.exec('docker system prune --force', timeout=60 * 10)
+    phdl.exec('docker system prune --force', timeout=60 * 10)
 
 
 def delete_all_images(phdl):
-    out_dict = phdl.exec('docker rmi -f $(docker images -aq)')
+    phdl.exec('docker rmi -f $(docker images -aq)')
 
 
 def old_install_docker_on_ubuntu(phdl):

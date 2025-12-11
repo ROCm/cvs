@@ -469,7 +469,6 @@ def parse_rvs_level_results(test_config, out_dict, level):
       out_dict: Dictionary of node -> command output
       level: RVS test level (1-5)
     """
-    test_name = f'level_{level}_config'
     fail_patterns = test_config.get('fail_regex_patterns', [])
 
     if not fail_patterns:
