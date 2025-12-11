@@ -103,7 +103,7 @@ def config_dict(config_file, cluster_dict):
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
 
-   log.info(config_dict)
+    log.info(config_dict)
     return config_dict
 
 
