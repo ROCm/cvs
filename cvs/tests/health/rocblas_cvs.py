@@ -48,32 +48,32 @@ def config_file(pytestconfig):
 
 # Importing the cluster and cofig files to script to access node, switch, test config params
 @pytest.fixture(scope="module")
-def  cluster_dict(cluster_file):
-     with open(cluster_file) as json_file:
+def cluster_dict(cluster_file):
+    with open(cluster_file) as json_file:
         cluster_dict = json.load(json_file)
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
 
-     log.info(cluster_dict)
-     return cluster_dict
+    log.info(cluster_dict)
+    return cluster_dict
 
 @pytest.fixture(scope="module")
-def  config_dict(config_file, cluster_dict):
-     with open(config_file) as json_file:
+def config_dict(config_file, cluster_dict):
+    with open(config_file) as json_file:
         config_dict_t = json.load(json_file)
-     config_dict = config_dict_t['rocblas']
+    config_dict = config_dict_t['rocblas']
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
 
-     log.info(config_dict)
-     return config_dict
+    log.info(config_dict)
+    return config_dict
 
 
 def parse_rocblas_fp32( out_dict, exp_dict, ):
     for node in out_dict.keys():
-        match = re.search( 'N,T,4000,4000,4000,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
+        match = re.search( r'N,T,4000,4000,4000,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
         fp32_gflops = float(match.group(1))
         if float(fp32_gflops) < float(exp_dict['fp32_gflops']):
             fail_test(f"Node {node} Actual GFLOPs for rocblas with FP32 {fp32_gflops} is lower than the expected GFLOPs {exp_dict['fp32_gflops']}") 
@@ -82,7 +82,7 @@ def parse_rocblas_fp32( out_dict, exp_dict, ):
 
 def parse_rocblas_bf16( out_dict, exp_dict ):
     for node in out_dict.keys():
-        match = re.search( 'N,T,1024,2048,512,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
+        match = re.search( r'N,T,1024,2048,512,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
         bf16_gflops = float(match.group(1))
         if float(bf16_gflops) < float(exp_dict['bf16_gflops']):
             fail_test(f"Node {node} Actual GFLOPs for rocblas with BF16 {bf16_gflops} is lower than the expected GFLOPs {exp_dict['bf16_gflops']}") 
@@ -90,7 +90,7 @@ def parse_rocblas_bf16( out_dict, exp_dict ):
 
 def parse_rocblas_int8( out_dict, exp_dict ):
     for node in out_dict.keys():
-        match = re.search( 'N,T,1024,2048,512,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
+        match = re.search( r'N,T,1024,2048,512,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,[0-9\.]+,\s+[0-9\.]+,\s+[0-9\.]+,\s+([0-9\.]+),\s+[0-9\.]+', out_dict[node] )
         int8_gflops = float(match.group(1))
         if float(int8_gflops) < float(exp_dict['int8_gflops']):
             fail_test(f"Node {node} Actual GFLOPs for rocblas with INT8 {int8_gflops} is lower than the expected GFLOPs {exp_dict['int8_gflops']}") 
