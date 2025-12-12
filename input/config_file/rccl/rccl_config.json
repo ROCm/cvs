@@ -20,6 +20,8 @@
        "ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7",
        "net_dev_list": "ens28np0,ens27np0,ens25np0,ens26np0,ens24np0,ens23np0,ens21np0,ens22np0",
        "oob_port": "eth0",
+       "_comment_nccl_socket_ifname": "Optional: Set interface(oob_port) for NCCL bootstrap/socket fallback. Set to empty string \"\" or remove this field if not needed (e.g., when RDMA interfaces are routable)",
+       "nccl_socket_ifname": "",
        "gid_index": "1",
        "start_msg_size": "1024",
        "end_msg_size": "16g",

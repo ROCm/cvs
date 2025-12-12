@@ -219,7 +219,7 @@ def convert_to_graph_dict(result_dict):
 #
 def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, user_name, ib_hca_list, \
         net_dev_list, oob_port, no_of_global_ranks, rocm_path_var, mpi_dir, mpi_path_var, \
-        rccl_dir, rccl_path_var, rccl_tests_dir, nccl_algo='ring', \
+        rccl_dir, rccl_path_var, rccl_tests_dir, nccl_socket_ifname="", nccl_algo='ring', \
         nccl_proto='simple', gid_index=1, qp_count=1, \
         start_msg_size=1024, end_msg_size='16g', \
         step_function=2, threads_per_gpu=1, warmup_iterations=10, no_of_iterations=1, \
@@ -313,6 +313,9 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
     if env_source_script:
         test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
 
+    # Build optional NCCL_SOCKET_IFNAME parameter
+    nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
+
     cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
@@ -324,6 +327,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
         -x NCCL_IB_HCA={ib_hca_list} \
+        {nccl_socket_param} \
         --mca btl ^vader,openib \
         --mca btl_tcp_if_include {oob_port}\
         --mca oob_tcp_if_include {oob_port}\
@@ -393,7 +397,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
 #
 def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_node_list, user_name, ib_hca_list, \
         net_dev_list, oob_port, no_of_global_ranks, rocm_path_var, mpi_dir, mpi_path_var, \
-        rccl_dir, rccl_path_var, rccl_tests_dir, nccl_algo='ring', \
+        rccl_dir, rccl_path_var, rccl_tests_dir, nccl_socket_ifname="", nccl_algo='ring', \
         nccl_proto='simple', gid_index=1, qp_count=1, \
         start_msg_size=1024, end_msg_size='16g', \
         step_function=2, threads_per_gpu=1, warmup_iterations=10, no_of_iterations=1, \
@@ -487,6 +491,9 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
     if env_source_script:
         test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
 
+    # Build optional NCCL_SOCKET_IFNAME parameter
+    nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
+
     cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
@@ -498,6 +505,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
         -x NCCL_IB_HCA={ib_hca_list} \
+        {nccl_socket_param} \
         --mca btl ^vader,openib \
         --mca btl_tcp_if_include {oob_port}\
         --mca oob_tcp_if_include {oob_port}\
