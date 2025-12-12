@@ -315,6 +315,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         rccl_dir=config_dict['rccl_dir'],
         rccl_path_var=config_dict['rccl_path_var'],
         rccl_tests_dir=config_dict['rccl_tests_dir'],
+        nccl_socket_ifname=config_dict.get('nccl_socket_ifname', ''),
         gid_index=config_dict['gid_index'],
         start_msg_size=config_dict['start_msg_size'],
         end_msg_size=config_dict['end_msg_size'],

@@ -382,6 +382,7 @@ def rccl_cluster_test(
     rccl_dir,
     rccl_path_var,
     rccl_tests_dir,
+    nccl_socket_ifname="",
     nccl_algo='ring',
     nccl_proto='simple',
     gid_index=1,
@@ -494,6 +495,9 @@ def rccl_cluster_test(
     if env_source_script:
         test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
 
+    # Build optional NCCL_SOCKET_IFNAME parameter
+    nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
+
     cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
@@ -505,6 +509,7 @@ def rccl_cluster_test(
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
         -x NCCL_IB_HCA={ib_hca_list} \
+        {nccl_socket_param} \
         --mca btl ^vader,openib \
         --mca btl_tcp_if_include {oob_port}\
         --mca oob_tcp_if_include {oob_port}\
@@ -583,6 +588,7 @@ def rccl_cluster_test_default(
     rccl_dir,
     rccl_path_var,
     rccl_tests_dir,
+    nccl_socket_ifname="",
     nccl_algo='ring',
     nccl_proto='simple',
     gid_index=1,
@@ -707,6 +713,9 @@ def rccl_cluster_test_default(
         if env_source_script:
             test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
 
+        # Build optional NCCL_SOCKET_IFNAME parameter
+        nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
+
         cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
@@ -718,10 +727,10 @@ def rccl_cluster_test_default(
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
         -x NCCL_IB_HCA={ib_hca_list} \
+        {nccl_socket_param} \
         --mca btl ^vader,openib \
         --mca btl_tcp_if_include {oob_port}\
         --mca oob_tcp_if_include {oob_port}\
-        -x NCCL_SOCKET_IFNAME={oob_port} \
         -x UCX_NET_DEVICES={net_dev_list} \
         -x UCX_TLS={ucx_tls} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
