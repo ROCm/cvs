@@ -1,6 +1,11 @@
 class SubcommandPlugin:
     """Base class for CLI subcommand plugins."""
 
+    PLUGIN_ORDERS = {
+        "monitor": 999,
+        "debug": 1000,  # High number to ensure debug appears last
+    }
+
     def get_name(self):
         raise NotImplementedError
 
@@ -14,7 +19,7 @@ class SubcommandPlugin:
 
     def get_order(self):
         """Return the display order for this plugin. Lower numbers appear first. Default is 0."""
-        return 0
+        return self.PLUGIN_ORDERS.get(self.get_name(), 0)
 
     def run(self, args):
         """Run the subcommand logic."""

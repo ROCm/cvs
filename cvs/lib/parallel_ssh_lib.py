@@ -27,7 +27,15 @@ class Pssh:
     """
 
     def __init__(
-        self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True
+        self,
+        log,
+        host_list,
+        user=None,
+        password=None,
+        pkey='id_rsa',
+        host_key_check=False,
+        stop_on_errors=True,
+        timeout=30,
     ):
         self.log = log
         self.host_list = host_list
@@ -37,16 +45,19 @@ class Pssh:
         self.password = password
         self.host_key_check = host_key_check
         self.stop_on_errors = stop_on_errors
+        self.timeout = timeout
         self.unreachable_hosts = []
 
         if self.password is None:
             print(self.reachable_hosts)
             print(self.user)
             print(self.pkey)
-            self.client = ParallelSSHClient(self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30)
+            self.client = ParallelSSHClient(
+                self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, timeout=self.timeout
+            )
         else:
             self.client = ParallelSSHClient(
-                self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+                self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30, timeout=self.timeout
             )
 
     def check_connectivity(self, hosts):
