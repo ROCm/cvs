@@ -326,6 +326,7 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         -x NCCL_IB_HCA={ib_hca_list} \
         --mca btl ^vader,openib \
         --mca btl_tcp_if_include {oob_port}\
+        --mca oob_tcp_if_include {oob_port}\
         -x UCX_NET_DEVICES={net_dev_list} \
         -x NCCL_ALGO={nccl_algo} \
         -x NCCL_MIN_NCHANNELS={min_channels} \
@@ -499,6 +500,7 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         -x NCCL_IB_HCA={ib_hca_list} \
         --mca btl ^vader,openib \
         --mca btl_tcp_if_include {oob_port}\
+        --mca oob_tcp_if_include {oob_port}\
         -x UCX_NET_DEVICES={net_dev_list} \
         -x UCX_TLS={ucx_tls} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
