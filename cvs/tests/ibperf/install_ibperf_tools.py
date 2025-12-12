@@ -17,7 +17,6 @@ import logging
 import itertools
 
 
-sys.path.insert( 0, './lib' )
 from cvs.lib import ibperf_lib
 
 from cvs.lib.parallel_ssh_lib import *
