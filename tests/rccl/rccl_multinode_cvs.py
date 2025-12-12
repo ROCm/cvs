@@ -400,6 +400,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, rccl_
        rccl_dir                = config_dict['rccl_dir'], \
        rccl_path_var           = config_dict['rccl_path_var'], \
        rccl_tests_dir          = config_dict['rccl_tests_dir'], \
+       nccl_socket_ifname      = config_dict.get('nccl_socket_ifname', ''), \
        nccl_algo               = rccl_algo, \
        nccl_proto              = rccl_protocol, \
        gid_index               = config_dict['gid_index'], \
