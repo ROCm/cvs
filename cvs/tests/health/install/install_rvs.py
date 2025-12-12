@@ -10,10 +10,10 @@ import pytest
 import re
 import json
 
-sys.path.insert( 0, './lib' )
+
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
-from verify_lib import *
+from cvs.lib.verify_lib import *
 from cvs.lib.linux_utils import (
     detect_distro,
     install_package,
