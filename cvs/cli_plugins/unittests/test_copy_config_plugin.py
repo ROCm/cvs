@@ -237,5 +237,54 @@ class TestCopyConfigPlugin(unittest.TestCase):
             self.assertEqual(current_content, original_content, "File content should match original config")
 
 
+class TestCopyConfigPluginExtension(unittest.TestCase):
+    """Test copy-config plugin finds core config roots"""
+
+    def test_find_config_root_returns_list(self):
+        """Test that _find_config_root returns a list of directories"""
+        plugin = CopyConfigPlugin()
+        roots = plugin._find_config_root()
+
+        # Should return a list
+        self.assertIsInstance(roots, list)
+        # Should have at least the core cvs config roots
+        self.assertGreater(len(roots), 0)
+        # Roots should exist
+        for root in roots:
+            self.assertTrue(os.path.exists(root), f"Root {root} should exist")
+
+    def test_find_config_file_in_core_package(self):
+        """Test finding config files from core cvs package"""
+        plugin = CopyConfigPlugin()
+        roots = plugin._find_config_root()
+
+        # Should be able to find a file that exists in core package
+        found_file = plugin._find_config_file(roots, "platform/host_config.json")
+        self.assertIsNotNone(found_file)
+        self.assertTrue(os.path.exists(found_file))
+
+    def test_copy_config_from_core_package(self):
+        """Test copying config file from core package"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, "copied_config.json")
+
+            args = argparse.Namespace()
+            args.output = output_file
+            args.path = "platform/host_config.json"
+            args.all = False
+            args.force = False
+            args.list = False
+
+            plugin = CopyConfigPlugin()
+            plugin.run(args)
+
+            # Should have copied the file
+            self.assertTrue(os.path.exists(output_file))
+            with open(output_file, "r") as f:
+                content = f.read()
+            # Should have valid JSON content
+            self.assertIn("{", content)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,5 @@
 from .base import SubcommandPlugin
+from cvs.extension import ExtensionConfig
 import os
 import shutil
 
@@ -41,16 +42,36 @@ Copy-Config Commands:
   cvs copy-config --all --output /tmp/cvs/input/ --force                  Force overwrite existing files"""
 
     def _find_config_root(self):
-        # Use the directory relative to this plugin file
+        """
+        Find config directories from cvs and extension packages.
+
+        Searches for config directories in:
+        1. Core cvs package (cvs/input/config_file, cvs/input/cluster_file)
+        2. Extension packages configured via extension.ini (e.g., cvs_extension/input)
+        """
         plugin_dir = os.path.dirname(__file__)
         cvs_dir = os.path.dirname(plugin_dir)  # cvs/
         config_root = os.path.join(cvs_dir, "input", "config_file")
         cluster_root = os.path.join(cvs_dir, "input", "cluster_file")
         roots = []
+
+        # Add core cvs config directories
         if os.path.exists(config_root):
             roots.append(config_root)
         if os.path.exists(cluster_root):
             roots.append(cluster_root)
+
+        # Add extension config directories
+        config = ExtensionConfig()
+        for input_dir in config.get_input_dirs():
+            config_file_dir = os.path.join(input_dir, "config_file")
+            cluster_file_dir = os.path.join(input_dir, "cluster_file")
+
+            if os.path.exists(config_file_dir):
+                roots.append(config_file_dir)
+            if os.path.exists(cluster_file_dir):
+                roots.append(cluster_file_dir)
+
         return roots
 
     def _list_configs(self, root, subpath):

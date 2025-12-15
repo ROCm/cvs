@@ -25,7 +25,8 @@ class TestMain(unittest.TestCase):
             expected_version = f.read().strip()
 
         version = main.get_version()
-        self.assertEqual(version, expected_version)
+        # get_version() now returns 'cvs: <version>' format
+        self.assertIn(f"cvs: {expected_version}", version)
 
     @patch("cvs.main.metadata.version", side_effect=main.metadata.PackageNotFoundError)
     def test_get_version_fallback(self, mock_version):
@@ -36,7 +37,8 @@ class TestMain(unittest.TestCase):
             expected_version = f.read().strip()
 
         version = main.get_version()
-        self.assertEqual(version, expected_version)
+        # get_version() now returns 'cvs: <version>' format
+        self.assertIn(f"cvs: {expected_version}", version)
 
     def test_load_plugins_success(self):
         """Test successful plugin loading"""

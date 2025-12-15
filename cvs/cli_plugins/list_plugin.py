@@ -7,35 +7,51 @@ from io import StringIO
 import contextlib
 
 from .base import SubcommandPlugin
+from cvs.extension import ExtensionConfig
 
 
 class ListPlugin(SubcommandPlugin):
     @staticmethod
     def discover_tests():
         """
-        Dynamically discover all test files in the tests/ directory.
+        Dynamically discover all test files in the tests/ directory and extension test directories.
         Returns a dict mapping test names to their module paths.
+
+        Supports extension packages (e.g., cvs-extenstion) that provide additional test directories
+        via extension.ini configuration.
         """
         test_map = {}
-        # Get the directory where this script is located
+        config = ExtensionConfig()
+
+        # Primary tests directory
         base_dir = os.path.dirname(os.path.dirname(__file__))
-        tests_dir = os.path.join(base_dir, "tests")
+        tests_dirs = [os.path.join(base_dir, "tests")]
 
-        if not os.path.exists(tests_dir):
-            return test_map
+        # Add extension test directories
+        extension_tests = config.get_tests_dirs()
+        tests_dirs.extend(extension_tests)
 
-        # Walk through tests directory
-        for root, dirs, files in os.walk(tests_dir):
-            for file in files:
-                if file.endswith(".py") and file != "__init__.py":
-                    # Get relative path from tests directory
-                    rel_path = os.path.relpath(os.path.join(root, file), tests_dir)
-                    # Convert to module path
-                    module_parts = os.path.splitext(rel_path)[0].split(os.sep)
-                    module_path = "tests." + ".".join(module_parts)
-                    # Use filename without .py as test name
-                    test_name = os.path.splitext(file)[0]
-                    test_map[test_name] = module_path
+        # Discover tests in all directories
+        for tests_dir in tests_dirs:
+            if not os.path.exists(tests_dir):
+                continue
+
+            for root, dirs, files in os.walk(tests_dir):
+                for file in files:
+                    if file.endswith(".py") and file != "__init__.py":
+                        rel_path = os.path.relpath(os.path.join(root, file), tests_dir)
+                        module_parts = os.path.splitext(rel_path)[0].split(os.sep)
+
+                        # Determine module prefix based on directory
+                        if tests_dir.endswith("tests"):
+                            module_path = "tests." + ".".join(module_parts)
+                        else:
+                            # Extension tests use their directory name as prefix
+                            dir_name = os.path.basename(tests_dir)
+                            module_path = f"{dir_name}." + ".".join(module_parts)
+
+                        test_name = os.path.splitext(file)[0]
+                        test_map[test_name] = module_path
 
         return test_map
 
