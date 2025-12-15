@@ -492,8 +492,11 @@ def rccl_cluster_test(
         -d {data_type} \
         -Z json -x {rccl_result_file}'
 
-    if env_source_script:
+    if env_source_script and env_source_script.lower() != 'none':
         test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+    else:
+        # Always wrap in bash to interpret && shell operator
+        test_cmd = f'bash -c "{test_cmd}"'
 
     # Build optional NCCL_SOCKET_IFNAME parameter
     nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
@@ -710,8 +713,11 @@ def rccl_cluster_test_default(
             -d {dtype} -N {no_of_cycles} -Z json -x {dtype_result_file}'
         )
 
-        if env_source_script:
+        if env_source_script and env_source_script.lower() != 'none':
             test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+        else:
+            # Always wrap in bash to interpret && shell operator
+            test_cmd = f'bash -c "{test_cmd}"'
 
         # Build optional NCCL_SOCKET_IFNAME parameter
         nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
@@ -916,8 +922,11 @@ def rccl_single_node_test(
         -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} \
         -Z json -x {rccl_result_file}'
 
-    if env_source_script:
+    if env_source_script and env_source_script.lower() != 'none':
         test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+    else:
+        # Always wrap in bash to interpret && shell operator
+        test_cmd = f'bash -c "{test_cmd}"'
 
     cmd = f'''export NCCL_DEBUG={debug_level};  \
            export PATH={PATH}; \
