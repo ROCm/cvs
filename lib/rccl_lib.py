@@ -310,8 +310,11 @@ def rccl_cluster_test( phdl, shdl, test_name, cluster_node_list, vpc_node_list, 
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
         -Z json -x {rccl_result_file}'
 
-    if env_source_script:
+    if env_source_script and env_source_script.lower() != 'none':
         test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+    else:
+        # Always wrap in bash to interpret && shell operator
+        test_cmd = f'bash -c "{test_cmd}"'
 
     # Build optional NCCL_SOCKET_IFNAME parameter
     nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
@@ -488,8 +491,11 @@ def rccl_cluster_test_default( phdl, shdl, test_name, cluster_node_list, vpc_nod
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
         -Z json -x {rccl_result_file}'
 
-    if env_source_script:
+    if env_source_script and env_source_script.lower() != 'none':
         test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+    else:
+        # Always wrap in bash to interpret && shell operator
+        test_cmd = f'bash -c "{test_cmd}"'
 
     # Build optional NCCL_SOCKET_IFNAME parameter
     nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
@@ -606,8 +612,11 @@ def rccl_single_node_test( phdl, test_name, cluster_node_list, \
         -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} \
         -Z json -x {rccl_result_file}'
 
-    if env_source_script:
+    if env_source_script and env_source_script.lower() != 'none':
         test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+    else:
+        # Always wrap in bash to interpret && shell operator
+        test_cmd = f'bash -c "{test_cmd}"'
         
     cmd = f'''export NCCL_DEBUG={debug_level};  \
            export PATH={PATH}; \
