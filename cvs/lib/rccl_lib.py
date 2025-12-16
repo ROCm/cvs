@@ -286,7 +286,8 @@ def convert_to_graph_dict(result_dict):
 def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[RcclTestsAggregated]:
     """
     Aggregate multiple rccl-test results into mean/std per (name, size, type, inPlace)
-    Args: validated_results: List[RcclTests] - list of validated rccl-test results
+    Args: 
+        validated_results: List[RcclTests] - list of validated rccl-test results
     Returns: List[RcclTestsAggregated] - list of aggregated rccl-test results with mean/std per (name, size, type, inPlace)
     """
     if not validated_results:
@@ -650,6 +651,8 @@ def rccl_cluster_test_default(
       threads_per_gpu, warmup_iterations, check_iteration_count: Test execution tuning.
       data_types: List of data types to test (e.g., ['float', 'half']).
       no_of_cycles: Number of cycles to run for each data type.
+      min_channels: Minimum NCCL channels (NCCL_MIN_NCHANNELS).
+      max_channels: Maximum NCCL channels (NCCL_MAX_NCHANNELS).
       debug_level: NCCL_DEBUG level.
       rccl_result_file: Path where the RCCL test writes JSON results (-Z json -x file).
       verify_bus_bw: If 'True' (string), compare bus BW vs expected thresholds.
@@ -660,6 +663,7 @@ def rccl_cluster_test_default(
     """
 
     print(f'Starting RCCL Test ..........................................{test_name}')
+    log.info(f'Using NCCL channels: min={min_channels}, max={max_channels}')
     # Base ROCm path as provided by caller
     ROCM_PATH = rocm_path_var
 
@@ -702,9 +706,11 @@ def rccl_cluster_test_default(
     all_raw_results = []
     all_validated_results = []
     base_path = Path(rccl_result_file)
+    
     for dtype in data_types:
         # Create a unique result file for each data type
         dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
+        log.info(f'Running {test_name} with dtype={dtype}')
 
         # Wrap test binary in shell to source env script if provided
         test_cmd = (
@@ -740,6 +746,8 @@ def rccl_cluster_test_default(
         -x UCX_NET_DEVICES={net_dev_list} \
         -x UCX_TLS={ucx_tls} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
+        -x NCCL_MIN_NCHANNELS={min_channels} \
+        -x NCCL_MAX_NCHANNELS={max_channels} \
         {test_cmd}
         '''
 
@@ -758,6 +766,7 @@ def rccl_cluster_test_default(
         # Read the JSON results emitted by the RCCL test binary
         result_dict_out = shdl.exec(f'cat {dtype_result_file}')
         dtype_result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
+        
         # Validate the results against the schema fail if results are not valid
         try:
             validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
