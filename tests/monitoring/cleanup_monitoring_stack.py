@@ -7,6 +7,43 @@ from lib.parallel_ssh_lib import Pssh
 
 logger = logging.getLogger(__name__)
 
+
+# Helper functions
+def get_management_node(cluster_dict):
+    """Get the management/head node from cluster configuration."""
+    return cluster_dict.get('head_node_dict', {}).get('mgmt_ip', 'localhost')
+
+
+def get_all_nodes(cluster_dict):
+    """Get all nodes (workers + management) from cluster configuration."""
+    mgmt_node = get_management_node(cluster_dict)
+    worker_nodes = list(cluster_dict.get('node_dict', {}).keys())
+    all_nodes = [mgmt_node] + worker_nodes
+    return list(dict.fromkeys(all_nodes))  # Remove duplicates
+
+
+# Fixtures
+@pytest.fixture(scope="module")
+def cluster_dict(request):
+    """Load cluster configuration."""
+    import json
+    cluster_file = request.config.getoption("--cluster_file")
+    with open(cluster_file) as f:
+        return json.load(f)
+
+
+@pytest.fixture(scope="module")
+def management_node(cluster_dict):
+    """Get management node IP."""
+    return get_management_node(cluster_dict)
+
+
+@pytest.fixture(scope="module")
+def all_nodes(cluster_dict):
+    """Get all node IPs including management node."""
+    return get_all_nodes(cluster_dict)
+
+
 def is_localhost(ip_address):
     """Check if IP address is localhost."""
     import socket
@@ -17,7 +54,8 @@ def is_localhost(ip_address):
         result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             local_addresses.update(result.stdout.strip().split())
-    except: pass
+    except:
+        pass
     return ip_address in local_addresses
 
 @pytest.mark.cleanup
@@ -34,9 +72,9 @@ def test_stop_exporters_on_all_nodes(cluster_dict, all_nodes):
             for cmd in commands:
                 subprocess.run(cmd, shell=True, capture_output=True, text=True)
         else:
-            phdl = Pssh([node_ip], user=username, priv_key=priv_key_file)
+            phdl = Pssh(logger, [node_ip], user=username, pkey=priv_key_file)
             for cmd in commands:
-                phdl.run(cmd)
+                phdl.exec(cmd)
     logger.info("✓ Exporters cleaned up on all nodes")
 
 @pytest.mark.cleanup
@@ -50,9 +88,9 @@ def test_stop_prometheus_on_management(cluster_dict, management_node):
         for cmd in commands:
             subprocess.run(cmd, shell=True, capture_output=True, text=True)
     else:
-        phdl = Pssh([management_node], user=username, priv_key=cluster_dict.get('priv_key_file'))
+        phdl = Pssh(logger, [management_node], user=username, pkey=cluster_dict.get('priv_key_file'))
         for cmd in commands:
-            phdl.run(cmd)
+            phdl.exec(cmd)
     logger.info("✓ Prometheus stopped")
 
 @pytest.mark.cleanup
