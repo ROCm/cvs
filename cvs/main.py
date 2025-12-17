@@ -28,7 +28,11 @@ def get_version():
     try:
         cvs_version = metadata.version("cvs")
     except metadata.PackageNotFoundError:
-        version_file = os.path.join(os.path.dirname(__file__), "..", "version.txt")
+        # Try version.txt in the package directory first (for installed packages)
+        version_file = os.path.join(os.path.dirname(__file__), "version.txt")
+        if not os.path.exists(version_file):
+            # Fall back to parent directory (for development/source installations)
+            version_file = os.path.join(os.path.dirname(__file__), "..", "version.txt")
         if os.path.exists(version_file):
             with open(version_file) as f:
                 cvs_version = f.read().strip()

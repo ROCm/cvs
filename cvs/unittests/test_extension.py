@@ -66,7 +66,9 @@ class TestExtensionConfig(unittest.TestCase):
             with patch("importlib.util.find_spec", return_value=mock_spec):
                 config = ExtensionConfig()
                 dirs = config.get_tests_dirs()
-                self.assertIn(abs_test_path, dirs)
+                # get_tests_dirs now returns list of tuples (module_path, abs_path)
+                abs_paths = [abs_path for module_path, abs_path in dirs]
+                self.assertIn(abs_test_path, abs_paths)
 
     def test_get_tests_dirs_relative_path(self):
         """Test get_tests_dirs with relative path resolved from site_packages."""
@@ -90,9 +92,11 @@ class TestExtensionConfig(unittest.TestCase):
             with patch("importlib.util.find_spec", return_value=mock_spec):
                 config = ExtensionConfig()
                 dirs = config.get_tests_dirs()
+                # get_tests_dirs now returns list of tuples (module_path, abs_path)
                 # Should resolve relative to site_packages_dir (tmpdir)
                 expected_dir = os.path.join(tmpdir, "cvs_test", "tests")
-                self.assertIn(expected_dir, dirs)
+                abs_paths = [abs_path for module_path, abs_path in dirs]
+                self.assertIn(expected_dir, abs_paths)
 
     def test_get_input_dirs_absolute_path(self):
         """Test get_input_dirs with absolute path."""
@@ -163,9 +167,11 @@ class TestExtensionConfig(unittest.TestCase):
                 config = ExtensionConfig()
 
                 test_dirs = config.get_tests_dirs()
+                # get_tests_dirs now returns list of tuples (module_path, abs_path)
                 self.assertEqual(len(test_dirs), 2)
-                self.assertIn(os.path.join(tmpdir, "cvs_test", "tests"), test_dirs)
-                self.assertIn("/abs/tests", test_dirs)
+                abs_paths = [abs_path for module_path, abs_path in test_dirs]
+                self.assertIn(os.path.join(tmpdir, "cvs_test", "tests"), abs_paths)
+                self.assertIn("/abs/tests", abs_paths)
 
                 input_dirs = config.get_input_dirs()
                 self.assertEqual(len(input_dirs), 2)

@@ -13,6 +13,10 @@ import sys
 import importlib.util
 
 
+CORE_PKG_NAME = "cvs"
+CORE_TESTS_DIR = "tests"
+
+
 class ExtensionConfig:
     """Load and parse extension configuration from extension.ini files."""
 
@@ -50,7 +54,7 @@ class ExtensionConfig:
 
         # Fall back to looking in cvs package
         if not config_file:
-            config_file = self._find_config_in_package("cvs")
+            config_file = self._find_config_in_package(CORE_PKG_NAME)
 
         if config_file and os.path.exists(config_file):
             try:
@@ -94,7 +98,7 @@ class ExtensionConfig:
         """
         if self.config and self.config.has_option("extensions", "package_name"):
             return self.config.get("extensions", "package_name")
-        return "cvs"
+        return CORE_PKG_NAME
 
     def get_tests_dirs(self):
         """
@@ -104,7 +108,9 @@ class ExtensionConfig:
         references to sibling extension packages like cvs_extension/tests.
 
         Returns:
-            list: List of test directories (relative or absolute paths)
+            list: List of tuples (module_path, absolute_path) where:
+                  - module_path: Python import path (e.g., 'cvs_internal.tests')
+                  - absolute_path: Filesystem path for walking directories
         """
         dirs = []
         if self.config and self.config.has_option("extensions", "tests_dirs"):
@@ -112,11 +118,10 @@ class ExtensionConfig:
             test_paths = [d.strip() for d in tests_dirs_str.split(",")]
 
             for test_path in test_paths:
-                if os.path.isabs(test_path):
-                    dirs.append(test_path)
-                else:
-                    # Resolve relative to site-packages directory
-                    dirs.append(os.path.join(self.site_packages_dir, test_path))
+                # Always treat as relative path: convert to module path and absolute path
+                module_path = test_path.replace(os.sep, ".")
+                abs_path = os.path.join(self.site_packages_dir, test_path)
+                dirs.append((module_path, abs_path))
         return dirs
 
     def get_input_dirs(self):

@@ -16,14 +16,59 @@ class TestListPlugin(unittest.TestCase):
 
         # Should have discovered some core tests
         self.assertGreater(len(test_map), 0)
-        # Core test modules should be in the test_map
-        self.assertIn("test_map" in str(test_map) or len(test_map) > 0, [True])
+        # Should have 'cvs' package key (nested structure)
+        self.assertIn("cvs", test_map)
+
+    def test_test_map_nested_structure(self):
+        """Test that test_map has nested structure: {package_name: {test_name: module_path}}"""
+        plugin = ListPlugin()
+        test_map = plugin.test_map
+
+        # Should be a dict
+        self.assertIsInstance(test_map, dict)
+
+        # Each package should map to a dict of tests
+        for pkg_name, tests in test_map.items():
+            self.assertIsInstance(pkg_name, str)
+            self.assertIsInstance(tests, dict)
+            # Each test should map to a module path string
+            for test_name, module_path in tests.items():
+                self.assertIsInstance(test_name, str)
+                self.assertIsInstance(module_path, str)
+                # Module path should contain dots and package name
+                self.assertIn(".", module_path)
 
     def test_test_map_populated(self):
         """Test that test_map is populated in __init__"""
         plugin = ListPlugin()
         self.assertIsNotNone(plugin.test_map)
         self.assertIsInstance(plugin.test_map, dict)
+
+    def test_find_test_method_exists(self):
+        """Test that _find_test helper method exists"""
+        plugin = ListPlugin()
+        self.assertTrue(hasattr(plugin, '_find_test'))
+        self.assertTrue(callable(plugin._find_test))
+
+    def test_find_test_searches_all_packages(self):
+        """Test that _find_test can find tests across all packages"""
+        plugin = ListPlugin()
+
+        # Get first test from first package
+        if plugin.test_map:
+            first_pkg = list(plugin.test_map.keys())[0]
+            first_test = list(plugin.test_map[first_pkg].keys())[0]
+
+            # Should find it
+            result = plugin._find_test(first_test)
+            self.assertIsNotNone(result)
+            self.assertEqual(result, plugin.test_map[first_pkg][first_test])
+
+    def test_find_test_returns_none_for_unknown(self):
+        """Test that _find_test returns None for unknown test"""
+        plugin = ListPlugin()
+        result = plugin._find_test("nonexistent_test_xyz_123")
+        self.assertIsNone(result)
 
     def test_get_name(self):
         """Test get_name returns 'list'"""
@@ -43,25 +88,22 @@ class TestListPluginExtension(unittest.TestCase):
             os.makedirs(ext_tests_dir)
             ext_test_file = os.path.join(ext_tests_dir, "test_extension.py")
             with open(ext_test_file, "w") as f:
-                f.write("# Extension test file")
+                f.write("def test_dummy(): pass")
 
             # Mock ExtensionConfig to return extension test directory
             mock_config = mock_config_class.return_value
-            mock_config.get_tests_dirs.return_value = [ext_tests_dir]
+            # get_tests_dirs now returns tuples (module_path, abs_path)
+            mock_config.get_tests_dirs.return_value = [("test_extension_pkg.ext_tests", ext_tests_dir)]
+            mock_config.get_package_name.return_value = "test_extension_pkg"
 
-            # Mock discover to include the extension directory
-            with patch.object(ListPlugin, "discover_tests") as mock_discover:
-                # Return a test_map that includes both core and extension tests
-                mock_discover.return_value = {
-                    "test_core": "tests.test_core",
-                    "test_extension": "ext_tests.test_extension",
-                }
-
+            # Patch discover_tests to use mock config
+            with patch("cvs.cli_plugins.list_plugin.ExtensionConfig", return_value=mock_config):
                 plugin = ListPlugin()
                 test_map = plugin.discover_tests()
 
-                # Should have tests from both core and extension
-                self.assertGreaterEqual(len(test_map), 1)
+                # Should have tests from extension
+                self.assertIn("test_extension_pkg", test_map)
+                self.assertIn("test_extension", test_map["test_extension_pkg"])
 
     @patch("cvs.cli_plugins.list_plugin.ExtensionConfig")
     def test_extension_tests_dirs_appended(self, mock_config_class):
@@ -72,28 +114,22 @@ class TestListPluginExtension(unittest.TestCase):
             os.makedirs(ext_tests_dir)
             ext_test_file = os.path.join(ext_tests_dir, "test_ext.py")
             with open(ext_test_file, "w") as f:
-                f.write("# Extension test")
+                f.write("def test_dummy(): pass")
 
             # Mock ExtensionConfig
             mock_config = mock_config_class.return_value
-            mock_config.get_tests_dirs.return_value = [ext_tests_dir]
+            # get_tests_dirs now returns tuples (module_path, abs_path)
+            mock_config.get_tests_dirs.return_value = [("ext_pkg.ext_tests", ext_tests_dir)]
+            mock_config.get_package_name.return_value = "ext_pkg"
 
-            # Patch discover_tests to capture the tests_dirs list
             with patch("cvs.cli_plugins.list_plugin.ExtensionConfig", return_value=mock_config):
-                # Access discover_tests and check behavior
                 ListPlugin()
-                # The plugin should have called get_tests_dirs
+                # The plugin should have called get_tests_dirs and get_package_name
                 mock_config.get_tests_dirs.assert_called()
-
-    def test_get_test_file_helper(self):
-        """Test get_test_file helper method"""
-        plugin = ListPlugin()
-
-        # This test checks that the method exists and is callable
-        self.assertTrue(callable(plugin.get_test_file))
+                mock_config.get_package_name.assert_called()
 
     def test_list_tests_no_argument(self):
-        """Test list_tests method with no argument lists all tests"""
+        """Test list_tests method with no argument lists all tests by package"""
         plugin = ListPlugin()
 
         # Should not raise an error
@@ -102,8 +138,11 @@ class TestListPluginExtension(unittest.TestCase):
             import io
             from contextlib import redirect_stdout
 
-            with redirect_stdout(io.StringIO()):
+            with redirect_stdout(io.StringIO()) as buf:
                 plugin.list_tests()
+                output = buf.getvalue()
+                # Should contain package names
+                self.assertTrue(len(output) > 0 or len(plugin.test_map) == 0)
         except SystemExit:
             # list_tests may call sys.exit, which is okay
             pass
@@ -112,9 +151,10 @@ class TestListPluginExtension(unittest.TestCase):
         """Test list_tests method with specific test name"""
         plugin = ListPlugin()
 
+        # Get first test from test_map
         if plugin.test_map:
-            # Get the first test from test_map
-            first_test = list(plugin.test_map.keys())[0]
+            first_pkg = list(plugin.test_map.keys())[0]
+            first_test = list(plugin.test_map[first_pkg].keys())[0]
 
             try:
                 import io
@@ -122,6 +162,7 @@ class TestListPluginExtension(unittest.TestCase):
 
                 with redirect_stdout(io.StringIO()):
                     plugin.list_tests(first_test)
+                    # May have output or may not depending on test file content
             except (SystemExit, Exception):
                 # Expected if test discovery fails in isolated environment
                 pass
