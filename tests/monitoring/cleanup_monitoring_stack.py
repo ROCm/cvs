@@ -75,7 +75,7 @@ def test_stop_exporters_on_all_nodes(cluster_dict, all_nodes):
             phdl = Pssh(logger, [node_ip], user=username, pkey=priv_key_file)
             for cmd in commands:
                 phdl.exec(cmd)
-    logger.info("✓ Exporters cleaned up on all nodes")
+    logger.info(" Exporters cleaned up on all nodes")
 
 @pytest.mark.cleanup
 def test_stop_prometheus_on_management(cluster_dict, management_node):
@@ -91,7 +91,7 @@ def test_stop_prometheus_on_management(cluster_dict, management_node):
         phdl = Pssh(logger, [management_node], user=username, pkey=cluster_dict.get('priv_key_file'))
         for cmd in commands:
             phdl.exec(cmd)
-    logger.info("✓ Prometheus stopped")
+    logger.info(" Prometheus stopped")
 
 @pytest.mark.cleanup
 def test_stop_grafana_on_management(cluster_dict, management_node):
@@ -102,7 +102,7 @@ def test_stop_grafana_on_management(cluster_dict, management_node):
     if is_localhost(management_node):
         for cmd in commands:
             subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    logger.info("✓ Grafana stopped")
+    logger.info(" Grafana stopped")
 
 @pytest.mark.cleanup
 def test_remove_prometheus_config(cluster_dict, management_node):
