@@ -24,6 +24,7 @@ The component public repository is located at `https://github.com/ROCm/cvs <http
   .. grid-item-card:: How to
 
     * :doc:`Run tests <how-to/run-cvs-tests>`
+    * :doc:`Execute arbitrary commands on cluster nodes <how-to/execute-cluster-commands>`
     * :doc:`Monitor the health of GPU clusters <how-to/run-cluster>`
 
   .. grid-item-card:: Reference
