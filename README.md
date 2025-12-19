@@ -218,26 +218,46 @@ cvs run rccl_multinode_cvs test_collect_hostinfo test_basic_ring --cluster_file 
 cvs run rccl_multinode_cvs --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json
 ```
 
-## Command Line Options
+## Executing Commands on Cluster Nodes
 
-The `cvs run` command supports common pytest options directly:
+CVS provides an `exec` command to execute arbitrary shell commands on all nodes in the cluster simultaneously using parallel SSH.
 
-- `--html`: Create HTML report file at given path
-- `--self-contained-html`: Create a self-contained HTML file containing all the HTML report
-- `--log-file`: Path to file for logging output (default: /tmp/cvs/test.log)
-- `--log-level`: Level of messages to catch/display (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-- `--capture`: Per-test capturing method for stdout/stderr (no, tee-sys, tee-merged, fd, sys)
+```bash
+# Execute a command on all nodes using --cluster_file
+cvs exec --cmd "hostname" --cluster_file /tmp/cvs/input/cluster_file/cluster.json
 
-All other pytest arguments are supported and passed transparently to pytest. For the complete list, run: `pytest --help`
+# Execute a command using CLUSTER_FILE environment variable
+CLUSTER_FILE=/tmp/cvs/input/cluster_file/cluster.json cvs exec --cmd "hostname"
 
-## CVS-Specific Options
+# Execute other commands
+cvs exec --cmd "uptime" --cluster_file /tmp/cvs/input/cluster_file/cluster.json
+cvs exec --cmd "nvidia-smi --query-gpu=name,memory.total --format=csv" --cluster_file /tmp/cvs/input/cluster_file/cluster.json
+```
 
-**Note**: The `--cluster_file` and `--config_file` arguments are **mandatory** for running tests. These files contain the cluster configuration and test-specific settings required by CVS tests.
-
-- `--cluster_file`: Path to cluster configuration JSON file (required)
-- `--config_file`: Path to test configuration JSON file (required)
+The `exec` command supports the following options:
+- `--cmd`: The shell command to execute on all nodes (required)
+- `--cluster_file`: Path to cluster configuration JSON file (optional if CLUSTER_FILE env var is set)
 
 ## Command Help
+
+```bash
+$ cvs --help
+usage: cvs [-h] [--version] {run,list,generate,monitor,exec} ...
+
+Cluster Validation Suite (CVS)
+
+positional arguments:
+  {run,list,generate,monitor,exec}
+    run                 Run a specific test (wrapper over pytest)
+    list                List available tests
+    generate            Generate configuration files or templates
+    monitor             Run cluster monitoring scripts
+    exec                Execute a command on all nodes in the cluster
+
+options:
+  -h, --help            show this help message and exit
+  --version             show program's version number and exit
+```
 
 ```bash
 $ cvs run --help
@@ -272,7 +292,26 @@ options:
                         Per-test capturing method for stdout/stderr
 ```
 
-## Example with full options
+## CVS Run Command Options
+
+The `cvs run` command supports common pytest options directly:
+
+- `--html`: Create HTML report file at given path
+- `--self-contained-html`: Create a self-contained HTML file containing all the HTML report
+- `--log-file`: Path to file for logging output (default: /tmp/cvs/test.log)
+- `--log-level`: Level of messages to catch/display (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- `--capture`: Per-test capturing method for stdout/stderr (no, tee-sys, tee-merged, fd, sys)
+
+All other pytest arguments are supported and passed transparently to pytest. For the complete list, run: `pytest --help`
+
+## CVS-Specific Options
+
+**Note**: The `--cluster_file` and `--config_file` arguments are **mandatory** for running tests. These files contain the cluster configuration and test-specific settings required by CVS tests.
+
+- `--cluster_file`: Path to cluster configuration JSON file (required)
+- `--config_file`: Path to test configuration JSON file (required)
+
+## Complete CVS Run Example
 
 ```bash
 cvs run rccl_multinode_cvs \
