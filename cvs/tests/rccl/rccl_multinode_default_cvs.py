@@ -298,60 +298,62 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         shdl.exec(f"bash {config_dict['env_source_script']}")
 
     # Execute the RCCL cluster test with parameters sourced from config_dict
-    result_dict = rccl_lib.rccl_cluster_test_default(
-        phdl,
-        shdl,
-        test_name=rccl_collective,
-        cluster_node_list=node_list,
-        vpc_node_list=vpc_node_list,
-        user_name=cluster_dict['username'],
-        ib_hca_list=config_dict['ib_hca_list'],
-        net_dev_list=config_dict['net_dev_list'],
-        oob_port=config_dict['oob_port'],
-        no_of_global_ranks=config_dict['no_of_global_ranks'],
-        rocm_path_var=config_dict['rocm_path_var'],
-        mpi_dir=config_dict['mpi_dir'],
-        mpi_path_var=config_dict['mpi_path_var'],
-        rccl_dir=config_dict['rccl_dir'],
-        rccl_path_var=config_dict['rccl_path_var'],
-        rccl_tests_dir=config_dict['rccl_tests_dir'],
-        nccl_socket_ifname=config_dict.get('nccl_socket_ifname', ''),
-        gid_index=config_dict['gid_index'],
-        start_msg_size=config_dict['start_msg_size'],
-        end_msg_size=config_dict['end_msg_size'],
-        step_function=config_dict['step_function'],
-        threads_per_gpu=config_dict['threads_per_gpu'],
-        warmup_iterations=config_dict['warmup_iterations'],
-        no_of_iterations=config_dict['no_of_iterations'],
-        check_iteration_count=config_dict['check_iteration_count'],
-        debug_level=config_dict['debug_level'],
-        rccl_result_file=config_dict['rccl_result_file'],
-        no_of_local_ranks=config_dict['no_of_local_ranks'],
-        ucx_tls=config_dict['ucx_tls'],
-        nccl_net_plugin=config_dict['nccl_net_plugin'],
-        user_key_file=cluster_dict['priv_key_file'],
-        verify_bus_bw=config_dict['verify_bus_bw'],
-        verify_bw_dip=config_dict['verify_bw_dip'],
-        verify_lat_dip=config_dict['verify_lat_dip'],
-        exp_results_dict=config_dict['results'],
-        env_source_script=config_dict['env_source_script'],
-    )
+    try:
+        result_dict = rccl_lib.rccl_cluster_test_default(
+            phdl,
+            shdl,
+            test_name=rccl_collective,
+            cluster_node_list=node_list,
+            vpc_node_list=vpc_node_list,
+            user_name=cluster_dict['username'],
+            ib_hca_list=config_dict['ib_hca_list'],
+            net_dev_list=config_dict['net_dev_list'],
+            oob_port=config_dict['oob_port'],
+            no_of_global_ranks=config_dict['no_of_global_ranks'],
+            rocm_path_var=config_dict['rocm_path_var'],
+            mpi_dir=config_dict['mpi_dir'],
+            mpi_path_var=config_dict['mpi_path_var'],
+            rccl_dir=config_dict['rccl_dir'],
+            rccl_path_var=config_dict['rccl_path_var'],
+            rccl_tests_dir=config_dict['rccl_tests_dir'],
+            nccl_socket_ifname=config_dict.get('nccl_socket_ifname', ''),
+            gid_index=config_dict['gid_index'],
+            start_msg_size=config_dict['start_msg_size'],
+            end_msg_size=config_dict['end_msg_size'],
+            step_function=config_dict['step_function'],
+            no_of_cycles=config_dict.get('no_of_cycles', 1),
+            threads_per_gpu=config_dict['threads_per_gpu'],
+            warmup_iterations=config_dict['warmup_iterations'],
+            no_of_iterations=config_dict['no_of_iterations'],
+            check_iteration_count=config_dict['check_iteration_count'],
+            debug_level=config_dict['debug_level'],
+            rccl_result_file=config_dict['rccl_result_file'],
+            no_of_local_ranks=config_dict['no_of_local_ranks'],
+            ucx_tls=config_dict['ucx_tls'],
+            nccl_net_plugin=config_dict['nccl_net_plugin'],
+            user_key_file=cluster_dict['priv_key_file'],
+            verify_bus_bw=config_dict['verify_bus_bw'],
+            verify_bw_dip=config_dict['verify_bw_dip'],
+            verify_lat_dip=config_dict['verify_lat_dip'],
+            exp_results_dict=config_dict['results'],
+            env_source_script=config_dict['env_source_script'],
+        )
 
-    print(result_dict)
-    key_name = f'{rccl_collective}'
-    rccl_res_dict[key_name] = result_dict
+        print(result_dict)
+        key_name = f'{rccl_collective}'
+        rccl_res_dict[key_name] = result_dict
 
-    # Scan dmesg between start and end times cluster wide ..
-    # end_time = phdl.exec('date')
-    phdl.exec(f'sudo echo "End of Test {rccl_collective}" | sudo tee /dev/kmsg')
+        # Scan dmesg between start and end times cluster wide ..
+        # end_time = phdl.exec('date')
+        phdl.exec(f'sudo echo "End of Test {rccl_collective}" | sudo tee /dev/kmsg')
 
-    end_time = phdl.exec('date +"%a %b %e %H:%M"')
-    verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
-
-    # Get new cluster snapshot and compare ..
-    if re.search('True', config_dict['cluster_snapshot_debug'], re.I):
-        cluster_dict_after = create_cluster_metrics_snapshot(phdl)
-        compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
+        end_time = phdl.exec('date +"%a %b %e %H:%M"')
+        verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
+    finally:
+        # Get new cluster snapshot and compare ..
+        if re.search('True', config_dict['cluster_snapshot_debug'], re.I):
+            cluster_dict_after = create_cluster_metrics_snapshot(phdl)
+            compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 
     # Update test results based on any failures ..
     update_test_result()

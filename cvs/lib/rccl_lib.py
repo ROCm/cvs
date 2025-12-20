@@ -883,6 +883,7 @@ def rccl_single_node_test(
     verify_lat_dip=True,
     exp_results_dict=None,
     env_source_script=None,
+    mpi_path_var=None,
 ):
     """
     Run an Single Node RCCL collective test
@@ -915,6 +916,8 @@ def rccl_single_node_test(
     # Environment variables exported into the mpirun context
     PATH = f'{ROCM_PATH}/bin:$PATH'
     LD_LIBRARY_PATH = f'{RCCL_PATH}:{ROCM_PATH}/lib:$LD_LIBRARY_PATH'
+    if mpi_path_var:
+        LD_LIBRARY_PATH = f'{mpi_path_var}/lib:{LD_LIBRARY_PATH}'
 
     # Build the test command
     # Wrap test binary in shell to source env script if provided
