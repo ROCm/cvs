@@ -1,9 +1,7 @@
 [project]
 name = "cvs"
-version = "0.1.0"
 description = "Cluster validation suite"
 readme = "README.md"
-requires-python = ">=3.14"
 dependencies = [
     "docker>=7.0.0",
     "openpyxl>=3.1.5",
@@ -20,4 +18,27 @@ dependencies = [
     "scp>=0.15.0",
     "tracelens",
     "xlsxwriter>=3.2.9",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+[tool.ruff.lint]
+ignore = [
+    "F403",  # Star imports (`from module import *`) used in test files
+    "F405",  # Undefined names from star imports
+    "E722",  # Bare `except` clauses
+]
+exclude = [
+    "docs/**",          # Documentation
+    "dist/**",          # Build artifacts
+    "*.egg-info/**",    # Package info
+    "__pycache__/**",   # Cache files
+    ".git/**",          # Git files
+    "test_venv/**",     # Virtual environments
+    "ruff_venv/**",     # Ruff environment
 ]

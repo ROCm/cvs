@@ -11,13 +11,9 @@ pandas
 
 # Docker SDK for container orchestration
 docker >= 7.0.0
-
-# TraceLens for PyTorch trace analysis (optional but recommended)
-# Install manually: pip install git+https://github.com/AMD-AGI/TraceLens.git
-# Required for accurate per-iteration metrics. Without it, basic parsing is used.
-# tracelens  # Uncomment after manual installation
-
 # YAML config parsing
 pyyaml >= 6.0
 orjson
 openpyxl
+netmiko
+jinja2

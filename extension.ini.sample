@@ -1,0 +1,69 @@
+# CVS Extension Configuration File (extension.ini)
+# 
+# This file allows extension packages to configure how they extend the core CVS package.
+# 
+# USAGE PATTERNS:
+# 
+# Pattern 1: Extension package wraps CVS as a submodule
+#   - Place this file at the root of your extension package
+#   - During your extension's setup.py installation, copy extension.ini into the cvs package
+#     Example: shutil.copy("extension.ini", "cvs/cvs/extension.ini")
+#   - This allows cvs to auto-discover extension configuration during runtime
+#   - CVS will look for extension.ini in site-packages/cvs/extension.ini
+#
+# Pattern 2: Standalone extension package(s)
+#   - Set CVS_EXTENSION_PKG_NAMES environment variable to your extension package name(s)
+#     Example: export CVS_EXTENSION_PKG_NAMES=my_cvs_extension
+#     Example: export CVS_EXTENSION_PKG_NAMES=ext1,ext2,ext3
+#   - CVS will look for extension.ini in each package in order (comma-separated list)
+#   - If CVS_EXTENSION_PKG_NAMES is not set, CVS looks in site-packages/cvs/extension.ini
+#   - Useful when you don't bundle cvs as a submodule
+#
+# CONFIGURATION OPTIONS:
+# - package_name: Name of the extension package (shown alongside cvs in version output)
+# - tests_dirs: Comma-separated paths to test directories (relative to site-packages root)
+# - input_dirs: Comma-separated paths to input/config directories (relative to site-packages root)
+
+[extensions]
+
+# Override the package name reported by 'cvs --version'
+# When set, the extension package version will be displayed alongside the cvs version.
+# Example: cvs --version will output:
+#   cvs: 1.0.0
+#   cvs_extension: 1.0.0
+package_name = cvs_extension
+
+# Comma-separated list of test directories to include in test discovery
+# Paths are relative to site-packages root.
+# CVS will automatically discover and include tests from these directories
+# in addition to the core cvs/tests directory.
+# Multiple directories can be specified by separating them with commas.
+#
+# IMPORTANT: For Pattern 1 (submodule wrapper), use relative paths from site-packages:
+#   tests_dirs = cvs_extension/tests
+# This resolves to: <site-packages>/cvs_extension/tests
+#
+# Example with multiple directories:
+#   tests_dirs = cvs_extension/tests1,cvs_extension/tests2
+tests_dirs = cvs_extension/tests
+
+# Comma-separated list of input/config directories for 'cvs copy-config'
+# Paths are relative to site-packages root.
+# The copy-config plugin will search for config files in:
+#   - input_dir/config_file/
+#   - input_dir/cluster_file/
+#   - input_dir/ (if it contains json files)
+# This allows extensions to provide additional configuration files alongside
+# the core CVS configuration files.
+#
+# IMPORTANT: For Pattern 1 (submodule wrapper), use relative paths from site-packages:
+#   input_dirs = cvs_extension/input
+# This resolves to: <site-packages>/cvs_extension/input
+#
+# Example with multiple directories:
+#   input_dirs = cvs_extension/input1,cvs_extension/input2
+input_dirs = cvs_extension/input1,cvs_extension/input2
+
+# Example with multiple directories:
+#   input_dirs = cvs_extension/input,other_extension/configs
+input_dirs = cvs_extension/input
