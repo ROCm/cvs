@@ -8,9 +8,11 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from threading import Lock
+from typing import Any, Dict, List, Optional, Tuple
 import time
 import logging
 
@@ -70,6 +72,16 @@ class AortaEnvironment:
         }
 
 
+@dataclass
+class AortaAnalysisConfig:
+    """Configuration for post-benchmark analysis using Aorta's built-in scripts."""
+    enable_tracelens: bool = True
+    enable_gemm_analysis: bool = False
+    tracelens_script: str = "scripts/tracelens_single_config/run_tracelens_single_config.sh"
+    gemm_script: str = "scripts/gemm_analysis/run_tracelens_analysis.sh"
+    skip_if_exists: bool = False
+
+
 @dataclass 
 class AortaConfig(RunConfig):
     """
@@ -97,6 +109,9 @@ class AortaConfig(RunConfig):
     
     # Environment configuration
     environment: AortaEnvironment = field(default_factory=AortaEnvironment)
+    
+    # Analysis configuration (use Aorta's built-in scripts)
+    analysis: AortaAnalysisConfig = field(default_factory=AortaAnalysisConfig)
     
     # Scripts to execute (relative to container mount)
     build_script: str = "scripts/build_rccl.sh"
@@ -135,8 +150,10 @@ class AortaRunner(BaseRunner):
         super().__init__(config)
         self.config: AortaConfig = config  # Type hint for IDE
         
+        # Thread-safe storage for parallel deployment
         self._docker_clients: Dict[str, docker.DockerClient] = {}
         self._containers: Dict[str, Container] = {}
+        self._lock = Lock()  # Protects _docker_clients and _containers
     
     def validate_config(self) -> List[str]:
         """Validate Aorta-specific configuration."""
@@ -161,7 +178,7 @@ class AortaRunner(BaseRunner):
     
     def _connect_docker(self, node: str) -> docker.DockerClient:
         """
-        Connect to Docker daemon on a node via SSH.
+        Connect to Docker daemon on a node via SSH (thread-safe).
         
         Args:
             node: Hostname or IP of the node
@@ -169,6 +186,7 @@ class AortaRunner(BaseRunner):
         Returns:
             Docker client connected to the node
         """
+        # Check cache first (read without lock for performance)
         if node in self._docker_clients:
             return self._docker_clients[node]
         
@@ -185,7 +203,9 @@ class AortaRunner(BaseRunner):
         client.ping()
         log.info(f"Connected to Docker on {node}")
         
-        self._docker_clients[node] = client
+        # Thread-safe update of cache
+        with self._lock:
+            self._docker_clients[node] = client
         return client
     
     def _cleanup_existing_containers(self, client: docker.DockerClient, node: str):
@@ -358,52 +378,106 @@ class AortaRunner(BaseRunner):
         
         return exit_code, '\n'.join(output_lines)
     
+    def _setup_single_node(self, node: str) -> Tuple[str, bool, Optional[str]]:
+        """
+        Set up a single node (thread-safe helper for parallel deployment).
+        
+        Args:
+            node: Hostname or IP of the node
+            
+        Returns:
+            Tuple of (node, success, error_message)
+        """
+        try:
+            # Connect to Docker
+            client = self._connect_docker(node)
+            
+            # Cleanup any existing containers
+            self._cleanup_existing_containers(client, node)
+            
+            # Pull image (will skip if already present)
+            log.info(f"Pulling image {self.config.docker.image} on {node}...")
+            try:
+                client.images.pull(self.config.docker.image)
+            except docker.errors.ImageNotFound:
+                return (node, False, f"Image not found: {self.config.docker.image}")
+            
+            # Launch container
+            container = self._launch_container(client, node)
+            
+            # Thread-safe update of shared state
+            with self._lock:
+                self._containers[node] = container
+            
+            # Build RCCL if not skipping
+            if not self.config.skip_rccl_build:
+                log.info(f"Building RCCL on {node}...")
+                build_cmd = f"bash {self.config.container_mount_path}/{self.config.build_script}"
+                exit_code, output = self._exec_in_container(container, build_cmd)
+                
+                if exit_code != 0:
+                    return (node, False, f"RCCL build failed:\n{output}")
+                
+                log.info(f"RCCL build completed on {node}")
+            
+            return (node, True, None)
+            
+        except Exception as e:
+            return (node, False, str(e))
+    
     def setup(self) -> bool:
         """
-        Set up Aorta environment.
+        Set up Aorta environment using parallel deployment.
         
+        Uses ThreadPoolExecutor for concurrent setup across all nodes:
         1. Connect to Docker daemon on each node
         2. Pull image if needed
         3. Launch container with GPU access and aorta bind mount
         4. Build RCCL from source (optional)
+        
+        This significantly reduces setup time for multi-node clusters.
         """
-        try:
-            for node in self.config.nodes:
-                # Connect to Docker
-                client = self._connect_docker(node)
-                
-                # Cleanup any existing containers
-                self._cleanup_existing_containers(client, node)
-                
-                # Pull image (will skip if already present)
-                log.info(f"Pulling image {self.config.docker.image} on {node}...")
-                try:
-                    client.images.pull(self.config.docker.image)
-                except docker.errors.ImageNotFound:
-                    log.error(f"Image not found: {self.config.docker.image}")
-                    return False
-                
-                # Launch container
-                container = self._launch_container(client, node)
-                self._containers[node] = container
-                
-                # Build RCCL if not skipping
-                if not self.config.skip_rccl_build:
-                    log.info(f"Building RCCL on {node}...")
-                    build_cmd = f"bash {self.config.container_mount_path}/{self.config.build_script}"
-                    exit_code, output = self._exec_in_container(container, build_cmd)
-                    
-                    if exit_code != 0:
-                        log.error(f"RCCL build failed on {node}:\n{output}")
-                        return False
-                    
-                    log.info(f"RCCL build completed on {node}")
-            
-            return True
-            
-        except Exception as e:
-            log.exception(f"Setup failed: {e}")
+        nodes = self.config.nodes
+        num_nodes = len(nodes)
+        
+        if num_nodes == 0:
+            log.error("No nodes configured")
             return False
+        
+        log.info(f"Setting up {num_nodes} node(s) in parallel...")
+        
+        # Use ThreadPoolExecutor for parallel deployment
+        # Max workers = number of nodes (each node gets its own thread)
+        with ThreadPoolExecutor(max_workers=num_nodes) as executor:
+            # Submit all setup tasks
+            futures = {
+                executor.submit(self._setup_single_node, node): node
+                for node in nodes
+            }
+            
+            # Collect results as they complete
+            failed_nodes = []
+            for future in as_completed(futures):
+                node = futures[future]
+                try:
+                    node_name, success, error_msg = future.result()
+                    if not success:
+                        log.error(f"Setup failed on {node_name}: {error_msg}")
+                        failed_nodes.append((node_name, error_msg))
+                    else:
+                        log.info(f"Setup completed on {node_name}")
+                except Exception as e:
+                    log.exception(f"Unexpected error setting up {node}: {e}")
+                    failed_nodes.append((node, str(e)))
+        
+        if failed_nodes:
+            log.error(f"Setup failed on {len(failed_nodes)}/{num_nodes} nodes:")
+            for node, error in failed_nodes:
+                log.error(f"  {node}: {error}")
+            return False
+        
+        log.info(f"All {num_nodes} node(s) set up successfully")
+        return True
     
     def run(self, **kwargs) -> RunResult:
         """
@@ -478,14 +552,22 @@ class AortaRunner(BaseRunner):
             nch = self.config.environment.NCCL_MAX_NCHANNELS
             compute_ch = 256 - nch
             output_dir_name = f"nodes1_rccl_develop_commsCh{nch}_computeCh{compute_ch}"
+            output_dir = self.config.aorta_path / output_dir_name
             
             # Collect artifact paths
-            trace_dir = self.config.aorta_path / output_dir_name / "torch_profiler"
+            trace_dir = output_dir / "torch_profiler"
             if trace_dir.exists():
                 artifacts["torch_traces"] = trace_dir
                 log.info(f"Found trace artifacts at {trace_dir}")
             else:
                 log.warning(f"Expected trace directory not found: {trace_dir}")
+            
+            # Run post-benchmark analysis using Aorta's scripts
+            if self.config.analysis.enable_tracelens and trace_dir.exists():
+                analysis_result = self._run_tracelens_analysis(container, output_dir)
+                if analysis_result:
+                    artifacts["tracelens_analysis"] = analysis_result
+                    log.info(f"TraceLens analysis completed: {analysis_result}")
             
             # Also collect training logs
             log_file = self.config.aorta_path / f"training_{node}.log"
@@ -519,6 +601,75 @@ class AortaRunner(BaseRunner):
                 exit_codes=exit_codes,
                 error_message=str(e)
             )
+    
+    def _run_tracelens_analysis(
+        self, 
+        container: Container, 
+        output_dir: Path
+    ) -> Optional[Path]:
+        """
+        Run Aorta's built-in TraceLens analysis on the collected traces.
+        
+        This uses Aorta's `run_tracelens_single_config.sh` script which:
+        1. Runs TraceLens on each rank's trace (individual reports)
+        2. Generates collective multi-rank reports
+        3. Creates gpu_timeline_summary_mean.xlsx with aggregated metrics
+        
+        Args:
+            container: Docker container to run analysis in
+            output_dir: Directory containing torch_profiler traces
+            
+        Returns:
+            Path to tracelens_analysis directory, or None if analysis failed
+        """
+        analysis_dir = output_dir / "tracelens_analysis"
+        
+        # Skip if already exists and skip_if_exists is set
+        if self.config.analysis.skip_if_exists and analysis_dir.exists():
+            log.info(f"TraceLens analysis already exists, skipping: {analysis_dir}")
+            return analysis_dir
+        
+        # Build the analysis command
+        # The script path is relative to container mount
+        script_path = f"{self.config.container_mount_path}/{self.config.analysis.tracelens_script}"
+        trace_path = str(output_dir).replace(
+            str(self.config.aorta_path), 
+            self.config.container_mount_path
+        )
+        
+        analysis_cmd = f"bash {script_path} {trace_path}"
+        
+        log.info(f"Running TraceLens analysis: {analysis_cmd}")
+        log.info("This may take a few minutes...")
+        
+        try:
+            exit_code, output = self._exec_in_container(
+                container, 
+                analysis_cmd,
+                stream=True,  # Stream for real-time feedback
+            )
+            
+            if exit_code != 0:
+                log.error(f"TraceLens analysis failed with exit code {exit_code}")
+                log.error(f"Output: {output[:2000]}...")  # Truncate for readability
+                return None
+            
+            # Verify the output was created
+            if analysis_dir.exists():
+                # Log what was generated
+                individual_count = len(list(analysis_dir.glob("individual_reports/*.xlsx")))
+                collective_count = len(list(analysis_dir.glob("collective_reports/*.xlsx")))
+                log.info("TraceLens analysis complete:")
+                log.info(f"  Individual reports: {individual_count}")
+                log.info(f"  Collective reports: {collective_count}")
+                return analysis_dir
+            else:
+                log.warning(f"TraceLens analysis completed but output not found: {analysis_dir}")
+                return None
+                
+        except Exception as e:
+            log.exception(f"TraceLens analysis failed: {e}")
+            return None
     
     def teardown(self) -> bool:
         """

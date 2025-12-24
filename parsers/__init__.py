@@ -27,9 +27,14 @@ from parsers.schemas import (
     AortaRcclConfigFile,
     AortaEnvironmentConfigFile,
     AortaExpectedResultsConfigFile,
+    AortaAnalysisConfigFile,
     # Validation helper
     validate_config_file,
 )
+
+# Parser implementations
+from parsers.aorta_report import AortaReportParser
+from parsers.tracelens import TraceLensParser
 
 __all__ = [
     # Result schemas
@@ -45,7 +50,11 @@ __all__ = [
     "AortaRcclConfigFile",
     "AortaEnvironmentConfigFile",
     "AortaExpectedResultsConfigFile",
+    "AortaAnalysisConfigFile",
     # Validation helper
     "validate_config_file",
+    # Parser implementations
+    "AortaReportParser",
+    "TraceLensParser",
 ]
 

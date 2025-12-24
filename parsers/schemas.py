@@ -409,6 +409,32 @@ class AortaExpectedResultsConfigFile(BaseModel):
     )
 
 
+class AortaAnalysisConfigFile(BaseModel):
+    """Schema for analysis section in aorta_benchmark.yaml."""
+    model_config = ConfigDict(extra="forbid")
+    
+    enable_tracelens: bool = Field(
+        default=True,
+        description="Run Aorta's TraceLens analysis after benchmark"
+    )
+    enable_gemm_analysis: bool = Field(
+        default=False,
+        description="Run Aorta's GEMM analysis (for sweep experiments)"
+    )
+    tracelens_script: str = Field(
+        default="scripts/tracelens_single_config/run_tracelens_single_config.sh",
+        description="Path to TraceLens analysis script relative to aorta_path"
+    )
+    gemm_script: str = Field(
+        default="scripts/gemm_analysis/run_tracelens_analysis.sh",
+        description="Path to GEMM analysis script relative to aorta_path"
+    )
+    skip_if_exists: bool = Field(
+        default=False,
+        description="Skip analysis if tracelens_analysis directory already exists"
+    )
+
+
 class AortaBenchmarkConfigFile(BaseModel):
     """
     Schema for the entire aorta_benchmark.yaml configuration file.
@@ -494,6 +520,12 @@ class AortaBenchmarkConfigFile(BaseModel):
         description="Expected results for validation"
     )
     
+    # Analysis configuration (use Aorta's built-in analysis scripts)
+    analysis: AortaAnalysisConfigFile = Field(
+        default_factory=AortaAnalysisConfigFile,
+        description="Post-benchmark analysis configuration"
+    )
+    
     @field_validator('aorta_path')
     @classmethod
     def validate_aorta_path_not_placeholder(cls, v: str) -> str:
@@ -530,6 +562,17 @@ class AortaBenchmarkConfigFile(BaseModel):
             exp_script = aorta / self.experiment_script
             if not exp_script.exists():
                 errors.append(f"experiment_script does not exist: {exp_script}")
+            
+            # Check analysis scripts if enabled
+            if self.analysis.enable_tracelens:
+                tracelens_script = aorta / self.analysis.tracelens_script
+                if not tracelens_script.exists():
+                    errors.append(f"tracelens_script does not exist: {tracelens_script}")
+            
+            if self.analysis.enable_gemm_analysis:
+                gemm_script = aorta / self.analysis.gemm_script
+                if not gemm_script.exists():
+                    errors.append(f"gemm_script does not exist: {gemm_script}")
         
         return errors
 

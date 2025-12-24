@@ -22,7 +22,7 @@ docker:
 
 # RCCL build configuration
 rccl:
-  clone_url: https://github.com/ROCmSoftwarePlatform/rccl.git
+  clone_url: https://github.com/rocm/rccl.git
   branch: develop
   build_path: /mnt/rccl
 
@@ -53,6 +53,14 @@ gpus_per_node: 8
 # Execution settings
 timeout_seconds: 10800  # 3 hours
 skip_rccl_build: false  # Set to true if RCCL is already built
+
+# Post-benchmark analysis using Aorta's built-in scripts
+# This replaces direct TraceLens parsing - Aorta's scripts are more sophisticated
+analysis:
+  enable_tracelens: true  # Run TraceLens analysis after benchmark
+  enable_gemm_analysis: false  # GEMM analysis (for sweep experiments)
+  tracelens_script: scripts/tracelens_single_config/run_tracelens_single_config.sh
+  skip_if_exists: false  # Re-run analysis even if results exist
 
 # Expected results for validation
 # NOTE: TraceLens reports TOTAL trace time for all profiled iterations (profiling.active=10)
