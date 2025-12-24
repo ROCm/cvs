@@ -7,9 +7,6 @@ class MonitorPlugin(SubcommandPlugin):
     def get_name(self):
         return "monitor"
 
-    def get_order(self):
-        return 999  # High number to ensure monitor appears last
-
     def get_parser(self, subparsers):
         parser = subparsers.add_parser("monitor", help="Run cluster monitoring scripts")
         parser.add_argument("monitor", nargs="?", help="Name of the monitor to use")

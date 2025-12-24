@@ -74,12 +74,12 @@ Run Commands:
         capture,
         extra_pytest_args,
     ):
-        if test_name not in self.test_map:
+        module_path = self._find_test(test_name)
+        if not module_path:
             print(f"Error: Unknown test '{test_name}'")
             print("Use 'cvs list' to see available tests.")
             sys.exit(1)
 
-        module_path = self.test_map[test_name]
         test_file = self.get_test_file(module_path)
 
         # Build pytest arguments

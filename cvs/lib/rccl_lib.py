@@ -16,7 +16,7 @@ import pandas as pd
 from pydantic import ValidationError
 
 from cvs.lib import globals
-from cvs.models.rccl import RcclTests, RcclTestsAggregated, RcclTestsMultinodeRaw
+from cvs.schema.rccl import RcclTests, RcclTestsAggregated, RcclTestsMultinodeRaw
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 

@@ -1,4 +1,4 @@
-"""CVS Pydantic models for data validation."""
+"""CVS Pydantic schemas for data validation."""
 
 from .rccl import (
     RcclTests,

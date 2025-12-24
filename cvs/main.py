@@ -6,21 +6,50 @@ import importlib
 import pkgutil
 import importlib.metadata as metadata
 from cvs.cli_plugins.base import SubcommandPlugin
+from cvs.extension import ExtensionConfig
 
 PLUGIN_DIR = os.path.join(os.path.dirname(__file__), "cli_plugins")
 
 
 def get_version():
-    """Get the version from importlib.metadata or fallback to version.txt file."""
+    """Get the version of cvs and any extension packages.
+
+    Returns version information for:
+    - cvs package (always)
+    - extension package if configured via extension.ini or CVS_EXTENSION_PKG_NAMES
+
+    Supports extension packages that override package name and version file location
+    via extension.ini configuration.
+    """
+    config = ExtensionConfig()
+    versions = []
+
+    # Get cvs version
     try:
-        return metadata.version("cvs")
+        cvs_version = metadata.version("cvs")
     except metadata.PackageNotFoundError:
-        # Fallback for development
-        version_file = os.path.join(os.path.dirname(__file__), "..", "version.txt")
+        # Try version.txt in the package directory first (for installed packages)
+        version_file = os.path.join(os.path.dirname(__file__), "version.txt")
+        if not os.path.exists(version_file):
+            # Fall back to parent directory (for development/source installations)
+            version_file = os.path.join(os.path.dirname(__file__), "..", "version.txt")
         if os.path.exists(version_file):
             with open(version_file) as f:
-                return f.read().strip()
-    return "unknown"
+                cvs_version = f.read().strip()
+        else:
+            cvs_version = "unknown"
+    versions.append(f"cvs: {cvs_version}")
+
+    # Get extension version if configured
+    extension_pkg_name = config.get_package_name()
+    if extension_pkg_name != "cvs":
+        try:
+            ext_version = metadata.version(extension_pkg_name)
+        except metadata.PackageNotFoundError:
+            ext_version = "unknown"
+        versions.append(f"{extension_pkg_name}: {ext_version}")
+
+    return "\n".join(versions)
 
 
 def discover_plugins():
