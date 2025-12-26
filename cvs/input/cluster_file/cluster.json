@@ -1,24 +1,35 @@
 {
     "_user_comment": " user-id will be resolved to current username in runtime. You can also change to your user-id here.",
-    "username": "speriasw",
+    "username": "{user-id}",
 
     "_key_comment": " Change <priv_key_file> to your private key if it is different.",
-    "priv_key_file": "/home/speriasw/.ssh/id_rsa",
+    "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
 
     "_node_comment": " Change to your node IPs. The Public IPs of the nodes will be the keys of the node_dict",
     "_vpc_comment": "If your cluster has a dedicated VPC IP that is reachable from other nodes in the cluster, set it to that (or) else set the same as the main host IP/Name",
 
     "head_node_dict":
     {
-        "mgmt_ip": "10.7.41.246"
+        "mgmt_ip": "{xx.xx.xx.xx|hostname}"
     },
     "node_dict":
     {
-        "10.7.40.118":
+        "{xx.xx.xx.xx|hostname}":
         {
             "bmc_ip": "NA",
-            "vpc_ip": "10.7.40.118"
+            "vpc_ip": "{xx.xx.xx.xx|hostname}"
+        },
+        "{xx.xx.xx.xx|hostname}":
+        {
+            "bmc_ip": "NA",
+            "vpc_ip": "{xx.xx.xx.xx|hostname}"
+        },
+        "{xx.xx.xx.xx|hostname}":
+        {
+            "bmc_ip": "NA",
+            "vpc_ip": "{xx.xx.xx.xx|hostname}"
         }
+
     }
 
 

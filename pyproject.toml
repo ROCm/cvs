@@ -1,25 +1,3 @@
-[project]
-name = "cvs"
-description = "Cluster validation suite"
-readme = "README.md"
-dependencies = [
-    "docker>=7.0.0",
-    "openpyxl>=3.1.5",
-    "orjson>=3.11.4",
-    "pandas>=2.3.3",
-    "parallel-ssh>=2.16.0.post1",
-    "paramiko>=4.0.0",
-    "pydantic>=2.0",
-    "pytest>=9.0.1",
-    "pytest-dependency>=0.6.0",
-    "pytest-html>=4.1.1",
-    "pytest-repeat>=0.9.4",
-    "pyyaml>=6.0",
-    "scp>=0.15.0",
-    "tracelens",
-    "xlsxwriter>=3.2.9",
-]
-
 [tool.ruff]
 line-length = 120
 target-version = "py39"
