@@ -286,8 +286,7 @@ def convert_to_graph_dict(result_dict):
 def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[RcclTestsAggregated]:
     """
     Aggregate multiple rccl-test results into mean/std per (name, size, type, inPlace)
-    Args: 
-        validated_results: List[RcclTests] - list of validated rccl-test results
+    Args: validated_results: List[RcclTests] - list of validated rccl-test results
     Returns: List[RcclTestsAggregated] - list of aggregated rccl-test results with mean/std per (name, size, type, inPlace)
     """
     if not validated_results:
@@ -409,8 +408,8 @@ def rccl_cluster_test(
     nccl_pxn_disable=1,
     nccl_net_plugin=None,
     user_password=None,
-    min_channels=None,
-    max_channels=None,
+    min_channels=64,
+    max_channels=64,
     data_type="float",
     user_key_file=None,
     verify_bus_bw=False,
@@ -501,10 +500,6 @@ def rccl_cluster_test(
 
     # Build optional NCCL_SOCKET_IFNAME parameter
     nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
-    
-    # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
-    nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
-    nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
 
     cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
@@ -523,8 +518,8 @@ def rccl_cluster_test(
         --mca oob_tcp_if_include {oob_port}\
         -x UCX_NET_DEVICES={net_dev_list} \
         -x NCCL_ALGO={nccl_algo} \
-        {nccl_min_channels_param} \
-        {nccl_max_channels_param} \
+        -x NCCL_MIN_NCHANNELS={min_channels} \
+        -x NCCL_MAX_NCHANNELS={max_channels} \
         -x NCCL_IB_QPS_PER_CONNECTION={qp_count} \
         -x IB_RX_QUEUE_LEN={ib_rx_queue_len} \
         -x UCX_TLS={ucx_tls} \
@@ -624,8 +619,8 @@ def rccl_cluster_test_default(
     nccl_pxn_disable=1,
     nccl_net_plugin=None,
     user_password=None,
-    min_channels=None,
-    max_channels=None,
+    min_channels=64,
+    max_channels=64,
     user_key_file=None,
     verify_bus_bw=False,
     verify_bw_dip=True,
@@ -655,8 +650,6 @@ def rccl_cluster_test_default(
       threads_per_gpu, warmup_iterations, check_iteration_count: Test execution tuning.
       data_types: List of data types to test (e.g., ['float', 'half']).
       no_of_cycles: Number of cycles to run for each data type.
-      min_channels: Minimum NCCL channels (NCCL_MIN_NCHANNELS).
-      max_channels: Maximum NCCL channels (NCCL_MAX_NCHANNELS).
       debug_level: NCCL_DEBUG level.
       rccl_result_file: Path where the RCCL test writes JSON results (-Z json -x file).
       verify_bus_bw: If 'True' (string), compare bus BW vs expected thresholds.
@@ -667,10 +660,6 @@ def rccl_cluster_test_default(
     """
 
     print(f'Starting RCCL Test ..........................................{test_name}')
-    if min_channels is not None and max_channels is not None:
-        log.info(f'Using NCCL channels: min={min_channels}, max={max_channels}')
-    else:
-        log.info('Using RCCL default NCCL channel configuration')
     # Base ROCm path as provided by caller
     ROCM_PATH = rocm_path_var
 
@@ -713,11 +702,9 @@ def rccl_cluster_test_default(
     all_raw_results = []
     all_validated_results = []
     base_path = Path(rccl_result_file)
-    
     for dtype in data_types:
         # Create a unique result file for each data type
         dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
-        log.info(f'Running {test_name} with dtype={dtype}')
 
         # Wrap test binary in shell to source env script if provided
         test_cmd = (
@@ -734,27 +721,25 @@ def rccl_cluster_test_default(
 
         # Build optional NCCL_SOCKET_IFNAME parameter
         nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
-        
-        # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
-        nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
-        nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
 
         cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
         -x NCCL_DEBUG={debug_level} \
         --bind-to numa \
+        -x NCCL_IB_GID_INDEX={gid_index} \
+        -x UCX_UNIFIED_MODE=y \
+        -x NCCL_IB_PCI_RELAXED_ORDERING=1 \
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
+        -x NCCL_IB_HCA={ib_hca_list} \
         {nccl_socket_param} \
-        -mca pml ^ucx \
-        -mca osc ^ucx \
-        -mca btl ^openib \
-        -mca oob_tcp_if_exclude docker,lo,usb0 \
-        -mca btl_tcp_if_exclude docker,lo,usb0 \
-        -x HSA_NO_SCRATCH_RECLAIM=1 \
-        {nccl_min_channels_param} \
-        {nccl_max_channels_param} \
+        --mca btl ^vader,openib \
+        --mca btl_tcp_if_include {oob_port}\
+        --mca oob_tcp_if_include {oob_port}\
+        -x UCX_NET_DEVICES={net_dev_list} \
+        -x UCX_TLS={ucx_tls} \
+        -x NCCL_NET_PLUGIN={nccl_net_plugin} \
         {test_cmd}
         '''
 
@@ -773,7 +758,6 @@ def rccl_cluster_test_default(
         # Read the JSON results emitted by the RCCL test binary
         result_dict_out = shdl.exec(f'cat {dtype_result_file}')
         dtype_result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
-        
         # Validate the results against the schema fail if results are not valid
         try:
             validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
