@@ -408,8 +408,8 @@ def rccl_cluster_test(
     nccl_pxn_disable=1,
     nccl_net_plugin=None,
     user_password=None,
-    min_channels=64,
-    max_channels=64,
+    min_channels=None,
+    max_channels=None,
     data_type="float",
     user_key_file=None,
     verify_bus_bw=False,
@@ -500,6 +500,10 @@ def rccl_cluster_test(
 
     # Build optional NCCL_SOCKET_IFNAME parameter
     nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
+    
+    # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
+    nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
+    nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
 
     cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
@@ -518,8 +522,8 @@ def rccl_cluster_test(
         --mca oob_tcp_if_include {oob_port}\
         -x UCX_NET_DEVICES={net_dev_list} \
         -x NCCL_ALGO={nccl_algo} \
-        -x NCCL_MIN_NCHANNELS={min_channels} \
-        -x NCCL_MAX_NCHANNELS={max_channels} \
+        {nccl_min_channels_param} \
+        {nccl_max_channels_param} \
         -x NCCL_IB_QPS_PER_CONNECTION={qp_count} \
         -x IB_RX_QUEUE_LEN={ib_rx_queue_len} \
         -x UCX_TLS={ucx_tls} \
@@ -619,8 +623,8 @@ def rccl_cluster_test_default(
     nccl_pxn_disable=1,
     nccl_net_plugin=None,
     user_password=None,
-    min_channels=64,
-    max_channels=64,
+    min_channels=None,
+    max_channels=None,
     user_key_file=None,
     verify_bus_bw=False,
     verify_bw_dip=True,
@@ -650,6 +654,8 @@ def rccl_cluster_test_default(
       threads_per_gpu, warmup_iterations, check_iteration_count: Test execution tuning.
       data_types: List of data types to test (e.g., ['float', 'half']).
       no_of_cycles: Number of cycles to run for each data type.
+      min_channels: Minimum NCCL channels (NCCL_MIN_NCHANNELS).
+      max_channels: Maximum NCCL channels (NCCL_MAX_NCHANNELS).
       debug_level: NCCL_DEBUG level.
       rccl_result_file: Path where the RCCL test writes JSON results (-Z json -x file).
       verify_bus_bw: If 'True' (string), compare bus BW vs expected thresholds.
@@ -660,6 +666,10 @@ def rccl_cluster_test_default(
     """
 
     print(f'Starting RCCL Test ..........................................{test_name}')
+    if min_channels is not None and max_channels is not None:
+        log.info(f'Using NCCL channels: min={min_channels}, max={max_channels}')
+    else:
+        log.info('Using RCCL default NCCL channel configuration')
     # Base ROCm path as provided by caller
     ROCM_PATH = rocm_path_var
 
@@ -702,9 +712,11 @@ def rccl_cluster_test_default(
     all_raw_results = []
     all_validated_results = []
     base_path = Path(rccl_result_file)
+    
     for dtype in data_types:
         # Create a unique result file for each data type
         dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
+        log.info(f'Running {test_name} with dtype={dtype}')
 
         # Wrap test binary in shell to source env script if provided
         test_cmd = (
@@ -721,6 +733,10 @@ def rccl_cluster_test_default(
 
         # Build optional NCCL_SOCKET_IFNAME parameter
         nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
+        
+        # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
+        nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
+        nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
 
         cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
@@ -740,6 +756,8 @@ def rccl_cluster_test_default(
         -x UCX_NET_DEVICES={net_dev_list} \
         -x UCX_TLS={ucx_tls} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
+        {nccl_min_channels_param} \
+        {nccl_max_channels_param} \
         {test_cmd}
         '''
 

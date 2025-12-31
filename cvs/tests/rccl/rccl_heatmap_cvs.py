@@ -282,13 +282,14 @@ def pytest_generate_tests(metafunc):
 
     gpu_count_list = rccl.get("gpu_count_list", ["8", "16"])
     data_type_list = rccl.get("data_type_list", ["float", "bfloat16"])
-    all_keys = ("rccl_collective", "gpu_count", "data_type")
+    channel_config_list = rccl.get("channel_config_list", ["default"])
+    all_keys = ("rccl_collective", "gpu_count", "data_type", "channel_config")
 
     active = [k for k in all_keys if k in metafunc.fixturenames]
     if not active:
         return
 
-    domain_by_key = {"rccl_collective": rccl_collective_list, "data_type": data_type_list, "gpu_count": gpu_count_list}
+    domain_by_key = {"rccl_collective": rccl_collective_list, "data_type": data_type_list, "gpu_count": gpu_count_list, "channel_config": channel_config_list}
     domains = [domain_by_key[k] for k in active]
 
     params, ids = [], []
@@ -301,7 +302,7 @@ def pytest_generate_tests(metafunc):
     metafunc.parametrize(",".join(active), params, ids=ids)
 
 
-def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_type):
+def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_type, channel_config):
     """
     Execute RCCL performance test across the cluster with given parameters.
 
@@ -309,6 +310,9 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
       - cluster_dict: cluster topology and credentials (expects node_dict, username, etc.).
       - config_dict: test configuration with RCCL/MPI paths, env, and thresholds.
       - rccl_collective: which RCCL collective test to run (e.g., "all_reduce_perf").
+      - gpu_count: number of GPUs to use for the test.
+      - data_type: data type for the test (e.g., "float", "bfloat16").
+      - channel_config: NCCL channel configuration in "min-max" format (e.g., "64-64").
 
     Flow:
       1) Capture start time to bound dmesg checks later.
@@ -329,6 +333,21 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
 
     node_list = full_node_list[:no_of_nodes]
     no_of_global_ranks = int(gpu_count)
+    
+    # Parse channel configuration (format: "min-max" or "default")
+    if str(channel_config).lower() == "default":
+        # Use RCCL defaults (don't specify channel parameters)
+        min_channels = None
+        max_channels = None
+    elif "-" in str(channel_config):
+        # Parse "min-max" format
+        min_channels, max_channels = channel_config.split("-")
+        min_channels = int(min_channels)
+        max_channels = int(max_channels)
+    else:
+        # Single value - use for both min and max
+        min_channels = int(channel_config)
+        max_channels = int(channel_config)
 
     # Build list of nodes and their VPC IPs (used by the RCCL test)
     # make sure the VPC IPs are reachable from all nodes for passwordless ssh
@@ -385,7 +404,7 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
         no_of_iterations=config_dict['no_of_iterations'],
         check_iteration_count=config_dict['check_iteration_count'],
         debug_level=config_dict['debug_level'],
-        rccl_result_file=f"/tmp/rccl_{rccl_collective}_{data_type}_{gpu_count}.json",
+        rccl_result_file=f"/tmp/rccl_{rccl_collective}_{data_type}_{gpu_count}_ch{channel_config}.json",
         no_of_local_ranks=config_dict['no_of_local_ranks'],
         ucx_tls=config_dict['ucx_tls'],
         nccl_net_plugin=config_dict['nccl_net_plugin'],
@@ -395,10 +414,12 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
         verify_lat_dip=config_dict['verify_lat_dip'],
         nic_model=config_dict['nic_model'],
         exp_results_dict=config_dict['expected_results'],
+        min_channels=min_channels,
+        max_channels=max_channels,
     )
 
     print(result_dict)
-    key_name = f'{rccl_collective}-{data_type}-{gpu_count}'
+    key_name = f'{rccl_collective}-{data_type}-{gpu_count}-ch{channel_config}'
     rccl_res_dict[key_name] = result_dict
 
     # Scan dmesg between start and end times cluster wide ..
