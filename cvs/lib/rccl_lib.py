@@ -500,7 +500,7 @@ def rccl_cluster_test(
 
     # Build optional NCCL_SOCKET_IFNAME parameter
     nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
-    
+
     # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
     nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
     nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
@@ -712,7 +712,7 @@ def rccl_cluster_test_default(
     all_raw_results = []
     all_validated_results = []
     base_path = Path(rccl_result_file)
-    
+
     for dtype in data_types:
         # Create a unique result file for each data type
         dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
@@ -733,7 +733,7 @@ def rccl_cluster_test_default(
 
         # Build optional NCCL_SOCKET_IFNAME parameter
         nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
-        
+
         # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
         nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
         nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
