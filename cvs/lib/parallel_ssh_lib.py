@@ -105,7 +105,7 @@ class Pssh:
         for host in self.unreachable_hosts:
             cmd_output[host] = cmd_output.get(host, "") + "\nABORT: Host Unreachable Error"
 
-    def _process_output(self, output, cmd=None, cmd_list=None):
+    def _process_output(self, output, cmd=None, cmd_list=None, print_console=True):
         """
         Helper method to process output from run_command, collect results, and handle pruning.
         Returns cmd_output dictionary.
@@ -123,10 +123,12 @@ class Pssh:
                 print(cmd)
             try:
                 for line in item.stdout or []:
-                    print(line)
+                    if print_console:
+                        print(line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
                 for line in item.stderr or []:
-                    print(line)
+                    if print_console:
+                        print(line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
             except Timeout as e:
                 if not self.stop_on_errors:
@@ -160,7 +162,7 @@ class Pssh:
                 if item.exception is None:
                     item.exception = e
 
-    def exec(self, cmd, timeout=None):
+    def exec(self, cmd, timeout=None, print_console=True):
         """
         Returns a dictionary of host as key and command output as values
         """
@@ -169,10 +171,10 @@ class Pssh:
             output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors)
         else:
             output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
-        cmd_output = self._process_output(output, cmd=cmd)
+        cmd_output = self._process_output(output, cmd=cmd, print_console=print_console)
         return cmd_output
 
-    def exec_cmd_list(self, cmd_list, timeout=None):
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
         """
         Run different commands on different hosts compared to to exec
         which runs the same command on all hosts.
@@ -185,7 +187,7 @@ class Pssh:
             output = self.client.run_command(
                 '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors
             )
-        cmd_output = self._process_output(output, cmd_list=cmd_list)
+        cmd_output = self._process_output(output, cmd_list=cmd_list, print_console=print_console)
         return cmd_output
 
     def scp_file(self, local_file, remote_file, recurse=False):
