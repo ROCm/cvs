@@ -289,7 +289,12 @@ def pytest_generate_tests(metafunc):
     if not active:
         return
 
-    domain_by_key = {"rccl_collective": rccl_collective_list, "data_type": data_type_list, "gpu_count": gpu_count_list, "channel_config": channel_config_list}
+    domain_by_key = {
+        "rccl_collective": rccl_collective_list,
+        "data_type": data_type_list,
+        "gpu_count": gpu_count_list,
+        "channel_config": channel_config_list,
+    }
     domains = [domain_by_key[k] for k in active]
 
     params, ids = [], []
@@ -333,7 +338,7 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
 
     node_list = full_node_list[:no_of_nodes]
     no_of_global_ranks = int(gpu_count)
-    
+
     # Parse channel configuration (format: "min-max" or "default")
     if str(channel_config).lower() == "default":
         # Use RCCL defaults (don't specify channel parameters)
