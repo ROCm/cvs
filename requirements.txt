@@ -8,5 +8,12 @@ pytest-dependency
 xlsxwriter
 pydantic >= 2.0
 pandas
+
+# Docker SDK for container orchestration
+docker >= 7.0.0
+# YAML config parsing
+pyyaml >= 6.0
+orjson
+openpyxl
 netmiko
 jinja2

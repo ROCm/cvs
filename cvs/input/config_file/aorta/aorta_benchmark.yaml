@@ -1,0 +1,65 @@
+# Aorta Benchmark Configuration
+# 
+# This configuration controls the CVS benchmark runner for Aorta distributed training.
+
+# Path to Aorta repository on host (will be bind-mounted into container)
+aorta_path: <changeme>
+
+# Container mount point for aorta_path
+container_mount_path: /mnt
+
+# Aorta base config file (relative to aorta_path)
+base_config: config/distributed.yaml
+
+# Docker container settings
+docker:
+  image: jeffdaily/pytorch:torchrec-dlrm-complete
+  container_name: aorta-benchmark
+  shm_size: 17G
+  network_mode: host
+  privileged: true
+
+# RCCL build configuration
+rccl:
+  clone_url: https://github.com/rocm/rccl.git
+  branch: develop
+  build_path: /mnt/rccl
+
+# NCCL/RCCL environment variables
+environment:
+  NCCL_MAX_NCHANNELS: 112
+  NCCL_MAX_P2P_NCHANNELS: 112
+  NCCL_DEBUG: VERSION
+  TORCH_NCCL_HIGH_PRIORITY: 1
+  OMP_NUM_THREADS: 1
+  RCCL_MSCCL_ENABLE: 0
+
+# Aorta training config overrides (passed via --override)
+training_overrides:
+  training.max_steps: 100
+  profiling.active: 10
+
+# Scripts to execute (relative to container_mount_path)
+build_script: scripts/build_rccl.sh
+experiment_script: scripts/rccl_exp.sh
+
+# Hardware configuration
+gpus_per_node: 8
+
+# Execution settings
+timeout_seconds: 10800
+skip_rccl_build: false
+
+# Post-benchmark analysis
+analysis:
+  enable_tracelens: false
+  enable_gemm_analysis: false
+  tracelens_script: scripts/tracelens_single_config/run_tracelens_single_config.sh
+  skip_if_exists: false
+
+# Expected results for validation
+expected_results:
+  max_avg_iteration_ms: 7000
+  min_compute_ratio: 0.8
+  min_overlap_ratio: 0.0
+  max_time_variance_ratio: 0.2

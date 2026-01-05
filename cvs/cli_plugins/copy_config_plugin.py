@@ -81,7 +81,7 @@ Copy-Config Commands:
         result = []
         for dirpath, dirs, files in os.walk(base):
             for f in files:
-                if f.endswith(".json"):
+                if f.endswith(".json") or f.endswith(".yaml"):
                     rel = os.path.relpath(os.path.join(dirpath, f), root)
                     result.append(rel)
         return sorted(result)

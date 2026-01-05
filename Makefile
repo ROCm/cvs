@@ -34,6 +34,8 @@ build: clean_build fmt-check lint
 venv: clean_venv
 	@echo "Creating virtual environment..."
 	$(PYTHON) -m venv $(VENV_DIR)
+	@echo "Upgrading pip..."
+	$(PIP) install --upgrade pip
 
 ruff-venv:
 	@if [ ! -d $(RUFF_VENV_DIR) ]; then \
