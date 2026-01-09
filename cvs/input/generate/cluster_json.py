@@ -24,11 +24,18 @@ class ClusterJsonGenerator(GeneratorPlugin):
 
     def get_parser(self):
         parser = argparse.ArgumentParser(description="Generate cluster json file")
-        parser.add_argument(
+
+        # Create mutually exclusive group for input sources
+        input_group = parser.add_mutually_exclusive_group(required=True)
+        input_group.add_argument(
             "--input_hosts_file",
-            required=True,
-            help="Input file with host IPs - one address per line, supports ranges like 192.168.1.10-20",
+            help="Input file with host IPs - one address per line, supports ranges like 192.168.1.10-20 and hostname[1-10]",
         )
+        input_group.add_argument(
+            "--hosts",
+            help="Comma-separated list of host IPs or hostnames, supports ranges like 192.168.1.10-20 and hostname[1-10]",
+        )
+
         parser.add_argument("--output_json_file", required=True, help="Output cluster file in JSON format")
         parser.add_argument("--username", required=True, help="Username to ssh to the hosts")
         parser.add_argument("--key_file", required=True, help="keyfile with private keys")
@@ -69,9 +76,56 @@ class ClusterJsonGenerator(GeneratorPlugin):
 
         return ips
 
+    def expand_hostname_bracket_range(self, hostname):
+        """
+        Expand hostname range with bracket notation like 'mia1-p01-g[24-30]' to list of hostnames
+        """
+        import re
+
+        # Check for bracket notation pattern
+        match = re.match(r'^(.+)\[(\d+)-(\d+)\](.*)$', hostname)
+        if not match:
+            return [hostname]
+
+        prefix = match.group(1)
+        start_num = int(match.group(2))
+        end_num = int(match.group(3))
+        suffix = match.group(4)
+
+        # Determine padding (preserve leading zeros)
+        start_str = match.group(2)
+        padding = len(start_str) if start_str.startswith('0') else 0
+
+        # Generate hostname list
+        hostnames = []
+        for num in range(start_num, end_num + 1):
+            if padding > 0:
+                num_str = str(num).zfill(padding)
+            else:
+                num_str = str(num)
+            hostname = f"{prefix}{num_str}{suffix}"
+            hostnames.append(hostname)
+
+        return hostnames
+
+    def expand_range(self, entry):
+        """
+        Unified method to expand both IP ranges and hostname bracket ranges
+        """
+        # First try bracket notation (hostname ranges)
+        if '[' in entry:
+            return self.expand_hostname_bracket_range(entry)
+
+        # Then try IP range notation
+        if '-' in entry and '.' in entry:
+            return self.expand_ip_range(entry)
+
+        # No range, return as-is
+        return [entry]
+
     def parse_hosts_file(self, filename):
         """
-        Parse hosts file with support for IP ranges
+        Parse hosts file with support for IP ranges and hostname bracket ranges
         """
         node_list = []
         with open(filename, "r") as f:
@@ -79,9 +133,24 @@ class ClusterJsonGenerator(GeneratorPlugin):
                 line = line.strip()
                 if not line or line.startswith('#'):
                     continue
-                # Expand ranges
-                expanded = self.expand_ip_range(line)
+                # Expand ranges (both IP and hostname bracket notation)
+                expanded = self.expand_range(line)
                 node_list.extend(expanded)
+
+        return node_list
+
+    def parse_hosts_list(self, hosts_string):
+        """
+        Parse comma-separated hosts string with support for IP ranges and hostname bracket ranges
+        """
+        node_list = []
+        hosts = [h.strip() for h in hosts_string.split(',')]
+        for host in hosts:
+            if not host:
+                continue
+            # Expand ranges (both IP and hostname bracket notation)
+            expanded = self.expand_range(host)
+            node_list.extend(expanded)
 
         return node_list
 
@@ -100,10 +169,14 @@ class ClusterJsonGenerator(GeneratorPlugin):
         return head_node_ip
 
     def generate(self, args):
-        # Parse hosts file with range expansion
-        node_list = self.parse_hosts_file(args.input_hosts_file)
+        # Parse hosts from file or comma-separated list
+        if args.input_hosts_file:
+            node_list = self.parse_hosts_file(args.input_hosts_file)
+        else:
+            node_list = self.parse_hosts_list(args.hosts)
+
         if not node_list:
-            print("ERROR !! No hosts in the file, this is mandatory, aborting !!")
+            print("ERROR !! No hosts provided, this is mandatory, aborting !!")
             sys.exit(1)
 
         # Determine head node

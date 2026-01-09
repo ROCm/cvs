@@ -142,7 +142,9 @@ cvs copy-config --all --output /tmp/cvs/input/ --force
 
 Alternatively, you can generate the cluster JSON file for N number of hosts using the `cvs generate cluster_json` command. This is useful for automatically creating cluster configurations from a list of host IPs.
 
-First, create a hosts file with one IP address per line (supports IP ranges like `192.168.1.10-20`, comments with `#`, and blank lines are ignored):
+#### Option 1: Using a hosts file
+
+Create a hosts file with one IP address or hostname per line (supports IP ranges like `192.168.1.10-20` and bracket notation like `hostname[1-10]`, comments with `#`, and blank lines are ignored):
 
 ```bash
 # Example hosts file: /tmp/hosts.txt
@@ -151,6 +153,9 @@ First, create a hosts file with one IP address per line (supports IP ranges like
 
 # IP range (expands to 192.168.1.11 through 192.168.1.15)
 192.168.1.11-15
+
+# Hostname bracket range (expands to server01 through server05)
+server[01-05]
 
 # Another single host
 192.168.1.20
@@ -164,12 +169,34 @@ Then generate the cluster JSON:
 cvs generate cluster_json --input_hosts_file /tmp/hosts.txt --output_json_file /tmp/cvs/input/cluster_file/cluster.json --username myuser --key_file ~/.ssh/id_rsa --head_node 192.168.1.10
 ```
 
+#### Option 2: Using comma-separated hosts
+
+Alternatively, specify hosts directly on the command line using comma-separated values:
+
+```bash
+cvs generate cluster_json --hosts "192.168.1.10,192.168.1.11-15,server[01-05]" --output_json_file /tmp/cvs/input/cluster_file/cluster.json --username myuser --key_file ~/.ssh/id_rsa --head_node 192.168.1.10
+```
+
+Example with mixed formats:
+
+```bash
+cvs generate cluster_json --hosts "mia1-p01-g20,mia1-p01-g22,mia1-p01-g[24-30],192.168.1.10-12" --output_json_file cluster.json --username myuser --key_file ~/.ssh/id_rsa
+```
+
 **Command options**:
-- `--input_hosts_file`: Path to file with host IPs (one per line, supports ranges)
+- `--input_hosts_file`: Path to file with host IPs/hostnames (one per line, supports ranges and bracket notation)
+- `--hosts`: Comma-separated list of host IPs/hostnames (supports ranges and bracket notation)
+  - **Note**: Use either `--input_hosts_file` OR `--hosts`, not both
 - `--output_json_file`: Path to output cluster JSON file
 - `--username`: SSH username for the hosts
 - `--key_file`: Path to SSH private key file
 - `--head_node`: IP of the head node (optional, defaults to first host in the list; can be different from the hosts in the file)
+
+**Supported range formats**:
+- IP ranges: `192.168.1.10-20` expands to `192.168.1.10` through `192.168.1.20`
+- Hostname bracket ranges: `server[1-5]` expands to `server1` through `server5`
+- Leading zeros preserved: `node[01-10]` expands to `node01` through `node10`
+- With suffix: `node[1-3].example.com` expands to `node1.example.com`, `node2.example.com`, `node3.example.com`
 
 ### Modify Configuration Files
 
