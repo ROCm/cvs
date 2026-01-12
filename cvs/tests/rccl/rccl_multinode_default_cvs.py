@@ -127,6 +127,7 @@ def phdl(cluster_dict):
         - node_dict: dict of node_name -> node_details
         - username: SSH username
         - priv_key_file: path to SSH private key
+        - port: SSH port (optional, defaults to 22)
 
     Returns:
       Pssh: Handle configured for all nodes (for broadcast/parallel operations).
@@ -139,7 +140,8 @@ def phdl(cluster_dict):
     """
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    port = int(cluster_dict.get('port', 22))
+    phdl = Pssh(log, node_list, port=port, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
 
 
@@ -161,7 +163,8 @@ def shdl(cluster_dict):
     """
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    port = int(cluster_dict.get('port', 22))
+    shdl = Pssh(log, [head_node], port=port, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return shdl
 
 
@@ -305,6 +308,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         cluster_node_list=node_list,
         vpc_node_list=vpc_node_list,
         user_name=cluster_dict['username'],
+        port=cluster_dict.get('port', 22),
         ib_hca_list=config_dict['ib_hca_list'],
         net_dev_list=config_dict['net_dev_list'],
         oob_port=config_dict['oob_port'],

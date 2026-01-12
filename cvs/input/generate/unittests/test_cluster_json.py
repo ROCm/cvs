@@ -120,6 +120,7 @@ class TestClusterJsonGenerator(unittest.TestCase):
         args.output_json_file = "/fake/output.json"
         args.username = "testuser"
         args.key_file = "/fake/key"
+        args.port = "22"
         args.head_node = "192.168.1.10"
 
         with patch.object(self.generator, 'parse_hosts_file', return_value=["192.168.1.10", "192.168.1.11"]):
@@ -131,6 +132,7 @@ class TestClusterJsonGenerator(unittest.TestCase):
                     mock_template.render.assert_called_once_with(
                         username="testuser",
                         priv_key_file="/fake/key",
+                        port="22",
                         head_node_ip="192.168.1.10",
                         node_list=["192.168.1.10", "192.168.1.11"],
                     )

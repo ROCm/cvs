@@ -417,6 +417,7 @@ def rccl_cluster_test(
     verify_lat_dip=True,
     exp_results_dict=None,
     env_source_script=None,
+    port=22,
 ):
     """
     Run an RCCL collective test across a cluster via MPI and verify results.
@@ -505,8 +506,15 @@ def rccl_cluster_test(
     nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
     nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
 
+    # Build SSH agent with custom port and key
+    ssh_key = f'-i {user_key_file}' if user_key_file else ''
+    ssh_agent = (
+        f'--mca plm_rsh_agent "ssh {ssh_key} -p {port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -q"'
+    )
+
     cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
+        {ssh_agent} \
         --hostfile /tmp/rccl_hosts_file.txt \
         -x NCCL_DEBUG={debug_level} \
         --bind-to numa \
@@ -632,6 +640,7 @@ def rccl_cluster_test_default(
     nic_model='ainic',
     exp_results_dict=None,
     env_source_script=None,
+    port=22,
 ):
     """
     Run an RCCL collective test across a cluster via MPI and verify results.
@@ -738,8 +747,13 @@ def rccl_cluster_test_default(
         nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
         nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
 
+        # Build SSH agent with custom port and key
+        ssh_key = f'-i {user_key_file}' if user_key_file else ''
+        ssh_agent = f'--mca plm_rsh_agent "ssh {ssh_key} -p {port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -q"'
+
         cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
+        {ssh_agent} \
         --hostfile /tmp/rccl_hosts_file.txt \
         -x NCCL_DEBUG={debug_level} \
         --bind-to numa \

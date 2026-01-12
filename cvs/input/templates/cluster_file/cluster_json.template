@@ -1,6 +1,7 @@
 {
   "username": "{{ username }}",
   "priv_key_file": "{{ priv_key_file }}",
+  "port": "{{ port }}",
   "head_node_dict": {
     "mgmt_ip": "{{ head_node_ip }}"
   },

@@ -5,6 +5,9 @@
     "_key_comment": " Change <priv_key_file> to your private key if it is different.",
     "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
 
+    "_port_comment": " SSH port for connecting to cluster nodes (default: 22).",
+    "port": "22",
+
     "_node_comment": " Change to your node IPs. The Public IPs of the nodes will be the keys of the node_dict",
     "_vpc_comment": "If your cluster has a dedicated VPC IP that is reachable from other nodes in the cluster, set it to that (or) else set the same as the main host IP/Name",
 

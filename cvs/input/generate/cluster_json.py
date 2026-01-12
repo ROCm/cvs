@@ -32,6 +32,7 @@ class ClusterJsonGenerator(GeneratorPlugin):
         parser.add_argument("--output_json_file", required=True, help="Output cluster file in JSON format")
         parser.add_argument("--username", required=True, help="Username to ssh to the hosts")
         parser.add_argument("--key_file", required=True, help="keyfile with private keys")
+        parser.add_argument("--port", default="22", help="SSH port for connecting to hosts (default: 22)")
         parser.add_argument("--head_node", help="IP of the head node (optional, defaults to first host in hosts file)")
         return parser
 
@@ -116,7 +117,11 @@ class ClusterJsonGenerator(GeneratorPlugin):
 
         template = Template(template_content)
         rendered_json = template.render(
-            username=args.username, priv_key_file=args.key_file, head_node_ip=head_node_ip, node_list=node_list
+            username=args.username,
+            priv_key_file=args.key_file,
+            port=args.port,
+            head_node_ip=head_node_ip,
+            node_list=node_list,
         )
 
         # Write the rendered JSON to output file

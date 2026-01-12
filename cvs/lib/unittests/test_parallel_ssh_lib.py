@@ -705,6 +705,22 @@ class TestPsshExecCmdList(unittest.TestCase):
             self.assertNotIn("host1 error line1", call)
             self.assertNotIn("host2 output line1", call)
 
+    def test_default_port_passed_to_client(self):
+        # Test that the default port 22 is passed to ParallelSSHClient
+        self.mock_pssh_client.assert_called_once_with(
+            self.host_list, port=22, user="user", password="pass", keepalive_seconds=30
+        )
+
+    def test_custom_port_passed_to_client(self):
+        # Test that a custom port is passed to ParallelSSHClient
+        with patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient") as mock_pssh:
+            mock_client = MagicMock()
+            mock_pssh.return_value = mock_client
+            Pssh("log", self.host_list, port=2222, user="user", password="pass")
+            mock_pssh.assert_called_once_with(
+                self.host_list, port=2222, user="user", password="pass", keepalive_seconds=30
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

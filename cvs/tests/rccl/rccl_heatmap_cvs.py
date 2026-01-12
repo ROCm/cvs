@@ -142,7 +142,13 @@ def phdl(cluster_dict):
     """
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    phdl = Pssh(
+        log,
+        node_list,
+        port=int(cluster_dict.get('port', 22)),
+        user=cluster_dict['username'],
+        pkey=cluster_dict['priv_key_file'],
+    )
     return phdl
 
 
@@ -164,7 +170,13 @@ def shdl(cluster_dict):
     """
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    shdl = Pssh(
+        log,
+        [head_node],
+        port=int(cluster_dict.get('port', 22)),
+        user=cluster_dict['username'],
+        pkey=cluster_dict['priv_key_file'],
+    )
     return shdl
 
 
@@ -387,6 +399,7 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
         cluster_node_list=node_list,
         vpc_node_list=vpc_node_list,
         user_name=cluster_dict['username'],
+        port=cluster_dict.get('port', 22),
         ib_hca_list=config_dict['ib_hca_list'],
         net_dev_list=config_dict['net_dev_list'],
         oob_port=config_dict['oob_port'],

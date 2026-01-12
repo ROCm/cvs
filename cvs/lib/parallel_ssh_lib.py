@@ -27,7 +27,15 @@ class Pssh:
     """
 
     def __init__(
-        self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True
+        self,
+        log,
+        host_list,
+        port=22,
+        user=None,
+        password=None,
+        pkey='id_rsa',
+        host_key_check=False,
+        stop_on_errors=True,
     ):
         self.log = log
         self.host_list = host_list
@@ -37,16 +45,20 @@ class Pssh:
         self.password = password
         self.host_key_check = host_key_check
         self.stop_on_errors = stop_on_errors
+        self.port = port
         self.unreachable_hosts = []
 
         if self.password is None:
             print(self.reachable_hosts)
             print(self.user)
             print(self.pkey)
-            self.client = ParallelSSHClient(self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30)
+            print(f"DEBUG: Creating ParallelSSHClient with port={self.port}, user={self.user}, pkey={self.pkey}")
+            self.client = ParallelSSHClient(
+                self.reachable_hosts, port=self.port, user=self.user, pkey=self.pkey, keepalive_seconds=30
+            )
         else:
             self.client = ParallelSSHClient(
-                self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+                self.reachable_hosts, port=self.port, user=self.user, password=self.password, keepalive_seconds=30
             )
 
     def check_connectivity(self, hosts):
@@ -58,6 +70,7 @@ class Pssh:
             return []
         temp_client = ParallelSSHClient(
             hosts,
+            port=self.port,
             user=self.user,
             pkey=self.pkey if self.password is None else None,
             password=self.password,
@@ -90,11 +103,11 @@ class Pssh:
             # Recreate client with filtered reachable_hosts, only if hosts were actually pruned
             if self.password is None:
                 self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30
+                    self.reachable_hosts, port=self.port, user=self.user, pkey=self.pkey, keepalive_seconds=30
                 )
             else:
                 self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+                    self.reachable_hosts, port=self.port, user=self.user, password=self.password, keepalive_seconds=30
                 )
 
     def inform_unreachability(self, cmd_output):
