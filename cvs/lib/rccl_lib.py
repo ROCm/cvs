@@ -30,6 +30,41 @@ rccl_err_dict = {
 }
 
 
+def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
+    """
+    Check if UCX is available in the OpenMPI build.
+
+    Parameters:
+      shdl: SSH handle to execute commands on the remote node.
+      mpi_path: Path to the MPI installation directory.
+      head_node: The head node hostname for retrieving command output.
+
+    Returns:
+      bool: True if UCX is available, False otherwise.
+    """
+    # First, try ompi_info
+    check_ucx_cmd = f'{mpi_path}/bin/ompi_info | grep "pml: ucx" | wc -l'
+    try:
+        ucx_check_out = shdl.exec(check_ucx_cmd)
+        ucx_available = int(ucx_check_out[head_node].strip()) > 0
+        log.info("UCX available in OpenMPI build" if ucx_available else "UCX not available in OpenMPI build")
+        return ucx_available
+    except Exception as e:
+        log.warning(f"ompi_info check failed: {e}; falling back to ldd check")
+
+    # Fallback: check if libmpi.so is linked to UCX
+    libmpi_path = f'{mpi_path}/lib/libmpi.so'
+    check_ldd_cmd = f'ldd {libmpi_path} | grep ucx | wc -l'
+    try:
+        ldd_out = shdl.exec(check_ldd_cmd)
+        ucx_available = int(ldd_out[head_node].strip()) > 0
+        log.info("UCX linked in libmpi.so" if ucx_available else "UCX not linked in libmpi.so")
+        return ucx_available
+    except Exception as e:
+        log.warning(f"ldd check failed: {e}; assuming UCX is not available")
+        return False
+
+
 def scan_rccl_logs(output):
     """
     Scan RCCL test stdout for known error/warning patterns and enforce failure criteria.
@@ -486,6 +521,13 @@ def rccl_cluster_test(
     cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
+    # Check if UCX is available in OpenMPI build; if not, use pml ob1
+    ucx_available = is_ucx_available_in_mpi(shdl, MPI_PATH, head_node)
+    pml_param = "--mca pml ob1" if not ucx_available else ""
+    ucx_params = (
+        f"-x UCX_UNIFIED_MODE=y -x UCX_NET_DEVICES={net_dev_list} -x UCX_TLS={ucx_tls} " if ucx_available else ""
+    )
+
     # Wrap test binary in shell to source env script if provided
     test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
@@ -511,22 +553,21 @@ def rccl_cluster_test(
         -x NCCL_DEBUG={debug_level} \
         --bind-to numa \
         -x NCCL_IB_GID_INDEX={gid_index} \
-        -x UCX_UNIFIED_MODE=y \
+        {ucx_params} \
         -x NCCL_IB_PCI_RELAXED_ORDERING=1 \
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
         -x NCCL_IB_HCA={ib_hca_list} \
         {nccl_socket_param} \
         --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {oob_port}\
-        --mca oob_tcp_if_include {oob_port}\
-        -x UCX_NET_DEVICES={net_dev_list} \
+        --mca btl_tcp_if_include {oob_port} \
+        --mca oob_tcp_if_include {oob_port} \
+        {pml_param} \
         -x NCCL_ALGO={nccl_algo} \
         {nccl_min_channels_param} \
         {nccl_max_channels_param} \
         -x NCCL_IB_QPS_PER_CONNECTION={qp_count} \
         -x IB_RX_QUEUE_LEN={ib_rx_queue_len} \
-        -x UCX_TLS={ucx_tls} \
         -x HCOLL_ENABLE_MCAST_ALL={hcoll_enable_mcast_all} \
         -x NCCL_CUMEM_ENABLE={nccl_cumem_enable} \
         -x NCCL_IB_TIMEOUT={nccl_ib_timeout} \
@@ -709,6 +750,13 @@ def rccl_cluster_test_default(
     cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
+    # Check if UCX is available in OpenMPI build; if not, use pml ob1
+    ucx_available = is_ucx_available_in_mpi(shdl, MPI_PATH, head_node)
+    pml_param = "--mca pml ob1" if not ucx_available else ""
+    ucx_params = (
+        f"-x UCX_UNIFIED_MODE=y -x UCX_NET_DEVICES={net_dev_list} -x UCX_TLS={ucx_tls} " if ucx_available else ""
+    )
+
     all_raw_results = []
     all_validated_results = []
     base_path = Path(rccl_result_file)
@@ -744,17 +792,16 @@ def rccl_cluster_test_default(
         -x NCCL_DEBUG={debug_level} \
         --bind-to numa \
         -x NCCL_IB_GID_INDEX={gid_index} \
-        -x UCX_UNIFIED_MODE=y \
+        {ucx_params} \
         -x NCCL_IB_PCI_RELAXED_ORDERING=1 \
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
         -x NCCL_IB_HCA={ib_hca_list} \
         {nccl_socket_param} \
         --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {oob_port}\
-        --mca oob_tcp_if_include {oob_port}\
-        -x UCX_NET_DEVICES={net_dev_list} \
-        -x UCX_TLS={ucx_tls} \
+        --mca btl_tcp_if_include {oob_port} \
+        --mca oob_tcp_if_include {oob_port} \
+        {pml_param} \
         -x NCCL_NET_PLUGIN={nccl_net_plugin} \
         {nccl_min_channels_param} \
         {nccl_max_channels_param} \
