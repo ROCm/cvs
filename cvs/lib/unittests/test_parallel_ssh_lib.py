@@ -347,6 +347,118 @@ class TestPsshExec(unittest.TestCase):
             self.assertNotIn("error line1", call)
             self.assertNotIn("output2 line1", call)
 
+    def test_exec_detailed_true_successful(self):
+        # Test: Execute command successfully with detailed=True
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["output1 line1", "output1 line2"]
+        mock_output1.stderr = ["error1 line1"]
+        mock_output1.exception = None
+        mock_output1.exit_code = 0
+
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = ["output2 line1"]
+        mock_output2.stderr = []
+        mock_output2.exception = None
+        mock_output2.exit_code = 0
+
+        self.mock_client.run_command.return_value = [mock_output1, mock_output2]
+
+        result = self.pssh.exec("echo hello", detailed=True)
+
+        self.assertIn("host1", result)
+        self.assertIn("host2", result)
+
+        # Check structure
+        self.assertIsInstance(result["host1"], dict)
+        self.assertIsInstance(result["host2"], dict)
+        self.assertIn("output", result["host1"])
+        self.assertIn("exit_code", result["host1"])
+        self.assertIn("output", result["host2"])
+        self.assertIn("exit_code", result["host2"])
+
+        # Check content
+        self.assertIn("output1 line1", result["host1"]["output"])
+        self.assertIn("output1 line2", result["host1"]["output"])
+        self.assertIn("error1 line1", result["host1"]["output"])
+        self.assertIn("output2 line1", result["host2"]["output"])
+        self.assertEqual(result["host1"]["exit_code"], 0)
+        self.assertEqual(result["host2"]["exit_code"], 0)
+
+    def test_exec_detailed_true_with_exit_code_failure(self):
+        # Test: Execute command with non-zero exit code and detailed=True
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["success output"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+        mock_output1.exit_code = 0
+
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = []
+        mock_output2.stderr = ["command failed"]
+        mock_output2.exception = None
+        mock_output2.exit_code = 1
+
+        self.mock_client.run_command.return_value = [mock_output1, mock_output2]
+
+        result = self.pssh.exec("failing command", detailed=True)
+
+        self.assertEqual(result["host1"]["exit_code"], 0)
+        self.assertEqual(result["host2"]["exit_code"], 1)
+        self.assertIn("success output", result["host1"]["output"])
+        self.assertIn("command failed", result["host2"]["output"])
+
+    @patch.object(Pssh, "check_connectivity")
+    def test_exec_detailed_true_with_exception(self, mock_check_connectivity):
+        # Test: Execute command with exception and detailed=True
+        self.pssh.stop_on_errors = False
+        from pssh.exceptions import ConnectionError
+
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["success output"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+        mock_output1.exit_code = 0
+
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = []
+        mock_output2.stderr = []
+        mock_output2.exception = ConnectionError("Connection failed")
+        mock_output2.exit_code = None  # No exit code available for exceptions
+
+        self.mock_client.run_command.return_value = [mock_output1, mock_output2]
+        mock_check_connectivity.return_value = []  # No pruning
+
+        result = self.pssh.exec("echo hello", detailed=True)
+
+        self.assertEqual(result["host1"]["exit_code"], 0)
+        self.assertEqual(result["host2"]["exit_code"], -1)  # -1 for exceptions
+        self.assertIn("success output", result["host1"]["output"])
+        self.assertIn("Connection failed", result["host2"]["output"])
+
+    def test_exec_detailed_false_backward_compatibility(self):
+        # Test: detailed=False (default) maintains backward compatibility
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["output1 line1"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+        mock_output1.exit_code = 0
+
+        self.mock_client.run_command.return_value = [mock_output1]
+
+        result = self.pssh.exec("echo hello", detailed=False)
+
+        # Should return string, not dict
+        self.assertIsInstance(result["host1"], str)
+        self.assertNotIsInstance(result["host1"], dict)
+        self.assertIn("output1 line1", result["host1"])
+
 
 class TestPsshExecCmdList(unittest.TestCase):
     @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
@@ -704,6 +816,15 @@ class TestPsshExecCmdList(unittest.TestCase):
             self.assertNotIn("host1 output line2", call)
             self.assertNotIn("host1 error line1", call)
             self.assertNotIn("host2 output line1", call)
+
+        # Verify headers and commands ARE printed
+        self.assertTrue(
+            any("#----------------------------------------------------------#" in call for call in printed_calls)
+        )
+        self.assertTrue(any("Host == host1 ==" in call for call in printed_calls))
+        self.assertTrue(any("Host == host2 ==" in call for call in printed_calls))
+        self.assertTrue(any("echo host1" in call for call in printed_calls))
+        self.assertTrue(any("echo host2" in call for call in printed_calls))
 
 
 if __name__ == "__main__":

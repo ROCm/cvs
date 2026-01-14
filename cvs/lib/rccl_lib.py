@@ -8,7 +8,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # Standard libraries
 import re
 import json
-from typing import List
 from pathlib import Path
 
 # Third party libraries
@@ -16,7 +15,7 @@ import pandas as pd
 from pydantic import ValidationError
 
 from cvs.lib import globals
-from cvs.schema.rccl import RcclTests, RcclTestsAggregated, RcclTestsMultinodeRaw
+from cvs.schema.rccl import RcclTestsAggregated, RcclTestsMultinodeRaw
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -30,12 +29,12 @@ rccl_err_dict = {
 }
 
 
-def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
+def is_ucx_available_in_mpi(orch, mpi_path, head_node):
     """
     Check if UCX is available in the OpenMPI build.
 
     Parameters:
-      shdl: SSH handle to execute commands on the remote node.
+      orch: Orchestrator instance for executing commands.
       mpi_path: Path to the MPI installation directory.
       head_node: The head node hostname for retrieving command output.
 
@@ -45,7 +44,7 @@ def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
     # First, try ompi_info
     check_ucx_cmd = f'{mpi_path}/bin/ompi_info | grep "pml: ucx" | wc -l'
     try:
-        ucx_check_out = shdl.exec(check_ucx_cmd)
+        ucx_check_out = orch.exec_on_head(check_ucx_cmd)
         ucx_available = int(ucx_check_out[head_node].strip()) > 0
         log.info("UCX available in OpenMPI build" if ucx_available else "UCX not available in OpenMPI build")
         return ucx_available
@@ -56,7 +55,7 @@ def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
     libmpi_path = f'{mpi_path}/lib/libmpi.so'
     check_ldd_cmd = f'ldd {libmpi_path} | grep ucx | wc -l'
     try:
-        ldd_out = shdl.exec(check_ldd_cmd)
+        ldd_out = orch.exec_on_head(check_ldd_cmd)
         ucx_available = int(ldd_out[head_node].strip()) > 0
         log.info("UCX linked in libmpi.so" if ucx_available else "UCX not linked in libmpi.so")
         return ucx_available
@@ -65,13 +64,13 @@ def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
         return False
 
 
-def determine_mpi_pml_config(mpi_pml, shdl, mpi_path, head_node, net_dev_list, ucx_tls):
+def determine_mpi_pml_config(orch, mpi_pml, mpi_path, head_node, net_dev_list, ucx_tls):
     """
     Determine MPI PML (Point-to-Point Messaging Layer) configuration based on user config or auto-detection.
 
     Parameters:
+      orch: Orchestrator instance for executing commands.
       mpi_pml: User-specified PML mode ('auto', 'ucx', or 'ob1').
-      shdl: SSH handle to execute commands on the remote node.
       mpi_path: Path to the MPI installation directory.
       head_node: The head node hostname for retrieving command output.
       net_dev_list: UCX network device(s) to use (UCX_NET_DEVICES).
@@ -84,7 +83,7 @@ def determine_mpi_pml_config(mpi_pml, shdl, mpi_path, head_node, net_dev_list, u
     """
     if mpi_pml.lower() == "auto":
         # Auto-detect UCX availability
-        ucx_available = is_ucx_available_in_mpi(shdl, mpi_path, head_node)
+        ucx_available = is_ucx_available_in_mpi(orch, mpi_path, head_node)
         pml_param = "--mca pml ob1" if not ucx_available else ""
     elif mpi_pml.lower() == "ucx":
         # User explicitly requested UCX
@@ -98,7 +97,7 @@ def determine_mpi_pml_config(mpi_pml, shdl, mpi_path, head_node, net_dev_list, u
         log.info("Using pml ob1 (user-specified)")
     else:
         log.warning(f"Unknown mpi_pml value '{mpi_pml}', defaulting to auto-detection")
-        ucx_available = is_ucx_available_in_mpi(shdl, mpi_path, head_node)
+        ucx_available = is_ucx_available_in_mpi(orch, mpi_path, head_node)
         pml_param = "--mca pml ob1" if not ucx_available else ""
 
     ucx_params = (
@@ -361,7 +360,7 @@ def convert_to_graph_dict(result_dict):
     return graph_dict
 
 
-def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[RcclTestsAggregated]:
+def aggregate_rccl_test_results(validated_results):
     """
     Aggregate multiple rccl-test results into mean/std per (name, size, type, inPlace)
     Args: validated_results: List[RcclTests] - list of validated rccl-test results
@@ -444,8 +443,7 @@ def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[Rccl
 # standard NCCL environment variables ..
 #
 def rccl_cluster_test(
-    phdl,
-    shdl,
+    orch,
     test_name,
     cluster_node_list,
     vpc_node_list,
@@ -496,13 +494,13 @@ def rccl_cluster_test(
     verify_lat_dip=True,
     exp_results_dict=None,
     env_source_script=None,
+    container_config=None,
 ):
     """
     Run an RCCL collective test across a cluster via MPI and verify results.
 
     Arguments:
-      phdl: Parallel ssh handle to run commands on all nodes.
-      shdl: ssh handle to the first node in the cluster.
+      orch: Orchestrator instance for test execution.
       test_name: RCCL test binary name (e.g., all_reduce_perf).
       cluster_node_list: List of cluster node hostnames/IPs (first is treated as head node).
       vpc_node_list: List of hostnames/IPs to pass to mpirun -H as hosts - \
@@ -520,9 +518,10 @@ def rccl_cluster_test(
       rccl_result_file: Path where the RCCL test writes JSON results (-Z json -x file).
       verify_bus_bw: If 'True' (string), compare bus BW vs expected thresholds.
       exp_results_dict: Dict of expected results per test for verification.
+      container_config: Container configuration for containerized execution (optional).
 
     Returns:
-      result_out: The raw JSON string read from rccl_result_file on the head node.
+      result_out: The raw JSON dict read from rccl_result_file on the head node.
     """
 
     print(f'Starting RCCL Test ..........................................{test_name}')
@@ -554,19 +553,11 @@ def rccl_cluster_test(
     # host_params = host_params.rstrip(',')
     # print(f'RCCL Hosts -H value {host_params}')
 
-    host_file_params = ''
-    proc_per_node = int(int(no_of_global_ranks) / len(cluster_node_list))
-    for node in vpc_node_list:
-        host_file_params = f'{host_file_params}' + f'{node} slots={proc_per_node}\n'
-
-    cmd = 'sudo rm -f /tmp/rccl_hosts_file.txt'
-    shdl.exec(cmd)
-
-    cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
-    shdl.exec(cmd)
+    # proc_per_node = int(int(no_of_global_ranks) / len(cluster_node_list))
+    proc_per_node = int(no_of_local_ranks)
 
     # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, shdl, MPI_PATH, head_node, net_dev_list, ucx_tls)
+    pml_param, ucx_params = determine_mpi_pml_config(orch, mpi_pml, MPI_PATH, head_node, net_dev_list, ucx_tls)
 
     # Wrap test binary in shell to source env script if provided
     test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
@@ -580,64 +571,98 @@ def rccl_cluster_test(
         # Always wrap in bash to interpret && shell operator
         test_cmd = f'bash -c "{test_cmd}"'
 
-    # Build optional NCCL_SOCKET_IFNAME parameter
-    nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
+    # Prepare parameters for distribute_using_mpi
+    mpi_extra_args = [
+        '--bind-to',
+        'numa',
+        '--mca',
+        'btl',
+        '^vader,openib',
+        '--mca',
+        'btl_tcp_if_include',
+        oob_port,
+        '--mca',
+        'oob_tcp_if_include',
+        oob_port,
+    ]
 
-    # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
-    nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
-    nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
+    env_vars = {
+        'NCCL_DEBUG': debug_level,
+        'NCCL_IB_GID_INDEX': str(gid_index),
+        'UCX_UNIFIED_MODE': 'y',
+        'NCCL_IB_PCI_RELAXED_ORDERING': '1',
+        'PATH': PATH,
+        'LD_LIBRARY_PATH': LD_LIBRARY_PATH,
+        'NCCL_IB_HCA': ib_hca_list,
+        'UCX_NET_DEVICES': net_dev_list,
+        'NCCL_ALGO': nccl_algo,
+        'NCCL_IB_QPS_PER_CONNECTION': str(qp_count),
+        'IB_RX_QUEUE_LEN': str(ib_rx_queue_len),
+        'UCX_TLS': ucx_tls,
+        'HCOLL_ENABLE_MCAST_ALL': str(hcoll_enable_mcast_all),
+        'NCCL_CUMEM_ENABLE': str(nccl_cumem_enable),
+        'NCCL_IB_TIMEOUT': str(nccl_ib_timeout),
+        'NCCL_IB_SL': str(nccl_ib_sl),
+        'NCCL_IB_TC': str(nccl_ib_tc),
+        'NCCL_IB_SPLIT_DATA_ON_QPS': str(nccl_ib_split_data_on_qps),
+        'NCCL_PXN_DISABLE': str(nccl_pxn_disable),
+        'NCCL_NET_PLUGIN': nccl_net_plugin,
+    }
 
-    cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
-        --allow-run-as-root \
-        --hostfile /tmp/rccl_hosts_file.txt \
-        -x NCCL_DEBUG={debug_level} \
-        --bind-to numa \
-        -x NCCL_IB_GID_INDEX={gid_index} \
-        {ucx_params} \
-        -x NCCL_IB_PCI_RELAXED_ORDERING=1 \
-        -x PATH={PATH} \
-        -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
-        -x NCCL_IB_HCA={ib_hca_list} \
-        {nccl_socket_param} \
-        --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {oob_port} \
-        --mca oob_tcp_if_include {oob_port} \
-        {pml_param} \
-        -x NCCL_ALGO={nccl_algo} \
-        {nccl_min_channels_param} \
-        {nccl_max_channels_param} \
-        -x NCCL_IB_QPS_PER_CONNECTION={qp_count} \
-        -x IB_RX_QUEUE_LEN={ib_rx_queue_len} \
-        -x HCOLL_ENABLE_MCAST_ALL={hcoll_enable_mcast_all} \
-        -x NCCL_CUMEM_ENABLE={nccl_cumem_enable} \
-        -x NCCL_IB_TIMEOUT={nccl_ib_timeout} \
-        -x NCCL_IB_SL={nccl_ib_sl} \
-        -x NCCL_IB_TC={nccl_ib_tc} \
-        -x NCCL_IB_SPLIT_DATA_ON_QPS={nccl_ib_split_data_on_qps} \
-        -x NCCL_PXN_DISABLE={nccl_pxn_disable} \
-        -x NCCL_NET_PLUGIN={nccl_net_plugin} \
-        {test_cmd}
-        '''
+    if nccl_socket_ifname.strip():
+        env_vars['NCCL_SOCKET_IFNAME'] = nccl_socket_ifname
 
+    if min_channels is not None:
+        env_vars['NCCL_MIN_NCHANNELS'] = str(min_channels)
+
+    if max_channels is not None:
+        env_vars['NCCL_MAX_NCHANNELS'] = str(max_channels)
+
+    # Check if UCX is available in OpenMPI build; if not, use pml ob1 and remove UCX env vars
+    ucx_available = is_ucx_available_in_mpi(orch, MPI_PATH, head_node)
+    if not ucx_available:
+        mpi_extra_args.extend(['--mca', 'pml', 'ob1'])
+        # Remove UCX-related environment variables
+        ucx_env_vars = ['UCX_UNIFIED_MODE', 'UCX_NET_DEVICES', 'UCX_TLS']
+        for var in ucx_env_vars:
+            env_vars.pop(var, None)
+
+    rank_cmd = test_cmd
+    mpi_install_dir = MPI_INSTALL_DIR
+
+    # Get the full command for logging (simulate what distribute_using_mpi will do)
+    # Note: This is just for logging, the actual command construction happens in the orchestrator
     print('%%%%%%%%%%%%%%%%')
-    print(cmd)
+    print(f'MPI Hosts: {vpc_node_list}')
+    print(f'Ranks per host: {proc_per_node}')
+    print(f'Env Vars: {env_vars}')
+    print(f'Rank Cmd: {rank_cmd}')
+    print(f'MPI Install Dir: {mpi_install_dir}')
     print('%%%%%%%%%%%%%%%%')
+
     try:
-        out_dict = shdl.exec(cmd, timeout=500)
+        out_dict = orch.distribute_using_mpi(
+            rank_cmd, vpc_node_list, proc_per_node, env_vars, mpi_install_dir, mpi_extra_args
+        )
         output = out_dict[head_node]
         # print(output)
         scan_rccl_logs(output)
     except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+        log.error(f'Hit Exceptions with rccl cmd - exception {repr(e)}')
+        fail_test(f'Hit Exceptions with rccl cmd - exception {repr(e)}')
 
     # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = shdl.exec(f'cat {rccl_result_file}')
+    cat_cmd = f'cat {rccl_result_file}'
+
+    result_dict_out = orch.exec(cat_cmd, hosts=[head_node])
     result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
 
     # Collect basic GPU information via rocm-smi
-    smi_out_dict = shdl.exec('rocm-smi -a | head -30')
+    smi_cmd = 'rocm-smi -a | head -30'
+
+    smi_out_dict = orch.exec(smi_cmd, hosts=[head_node])
     smi_out = smi_out_dict[head_node]
+
     get_model_from_rocm_smi_output(smi_out)
 
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
@@ -660,8 +685,7 @@ def rccl_cluster_test(
 # standard NCCL environment variables ..
 #
 def rccl_cluster_test_default(
-    phdl,
-    shdl,
+    orch,
     test_name,
     cluster_node_list,
     vpc_node_list,
@@ -719,8 +743,7 @@ def rccl_cluster_test_default(
     Run an RCCL collective test across a cluster via MPI and verify results.
 
     Arguments:
-      phdl: Parallel ssh handle to run commands on all nodes.
-      shdl: ssh handle to the first node in the cluster.
+      orch: Orchestrator instance for test execution.
       test_name: RCCL test binary name (e.g., all_reduce_perf).
       cluster_node_list: List of cluster node hostnames/IPs (first is treated as head node).
       vpc_node_list: List of hostnames/IPs to pass to mpirun -H as hosts - \
@@ -780,23 +803,73 @@ def rccl_cluster_test_default(
     # host_params = host_params.rstrip(',')
     # print(f'RCCL Hosts -H value {host_params}')
 
-    host_file_params = ''
-    proc_per_node = int(int(no_of_global_ranks) / len(cluster_node_list))
-    for node in vpc_node_list:
-        host_file_params = f'{host_file_params}' + f'{node} slots={proc_per_node}\n'
-
-    cmd = 'sudo rm -f /tmp/rccl_hosts_file.txt'
-    shdl.exec(cmd)
-
-    cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
-    shdl.exec(cmd)
+    # proc_per_node = int(int(no_of_global_ranks) / len(cluster_node_list))
+    proc_per_node = int(no_of_local_ranks)
 
     # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, shdl, MPI_PATH, head_node, net_dev_list, ucx_tls)
+    pml_param, ucx_params = determine_mpi_pml_config(orch, mpi_pml, MPI_PATH, head_node, net_dev_list, ucx_tls)
 
     all_raw_results = []
     all_validated_results = []
     base_path = Path(rccl_result_file)
+
+    # Prepare common parameters for distribute_using_mpi
+    mpi_extra_args = [
+        '--bind-to',
+        'numa',
+        '--mca',
+        'btl',
+        '^vader,openib',
+        '--mca',
+        'btl_tcp_if_include',
+        oob_port,
+        '--mca',
+        'oob_tcp_if_include',
+        oob_port,
+    ]
+
+    env_vars = {
+        'NCCL_DEBUG': debug_level,
+        'NCCL_IB_GID_INDEX': str(gid_index),
+        'UCX_UNIFIED_MODE': 'y',
+        'NCCL_IB_PCI_RELAXED_ORDERING': '1',
+        'PATH': PATH,
+        'LD_LIBRARY_PATH': LD_LIBRARY_PATH,
+        'NCCL_IB_HCA': ib_hca_list,
+        'UCX_NET_DEVICES': net_dev_list,
+        'NCCL_ALGO': nccl_algo,
+        'NCCL_IB_QPS_PER_CONNECTION': str(qp_count),
+        'IB_RX_QUEUE_LEN': str(ib_rx_queue_len),
+        'UCX_TLS': ucx_tls,
+        'HCOLL_ENABLE_MCAST_ALL': str(hcoll_enable_mcast_all),
+        'NCCL_CUMEM_ENABLE': str(nccl_cumem_enable),
+        'NCCL_IB_TIMEOUT': str(nccl_ib_timeout),
+        'NCCL_IB_SL': str(nccl_ib_sl),
+        'NCCL_IB_TC': str(nccl_ib_tc),
+        'NCCL_IB_SPLIT_DATA_ON_QPS': str(nccl_ib_split_data_on_qps),
+        'NCCL_PXN_DISABLE': str(nccl_pxn_disable),
+        'NCCL_NET_PLUGIN': nccl_net_plugin,
+    }
+
+    if nccl_socket_ifname.strip():
+        env_vars['NCCL_SOCKET_IFNAME'] = nccl_socket_ifname
+
+    if min_channels is not None:
+        env_vars['NCCL_MIN_NCHANNELS'] = str(min_channels)
+
+    if max_channels is not None:
+        env_vars['NCCL_MAX_NCHANNELS'] = str(max_channels)
+
+    # Check if UCX is available in OpenMPI build; if not, use pml ob1 and remove UCX env vars
+    ucx_available = is_ucx_available_in_mpi(orch, MPI_PATH, head_node)
+    if not ucx_available:
+        mpi_extra_args.extend(['--mca', 'pml', 'ob1'])
+        # Remove UCX-related environment variables
+        ucx_env_vars = ['UCX_UNIFIED_MODE', 'UCX_NET_DEVICES', 'UCX_TLS']
+        for var in ucx_env_vars:
+            env_vars.pop(var, None)
+
+    mpi_install_dir = MPI_INSTALL_DIR
 
     for dtype in data_types:
         # Create a unique result file for each data type
@@ -816,49 +889,31 @@ def rccl_cluster_test_default(
             # Always wrap in bash to interpret && shell operator
             test_cmd = f'bash -c "{test_cmd}"'
 
-        # Build optional NCCL_SOCKET_IFNAME parameter
-        nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
+        rank_cmd = test_cmd
 
-        # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
-        nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
-        nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
-
-        cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
-        --allow-run-as-root \
-        --hostfile /tmp/rccl_hosts_file.txt \
-        -x NCCL_DEBUG={debug_level} \
-        --bind-to numa \
-        -x NCCL_IB_GID_INDEX={gid_index} \
-        {ucx_params} \
-        -x NCCL_IB_PCI_RELAXED_ORDERING=1 \
-        -x PATH={PATH} \
-        -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
-        -x NCCL_IB_HCA={ib_hca_list} \
-        {nccl_socket_param} \
-        --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {oob_port} \
-        --mca oob_tcp_if_include {oob_port} \
-        {pml_param} \
-        -x NCCL_NET_PLUGIN={nccl_net_plugin} \
-        {nccl_min_channels_param} \
-        {nccl_max_channels_param} \
-        {test_cmd}
-        '''
-
+        # Get the full command for logging (simulate what distribute_using_mpi will do)
+        # Note: This is just for logging, the actual command construction happens in the orchestrator
         print('%%%%%%%%%%%%%%%%')
-        print(cmd)
+        print(f'MPI Hosts: {vpc_node_list}')
+        print(f'Ranks per host: {proc_per_node}')
+        print(f'Env Vars: {env_vars}')
+        print(f'Rank Cmd: {rank_cmd}')
+        print(f'MPI Install Dir: {mpi_install_dir}')
         print('%%%%%%%%%%%%%%%%')
+
         try:
-            out_dict = shdl.exec(cmd, timeout=500)
+            out_dict = orch.distribute_using_mpi(
+                rank_cmd, vpc_node_list, proc_per_node, env_vars, mpi_install_dir, mpi_extra_args
+            )
             output = out_dict[head_node]
             # print(output)
             scan_rccl_logs(output)
         except Exception as e:
-            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+            log.error(f'Hit Exceptions with rccl cmd - exception {repr(e)}')
+            fail_test(f'Hit Exceptions with rccl cmd - exception {repr(e)}')
 
         # Read the JSON results emitted by the RCCL test binary
-        result_dict_out = shdl.exec(f'cat {dtype_result_file}')
+        result_dict_out = orch.exec(f'cat {dtype_result_file}')
         dtype_result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
         # Validate the results against the schema fail if results are not valid
         try:
@@ -896,7 +951,7 @@ def rccl_cluster_test_default(
         fail_test(f'RCCL Test aggregation failed: {e}')
 
     # Collect basic GPU information via rocm-smi
-    smi_out_dict = shdl.exec('rocm-smi -a | head -30')
+    smi_out_dict = orch.exec_on_head('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
     get_model_from_rocm_smi_output(smi_out)
 
@@ -964,7 +1019,7 @@ def rccl_cluster_test_default(
 # Single node RCCL
 #
 def rccl_single_node_test(
-    phdl,
+    orch,
     test_name,
     cluster_node_list,
     rocm_path_var,
@@ -990,7 +1045,7 @@ def rccl_single_node_test(
     Run an Single Node RCCL collective test
 
     Arguments:
-      phdl: Parallel ssh handle to run commands on all nodes.
+      orch: Orchestrator instance for test execution.
       test_name: RCCL test binary name (e.g., all_reduce_perf).
       cluster_node_list: List of cluster node hostnames/IPs
       rocm_path_var, rccl_dir, rccl_path_var, rccl_tests_dir: Installation paths.
@@ -1039,7 +1094,7 @@ def rccl_single_node_test(
     print(cmd)
     print('%%%%%%%%%%%%%%%%')
     try:
-        out_dict = phdl.exec(cmd, timeout=500)
+        out_dict = orch.exec(cmd, hosts=[head_node], timeout=500)
         for node in out_dict.keys():
             scan_rccl_logs(out_dict[node])
     except Exception as e:
@@ -1047,11 +1102,11 @@ def rccl_single_node_test(
         fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
     # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = phdl.exec(f'cat {rccl_result_file}')
+    result_dict_out = orch.exec(f'cat {rccl_result_file}', hosts=[head_node])
     result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
 
     # Collect basic GPU information via rocm-smi
-    phdl.exec('rocm-smi -a | head -30')
+    orch.exec('rocm-smi -a | head -30', hosts=[head_node])
 
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
     test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None

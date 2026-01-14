@@ -97,18 +97,24 @@ class Pssh:
                     self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
                 )
 
-    def inform_unreachability(self, cmd_output):
+    def inform_unreachability(self, cmd_output, include_exit_codes=False):
         """
         Update cmd_output with "Host Unreachable" for all hosts in self.unreachable_hosts.
-        This ensures that the output dictionary reflects the status of pruned hosts.
+        Handles both string and structured formats based on include_exit_codes.
         """
         for host in self.unreachable_hosts:
-            cmd_output[host] = cmd_output.get(host, "") + "\nABORT: Host Unreachable Error"
+            if include_exit_codes:
+                existing = cmd_output.get(host, {'output': '', 'exit_code': -1})
+                existing['output'] += "\nABORT: Host Unreachable Error"
+                existing['exit_code'] = -1  # Ensure unreachable hosts have error exit code
+                cmd_output[host] = existing
+            else:
+                cmd_output[host] = cmd_output.get(host, "") + "\nABORT: Host Unreachable Error"
 
-    def _process_output(self, output, cmd=None, cmd_list=None, print_console=True):
+    def _process_output(self, output, cmd=None, cmd_list=None, print_console=True, include_exit_codes=False):
         """
         Helper method to process output from run_command, collect results, and handle pruning.
-        Returns cmd_output dictionary.
+        Returns cmd_output dictionary. If include_exit_codes=True, returns structured format.
         """
         cmd_output = {}
         i = 0
@@ -144,34 +150,47 @@ class Pssh:
                 cmd_out_str += exc_str + '\n'
             if cmd_list:
                 i += 1
-            cmd_output[item.host] = cmd_out_str
+
+            if include_exit_codes:
+                # Use -1 for exit code when command couldn't execute due to exceptions
+                exit_code = getattr(item, 'exit_code', -1) if item.exception is None else -1
+                cmd_output[item.host] = {'output': cmd_out_str, 'exit_code': exit_code}
+            else:
+                cmd_output[item.host] = cmd_out_str
 
         if not self.stop_on_errors:
             self.prune_unreachable_hosts(output)
-            self.inform_unreachability(cmd_output)
+            self.inform_unreachability(cmd_output, include_exit_codes)
 
         return cmd_output
 
-    def _handle_timeout_exception(self, output, e):
+    def inform_unreachability_structured(self, cmd_output):
         """
-        Helper method to handle Timeout exceptions by setting exceptions for all hosts in output.
-        Since Timeout is raised once for the operation, assume all hosts are affected.
+        Update cmd_output with "Host Unreachable" for all hosts in self.unreachable_hosts.
+        Handles structured output format.
         """
-        if output is not None and isinstance(e, Timeout):
-            for item in output:
-                if item.exception is None:
-                    item.exception = e
+        for host in self.unreachable_hosts:
+            existing = cmd_output.get(host, {'output': '', 'exit_code': -1})
+            existing['output'] += "\nABORT: Host Unreachable Error"
+            existing['exit_code'] = -1  # Ensure unreachable hosts have error exit code
+            cmd_output[host] = existing
 
-    def exec(self, cmd, timeout=None, print_console=True):
+    def exec(self, cmd, timeout=None, print_console=True, detailed=False):
         """
-        Returns a dictionary of host as key and command output as values
+        Returns a dictionary of host as key and command output as values.
+        If detailed=True, returns structured dict with 'output' and 'exit_code' keys.
+        If detailed=False (default), returns output strings.
         """
         print(f'cmd = {cmd}')
         if timeout is None:
             output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors)
         else:
             output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
-        cmd_output = self._process_output(output, cmd=cmd, print_console=print_console)
+
+        if detailed:
+            cmd_output = self._process_output(output, cmd=cmd, print_console=print_console, include_exit_codes=True)
+        else:
+            cmd_output = self._process_output(output, cmd=cmd, print_console=print_console, include_exit_codes=False)
         return cmd_output
 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
