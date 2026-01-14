@@ -16,7 +16,7 @@ import json
 from cvs.lib import rccl_lib
 from cvs.lib import html_lib
 
-from cvs.lib.parallel_ssh_lib import *
+from cvs.core import OrchestratorFactory, OrchestratorConfig
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -118,53 +118,27 @@ def config_dict(config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def phdl(cluster_dict):
+def orch(cluster_file, config_file):
     """
-    Build and return a parallel SSH handle (Pssh) for all cluster nodes.
+    Create and return an orchestrator instance for test execution.
 
     Args:
-      cluster_dict (dict): Cluster metadata fixture containing:
-        - node_dict: dict of node_name -> node_details
-        - username: SSH username
-        - priv_key_file: path to SSH private key
+      cluster_file (str): Path to cluster configuration JSON
+      config_file (str): Path to test configuration JSON
 
     Returns:
-      Pssh: Handle configured for all nodes (for broadcast/parallel operations).
+      Orchestrator: Orchestrator instance for running tests
 
     Notes:
-      - Prints the cluster_dict for quick debugging; consider replacing with log.debug.
-      - Module-scoped so a single shared handle is used across all tests in the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-      - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
+      - Creates orchestrator using OrchestratorConfig.from_configs()
+      - Container setup is handled by test_launch_container
+      - Handles cleanup and container teardown automatically on teardown
     """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
-
-
-@pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    """
-    Build and return a parallel SSH handle (Pssh) for the head node only.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-
-    Returns:
-      Pssh: Handle configured for the first node (head node) in node_dict.
-
-    Notes:
-      - Useful when commands should be executed only from a designated head node.
-      - Module scope ensures a single connection context for the duration of the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-    """
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return shdl
+    log.info("Creating orchestrator from config files")
+    config = OrchestratorConfig.from_configs(cluster_file, config_file)
+    orch = OrchestratorFactory.create_orchestrator(log, config)
+    yield orch
+    orch.cleanup(orch.hosts)
 
 
 @pytest.fixture(scope="module")
@@ -191,41 +165,63 @@ def vpc_node_list(cluster_dict):
 # Start of test cases.
 
 
-def test_collect_hostinfo(phdl):
+def test_launch_container(orch):
     """
-    Collect basic ROCm/host info from all nodes.
+    Launch containers and validate setup - runs first due to definition order.
+
+    This test must run before any other tests that require containers.
+    If this test fails, subsequent container-dependent tests will also fail.
+
+    In baremetal mode (no containers configured), this test passes without action.
+    """
+    # Check orchestrator type
+    if orch.orchestrator_type == "baremetal":
+        log.info("Baremetal orchestrator detected - skipping container launch")
+        pytest.skip("Baremetal mode: no containers to launch")
+
+    log.info("Launching containers on cluster nodes")
+    success = orch.setup_containers()
+    assert success, "Container launch failed on one or more nodes"
+
+    log.info("Setting up SSH daemon in containers")
+    success = orch.setup_sshd()
+    assert success, "SSH daemon setup failed on one or more nodes"
+
+
+def test_collect_hostinfo(orch):
+    """
+    Collect basic ROCm/host info from all nodes using orchestrator.
 
     Behavior:
       - Executes common ROCm commands to capture version and agent info.
+      - If container is enabled, executes inside container to get container ROCm version.
       - Does not parse output; relies on update_test_result to finalize status.
-
-    Notes:
-      - globals.error_list is reset before test (pattern used across tests).
     """
 
     globals.error_list = []
-    phdl.exec('cat /opt/rocm/.info/version')
-    phdl.exec('hipconfig')
-    phdl.exec('rocm_agent_enumerator')
+    orch.exec('cat /opt/rocm/.info/version')
+    orch.exec('hipconfig')
+    orch.exec('rocm_agent_enumerator')
     update_test_result()
 
 
-def test_collect_networkinfo(phdl):
+def test_collect_networkinfo(orch):
     """
-    Collect basic RDMA/verbs info from all nodes.
+    Collect basic RDMA/verbs info from all nodes using orchestrator.
 
     Behavior:
       - Executes 'rdma link' and 'ibv_devinfo' to snapshot network capabilities.
+      - Always executes on baremetal host regardless of orchestrator type.
       - Does not parse output; relies on update_test_result to finalize status.
     """
 
     globals.error_list = []
-    phdl.exec('rdma link')
-    phdl.exec('ibv_devinfo')
+    orch.all.exec('rdma link')
+    orch.all.exec('ibv_devinfo')
     update_test_result()
 
 
-def test_disable_firewall(phdl):
+def test_disable_firewall(orch):
     globals.error_list = []
     sudo_status = get_passwordless_sudo_status(phdl)
     no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
@@ -237,7 +233,7 @@ def test_disable_firewall(phdl):
         return
     phdl.exec('sudo service ufw stop')
     time.sleep(2)
-    out_dict = phdl.exec('sudo service ufw status')
+    out_dict = orch.all.exec('sudo service ufw status')
     for node in out_dict.keys():
         if not re.search('inactive|dead|stopped|disabled', out_dict[node], re.I):
             fail_test(f'Service ufw not disabled properly on node {node}')
@@ -270,13 +266,12 @@ def test_print_env_once(phdl, shdl, config_dict):
         "broadcast_perf",
     ],
 )
-def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
+def test_rccl_perf(orch, cluster_dict, config_dict, rccl_collective):
     """
     Execute RCCL performance test across the cluster with given parameters.
 
     Parameters (from fixtures and config):
-      - phdl: parallel execution handle for nodes (expects exec/exec_cmd_list).
-      - shdl: switch or auxiliary handle used by rccl_lib (implementation-specific).
+      - orch: orchestrator for remote execution and MPI (baremetal, container, etc.).
       - cluster_dict: cluster topology and credentials (expects node_dict, username, etc.).
       - config_dict: test configuration with RCCL/MPI paths, env, and thresholds.
       - rccl_collective: which RCCL collective test to run (e.g., "all_reduce_perf").
