@@ -422,6 +422,7 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
         exp_results_dict=config_dict['expected_results'],
         min_channels=min_channels,
         max_channels=max_channels,
+        env_source_script=config_dict['env_source_script'],
     )
 
     print(result_dict)
