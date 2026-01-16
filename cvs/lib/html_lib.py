@@ -474,7 +474,12 @@ def build_rccl_heatmap(filename, chart_name, title, act_data_json, ref_data_json
 
     try:
         with open(ref_data_json, 'r') as fp2:
-            ref_data_dict = json.load(fp2)
+            ref_data_dict_t = json.load(fp2)
+            # Handle both wrapped (metadata/result) and unwrapped reference formats
+            if 'result' in ref_data_dict_t:
+                ref_data_dict = ref_data_dict_t['result']
+            else:
+                ref_data_dict = ref_data_dict_t
     except Exception as e:
         print(f'Error reading file {ref_data_json} - {e}')
 
@@ -1326,15 +1331,16 @@ def build_rccl_heatmap_table(filename, title, act_data_json, ref_data_json):
     except Exception as e:
         print(f'Error reading file {ref_data_json} - {e}')
 
+    # Handle both wrapped (metadata/result) and unwrapped reference formats
     if 'result' in ref_data_dict_t.keys():
         ref_data_dict = ref_data_dict_t['result']
     else:
-        fail_test(
-            f'Error the reference JSON file {ref_data_json} is not in the expected format, \
-                need metadata and result as top level keys'
-        )
+        # Assume unwrapped format - use directly
+        ref_data_dict = ref_data_dict_t
 
     print('Build HTML RCCL heatmap table')
+    missing_ref_keys = []
+    missing_ref_msg_sizes = 0
     with open(filename, 'a') as fp:
         html_lines = (
             '''
@@ -1359,23 +1365,39 @@ def build_rccl_heatmap_table(filename, title, act_data_json, ref_data_json):
         )
         fp.write(html_lines)
         for key_nam in act_data_dict.keys():
-            (collective, data_type, gpu_count) = key_nam.split("-")
-            # Skip if reference data doesn't have this test configuration
-            if key_nam not in ref_data_dict:
-                print(f"Warning: {key_nam} not found in reference data, skipping from table")
+            # Handle both 3-part (collective-datatype-gpucount) and 4-part (collective-datatype-gpucount-chconfig) formats
+            parts = key_nam.split("-")
+            if len(parts) >= 3:
+                collective = parts[0]
+                data_type = parts[1]
+                gpu_count = parts[2]
+            else:
+                print(f"Warning: Invalid key format {key_nam}, skipping")
+                continue
+            # Skip if reference data doesn't have this test configuration.
+            # Some golden reference files use keys without channel suffix (e.g. "all_reduce_perf-float-8")
+            # while the active run may include "-chdefault" (e.g. "all_reduce_perf-float-8-chdefault").
+            ref_key = key_nam
+            if ref_key not in ref_data_dict:
+                # Try fallback by stripping channel suffix (anything after the 3rd dash-separated field)
+                # e.g. "collective-dtype-gpucount-chdefault" -> "collective-dtype-gpucount"
+                if len(parts) >= 4:
+                    ref_key = "-".join(parts[:3])
+            if ref_key not in ref_data_dict:
+                missing_ref_keys.append(key_nam)
                 continue
             for msg_size in act_data_dict[key_nam].keys():
                 act_bus_bw = act_data_dict[key_nam][msg_size]['bus_bw']
                 act_alg_bw = act_data_dict[key_nam][msg_size]['alg_bw']
                 act_time = act_data_dict[key_nam][msg_size]['time']
                 # Skip if reference doesn't have this message size
-                if msg_size not in ref_data_dict[key_nam]:
-                    print(f"Warning: msg_size {msg_size} not found in reference for {key_nam}, skipping from table")
+                if msg_size not in ref_data_dict[ref_key]:
+                    missing_ref_msg_sizes += 1
                     continue
-                ref_bus_bw = ref_data_dict[key_nam][msg_size]['bus_bw']
-                ref_alg_bw = ref_data_dict[key_nam][msg_size]['alg_bw']
+                ref_bus_bw = ref_data_dict[ref_key][msg_size]['bus_bw']
+                ref_alg_bw = ref_data_dict[ref_key][msg_size]['alg_bw']
                 act_time = act_data_dict[key_nam][msg_size]['time']
-                ref_time = ref_data_dict[key_nam][msg_size]['time']
+                ref_time = ref_data_dict[ref_key][msg_size]['time']
 
                 html_lines = f'''
      <tr>
@@ -1415,6 +1437,19 @@ def build_rccl_heatmap_table(filename, title, act_data_json, ref_data_json):
          <br><br>
          '''
         fp.write(html_lines)
+
+    # Print a concise summary instead of spamming per-key warnings
+    if missing_ref_keys:
+        sample = ", ".join(missing_ref_keys[:5])
+        print(
+            f"Warning: {len(missing_ref_keys)} test keys not found in reference data; "
+            f"skipped from table. Sample: {sample}"
+        )
+    if missing_ref_msg_sizes:
+        print(
+            f"Warning: {missing_ref_msg_sizes} msg_size entries not found in reference data; "
+            f"skipped from table."
+        )
 
 
 def insert_chart(filename, chart_name):
