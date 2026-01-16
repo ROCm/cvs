@@ -1446,10 +1446,7 @@ def build_rccl_heatmap_table(filename, title, act_data_json, ref_data_json):
             f"skipped from table. Sample: {sample}"
         )
     if missing_ref_msg_sizes:
-        print(
-            f"Warning: {missing_ref_msg_sizes} msg_size entries not found in reference data; "
-            f"skipped from table."
-        )
+        print(f"Warning: {missing_ref_msg_sizes} msg_size entries not found in reference data; skipped from table.")
 
 
 def insert_chart(filename, chart_name):
