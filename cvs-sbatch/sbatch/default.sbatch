@@ -9,14 +9,13 @@
 # Debug mode:  DEBUG_MODE=1 sbatch sbatch/default.sbatch
 ##############################################################
 
-#SBATCH --job-name=TheRock-Multinode-RCCL-CI-Test
-#SBATCH --output=/apps/cvs_tests/logs/%x-%j.out
-#SBATCH --error=/apps/cvs_tests/logs/%x-%j.err
-#SBATCH --ntasks-per-node=8
-#SBATCH --partition=17nodexgmi38
-#SBATCH --reservation=rccl
+#SBATCH --job-name=aorta-automation-tests
+#SBATCH --output=/scratch/users/speriasw/tmp/slurm/%x-%j.out
+#SBATCH --error=/scratch/users/speriasw/tmp/slurm/%x-%j.err
+#SBATCH --reservation=rccl_415
+#SBATCH --account=rccl
+#SBATCH --partition=rccl
 #SBATCH --exclusive
-#SBATCH --chdir=/apps/cvs_tests/cvs-sbatch
 
 # Enable strict error handling
 set -euo pipefail

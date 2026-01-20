@@ -1,0 +1,73 @@
+# Aorta Benchmark Test Configuration
+# For testing on SLURM cluster
+
+# Path to Aorta repository (on shared filesystem)
+aorta_path: /home/AMD/speriasw/aorta-cvs-integration/aorta
+
+# Container mount point for aorta_path
+container_mount_path: /mnt
+
+# Aorta base config file (relative to aorta_path)
+# profile_overlap_2gpu.yaml has profiling enabled with compile disabled (works on ROCm)
+base_config: config/profile_overlap_2gpu.yaml
+
+# Docker container settings
+docker:
+  image: jeffdaily/pytorch:torchrec-dlrm-complete
+  container_name: aorta-benchmark
+  shm_size: 17G
+  network_mode: host
+  privileged: true
+
+# RCCL build configuration
+rccl:
+  clone_url: https://github.com/rocm/rccl.git
+  branch: develop
+  build_path: /mnt/rccl
+
+# NCCL/RCCL environment variables
+environment:
+  NCCL_MAX_NCHANNELS: 112
+  NCCL_MAX_P2P_NCHANNELS: 112
+  NCCL_DEBUG: VERSION
+  TORCH_NCCL_HIGH_PRIORITY: 1
+  OMP_NUM_THREADS: 1
+  RCCL_MSCCL_ENABLE: 0
+
+# Short test run (profile_overlap_2gpu.yaml already uses 12 steps with profiling)
+# These overrides are minimal since the base config is already short
+training_overrides:
+  training.max_steps: 15
+  profiling.active: 6
+
+# Scripts to execute (using existing aorta scripts)
+# Note: build_script is skipped when skip_rccl_build: true
+build_script: scripts/launch_rocm.sh
+experiment_script: scripts/launch_rocm.sh
+
+# Hardware
+gpus_per_node: 8
+
+# Timeout
+timeout_seconds: 3600  # 1 hour for test
+
+# Skip RCCL build for this test (the aorta repo uses container-native RCCL)
+skip_rccl_build: true
+
+# Post-benchmark analysis
+# NOTE: TraceLens is disabled because it requires a custom Docker image with TraceLens installed.
+# The jeffdaily/pytorch:torchrec-dlrm-complete image does not have TraceLens.
+# Traces can still be viewed manually in Perfetto (ui.perfetto.dev).
+analysis:
+  enable_tracelens: false
+  enable_gemm_analysis: false
+  tracelens_script: scripts/tracelens_single_config/run_tracelens_single_config.sh
+  gemm_script: scripts/gemm_analysis/run_tracelens_analysis.sh
+  skip_if_exists: false
+
+# Expected results
+expected_results:
+  max_avg_iteration_ms: 10000
+  min_compute_ratio: 0.5
+  min_overlap_ratio: 0.0
+  max_time_variance_ratio: 0.5
