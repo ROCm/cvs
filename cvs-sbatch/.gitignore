@@ -1,0 +1,20 @@
+# Ignore generated files
+cluster.json
+cvs-failure.log
+*.log
+
+# Ignore results directories (contain large artifacts)
+results/
+results.old/
+
+# Ignore reference files (user-specific)
+mi350_reference*.json
+
+# Keep config files (don't ignore them)
+!config.json
+!config_aorta.yaml
+!config_full_collectives.json
+
+# Ignore temporary venvs
+.venv/
+__pycache__/

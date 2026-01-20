@@ -1,0 +1,87 @@
+# Aorta Benchmark Configuration for cvs-sbatch
+# 
+# This configuration controls the CVS benchmark runner for Aorta distributed training.
+# Copy this file and modify paths as needed before running.
+#
+# Usage:
+#   1. Copy this file: cp config_aorta.yaml my_config.yaml
+#   2. Modify aorta_path to point to your Aorta checkout
+#   3. Run: sbatch sbatch/aorta.sbatch (or set CONFIG_FILE=my_config.yaml)
+
+# Path to Aorta repository on host (will be bind-mounted into container)
+# IMPORTANT: Must be on a shared filesystem accessible from all nodes!
+aorta_path: /apps/cvs_tests/aorta
+
+# Container mount point for aorta_path
+container_mount_path: /mnt
+
+# Aorta base config file (relative to aorta_path)
+base_config: config/distributed.yaml
+
+# Docker container settings
+docker:
+  image: jeffdaily/pytorch:torchrec-dlrm-complete
+  container_name: aorta-benchmark
+  shm_size: 17G
+  network_mode: host
+  privileged: true
+
+# RCCL build configuration
+# Set skip_rccl_build: true if RCCL is already built in your aorta_path
+rccl:
+  clone_url: https://github.com/rocm/rccl.git
+  branch: develop
+  build_path: /mnt/rccl
+
+# NCCL/RCCL environment variables for tuning
+environment:
+  NCCL_MAX_NCHANNELS: 112
+  NCCL_MAX_P2P_NCHANNELS: 112
+  NCCL_DEBUG: VERSION
+  TORCH_NCCL_HIGH_PRIORITY: 1
+  OMP_NUM_THREADS: 1
+  RCCL_MSCCL_ENABLE: 0
+
+# Aorta training config overrides (passed via AORTA_OVERRIDE_ARGS env var)
+# These override settings in the base_config
+training_overrides:
+  training.max_steps: 100
+  profiling.active: 10
+
+# Scripts to execute (relative to container_mount_path)
+build_script: scripts/build_rccl.sh
+experiment_script: scripts/rccl_exp.sh
+
+# Hardware configuration
+gpus_per_node: 8
+
+# Execution settings
+timeout_seconds: 10800  # 3 hours
+
+# Skip RCCL build if already built (saves ~10-15 minutes)
+skip_rccl_build: false
+
+# Post-benchmark analysis
+# Uses Aorta's built-in TraceLens and GEMM analysis scripts
+analysis:
+  # TraceLens: Generates performance reports from PyTorch traces
+  # - Individual reports per rank
+  # - Collective multi-rank reports
+  enable_tracelens: true
+  tracelens_script: scripts/tracelens_single_config/run_tracelens_single_config.sh
+
+  # GEMM Analysis: Extended TraceLens analysis for sweep directories
+  # - Supports multi-channel, multi-thread configurations
+  # - Generates comparison reports across configurations
+  enable_gemm_analysis: false
+  gemm_script: scripts/gemm_analysis/run_tracelens_analysis.sh
+
+  # Skip analysis if results already exist
+  skip_if_exists: false
+
+# Expected results for validation (used by test assertions)
+expected_results:
+  max_avg_iteration_ms: 7000
+  min_compute_ratio: 0.8
+  min_overlap_ratio: 0.0
+  max_time_variance_ratio: 0.2

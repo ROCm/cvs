@@ -526,6 +526,11 @@ class AortaRunner(BaseRunner):
                     override_args += f' --override {key}="{value}"'
 
             # Execute experiment script with streaming output for real-time feedback
+            # Note: override_args is passed via environment if the script supports it
+            if override_args:
+                env["AORTA_OVERRIDE_ARGS"] = override_args.strip()
+                log.info(f"Training overrides: {override_args.strip()}")
+
             exp_cmd = f"bash {self.config.container_mount_path}/{self.config.experiment_script}"
             log.info(f"Running experiment: {exp_cmd}")
             log.info("Streaming output (this may take several minutes)...")
@@ -571,6 +576,13 @@ class AortaRunner(BaseRunner):
                 if analysis_result:
                     artifacts["tracelens_analysis"] = analysis_result
                     log.info(f"TraceLens analysis completed: {analysis_result}")
+
+            # Run GEMM analysis if enabled
+            if self.config.analysis.enable_gemm_analysis and trace_dir.exists():
+                gemm_result = self._run_gemm_analysis(container, output_dir)
+                if gemm_result:
+                    artifacts["gemm_analysis"] = gemm_result
+                    log.info(f"GEMM analysis completed: {gemm_result}")
 
             # Also collect training logs
             log_file = self.config.aorta_path / f"training_{node}.log"
@@ -665,6 +677,81 @@ class AortaRunner(BaseRunner):
 
         except Exception as e:
             log.exception(f"TraceLens analysis failed: {e}")
+            return None
+
+    def _run_gemm_analysis(self, container: Container, output_dir: Path) -> Optional[Path]:
+        """
+        Run Aorta's GEMM analysis on the collected traces.
+
+        This uses Aorta's `gemm_analysis/run_tracelens_analysis.sh` script which:
+        1. Discovers configurations (thread configs, channel settings)
+        2. Generates individual TraceLens reports per rank
+        3. Generates collective multi-rank reports
+        4. Compares channels across thread configurations
+
+        Args:
+            container: Docker container to run analysis in
+            output_dir: Directory containing torch_profiler traces
+
+        Returns:
+            Path to tracelens_analysis directory, or None if analysis failed
+        """
+        analysis_dir = output_dir / "tracelens_analysis"
+
+        # Skip if already exists and skip_if_exists is set
+        if self.config.analysis.skip_if_exists and analysis_dir.exists():
+            log.info(f"GEMM analysis already exists, skipping: {analysis_dir}")
+            return analysis_dir
+
+        # Build the analysis command
+        # The script path is relative to container mount
+        script_path = f"{self.config.container_mount_path}/{self.config.analysis.gemm_script}"
+        trace_path = str(output_dir).replace(str(self.config.aorta_path), self.config.container_mount_path)
+
+        # Check if this is a sweep directory structure or single config
+        # For single config runs (like our benchmark), use tracelens_single_config
+        # The gemm_analysis script expects sweep directory structure with *thread dirs
+        torch_profiler_dir = output_dir / "torch_profiler"
+
+        if torch_profiler_dir.exists():
+            # Single config - use the parent directory
+            analysis_cmd = f"bash {script_path} {trace_path}"
+        else:
+            # Sweep structure - pass the sweep directory
+            analysis_cmd = f"bash {script_path} {trace_path}"
+
+        log.info(f"Running GEMM analysis: {analysis_cmd}")
+        log.info("This may take several minutes depending on trace size...")
+
+        try:
+            exit_code, output = self._exec_in_container(
+                container,
+                analysis_cmd,
+                stream=True,  # Stream for real-time feedback
+            )
+
+            if exit_code != 0:
+                log.error(f"GEMM analysis failed with exit code {exit_code}")
+                log.error(f"Output: {output[:2000]}...")  # Truncate for readability
+                return None
+
+            # Verify the output was created
+            if analysis_dir.exists():
+                # Log what was generated
+                individual_count = len(list(analysis_dir.glob("**/individual_reports/*.xlsx")))
+                collective_count = len(list(analysis_dir.glob("**/collective_reports/*.xlsx")))
+                comparison_count = len(list(analysis_dir.glob("comparisons/*.xlsx")))
+                log.info("GEMM analysis complete:")
+                log.info(f"  Individual reports: {individual_count}")
+                log.info(f"  Collective reports: {collective_count}")
+                log.info(f"  Comparison reports: {comparison_count}")
+                return analysis_dir
+            else:
+                log.warning(f"GEMM analysis completed but output not found: {analysis_dir}")
+                return None
+
+        except Exception as e:
+            log.exception(f"GEMM analysis failed: {e}")
             return None
 
     def teardown(self) -> bool:
