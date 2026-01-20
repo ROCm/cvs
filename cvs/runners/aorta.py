@@ -531,7 +531,10 @@ class AortaRunner(BaseRunner):
                 env["AORTA_OVERRIDE_ARGS"] = override_args.strip()
                 log.info(f"Training overrides: {override_args.strip()}")
 
-            exp_cmd = f"bash {self.config.container_mount_path}/{self.config.experiment_script}"
+            # Pass the base config file to the experiment script
+            # launch_rocm.sh expects: CONFIG=${1:-default.yaml}
+            config_path = f"{self.config.container_mount_path}/{self.config.base_config}"
+            exp_cmd = f"bash {self.config.container_mount_path}/{self.config.experiment_script} {config_path}"
             log.info(f"Running experiment: {exp_cmd}")
             log.info("Streaming output (this may take several minutes)...")
 
@@ -556,19 +559,48 @@ class AortaRunner(BaseRunner):
                     error_message=f"Experiment exited with code {exit_code}",
                 )
 
-            # Determine output directory from environment
+            # Find torch_profiler directory - Aorta saves traces to output_dir/torch_profiler
+            # The output_dir is configured in the YAML config (e.g., "overlap_debug_repro")
+            # We search for the most recent torch_profiler directory
             nch = self.config.environment.NCCL_MAX_NCHANNELS
             compute_ch = 256 - nch
-            output_dir_name = f"nodes1_rccl_develop_commsCh{nch}_computeCh{compute_ch}"
-            output_dir = self.config.aorta_path / output_dir_name
 
-            # Collect artifact paths
-            trace_dir = output_dir / "torch_profiler"
-            if trace_dir.exists():
+            trace_dir = None
+            output_dir = None
+
+            # Search for torch_profiler directories in aorta_path (handles nested dirs like artifacts/*/torch_profiler)
+            for candidate in self.config.aorta_path.glob("**/torch_profiler"):
+                if candidate.is_dir():
+                    # Use the most recently modified one (check mtime of rank subdirs or files inside)
+                    try:
+                        # Get mtime of most recent file in the directory
+                        latest_file = max(candidate.glob("**/*"), key=lambda p: p.stat().st_mtime if p.is_file() else 0, default=None)
+                        candidate_mtime = latest_file.stat().st_mtime if latest_file and latest_file.is_file() else candidate.stat().st_mtime
+                    except (ValueError, OSError):
+                        candidate_mtime = candidate.stat().st_mtime
+
+                    if trace_dir is None:
+                        trace_dir = candidate
+                        output_dir = candidate.parent
+                        trace_mtime = candidate_mtime
+                    elif candidate_mtime > trace_mtime:
+                        trace_dir = candidate
+                        output_dir = candidate.parent
+                        trace_mtime = candidate_mtime
+
+            if trace_dir and trace_dir.exists():
                 artifacts["torch_traces"] = trace_dir
                 log.info(f"Found trace artifacts at {trace_dir}")
             else:
-                log.warning(f"Expected trace directory not found: {trace_dir}")
+                # Fallback to legacy path format
+                output_dir_name = f"nodes1_rccl_develop_commsCh{nch}_computeCh{compute_ch}"
+                output_dir = self.config.aorta_path / output_dir_name
+                trace_dir = output_dir / "torch_profiler"
+                if trace_dir.exists():
+                    artifacts["torch_traces"] = trace_dir
+                    log.info(f"Found trace artifacts at {trace_dir}")
+                else:
+                    log.warning(f"No torch_profiler directory found in {self.config.aorta_path}")
 
             # Run post-benchmark analysis using Aorta's scripts
             if self.config.analysis.enable_tracelens and trace_dir.exists():

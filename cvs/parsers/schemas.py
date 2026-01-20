@@ -32,6 +32,7 @@ class ParseStatus(Enum):
     SUCCESS = "success"
     PARTIAL = "partial"  # Some results parsed, some failed
     FAILED = "failed"
+    NO_DATA = "no_data"  # No data to parse (e.g., TraceLens skipped, Chrome traces disabled)
 
 
 T = TypeVar('T', bound=BaseModel)

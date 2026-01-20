@@ -41,7 +41,7 @@ training_overrides:
 
 # Scripts to execute (relative to container_mount_path)
 build_script: scripts/build_rccl.sh
-experiment_script: scripts/rccl_exp.sh
+experiment_script: scripts/launch_rocm.sh
 
 # Hardware configuration
 gpus_per_node: 8

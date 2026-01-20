@@ -264,8 +264,13 @@ class TestAortaBenchmark:
         if parse_result.status == ParseStatus.FAILED:
             for error in parse_result.errors:
                 fail_test(f"Parse error: {error}")
+        elif parse_result.status == ParseStatus.NO_DATA:
+            # NO_DATA is not a failure - just means Excel reports weren't generated
+            # (e.g., chrome_trace disabled to avoid ROCm crashes)
+            # Raw traces are still available for viewing in Perfetto
+            log.info("No parsed metrics available, but raw traces exist for manual analysis")
 
-        # Log warnings
+        # Log warnings (for all statuses)
         for warning in parse_result.warnings:
             log.warning(warning)
 
