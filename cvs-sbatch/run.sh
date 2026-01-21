@@ -60,8 +60,18 @@ main() {
   log_info "========================================"
   log_info "CVS Benchmark Automation"
   log_info "========================================"
-  log_info "Job ID: ${SLURM_JOB_ID:-N/A}"
-  log_info "Nodes: ${SLURM_NNODES:-N/A}"
+  
+  # Detect execution environment
+  if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    log_info "Environment: SLURM"
+    log_info "Job ID: ${SLURM_JOB_ID}"
+    log_info "Nodes: ${SLURM_NNODES:-N/A}"
+    log_info "Node List: ${SLURM_NODELIST:-N/A}"
+  else
+    log_info "Environment: Non-SLURM (manual node config)"
+    log_info "Cluster Config: ${MANUAL_CLUSTER_CONFIG:-cluster_config.json}"
+  fi
+  
   log_info "Working directory: $(pwd)"
   log_info "CVS directory: $CVS_DIR"
   log_info "CVS branch: $CVS_BRANCH"

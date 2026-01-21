@@ -1,0 +1,29 @@
+{
+    "_description": "Cluster configuration for non-SLURM environments",
+    "_usage": "Copy this file to cluster_config.json and modify as needed",
+    "_note": "Set MANUAL_CLUSTER_CONFIG=/path/to/your/config.json to use a different file",
+
+    "_user_comment": "Username for SSH connections. Leave empty to use current user.",
+    "username": "",
+
+    "_key_comment": "Path to SSH private key. Leave empty for auto-detection.",
+    "priv_key_file": "",
+
+    "_head_comment": "Head/management node - used for job coordination",
+    "head_node_dict": {
+        "mgmt_ip": "head-node-hostname-or-ip"
+    },
+
+    "_node_comment": "Compute nodes - add all nodes that will run the benchmark",
+    "_vpc_comment": "vpc_ip should be the IP/hostname reachable from other nodes in the cluster",
+    "node_dict": {
+        "node1-hostname": {
+            "bmc_ip": "NA",
+            "vpc_ip": "node1-hostname"
+        },
+        "node2-hostname": {
+            "bmc_ip": "NA",
+            "vpc_ip": "node2-hostname"
+        }
+    }
+}

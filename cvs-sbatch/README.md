@@ -1,20 +1,26 @@
 # CVS Benchmark Automation
 
-Automated SLURM-based config generation for CVS (Cluster Validation Suite).
+Automated benchmark execution for CVS (Cluster Validation Suite).
+
+**Supports both SLURM and non-SLURM environments.**
 
 ## Structure
 
 ```
 cvs-sbatch/
 ├── run.sh                      # Main orchestrator script
+├── run_direct.sh               # Direct execution (non-SLURM)
 ├── sbatch/
 │   ├── default.sbatch          # SBATCH configuration for RCCL tests
 │   └── aorta.sbatch            # SBATCH configuration for Aorta benchmarks
 ├── lib/
 │   ├── common.sh               # Logging, cleanup, error handling
 │   ├── git_ops.sh              # CVS repository management
-│   ├── cluster_config.sh       # Cluster JSON generation
+│   ├── cluster_config.sh       # Cluster JSON generation (SLURM + manual)
 │   └── python_env.sh           # Python environment & test execution
+├── examples/
+│   └── cluster_config_chi.json # Example cluster config for CHI cluster
+├── cluster_config.json.template # Template for manual cluster config
 ├── config.json                 # RCCL benchmark configuration
 ├── config_aorta.yaml           # Aorta benchmark configuration
 └── README.md                   # This file
@@ -22,83 +28,185 @@ cvs-sbatch/
 
 ## Features
 
+- **Dual Environment Support**: Works with SLURM and non-SLURM clusters
 - **Modular Design**: Separated concerns for maintainability
 - **Idempotent**: Safe to run multiple times
 - **Auto-Cleanup**: Removes generated files on exit
 - **Python Environment Fallback**: UV → System pytest → Venv
-- **Dynamic Cluster Configuration**: Generates cluster.json from SLURM allocation
+- **Dynamic Cluster Configuration**: Auto-generates from SLURM or manual config
 
-## Usage
+---
 
-### Submit RCCL Benchmark (Default)
+## Quick Start
 
-```bash
-sbatch sbatch/default.sbatch 
-```
-
-### Submit Aorta Benchmark
+### SLURM Environment
 
 ```bash
-# Ensure config_aorta.yaml has correct aorta_path
+# RCCL benchmark
+sbatch sbatch/default.sbatch
+
+# Aorta benchmark
 sbatch sbatch/aorta.sbatch
 ```
 
-**Prerequisites for Aorta:**
+### Non-SLURM Environment
+
+```bash
+# 1. Create cluster config from template
+cp cluster_config.json.template cluster_config.json
+
+# 2. Edit with your node information
+vim cluster_config.json
+
+# 3. Run benchmark
+./run_direct.sh
+```
+
+---
+
+## Usage
+
+### SLURM Mode
+
+When running under SLURM, the cluster configuration is automatically generated from SLURM environment variables (`SLURM_NODELIST`, `SLURM_SUBMIT_HOST`, etc.).
+
+```bash
+# Submit RCCL benchmark
+sbatch sbatch/default.sbatch
+
+# Submit Aorta benchmark
+CONFIG_FILE=config_aorta.yaml sbatch sbatch/aorta.sbatch
+```
+
+### Non-SLURM Mode (Manual Cluster Config)
+
+For clusters without SLURM, you must provide a cluster configuration file.
+
+#### Step 1: Create Cluster Configuration
+
+```bash
+# Option A: Copy template
+cp cluster_config.json.template cluster_config.json
+
+# Option B: Use example
+cp examples/cluster_config_chi.json cluster_config.json
+```
+
+#### Step 2: Edit Configuration
+
+```json
+{
+    "username": "your-username",
+    "priv_key_file": "/home/user/.ssh/id_ed25519",
+    "head_node_dict": {
+        "mgmt_ip": "head-node-hostname"
+    },
+    "node_dict": {
+        "node1-hostname": {
+            "bmc_ip": "NA",
+            "vpc_ip": "node1-hostname"
+        },
+        "node2-hostname": {
+            "bmc_ip": "NA",
+            "vpc_ip": "node2-hostname"
+        }
+    }
+}
+```
+
+**Fields:**
+- `username`: SSH username (leave empty for current user)
+- `priv_key_file`: Path to SSH private key (leave empty for auto-detection)
+- `head_node_dict.mgmt_ip`: Head/management node hostname or IP
+- `node_dict`: Map of compute nodes with their VPC IPs
+
+#### Step 3: Run Benchmark
+
+```bash
+# Using run_direct.sh (recommended)
+./run_direct.sh
+
+# Or with custom cluster config
+./run_direct.sh --cluster my_cluster.json
+
+# Or with environment variable
+MANUAL_CLUSTER_CONFIG=my_cluster.json ./run.sh
+```
+
+### Running Specific Benchmarks
+
+```bash
+# RCCL benchmark (non-SLURM)
+MANUAL_CLUSTER_CONFIG=cluster_config.json \
+TEST_PATH=./cvs/tests/rccl/rccl_heatmap_cvs.py \
+./run.sh
+
+# Aorta benchmark (non-SLURM)
+MANUAL_CLUSTER_CONFIG=cluster_config.json \
+TEST_PATH=./cvs/tests/benchmark/test_aorta.py \
+CONFIG_FILE=config_aorta.yaml \
+./run.sh
+```
+
+---
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CVS_REPO_URL` | CVS Git repository URL | `https://github.com/ROCm/cvs.git` |
+| `CVS_DIR` | Local path to CVS repository | `/apps/cvs_tests/cvs` |
+| `CVS_BRANCH` | CVS branch to use | `main` |
+| `TEST_PATH` | Test file to execute | `./cvs/tests/rccl/rccl_heatmap_cvs.py` |
+| `CONFIG_FILE` | Benchmark config (JSON/YAML) | `config.json` |
+| `LOG_FILE` | Path to log file | `/tmp/cvs_$USER_$$.log` |
+| `MANUAL_CLUSTER_CONFIG` | Manual cluster config (non-SLURM) | `cluster_config.json` |
+| `DEBUG_MODE` | Enable verbose logging | `0` |
+
+### Running Aorta Benchmarks
+
+**Prerequisites:**
 - Docker daemon running on compute nodes
 - User in 'docker' group on compute nodes
 - Aorta repository on shared filesystem
 - Docker image pullable or pre-cached
 
-### Local Testing
-
 ```bash
-./run.sh
+# SLURM
+sbatch sbatch/aorta.sbatch
+
+# Non-SLURM
+MANUAL_CLUSTER_CONFIG=cluster_config.json \
+CONFIG_FILE=config_aorta.yaml \
+TEST_PATH=./cvs/tests/benchmark/test_aorta.py \
+./run_direct.sh
 ```
 
-### Configuration via Environment Variables
-
-```bash
-# Override CVS repository
-export CVS_REPO_URL="https://github.com/your/fork.git"
-export CVS_BRANCH="your-branch"
-
-# Override CVS directory
-export CVS_DIR="/path/to/cvs"
-
-# Override test settings
-export TEST_PATH="./tests/your_test.py"
-export CONFIG_FILE="config_custom.yaml"  # Supports .json and .yaml
-export LOG_FILE="/tmp/your_test.log"
-
-# Enable debug mode (verbose logging)
-export DEBUG_MODE=1
-
-sbatch sbatch/default.sbatch
-```
-
-### Running Aorta with Custom Config
+### Custom Configuration
 
 ```bash
 # Copy and modify config
-cp config_aorta.yaml my_aorta_config.yaml
-# Edit my_aorta_config.yaml (set aorta_path, etc.)
+cp config_aorta.yaml my_config.yaml
+vim my_config.yaml
 
 # Run with custom config
-export CONFIG_FILE="my_aorta_config.yaml"
-sbatch sbatch/aorta.sbatch
+CONFIG_FILE=my_config.yaml ./run_direct.sh
 ```
 
-### Debug Mode
+---
+
+## Debug Mode
 
 Enable verbose logging for troubleshooting:
 
 ```bash
-# One-time debug mode
+# SLURM
 DEBUG_MODE=1 sbatch sbatch/default.sbatch
 
-# Or export for multiple runs
-export DEBUG_MODE=1
-sbatch sbatch/default.sbatch
+# Non-SLURM
+DEBUG_MODE=1 ./run_direct.sh
 ```
 
 Debug mode provides:
@@ -106,14 +214,13 @@ Debug mode provides:
 - Debug-level log messages
 - Directory and path verification
 - Step-by-step progress indicators
-- Exit code reporting
 
-**Production use:** Keep `DEBUG_MODE=0` (default) for clean logs
+---
 
 ## Library Modules
 
 ### `lib/common.sh`
-- Logging functions (`log_info`, `log_error`, `log_success`)
+- Logging functions (`log_info`, `log_error`, `log_success`, `log_debug`)
 - Cleanup functions
 - Error handling and traps
 
@@ -123,9 +230,10 @@ Debug mode provides:
 - Idempotent git operations
 
 ### `lib/cluster_config.sh`
+- Auto-detect SLURM vs non-SLURM environment
 - SSH key detection
 - Node IP resolution
-- Generate `cluster.json` from SLURM allocation
+- Generate `cluster.json` from SLURM allocation **or** manual config
 
 ### `lib/python_env.sh`
 - UV-based execution
@@ -133,38 +241,20 @@ Debug mode provides:
 - Virtual environment management
 - Automatic fallback mechanism
 
-## SBATCH Configuration
-
-Edit `sbatch/default.sbatch` to modify SLURM parameters:
-- Node count
-- Tasks per node
-- GPUs per node
-- Partition
-- Reservation
-- Account
+---
 
 ## Generated Files
 
 The following files are generated during execution and cleaned up automatically:
 
-- `cluster.json` - Generated from SLURM allocation
+- `cluster.json` - Generated from SLURM allocation or manual config
 - `.venv/` - Python virtual environment (if created)
+
+---
 
 ## Development
 
-# Planned Features
-
-- TODO: Dynamic benchmark configuration generation
-    - Level 1: collectives [All_reduce, Reduce_gather, Reduce_scatter, AlltoAll], dtypes [float, bloat16]
-    - Level 2: check functionality of all collectives & dtypes
-    - Level 3: sweep across algo, proto combination matrix
-    - Level 4: user defined sweeps
-- TODO: Bats unit tests for the individual modules
-- TODO: Bats integration tests for the individual modules 
-
 ### Adding New SBATCH Configurations
-
-Create additional files in `sbatch/`:
 
 ```bash
 cp sbatch/default.sbatch sbatch/multi_node.sbatch
@@ -186,19 +276,19 @@ cp sbatch/default.sbatch sbatch/mybench.sbatch
 sbatch sbatch/mybench.sbatch
 ```
 
-### Adding New Library Functions
-
-1. Create or edit files in `lib/`
-2. Source them in `run.sh`
-3. Use functions in the main workflow
-
 ### Testing Individual Modules
 
 ```bash
 # Source a module and test its functions
 source lib/common.sh
 log_info "Testing logging"
+
+# Test cluster config generation (non-SLURM)
+source lib/cluster_config.sh
+MANUAL_CLUSTER_CONFIG=my_cluster.json generate_cluster_config_manual
 ```
+
+---
 
 ## Troubleshooting
 
@@ -206,34 +296,47 @@ log_info "Testing logging"
 
 ```bash
 # Check output
-cat /scratch/users/speriasw/tmp/slurm/cvs-benchmark-<JOB_ID>.out
+cat /scratch/users/$USER/tmp/slurm/cvs-benchmark-<JOB_ID>.out
 
 # Check errors
-cat /scratch/users/speriasw/tmp/slurm/cvs-benchmark-<JOB_ID>.err
+cat /scratch/users/$USER/tmp/slurm/cvs-benchmark-<JOB_ID>.err
 ```
 
-### Enable Debug Mode
-
-Submit with verbose logging:
+### Non-SLURM: "Cluster config not found"
 
 ```bash
-DEBUG_MODE=1 sbatch sbatch/default.sbatch
+# Ensure you have a cluster config file
+cp cluster_config.json.template cluster_config.json
+# Edit with your nodes
+vim cluster_config.json
 ```
 
-This enables:
-- Command tracing (`set -x`)
-- Detailed debug messages
-- Path verification steps
-- Exit code reporting
+### Non-SLURM: "Failed to resolve hostname"
+
+- Ensure hostnames in your config are resolvable
+- Use IP addresses instead of hostnames if DNS is not available
+- Verify SSH connectivity to all nodes
 
 ### Manual Cleanup
-
-If cleanup didn't run:
 
 ```bash
 rm -f cluster.json
 rm -rf /path/to/cvs/.venv
 ```
+
+---
+
+## Planned Features
+
+- TODO: Dynamic benchmark configuration generation
+    - Level 1: collectives [All_reduce, Reduce_gather, Reduce_scatter, AlltoAll], dtypes [float, bfloat16]
+    - Level 2: check functionality of all collectives & dtypes
+    - Level 3: sweep across algo, proto combination matrix
+    - Level 4: user defined sweeps
+- TODO: Bats unit tests for individual modules
+- TODO: Bats integration tests
+
+---
 
 ## Author
 
@@ -242,4 +345,3 @@ surya.periaswamy@amd.com
 ## License
 
 Internal use only.
-
