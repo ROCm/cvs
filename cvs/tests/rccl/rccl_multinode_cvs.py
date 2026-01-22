@@ -405,6 +405,7 @@ def test_rccl_perf(
         nccl_ib_split_data_on_qps=config_dict['nccl_ib_split_data_on_qps'],
         nccl_pxn_disable=nccl_pxn_disable,
         nccl_net_plugin=config_dict['nccl_net_plugin'],
+        mpi_pml=config_dict.get('mpi_pml', 'auto'),
         user_key_file=cluster_dict['priv_key_file'],
         verify_bus_bw=config_dict['verify_bus_bw'],
         verify_bw_dip=config_dict['verify_bw_dip'],

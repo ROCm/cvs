@@ -65,6 +65,49 @@ def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
         return False
 
 
+def determine_mpi_pml_config(mpi_pml, shdl, mpi_path, head_node, net_dev_list, ucx_tls):
+    """
+    Determine MPI PML (Point-to-Point Messaging Layer) configuration based on user config or auto-detection.
+
+    Parameters:
+      mpi_pml: User-specified PML mode ('auto', 'ucx', or 'ob1').
+      shdl: SSH handle to execute commands on the remote node.
+      mpi_path: Path to the MPI installation directory.
+      head_node: The head node hostname for retrieving command output.
+      net_dev_list: UCX network device(s) to use (UCX_NET_DEVICES).
+      ucx_tls: UCX transport layer to use (UCX_TLS).
+
+    Returns:
+      tuple: (pml_param, ucx_params) where:
+        - pml_param: MCA parameter string for mpirun (e.g., '--mca pml ob1' or '')
+        - ucx_params: UCX environment parameter string for mpirun (e.g., '-x UCX_...' or '')
+    """
+    if mpi_pml.lower() == "auto":
+        # Auto-detect UCX availability
+        ucx_available = is_ucx_available_in_mpi(shdl, mpi_path, head_node)
+        pml_param = "--mca pml ob1" if not ucx_available else ""
+    elif mpi_pml.lower() == "ucx":
+        # User explicitly requested UCX
+        ucx_available = True
+        pml_param = ""
+        log.info("Using UCX (user-specified)")
+    elif mpi_pml.lower() == "ob1":
+        # User explicitly requested ob1 fallback
+        ucx_available = False
+        pml_param = "--mca pml ob1"
+        log.info("Using pml ob1 (user-specified)")
+    else:
+        log.warning(f"Unknown mpi_pml value '{mpi_pml}', defaulting to auto-detection")
+        ucx_available = is_ucx_available_in_mpi(shdl, mpi_path, head_node)
+        pml_param = "--mca pml ob1" if not ucx_available else ""
+
+    ucx_params = (
+        f"-x UCX_UNIFIED_MODE=y -x UCX_NET_DEVICES={net_dev_list} -x UCX_TLS={ucx_tls} " if ucx_available else ""
+    )
+
+    return pml_param, ucx_params
+
+
 def scan_rccl_logs(output):
     """
     Scan RCCL test stdout for known error/warning patterns and enforce failure criteria.
@@ -446,6 +489,7 @@ def rccl_cluster_test(
     min_channels=None,
     max_channels=None,
     data_type="float",
+    mpi_pml="auto",
     user_key_file=None,
     verify_bus_bw=False,
     verify_bw_dip=True,
@@ -521,12 +565,8 @@ def rccl_cluster_test(
     cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
-    # Check if UCX is available in OpenMPI build; if not, use pml ob1
-    ucx_available = is_ucx_available_in_mpi(shdl, MPI_PATH, head_node)
-    pml_param = "--mca pml ob1" if not ucx_available else ""
-    ucx_params = (
-        f"-x UCX_UNIFIED_MODE=y -x UCX_NET_DEVICES={net_dev_list} -x UCX_TLS={ucx_tls} " if ucx_available else ""
-    )
+    # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
+    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, shdl, MPI_PATH, head_node, net_dev_list, ucx_tls)
 
     # Wrap test binary in shell to source env script if provided
     test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
@@ -666,6 +706,7 @@ def rccl_cluster_test_default(
     user_password=None,
     min_channels=None,
     max_channels=None,
+    mpi_pml="auto",
     user_key_file=None,
     verify_bus_bw=False,
     verify_bw_dip=True,
@@ -750,12 +791,8 @@ def rccl_cluster_test_default(
     cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
-    # Check if UCX is available in OpenMPI build; if not, use pml ob1
-    ucx_available = is_ucx_available_in_mpi(shdl, MPI_PATH, head_node)
-    pml_param = "--mca pml ob1" if not ucx_available else ""
-    ucx_params = (
-        f"-x UCX_UNIFIED_MODE=y -x UCX_NET_DEVICES={net_dev_list} -x UCX_TLS={ucx_tls} " if ucx_available else ""
-    )
+    # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
+    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, shdl, MPI_PATH, head_node, net_dev_list, ucx_tls)
 
     all_raw_results = []
     all_validated_results = []

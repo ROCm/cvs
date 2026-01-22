@@ -9,6 +9,8 @@
        "rccl_tests_dir": "/opt/rccl-tests/build",
        "mpi_dir": "/usr/bin",
        "mpi_path_var": "/usr",
+       "_comment_mpi_pml": "MPI Point-to-Point Messaging Layer: 'auto' (auto-detect UCX support), 'ucx' (force UCX), or 'ob1' (force OpenIB/TCP fallback). Auto-detection checks if UCX is available via ompi_info or library linkage.",
+       "mpi_pml" : "auto",
        "rocm_path_var": "/opt/rocm/",
        "rccl_path_var": "/opt/rccl-tests/",
        "gpu_count_list": [ "8", "16", "32" ],
