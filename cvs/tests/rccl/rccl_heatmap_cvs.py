@@ -413,6 +413,7 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
         no_of_local_ranks=config_dict['no_of_local_ranks'],
         ucx_tls=config_dict['ucx_tls'],
         nccl_net_plugin=config_dict['nccl_net_plugin'],
+        mpi_pml=config_dict.get('mpi_pml', 'auto'),
         user_key_file=cluster_dict['priv_key_file'],
         verify_bus_bw=config_dict['verify_bus_bw'],
         verify_bw_dip=config_dict['verify_bw_dip'],
