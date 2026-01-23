@@ -162,8 +162,8 @@
 			       "auto":
 			           {
                    		       "output_throughput_per_sec": "10000",
-                                       "mean_ttft_ms": "55000",
-                                       "mean_tpot_ms": "85"
+                                       "mean_ttft_ms": "60000",
+                                       "mean_tpot_ms": "110"
 				   }
 			  }
 		      },
