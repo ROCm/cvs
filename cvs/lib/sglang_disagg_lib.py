@@ -12,7 +12,6 @@ import time
 from cvs.lib import globals
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
-from cvs.lib import linux_utils
 
 
 log = globals.log
@@ -421,7 +420,6 @@ class SglangDisaggPD:
         print('#================ * * * =========================#')
         cmd_list = []
         decode_node_list = self.inf_dict['decode_node_list']
-        tp_size = int(self.decode_nnodes) * 8
         print('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
         for i in range(0, int(self.decode_nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
@@ -560,7 +558,7 @@ class SglangDisaggPD:
                       --host 0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']} \
                       > {self.log_dir}/benchmark_node/benchmark_results.log" '''
         formatted_cmd = textwrap_for_yml(cmd)
-        out_dict = self.b_phdl.exec(formatted_cmd, timeout=500)
+        self.b_phdl.exec(formatted_cmd, timeout=500)
         time.sleep(5)
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
         self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])

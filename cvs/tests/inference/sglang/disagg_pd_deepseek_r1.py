@@ -227,13 +227,6 @@ def test_cleanup_stale_containers(p_phdl, d_hdl, r_hdl, inference_dict):
     r_hdl.exec(f'sudo rm -rf {self.log_dir}')
 
 
-def test_cleanup_stale_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict):
-    for a_phdl in [p_phdl, d_phdl, r_phdl]:
-        container_name = inference_dict['container_name']
-        docker_lib.kill_docker_container(a_phdl, container_name)
-        docker_lib.delete_all_containers_and_volumes(a_phdl)
-
-
 def test_launch_inference_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict):
     log.info('Testcase launch InferenceMax containers')
     globals.error_list = []
