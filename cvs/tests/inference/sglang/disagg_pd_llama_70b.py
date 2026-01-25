@@ -261,6 +261,15 @@ def test_launch_inference_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_d
 
 # Setup the ib devices and ensure they show up in the container
 def test_setup_ibv_devices(im_obj):
+    """
+    Validate that InfiniBand / RDMA devices are:
+      - Properly configured on the host
+      - Visible inside the inference container
+      - Ready for high-performance communication (Prefill/Decode)
+
+    This test is foundational and must pass before any inference tests
+    that rely on RDMA-based KV cache transfer.
+    """
     globals.error_list = []
     im_obj.check_ibv_devices()
     im_obj.exec_nic_setup_scripts()
@@ -268,6 +277,14 @@ def test_setup_ibv_devices(im_obj):
 
 
 def test_rms_norm(im_obj):
+    """
+    Run RMSNorm operator tests to validate:
+      - GPU kernel correctness
+      - AITer backend functionality
+      - Basic compute stability before inference
+
+    This serves as a low-level sanity check before launching servers.
+    """
     globals.error_list = []
     im_obj.run_test_rmsnorm()
     update_test_result()
@@ -275,6 +292,16 @@ def test_rms_norm(im_obj):
 
 # Test to start the prefill servers using sglang.launch_server
 def test_launch_prefill_servers(im_obj):
+    """
+    Start SGLang Prefill servers in disaggregated PD mode.
+
+    Prefill servers:
+      - Handle prompt processing
+      - Generate KV cache
+      - Serve as upstream for Decode servers
+
+    This test prepares the Prefill side of the inference pipeline.
+    """
     globals.error_list = []
     im_obj.setup_prefill_container_env()
     im_obj.launch_prefill_servers()
@@ -283,6 +310,16 @@ def test_launch_prefill_servers(im_obj):
 
 # Test to start the decode servers using sglang.launch_server
 def test_launch_decode_servers(im_obj):
+    """
+    Start SGLang Decode servers in disaggregated PD mode.
+
+    Decode servers:
+      - Consume KV cache from Prefill servers
+      - Generate output tokens
+      - Drive decode throughput and latency
+
+    This test completes the inference data plane.
+    """
     globals.error_list = []
     im_obj.setup_decode_container_env()
     im_obj.launch_decode_servers()
@@ -292,6 +329,15 @@ def test_launch_decode_servers(im_obj):
 # Test to validate the Prefill and Decode servers are ready to serve
 # Inference traffic
 def test_poll_for_server_ready(im_obj):
+    """
+    Poll Prefill and Decode server logs to ensure:
+      - Servers have fully started
+      - Models are loaded
+      - HTTP endpoints are responding (200 OK)
+      - Systems are stable before inference begins
+
+    This test prevents inference traffic from being sent too early.
+    """
     globals.error_list = []
     im_obj.poll_and_check_server_ready()
     update_test_result()
@@ -299,6 +345,16 @@ def test_poll_for_server_ready(im_obj):
 
 # Start the proxy router serving using sglang_router.launch_router
 def test_launch_proxy_router(im_obj):
+    """
+    Start the SGLang Proxy Router.
+
+    The Proxy Router:
+      - Accepts inference requests
+      - Routes Prefill and Decode traffic
+      - Coordinates disaggregated PD execution
+
+    This test completes the control plane setup for inference serving.
+    """
     globals.error_list = []
     im_obj.setup_proxy_router_container_env()
     im_obj.launch_proxy_router()
@@ -307,6 +363,19 @@ def test_launch_proxy_router(im_obj):
 
 # Test to run the canned gsm8k benchmark packaged with the container
 def test_run_gsm8k_benchmark_test(im_obj):
+    """
+    Execute the GSM8K benchmark using the SGLang inference serving stack.
+
+    Purpose:
+    --------
+    This test validates:
+      - End-to-end inference correctness using a real-world dataset
+      - Sustained decode throughput under realistic query patterns
+      - Proper interaction between Proxy Router, Prefill, and Decode servers
+
+    GSM8K is a commonly used reasoning benchmark, making it a strong
+    signal for both correctness and performance regression detection.
+    """
     globals.error_list = []
     im_obj.setup_benchmark_serv_container_env()
     im_obj.run_gsm8k_benchmark_test()
@@ -315,6 +384,20 @@ def test_run_gsm8k_benchmark_test(im_obj):
 
 # Test to run the sglang Benchmarking Testing using bench_serv
 def test_run_benchmark_test(im_obj):
+    """
+    Execute a synthetic serving benchmark using sglang.bench_serving
+    with a random dataset.
+
+    Purpose:
+    --------
+    This test focuses on:
+      - Stress-testing the serving infrastructure
+      - Evaluating scheduling, batching, and throughput under load
+      - Isolating serving performance independent of dataset semantics
+
+    Randomized workloads are useful for detecting performance regressions
+    and scaling bottlenecks.
+    """
     globals.error_list = []
     im_obj.setup_benchmark_serv_container_env()
     im_obj.benchserv_test_random(d_type='auto')

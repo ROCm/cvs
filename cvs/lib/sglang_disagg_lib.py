@@ -48,14 +48,40 @@ class SglangDisaggPD:
         user_name=None,
         priv_key_file=None,
     ):
-        #
+        """
+        Initialize a Disaggregated Prefill/Decode (PD) inference controller
+        for SGLang.
+
+        This class encapsulates:
+          - Cluster topology (prefill, decode, proxy, benchmark nodes)
+          - SSH-based remote execution (via Pssh handlers)
+          - Inference configuration (networking, containers, env vars)
+          - Benchmark configuration (load, concurrency, prompt sizes)
+
+        Args:
+            model_name (str): HuggingFace or local model identifier
+            inference_config_dict (dict): Cluster and runtime configuration
+            benchmark_params_dict (dict): Benchmark workload parameters
+            hf_token (str): HuggingFace access token
+            p_phdl, d_phdl, r_phdl, b_phdl: Optional pre-created SSH handlers
+            gpu_type (str): GPU type (e.g., mi300, mi325)
+            user_name (str): SSH username for remote nodes
+            priv_key_file (str): SSH private key file
+        """
+
+        # ------------------------------------------------------------------
+        # Basic identity and authentication parameters
+        # ------------------------------------------------------------------
         self.user_name = user_name
         self.priv_key_file = priv_key_file
         self.model_name = model_name
         self.hf_token = hf_token
         self.gpu_type = gpu_type
 
-        # Sample inference config and model params dict saved above
+        # ------------------------------------------------------------------
+        # Store inference and benchmark configuration dictionaries
+        # These are typically loaded from a JSON/YAML configuration file
+        # ------------------------------------------------------------------
         self.inf_dict = inference_config_dict
         self.bp_dict = benchmark_params_dict
 
@@ -63,6 +89,14 @@ class SglangDisaggPD:
         self.hf_token = hf_token
         self.gpu_type = gpu_type
 
+        # ------------------------------------------------------------------
+        # Extract cluster topology for disaggregated inference
+        #
+        # Prefill nodes  : Handle prompt ingestion + KV cache creation
+        # Decode nodes   : Handle token generation
+        # Proxy node     : Routes requests between prefill/decode
+        # Benchmark node : Generates inference load
+        # ------------------------------------------------------------------
         self.prefill_node_list = self.inf_dict['prefill_node_list']
         self.decode_node_list = self.inf_dict['decode_node_list']
         self.prefill_nnodes = len(self.prefill_node_list)
@@ -71,6 +105,14 @@ class SglangDisaggPD:
         self.proxy_node = list(self.inf_dict['proxy_router_node'])
         self.benchmark_serv_node = list(self.inf_dict['benchmark_serv_node'])
 
+        # ------------------------------------------------------------------
+        # SSH handlers for each node group
+        #
+        # p_phdl : Prefill nodes
+        # d_phdl : Decode nodes
+        # r_phdl : Proxy/router node
+        # b_phdl : Benchmark client node
+        # ------------------------------------------------------------------
         self.p_phdl = p_phdl
         self.d_phdl = d_phdl
         self.r_phdl = r_phdl
@@ -93,6 +135,9 @@ class SglangDisaggPD:
         self.inference_results_dict = {}
         print(self.gpu_type)
 
+        # ------------------------------------------------------------------
+        # Extract commonly used inference parameters for convenience
+        # ------------------------------------------------------------------
         # Needed only in the case of distributed inference - placeholder for future
         # Intialize cluster stats dicts ..
         self.rdma_stats_dict_before = {}
@@ -101,6 +146,10 @@ class SglangDisaggPD:
         self.inference_start_time = p_phdl.exec('date +"%a %b %e %H:%M"')
         self.inference_end_time = None
 
+        # ------------------------------------------------------------------
+        # Set default benchmark parameters if not provided
+        # These control request generation and performance measurement
+        # ------------------------------------------------------------------
         self.home_dir = os.path.expanduser("~")
         self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
         self.inf_dict.setdefault('container_name', 'sglang_container')
@@ -163,6 +212,25 @@ class SglangDisaggPD:
     def install_container_packages(
         self,
     ):
+        """
+        Install required system networking utilities inside inference containers.
+
+        Purpose:
+        --------
+        This method prepares the container environment for distributed inference
+        by installing basic networking and diagnostic tools that are commonly
+        needed for:
+        - Connectivity validation between nodes
+        - Debugging network paths (ping, ip route, ifconfig)
+        - Verifying NIC and routing configuration
+        - Troubleshooting NCCL/Gloo/RDMA-related issues
+
+        These tools are installed inside the running container on:
+        - Prefill nodes
+        - Decode nodes
+        - Proxy/router nodes
+        """
+
         print('Run pre inference tasks')
         # Install ip tools
         cmd = f'docker exec {self.container_name} /bin/bash -c " \
@@ -211,14 +279,28 @@ class SglangDisaggPD:
                     print(dout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
-    def bringup_etcd_mooncake(
-        self,
-    ):
-        print('To be added in future, for now use NCCL')
-
     def check_ibv_devices(
         self,
     ):
+        """
+        Verify that InfiniBand / RDMA devices are visible inside the container
+        on all relevant nodes.
+
+        Purpose:
+        --------
+        This method ensures that RDMA-capable devices (e.g., InfiniBand HCAs)
+        are correctly exposed inside the container environment. This is a
+        critical prerequisite for:
+        - NCCL / RCCL over RDMA
+        - High-performance distributed inference
+        - Low-latency, high-bandwidth GPU communication
+
+        The check is performed on:
+        - Prefill nodes
+        - Decode nodes
+
+        Proxy and benchmark nodes typically do not require RDMA access.
+        """
         for hdl in [self.p_phdl, self.d_phdl]:
             cmd = f'''docker exec {self.container_name} /bin/bash -c "ibv_devinfo" '''
             out_dict = hdl.exec(cmd)
@@ -340,16 +422,38 @@ class SglangDisaggPD:
         self.b_phdl.exec(cmd)
         time.sleep(5)
 
-    def start_etcd_on_prefill_nodes(
-        self,
-    ):
-        # Start ETCd on Prefill nodes ..
-        print('start etcd')
-
     def run_test_rmsnorm(self, max_jobs=192):
+        """
+        Run RMSNorm 2D operator tests inside the SGLang container across
+        relevant nodes and validate correctness.
+
+        Purpose:
+        --------
+        This method executes the AITER RMSNorm 2D operator test, which validates:
+        - Correctness of RMSNorm kernel implementation
+        - Stability under high parallel job execution
+        - GPU kernel behavior under concurrent workloads
+
+        The test is executed on:
+        - Prefill nodes
+        - Decode nodes
+        - Proxy/router nodes
+
+        Args:
+        max_jobs (int): Maximum number of concurrent jobs to launch within
+                        the RMSNorm test to stress the kernel.
+        """
         print('#================ * * * =========================#')
         print('Run rmsnorm2d')
         print('#================ * * * =========================#')
+        # ------------------------------------------------------------------
+        # Construct command to run RMSNorm test inside the container
+        #
+        # Details:
+        #   - MAX_JOBS controls parallelism inside the test
+        #   - Output is redirected to a per-container log file
+        #   - Command is executed in the background to allow parallel execution
+        # ------------------------------------------------------------------
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "MAX_JOBS={max_jobs} \
                 python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py > /tmp/rsmnorm_test.log 2>&1 &" '''
         for hdl in [self.p_phdl, self.d_phdl, self.r_phdl]:
@@ -367,6 +471,28 @@ class SglangDisaggPD:
     # supported --dtype {auto,half,float16,bfloat16,float,float32}
     # supported --kv-cache-dtype {auto,fp8_e5m2,fp8_e4m3,bf16,bfloat16,fp4_e2m1}
     def launch_prefill_servers(self, dtype='auto', kv_cache_dtype='auto'):
+        """
+        Generate and stage Prefill server launch scripts on all Prefill nodes
+        for SGLang disaggregated inference.
+
+        Purpose:
+        --------
+        This method prepares the launch script for SGLang Prefill servers.
+        In disaggregated PD (Prefill / Decode) mode:
+        - Prefill servers are responsible for processing input prompts
+        - They generate KV cache entries
+        - KV cache is later consumed by Decode servers
+
+        This method:
+        - Creates one launch script per Prefill node
+        - Sets distributed environment variables (NNODES, NODE_RANK)
+        - Configures SGLang for Prefill-only execution
+        - Does NOT start the servers yet; it stages the script for later execution
+
+        Args:
+        dtype (str): Model compute datatype (e.g., fp16, bf16, auto)
+        kv_cache_dtype (str): KV cache datatype (e.g., fp16, bf16, auto)
+        """
         print('#================ * * * =========================#')
         print('Create Prefill launch script on Prefill nodes')
         print('#================ * * * =========================#')
@@ -415,6 +541,27 @@ class SglangDisaggPD:
         time.sleep(5)
 
     def launch_decode_servers(self, dtype='auto', kv_cache_dtype='auto'):
+        """
+        Generate and deploy Decode server launch scripts on all Decode nodes
+        for SGLang disaggregated inference.
+
+        Purpose:
+        --------
+        In disaggregated PD (Prefill / Decode) inference:
+        - Decode servers are responsible for token generation
+        - They consume KV cache generated by Prefill servers
+        - They perform the latency- and throughput-critical decode loop
+
+        This method:
+        - Creates one Decode launch script per Decode node
+        - Sets distributed environment variables (NNODES, NODE_RANK)
+        - Configures SGLang for Decode-only execution
+        - Deploys the scripts to Decode nodes for later execution
+
+        Args:
+        dtype (str): Model compute datatype (e.g., fp16, bf16, auto)
+        kv_cache_dtype (str): KV cache datatype (e.g., fp16, bf16, auto)
+        """
         print('#================ * * * =========================#')
         print('Create Decode launch script on Decode nodes')
         print('#================ * * * =========================#')
@@ -422,6 +569,24 @@ class SglangDisaggPD:
         decode_node_list = self.inf_dict['decode_node_list']
         print('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
         for i in range(0, int(self.decode_nnodes)):
+            # ------------------------------------------------------------------
+            # Construct a command that writes a Decode server launch script
+            # into /tmp/decode_launch_script.sh inside the container
+            #
+            # Key configuration details:
+            #   - NNODES / NODE_RANK: Distributed topology for SGLang
+            #   - disaggregation-mode decode: Run in Decode-only mode
+            #   - disaggregation-ib-device: RDMA device used for KV transfers
+            #   - host / port: Network endpoint for this Decode server
+            #   - dtype / kv-cache-dtype: Compute and KV precision
+            #   - tensor parallelism: Model sharding across GPUs
+            #   - aiter backend: Optimized attention backend for AMD GPUs
+            #   - memory fraction: Static GPU memory reservation
+            #
+            # NOTE:
+            #   The script is written (echo > file), not executed here.
+            #   Execution is handled by a separate orchestration step.
+            # ------------------------------------------------------------------
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.decode_nnodes}
                       export NODE_RANK={i}
@@ -463,6 +628,23 @@ class SglangDisaggPD:
     def poll_and_check_server_ready(
         self,
     ):
+        """
+        Wait for Prefill and Decode servers to initialize and verify that they
+        are fully ready to accept inference requests.
+
+        Purpose:
+        --------
+        After launching Prefill and Decode server scripts, the servers require
+        time to:
+        - Initialize Python runtime
+        - Load model weights
+        - Allocate GPU memory
+        - Initialize RDMA / NCCL / Gloo communication
+        - Bind to network ports
+
+        This method enforces a startup delay and then actively polls each server
+        to confirm readiness before inference traffic is sent.
+        """
         print('Waiting 120 secs after launching decode script')
         time.sleep(120)
         for node_no in range(0, self.prefill_nnodes):
@@ -473,9 +655,42 @@ class SglangDisaggPD:
     def launch_proxy_router(
         self,
     ):
+        """
+        Generate and launch the SGLang Proxy Router for disaggregated
+        Prefill/Decode (PD) inference.
+
+        Purpose:
+        --------
+        The Proxy Router is the control-plane and data-plane entry point for
+        inference traffic in a disaggregated PD deployment.
+
+        Responsibilities:
+        - Accept incoming inference requests
+        - Route prefill requests to Prefill servers
+        - Route decode requests to Decode servers
+        - Coordinate Prefill ? Decode handoff
+
+        This method:
+        - Builds routing configuration dynamically based on cluster topology
+        - Creates a launch script on the Proxy Router node
+        - Launches the router as a background service
+        """
+
+        # ------------------------------------------------------------------
+        # Build Prefill endpoint arguments for the router
+        #
+        # Each Prefill server is specified as:
+        #   --prefill http://<host>:<port>
+        # ------------------------------------------------------------------
         prefill_str = ''
         for prefill_node in self.prefill_node_list:
             prefill_str = prefill_str + f"--prefill http://{prefill_node}:{self.inf_dict['prefill_serv_port']} "
+        # ------------------------------------------------------------------
+        # Build Decode endpoint arguments for the router
+        #
+        # Each Decode server is specified as:
+        #   --decode http://<host>:<port>
+        # ------------------------------------------------------------------
         decode_str = ''
         for decode_node in self.decode_node_list:
             decode_str = decode_str + f"--decode http://{decode_node}:{self.inf_dict['decode_serv_port']} "
@@ -483,6 +698,19 @@ class SglangDisaggPD:
         print('Create Proxy Router launch script on Proxy Router nodes')
         print('#================ * * * =========================#')
 
+        # ------------------------------------------------------------------
+        # Create the Proxy Router launch script
+        #
+        # Key flags:
+        #   --pd-disaggregation : Enable Prefill/Decode disaggregation
+        #   --prefill / --decode: Upstream Prefill and Decode endpoints
+        #   --host 0.0.0.0      : Listen on all interfaces
+        #   --port              : External router port
+        #   --log-dir           : Directory for router logs
+        #
+        # NOTE:
+        #   The script is written to disk but not executed here.
+        # ------------------------------------------------------------------
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       python3 -m sglang_router.launch_router \
                               --pd-disaggregation \
@@ -512,11 +740,41 @@ class SglangDisaggPD:
     def run_gsm8k_benchmark_test(
         self,
     ):
+        """
+        Run the GSM8K inference benchmark against the SGLang disaggregated
+        Prefill/Decode deployment and validate throughput.
+
+        Purpose:
+        --------
+        This method executes a real-world inference workload (GSM8K question
+        answering) to:
+        - Validate end-to-end correctness of the inference pipeline
+        - Measure sustained output token throughput
+        - Ensure performance meets expected SLA thresholds
+
+        The benchmark traffic is sent to the Proxy Router, which:
+        - Routes requests to Prefill servers
+        - Coordinates Decode servers for token generation
+        """
         print('#================ * * * =========================#')
         print('Create Benchmark script')
         print('#================ * * * =========================#')
 
         i_dict = self.bp_dict['inference_tests']['gsm8k']
+        # ------------------------------------------------------------------
+        # Construct command to run GSM8K benchmark inside the container
+        #
+        # Key steps:
+        #   - Create a directory to store benchmark logs
+        #   - Navigate to the GSM8K benchmark directory
+        #   - Source environment variables required for benchmark execution
+        #   - Launch the benchmark using nohup to allow async execution
+        #
+        # Benchmark parameters:
+        #   --num-questions : Total GSM8K questions to run
+        #   --parallel      : Maximum concurrent inference requests
+        #   --host / --port : Proxy Router endpoint for inference
+        # ------------------------------------------------------------------
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
                       cd /sgl-workspace/sglang/benchmark/gsm8k; \
@@ -542,10 +800,42 @@ class SglangDisaggPD:
                     )
 
     def benchserv_test_random(self, d_type='auto'):
+        """
+        Run SGLang serving benchmark using a synthetic random dataset and
+        validate inference performance and correctness.
+
+        Purpose:
+        --------
+        This benchmark exercises the inference serving stack using randomly
+        generated input/output sequences to:
+        - Stress-test request scheduling and batching
+        - Evaluate sustained throughput under synthetic load
+        - Validate end-to-end serving stability independent of real datasets
+
+        The benchmark targets the Proxy Router endpoint, ensuring that
+        Prefill, Decode, and routing logic work together correctly.
+
+        Args:
+        d_type (str): Data type identifier used to select expected
+                      performance thresholds (e.g., fp16, bf16, auto).
+        """
         print('#================ * * * =========================#')
         print('Benchmark Random Dataset')
         print('#================ * * * =========================#')
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
+        # ------------------------------------------------------------------
+        # Construct command to run sglang.bench_serving with random dataset
+        #
+        # Key parameters:
+        #   --dataset-name random     : Use synthetic random prompts
+        #   --num-prompts             : Total number of inference requests
+        #   --random-input            : Input token length per request
+        #   --random-output           : Output token length per request
+        #   --random-range-ratio      : Variability in input/output lengths
+        #   --host / --port           : Proxy Router endpoint
+        #
+        # Output is redirected to a log file for later inspection.
+        # ------------------------------------------------------------------
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
                       source /tmp/benchmark_env_script.sh && \
@@ -564,8 +854,34 @@ class SglangDisaggPD:
         self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
 
     def poll_for_server_ready(self, node_no, sglang_function, no_of_iterations=11):
-        # This method assumes the LOG directory is on common FS like NFS and
-        # accessible from all nodes.
+        """
+        Poll SGLang Prefill or Decode server logs to determine when the server
+        is ready to accept inference traffic.
+
+        Readiness definition:
+        ---------------------
+        A server is considered "ready" when its log shows successful HTTP
+        requests (HTTP 200 OK), indicating that:
+        - The server process has started
+        - The model is loaded
+        - Network endpoints are listening
+        - Request handling is functional
+
+        Assumptions:
+        ------------
+        - Log directory is located on a shared filesystem (e.g., NFS)
+        - Logs are accessible from a designated head node
+        - Each server writes logs to a predictable per-node path
+
+        Args:
+        node_no (int): Index of the Prefill or Decode node being checked
+        sglang_function (str): Server role ('prefill' or 'decode')
+        no_of_iterations (int): Maximum number of polling attempts before
+                                declaring failure
+        """
+        # ------------------------------------------------------------------
+        # Prefill server readiness check
+        # ------------------------------------------------------------------
         if re.search('prefill', sglang_function):
             head_node = self.prefill_node_list[0]
             for j in range(1, no_of_iterations):
@@ -585,6 +901,9 @@ class SglangDisaggPD:
             head_node = self.prefill_node_list[0]
             print(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
             fail_test(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
+        # ------------------------------------------------------------------
+        # Decode server readiness check
+        # ------------------------------------------------------------------
         elif re.search('decode', sglang_function):
             head_node = self.decode_node_list[0]
             for j in range(1, no_of_iterations):
@@ -605,6 +924,27 @@ class SglangDisaggPD:
             fail_test(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
 
     def get_inference_results_dict(self, out_dict):
+        """
+        Parse inference benchmark output logs and extract key performance metrics
+        into a structured dictionary.
+
+        Purpose:
+        --------
+        This method processes raw text output generated by inference benchmarks
+        (e.g., sglang.bench_serving) and extracts important metrics such as:
+        - Request counts
+        - Token throughput
+        - Latency statistics (TTFT, TPOT)
+        - Benchmark duration
+
+        The extracted metrics are stored per node in:
+        self.inference_results_dict
+
+        Args:
+        out_dict (dict):
+            Dictionary keyed by node identifier, where each value is the
+            raw stdout/stderr text produced by the benchmark on that node.
+        """
         self.inference_results_dict = {}
         print('Inside get_inference_results_dict')
         print(out_dict)
@@ -671,6 +1011,23 @@ class SglangDisaggPD:
     def scan_for_inference_errors(
         self,
     ):
+        """
+        Scan Prefill and Decode server logs for known inference error patterns
+        and fail the test if any are detected.
+
+        Purpose:
+        --------
+        This method performs a post-inference health check by scanning
+        server logs for known error signatures that indicate:
+        - Runtime failures
+        - Communication errors (RDMA/NCCL)
+        - Out-of-memory conditions
+        - Kernel or backend crashes
+        - Fatal exceptions during inference
+
+        The method ensures that even if benchmarks complete, silent or
+        non-fatal errors do not go unnoticed.
+        """
         print('Scan for inference errors')
         inference_pass = True
 
@@ -710,6 +1067,36 @@ class SglangDisaggPD:
     def poll_for_inference_completion(
         self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
     ):
+        """
+        Poll benchmark logs to detect inference completion and extract results.
+
+        Purpose:
+        --------
+        This method monitors inference progress by periodically inspecting
+        benchmark output logs. It determines when inference has completed,
+        detects early failures, and enforces a global timeout.
+
+        Completion criteria:
+        --------------------
+        Inference is considered complete when the benchmark output contains
+        the pattern 'Serving Benchmark Result'.
+
+        Failure criteria:
+        -----------------
+        Any known inference error detected in Prefill or Decode logs
+        immediately aborts the process.
+
+        Args:
+        iterations (int):
+            Maximum number of polling iterations.
+        waittime_between_iters (int):
+            Time (seconds) to wait between polling attempts.
+        total_timeout (int or None):
+            Maximum wall-clock time (seconds) allowed for inference.
+        require_all_nodes (bool):
+            If True, all nodes must report completion.
+            If False, completion by any node is sufficient.
+        """
         # Initial wait to give inference time to start logging
         time.sleep(60)
 
@@ -720,15 +1107,29 @@ class SglangDisaggPD:
             return total_timeout is not None and (time.time() - start_time) >= float(total_timeout)
 
         completed_pattern = re.compile('Serving Benchmark Result', re.I)
+        # ------------------------------------------------------------------
+        # Poll loop: periodically inspect benchmark logs for completion
+        # ------------------------------------------------------------------
         for itr in range(1, iterations + 1):
             print(f'Starting iteration {itr}')
 
+            # --------------------------------------------------------------
+            # Early exit if any inference errors are detected
+            #
+            # This scans Prefill and Decode logs for known failure patterns
+            # (e.g., OOM, RDMA failures, backend crashes).
+            # --------------------------------------------------------------
             # Early abort on inference errors
             if not self.scan_for_inference_errors():
                 msg = 'Failures seen in inference logs, Aborting!!!'
                 fail_test(msg)
                 return {"status": "error", "reason": msg}
 
+            # --------------------------------------------------------------
+            # Read the most recent benchmark output
+            #
+            # Tail only the last 1000 lines to reduce I/O and parsing cost.
+            # --------------------------------------------------------------
             cmd = f"sudo tail -1000 {self.log_dir}/benchmark_node/benchmark_results.log"
 
             out_dict = self.b_phdl.exec(cmd)
@@ -738,12 +1139,20 @@ class SglangDisaggPD:
             for node, output in out_dict.items():
                 node_completion[node] = bool(completed_pattern.search(output))
 
+            # --------------------------------------------------------------
+            # Determine overall completion based on policy
+            #
+            # - require_all_nodes=True  ? all nodes must complete
+            # - require_all_nodes=False ? any node completing is sufficient
+            # --------------------------------------------------------------
             if require_all_nodes:
                 all_complete = all(node_completion.values()) if node_completion else False
             else:
                 all_complete = any(node_completion.values()) if node_completion else False
 
-            # If not yet complete, wait and continue (subject to timeout)
+            # --------------------------------------------------------------
+            # If inference is still running, wait and retry
+            # --------------------------------------------------------------
             if not all_complete:
                 if timed_out():
                     msg = f"Timeout while waiting for inference completion after ~{int(time.time() - start_time)}s"
@@ -755,6 +1164,11 @@ class SglangDisaggPD:
                 time.sleep(int(waittime_between_iters))
                 continue
 
+            # --------------------------------------------------------------
+            # Inference completed successfully
+            #
+            # Parse benchmark results and return structured output.
+            # --------------------------------------------------------------
             self.get_inference_results_dict(out_dict)
             print('Completed Inference, returning !!!')
             return {"status": "success", "results": self.inference_results_dict}
@@ -773,10 +1187,27 @@ class SglangDisaggPD:
             return {"status": "stuck_in_progress", "reason": msg}
 
     def verify_inference_results(self, test_name, expected_result_dict):
+        """
+        Validate inference benchmark results against expected performance
+        thresholds and check for system-level errors.
+
+        Purpose:
+        --------
+        This method verifies that:
+        - Inference completed successfully on all nodes
+        - Performance metrics meet or exceed expected baselines
+        - Latency metrics stay below defined thresholds
+        - No kernel-level (dmesg) errors occurred during inference
+
+        It acts as the final gate for inference validation.
+        """
         print('Verify Inference Completion Msg')
         print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
         print(self.inference_results_dict)
         print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        # ------------------------------------------------------------------
+        # Validate metrics on a per-node basis
+        # ------------------------------------------------------------------
         for node in self.inference_results_dict.keys():
             print('%%%% node {}'.format(node))
             for metric_name in expected_result_dict.keys():
@@ -784,6 +1215,12 @@ class SglangDisaggPD:
                 if metric_name in self.inference_results_dict[node].keys():
                     # latency metric, so actual should be lower than expected ..
                     print('%% metric found in inference results ^^^')
+                    # ------------------------------------------------------
+                    # Latency metrics (e.g., TTFT, TPOT)
+                    #
+                    # For latency, lower values are better.
+                    # Fail if actual latency exceeds expected threshold.
+                    # ------------------------------------------------------
                     if re.search('ms', metric_name, re.I):
                         print(self.inference_results_dict[node][metric_name])
                         print(expected_result_dict[metric_name])
@@ -795,6 +1232,12 @@ class SglangDisaggPD:
                                 Actual = {self.inference_results_dict[node][metric_name]},  \
                                 Expected = {expected_result_dict[metric_name]}"
                             )
+                    # ------------------------------------------------------
+                    # Throughput and count metrics
+                    #
+                    # For throughput, higher values are better.
+                    # Fail if actual throughput is lower than expected.
+                    # ------------------------------------------------------
                     else:
                         if float(self.inference_results_dict[node][metric_name]) < float(
                             expected_result_dict[metric_name]
@@ -805,7 +1248,12 @@ class SglangDisaggPD:
                                 Expected = {expected_result_dict[metric_name]}"
                             )
 
-        # Scan Dmesg for errors ..
+        # ------------------------------------------------------------------
+        # Perform kernel-level (dmesg) error checks
+        #
+        # This ensures no silent hardware or driver errors occurred during
+        # inference (e.g., GPU resets, RDMA failures, IOMMU errors).
+        # ------------------------------------------------------------------
         self.inference_end_time = self.p_phdl.exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
         verify_dmesg_for_errors(self.p_phdl, self.inference_start_time, self.inference_end_time)
