@@ -25,11 +25,6 @@ jobs:
   cvs-aorta-benchmark:
     name: cvs Aorta Benchmark Tests
     runs-on: linux-vultr-mi325-scale-runner
-    permissions:
-      id-token: write
-    container:
-      image: ghcr.io/rocm/therock_build_manylinux_x86_64@sha256:1f1ce0ab151146c7f86ee4345be74c42d8ca83200d9d26843e8a71df01ecad4e
-      options: -v /runner/config:/home/awsconfig/
     steps:
       - name: Checkout TheRock repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
