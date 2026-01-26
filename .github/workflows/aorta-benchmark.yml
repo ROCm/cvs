@@ -37,6 +37,7 @@ jobs:
           repository: "ROCm/cvs"
 
       - name: Test Aorta Benchmark Tests
+        shell: bash
         run: |
           cd /home/arravikum/cvs_aorta/cvs-sbatch
           ./run_direct.sh --cluster ./cluster_config.json --config ./config_aorta_test.yaml --test ../cvs/cvs/tests/benchmark/test_aorta.py
