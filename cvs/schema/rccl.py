@@ -79,8 +79,13 @@ class RcclTests(BaseModel):
         if isinstance(v, int):
             return v
 
+        # Treat NaN as "no errors" (0 wrong)
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return 0
+
         # Handle string values
         if isinstance(v, str):
+            v = v.strip()
             # 'N/A' means no errors (0 wrong)
             if v.upper() in ['N/A', 'NA', 'NONE', '']:
                 return 0
@@ -96,6 +101,18 @@ class RcclTests(BaseModel):
             return int(v)
         except (ValueError, TypeError):
             return 0
+
+    @model_validator(mode='after')
+    def validate_wrong_is_zero(self):
+        """
+        Enforce correctness of rccl-tests iteration results.
+        After normalization, any positive `wrong` indicates corrupted/invalid results.
+        """
+        if self.wrong < 0:
+            raise ValueError(f'wrong must be >= 0, got {self.wrong}')
+        if self.wrong > 0:
+            raise ValueError(f'wrong must be 0 after normalization, got {self.wrong}')
+        return self
 
     @field_validator('time', 'algBw', 'busBw')
     @classmethod
