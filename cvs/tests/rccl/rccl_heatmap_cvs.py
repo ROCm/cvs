@@ -418,7 +418,7 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
         verify_bw_dip=config_dict['verify_bw_dip'],
         verify_lat_dip=config_dict['verify_lat_dip'],
         nic_model=config_dict['nic_model'],
-        exp_results_dict=config_dict['expected_results'],
+        exp_results_dict=config_dict['results'],
         min_channels=min_channels,
         max_channels=max_channels,
         env_source_script=config_dict['env_source_script'],
