@@ -57,7 +57,7 @@
        "debug_level": "ERROR",
        "rccl_result_file": "/tmp/rccl_result_file.json",
        "_comments_results": "expected results below are for 2 node cluster, will vary based on cluster size",
-       "expected_results":
+       "results":
        {
            "all_reduce_perf":
            {
