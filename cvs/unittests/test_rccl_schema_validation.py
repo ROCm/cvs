@@ -30,12 +30,14 @@ class TestRcclSchemaValidation(unittest.TestCase):
 
     def test_wrong_positive_fails_after_normalization(self):
         payload = {**self._base_payload(), "wrong": 1}
-        with self.assertRaises(ValidationError):
+        with self.assertRaises(ValidationError) as ctx:
             RcclTests.model_validate(payload)
+        self.assertIn("SEVERE DATA CORRUPTION", str(ctx.exception))
 
         payload2 = {**self._base_payload(), "wrong": "1"}
-        with self.assertRaises(ValidationError):
+        with self.assertRaises(ValidationError) as ctx2:
             RcclTests.model_validate(payload2)
+        self.assertIn("SEVERE DATA CORRUPTION", str(ctx2.exception))
 
 
 if __name__ == "__main__":

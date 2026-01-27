@@ -111,7 +111,10 @@ class RcclTests(BaseModel):
         if self.wrong < 0:
             raise ValueError(f'wrong must be >= 0, got {self.wrong}')
         if self.wrong > 0:
-            raise ValueError(f'wrong must be 0 after normalization, got {self.wrong}')
+            raise ValueError(
+                f"SEVERE DATA CORRUPTION: rccl-tests reported non-zero '#wrong' after normalization "
+                f"(wrong={self.wrong}). Results are invalid/corrupted."
+            )
         return self
 
     @field_validator('time', 'algBw', 'busBw')

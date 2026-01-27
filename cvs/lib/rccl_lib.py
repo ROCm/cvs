@@ -30,6 +30,25 @@ rccl_err_dict = {
 }
 
 
+def _is_severe_wrong_corruption_error(err: ValidationError) -> bool:
+    """
+    Detect the rccl-tests '#wrong' corruption failure from a pydantic ValidationError.
+    This is used to provide explicit, high-signal feedback to the user.
+    """
+    # Prefer structured parsing when available
+    try:
+        for item in err.errors():
+            msg = item.get('msg', '') or ''
+            if 'SEVERE DATA CORRUPTION' in msg or "'#wrong'" in msg or 'wrong=' in msg:
+                return True
+    except Exception:
+        pass
+
+    # Fallback to string search
+    s = str(err)
+    return 'SEVERE DATA CORRUPTION' in s or "'#wrong'" in s
+
+
 def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
     """
     Check if UCX is available in the OpenMPI build.
@@ -830,8 +849,29 @@ def rccl_cluster_test_default(
             all_validated_results.extend(validated)
             all_raw_results.extend(dtype_result_out)
         except ValidationError as e:
-            log.error(f'Validation Failed: {e}')
-            fail_test(f'RCCL Test {dtype} schema validation failed: {e}')
+            if _is_severe_wrong_corruption_error(e):
+                msg = (
+                    "\n"
+                    "==================== SEVERE DATA CORRUPTION ====================\n"
+                    "RCCL rccl-tests JSON schema validation failed due to '#wrong' > 0.\n"
+                    "This indicates invalid/corrupted rccl-tests results.\n"
+                    "\n"
+                    f"data_type: {dtype}\n"
+                    f"result_file: {dtype_result_file}\n"
+                    "\n"
+                    "Action: aborting further RCCL iterations/data types.\n"
+                    "Please inspect the rccl-tests stdout/stderr and re-run.\n"
+                    "================================================================\n"
+                )
+                print(msg)
+                log.error(msg)
+                fail_test(msg)
+            else:
+                log.error(f'Validation Failed: {e}')
+                fail_test(f'RCCL Test {dtype} schema validation failed: {e}')
+
+            # IMPORTANT: schema validation failures should stop further iterations/data types
+            raise RuntimeError(f'RCCL Test {dtype} schema validation failed') from e
 
     # Save the results to a main result file
     with open(rccl_result_file, 'w') as f:
