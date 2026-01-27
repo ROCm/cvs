@@ -232,7 +232,7 @@ def get_rdma_nic_dict(phdl):
         rdma_dict[node] = {}
         for line in out_dict[node].split("\n"):
             if re.search('^link', line):
-                pattern = r"link\s+([a-zA-Z0-9\_\-\.]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z\_]+)\s+netdev\s+([a-z0-9A-Z\.]+)"
+                pattern = r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z_]+)\s+netdev\s+([a-zA-Z0-9.-]+)"
                 match = re.search(pattern, line)
                 dev = match.group(1)
                 rdma_dict[node][dev] = {}
@@ -287,7 +287,7 @@ def get_active_rdma_nic_dict(phdl):
         rdma_dict[node] = {}
         for line in out_dict[node].split("\n"):
             if re.search('^link', line):
-                pattern = r"link\s+([a-zA-Z0-9\_\-\.]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z\_]+)\s+netdev\s+([a-z0-9A-Z\.]+)"
+                pattern = r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z_]+)\s+netdev\s+([a-zA-Z0-9.-]+)"
                 match = re.search(pattern, line)
                 dev = match.group(1)
                 status = match.group(3)
@@ -300,21 +300,63 @@ def get_active_rdma_nic_dict(phdl):
     return rdma_dict
 
 
+def get_rdma_capable_devices_dict(phdl):
+    """
+    Get RDMA-capable Ethernet devices per node by checking /sys/class/infiniband/.
+    Returns a dict of node -> list of NIC names (e.g., ['eth0', 'eth1']).
+    """
+    rdma_cap_dict = {}
+
+    # Get list of RDMA devices per node
+    out_dict = phdl.exec('ls /sys/class/infiniband/')
+    for node in out_dict.keys():
+        rdma_cap_dict[node] = []
+        devices = out_dict[node].strip().split('\n')
+        if devices == ['']:  # Empty if no devices
+            continue
+        for dev in devices:
+            dev = dev.strip()
+            if not dev:
+                continue
+            # Get the associated netdev (NIC name) by listing /sys/class/infiniband/{dev}/device/net/
+            netdev_out = phdl.exec(f'ls /sys/class/infiniband/{dev}/device/net/')
+            if node in netdev_out and netdev_out[node].strip():
+                nic_names = netdev_out[node].strip().split('\n')
+                for nic_name in nic_names:
+                    nic_name = nic_name.strip()
+                    if nic_name and nic_name not in rdma_cap_dict[node]:
+                        rdma_cap_dict[node].append(nic_name)
+    return rdma_cap_dict
+
+
 def get_backend_nic_dict(phdl):
     lshw_dict = get_lshw_network_dict(phdl)
+    rdma_cap_devs = get_rdma_capable_devices_dict(phdl)
     bck_net_dict = {}
     for node in lshw_dict.keys():
         bck_net_dict[node] = []
-        print(lshw_dict[node])
-        # we make a crude assumption that number of backend nics are more than front end ..
-        # if we have to pass this from Input file, we can do that.
+
+        # Debug output
+        print(f"Node: {node}")
+        print(f"RDMA-capable devices: {rdma_cap_devs.get(node, [])}")
+        print(f"lshw network interfaces: {list(lshw_dict[node].keys())}")
+
+        # Filter lshw_dict to only RDMA-capable devices
+        filtered_lshw = {intf: lshw_dict[node][intf] for intf in rdma_cap_devs.get(node, []) if intf in lshw_dict[node]}
+
+        print(f"Filtered lshw (RDMA-capable only): {list(filtered_lshw.keys())}")
+
+        # Now apply the heuristic on the filtered dict: group by description, pick the largest group
+        if not filtered_lshw:
+            print(f"WARNING: No RDMA-capable NICs found in lshw for node {node}")
+            continue  # No RDMA-capable NICs
         list_a = []
         list_b = []
-        for intf_name in lshw_dict[node].keys():
+        for intf_name in filtered_lshw.keys():
             if len(list_a) == 0:
                 list_a.append(intf_name)
             else:
-                if lshw_dict[node][intf_name]['description'] == lshw_dict[node][list_a[0]]['description']:
+                if filtered_lshw[intf_name]['description'] == filtered_lshw[list_a[0]]['description']:
                     list_a.append(intf_name)
                 else:
                     list_b.append(intf_name)
