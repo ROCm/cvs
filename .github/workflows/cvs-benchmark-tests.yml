@@ -31,6 +31,7 @@ jobs:
         #if: {{ inputs.test_type=="sglang-test" }}
         shell: bash
         run: |
+          source /home/arravikum@amd.com/TheRock/.venv/bin/activate
           cd /home/arravikum@amd.com/cvs_sglang_jax/cvs/cvs
           pytest -vvv -log-file=./sglang.log -s ./tests/inference/sglang/disagg_pd_deepseek_r1.py /
           --cluster_file ./input/cluster_file/4_nodes.json --config_file ./input/config_file/inference/sglang/sglang_disagg_pd_mi35x.json /
