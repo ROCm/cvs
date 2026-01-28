@@ -22,20 +22,25 @@ permissions:
   contents: read
 
 jobs:
-  cvs-aorta-benchmark:
+  cvs-sglang-jaxmax-benchmark:
     name: cvs sglang-jaxmax Benchmark Tests
     runs-on: linux-TW-mi355-scale-runner
     steps:
 
       - name: Test sglang Benchmark Tests
-        #if: {{ inputs.test_type=="sglang-test" }}
         shell: bash
         run: |
           source /home/arravikum@amd.com/TheRock/.venv/bin/activate
           cd /home/arravikum@amd.com/cvs_sglang_jax/cvs/cvs
-          pytest -vvv -log-file=./sglang.log -s ./tests/inference/sglang/disagg_pd_deepseek_r1.py /
-          --cluster_file ./input/cluster_file/4_nodes.json --config_file ./input/config_file/inference/sglang/sglang_disagg_pd_mi35x.json /
-          --html=/home/arravikum@amd.com/latest_deepseek_4p_4d.html --capture=tee-sys --self-contained-html
+          pytest -vvv \
+            --log-file=./sglang.log \
+            -s ./tests/inference/sglang/disagg_pd_deepseek_r1.py \
+            --cluster_file ./input/cluster_file/4_nodes.json \
+            --config_file ./input/config_file/inference/sglang/sglang_disagg_pd_mi35x.json \
+            --html=/home/arravikum@amd.com/latest_deepseek_4p_4d.html \
+            --capture=tee-sys \
+            --self-contained-html
+
 
 
 
