@@ -1,0 +1,218 @@
+{
+    "config": {
+        "container_image": "rocm/7.0:rocm7.0_ubuntu_22.04_vllm_0.10.1_instinct_20250927_rc1",
+        "container_name": "vllm_inference_rocm",
+        "nnodes": "1",
+        "benchmark_server_script_path": "/home/{user-id}/benchmark_server_scripts/",
+        "benchmark_script_repo": "https://github.com/kimbochen/bench_serving.git",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "shm_size": "16G",
+        "log_dir": "/home/{user-id}/LOGS",
+        "data_cache_dir": "/mnt/localdisk/models",
+        "container_config": {
+            "device_list": [
+                "/dev/dri",
+                "/dev/kfd",
+                "/dev/mem"
+            ],
+            "volume_dict": {
+                "/home/{user-id}": "/home/{user-id}",
+                "/mnt/localdisk/models": "/data"
+            },
+            "env_dict": {
+                "HF_HUB_CACHE": "/data/huggingface-cache"
+            }
+        }
+    },
+    "benchmark_params": {
+        "gpt-oss-120b": {
+            "container_image": "rocm/7.0:rocm7.0_ubuntu_22.04_vllm_0.10.1_instinct_20250927_rc1",
+            "backend": "vllm",
+            "base_url": "http://0.0.0.0",
+            "port_no": "8888",
+            "_example_dataset_name": "sharegpt|hf|random|sonnet|burstgpt",
+            "dataset_name": "random",
+            "concurrency_levels": [
+                16,
+                32,
+                64
+            ],
+            "model": "/data/gpt-oss-120b",
+            "num_prompts": "3200",
+            "sequence_combinations": [
+                {
+                    "isl": "1024",
+                    "osl": "1024",
+                    "name": "balanced"
+                },
+                {
+                    "isl": "1024",
+                    "osl": "8192",
+                    "name": "long_generation"
+                },
+                {
+                    "isl": "8192",
+                    "osl": "1024",
+                    "name": "long_context"
+                }
+            ],
+            "burstiness": "1.0",
+            "seed": "0",
+            "request_rate": "inf",
+            "max_model_length": "9216",
+            "random_range_ratio": "0.8",
+            "random_prefix_len": "0",
+            "tensor_parallelism": "1",
+            "_example_tokenizer_mode": "auto|slow|mistral|custom",
+            "tokenizer_mode": "auto",
+            "percentile_metrics": "ttft,tpot,itl,e2el",
+            "metric_percentiles": "99",
+            "server_script": "gpt-oss-120b_fp4_mi355x_vllm_docker.sh",
+            "bench_serv_script": "benchmark_serving.py",
+            "result_dict": {
+                "output_throughput_per_sec": "10600",
+                "mean_ttft_ms": "200",
+                "mean_tpot_ms": "10"
+            }
+        },
+        "qwen3-235b": {
+            "container_image": "amdsiloai/vllm:2025111-0.11.1rc2-qwen3",
+            "backend": "vllm",
+            "base_url": "http://0.0.0.0",
+            "port_no": "8888",
+            "dataset_name": "random",
+            "concurrency_levels": [
+                16,
+                32,
+                64
+            ],
+            "model": "/data/Qwen3-235B-A22B-Instruct-2507",
+            "num_prompts": "3200",
+            "sequence_combinations": [
+                {
+                    "isl": "1024",
+                    "osl": "1024",
+                    "name": "balanced"
+                },
+                {
+                    "isl": "1024",
+                    "osl": "8192",
+                    "name": "long_generation"
+                },
+                {
+                    "isl": "8192",
+                    "osl": "1024",
+                    "name": "long_context"
+                }
+            ],
+            "burstiness": "1.0",
+            "seed": "0",
+            "request_rate": "inf",
+            "max_model_length": "9216",
+            "random_range_ratio": "0.8",
+            "random_prefix_len": "0",
+            "tensor_parallelism": "8",
+            "tokenizer_mode": "auto",
+            "percentile_metrics": "ttft,tpot,itl,e2el",
+            "metric_percentiles": "99",
+            "server_script": "qwen3-235b-bf16_mi355x_vllm_docker.sh",
+            "bench_serv_script": "benchmark_serving.py",
+            "result_dict": {
+                "output_throughput_per_sec": "8000",
+                "mean_ttft_ms": "300",
+                "mean_tpot_ms": "12"
+            }
+        },
+        "qwen3-80b": {
+            "container_image": "rocm/vllm-dev:nightly",
+            "backend": "vllm",
+            "base_url": "http://0.0.0.0",
+            "port_no": "8888",
+            "dataset_name": "random",
+            "concurrency_levels": [
+                16,
+                32,
+                64
+            ],
+            "model": "/data/Qwen3-Next-80B-A3B-Instruct",
+            "num_prompts": "3200",
+            "sequence_combinations": [
+                {
+                    "isl": "1024",
+                    "osl": "1024",
+                    "name": "balanced"
+                },
+                {
+                    "isl": "1024",
+                    "osl": "8192",
+                    "name": "long_generation"
+                },
+                {
+                    "isl": "8192",
+                    "osl": "1024",
+                    "name": "long_context"
+                }
+            ],
+            "burstiness": "1.0",
+            "seed": "0",
+            "request_rate": "inf",
+            "max_model_length": "9216",
+            "random_range_ratio": "0.8",
+            "random_prefix_len": "0",
+            "tensor_parallelism": "1",
+            "tokenizer_mode": "auto",
+            "percentile_metrics": "ttft,tpot,itl,e2el",
+            "metric_percentiles": "99",
+            "server_script": "qwen3-80b-bf16_mi355x_vllm_docker.sh",
+            "bench_serv_script": "benchmark_serving.py",
+            "result_dict": {
+                "output_throughput_per_sec": "12000",
+                "mean_ttft_ms": "150",
+                "mean_tpot_ms": "8"
+            }
+        },
+        "deepseek-v31": {
+            "container_image": "rocm/7.x-preview:rocm7.2_preview_ubuntu_22.04_vlm_0.10.1_instinct_20251029",
+            "backend": "vllm",
+            "base_url": "http://0.0.0.0",
+            "port_no": "8888",
+            "dataset_name": "random",
+            "concurrency_levels": [
+                16,
+                32,
+                64
+            ],
+            "model": "/data/dsv31-fp8",
+            "num_prompts": "3200",
+            "sequence_combinations": [
+                {
+                    "isl": "1024",
+                    "osl": "1024",
+                    "name": "balanced"
+                },
+                {
+                    "isl": "1024",
+                    "osl": "8192",
+                    "name": "long_generation"
+                }
+            ],
+            "burstiness": "1.0",
+            "seed": "0",
+            "request_rate": "inf",
+            "max_model_length": "9216",
+            "random_range_ratio": "0.8",
+            "random_prefix_len": "0",
+            "tensor_parallelism": "8",
+            "tokenizer_mode": "auto",
+            "percentile_metrics": "ttft,tpot,itl,e2el",
+            "metric_percentiles": "99",
+            "server_script": "dsr1_fp8_mi355x_vllm_docker.sh",
+            "bench_serv_script": "benchmark_serving.py",
+            "result_dict": {
+                "output_throughput_per_sec": "9000",
+                "mean_ttft_ms": "250",
+                "mean_tpot_ms": "11"
+            }
+        }
+    }
+}

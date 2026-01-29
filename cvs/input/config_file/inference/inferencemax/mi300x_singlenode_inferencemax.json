@@ -1,69 +1,54 @@
 {
-
-    "config":
-    {
+    "config": {
         "container_image": "rocm/7.0:rocm7.0_ubuntu_22.04_vllm_0.10.1_instinct_20250927_rc1",
         "container_name": "inference_max_rocm",
         "_example_nnodes": "4",
         "nnodes": "4",
-	"inferencemax_repo": "https://github.com/InferenceMAX/InferenceMAX.git",
-	"benchmark_script_repo": "https://github.com/kimbochen/bench_serving.git",
+        "inferencemax_repo": "https://github.com/InferenceMAX/InferenceMAX.git",
+        "benchmark_script_repo": "https://github.com/kimbochen/bench_serving.git",
         "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "128G",
         "log_dir": "/home/{user-id}/LOGS",
-        "container_config":
-        {
-            "device_list": [ "/dev/dri", "/dev/kfd" ],
-            "volume_dict":
-            {
-            "/home/{user-id}": "/home/{user-id}"
+        "container_config": {
+            "device_list": [
+                "/dev/dri",
+                "/dev/kfd"
+            ],
+            "volume_dict": {
+                "/home/{user-id}": "/home/{user-id}"
             },
-	    "env_dict":
-	    {
-            }
+            "env_dict": {}
         }
     },
-    "benchmark_params":
-    {
-        "single_node":
-        {
-             "gpt-oss-120b":
-             {
-                 "mi300x":
-                 {
-		      "backend": "vllm",
-		      "base_url": "http://0.0.0.0",
-		      "port_no": "8000",
-		      "_example_dataset_name": "sharegpt|hf|random|sonnet|burstgpt",
-		      "dataset_name": "random",
-		      "max_concurrency": "64",
-		      "model": "openai/gpt-oss-120b",
-		      "num_prompts": "1000",
-		      "input_sequence_length": "8192",
-		      "output_sequence_length": "1024",
-		      "burstiness": "1.0",
-		      "seed": "0",
-		      "max_model_length": "9216",
-		      "random_range_ratio": "0.8",
-		      "random_prefix_len": "0",
-		      "tensor_parallelism": "8",
-		      "_example_tokenizer_mode": "auto|slow|mistral|custom",
-		      "tokenizer_mode": "auto",
-		      "percentiles_metrics": "ttft,tpot,itl,e2el",
-		      "metric_percentiles": "99",
-		      "server_script": "gptoss_fp4_mi300x_docker.sh",
-		      "bench_serv_script": "benchmark_serving.py",
-		      "result_dict":
-		      {
-			   "output_throughput_per_sec": "4200",
-			   "mean_ttft_ms": "500",
-			   "mean_tpot_ms": "15"
-	              }
-                 }
-             }
-	     
+    "benchmark_params": {
+        "gpt-oss-120b": {
+            "backend": "vllm",
+            "base_url": "http://0.0.0.0",
+            "port_no": "8000",
+            "_example_dataset_name": "sharegpt|hf|random|sonnet|burstgpt",
+            "dataset_name": "random",
+            "max_concurrency": "64",
+            "model": "openai/gpt-oss-120b",
+            "num_prompts": "1000",
+            "input_sequence_length": "8192",
+            "output_sequence_length": "1024",
+            "burstiness": "1.0",
+            "seed": "0",
+            "max_model_length": "9216",
+            "random_range_ratio": "0.8",
+            "random_prefix_len": "0",
+            "tensor_parallelism": "8",
+            "_example_tokenizer_mode": "auto|slow|mistral|custom",
+            "tokenizer_mode": "auto",
+            "percentiles_metrics": "ttft,tpot,itl,e2el",
+            "metric_percentiles": "99",
+            "server_script": "gptoss_fp4_mi300x_docker.sh",
+            "bench_serv_script": "benchmark_serving.py",
+            "result_dict": {
+                "output_throughput_per_sec": "4200",
+                "mean_ttft_ms": "500",
+                "mean_tpot_ms": "15"
+            }
         }
-
     }
-
 }

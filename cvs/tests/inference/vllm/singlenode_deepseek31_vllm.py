@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 
 import re
+import os
 import time
 import json
 
@@ -18,6 +19,9 @@ from cvs.lib.inference_lib import InferenceJobFactory
 from cvs.lib import globals
 
 log = globals.log
+
+# Model name for this test suite
+MODEL_NAME = "deepseek-v31"
 
 
 # Importing additional cmd line args to script ..
@@ -105,6 +109,85 @@ def benchmark_params_dict(training_config_file, cluster_dict):
     return benchmark_params_dict
 
 
+def pytest_generate_tests(metafunc):
+    """
+    Dynamically parametrize inference tests based on sequence combinations and concurrency levels
+    for the DeepSeek-V3.1 model.
+
+    Behavior:
+      - Reads the config file path from pytest's --config_file option.
+      - Loads the JSON and extracts deepseek-v31 model configuration.
+      - Extracts sequence_combinations (ISL/OSL pairs) and concurrency_levels.
+      - Creates test cases for each sequence combination × concurrency level.
+
+    Test Matrix:
+      - Test IDs: "combination_name-concX" (e.g., "balanced-conc16")
+
+    Notes:
+      - If no config_file is provided, the hook returns without parametrizing.
+      - Each combination gets a separate test case with clear ID.
+    """
+    config_file = metafunc.config.getoption("config_file")
+    if not config_file or not os.path.exists(config_file):
+        print(f'Warning: Missing or invalid config file {config_file}')
+        return
+
+    with open(config_file) as fp:
+        cfg = json.load(fp)
+
+    # Extract deepseek-v31 model config (now directly under benchmark_params, no single_node nesting)
+    benchmark_params = cfg.get("benchmark_params", {})
+    model_config = benchmark_params.get(MODEL_NAME, {})
+
+    if not model_config:
+        print(f'Warning: Model {MODEL_NAME} not found in config')
+        return
+
+    # Build test parameters: list of (seq_combo_dict, concurrency, test_id)
+    test_params = []
+
+    # Check if model uses sequence_combinations or legacy ISL/OSL
+    seq_combos = model_config.get("sequence_combinations", [])
+
+    if seq_combos:
+        # New format: multiple combinations per model
+        for combo in seq_combos:
+            combo_name = combo.get("name", f"isl{combo['isl']}_osl{combo['osl']}")
+
+            # Check if model has concurrency_levels array or single max_concurrency
+            conc_levels = model_config.get("concurrency_levels", [])
+            if conc_levels:
+                # Parametrize across concurrency levels
+                for conc in conc_levels:
+                    test_id = f"{combo_name}-conc{conc}"
+                    test_params.append((combo, conc, test_id))
+            else:
+                # Backward compatibility: use max_concurrency as single value
+                max_conc = int(model_config.get("max_concurrency", "64"))
+                test_id = f"{combo_name}"
+                test_params.append((combo, max_conc, test_id))
+    else:
+        # Legacy format: single ISL/OSL values
+        isl = model_config.get("input_sequence_length", "1024")
+        osl = model_config.get("output_sequence_length", "1024")
+        combo = {"isl": isl, "osl": osl, "name": "default"}
+
+        conc_levels = model_config.get("concurrency_levels", [])
+        if conc_levels:
+            for conc in conc_levels:
+                test_id = f"conc{conc}"
+                test_params.append((combo, conc, test_id))
+        else:
+            max_conc = int(model_config.get("max_concurrency", "64"))
+            test_params.append((combo, max_conc, "default"))
+
+    # Parametrize if test uses these fixtures
+    if "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames:
+        if test_params:
+            combos, concs, ids = zip(*test_params)
+            metafunc.parametrize("seq_combo,concurrency", list(zip(combos, concs)), ids=ids)
+
+
 @pytest.fixture(scope="module")
 def hf_token(inference_dict):
     """
@@ -135,7 +218,7 @@ def hf_token(inference_dict):
 @pytest.fixture(scope="module")
 def s_phdl(cluster_dict):
     """
-    Create and return a parallel SSH handle for all cluster nodes.
+    Create and return a parallel SSH handle for all cluster nodes (server).
 
     Args:
       cluster_dict (dict): Cluster configuration loaded by another fixture. Expected keys:
@@ -162,7 +245,7 @@ def s_phdl(cluster_dict):
 @pytest.fixture(scope="module")
 def c_phdl(cluster_dict):
     """
-    Create and return a parallel SSH handle for all cluster nodes.
+    Create and return a parallel SSH handle for all cluster nodes (client).
 
     Args:
       cluster_dict (dict): Cluster configuration loaded by another fixture. Expected keys:
@@ -186,31 +269,6 @@ def c_phdl(cluster_dict):
     return c_phdl
 
 
-@pytest.fixture(scope="module")
-def gpu_type(s_phdl, cluster_dict):
-    """
-    Provide the GPU type string for the test module.
-
-    Args:
-      cluster_dict (dict): Cluster configuration that includes the GPU type.
-
-    Returns:
-      str: The GPU type (e.g., 'mi300', 'mi300x') used to select model parameters and logic.
-
-    Notes:
-      - Module scope ensures this is evaluated once per test module.
-      - Consider validating this value against an expected set of GPU types to catch typos early.
-    """
-
-    print(s_phdl)
-    print(dir(s_phdl))
-    head_node = s_phdl.host_list[0]
-    smi_out_dict = s_phdl.exec('rocm-smi -a | head -30')
-    smi_out = smi_out_dict[head_node]
-    gpu_type = get_model_from_rocm_smi_output(smi_out)
-    return gpu_type
-
-
 def test_cleanup_stale_containers(s_phdl, inference_dict):
     """
     Pytest: Clean up potentially stale Docker containers and volumes before tests.
@@ -226,7 +284,7 @@ def test_cleanup_stale_containers(s_phdl, inference_dict):
 
     Notes:
       - This performs a broad cleanup via delete_all_containers_and_volumes; ensure the
-        test environment is isolated so this doesn?t remove unrelated containers/volumes.
+        test environment is isolated so this doesn't remove unrelated containers/volumes.
       - Consider narrowing cleanup scope if other workloads may be present on the hosts.
     """
 
@@ -236,9 +294,13 @@ def test_cleanup_stale_containers(s_phdl, inference_dict):
 
 
 def test_launch_inference_containers(s_phdl, inference_dict):
-    """ """
+    """
+    Launch vLLM inference containers on all nodes.
 
-    log.info('Testcase launch InferenceMax containers')
+    Note: Container image will be overridden per model when job is created.
+    """
+
+    log.info(f'Testcase launch vLLM containers for {MODEL_NAME}')
     globals.error_list = []
     container_name = inference_dict['container_name']
     # Launch the containers ..
@@ -249,7 +311,7 @@ def test_launch_inference_containers(s_phdl, inference_dict):
         inference_dict['container_config']['device_list'],
         inference_dict['container_config']['volume_dict'],
         inference_dict['container_config']['env_dict'],
-        shm_size='48G',
+        shm_size='16G',
         timeout=60 * 20,
     )
     # ADD verifications ..
@@ -262,22 +324,64 @@ def test_launch_inference_containers(s_phdl, inference_dict):
     update_test_result()
 
 
-def test_gpt_oss_120_single_node(c_phdl, s_phdl, gpu_type, inference_dict, benchmark_params_dict, hf_token):
+def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, hf_token, seq_combo, concurrency):
+    """
+    Test vLLM inference for DeepSeek-V3.1 with specific sequence combination and concurrency level.
+
+    This test is parametrized via pytest_generate_tests to run once per:
+      - Sequence combination (ISL/OSL pair) defined in model's sequence_combinations
+      - Concurrency level defined in model's concurrency_levels
+
+    The factory will automatically create the correct VllmJob instance with
+    the model-specific container image and parameters.
+
+    Args:
+        seq_combo: Dict with 'isl', 'osl', 'name' keys for this test iteration
+        concurrency: Integer concurrency level for this test iteration
+    """
+    # Since this is a per-GPU-type config file (mi355x), gpu_type is implicit
+    gpu_type = "mi355x"
+
+    log.info(
+        f"Starting inference test for model: {MODEL_NAME}, GPU: {gpu_type}, combination: {seq_combo['name']} (ISL={seq_combo['isl']}, OSL={seq_combo['osl']}), concurrency: {concurrency}"
+    )
     globals.error_list = []
-    im_obj = InferenceJobFactory.create_job(
+
+    # Override ISL/OSL and concurrency in benchmark_params for this specific test iteration
+    # Config is now fully flattened, so access directly under benchmark_params
+    model_params = benchmark_params_dict[MODEL_NAME]
+    model_params['input_sequence_length'] = seq_combo['isl']
+    model_params['output_sequence_length'] = seq_combo['osl']
+    model_params['max_concurrency'] = str(concurrency)
+
+    # Calculate num_prompts based on OSL (matching recipe logic)
+    osl = int(seq_combo['osl'])
+    if osl == 8192:
+        model_params['num_prompts'] = str(concurrency * 20)
+    else:
+        model_params['num_prompts'] = str(concurrency * 50)
+
+    # Create job using factory - it will auto-detect vLLM from config
+    vllm_job = InferenceJobFactory.create_job(
         inference_dict,
         c_phdl,
         s_phdl,
-        'gpt-oss-120b',
+        MODEL_NAME,
         inference_dict,
         benchmark_params_dict,
         hf_token,
         gpu_type,
         distributed_inference=False,
     )
-    im_obj.build_server_inference_job_cmd()
-    im_obj.start_inference_server_job()
-    im_obj.start_inference_client_job()
-    im_obj.poll_for_inference_completion()
-    im_obj.verify_inference_results()
+
+    # Build and execute inference job
+    vllm_job.build_server_inference_job_cmd()
+    vllm_job.start_inference_server_job()
+    vllm_job.start_inference_client_job()
+    vllm_job.poll_for_inference_completion()
+    vllm_job.verify_inference_results()
     update_test_result()
+
+    log.info(
+        f"Completed inference test for model: {MODEL_NAME}, GPU: {gpu_type}, combination: {seq_combo['name']}, concurrency: {concurrency}"
+    )

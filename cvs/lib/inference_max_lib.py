@@ -33,7 +33,9 @@ def textwrap_for_yml(msg_string):
     return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
 
 
-class InferenceMaxJob:
+class InferenceBaseJob:
+    """Base class for inference jobs supporting multiple frameworks."""
+
     def __init__(
         self,
         c_phdl,
@@ -88,13 +90,20 @@ class InferenceMaxJob:
         self.if_dict.setdefault('nccl_debug', 'ERROR')
         self.if_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.if_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
-        self.if_dict.setdefault('inferencemax_repo', 'https://github.com/InferenceMAX/InferenceMAX.git')
         self.if_dict.setdefault('benchmark_script_repo', 'https://github.com/kimbochen/bench_serving.git')
 
         print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
         print(f'inference_dict = {self.if_dict}')
         print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-        self.container_image = self.if_dict['container_image']
+
+        # Get model-specific config first
+        if self.distributed_inference:
+            self.bp_dict = self.benchmark_params_dict['multi_node'][self.model_name][self.gpu_type]
+        else:
+            self.bp_dict = self.benchmark_params_dict['single_node'][self.model_name][self.gpu_type]
+
+        # Container image can be model-specific (in bp_dict) or global (in if_dict)
+        self.container_image = self.bp_dict.get('container_image', self.if_dict['container_image'])
         self.container_name = self.if_dict['container_name']
 
         self.distributed_inference = distributed_inference
@@ -109,11 +118,6 @@ class InferenceMaxJob:
         self.nccl_debug = self.if_dict['nccl_debug']
         self.data_cache_dir = self.if_dict['data_cache_dir']
         self.log_dir = self.if_dict['log_dir']
-
-        if self.distributed_inference:
-            self.bp_dict = self.benchmark_params_dict['multi_node'][self.model_name][self.gpu_type]
-        else:
-            self.bp_dict = self.benchmark_params_dict['single_node'][self.model_name][self.gpu_type]
 
         # set defaults for benchmark param dict if not passed via JSON file
         self.bp_dict.setdefault('backend', 'vllm')
@@ -135,12 +139,26 @@ class InferenceMaxJob:
         self.bp_dict.setdefault('percentile_metrics', 'ttft,tpot,itl,e2el')
         self.bp_dict.setdefault('metric_percentiles', '99')
 
+        # Set server and client scripts
         self.server_script = self.bp_dict['server_script']
         self.bench_serv_script = self.bp_dict['bench_serv_script']
 
         print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
         print(f'benchmark_params_dict = {self.bp_dict}')
         print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+
+    # Framework-specific methods to be implemented by derived classes
+    def get_server_script_directory(self):
+        """Get directory where server scripts are located."""
+        raise NotImplementedError("Derived class must implement get_server_script_directory()")
+
+    def get_result_filename(self):
+        """Get result filename for benchmark output."""
+        raise NotImplementedError("Derived class must implement get_result_filename()")
+
+    def get_completion_pattern(self):
+        """Get regex pattern to detect benchmark completion."""
+        raise NotImplementedError("Derived class must implement get_completion_pattern()")
 
     def run_preinference_tasks(
         self,
@@ -240,105 +258,97 @@ class InferenceMaxJob:
 
         cmd_list = []
         for i in range(0, int(self.nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {self.log_dir}/inference-max/out-node{i}" '''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {self.log_dir}/{self.get_log_subdir()}/out-node{i}" '''
             cmd_list.append(cmd)
         self.s_phdl.exec_cmd_list(cmd_list)
 
-    def start_inference_server_job(
-        self,
-    ):
-        print('Start Server side Inference on all Nodes')
-        cmd = f'''docker exec {self.container_name} /bin/bash -c "git clone {self.if_dict['inferencemax_repo']}" '''
-        out_dict = self.s_phdl.exec(cmd)
+    def clone_bench_serving_repo(self, clone_dir):
+        """Clone bench_serving repository for client benchmarks."""
+        cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {clone_dir}; git clone {self.if_dict['benchmark_script_repo']}" '''
+        out_dict = self.c_phdl.exec(cmd)
         for node in out_dict.keys():
             if re.search('error|fail', out_dict[node], re.I):
-                fail_test('Errors or failures seen in pulling inference max repo from Github, pls check')
-
+                fail_test('Errors or failures seen in pulling bench_serving repo from Github, pls check')
         time.sleep(3)
 
-        self.s_phdl.exec(f'''docker exec {self.container_name} /bin/bash -c "ls -ld /app/InferenceMAX" ''')
+    def launch_server(self):
+        """Launch inference server."""
+        script_dir = self.get_server_script_directory()
+        script_name = self.server_script
+        log_file = f'{self.server_script}_server.log'
 
-        # Start the server side inference job.
+        # Start the server side inference job
         cmd_list = []
         for i in range(0, int(self.nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "cd /app/InferenceMAX/benchmarks; source /tmp/server_env_script.sh; nohup /bin/bash /app/InferenceMAX/benchmarks/{self.server_script} > {self.log_dir}/inference-max/out-node{i}/{self.server_script}_server.log 2>&1 &" '''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash {script_name} > {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file} 2>&1 &" '''
             cmd_list.append(cmd)
         self.s_phdl.exec_cmd_list(cmd_list)
 
-        # waith 60 secs for server to launch
+    def poll_server_startup(self):
+        """Poll for server startup completion."""
+        log_file = f'{self.server_script}_server.log'
+
         print('Waiting 360 secs for server to launch')
         time.sleep(360)
-
         for j in range(0, 20):
             print(f'Polling for application startup complete on all nodes, iteration {j}')
             cmd_list = []
             for i in range(0, int(self.nnodes)):
-                cmd = f'tail -30 {self.log_dir}/inference-max/out-node{i}/{self.server_script}_server.log'
+                cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'
                 cmd_list.append(cmd)
             out_dict = self.s_phdl.exec_cmd_list(cmd_list)
             for node in out_dict.keys():
                 if re.search('Failed to start', out_dict[node], re.I):
-                    fail_test(f'Failed to start server application for {self.server_script} on node {node}')
+                    fail_test(f'Failed to start server on node {node}')
                     return
                 if not re.search('Application startup complete', out_dict[node], re.I):
                     print('Waiting 60 secs for next poll')
                     time.sleep(60)
 
-    def start_inference_client_job(
-        self,
-    ):
-        print('Start Client side benchmark script on all Nodes')
+    def launch_client(self):
+        """Launch client benchmark."""
+        clone_dir = '/app'
+        backend = self.benchmark_params_dict['backend']
+        result_filename = self.get_result_filename()
 
-        cmd = f'''docker exec {self.container_name} /bin/bash -c "cd  /app; git clone {self.if_dict['benchmark_script_repo']}" '''
-        out_dict = self.c_phdl.exec(cmd)
-        for node in out_dict.keys():
-            if re.search('error|fail', out_dict[node], re.I):
-                fail_test('Errors or failures seen in pulling inference max repo from Github, pls check')
+        # Launch client benchmark
+        cmd_list = []
+        for i in range(0, int(self.nnodes)):
+            client_cmd = f'''source /tmp/server_env_script.sh; cd {clone_dir}; \
+                    python3 bench_serving/{self.bench_serv_script} \
+                    --model {self.bp_dict['model']} \
+                    --backend {backend} \
+                    --base-url {self.bp_dict['base_url']}:{self.bp_dict['port_no']} \
+                    --dataset-name {self.bp_dict['dataset_name']} \
+                    --num-prompts {self.bp_dict['num_prompts']} \
+                    --random-input-len {self.bp_dict['input_sequence_length']} \
+                    --random-output-len {self.bp_dict['output_sequence_length']} \
+                    --max-concurrency {self.bp_dict['max_concurrency']} \
+                    --request-rate {self.bp_dict['request_rate']} \
+                    --burstiness {self.bp_dict['burstiness']} \
+                    --tokenizer-mode {self.bp_dict['tokenizer_mode']} \
+                    --seed {self.bp_dict['seed']} \
+                    --random-range-ratio {self.bp_dict['random_range_ratio']} \
+                    --random-prefix-len {self.bp_dict['random_prefix_len']} \
+                    --percentile-metrics {self.bp_dict['percentile_metrics']} \
+                    --ignore-eos \
+                    --save-result \
+                    --result-dir {self.log_dir}/{self.get_log_subdir()}/out-node{i} \
+                    --result-filename {result_filename} \
+                    > {self.log_dir}/{self.get_log_subdir()}/out-node{i}/bench_serv_script.log 2>&1 &'''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "{client_cmd}" '''
+            cmd_list.append(cmd)
+        self.c_phdl.exec_cmd_list(cmd_list)
 
-        time.sleep(3)
-
-        if self.distributed_inference:
-            print('To be done - TBD')
-        else:
-            cmd_list = []
-            for i in range(0, int(self.nnodes)):
-                client_cmd = f'''source /tmp/server_env_script.sh; cd /app; \
-                        python3 bench_serving/{self.bench_serv_script} \
-                        --model {self.bp_dict['model']} \
-                        --backend {self.bp_dict['backend']} \
-                        --base-url {self.bp_dict['base_url']}:{self.bp_dict['port_no']} \
-                        --dataset-name {self.bp_dict['dataset_name']} \
-                        --num-prompts {self.bp_dict['num_prompts']} \
-                        --random-input-len {self.bp_dict['input_sequence_length']} \
-                        --random-output-len {self.bp_dict['output_sequence_length']} \
-                        --max-concurrency {self.bp_dict['max_concurrency']} \
-                        --request-rate {self.bp_dict['request_rate']} \
-                        --burstiness {self.bp_dict['burstiness']} \
-                        --tokenizer-mode {self.bp_dict['tokenizer_mode']} \
-                        --seed {self.bp_dict['seed']} \
-                        --random-range-ratio {self.bp_dict['random_range_ratio']} \
-                        --random-prefix-len {self.bp_dict['random_prefix_len']} \
-                        --percentile-metrics {self.bp_dict['percentile_metrics']} \
-                        --ignore-eos \
-                        --save-result \
-                        --result-dir {self.log_dir}/inference-max/out-node{i} \
-                        --result-filename inferencemax_test_result.json \
-                        > {self.log_dir}/inference-max/out-node{i}/bench_serv_script.log 2>&1 &'''
-
-                print(client_cmd)
-                cmd = f'''docker exec {self.container_name} /bin/bash -c "{client_cmd}" '''
-                cmd_list.append(cmd)
-
-        out_dict = self.c_phdl.exec_cmd_list(cmd_list)
-
+    def poll_client_completion(self):
+        """Poll for client benchmark completion."""
         print('Waiting for 120 secs for benchmark scripts to start')
         time.sleep(120)
-
         for j in range(0, 20):
             print(f'Polling for Benchmark script to complete on all nodes, iteration {j}')
             cmd_list = []
             for i in range(0, int(self.nnodes)):
-                cmd = f'tail -30 {self.log_dir}/inference-max/out-node{i}/bench_serv_script.log'
+                cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/bench_serv_script.log'
                 cmd_list.append(cmd)
             out_dict = self.c_phdl.exec_cmd_list(cmd_list)
             for node in out_dict.keys():
@@ -348,6 +358,30 @@ class InferenceMaxJob:
                 if not re.search('End-to-end Latency', out_dict[node], re.I):
                     print('Waiting 60 secs for next poll')
                     time.sleep(60)
+
+    def start_inference_server_job(
+        self,
+    ):
+        """Start inference server - launch and poll for startup."""
+        print('Start Server side Inference on all Nodes')
+        self.launch_server()
+        self.poll_server_startup()
+
+    def start_inference_client_job(
+        self,
+    ):
+        print('Start Client side benchmark script on all Nodes')
+
+        # Clone bench_serving repo to /app
+        self.clone_bench_serving_repo('/app')
+
+        if self.distributed_inference:
+            print('Distributed inference - TBD')
+            return
+
+        # Launch client and poll for completion
+        self.launch_client()
+        self.poll_client_completion()
 
     def get_inference_results_dict(self, out_dict):
         self.inference_results_dict = {}
@@ -422,7 +456,8 @@ class InferenceMaxJob:
 
         # Execute the commands across nodes; returns a mapping of node -> command output
         for j in range(0, int(self.nnodes)):
-            cmd = f"sudo cat {self.log_dir}/inference-max/out-node{j}/{self.server_script}_server.log"
+            log_file = f'{self.server_script}_server.log'
+            cmd = f"sudo cat {self.log_dir}/{self.get_log_subdir()}/out-node{j}/{log_file}"
             cmd_list.append(cmd)
         out_dict = self.s_phdl.exec_cmd_list(cmd_list)
 
@@ -449,7 +484,7 @@ class InferenceMaxJob:
         def timed_out() -> bool:
             return total_timeout is not None and (time.time() - start_time) >= float(total_timeout)
 
-        completed_pattern = re.compile('Serving Benchmark Result', re.I)
+        completed_pattern = self.get_completion_pattern()
         for itr in range(1, iterations + 1):
             print(f'Starting iteration {itr}')
 
@@ -462,7 +497,7 @@ class InferenceMaxJob:
             # Build commands to tail recent lines from each node's inference log and capture stderr as well
             cmd_list = []
             for j in range(0, int(self.nnodes)):
-                cmd = f"sudo tail -2000 {self.log_dir}/inference-max/out-node{j}/bench_serv_script.log"
+                cmd = f"sudo tail -2000 {self.log_dir}/{self.get_log_subdir()}/out-node{j}/bench_serv_script.log"
                 cmd_list.append(cmd)
 
             out_dict = self.c_phdl.exec_cmd_list(cmd_list)
@@ -539,3 +574,66 @@ class InferenceMaxJob:
         time.sleep(2)
         verify_dmesg_for_errors(self.s_phdl, self.inference_start_time, self.inference_end_time)
         print(self.inference_result_dict)
+
+
+class InferenceMaxJob(InferenceBaseJob):
+    """InferenceMAX-specific implementation."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.if_dict.setdefault('inferencemax_repo', 'https://github.com/InferenceMAX/InferenceMAX.git')
+
+    def get_server_script_directory(self):
+        """InferenceMAX scripts are in the cloned repo."""
+        return '/app/InferenceMAX/benchmarks'
+
+    def get_result_filename(self):
+        """InferenceMAX result filename."""
+        return 'inferencemax_test_result.json'
+
+    def get_completion_pattern(self):
+        """InferenceMAX completion pattern."""
+        return re.compile('Serving Benchmark Result', re.I)
+
+    def get_log_subdir(self):
+        """InferenceMAX uses 'inference-max' log subdirectory."""
+        return 'inference-max'
+
+    def clone_inferencemax_repo(self):
+        """Clone InferenceMAX repository."""
+        cmd = f'''docker exec {self.container_name} /bin/bash -c "git clone {self.if_dict['inferencemax_repo']}" '''
+        out_dict = self.s_phdl.exec(cmd)
+        for node in out_dict.keys():
+            if re.search('error|fail', out_dict[node], re.I):
+                fail_test('Errors or failures seen in pulling InferenceMAX repo from Github, pls check')
+        time.sleep(3)
+        self.s_phdl.exec(f'''docker exec {self.container_name} /bin/bash -c "ls -ld /app/InferenceMAX" ''')
+
+    def start_inference_server_job(self):
+        """Start InferenceMAX server - clone repo, then call base implementation."""
+        self.clone_inferencemax_repo()
+        super().start_inference_server_job()
+
+
+class VllmJob(InferenceBaseJob):
+    """vLLM-specific implementation."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.if_dict.setdefault('benchmark_server_script_path', '/host_scripts')
+
+    def get_server_script_directory(self):
+        """vLLM scripts are mounted from host."""
+        return self.if_dict['benchmark_server_script_path']
+
+    def get_result_filename(self):
+        """vLLM result filename."""
+        return 'vllm_test_result.json'
+
+    def get_completion_pattern(self):
+        """vLLM completion pattern."""
+        return re.compile('End-to-end Latency', re.I)
+
+    def get_log_subdir(self):
+        """vLLM uses 'vllm' log subdirectory."""
+        return 'vllm'
