@@ -323,6 +323,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         threads_per_gpu=config_dict['threads_per_gpu'],
         warmup_iterations=config_dict['warmup_iterations'],
         no_of_iterations=config_dict['no_of_iterations'],
+        no_of_cycles=config_dict['no_of_cycles'],
         check_iteration_count=config_dict['check_iteration_count'],
         debug_level=config_dict['debug_level'],
         rccl_result_file=config_dict['rccl_result_file'],

@@ -470,7 +470,8 @@ def rccl_cluster_test(
     step_function=2,
     threads_per_gpu=1,
     warmup_iterations=10,
-    no_of_iterations=1,
+    no_of_iterations=20,
+    no_of_cycles=1,
     check_iteration_count=1,
     debug_level='INFO',
     rccl_result_file='/tmp/rccl_result_output.json',
@@ -571,7 +572,7 @@ def rccl_cluster_test(
     # Wrap test binary in shell to source env script if provided
     test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-        -d {data_type} \
+        -d {data_type} -n {no_of_iterations} -N {no_of_cycles} \
         -Z json -x {rccl_result_file}'
 
     if env_source_script and env_source_script.lower() != 'none':
@@ -686,9 +687,9 @@ def rccl_cluster_test_default(
     step_function=2,
     threads_per_gpu=1,
     warmup_iterations=10,
-    no_of_iterations=1,
+    no_of_iterations=20,
     data_types=['float'],
-    no_of_cycles=10,
+    no_of_cycles=1,
     check_iteration_count=1,
     debug_level='INFO',
     rccl_result_file='/tmp/rccl_result_output.json',
@@ -807,7 +808,7 @@ def rccl_cluster_test_default(
         test_cmd = (
             f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
             -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-            -d {dtype} -N {no_of_cycles} -Z json -x {dtype_result_file}'
+            -d {dtype} -n {no_of_iterations} -N {no_of_cycles} -Z json -x {dtype_result_file}'
         )
 
         if env_source_script and env_source_script.lower() != 'none':
@@ -975,7 +976,8 @@ def rccl_single_node_test(
     end_msg_size='16g',
     step_function=2,
     warmup_iterations=10,
-    no_of_iterations=1,
+    no_of_iterations=20,
+    no_of_cycles=1,
     check_iteration_count=1,
     debug_level='INFO',
     rccl_result_file='/tmp/rccl_result_output.json',
@@ -1021,7 +1023,7 @@ def rccl_single_node_test(
     # Build the test command
     # Wrap test binary in shell to source env script if provided
     test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-        -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} \
+        -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} -n {no_of_iterations} -N {no_of_cycles} \
         -Z json -x {rccl_result_file}'
 
     if env_source_script and env_source_script.lower() != 'none':

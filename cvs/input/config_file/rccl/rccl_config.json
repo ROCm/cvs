@@ -36,7 +36,7 @@
        "step_function": "2",
        "threads_per_gpu": "1",
        "warmup_iterations": "10",
-       "no_of_iterations": "1",
+       "no_of_iterations": "20",
        "no_of_cycles": "1",
        "check_iteration_count": "1",
        "nccl_ib_timeout": "30",
