@@ -30,6 +30,28 @@ class WanBenchmarkResult:
     artifact_path: Optional[str] = None
 
 
+@dataclass
+class WanRunSummary:
+    """Summary for one WAN run directory (one result line)."""
+
+    label: str
+    avg_total_time_s: float
+    step_count: int
+    run_dir: str
+    bench_dir: str
+    rank0_json_files: List[str]
+    artifact_path: Optional[str] = None
+
+
+@dataclass
+class WanAggregateResult:
+    """Aggregated results across multiple run directories."""
+
+    per_run: List[WanRunSummary]
+    overall_avg_total_time_s: float
+    result_count: int
+
+
 class WanOutputParser:
     """
     Parser for PyTorch XDit WAN benchmark outputs.
@@ -52,6 +74,132 @@ class WanOutputParser:
         """
         self.output_dir = Path(output_dir)
         self.expected_artifact = expected_artifact
+
+    @staticmethod
+    def _select_bench_dir(run_dir: Path) -> Path:
+        """
+        Mirror `wan.sh` bench_dir selection:
+        - Prefer outputs/outputs/outputs if it contains rank0_step*.json
+        - Else prefer outputs/outputs if it contains rank0_step*.json
+        - Else default to outputs
+        """
+        candidates = [
+            run_dir / "outputs" / "outputs" / "outputs",
+            run_dir / "outputs" / "outputs",
+            run_dir / "outputs",
+        ]
+        for cand in candidates:
+            try:
+                if cand.exists() and any(p.name.startswith("rank0_step") for p in cand.glob("rank0_step*.json")):
+                    return cand
+            except Exception:
+                continue
+        return run_dir / "outputs"
+
+    @staticmethod
+    def _label_from_run_dir(run_dir: Path) -> str:
+        """
+        Mirror `wan.sh` labeling:
+          label="${run_dir##*/}"
+          label="${label#wan_22_}"
+          label="${label%_outputs}"
+        """
+        label = run_dir.name
+        if label.startswith("wan_22_"):
+            label = label[len("wan_22_") :]
+        if label.endswith("_outputs"):
+            label = label[: -len("_outputs")]
+        return label
+
+    @staticmethod
+    def _avg_total_time_from_jsons(json_files: List[Path]) -> Tuple[Optional[float], List[float], List[str]]:
+        """
+        Parse numeric total_time from the given JSON files and compute average.
+        Returns (avg, step_times, errors).
+        """
+        step_times: List[float] = []
+        errors: List[str] = []
+        for jf in json_files:
+            try:
+                with open(jf, "r") as f:
+                    data = json.load(f)
+                total_time = data.get("total_time")
+                if not isinstance(total_time, (int, float)):
+                    continue
+                step_times.append(float(total_time))
+            except Exception as e:
+                errors.append(f"{jf}: {e}")
+        if not step_times:
+            return None, [], errors
+        return sum(step_times) / len(step_times), step_times, errors
+
+    @classmethod
+    def parse_runs_under_base_dir(
+        cls,
+        base_dir: str,
+        expected_artifact: str = "video.mp4",
+        run_glob: str = "wan_22_*_outputs",
+        require_artifact: bool = True,
+    ) -> Tuple[Optional[WanAggregateResult], List[str]]:
+        """
+        Parse multiple WAN run directories under a base directory and compute an overall average.
+
+        This matches the output style of `wan/wan.sh`, which iterates:
+          for run_dir in "$HF_HOME"/wan_22_*_outputs; do ... done
+
+        Returns:
+          (aggregate_result, errors)
+        """
+        errors: List[str] = []
+        base = Path(base_dir)
+        if not base.exists():
+            return None, [f"Base directory does not exist: {base_dir}"]
+
+        run_dirs = sorted([p for p in base.glob(run_glob) if p.is_dir()])
+        if not run_dirs:
+            return None, [f"No run directories found under {base_dir} matching {run_glob}"]
+
+        per_run: List[WanRunSummary] = []
+        for run_dir in run_dirs:
+            bench_dir = cls._select_bench_dir(run_dir)
+            rank0_jsons = sorted(list(bench_dir.glob("rank0_step*.json")))
+            if not rank0_jsons:
+                continue
+
+            avg, step_times, parse_errs = cls._avg_total_time_from_jsons(rank0_jsons)
+            errors.extend(parse_errs)
+            if avg is None:
+                continue
+
+            # Find artifact (in run_dir scope)
+            artifact_path = None
+            for root, _, files in os.walk(run_dir):
+                if expected_artifact in files:
+                    artifact_path = str(Path(root) / expected_artifact)
+                    break
+
+            if require_artifact and not artifact_path:
+                errors.append(f"Artifact '{expected_artifact}' not found under {run_dir}")
+                continue
+
+            per_run.append(
+                WanRunSummary(
+                    label=cls._label_from_run_dir(run_dir),
+                    avg_total_time_s=avg,
+                    step_count=len(step_times),
+                    run_dir=str(run_dir),
+                    bench_dir=str(bench_dir),
+                    rank0_json_files=[str(p) for p in rank0_jsons],
+                    artifact_path=artifact_path,
+                )
+            )
+
+        if not per_run:
+            errors.append(f"No valid results parsed under {base_dir}")
+            return None, errors
+
+        overall = sum(r.avg_total_time_s for r in per_run) / len(per_run)
+        return WanAggregateResult(per_run=per_run, overall_avg_total_time_s=overall, result_count=len(per_run)), errors
 
     def find_benchmark_jsons(self) -> List[Path]:
         """

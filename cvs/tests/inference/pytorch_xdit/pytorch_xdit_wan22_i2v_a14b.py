@@ -11,6 +11,9 @@ All rights reserved.
 import json
 import pytest
 import re
+import shlex
+import socket
+import subprocess
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
@@ -26,6 +29,184 @@ from cvs.parsers.schemas import ClusterConfigFile, PytorchXditWanConfigFile
 from cvs.parsers.pytorch_xdit_wan import WanOutputParser
 
 log = globals.log
+
+
+def _is_local_target(target: str) -> bool:
+    """
+    Best-effort check whether a "target" refers to the current machine.
+
+    Used to decide whether single-node execution should be local (no SSH) or remote via SSH.
+    """
+    if not target:
+        return False
+
+    target_norm = target.strip().lower()
+    if target_norm in {"localhost", "127.0.0.1", "::1"}:
+        return True
+
+    # Hostname / FQDN match
+    try:
+        if target_norm in {socket.gethostname().lower(), socket.getfqdn().lower()}:
+            return True
+    except Exception:
+        pass
+
+    # IP address match against locally-resolvable addresses
+    try:
+        target_ip = socket.gethostbyname(target)
+    except Exception:
+        target_ip = None
+
+    if target_ip:
+        local_ips = set()
+        try:
+            for fam, _, _, _, sockaddr in socket.getaddrinfo(socket.gethostname(), None):
+                if fam in (socket.AF_INET, socket.AF_INET6) and sockaddr:
+                    local_ips.add(sockaddr[0])
+        except Exception:
+            pass
+
+        # Always include loopback
+        local_ips.update({"127.0.0.1", "::1"})
+
+        if target_ip in local_ips:
+            return True
+
+    return False
+
+
+class LocalPssh:
+    """
+    Minimal drop-in replacement for `Pssh` that executes commands locally.
+
+    This is needed on HPC systems where SSH authentication works interactively
+    (Kerberos/certs/hostbased) but libssh2-based clients (parallel-ssh) cannot
+    authenticate non-interactively.
+    """
+
+    def __init__(self, host: str):
+        self.host_list = [host]
+
+    def exec(self, cmd: str, timeout=None, print_console=True):
+        # Keep output format similar to Pssh.exec: return dict[host] -> combined output
+        completed = subprocess.run(
+            cmd,
+            shell=True,
+            text=True,
+            capture_output=True,
+            timeout=timeout if timeout is None else int(timeout),
+        )
+        out = (completed.stdout or "") + (completed.stderr or "")
+        if print_console:
+            print(f"cmd = {_redact_secrets(cmd)}")
+            print(out)
+        return {self.host_list[0]: out}
+
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        # Run different commands; map 1:1 with host_list ordering
+        out = {}
+        for host, cmd in zip(self.host_list, cmd_list):
+            completed = subprocess.run(
+                cmd,
+                shell=True,
+                text=True,
+                capture_output=True,
+                timeout=timeout if timeout is None else int(timeout),
+            )
+            out_str = (completed.stdout or "") + (completed.stderr or "")
+            if print_console:
+                print(f"cmd = {_redact_secrets(cmd)}")
+                print(out_str)
+            out[host] = out_str
+        return out
+
+
+class OpenSshPssh:
+    """
+    Drop-in replacement for `Pssh` that executes commands via the system `ssh` client.
+
+    This is much more compatible with HPC environments than libssh2-based clients
+    (parallel-ssh), and supports:
+    - ssh-agent
+    - Kerberos/SSSD-style usernames (e.g., user@realm)
+    - ProxyJump and other ~/.ssh/config behaviors
+    """
+
+    def __init__(self, host: str, user: str | None = None, pkey: str | None = None):
+        self.host_list = [host]
+        self.user = user
+        self.pkey = pkey
+
+    def _dest(self, host: str) -> str:
+        return f"{self.user}@{host}" if self.user else host
+
+    def _ssh_args(self, host: str) -> list[str]:
+        args = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "ConnectTimeout=10",
+        ]
+        if self.pkey:
+            args += ["-i", self.pkey]
+        args.append(self._dest(host))
+        return args
+
+    def exec(self, cmd: str, timeout=None, print_console=True):
+        host = self.host_list[0]
+        # IMPORTANT: ssh concatenates argv into a single remote command string without
+        # escaping. If we pass ["bash","-lc",cmd], bash will receive only the first word
+        # of cmd as the -c payload (e.g., "docker"), and the remaining words as $0/$1...
+        # which leads to running `docker` with no args (prints docker help).
+        remote_cmd = f"bash -lc {shlex.quote(cmd)}"
+        ssh_cmd = self._ssh_args(host) + [remote_cmd]
+        completed = subprocess.run(
+            ssh_cmd,
+            text=True,
+            capture_output=True,
+            timeout=timeout if timeout is None else int(timeout),
+        )
+        out = (completed.stdout or "") + (completed.stderr or "")
+        if print_console:
+            printable = " ".join(shlex.quote(a) for a in ssh_cmd[:-1]) + " " + shlex.quote(_redact_secrets(cmd))
+            print(f"cmd = {printable}")
+            print(out)
+        return {host: out}
+
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        out = {}
+        for host, cmd in zip(self.host_list, cmd_list):
+            remote_cmd = f"bash -lc {shlex.quote(cmd)}"
+            ssh_cmd = self._ssh_args(host) + [remote_cmd]
+            completed = subprocess.run(
+                ssh_cmd,
+                text=True,
+                capture_output=True,
+                timeout=timeout if timeout is None else int(timeout),
+            )
+            out_str = (completed.stdout or "") + (completed.stderr or "")
+            if print_console:
+                printable = " ".join(shlex.quote(a) for a in ssh_cmd[:-1]) + " " + shlex.quote(_redact_secrets(cmd))
+                print(f"cmd = {printable}")
+                print(out_str)
+            out[host] = out_str
+        return out
+
+
+def _redact_secrets(s: str) -> str:
+    """
+    Best-effort redaction for secrets that may appear in command strings/logs.
+
+    Currently redacts:
+    - HF_TOKEN=...
+    """
+    if not s:
+        return s
+    # Replace HF_TOKEN=<anything until space> with HF_TOKEN=<redacted>
+    return re.sub(r"(HF_TOKEN=)\\S+", r"\\1<redacted>", s)
 
 
 # =============================================================================
@@ -142,10 +323,35 @@ def hf_token(inference_dict):
 
 @pytest.fixture(scope="module")
 def s_phdl(cluster_dict):
-    """Create and return a parallel SSH handle for all cluster nodes."""
+    """Create and return a command execution handle for all cluster nodes."""
     node_list = list(cluster_dict['node_dict'].keys())
-    s_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
-    return s_phdl
+
+    # Single-node mode: execute locally ONLY when the target actually refers to this machine.
+    #
+    # Rationale: users often specify a remote node IP/hostname in cluster.json even for a
+    # single-node run. Always forcing local execution will run benchmarks on the login node
+    # (no GPUs/ROCm) and silently "pass" until parsing fails.
+    if len(node_list) == 1:
+        target = node_list[0]
+        if _is_local_target(target):
+            log.info(f"Using local execution mode for single-node target {target}")
+            return LocalPssh(host=target)
+        # parallel-ssh/libssh2 commonly fails in environments where OpenSSH works.
+        log.info(f"Using OpenSSH execution mode for single-node target {target}")
+        return OpenSshPssh(
+            host=target,
+            user=cluster_dict.get("username"),
+            pkey=cluster_dict.get("priv_key_file"),
+        )
+
+    # Default: use parallel-ssh for remote execution
+    return Pssh(
+        log,
+        node_list,
+        user=cluster_dict.get('username'),
+        password=cluster_dict.get('password'),
+        pkey=cluster_dict.get('priv_key_file'),
+    )
 
 
 @pytest.fixture(scope="module")
@@ -234,7 +440,7 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         f"hf download {model_repo} --revision {model_rev}"
     )
 
-    log.info(f"Running download: {download_cmd}")
+    log.info(f"Running download: {_redact_secrets(download_cmd)}")
 
     try:
         download_result = s_phdl.exec(download_cmd, timeout=1800)  # 30 min timeout
@@ -353,7 +559,7 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
 
     log.info(f"Running WAN 2.2 benchmark on {head_node}")
     log.info(f"Output directory: {output_dir}")
-    log.debug(f"Docker command: {docker_cmd}")
+    log.debug(f"Docker command: {_redact_secrets(docker_cmd)}")
 
     try:
         # Run with generous timeout (benchmarks can take 10+ minutes)
@@ -365,8 +571,16 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
 
         # Check for common failure patterns
         output = benchmark_result[head_node]
-        if re.search(r'error|fail|exception|traceback', output, re.I):
-            log.warning("Detected potential errors in benchmark output")
+        # Avoid overly-generic "error" matching; focus on patterns that strongly indicate failure.
+        fatal_patterns = [
+            r"\bTraceback\b",
+            r"\bModuleNotFoundError\b",
+            r"\bChildFailedError\b",
+            r"No AMD GPU detected",
+            r"0 active drivers \(\[\]\)\. There should only be one\.",
+        ]
+        if any(re.search(p, output, re.I) for p in fatal_patterns):
+            fail_test("Benchmark output indicates a failure (see logs above).")
 
     except Exception as e:
         fail_test(f"Benchmark execution failed with exception: {e}")
@@ -392,46 +606,80 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
 
     output_dir = inference_dict.get('_test_output_dir')
     if not output_dir:
-        fail_test("Output directory not set by previous test")
+        # Allow running this test standalone by deriving the output directory
+        # from the configured output_base_dir and current hostname.
+        try:
+            head_node = s_phdl.host_list[0]
+            hostname_out = s_phdl.exec('hostname', print_console=False)
+            hostname = hostname_out.get(head_node, '').strip() or head_node
+            output_base_dir = inference_dict.get('output_base_dir')
+            if output_base_dir:
+                output_dir = f"{output_base_dir}/wan_22_{hostname}_outputs"
+                log.info(f"Derived output directory: {output_dir}")
+        except Exception:
+            output_dir = None
+
+        if not output_dir:
+            fail_test("Output directory not set by previous test and could not be derived")
+            update_test_result()
+            return
+
+    # If multiple run directories exist under output_base_dir, aggregate like `wan.sh`
+    base_dir = inference_dict.get("output_base_dir")
+    wan_params = benchmark_params_dict["wan22_i2v_a14b"]
+    expected_results = wan_params["expected_results"]
+
+    if base_dir:
+        agg, agg_errors = WanOutputParser.parse_runs_under_base_dir(
+            base_dir=base_dir, expected_artifact="video.mp4", run_glob="wan_22_*_outputs", require_artifact=True
+        )
+    else:
+        agg, agg_errors = None, ["output_base_dir not set in config; cannot aggregate runs"]
+
+    for e in agg_errors:
+        log.warning(f"Parse warning: {e}")
+
+    if agg and agg.result_count > 1:
+        # Print per-run lines + overall average in the same style as wan.sh
+        for r in agg.per_run:
+            log.info(f"{r.label} {r.avg_total_time_s:.2f}")
+        log.info(f"Average {agg.overall_avg_total_time_s:.2f} 720P - {agg.result_count} results")
+
+        # Validate using overall average
+        overall_result = type("Tmp", (), {"avg_total_time_s": agg.overall_avg_total_time_s})()
+        parser = WanOutputParser(output_dir, expected_artifact="video.mp4")  # only used for threshold selection
+        passed, message = parser.validate_threshold(overall_result, expected_results, gpu_type)
+        log.info(message)
+        if not passed:
+            fail_test(message)
         update_test_result()
         return
 
+    # Fallback: single-run behavior (existing logic)
     log.info(f"Parsing results from: {output_dir}")
-
-    # Parse outputs
     parser = WanOutputParser(output_dir, expected_artifact="video.mp4")
     result, errors = parser.parse()
 
-    # Report parse errors
     for error in errors:
         log.warning(f"Parse warning: {error}")
 
-    # Check if parsing succeeded
     if result is None:
         fail_test(f"Failed to parse benchmark results: {errors}")
         update_test_result()
         return
 
-    # Verify artifact exists
     if not result.artifact_path:
         fail_test(f"Artifact 'video.mp4' not found under {output_dir}")
     else:
         log.info(f"Artifact found: {result.artifact_path}")
 
-    # Log results
     log.info("Benchmark results:")
     log.info(f"  Steps parsed: {result.step_count}")
     log.info(f"  Average total_time: {result.avg_total_time_s:.2f}s")
     log.info(f"  Step times: {[f'{t:.2f}' for t in result.step_times]}")
 
-    # Validate against threshold
-    wan_params = benchmark_params_dict['wan22_i2v_a14b']
-    expected_results = wan_params['expected_results']
-
     passed, message = parser.validate_threshold(result, expected_results, gpu_type)
     log.info(message)
-
     if not passed:
         fail_test(message)
-
     update_test_result()
