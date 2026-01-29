@@ -518,9 +518,7 @@ class PytorchXditWan22Benchmarks(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt: str = Field(description="Text prompt for image-to-video generation")
-    size: str = Field(
-        default="720*1280", pattern=r"^\d+\*\d+$", description="Video resolution (format: height*width)"
-    )
+    size: str = Field(default="720*1280", pattern=r"^\d+\*\d+$", description="Video resolution (format: height*width)")
     frame_num: int = Field(default=81, ge=1, description="Number of frames to generate")
     num_benchmark_steps: int = Field(default=5, ge=1, description="Number of benchmark iterations to run")
     compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
@@ -531,7 +529,9 @@ class PytorchXditWan22Benchmarks(BaseModel):
 
     @field_validator('expected_results')
     @classmethod
-    def validate_has_auto_or_specific(cls, v: Dict[str, PytorchXditExpectedResults]) -> Dict[str, PytorchXditExpectedResults]:
+    def validate_has_auto_or_specific(
+        cls, v: Dict[str, PytorchXditExpectedResults]
+    ) -> Dict[str, PytorchXditExpectedResults]:
         """Ensure either 'auto' or a specific GPU type is present."""
         if not v:
             raise ValueError("expected_results must contain at least one GPU type threshold")
@@ -600,9 +600,7 @@ class PytorchXditWanConfig(BaseModel):
     def validate_path_not_placeholder(cls, v: str, info) -> str:
         """Check that paths are not still placeholders."""
         if '<changeme>' in v.lower():
-            raise ValueError(
-                f"{info.field_name} contains placeholder '<changeme>'. Please set a valid path in config."
-            )
+            raise ValueError(f"{info.field_name} contains placeholder '<changeme>'. Please set a valid path in config.")
         return v
 
 

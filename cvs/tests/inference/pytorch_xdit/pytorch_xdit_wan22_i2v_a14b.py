@@ -9,11 +9,8 @@ All rights reserved.
 """
 
 import json
-import os
 import pytest
 import re
-import time
-from pathlib import Path
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
@@ -246,7 +243,7 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         # Verify download succeeded
         verify_result = s_phdl.exec(check_cmd)
         if "EXISTS" not in verify_result[head_node]:
-            fail_test(f"Model download failed: snapshot directory still missing after download")
+            fail_test("Model download failed: snapshot directory still missing after download")
     except Exception as e:
         fail_test(f"Model download failed with exception: {e}")
 
@@ -422,7 +419,7 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
         log.info(f"Artifact found: {result.artifact_path}")
 
     # Log results
-    log.info(f"Benchmark results:")
+    log.info("Benchmark results:")
     log.info(f"  Steps parsed: {result.step_count}")
     log.info(f"  Average total_time: {result.avg_total_time_s:.2f}s")
     log.info(f"  Step times: {[f'{t:.2f}' for t in result.step_times]}")
