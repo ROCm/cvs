@@ -235,17 +235,27 @@ def test_cleanup_stale_containers(s_phdl, inference_dict):
     docker_lib.delete_all_containers_and_volumes(s_phdl)
 
 
-def test_launch_inference_containers(s_phdl, inference_dict):
-    """ """
+def test_launch_inference_containers(s_phdl, inference_dict, benchmark_params_dict):
+    """
+    Launch InferenceMAX inference containers on all nodes.
+
+    Note: Container image can be model-specific or use global default.
+    """
 
     log.info('Testcase launch InferenceMax containers')
     globals.error_list = []
     container_name = inference_dict['container_name']
+
+    # Get model-specific container image or use global default
+    container_image = benchmark_params_dict.get('gpt-oss-120b', {}).get(
+        'container_image', inference_dict['container_image']
+    )
+
     # Launch the containers ..
     docker_lib.launch_docker_container(
         s_phdl,
         container_name,
-        inference_dict['container_image'],
+        container_image,
         inference_dict['container_config']['device_list'],
         inference_dict['container_config']['volume_dict'],
         inference_dict['container_config']['env_dict'],
