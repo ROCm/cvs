@@ -1,0 +1,48 @@
+{
+    "config": {
+        "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
+        "container_name": "flux-benchmark",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "hf_home": "/home/{user-id}",
+        "output_base_dir": "/home/{user-id}/cvs_flux_output",
+        "model_repo": "black-forest-labs/FLUX.1-dev",
+        "model_rev": "",
+        "container_config": {
+            "device_list": [
+                "/dev/dri",
+                "/dev/kfd"
+            ],
+            "volume_dict": {},
+            "env_dict": {}
+        }
+    },
+    "benchmark_params": {
+        "flux1_dev_t2i": {
+            "prompt": "A small cat",
+            "seed": 42,
+            "num_inference_steps": 25,
+            "max_sequence_length": 256,
+            "no_use_resolution_binning": true,
+            "warmup_steps": 1,
+            "warmup_calls": 5,
+            "num_repetitions": 25,
+            "height": 1024,
+            "width": 1024,
+            "ulysses_degree": 8,
+            "ring_degree": 1,
+            "use_torch_compile": true,
+            "torchrun_nproc": 8,
+            "expected_results": {
+                "auto": {
+                    "max_avg_pipe_time_s": 10.0
+                },
+                "mi300x": {
+                    "max_avg_pipe_time_s": 8.0
+                },
+                "mi355": {
+                    "max_avg_pipe_time_s": 7.0
+                }
+            }
+        }
+    }
+}
