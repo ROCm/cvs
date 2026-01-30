@@ -369,7 +369,7 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
     else:
         model_params['num_prompts'] = str(concurrency * 50)
 
-    # Create vLLM job directly
+    # Create VllmJob instance
     vllm_job = VllmJob(
         c_phdl=c_phdl,
         s_phdl=s_phdl,
@@ -381,9 +381,14 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
         distributed_inference=False,
     )
 
-    # Build and execute inference job
+    # Stop any existing server process for clean state
+    vllm_job.stop_server()
+
+    # Build and start server with current test parameters
     vllm_job.build_server_inference_job_cmd()
     vllm_job.start_inference_server_job()
+
+    # Run benchmark client
     vllm_job.start_inference_client_job()
     vllm_job.poll_for_inference_completion()
     vllm_job.verify_inference_results()

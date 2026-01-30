@@ -6,7 +6,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import re
+import time
 
+from cvs.lib import globals
 from cvs.lib.inference.base import InferenceBaseJob
 
 
@@ -32,3 +34,18 @@ class VllmJob(InferenceBaseJob):
     def get_log_subdir(self):
         """vLLM uses 'vllm' log subdirectory."""
         return 'vllm'
+
+    def stop_server(self):
+        """Stop the vLLM server process."""
+        log = globals.log
+        log.info("Stopping vLLM server")
+        self.s_phdl.exec(f'docker exec {self.container_name} pkill -f "vllm serve"')
+        time.sleep(5)  # Wait for graceful shutdown
+
+    def restart_server(self):
+        """Restart the vLLM server with updated parameters."""
+        log = globals.log
+        log.info("Restarting vLLM server with updated parameters")
+        self.stop_server()
+        self.build_server_inference_job_cmd()
+        self.start_inference_server_job()

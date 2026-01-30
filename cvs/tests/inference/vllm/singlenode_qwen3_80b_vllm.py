@@ -372,14 +372,13 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
       - Sequence combination (ISL/OSL pair) defined in model's sequence_combinations
       - Concurrency level defined in model's concurrency_levels
 
-    The factory will automatically create the correct VllmJob instance with
-    the model-specific container image and parameters.
+    The vllm_server fixture provides a running server that is reused across all iterations.
 
     Args:
+        vllm_server: VllmJob instance with running server (from fixture)
         seq_combo: Dict with 'isl', 'osl', 'name' keys for this test iteration
         concurrency: Integer concurrency level for this test iteration
     """
-    # Since this is a per-GPU-type config file (mi355x), gpu_type is implicit
     gpu_type = "mi355x"
 
     log.info(
@@ -388,7 +387,6 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
     globals.error_list = []
 
     # Override ISL/OSL and concurrency in benchmark_params for this specific test iteration
-    # Config is now fully flattened, so access directly under benchmark_params
     model_params = benchmark_params_dict[MODEL_NAME]
     model_params['input_sequence_length'] = seq_combo['isl']
     model_params['output_sequence_length'] = seq_combo['osl']
@@ -401,7 +399,7 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
     else:
         model_params['num_prompts'] = str(concurrency * 50)
 
-    # Create vLLM job directly
+    # Create VllmJob instance
     vllm_job = VllmJob(
         c_phdl=c_phdl,
         s_phdl=s_phdl,
@@ -413,9 +411,14 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
         distributed_inference=False,
     )
 
-    # Build and execute inference job
+    # Stop any existing server process for clean state
+    vllm_job.stop_server()
+
+    # Build and start server with current test parameters
     vllm_job.build_server_inference_job_cmd()
     vllm_job.start_inference_server_job()
+
+    # Run benchmark client
     vllm_job.start_inference_client_job()
     vllm_job.poll_for_inference_completion()
     vllm_job.verify_inference_results()

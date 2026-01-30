@@ -182,7 +182,7 @@
                 32,
                 64
             ],
-            "model": "deepseek-ai/DeepSeek-V3",
+            "model": "/models/dsv31-fp8",
             "num_prompts": "3200",
             "sequence_combinations": [
                 {

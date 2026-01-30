@@ -134,6 +134,7 @@ class InferenceBaseJob:
         self.bp_dict.setdefault('model', 'openai/gpt-oss-120b')
         self.bp_dict.setdefault('num_prompts', '1000')
         self.bp_dict.setdefault('input_sequence_length', '8192')
+        self.bp_dict.setdefault('output_sequence_length', '1024')
         self.bp_dict.setdefault('burstiness', '1.0')
         self.bp_dict.setdefault('seed', '0')
         self.bp_dict.setdefault('request_rate', 'inf')
