@@ -9,9 +9,11 @@ All rights reserved.
 """
 
 import json
+import os
 import pytest
 import re
 import socket
+import shlex
 import subprocess
 
 from cvs.lib.parallel_ssh_lib import Pssh
@@ -28,6 +30,84 @@ from cvs.parsers.schemas import ClusterConfigFile, PytorchXditFluxConfigFile
 from cvs.parsers.pytorch_xdit_flux import FluxOutputParser
 
 log = globals.log
+
+
+class _SecretValue:
+    """
+    Wrapper to avoid leaking secrets in pytest tracebacks.
+
+    Pytest will include fixture values in failure reports; by wrapping the token, we ensure
+    the token's repr is redacted while still behaving like a string for command building.
+    """
+
+    def __init__(self, value: str):
+        self.value = value or ""
+
+    def __bool__(self) -> bool:  # truthiness checks like `if hf_token:`
+        return bool(self.value)
+
+    def __str__(self) -> str:  # f-strings and command assembly
+        return self.value
+
+    def __repr__(self) -> str:  # pytest failure display
+        return "<redacted>"
+
+
+def _redact_secrets(s: str) -> str:
+    """
+    Best-effort redaction for secrets that may appear in command strings/logs.
+
+    Currently redacts:
+    - HF_TOKEN=...
+    """
+    if not s:
+        return s
+    # Replace HF_TOKEN=<anything until space> with HF_TOKEN=<redacted>
+    return re.sub(r"(HF_TOKEN=)[^\s]+", r"\1<redacted>", s)
+
+
+def _is_local_target(target: str) -> bool:
+    """
+    Best-effort check whether a "target" refers to the current machine.
+
+    Used to decide whether single-node execution should be local (no SSH) or remote via SSH.
+    """
+    if not target:
+        return False
+
+    target_norm = target.strip().lower()
+    if target_norm in {"localhost", "127.0.0.1", "::1"}:
+        return True
+
+    # Hostname / FQDN match
+    try:
+        if target_norm in {socket.gethostname().lower(), socket.getfqdn().lower()}:
+            return True
+    except Exception:
+        pass
+
+    # IP address match against locally-resolvable addresses
+    try:
+        target_ip = socket.gethostbyname(target)
+    except Exception:
+        target_ip = None
+
+    if target_ip:
+        local_ips = set()
+        try:
+            for fam, _, _, _, sockaddr in socket.getaddrinfo(socket.gethostname(), None):
+                if fam in (socket.AF_INET, socket.AF_INET6) and sockaddr:
+                    local_ips.add(sockaddr[0])
+        except Exception:
+            pass
+
+        # Always include loopback
+        local_ips.update({"127.0.0.1", "::1"})
+
+        if target_ip in local_ips:
+            return True
+
+    return False
 
 
 class LocalPssh:
@@ -53,7 +133,7 @@ class LocalPssh:
         )
         out = (completed.stdout or "") + (completed.stderr or "")
         if print_console:
-            print(f"cmd = {cmd}")
+            print(f"cmd = {_redact_secrets(cmd)}")
             print(out)
         return {self.host_list[0]: out}
 
@@ -70,23 +150,85 @@ class LocalPssh:
             )
             out_str = (completed.stdout or "") + (completed.stderr or "")
             if print_console:
-                print(f"cmd = {cmd}")
+                print(f"cmd = {_redact_secrets(cmd)}")
                 print(out_str)
             out[host] = out_str
         return out
 
 
-def _redact_secrets(s: str) -> str:
+class OpenSshPssh:
     """
-    Best-effort redaction for secrets that may appear in command strings/logs.
+    Drop-in replacement for `Pssh` that executes commands via the system `ssh` client.
 
-    Currently redacts:
-    - HF_TOKEN=...
+    This is much more compatible with HPC environments than libssh2-based clients
+    (parallel-ssh), and supports:
+    - ssh-agent
+    - Kerberos/SSSD-style usernames (e.g., user@realm)
+    - ProxyJump and other ~/.ssh/config behaviors
     """
-    if not s:
-        return s
-    # Replace HF_TOKEN=<anything until space> with HF_TOKEN=<redacted>
-    return re.sub(r"(HF_TOKEN=)[^\s]+", r"\1<redacted>", s)
+
+    def __init__(self, host: str, user: str | None = None, pkey: str | None = None):
+        self.host_list = [host]
+        self.user = user
+        self.pkey = pkey
+
+    def _dest(self, host: str) -> str:
+        return f"{self.user}@{host}" if self.user else host
+
+    def _ssh_args(self, host: str) -> list[str]:
+        args = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "ConnectTimeout=10",
+        ]
+        if self.pkey:
+            args += ["-i", self.pkey]
+        args.append(self._dest(host))
+        return args
+
+    def exec(self, cmd: str, timeout=None, print_console=True):
+        host = self.host_list[0]
+        # IMPORTANT: ssh concatenates argv into a single remote command string without
+        # escaping. If we pass ["bash","-lc",cmd], bash will receive only the first word
+        # of cmd as the -c payload (e.g., "docker"), and the remaining words as $0/$1...
+        # which leads to running `docker` with no args (prints docker help).
+        remote_cmd = f"bash -lc {shlex.quote(cmd)}"
+        ssh_cmd = self._ssh_args(host) + [remote_cmd]
+        completed = subprocess.run(
+            ssh_cmd,
+            text=True,
+            capture_output=True,
+            timeout=timeout if timeout is None else int(timeout),
+        )
+        out = (completed.stdout or "") + (completed.stderr or "")
+        if print_console:
+            printable = " ".join(shlex.quote(a) for a in ssh_cmd[:-1]) + " " + shlex.quote(_redact_secrets(cmd))
+            print(f"cmd = {printable}")
+            print(out)
+        return {host: out}
+
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        out = {}
+        for host, cmd in zip(self.host_list, cmd_list):
+            remote_cmd = f"bash -lc {shlex.quote(cmd)}"
+            ssh_cmd = self._ssh_args(host) + [remote_cmd]
+            completed = subprocess.run(
+                ssh_cmd,
+                text=True,
+                capture_output=True,
+                timeout=timeout if timeout is None else int(timeout),
+            )
+            out_str = (completed.stdout or "") + (completed.stderr or "")
+            if print_console:
+                printable = " ".join(shlex.quote(a) for a in ssh_cmd[:-1]) + " " + shlex.quote(_redact_secrets(cmd))
+                print(f"cmd = {printable}")
+                print(out_str)
+            out[host] = out_str
+        return out
 
 
 # =============================================================================
@@ -192,15 +334,15 @@ def hf_token(inference_dict):
     hf_token_file = inference_dict['hf_token_file']
     try:
         with open(hf_token_file, 'r') as fp:
-            hf_token = fp.read().rstrip("\n")
+            token = fp.read().rstrip("\n")
         log.info("HF token loaded successfully")
-        return hf_token
+        return _SecretValue(token)
     except FileNotFoundError:
         log.warning(f"HF token file not found: {hf_token_file}")
-        return ""
+        return _SecretValue("")
     except Exception as e:
         log.error(f"Error reading HF token file: {e}")
-        return ""
+        return _SecretValue("")
 
 
 @pytest.fixture(scope="module")
@@ -208,17 +350,23 @@ def s_phdl(cluster_dict):
     """Create and return a command execution handle for all cluster nodes."""
     node_list = list(cluster_dict['node_dict'].keys())
 
-    # Single-node mode: always execute locally.
+    # Single-node mode: execute locally ONLY when the target actually refers to this machine.
     #
-    # Rationale: on many HPC systems, libssh2-based clients (parallel-ssh) cannot
-    # authenticate even when OpenSSH works, and users often specify an IP address
-    # (which won't match socket.gethostname()). For single-node benchmarking, we
-    # want deterministic local execution regardless of whether node_dict uses an
-    # IP, hostname, or "localhost".
+    # Rationale: users often specify a remote node IP/hostname in cluster.json even for a
+    # single-node run. Always forcing local execution will run benchmarks on the login node
+    # (no GPUs/ROCm) and fail in confusing ways.
     if len(node_list) == 1:
         target = node_list[0]
-        log.info(f"Using local execution mode for single-node target {target}")
-        return LocalPssh(host=target)
+        if _is_local_target(target):
+            log.info(f"Using local execution mode for single-node target {target}")
+            return LocalPssh(host=target)
+        # parallel-ssh/libssh2 commonly fails in environments where OpenSSH works.
+        log.info(f"Using OpenSSH execution mode for single-node target {target}")
+        return OpenSshPssh(
+            host=target,
+            user=cluster_dict.get("username"),
+            pkey=cluster_dict.get("priv_key_file"),
+        )
 
     # Default: use parallel-ssh for remote execution
     return Pssh(
@@ -374,6 +522,18 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     - Output directory to /outputs
     """
     globals.error_list = []
+
+    # Preflight: ensure we're on a GPU-capable host. Running on a login node (no /dev/kfd)
+    # will cause ROCm + container init to fail and produce no timing.json.
+    head_node = s_phdl.host_list[0]
+    kfd_check = s_phdl.exec("test -e /dev/kfd && echo KFD_OK || echo KFD_MISSING", print_console=False)
+    if "KFD_OK" not in (kfd_check.get(head_node, "") or ""):
+        fail_test(
+            "ROCm device node /dev/kfd not found on this host. "
+            "This test must be run on a GPU compute node (e.g., via an interactive SLURM allocation)."
+        )
+        update_test_result()
+        return
 
     container_image = inference_dict['container_image']
     container_name = inference_dict['container_name']
