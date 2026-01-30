@@ -15,7 +15,7 @@ import json
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib import docker_lib
-from cvs.lib.inference_lib import InferenceJobFactory
+from cvs.lib.inference.vllm import VllmJob
 from cvs.lib import globals
 
 log = globals.log
@@ -210,8 +210,10 @@ def hf_token(inference_dict):
             hf_token = fp.read().rstrip("\n")
     except FileNotFoundError:
         print(f"Error: The file '{hf_token_file}' was not found.")
+        raise
     except Exception as e:
         print(f"An error occurred: {e}")
+        raise
     return hf_token
 
 
@@ -267,6 +269,38 @@ def c_phdl(cluster_dict):
     node_list = list(cluster_dict['node_dict'].keys())
     c_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return c_phdl
+
+
+@pytest.fixture(scope="module", autouse=True)
+def cleanup_on_exit(s_phdl, inference_dict):
+    """
+    Automatically clean up containers after all tests in the module complete.
+
+    This fixture runs automatically (autouse=True) and ensures cleanup happens
+    even if tests fail, providing proper test isolation.
+
+    Args:
+      s_phdl: Parallel SSH handle for server nodes
+      inference_dict: Inference configuration containing container_name
+
+    Yields:
+      None (all tests run between yield statement and cleanup)
+
+    Behavior:
+      - Runs setup code before yield (currently none)
+      - Yields control to run all module tests
+      - After all tests complete (success or failure), kills container and cleans up volumes
+    """
+    # Setup (before tests) - nothing needed currently
+    yield
+    # Teardown (after all tests, even on failure)
+    try:
+        container_name = inference_dict['container_name']
+        log.info(f"Cleaning up container {container_name} after test module completion")
+        docker_lib.kill_docker_container(s_phdl, container_name)
+        docker_lib.delete_all_containers_and_volumes(s_phdl)
+    except Exception as e:
+        log.warning(f"Cleanup failed (non-critical): {e}")
 
 
 def test_cleanup_stale_containers(s_phdl, inference_dict):
@@ -361,16 +395,15 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
     else:
         model_params['num_prompts'] = str(concurrency * 50)
 
-    # Create job using factory - it will auto-detect vLLM from config
-    vllm_job = InferenceJobFactory.create_job(
-        inference_dict,
-        c_phdl,
-        s_phdl,
-        MODEL_NAME,
-        inference_dict,
-        benchmark_params_dict,
-        hf_token,
-        gpu_type,
+    # Create vLLM job directly
+    vllm_job = VllmJob(
+        c_phdl=c_phdl,
+        s_phdl=s_phdl,
+        model_name=MODEL_NAME,
+        inference_config_dict=inference_dict,
+        benchmark_params_dict=benchmark_params_dict,
+        hf_token=hf_token,
+        gpu_type=gpu_type,
         distributed_inference=False,
     )
 

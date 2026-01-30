@@ -15,7 +15,7 @@ import json
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib import docker_lib
-from cvs.lib.inference_lib import InferenceJobFactory
+from cvs.lib.inference.vllm import VllmJob
 from cvs.lib import globals
 
 log = globals.log
@@ -210,8 +210,10 @@ def hf_token(inference_dict):
             hf_token = fp.read().rstrip("\n")
     except FileNotFoundError:
         print(f"Error: The file '{hf_token_file}' was not found.")
+        raise
     except Exception as e:
         print(f"An error occurred: {e}")
+        raise
     return hf_token
 
 
@@ -361,16 +363,15 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
     else:
         model_params['num_prompts'] = str(concurrency * 50)
 
-    # Create job using factory - it will auto-detect vLLM from config
-    vllm_job = InferenceJobFactory.create_job(
-        inference_dict,
-        c_phdl,
-        s_phdl,
-        MODEL_NAME,
-        inference_dict,
-        benchmark_params_dict,
-        hf_token,
-        gpu_type,
+    # Create vLLM job directly
+    vllm_job = VllmJob(
+        c_phdl=c_phdl,
+        s_phdl=s_phdl,
+        model_name=MODEL_NAME,
+        inference_config_dict=inference_dict,
+        benchmark_params_dict=benchmark_params_dict,
+        hf_token=hf_token,
+        gpu_type=gpu_type,
         distributed_inference=False,
     )
 

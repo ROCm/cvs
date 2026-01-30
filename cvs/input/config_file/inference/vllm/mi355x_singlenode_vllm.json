@@ -8,7 +8,7 @@
         "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "16G",
         "log_dir": "/home/{user-id}/LOGS",
-        "data_cache_dir": "/mnt/localdisk/models",
+        "data_cache_dir": "/it-share/models/",
         "container_config": {
             "device_list": [
                 "/dev/dri",
@@ -17,10 +17,10 @@
             ],
             "volume_dict": {
                 "/home/{user-id}": "/home/{user-id}",
-                "/mnt/localdisk/models": "/data"
+                "/it-share/models/": "/models"
             },
             "env_dict": {
-                "HF_HUB_CACHE": "/data/huggingface-cache"
+                "HF_HUB_CACHE": "/models/huggingface-cache"
             }
         }
     },
@@ -37,7 +37,7 @@
                 32,
                 64
             ],
-            "model": "/data/gpt-oss-120b",
+            "model": "openai/gpt-oss-120b",
             "num_prompts": "3200",
             "sequence_combinations": [
                 {
@@ -86,7 +86,7 @@
                 32,
                 64
             ],
-            "model": "/data/Qwen3-235B-A22B-Instruct-2507",
+            "model": "Qwen/Qwen3-235B-A22B-Instruct-2507",
             "num_prompts": "3200",
             "sequence_combinations": [
                 {
@@ -134,7 +134,7 @@
                 32,
                 64
             ],
-            "model": "/data/Qwen3-Next-80B-A3B-Instruct",
+            "model": "Qwen/Qwen3-Next-80B-A3B-Instruct",
             "num_prompts": "3200",
             "sequence_combinations": [
                 {
@@ -182,7 +182,7 @@
                 32,
                 64
             ],
-            "model": "/data/dsv31-fp8",
+            "model": "deepseek-ai/DeepSeek-V3",
             "num_prompts": "3200",
             "sequence_combinations": [
                 {

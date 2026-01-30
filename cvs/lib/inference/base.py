@@ -58,6 +58,7 @@ class InferenceBaseJob:
         self.model_name = model_name
         self.hf_token = hf_token
         self.gpu_type = gpu_type
+        self.distributed_inference = distributed_inference
 
         # Sample inference config and model params dict saved above
         self.if_dict = inference_config_dict
@@ -96,17 +97,23 @@ class InferenceBaseJob:
         print(f'inference_dict = {self.if_dict}')
         print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 
-        # Get model-specific config first
+        # Get model-specific config - check if nested under single_node/multi_node or flat
         if self.distributed_inference:
-            self.bp_dict = self.benchmark_params_dict['multi_node'][self.model_name][self.gpu_type]
+            # Multi-node structure: benchmark_params['multi_node'][model_name] or benchmark_params[model_name]
+            if 'multi_node' in self.benchmark_params_dict:
+                self.bp_dict = self.benchmark_params_dict['multi_node'][self.model_name]
+            else:
+                self.bp_dict = self.benchmark_params_dict[self.model_name]
         else:
-            self.bp_dict = self.benchmark_params_dict['single_node'][self.model_name][self.gpu_type]
+            # Single-node structure: benchmark_params['single_node'][model_name] or benchmark_params[model_name]
+            if 'single_node' in self.benchmark_params_dict:
+                self.bp_dict = self.benchmark_params_dict['single_node'][self.model_name]
+            else:
+                self.bp_dict = self.benchmark_params_dict[self.model_name]
 
         # Container image can be model-specific (in bp_dict) or global (in if_dict)
         self.container_image = self.bp_dict.get('container_image', self.if_dict['container_image'])
         self.container_name = self.if_dict['container_name']
-
-        self.distributed_inference = distributed_inference
 
         self.nnodes = self.if_dict['nnodes']
         self.nic_type = self.if_dict['nic_type']
@@ -159,6 +166,10 @@ class InferenceBaseJob:
     def get_completion_pattern(self):
         """Get regex pattern to detect benchmark completion."""
         raise NotImplementedError("Derived class must implement get_completion_pattern()")
+
+    def get_log_subdir(self):
+        """Get log subdirectory name for this framework."""
+        raise NotImplementedError("Derived class must implement get_log_subdir()")
 
     def run_preinference_tasks(
         self,
@@ -267,7 +278,8 @@ class InferenceBaseJob:
         cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {clone_dir}; git clone {self.if_dict['benchmark_script_repo']}" '''
         out_dict = self.c_phdl.exec(cmd)
         for node in out_dict.keys():
-            if re.search('error|fail', out_dict[node], re.I):
+            # Ignore "already exists" error - repo was cloned in previous test
+            if re.search('error|fail', out_dict[node], re.I) and not re.search('already exists', out_dict[node], re.I):
                 fail_test('Errors or failures seen in pulling bench_serving repo from Github, pls check')
         time.sleep(3)
 
@@ -282,14 +294,44 @@ class InferenceBaseJob:
         for i in range(0, int(self.nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash {script_name} > {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file} 2>&1 &" '''
             cmd_list.append(cmd)
-        self.s_phdl.exec_cmd_list(cmd_list)
+        out_dict = self.s_phdl.exec_cmd_list(cmd_list)
+
+        # Check for immediate failures in server launch
+        for node in out_dict.keys():
+            if re.search(
+                'No such file or directory|command not found|cannot access|Permission denied', out_dict[node], re.I
+            ):
+                log.error(f'FAIL - Failed to start server on node {node}: {out_dict[node]}')
+                raise Exception(f'Failed to start server on node {node}: {out_dict[node]}')
 
     def poll_server_startup(self):
         """Poll for server startup completion."""
         log_file = f'{self.server_script}_server.log'
 
-        print('Waiting 360 secs for server to launch')
-        time.sleep(360)
+        # Do an early check for fast failures before the long wait
+        print('Waiting 30 secs for server to start writing logs...')
+        time.sleep(30)
+
+        # Early failure detection
+        cmd_list = []
+        for i in range(0, int(self.nnodes)):
+            cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'
+            cmd_list.append(cmd)
+        out_dict = self.s_phdl.exec_cmd_list(cmd_list)
+        for node in out_dict.keys():
+            log_content = out_dict[node].lower()
+            if re.search(
+                'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback',
+                log_content,
+                re.I,
+            ):
+                error_msg = f'Failed to start server on node {node}: {out_dict[node][-500:]}'
+                fail_test(error_msg)
+                raise Exception(error_msg)
+
+        print('No immediate errors detected. Waiting 330 more secs for server to fully launch...')
+        time.sleep(330)
+
         for j in range(0, 20):
             print(f'Polling for application startup complete on all nodes, iteration {j}')
             cmd_list = []
@@ -298,9 +340,13 @@ class InferenceBaseJob:
                 cmd_list.append(cmd)
             out_dict = self.s_phdl.exec_cmd_list(cmd_list)
             for node in out_dict.keys():
-                if re.search('Failed to start', out_dict[node], re.I):
-                    fail_test(f'Failed to start server on node {node}')
-                    return
+                # Check for common failure patterns that indicate server won't start
+                if re.search(
+                    'Failed to start|No such file or directory|command not found|cannot access', out_dict[node], re.I
+                ):
+                    error_msg = f'Failed to start server on node {node}: {out_dict[node][-500:]}'
+                    fail_test(error_msg)
+                    raise Exception(error_msg)
                 if not re.search('Application startup complete', out_dict[node], re.I):
                     print('Waiting 60 secs for next poll')
                     time.sleep(60)
@@ -308,7 +354,7 @@ class InferenceBaseJob:
     def launch_client(self):
         """Launch client benchmark."""
         clone_dir = '/app'
-        backend = self.benchmark_params_dict['backend']
+        backend = self.bp_dict['backend']
         result_filename = self.get_result_filename()
 
         # Launch client benchmark
@@ -574,66 +620,3 @@ class InferenceBaseJob:
         time.sleep(2)
         verify_dmesg_for_errors(self.s_phdl, self.inference_start_time, self.inference_end_time)
         print(self.inference_result_dict)
-
-
-class InferenceMaxJob(InferenceBaseJob):
-    """InferenceMAX-specific implementation."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.if_dict.setdefault('inferencemax_repo', 'https://github.com/InferenceMAX/InferenceMAX.git')
-
-    def get_server_script_directory(self):
-        """InferenceMAX scripts are in the cloned repo."""
-        return '/app/InferenceMAX/benchmarks'
-
-    def get_result_filename(self):
-        """InferenceMAX result filename."""
-        return 'inferencemax_test_result.json'
-
-    def get_completion_pattern(self):
-        """InferenceMAX completion pattern."""
-        return re.compile('Serving Benchmark Result', re.I)
-
-    def get_log_subdir(self):
-        """InferenceMAX uses 'inference-max' log subdirectory."""
-        return 'inference-max'
-
-    def clone_inferencemax_repo(self):
-        """Clone InferenceMAX repository."""
-        cmd = f'''docker exec {self.container_name} /bin/bash -c "git clone {self.if_dict['inferencemax_repo']}" '''
-        out_dict = self.s_phdl.exec(cmd)
-        for node in out_dict.keys():
-            if re.search('error|fail', out_dict[node], re.I):
-                fail_test('Errors or failures seen in pulling InferenceMAX repo from Github, pls check')
-        time.sleep(3)
-        self.s_phdl.exec(f'''docker exec {self.container_name} /bin/bash -c "ls -ld /app/InferenceMAX" ''')
-
-    def start_inference_server_job(self):
-        """Start InferenceMAX server - clone repo, then call base implementation."""
-        self.clone_inferencemax_repo()
-        super().start_inference_server_job()
-
-
-class VllmJob(InferenceBaseJob):
-    """vLLM-specific implementation."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.if_dict.setdefault('benchmark_server_script_path', '/host_scripts')
-
-    def get_server_script_directory(self):
-        """vLLM scripts are mounted from host."""
-        return self.if_dict['benchmark_server_script_path']
-
-    def get_result_filename(self):
-        """vLLM result filename."""
-        return 'vllm_test_result.json'
-
-    def get_completion_pattern(self):
-        """vLLM completion pattern."""
-        return re.compile('End-to-end Latency', re.I)
-
-    def get_log_subdir(self):
-        """vLLM uses 'vllm' log subdirectory."""
-        return 'vllm'

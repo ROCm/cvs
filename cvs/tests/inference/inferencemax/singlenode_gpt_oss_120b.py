@@ -14,7 +14,7 @@ import json
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib import docker_lib
-from cvs.lib.inference_lib import InferenceJobFactory
+from cvs.lib.inference.inference_max import InferenceMaxJob
 from cvs.lib import globals
 
 log = globals.log
@@ -264,15 +264,14 @@ def test_launch_inference_containers(s_phdl, inference_dict):
 
 def test_gpt_oss_120_single_node(c_phdl, s_phdl, gpu_type, inference_dict, benchmark_params_dict, hf_token):
     globals.error_list = []
-    im_obj = InferenceJobFactory.create_job(
-        inference_dict,
-        c_phdl,
-        s_phdl,
-        'gpt-oss-120b',
-        inference_dict,
-        benchmark_params_dict,
-        hf_token,
-        gpu_type,
+    im_obj = InferenceMaxJob(
+        c_phdl=c_phdl,
+        s_phdl=s_phdl,
+        model_name='gpt-oss-120b',
+        inference_config_dict=inference_dict,
+        benchmark_params_dict=benchmark_params_dict,
+        hf_token=hf_token,
+        gpu_type=gpu_type,
         distributed_inference=False,
     )
     im_obj.build_server_inference_job_cmd()
