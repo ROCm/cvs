@@ -62,18 +62,18 @@ class FluxOutputParser:
         """
         # Expected location: output_dir/results/timing.json
         timing_json = self.output_dir / "results" / "timing.json"
-        
+
         if timing_json.exists():
             log.info(f"Found timing.json: {timing_json}")
             return timing_json
-        
+
         # Fallback: search recursively
         for root, dirs, files in os.walk(self.output_dir):
             if "timing.json" in files:
                 timing_path = Path(root) / "timing.json"
                 log.info(f"Found timing.json (fallback search): {timing_path}")
                 return timing_path
-        
+
         log.warning(f"timing.json not found under {self.output_dir}")
         return None
 

@@ -750,7 +750,7 @@ def validate_config_file(
             # Check if it's a pytorch_xdit config (WAN or Flux)
             config_section = raw_config.get("config", {})
             benchmark_section = raw_config.get("benchmark_params", {})
-            
+
             # Detect Flux: check for flux1_dev_t2i in benchmark_params or FLUX in model_repo
             if "flux1_dev_t2i" in benchmark_section or "FLUX" in config_section.get("model_repo", ""):
                 config_type = "pytorch_xdit_flux"

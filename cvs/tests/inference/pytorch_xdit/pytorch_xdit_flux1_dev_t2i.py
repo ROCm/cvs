@@ -9,7 +9,6 @@ All rights reserved.
 """
 
 import json
-import os
 import pytest
 import re
 import socket
@@ -437,7 +436,7 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         # Require specific snapshot directory
         snapshot_dir = f"{model_dir}/snapshots/{model_rev}"
         log.info(f"Checking for model cache at: {snapshot_dir}")
-        
+
         check_cmd = f"test -d {snapshot_dir} && echo 'EXISTS' || echo 'MISSING'"
         check_result = s_phdl.exec(check_cmd)
 
@@ -451,7 +450,7 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         # No specific revision - check if any snapshot exists
         snapshots_dir = f"{model_dir}/snapshots"
         log.info(f"Checking for any model snapshot under: {snapshots_dir}")
-        
+
         check_cmd = f"test -d {snapshots_dir} && ls {snapshots_dir} | head -1 && echo 'EXISTS' || echo 'MISSING'"
         check_result = s_phdl.exec(check_cmd)
 
@@ -503,7 +502,7 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
             verify_cmd = f"test -d {snapshot_dir} && echo 'EXISTS' || echo 'MISSING'"
         else:
             verify_cmd = f"test -d {snapshots_dir} && ls {snapshots_dir} | head -1 && echo 'EXISTS' || echo 'MISSING'"
-        
+
         verify_result = s_phdl.exec(verify_cmd)
         if "EXISTS" not in verify_result[head_node]:
             fail_test("Model download failed: expected directory still missing after download")
@@ -594,7 +593,7 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     resolution_binning_flag = "" if no_use_resolution_binning else ""
     if no_use_resolution_binning:
         resolution_binning_flag = "--no_use_resolution_binning"
-    
+
     compile_flag = "--use-torch-compile" if use_torch_compile else ""
 
     torchrun_cmd = (
