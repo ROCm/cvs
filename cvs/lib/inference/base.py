@@ -46,6 +46,7 @@ class InferenceBaseJob:
         hf_token,
         gpu_type='mi300',
         distributed_inference=False,
+        server_launch_poll_count=20,
     ):
         # Client instance phdl
         self.c_phdl = c_phdl
@@ -125,6 +126,25 @@ class InferenceBaseJob:
         self.nccl_debug = self.if_dict['nccl_debug']
         self.data_cache_dir = self.if_dict['data_cache_dir']
         self.log_dir = self.if_dict['log_dir']
+
+        # Allow derived classes to override server launch wait duration
+        self.default_server_precheck_wait_time = 30
+        self.default_server_wait_time = 330
+        self.default_server_poll_wait_time = 60
+        self.default_server_poll_count = server_launch_poll_count
+        self.default_server_precheck_error_pattern = re.compile(
+            'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback|failed to start',
+            re.I,
+        )
+        self.default_server_error_pattern_poll = re.compile(
+            'failed to start|no such file or directory|command not found|cannot access', re.I
+        )
+        self.default_client_wait_time = 120
+        self.default_client_poll_count = 20
+        self.default_client_poll_wait_time = 60
+
+        # Regex/parse defaults that derived classes may override
+        self.readiness_pattern = re.compile('Application startup complete|Uvicorn running|Started server', re.I)
 
         # set defaults for benchmark param dict if not passed via JSON file
         self.bp_dict.setdefault('backend', 'vllm')
@@ -305,13 +325,38 @@ class InferenceBaseJob:
                 log.error(f'FAIL - Failed to start server on node {node}: {out_dict[node]}')
                 raise Exception(f'Failed to start server on node {node}: {out_dict[node]}')
 
+    def check_server_status(self, log_file, log_subdir, error_pattern):
+        """Tail recent server logs, detect launch failures, and return the output dict."""
+        cmd_list = []
+        for i in range(0, int(self.nnodes)):
+            cmd = f'tail -30 {self.log_dir}/{log_subdir}/out-node{i}/{log_file}'
+            cmd_list.append(cmd)
+        out_dict = self.s_phdl.exec_cmd_list(cmd_list)
+
+        for node, output in out_dict.items():
+            if error_pattern.search(output or ''):
+                error_msg = f'Failed to start server on node {node}: {output[-500:]}'
+                fail_test(error_msg)
+                raise Exception(error_msg)
+
+        return out_dict
+
+    def is_server_ready(self, out_dict, readiness_pattern):
+        """Return True if all nodes show the readiness marker."""
+        if not out_dict:
+            return False
+
+        node_ready = {node: bool(readiness_pattern.search(output or '')) for node, output in out_dict.items()}
+        return bool(node_ready) and all(node_ready.values())
+
     def poll_server_startup(self):
         """Poll for server startup completion."""
         log_file = f'{self.server_script}_server.log'
+        readiness_pattern = self.readiness_pattern
 
         # Do an early check for fast failures before the long wait
-        print('Waiting 30 secs for server to start writing logs...')
-        time.sleep(30)
+        print(f'Waiting {self.default_server_precheck_wait_time} secs for server to start writing logs...')
+        time.sleep(self.default_server_precheck_wait_time)
 
         # Early failure detection
         cmd_list = []
@@ -321,36 +366,40 @@ class InferenceBaseJob:
         out_dict = self.s_phdl.exec_cmd_list(cmd_list)
         for node in out_dict.keys():
             log_content = out_dict[node].lower()
-            if re.search(
-                'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback',
-                log_content,
-                re.I,
-            ):
+            if self.default_server_precheck_error_pattern.search(log_content):
                 error_msg = f'Failed to start server on node {node}: {out_dict[node][-500:]}'
                 fail_test(error_msg)
                 raise Exception(error_msg)
 
-        print('No immediate errors detected. Waiting 330 more secs for server to fully launch...')
-        time.sleep(330)
+        print(
+            f'No immediate errors detected. Waiting {self.default_server_wait_time} more secs for server to fully launch...'
+        )
+        time.sleep(self.default_server_wait_time)
 
-        for j in range(0, 20):
+        for j in range(0, self.default_server_poll_count):
             print(f'Polling for application startup complete on all nodes, iteration {j}')
             cmd_list = []
             for i in range(0, int(self.nnodes)):
                 cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'
                 cmd_list.append(cmd)
             out_dict = self.s_phdl.exec_cmd_list(cmd_list)
+
             for node in out_dict.keys():
-                # Check for common failure patterns that indicate server won't start
-                if re.search(
-                    'Failed to start|No such file or directory|command not found|cannot access', out_dict[node], re.I
-                ):
+                if self.default_server_error_pattern_poll.search(out_dict[node] or ''):
                     error_msg = f'Failed to start server on node {node}: {out_dict[node][-500:]}'
                     fail_test(error_msg)
                     raise Exception(error_msg)
-                if not re.search('Application startup complete', out_dict[node], re.I):
-                    print('Waiting 60 secs for next poll')
-                    time.sleep(60)
+
+            if self.is_server_ready(out_dict, readiness_pattern):
+                print('Server startup confirmed on all nodes')
+                return
+
+            print(f'Waiting {self.default_server_poll_wait_time} secs for next poll')
+            time.sleep(self.default_server_poll_wait_time)
+
+        error_msg = 'Server did not report readiness before timeout; aborting startup'
+        fail_test(error_msg)
+        raise Exception(error_msg)
 
     def launch_client(self):
         """Launch client benchmark."""
@@ -389,9 +438,9 @@ class InferenceBaseJob:
 
     def poll_client_completion(self):
         """Poll for client benchmark completion."""
-        print('Waiting for 120 secs for benchmark scripts to start')
-        time.sleep(120)
-        for j in range(0, 20):
+        print(f'Waiting for {self.default_client_wait_time} secs for benchmark scripts to start')
+        time.sleep(self.default_client_wait_time)
+        for j in range(0, self.default_client_poll_count):
             print(f'Polling for Benchmark script to complete on all nodes, iteration {j}')
             cmd_list = []
             for i in range(0, int(self.nnodes)):
@@ -403,8 +452,8 @@ class InferenceBaseJob:
                     fail_test(f'Failed to run benchmark script on node {node}')
                     return
                 if not re.search('End-to-end Latency', out_dict[node], re.I):
-                    print('Waiting 60 secs for next poll')
-                    time.sleep(60)
+                    print(f'Waiting {self.default_client_poll_wait_time} secs for next poll')
+                    time.sleep(self.default_client_poll_wait_time)
 
     def start_inference_server_job(
         self,
@@ -511,8 +560,8 @@ class InferenceBaseJob:
         # Check the log content against all known inference error patterns
         for node in out_dict.keys():
             for err_key in inference_err_dict:
-                if re.search(f'{inference_err_dict[err_key]}', out_dict[node]):
-                    fail_test(f'ERROR {inference_err_dict[err_key]} seen in inference logs ..')
+                if re.search(f"{inference_err_dict[err_key]}", out_dict[node]):
+                    fail_test(f"ERROR {inference_err_dict[err_key]} seen in inference logs ...")
                     log.error('Aborting inference log polling')
                     inference_pass = False
         return inference_pass
@@ -524,6 +573,8 @@ class InferenceBaseJob:
         num_prompts = self.bp_dict['num_prompts']
         # Assume 1000 prompts completes in 120 secs ..
         iterations = int(float(num_prompts) / 60)
+        self.inference_poll_iterations = iterations
+        completion_pattern = self.get_completion_pattern()
 
         # Track wall-clock timeout if specified
         start_time = time.time()
@@ -531,7 +582,6 @@ class InferenceBaseJob:
         def timed_out() -> bool:
             return total_timeout is not None and (time.time() - start_time) >= float(total_timeout)
 
-        completed_pattern = self.get_completion_pattern()
         for itr in range(1, iterations + 1):
             print(f'Starting iteration {itr}')
 
@@ -552,7 +602,7 @@ class InferenceBaseJob:
             # Determine completion across nodes
             node_completion = {}
             for node, output in out_dict.items():
-                node_completion[node] = bool(completed_pattern.search(output))
+                node_completion[node] = bool(completion_pattern.search(output))
 
             if require_all_nodes:
                 all_complete = all(node_completion.values()) if node_completion else False
