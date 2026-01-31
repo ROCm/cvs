@@ -409,6 +409,7 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
         hf_token=hf_token,
         gpu_type=gpu_type,
         distributed_inference=False,
+        server_launch_poll_count=30,
     )
 
     # Stop any existing server process for clean state

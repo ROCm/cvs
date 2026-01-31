@@ -88,7 +88,7 @@ class ListPlugin(SubcommandPlugin):
                 return tests[test_name]
         return None
 
-    def list_tests(self, test_name=None):
+    def list_tests(self, test_name=None, cluster_file=None, config_file=None):
         if test_name:
             # List specific tests within a test file
             module_path = self._find_test(test_name)
@@ -100,12 +100,15 @@ class ListPlugin(SubcommandPlugin):
             test_file = self.get_test_file(module_path)
 
             # Use pytest to collect tests, but add dummy arguments for required options
+            cluster_arg = f"--cluster_file={cluster_file or 'dummy'}"
+            config_arg = f"--config_file={config_file or 'dummy'}"
+
             pytest_args = [
                 test_file,
                 "--collect-only",
                 "-q",
-                "--cluster_file=dummy",  # Dummy value to satisfy argparse
-                "--config_file=dummy",  # Dummy value to satisfy argparse
+                cluster_arg,
+                config_arg,
             ]
             # Capture pytest output
             buf = StringIO()
@@ -115,12 +118,14 @@ class ListPlugin(SubcommandPlugin):
             # Parse output for test functions
             test_rows = []
             for line in output.splitlines():
-                m = re.match(r"(.+\.py)::(test_\w+)", line.strip())
+                # Capture parametrized ids as well, e.g. test_vllm_inference[balanced-conc16]
+                m = re.match(r"(.+\.py)::(test_[^\[]+)(\[.+\])?", line.strip())
                 if m:
-                    test_file_path, test_func = m.groups()
-                    test_rows.append(test_func)
+                    _file_path, base, param = m.groups()
+                    display = base + (param or "")
+                    test_rows.append(display)
             print(f"\nAvailable tests in {test_name}:")
-            for func in test_rows:
+            for func in sorted(set(test_rows)):
                 print(f"  - {func}")
             if not test_rows:
                 print(output)
@@ -139,6 +144,8 @@ class ListPlugin(SubcommandPlugin):
     def get_parser(self, subparsers):
         parser = subparsers.add_parser("list", help="List available tests")
         parser.add_argument("test", nargs="?", help="Optional: specific test file to list tests from")
+        parser.add_argument("--cluster_file", dest="cluster_file", help="Optional: cluster file for test collection")
+        parser.add_argument("--config_file", dest="config_file", help="Optional: config file for test collection")
         parser.set_defaults(_plugin=self)
         return parser
 
@@ -149,4 +156,4 @@ List Commands:
   cvs list agfhc_cvs                 List all tests in agfhc_cvs"""
 
     def run(self, args):
-        self.list_tests(args.test)
+        self.list_tests(args.test, cluster_file=args.cluster_file, config_file=args.config_file)
