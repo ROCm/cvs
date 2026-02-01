@@ -27,6 +27,7 @@ MODEL_NAME = "gpt-oss-120b"
 
 inf_res_dict = {}
 
+
 # Importing additional cmd line args to script ..
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
@@ -393,7 +394,7 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
 
     # Run benchmark client
     vllm_job.start_inference_client_job()
-    #res_dict will have status, results from base inference class
+    # res_dict will have status, results from base inference class
     # - {"status": "success", "results": self.inference_result_dict}
     res_dict = vllm_job.poll_for_inference_completion()
     res_index = (MODEL_NAME, gpu_type, seq_combo['isl'], seq_combo['osl'], seq_combo['name'], concurrency)
@@ -406,43 +407,43 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
     )
 
 
-
 def test_print_results_table():
     globals.error_list = []
     pprint(inf_res_dict, depth=3)
     rows = []
     headers = [
-    "Model",
-    "GPU",
-    "ISL",
-    "OSL",
-    "Policy",
-    "TP",
-    "Host",
-    "Req/s",
-    "Out tok/s",
-    "Mean TTFT (ms)",
-    "Mean TPOT (ms)",
-    "P99 ITL (ms)",
+        "Model",
+        "GPU",
+        "ISL",
+        "OSL",
+        "Policy",
+        "TP",
+        "Host",
+        "Req/s",
+        "Out tok/s",
+        "Mean TTFT (ms)",
+        "Mean TPOT (ms)",
+        "P99 ITL (ms)",
     ]
 
     for (model, isl, osl, gpu, policy, tp), entry in inf_res_dict.items():
         for host, m in entry["results"].items():
-            rows.append([
-                model,
-                gpu,
-                isl,
-                osl,
-                policy,
-                tp,
-                host,
-                m["successful_requests"],
-                m["output_throughput_per_sec"],
-                m["mean_ttft_ms"],
-                m["mean_tpot_ms"],
-                m["p99_itl_ms"],
-                ])
+            rows.append(
+                [
+                    model,
+                    gpu,
+                    isl,
+                    osl,
+                    policy,
+                    tp,
+                    host,
+                    m["successful_requests"],
+                    m["output_throughput_per_sec"],
+                    m["mean_ttft_ms"],
+                    m["mean_tpot_ms"],
+                    m["p99_itl_ms"],
+                ]
+            )
 
     print(tabulate(rows, headers=headers, tablefmt="github"))
     update_test_result()
-
