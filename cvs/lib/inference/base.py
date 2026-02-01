@@ -623,9 +623,9 @@ class InferenceBaseJob:
                 continue
 
             # Parse/store final results and report success
-            self.get_inference_results_dict(out_dict)
+            res_dict = self.get_inference_results_dict(out_dict)
             print('Completed Inference, returning !!!')
-            return {"status": "success", "results": self.inference_result_dict}
+            return {"status": "success", "results": res_dict}
 
             # If we reached here, it means poll for inference completion failed
 
