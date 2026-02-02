@@ -36,6 +36,9 @@ def textwrap_for_yml(msg_string):
 class InferenceBaseJob:
     """Base class for inference jobs supporting multiple frameworks."""
 
+    # Class-level results dictionary shared across all test iterations
+    all_test_results = {}
+
     def __init__(
         self,
         c_phdl,
@@ -67,7 +70,7 @@ class InferenceBaseJob:
 
         self.job_cmd = ''
         self.job_cmd_list = []
-        self.inference_result_dict = {}
+        self.inference_results_dict = {}
         print(self.gpu_type)
 
         # Needed only in the case of distributed inference - placeholder for future
@@ -192,6 +195,10 @@ class InferenceBaseJob:
         """Get log subdirectory name for this framework."""
         raise NotImplementedError("Derived class must implement get_log_subdir()")
 
+    def collect_test_result(self, status):
+        """Collect test results. Override in derived class if needed."""
+        pass
+
     def run_preinference_tasks(
         self,
     ):
@@ -245,6 +252,19 @@ class InferenceBaseJob:
     def build_server_inference_job_cmd(
         self,
     ):
+        # Build VLLM env vars from config, with defaults if not specified
+        vllm_env_vars = self.bp_dict.get(
+            'vllm_env_vars',
+            {
+                'VLLM_USE_AITER_UNIFIED_ATTENTION': '1',
+                'VLLM_ROCM_USE_AITER_MHA': '0',
+                'VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4': '1',
+            },
+        )
+
+        # Convert dict to export statements
+        vllm_exports = '\n'.join([f'export {k}={v}' for k, v in vllm_env_vars.items()])
+
         s_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                     export MODEL={self.bp_dict['model']}
                     export ISL={self.bp_dict['input_sequence_length']}
@@ -254,9 +274,7 @@ class InferenceBaseJob:
                     export TP={self.bp_dict['tensor_parallelism']}
                     export CONC={self.bp_dict['max_concurrency']}
                     export HF_TOKEN={self.hf_token}
-                    export VLLM_USE_AITER_UNIFIED_ATTENTION=1
-                    export VLLM_ROCM_USE_AITER_MHA=0
-                    export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1
+                    {vllm_exports}
                     export PORT={self.bp_dict['port_no']}'  > /tmp/server_env_script.sh"
                     '''
         time.sleep(3)
@@ -680,51 +698,60 @@ class InferenceBaseJob:
         print(f"Validating results for config: {config_key}")
         print(f"Expected thresholds: {expected_result_dict}")
 
-        # Validate metrics on a per-node basis
-        for node in self.inference_result_dict.keys():
-            print(f"Validating node: {node}")
-            print(f"Actual results: {self.inference_result_dict[node]}")
+        validation_passed = True
+        try:
+            # Validate metrics on a per-node basis
+            for node in self.inference_results_dict.keys():
+                print(f"Validating node: {node}")
+                print(f"Actual results: {self.inference_results_dict[node]}")
 
-            for metric_name in expected_result_dict.keys():
-                if metric_name not in self.inference_result_dict[node]:
-                    print(f"WARNING: Metric {metric_name} not found in actual results, skipping")
-                    continue
+                for metric_name in expected_result_dict.keys():
+                    if metric_name not in self.inference_results_dict[node]:
+                        print(f"WARNING: Metric {metric_name} not found in actual results, skipping")
+                        continue
 
-                actual_value = float(self.inference_result_dict[node][metric_name])
-                expected_value = float(expected_result_dict[metric_name])
+                    actual_value = float(self.inference_results_dict[node][metric_name])
+                    expected_value = float(expected_result_dict[metric_name])
 
-                # Latency metrics (ms): lower is better
-                if re.search('ms', metric_name, re.I):
-                    if actual_value > expected_value:
-                        fail_test(
-                            f"FAIL - Latency metric '{metric_name}' exceeded threshold for {config_key}\n"
-                            f"  Actual: {actual_value} ms\n"
-                            f"  Expected: <= {expected_value} ms\n"
-                            f"  Difference: +{actual_value - expected_value:.2f} ms ({((actual_value / expected_value - 1) * 100):.1f}% worse)"
-                        )
+                    # Latency metrics (ms): lower is better
+                    if re.search('ms', metric_name, re.I):
+                        if actual_value > expected_value:
+                            fail_test(
+                                f"FAIL - Latency metric '{metric_name}' exceeded threshold for {config_key}\n"
+                                f"  Actual: {actual_value} ms\n"
+                                f"  Expected: <= {expected_value} ms\n"
+                                f"  Difference: +{actual_value - expected_value:.2f} ms ({((actual_value / expected_value - 1) * 100):.1f}% worse)"
+                            )
+                        else:
+                            print(f"✓ {metric_name}: {actual_value} ms <= {expected_value} ms")
+
+                    # Throughput metrics (per_sec): higher is better
                     else:
-                        print(f"✓ {metric_name}: {actual_value} ms <= {expected_value} ms")
+                        if actual_value < expected_value:
+                            fail_test(
+                                f"FAIL - Throughput metric '{metric_name}' below threshold for {config_key}\n"
+                                f"  Actual: {actual_value}\n"
+                                f"  Expected: >= {expected_value}\n"
+                                f"  Difference: -{expected_value - actual_value:.2f} ({((1 - actual_value / expected_value) * 100):.1f}% worse)"
+                            )
+                        else:
+                            print(f"✓ {metric_name}: {actual_value} >= {expected_value}")
+        except Exception as e:
+            validation_passed = False
+            raise e
+        finally:
+            # Scan Dmesg for errors
+            self.inference_end_time = self.s_phdl.exec('date +"%a %b %e %H:%M"')
+            time.sleep(2)
+            verify_dmesg_for_errors(self.s_phdl, self.inference_start_time, self.inference_end_time)
 
-                # Throughput metrics (per_sec): higher is better
-                else:
-                    if actual_value < expected_value:
-                        fail_test(
-                            f"FAIL - Throughput metric '{metric_name}' below threshold for {config_key}\n"
-                            f"  Actual: {actual_value}\n"
-                            f"  Expected: >= {expected_value}\n"
-                            f"  Difference: -{expected_value - actual_value:.2f} ({((1 - actual_value / expected_value) * 100):.1f}% worse)"
-                        )
-                    else:
-                        print(f"✓ {metric_name}: {actual_value} >= {expected_value}")
-
-        # Scan Dmesg for errors
-        self.inference_end_time = self.s_phdl.exec('date +"%a %b %e %H:%M"')
-        time.sleep(2)
-        verify_dmesg_for_errors(self.s_phdl, self.inference_start_time, self.inference_end_time)
-
-        print(f"✓ All validations passed for {config_key}")
-        print(self.inference_result_dict)
-
-        # Auto-store results if this is a VllmJob instance
-        if hasattr(self, 'store_test_result'):
-            self.store_test_result()
+            if validation_passed:
+                print(f"✓ All validations passed for {config_key}")
+                print(self.inference_results_dict)
+                # Auto-store results
+                self.collect_test_result("success")
+            else:
+                print(f"✗ Validations failed for {config_key}")
+                print(self.inference_results_dict)
+                # Auto-store results even on failure
+                self.collect_test_result("failed")

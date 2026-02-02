@@ -69,6 +69,11 @@
             "metric_percentiles": "99",
             "server_script": "gpt-oss-120b_fp4_mi355x_vllm_docker.sh",
             "bench_serv_script": "benchmark_serving.py",
+            "vllm_env_vars": {
+                "VLLM_USE_AITER_UNIFIED_ATTENTION": "1",
+                "VLLM_ROCM_USE_AITER_MHA": "0",
+                "VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4": "1"
+            },
             "result_dict": {
                 "ISL=1024,OSL=1024,TP=1,CONC=16": {
                     "total_throughput_per_sec": "4651",
@@ -159,6 +164,13 @@
             "metric_percentiles": "99",
             "server_script": "qwen3-235b-bf16_mi355x_vllm_docker.sh",
             "bench_serv_script": "benchmark_serving.py",
+            "vllm_env_vars": {
+                "VLLM_V1_USE_PREFILL_DECODE_ATTENTION": "1",
+                "VLLM_ROCM_USE_AITER": "1",
+                "VLLM_ROCM_USE_AITER_MHA": "1",
+                "VLLM_ROCM_QUICK_REDUCE_QUANTIZATION": "INT4",
+                "SAFETENSORS_FAST_GPU": "1"
+            },
             "result_dict": {
                 "ISL=1024,OSL=1024,TP=8,CONC=16": {
                     "total_throughput_per_sec": "2000",
@@ -249,6 +261,13 @@
             "metric_percentiles": "99",
             "server_script": "qwen3-80b-bf16_mi355x_vllm_docker.sh",
             "bench_serv_script": "benchmark_serving.py",
+            "vllm_env_vars": {
+                "AITER_ONLINE_TUNE": "0",
+                "VLLM_ROCM_USE_AITER": "1",
+                "VLLM_ROCM_USE_AITER_MOE": "1",
+                "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION": "0",
+                "VLLM_ROCM_USE_AITER_MHA": "0"
+            },
             "result_dict": {
                 "ISL=1024,OSL=1024,TP=1,CONC=16": {
                     "total_throughput_per_sec": "2003",
@@ -308,7 +327,7 @@
                 32,
                 64
             ],
-            "model": "/models/dsv31-fp8",
+            "model": "deepseek-ai/DeepSeek-V3.1",
             "num_prompts": "3200",
             "sequence_combinations": [
                 {
@@ -334,6 +353,13 @@
             "metric_percentiles": "99",
             "server_script": "dsr1_fp8_mi355x_vllm_docker.sh",
             "bench_serv_script": "benchmark_serving.py",
+            "vllm_env_vars": {
+                "VLLM_ROCM_USE_AITER": "1",
+                "VLLM_USE_AITER_TRITON_ROPE": "1",
+                "VLLM_ROCM_USE_AITER_RMSNORM": "1",
+                "VLLM_ROCM_USE_AITER_TRITON_LINEAR": "1",
+                "VLLM_ROCM_QUICK_REDUCE_QUANTIZATION": "INT4"
+            },
             "result_dict": {
                 "ISL=1024,OSL=1024,TP=8,CONC=16": {
                     "total_throughput_per_sec": "1944",

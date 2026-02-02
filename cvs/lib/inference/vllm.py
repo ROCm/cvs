@@ -18,9 +18,6 @@ from cvs.lib.utils_lib import update_test_result
 class VllmJob(InferenceBaseJob):
     """vLLM-specific implementation."""
 
-    # Class-level results dictionary shared across all test iterations
-    all_test_results = {}
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.if_dict.setdefault('benchmark_server_script_path', '/host_scripts')
@@ -56,14 +53,14 @@ class VllmJob(InferenceBaseJob):
         self.build_server_inference_job_cmd()
         self.start_inference_server_job()
 
-    def store_test_result(self):
+    def collect_test_result(self, status="success"):
         """
-        Store test results from the last poll_for_inference_completion call.
+        Collect test results from the last poll_for_inference_completion call.
 
         Automatically extracts test parameters from the instance's benchmark_params_dict.
         """
         # Get the last poll result (assumes poll_for_inference_completion was just called)
-        if hasattr(self, 'inference_result_dict') and self.inference_result_dict:
+        if hasattr(self, 'inference_results_dict') and self.inference_results_dict:
             # Extract test parameters from the instance
             isl = self.bp_dict['input_sequence_length']
             osl = self.bp_dict['output_sequence_length']
@@ -79,7 +76,9 @@ class VllmJob(InferenceBaseJob):
 
             res_index = (self.model_name, self.gpu_type, isl, osl, seq_name, conc)
             # Store with the same structure as poll_for_inference_completion returns
-            VllmJob.all_test_results[res_index] = {"status": "success", "results": self.inference_result_dict}
+            InferenceBaseJob.all_test_results[res_index] = {"status": status, "results": self.inference_results_dict}
+        else:
+            print("WARNING: Cannot collect test results - inference_results_dict is empty or not populated")
 
     @classmethod
     def print_all_results(cls):
@@ -96,6 +95,7 @@ class VllmJob(InferenceBaseJob):
 
         rows = []
         headers = [
+            "Status",
             "Model",
             "GPU",
             "ISL",
@@ -111,9 +111,11 @@ class VllmJob(InferenceBaseJob):
         ]
 
         for (model, gpu, isl, osl, policy, conc), entry in cls.all_test_results.items():
+            status = entry["status"]
             for host, m in entry["results"].items():
                 rows.append(
                     [
+                        status,
                         model,
                         gpu,
                         isl,
@@ -135,57 +137,4 @@ class VllmJob(InferenceBaseJob):
     @classmethod
     def clear_all_results(cls):
         """Clear all accumulated test results. Useful for test isolation."""
-        cls.all_test_results = {}
-
-
-def print_inference_results_table(inf_res_dict):
-    """
-    DEPRECATED: Use VllmJob.print_all_results() instead.
-
-    Print a formatted table of inference test results.
-
-    Args:
-        inf_res_dict: Dictionary with structure:
-            {(model, gpu, isl, osl, policy, conc): {"status": ..., "results": {node: metrics}}}
-    """
-    globals.error_list = []
-    print(inf_res_dict)
-    pprint(inf_res_dict, depth=3)
-
-    rows = []
-    headers = [
-        "Model",
-        "GPU",
-        "ISL",
-        "OSL",
-        "Policy",
-        "Conc",
-        "Host",
-        "Req/s",
-        "Tot tok/s",
-        "Mean TTFT (ms)",
-        "Mean TPOT (ms)",
-        "P99 ITL (ms)",
-    ]
-
-    for (model, gpu, isl, osl, policy, conc), entry in inf_res_dict.items():
-        for host, m in entry["results"].items():
-            rows.append(
-                [
-                    model,
-                    gpu,
-                    isl,
-                    osl,
-                    policy,
-                    conc,
-                    host,
-                    m["successful_requests"],
-                    m["total_throughput_per_sec"],
-                    m["mean_ttft_ms"],
-                    m["mean_tpot_ms"],
-                    m["p99_itl_ms"],
-                ]
-            )
-
-    print(tabulate(rows, headers=headers, tablefmt="github"))
-    update_test_result()
+        InferenceBaseJob.all_test_results = {}
