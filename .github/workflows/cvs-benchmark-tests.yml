@@ -1,4 +1,4 @@
-name: CVS Aorta Benchmark
+name: CVS sglang Benchmark
 
 on:
   push:
@@ -40,6 +40,21 @@ jobs:
             --html=/home/arravikum@amd.com/latest_deepseek_4p_4d.html \
             --capture=tee-sys \
             --self-contained-html
+
+      - name: Collect HTML benchmark report
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/artifacts
+          cp /home/arravikum@amd.com/latest_deepseek_4p_4d.html \
+             $GITHUB_WORKSPACE/artifacts/latest_deepseek_4p_4d.html
+
+      - name: Upload benchmark HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sglang-benchmark-html-report
+          path: artifacts/latest_deepseek_4p_4d.html
 
 
 
