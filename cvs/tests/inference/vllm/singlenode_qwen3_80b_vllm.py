@@ -428,3 +428,8 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
     log.info(
         f"Completed inference test for model: {MODEL_NAME}, GPU: {gpu_type}, combination: {seq_combo['name']}, concurrency: {concurrency}"
     )
+
+
+def test_print_results_table():
+    """Print formatted table of all inference test results."""
+    VllmJob.print_all_results()

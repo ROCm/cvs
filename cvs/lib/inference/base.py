@@ -570,14 +570,14 @@ class InferenceBaseJob:
                     inference_pass = False
         return inference_pass
 
-    def poll_for_inference_completion(self, waittime_between_iters=120, iterations=15, \
-            total_timeout=3600, require_all_nodes=True):
+    def poll_for_inference_completion(
+        self, waittime_between_iters=120, iterations=15, total_timeout=3600, require_all_nodes=True
+    ):
         # Initial wait to give inference time to start logging
         time.sleep(60)
 
-        num_prompts = self.bp_dict['num_prompts']
         # Assume 1000 prompts completes in 120 secs ..
-        #iterations = int(float(num_prompts) / 60)
+        # iterations = int(float(num_prompts) / 60)
         self.inference_poll_iterations = iterations
         completion_pattern = self.get_completion_pattern()
 
@@ -647,32 +647,84 @@ class InferenceBaseJob:
     def verify_inference_results(
         self,
     ):
-        print('Verify Inference Completion Msg')
-        for node in self.inference_result_dict.keys():
-            for metric_name in self.expected_result_dict[node].keys():
-                if metric_name in expected_result_dict:
-                    # latency metric, so actual should be lower than expected ..
-                    if re.search('ms', metric_name, re.I):
-                        if float(self.inference_result_dict[node][metric_name]) > float(
-                            self.expected_result_dict[metric_name]
-                        ):
-                            fail_test(
-                                f"FAIL - The latency metric {metric_name} actual value higher than expected \
-                                Actual = {self.inference_result_dict[node][metric_name]},  \
-                                Expected = {self.expected_result_dict[metric_name]}"
-                            )
-                    else:
-                        if float(self.inference_result_dict[node][metric_name]) < float(
-                            self.expected_result_dict[metric_name]
-                        ):
-                            fail_test(
-                                f"FAIL - The latency metric {metric_name} actual value lower than expected \
-                                Actual = {self.inference_result_dict[node][metric_name]}, \
-                                Expected = {self.expected_result_dict[metric_name]}"
-                            )
+        """
+        Validate inference results against configuration-specific expected thresholds.
 
-        # Scan Dmesg for errors ..
+        Uses nested result_dict with keys like "ISL=1024,OSL=1024,TP=1,CONC=16" to
+        validate each test configuration against its specific baseline.
+        """
+        print('Verify Inference Completion Msg')
+
+        # Build configuration key from current test parameters
+        isl = self.bp_dict['input_sequence_length']
+        osl = self.bp_dict['output_sequence_length']
+        tp = self.bp_dict['tensor_parallelism']
+        conc = self.bp_dict['max_concurrency']
+
+        config_key = f"ISL={isl},OSL={osl},TP={tp},CONC={conc}"
+
+        # Get expected results for this specific configuration
+        if 'result_dict' not in self.bp_dict:
+            print(f"WARNING: No result_dict found in benchmark_params for {self.model_name}, skipping validation")
+            return
+
+        result_dict = self.bp_dict['result_dict']
+
+        # Check if this config has expected thresholds
+        if config_key not in result_dict:
+            print(f"WARNING: No expected results for config {config_key}, skipping validation")
+            print(f"Available configs: {list(result_dict.keys())}")
+            return
+
+        expected_result_dict = result_dict[config_key]
+        print(f"Validating results for config: {config_key}")
+        print(f"Expected thresholds: {expected_result_dict}")
+
+        # Validate metrics on a per-node basis
+        for node in self.inference_result_dict.keys():
+            print(f"Validating node: {node}")
+            print(f"Actual results: {self.inference_result_dict[node]}")
+
+            for metric_name in expected_result_dict.keys():
+                if metric_name not in self.inference_result_dict[node]:
+                    print(f"WARNING: Metric {metric_name} not found in actual results, skipping")
+                    continue
+
+                actual_value = float(self.inference_result_dict[node][metric_name])
+                expected_value = float(expected_result_dict[metric_name])
+
+                # Latency metrics (ms): lower is better
+                if re.search('ms', metric_name, re.I):
+                    if actual_value > expected_value:
+                        fail_test(
+                            f"FAIL - Latency metric '{metric_name}' exceeded threshold for {config_key}\n"
+                            f"  Actual: {actual_value} ms\n"
+                            f"  Expected: <= {expected_value} ms\n"
+                            f"  Difference: +{actual_value - expected_value:.2f} ms ({((actual_value / expected_value - 1) * 100):.1f}% worse)"
+                        )
+                    else:
+                        print(f"✓ {metric_name}: {actual_value} ms <= {expected_value} ms")
+
+                # Throughput metrics (per_sec): higher is better
+                else:
+                    if actual_value < expected_value:
+                        fail_test(
+                            f"FAIL - Throughput metric '{metric_name}' below threshold for {config_key}\n"
+                            f"  Actual: {actual_value}\n"
+                            f"  Expected: >= {expected_value}\n"
+                            f"  Difference: -{expected_value - actual_value:.2f} ({((1 - actual_value / expected_value) * 100):.1f}% worse)"
+                        )
+                    else:
+                        print(f"✓ {metric_name}: {actual_value} >= {expected_value}")
+
+        # Scan Dmesg for errors
         self.inference_end_time = self.s_phdl.exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
         verify_dmesg_for_errors(self.s_phdl, self.inference_start_time, self.inference_end_time)
+
+        print(f"✓ All validations passed for {config_key}")
         print(self.inference_result_dict)
+
+        # Auto-store results if this is a VllmJob instance
+        if hasattr(self, 'store_test_result'):
+            self.store_test_result()
