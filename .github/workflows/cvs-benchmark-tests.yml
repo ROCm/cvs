@@ -55,6 +55,8 @@ jobs:
         with:
           name: sglang-benchmark-html-report
           path: artifacts/latest_deepseek_4p_4d.html
+          if-no-files-found: warn
+          retention-days: 30
 
 
 
