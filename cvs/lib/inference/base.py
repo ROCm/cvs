@@ -49,7 +49,7 @@ class InferenceBaseJob:
         hf_token,
         gpu_type='mi300',
         distributed_inference=False,
-        server_launch_poll_count=20,
+        server_launch_poll_count=30,
     ):
         # Client instance phdl
         self.c_phdl = c_phdl
@@ -133,7 +133,7 @@ class InferenceBaseJob:
         # Allow derived classes to override server launch wait duration
         self.default_server_precheck_wait_time = 30
         self.default_server_wait_time = 330
-        self.default_server_poll_wait_time = 60
+        self.default_server_poll_wait_time = 120
         self.default_server_poll_count = server_launch_poll_count
         self.default_server_precheck_error_pattern = re.compile(
             'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback|failed to start',
@@ -749,9 +749,9 @@ class InferenceBaseJob:
                 print(f"✓ All validations passed for {config_key}")
                 print(self.inference_results_dict)
                 # Auto-store results
-                self.collect_test_result("success")
+                self.collect_test_result()
             else:
                 print(f"✗ Validations failed for {config_key}")
                 print(self.inference_results_dict)
                 # Auto-store results even on failure
-                self.collect_test_result("failed")
+                self.collect_test_result()

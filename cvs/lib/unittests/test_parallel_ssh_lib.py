@@ -706,5 +706,135 @@ class TestPsshExecCmdList(unittest.TestCase):
             self.assertNotIn("host2 output line1", call)
 
 
+class TestSafeIterator(unittest.TestCase):
+    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    def setUp(self, mock_pssh_client):
+        self.mock_client = MagicMock()
+        mock_pssh_client.return_value = self.mock_client
+        self.host_list = ["host1"]
+        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+
+    def test_safe_iterator_with_valid_lines(self):
+        # Test: All lines are valid UTF-8, should yield all lines
+        valid_lines = ["line1", "line2", "line3"]
+        result = list(self.pssh._safe_iterator(iter(valid_lines)))
+        self.assertEqual(result, valid_lines)
+
+    @patch('builtins.print')
+    def test_safe_iterator_with_unicode_error(self, mock_print):
+        # Test: Iterator raises UnicodeDecodeError, should skip and continue
+
+        class SimpleIterator:
+            def __init__(self):
+                self.data = [b'line1\n', b'bad\x96utf8\n', b'line3\n']
+                self.index = 0
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if self.index >= len(self.data):
+                    raise StopIteration
+                line_bytes = self.data[self.index]
+                self.index += 1
+                return line_bytes.decode('utf-8').strip()
+
+        result = list(self.pssh._safe_iterator(SimpleIterator()))
+
+        # Should get lines before and after the bad byte
+        self.assertEqual(result, ["line1", "line3"])
+
+        # Should have printed warning
+        mock_print.assert_called()
+        warning_calls = [str(call) for call in mock_print.call_args_list]
+        self.assertTrue(any("UnicodeDecodeError" in call for call in warning_calls))
+
+    @patch('builtins.print')
+    def test_safe_iterator_with_multiple_unicode_errors(self, mock_print):
+        # Test: Iterator that simulates multiple UnicodeDecodeErrors during iteration
+
+        class ByteLineIterator:
+            """Simulates pssh iterator that decodes bytes line-by-line"""
+
+            def __init__(self):
+                # Mix of valid UTF-8 and invalid bytes
+                self.data = [
+                    b'good1\n',  # Valid UTF-8
+                    b'bad\x96line\n',  # Invalid UTF-8 (0x96 not valid in UTF-8)
+                    b'good2\n',  # Valid UTF-8
+                    b'\xff\xfe bad\n',  # Invalid UTF-8 (0xff, 0xfe not valid start bytes)
+                    b'good3\n',  # Valid UTF-8
+                ]
+                self.index = 0
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if self.index >= len(self.data):
+                    raise StopIteration
+                line_bytes = self.data[self.index]
+                self.index += 1
+                # Decode like pssh does - raises UnicodeDecodeError on invalid UTF-8
+                return line_bytes.decode('utf-8').strip()
+
+        result = list(self.pssh._safe_iterator(ByteLineIterator()))
+
+        # Should get only the valid UTF-8 lines
+        self.assertEqual(result, ["good1", "good2", "good3"])
+
+        # Should have printed warnings for both decode errors
+        self.assertEqual(mock_print.call_count, 2)
+
+    def test_safe_iterator_with_empty_iterator(self):
+        # Test: Empty iterator should return empty list
+        empty_iter = iter([])
+        result = list(self.pssh._safe_iterator(empty_iter))
+        self.assertEqual(result, [])
+
+    @patch('builtins.print')
+    def test_safe_iterator_integration_with_process_output(self, mock_print):
+        # Test: Integration test - _safe_iterator used in _process_output handles UnicodeDecodeError
+
+        class ByteLineIterator:
+            """Simulates pssh stdout with mixed valid/invalid UTF-8"""
+
+            def __init__(self):
+                self.data = [
+                    b'valid line 1\n',
+                    b'tqdm\x96progress\n',  # Invalid UTF-8 like from tqdm progress bar
+                    b'valid line 2\n',
+                ]
+                self.index = 0
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if self.index >= len(self.data):
+                    raise StopIteration
+                line_bytes = self.data[self.index]
+                self.index += 1
+                return line_bytes.decode('utf-8').strip()
+
+        mock_output = MagicMock()
+        mock_output.host = "host1"
+        mock_output.stdout = ByteLineIterator()
+        mock_output.stderr = []
+        mock_output.exception = None
+
+        result = self.pssh._process_output([mock_output], cmd="test command", print_console=False)
+
+        # Should have collected valid lines only
+        self.assertIn("host1", result)
+        self.assertIn("valid line 1", result["host1"])
+        self.assertIn("valid line 2", result["host1"])
+        self.assertNotIn("tqdm", result["host1"])
+
+        # Should have printed warning for UnicodeDecodeError
+        warning_calls = [str(call) for call in mock_print.call_args_list]
+        self.assertTrue(any("UnicodeDecodeError" in call for call in warning_calls))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -53,7 +53,7 @@ class VllmJob(InferenceBaseJob):
         self.build_server_inference_job_cmd()
         self.start_inference_server_job()
 
-    def collect_test_result(self, status="success"):
+    def collect_test_result(self):
         """
         Collect test results from the last poll_for_inference_completion call.
 
@@ -75,8 +75,8 @@ class VllmJob(InferenceBaseJob):
                     break
 
             res_index = (self.model_name, self.gpu_type, isl, osl, seq_name, conc)
-            # Store with the same structure as poll_for_inference_completion returns
-            InferenceBaseJob.all_test_results[res_index] = {"status": status, "results": self.inference_results_dict}
+            # Store results without status field
+            InferenceBaseJob.all_test_results[res_index] = self.inference_results_dict
         else:
             print("WARNING: Cannot collect test results - inference_results_dict is empty or not populated")
 
@@ -95,7 +95,6 @@ class VllmJob(InferenceBaseJob):
 
         rows = []
         headers = [
-            "Status",
             "Model",
             "GPU",
             "ISL",
@@ -110,12 +109,10 @@ class VllmJob(InferenceBaseJob):
             "P99 ITL (ms)",
         ]
 
-        for (model, gpu, isl, osl, policy, conc), entry in cls.all_test_results.items():
-            status = entry["status"]
-            for host, m in entry["results"].items():
+        for (model, gpu, isl, osl, policy, conc), results in cls.all_test_results.items():
+            for host, m in results.items():
                 rows.append(
                     [
-                        status,
                         model,
                         gpu,
                         isl,
@@ -123,11 +120,11 @@ class VllmJob(InferenceBaseJob):
                         policy,
                         conc,
                         host,
-                        m["successful_requests"],
-                        m["total_throughput_per_sec"],
-                        m["mean_ttft_ms"],
-                        m["mean_tpot_ms"],
-                        m["p99_itl_ms"],
+                        m.get("successful_requests", "N/A"),
+                        m.get("total_throughput_per_sec", "N/A"),
+                        m.get("mean_ttft_ms", "N/A"),
+                        m.get("mean_tpot_ms", "N/A"),
+                        m.get("p99_itl_ms", "N/A"),
                     ]
                 )
 

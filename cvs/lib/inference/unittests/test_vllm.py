@@ -179,25 +179,20 @@ class TestPrintAllResults(unittest.TestCase):
         """Test printing with a single test result."""
         InferenceBaseJob.all_test_results = {
             ('gpt-oss-120b', 'mi355x', '1024', '8192', 'long_generation', 32): {
-                'status': 'success',
-                'results': {
-                    'node1': {
-                        'successful_requests': '640',
-                        'total_throughput_per_sec': '4038',
-                        'mean_ttft_ms': '230',
-                        'mean_tpot_ms': '13',
-                        'p99_itl_ms': '150',
-                    }
-                },
+                'node1': {
+                    'successful_requests': '640',
+                    'total_throughput_per_sec': '4038',
+                    'mean_ttft_ms': '230',
+                    'mean_tpot_ms': '13',
+                    'p99_itl_ms': '150',
+                }
             }
         }
 
         VllmJob.print_all_results()
 
         # Check that table was printed
-        table_printed = any(
-            'success' in str(call) and 'gpt-oss-120b' in str(call) for call in mock_print.call_args_list
-        )
+        table_printed = any('gpt-oss-120b' in str(call) for call in mock_print.call_args_list)
         self.assertTrue(table_printed or len(mock_print.call_args_list) > 0)
 
     @patch('cvs.lib.inference.vllm.update_test_result')
@@ -206,28 +201,22 @@ class TestPrintAllResults(unittest.TestCase):
         """Test printing with multiple test results."""
         InferenceBaseJob.all_test_results = {
             ('gpt-oss-120b', 'mi355x', '1024', '8192', 'long_generation', 32): {
-                'status': 'success',
-                'results': {
-                    'node1': {
-                        'successful_requests': '640',
-                        'total_throughput_per_sec': '4038',
-                        'mean_ttft_ms': '230',
-                        'mean_tpot_ms': '13',
-                        'p99_itl_ms': '150',
-                    }
-                },
+                'node1': {
+                    'successful_requests': '640',
+                    'total_throughput_per_sec': '4038',
+                    'mean_ttft_ms': '230',
+                    'mean_tpot_ms': '13',
+                    'p99_itl_ms': '150',
+                }
             },
             ('gpt-oss-120b', 'mi355x', '8192', '1024', 'long_context', 16): {
-                'status': 'success',
-                'results': {
-                    'node1': {
-                        'successful_requests': '800',
-                        'total_throughput_per_sec': '16509',
-                        'mean_ttft_ms': '350',
-                        'mean_tpot_ms': '20',
-                        'p99_itl_ms': '200',
-                    }
-                },
+                'node1': {
+                    'successful_requests': '800',
+                    'total_throughput_per_sec': '16509',
+                    'mean_ttft_ms': '350',
+                    'mean_tpot_ms': '20',
+                    'p99_itl_ms': '200',
+                }
             },
         }
 
@@ -240,9 +229,7 @@ class TestPrintAllResults(unittest.TestCase):
 class TestClearAllResults(unittest.TestCase):
     def test_clear_all_results(self):
         """Test that clear_all_results empties the class variable."""
-        InferenceBaseJob.all_test_results = {
-            ('test', 'gpu', '1024', '1024', 'balanced', 16): {'status': 'success', 'results': {}}
-        }
+        InferenceBaseJob.all_test_results = {('test', 'gpu', '1024', '1024', 'balanced', 16): {}}
 
         VllmJob.clear_all_results()
 
