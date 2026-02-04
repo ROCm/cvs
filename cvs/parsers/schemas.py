@@ -631,12 +631,26 @@ class PytorchXditWanConfig(BaseModel):
         default="amdsiloai/pytorch-xdit:v25.11.2", description="Docker image for pytorch-xdit container"
     )
     container_name: str = Field(default="wan22-benchmark", description="Name for the Docker container")
-    hf_token_file: str = Field(description="Path to Hugging Face token file")
+    hf_token_file: str = Field(
+        default="",
+        description=(
+            "Optional path to Hugging Face token file. "
+            "Not required when using a pre-staged local model path (recommended) or pre-cached HF snapshots (offline)."
+        ),
+    )
     hf_home: str = Field(description="Host directory for Hugging Face cache (mounted to /hf_home)")
     output_base_dir: str = Field(description="Host base directory for benchmark outputs")
-    model_repo: str = Field(default="Wan-AI/Wan2.2-I2V-A14B", description="Hugging Face model repository")
+    model_repo: str = Field(
+        default="Wan-AI/Wan2.2-I2V-A14B",
+        description=(
+            "Model identifier. Prefer an explicit local filesystem path (e.g., /models/Wan-AI/Wan2.2-I2V-A14B) "
+            "to avoid any runtime downloads. For backward compatibility, a Hugging Face repo id may be used only if "
+            "the snapshot is already cached under hf_home."
+        ),
+    )
     model_rev: str = Field(
-        default="206a9ee1b7bfaaf8f7e4d81335650533490646a3", description="Model revision (commit hash)"
+        default="206a9ee1b7bfaaf8f7e4d81335650533490646a3",
+        description="Model revision (commit hash). Ignored if model_repo is an explicit local filesystem path.",
     )
     container_config: PytorchXditContainerConfig = Field(
         default_factory=PytorchXditContainerConfig, description="Container device/volume/env configuration"
@@ -646,6 +660,8 @@ class PytorchXditWanConfig(BaseModel):
     @classmethod
     def validate_path_not_placeholder(cls, v: str, info) -> str:
         """Check that paths are not still placeholders."""
+        if not v:
+            return v
         if '<changeme>' in v.lower():
             raise ValueError(f"{info.field_name} contains placeholder '<changeme>'. Please set a valid path in config.")
         return v
@@ -685,12 +701,29 @@ class PytorchXditFluxConfig(BaseModel):
         default="amdsiloai/pytorch-xdit:v25.11.2", description="Docker image for pytorch-xdit container"
     )
     container_name: str = Field(default="flux-benchmark", description="Name for the Docker container")
-    hf_token_file: str = Field(description="Path to Hugging Face token file")
+    hf_token_file: str = Field(
+        default="",
+        description=(
+            "Optional path to Hugging Face token file. "
+            "Not required when using a pre-staged local model path (recommended) or pre-cached HF snapshots (offline)."
+        ),
+    )
     hf_home: str = Field(description="Host directory for Hugging Face cache (mounted to /hf_home)")
     output_base_dir: str = Field(description="Host base directory for benchmark outputs")
-    model_repo: str = Field(default="black-forest-labs/FLUX.1-dev", description="Hugging Face model repository")
+    model_repo: str = Field(
+        default="black-forest-labs/FLUX.1-dev",
+        description=(
+            "Model identifier. Prefer an explicit local filesystem path (e.g., /models/black-forest-labs/FLUX.1-dev) "
+            "to avoid any runtime downloads. For backward compatibility, a Hugging Face repo id may be used only if "
+            "the snapshot is already cached under hf_home."
+        ),
+    )
     model_rev: str = Field(
-        default="", description="Model revision (commit hash) - empty means use any available snapshot"
+        default="",
+        description=(
+            "Model revision (commit hash). Empty means use any available cached snapshot under hf_home. "
+            "Ignored if model_repo is an explicit local filesystem path."
+        ),
     )
     container_config: PytorchXditContainerConfig = Field(
         default_factory=PytorchXditContainerConfig, description="Container device/volume/env configuration"
@@ -700,6 +733,8 @@ class PytorchXditFluxConfig(BaseModel):
     @classmethod
     def validate_path_not_placeholder(cls, v: str, info) -> str:
         """Check that paths are not still placeholders."""
+        if not v:
+            return v
         if '<changeme>' in v.lower():
             raise ValueError(f"{info.field_name} contains placeholder '<changeme>'. Please set a valid path in config.")
         return v

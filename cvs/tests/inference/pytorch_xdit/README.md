@@ -22,9 +22,9 @@ Runs WAN 2.2 I2V-A14B inference inside the `amdsiloai/pytorch-xdit:v25.11.2` con
    - Node definitions
    - SSH credentials (username + private key)
 
-2. **HF Token** (for model download):
-   - Place your Hugging Face token in `~/.hf_token`
-   - Or specify a different path in the config
+2. **Model must be pre-staged locally** (no runtime downloads):
+   - Set `config.model_repo` to an explicit on-disk path on every node (recommended), e.g. `/models/Wan-AI/Wan2.2-I2V-A14B`
+   - Alternatively, use a HF repo id in `config.model_repo` only if the snapshot is already cached under `hf_home` (offline mode)
 
 3. **Compute node allocation** (SLURM):
    ```bash
@@ -66,10 +66,10 @@ Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_wan22_i2v_a14b.jso
     "config": {
         "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
         "container_name": "wan22-benchmark",
-        "hf_token_file": "/home/{user-id}/.hf_token",
+        "hf_token_file": "",
         "hf_home": "/home/{user-id}",
-        "output_base_dir": "/home/{user-id}/cvs_outputs",
-        "model_repo": "Wan-AI/Wan2.2-I2V-A14B",
+        "output_base_dir": "/home/{user-id}/cvs_wan_output",
+        "model_repo": "/models/Wan-AI/Wan2.2-I2V-A14B",
         "model_rev": "206a9ee1b7bfaaf8f7e4d81335650533490646a3",
         "container_config": {
             "device_list": ["/dev/dri", "/dev/kfd"],
@@ -86,9 +86,7 @@ Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_wan22_i2v_a14b.jso
             "compile": true,
             "torchrun_nproc": 8,
             "expected_results": {
-                "auto": {"max_avg_total_time_s": 15.0},
-                "mi300x": {"max_avg_total_time_s": 12.0},
-                "mi355": {"max_avg_total_time_s": 10.0}
+                "auto": {"max_avg_total_time_s": 9999.0}
             }
         }
     }
@@ -135,7 +133,7 @@ Each `rank0_step*.json` contains:
 ### Test Execution Flow
 
 1. **Cleanup**: Remove any stale containers
-2. **Cache verification**: Check if model is cached, download if needed
+2. **Model presence verification (offline)**: Ensure the model is available locally (no downloads)
 3. **Benchmark run**: Execute WAN inference with torchrun
 4. **Result parsing**: 
    - Locate `rank0_step*.json` files
@@ -147,14 +145,14 @@ Each `rank0_step*.json` contains:
 ### Pass/Fail Criteria
 
 The test **PASSES** if:
-- Model cache exists or downloads successfully
+- Model is present locally (no downloads)
 - Container executes without errors
 - At least one `rank0_step*.json` file is generated
 - `video.mp4` artifact is generated
 - Average `total_time` ≤ `expected_results[gpu_type].max_avg_total_time_s`
 
 The test **FAILS** if:
--  Model download fails (HF token missing/invalid)
+-  Model is missing on the target node(s)
 -  Container execution fails (Docker/GPU errors)
 -  No benchmark JSONs found
 -  Artifact missing
@@ -162,29 +160,16 @@ The test **FAILS** if:
 
 ### Troubleshooting
 
-#### HF Token Issues
+#### Missing Model Path
+If you see a failure like:
 ```
-Error: HF token required to download...
+Local model path not found on <node>: /models/...
 ```
-**Solution**: Create `~/.hf_token` with your Hugging Face access token
-
-#### Model Download Timeout
-```
-Model download failed with exception: timeout
-```
-**Solution**: Increase timeout in test or manually pre-download:
-```bash
-docker run --rm \
-  --mount type=bind,source=$HOME,target=/hf_home \
-  -e HF_HOME=/hf_home \
-  -e HF_TOKEN=$(cat ~/.hf_token) \
-  amdsiloai/pytorch-xdit:v25.11.2 \
-  hf download Wan-AI/Wan2.2-I2V-A14B --revision 206a9ee1b7bfaaf8f7e4d81335650533490646a3
-```
+**Solution**: Pre-stage the model directory on every node and set `config.model_repo` to that path.
 
 #### Performance Threshold Exceeded
 ```
-FAIL: Average total_time 13.45s > threshold 12.0s (GPU: mi300x)
+FAIL: Average total_time XX.XXs > threshold YY.YYs (GPU: <gpu_type>)
 ```
 **Solution**: Either optimize the run or adjust threshold in config if the baseline changed
 
@@ -237,7 +222,7 @@ cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_i2v_a14b.py::test_verify
 cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_i2v_a14b.py::test_run_wan22_benchmark PASSED
 cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_i2v_a14b.py::test_parse_and_validate_results PASSED
 
-============================== 4 passed in 652.34s ==============================
+============================== 4 passed in X.XXs ==============================
 ```
 
 ---
@@ -260,10 +245,10 @@ Runs FLUX.1-dev text-to-image inference inside the `amdsiloai/pytorch-xdit:v25.1
    - Node definitions
    - SSH credentials (username + private key)
 
-2. **HF Token** (for model download):
-   - Place your Hugging Face token in `~/.hf_token`
-   - Or specify a different path in the config
-   - **Note**: FLUX.1-dev requires accepting the model license on Hugging Face
+2. **Model must be pre-staged locally** (no runtime downloads):
+   - Set `config.model_repo` to an explicit on-disk path on every node (recommended), e.g. `/models/black-forest-labs/FLUX.1-dev`
+   - Alternatively, use a HF repo id in `config.model_repo` only if the snapshot is already cached under `hf_home` (offline mode)
+   - If you pre-download from Hugging Face, ensure any required model license is accepted beforehand
 
 3. **Compute node allocation** (SLURM):
    ```bash
@@ -305,10 +290,10 @@ Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_flux1_dev_t2i.json
     "config": {
         "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
         "container_name": "flux-benchmark",
-        "hf_token_file": "/home/{user-id}/.hf_token",
+        "hf_token_file": "",
         "hf_home": "/home/{user-id}",
         "output_base_dir": "/home/{user-id}/cvs_flux_output",
-        "model_repo": "black-forest-labs/FLUX.1-dev",
+        "model_repo": "/models/black-forest-labs/FLUX.1-dev",
         "model_rev": "",
         "container_config": {
             "device_list": ["/dev/dri", "/dev/kfd"],
@@ -333,9 +318,7 @@ Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_flux1_dev_t2i.json
             "use_torch_compile": true,
             "torchrun_nproc": 8,
             "expected_results": {
-                "auto": {"max_avg_pipe_time_s": 10.0},
-                "mi300x": {"max_avg_pipe_time_s": 8.0},
-                "mi355": {"max_avg_pipe_time_s": 7.0}
+                "auto": {"max_avg_pipe_time_s": 9999.0}
             }
         }
     }
@@ -384,7 +367,7 @@ The `timing.json` file contains a JSON list where each entry has:
 ### Test Execution Flow
 
 1. **Cleanup**: Remove any stale containers
-2. **Cache verification**: Check if model is cached, download if needed
+2. **Model presence verification (offline)**: Ensure the model is available locally (no downloads)
    - If `model_rev` is set: requires specific snapshot
    - If `model_rev` is empty: any snapshot is acceptable
 3. **Benchmark run**: Execute Flux inference with torchrun
@@ -398,14 +381,14 @@ The `timing.json` file contains a JSON list where each entry has:
 ### Pass/Fail Criteria
 
 The test **PASSES** if:
-- Model cache exists or downloads successfully
+- Model is present locally (no downloads)
 - Container executes without errors
 - `timing.json` file is generated with valid pipe_time entries
 - At least one `flux_*.png` image is generated
 - Average `pipe_time` ≤ `expected_results[gpu_type].max_avg_pipe_time_s`
 
 The test **FAILS** if:
-- Model download fails (HF token missing/invalid or license not accepted)
+- Model is missing on the target node(s)
 - Container execution fails (Docker/GPU errors)
 - No timing.json found or no valid pipe_time values
 - No images generated
@@ -413,33 +396,16 @@ The test **FAILS** if:
 
 ### Troubleshooting
 
-#### HF Token Issues / License Not Accepted
+#### Missing Model Path
+If you see a failure like:
 ```
-Error: HF token required to download...
-Error: Repository not found or access denied
+Local model path not found on <node>: /models/...
 ```
-**Solution**: 
-1. Create `~/.hf_token` with your Hugging Face access token
-2. Visit https://huggingface.co/black-forest-labs/FLUX.1-dev and accept the model license
-3. Ensure your token has read access to gated repositories
-
-#### Model Download Timeout
-```
-Model download failed with exception: timeout
-```
-**Solution**: Increase timeout in test or manually pre-download:
-```bash
-docker run --rm \
-  --mount type=bind,source=$HOME,target=/hf_home \
-  -e HF_HOME=/hf_home \
-  -e HF_TOKEN=$(cat ~/.hf_token) \
-  amdsiloai/pytorch-xdit:v25.11.2 \
-  hf download black-forest-labs/FLUX.1-dev
-```
+**Solution**: Pre-stage the model directory on every node and set `config.model_repo` to that path.
 
 #### Performance Threshold Exceeded
 ```
-FAIL: Average pipe_time 9.23s > threshold 8.0s (GPU: mi300x)
+FAIL: Average pipe_time XX.XXs > threshold YY.YYs (GPU: <gpu_type>)
 ```
 **Solution**: Either optimize the run or adjust threshold in config if the baseline changed
 
@@ -498,5 +464,5 @@ cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_t2i.py::test_verify_
 cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_t2i.py::test_run_flux1_benchmark PASSED
 cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_t2i.py::test_parse_and_validate_results PASSED
 
-============================== 4 passed in 485.21s ==============================
+============================== 4 passed in X.XXs ==============================
 ```

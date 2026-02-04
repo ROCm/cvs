@@ -8,6 +8,7 @@ __pycache__/
 # Virtual environments
 test_venv/
 ruff_venv/
+test_env/
 
 # Build distributions
 dist/
