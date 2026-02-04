@@ -11,6 +11,8 @@ import re
 import os
 import time
 import json
+from pprint import pprint
+from tabulate import tabulate
 
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
@@ -22,6 +24,8 @@ log = globals.log
 
 # Model name for this test suite
 MODEL_NAME = "qwen3-235b"
+
+inf_res_dict = {}
 
 
 # Importing additional cmd line args to script ..
@@ -390,10 +394,54 @@ def test_vllm_inference(c_phdl, s_phdl, inference_dict, benchmark_params_dict, h
 
     # Run benchmark client
     vllm_job.start_inference_client_job()
-    vllm_job.poll_for_inference_completion()
+    res_dict = vllm_job.poll_for_inference_completion()
+    res_index = (MODEL_NAME, gpu_type, seq_combo['isl'], seq_combo['osl'], seq_combo['name'], concurrency)
+    inf_res_dict[res_index] = res_dict
     vllm_job.verify_inference_results()
     update_test_result()
 
     log.info(
         f"Completed inference test for model: {MODEL_NAME}, GPU: {gpu_type}, combination: {seq_combo['name']}, concurrency: {concurrency}"
     )
+
+
+def test_print_results_table():
+    globals.error_list = []
+    pprint(inf_res_dict, depth=3)
+    rows = []
+    headers = [
+        "Model",
+        "GPU",
+        "ISL",
+        "OSL",
+        "Policy",
+        "Concurrency",
+        "Host",
+        "Req/s",
+        "Total tok/s",
+        "Mean TTFT (ms)",
+        "Mean TPOT (ms)",
+        "P99 ITL (ms)",
+    ]
+
+    for (model, gpu, isl, osl, policy, concurrency), entry in inf_res_dict.items():
+        for host, m in entry["results"].items():
+            rows.append(
+                [
+                    model,
+                    gpu,
+                    isl,
+                    osl,
+                    policy,
+                    concurrency,
+                    host,
+                    m["successful_requests"],
+                    m["total_throughput_per_sec"],
+                    m["mean_ttft_ms"],
+                    m["mean_tpot_ms"],
+                    m["p99_itl_ms"],
+                ]
+            )
+
+    print(tabulate(rows, headers=headers, tablefmt="github"))
+    update_test_result()

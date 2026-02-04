@@ -70,9 +70,51 @@
             "server_script": "gpt-oss-120b_fp4_mi355x_vllm_docker.sh",
             "bench_serv_script": "benchmark_serving.py",
             "result_dict": {
-                "output_throughput_per_sec": "10600",
-                "mean_ttft_ms": "200",
-                "mean_tpot_ms": "10"
+                "ISL=1024,OSL=1024,TP=1,CONC=16": {
+                    "total_throughput_per_sec": "4651",
+                    "mean_ttft_ms": "70",
+                    "mean_tpot_ms": "8"
+                },
+                "ISL=1024,OSL=1024,TP=1,CONC=32": {
+                    "total_throughput_per_sec": "7043",
+                    "mean_ttft_ms": "180",
+                    "mean_tpot_ms": "9"
+                },
+                "ISL=1024,OSL=1024,TP=1,CONC=64": {
+                    "total_throughput_per_sec": "10677",
+                    "mean_ttft_ms": "76",
+                    "mean_tpot_ms": "13"
+                },
+                "ISL=1024,OSL=8192,TP=1,CONC=16": {
+                    "total_throughput_per_sec": "2735",
+                    "mean_ttft_ms": "57",
+                    "mean_tpot_ms": "7"
+                },
+                "ISL=1024,OSL=8192,TP=1,CONC=32": {
+                    "total_throughput_per_sec": "4038",
+                    "mean_ttft_ms": "67",
+                    "mean_tpot_ms": "10"
+                },
+                "ISL=1024,OSL=8192,TP=1,CONC=64": {
+                    "total_throughput_per_sec": "6140",
+                    "mean_ttft_ms": "93",
+                    "mean_tpot_ms": "13"
+                },
+                "ISL=8192,OSL=1024,TP=1,CONC=16": {
+                    "total_throughput_per_sec": "16509",
+                    "mean_ttft_ms": "335",
+                    "mean_tpot_ms": "24"
+                },
+                "ISL=8192,OSL=1024,TP=1,CONC=32": {
+                    "total_throughput_per_sec": "22072",
+                    "mean_ttft_ms": "320",
+                    "mean_tpot_ms": "19"
+                },
+                "ISL=8192,OSL=1024,TP=1,CONC=64": {
+                    "total_throughput_per_sec": "28863",
+                    "mean_ttft_ms": "280",
+                    "mean_tpot_ms": "22"
+                }
             }
         },
         "qwen3-235b": {
@@ -118,9 +160,51 @@
             "server_script": "qwen3-235b-bf16_mi355x_vllm_docker.sh",
             "bench_serv_script": "benchmark_serving.py",
             "result_dict": {
-                "output_throughput_per_sec": "8000",
-                "mean_ttft_ms": "300",
-                "mean_tpot_ms": "12"
+                "ISL=1024,OSL=1024,TP=8,CONC=16": {
+                    "total_throughput_per_sec": "2000",
+                    "mean_ttft_ms": "850",
+                    "mean_tpot_ms": "18"
+                },
+                "ISL=1024,OSL=1024,TP=8,CONC=32": {
+                    "total_throughput_per_sec": "3435",
+                    "mean_ttft_ms": "80",
+                    "mean_tpot_ms": "10"
+                },
+                "ISL=1024,OSL=1024,TP=8,CONC=64": {
+                    "total_throughput_per_sec": "5840",
+                    "mean_ttft_ms": "260",
+                    "mean_tpot_ms": "10"
+                },
+                "ISL=1024,OSL=8192,TP=8,CONC=16": {
+                    "total_throughput_per_sec": "1119",
+                    "mean_ttft_ms": "415",
+                    "mean_tpot_ms": "25"
+                },
+                "ISL=1024,OSL=8192,TP=8,CONC=32": {
+                    "total_throughput_per_sec": "1876",
+                    "mean_ttft_ms": "70",
+                    "mean_tpot_ms": "10"
+                },
+                "ISL=1024,OSL=8192,TP=8,CONC=64": {
+                    "total_throughput_per_sec": "3139",
+                    "mean_ttft_ms": "310",
+                    "mean_tpot_ms": "14"
+                },
+                "ISL=8192,OSL=1024,TP=8,CONC=16": {
+                    "total_throughput_per_sec": "7476",
+                    "mean_ttft_ms": "300",
+                    "mean_tpot_ms": "21"
+                },
+                "ISL=8192,OSL=1024,TP=8,CONC=32": {
+                    "total_throughput_per_sec": "11312",
+                    "mean_ttft_ms": "355",
+                    "mean_tpot_ms": "27"
+                },
+                "ISL=8192,OSL=1024,TP=8,CONC=64": {
+                    "total_throughput_per_sec": "16082",
+                    "mean_ttft_ms": "450",
+                    "mean_tpot_ms": "39"
+                }
             }
         },
         "qwen3-80b": {
@@ -166,9 +250,51 @@
             "server_script": "qwen3-80b-bf16_mi355x_vllm_docker.sh",
             "bench_serv_script": "benchmark_serving.py",
             "result_dict": {
-                "output_throughput_per_sec": "12000",
-                "mean_ttft_ms": "150",
-                "mean_tpot_ms": "8"
+                "ISL=1024,OSL=1024,TP=1,CONC=16": {
+                    "total_throughput_per_sec": "2003",
+                    "mean_ttft_ms": "69",
+                    "mean_tpot_ms": "9"
+                },
+                "ISL=1024,OSL=1024,TP=1,CONC=32": {
+                    "total_throughput_per_sec": "3155",
+                    "mean_ttft_ms": "69",
+                    "mean_tpot_ms": "12"
+                },
+                "ISL=1024,OSL=1024,TP=1,CONC=64": {
+                    "total_throughput_per_sec": "4570",
+                    "mean_ttft_ms": "375",
+                    "mean_tpot_ms": "23"
+                },
+                "ISL=1024,OSL=8192,TP=1,CONC=16": {
+                    "total_throughput_per_sec": "1200",
+                    "mean_ttft_ms": "84",
+                    "mean_tpot_ms": "12"
+                },
+                "ISL=1024,OSL=8192,TP=1,CONC=32": {
+                    "total_throughput_per_sec": "1800",
+                    "mean_ttft_ms": "200",
+                    "mean_tpot_ms": "12"
+                },
+                "ISL=1024,OSL=8192,TP=1,CONC=64": {
+                    "total_throughput_per_sec": "2600",
+                    "mean_ttft_ms": "768",
+                    "mean_tpot_ms": "21"
+                },
+                "ISL=8192,OSL=1024,TP=1,CONC=16": {
+                    "total_throughput_per_sec": "7500",
+                    "mean_ttft_ms": "495",
+                    "mean_tpot_ms": "16"
+                },
+                "ISL=8192,OSL=1024,TP=1,CONC=32": {
+                    "total_throughput_per_sec": "11300",
+                    "mean_ttft_ms": "280",
+                    "mean_tpot_ms": "17"
+                },
+                "ISL=8192,OSL=1024,TP=1,CONC=64": {
+                    "total_throughput_per_sec": "16000",
+                    "mean_ttft_ms": "91",
+                    "mean_tpot_ms": "18"
+                }
             }
         },
         "deepseek-v31": {
@@ -182,7 +308,7 @@
                 32,
                 64
             ],
-            "model": "/models/dsv31-fp8",
+            "model": "deepseek-ai/DeepSeek-V3.1",
             "num_prompts": "3200",
             "sequence_combinations": [
                 {
@@ -209,9 +335,36 @@
             "server_script": "dsr1_fp8_mi355x_vllm_docker.sh",
             "bench_serv_script": "benchmark_serving.py",
             "result_dict": {
-                "output_throughput_per_sec": "9000",
-                "mean_ttft_ms": "250",
-                "mean_tpot_ms": "11"
+                "ISL=1024,OSL=1024,TP=8,CONC=16": {
+                    "total_throughput_per_sec": "1944",
+                    "mean_ttft_ms": "84",
+                    "mean_tpot_ms": "12"
+                },
+                "ISL=1024,OSL=1024,TP=8,CONC=32": {
+                    "total_throughput_per_sec": "2939",
+                    "mean_ttft_ms": "302",
+                    "mean_tpot_ms": "21"
+                },
+                "ISL=1024,OSL=1024,TP=8,CONC=64": {
+                    "total_throughput_per_sec": "4834",
+                    "mean_ttft_ms": "250",
+                    "mean_tpot_ms": "11"
+                },
+                "ISL=1024,OSL=8192,TP=8,CONC=16": {
+                    "total_throughput_per_sec": "1109",
+                    "mean_ttft_ms": "253",
+                    "mean_tpot_ms": "19"
+                },
+                "ISL=1024,OSL=8192,TP=8,CONC=32": {
+                    "total_throughput_per_sec": "1676",
+                    "mean_ttft_ms": "305",
+                    "mean_tpot_ms": "21"
+                },
+                "ISL=1024,OSL=8192,TP=8,CONC=64": {
+                    "total_throughput_per_sec": "2716",
+                    "mean_ttft_ms": "280",
+                    "mean_tpot_ms": "13"
+                }
             }
         }
     }

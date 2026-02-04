@@ -67,7 +67,6 @@ class InferenceBaseJob:
 
         self.job_cmd = ''
         self.job_cmd_list = []
-        self.inference_result_dict = {}
         print(self.gpu_type)
 
         # Needed only in the case of distributed inference - placeholder for future
@@ -570,14 +569,14 @@ class InferenceBaseJob:
                     inference_pass = False
         return inference_pass
 
-    def poll_for_inference_completion(self, waittime_between_iters=120, iterations=15, \
-            total_timeout=3600, require_all_nodes=True):
+    def poll_for_inference_completion(
+        self, waittime_between_iters=120, iterations=15, total_timeout=3600, require_all_nodes=True
+    ):
         # Initial wait to give inference time to start logging
         time.sleep(60)
 
-        num_prompts = self.bp_dict['num_prompts']
         # Assume 1000 prompts completes in 120 secs ..
-        #iterations = int(float(num_prompts) / 60)
+        # iterations = int(float(num_prompts) / 60)
         self.inference_poll_iterations = iterations
         completion_pattern = self.get_completion_pattern()
 
@@ -647,32 +646,62 @@ class InferenceBaseJob:
     def verify_inference_results(
         self,
     ):
+        """
+        Verify inference results against expected thresholds from result_dict.
+
+        The expected results are keyed by: "ISL=X,OSL=Y,TP=Z,CONC=W"
+        This method builds that key from current test parameters and compares.
+        """
         print('Verify Inference Completion Msg')
-        for node in self.inference_result_dict.keys():
-            for metric_name in self.expected_result_dict[node].keys():
-                if metric_name in expected_result_dict:
-                    # latency metric, so actual should be lower than expected ..
+
+        # Build the expected result key from current test parameters
+        isl = self.bp_dict.get('input_sequence_length', '1024')
+        osl = self.bp_dict.get('output_sequence_length', '1024')
+        tp = self.bp_dict.get('tensor_parallelism', '1')
+        conc = self.bp_dict.get('max_concurrency', '64')
+
+        expected_key = f"ISL={isl},OSL={osl},TP={tp},CONC={conc}"
+        print(f'Looking for expected results with key: {expected_key}')
+
+        # Get expected results from result_dict
+        result_dict = self.bp_dict.get('result_dict', {})
+        expected_result_dict = result_dict.get(expected_key, {})
+
+        if not expected_result_dict:
+            print(f'Warning: No expected results found for {expected_key}, skipping validation')
+            # Scan Dmesg for errors ..
+            self.inference_end_time = self.s_phdl.exec('date +"%a %b %e %H:%M"')
+            time.sleep(2)
+            verify_dmesg_for_errors(self.s_phdl, self.inference_start_time, self.inference_end_time)
+            print(self.inference_results_dict)
+            return
+
+        print(f'Expected results: {expected_result_dict}')
+
+        # Compare actual vs expected for each node
+        for node in self.inference_results_dict.keys():
+            for metric_name in expected_result_dict.keys():
+                if metric_name in self.inference_results_dict[node]:
+                    actual_value = float(self.inference_results_dict[node][metric_name])
+                    expected_value = float(expected_result_dict[metric_name])
+
+                    # Latency metrics (ms) - lower is better, fail if actual > expected
                     if re.search('ms', metric_name, re.I):
-                        if float(self.inference_result_dict[node][metric_name]) > float(
-                            self.expected_result_dict[metric_name]
-                        ):
+                        if actual_value > expected_value:
                             fail_test(
-                                f"FAIL - The latency metric {metric_name} actual value higher than expected \
-                                Actual = {self.inference_result_dict[node][metric_name]},  \
-                                Expected = {self.expected_result_dict[metric_name]}"
+                                f"FAIL - Latency metric {metric_name} higher than expected on node {node}: \
+                                Actual = {actual_value}, Expected = {expected_value}"
                             )
+                    # Throughput/count metrics - higher is better, fail if actual < expected
                     else:
-                        if float(self.inference_result_dict[node][metric_name]) < float(
-                            self.expected_result_dict[metric_name]
-                        ):
+                        if actual_value < expected_value:
                             fail_test(
-                                f"FAIL - The latency metric {metric_name} actual value lower than expected \
-                                Actual = {self.inference_result_dict[node][metric_name]}, \
-                                Expected = {self.expected_result_dict[metric_name]}"
+                                f"FAIL - Throughput metric {metric_name} lower than expected on node {node}: \
+                                Actual = {actual_value}, Expected = {expected_value}"
                             )
 
         # Scan Dmesg for errors ..
         self.inference_end_time = self.s_phdl.exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
         verify_dmesg_for_errors(self.s_phdl, self.inference_start_time, self.inference_end_time)
-        print(self.inference_result_dict)
+        print(self.inference_results_dict)
