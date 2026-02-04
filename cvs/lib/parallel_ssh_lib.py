@@ -105,6 +105,25 @@ class Pssh:
         for host in self.unreachable_hosts:
             cmd_output[host] = cmd_output.get(host, "") + "\nABORT: Host Unreachable Error"
 
+    def _safe_iterator(self, iterator):
+        """
+        Wrapper for iterators that may contain invalid UTF-8 bytes.
+        Yields valid lines and skips malformed ones with a warning.
+        """
+        # Convert to iterator (handles both lists and existing iterators safely)
+        iterator = iter(iterator)
+        while True:
+            try:
+                line = next(iterator)
+                yield line
+            except UnicodeDecodeError as e:
+                print(f"Warning: Skipping malformed line due to UnicodeDecodeError: {e}")
+                # Continue to next line
+                continue
+            except StopIteration:
+                # End of iterator
+                break
+
     def _process_output(self, output, cmd=None, cmd_list=None, print_console=True):
         """
         Helper method to process output from run_command, collect results, and handle pruning.
@@ -122,11 +141,11 @@ class Pssh:
             else:
                 print(cmd)
             try:
-                for line in item.stdout or []:
+                for line in self._safe_iterator(item.stdout or []):
                     if print_console:
                         print(line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
-                for line in item.stderr or []:
+                for line in self._safe_iterator(item.stderr or []):
                     if print_console:
                         print(line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'

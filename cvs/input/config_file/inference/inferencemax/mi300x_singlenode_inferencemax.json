@@ -45,9 +45,11 @@
             "server_script": "gptoss_fp4_mi300x_docker.sh",
             "bench_serv_script": "benchmark_serving.py",
             "result_dict": {
-                "output_throughput_per_sec": "4200",
-                "mean_ttft_ms": "500",
-                "mean_tpot_ms": "15"
+                "ISL=8192,OSL=1024,TP=8,CONC=64": {
+                    "total_throughput_per_sec": "4200",
+                    "mean_ttft_ms": "500",
+                    "mean_tpot_ms": "15"
+                }
             }
         }
     }

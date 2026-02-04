@@ -36,6 +36,9 @@ def textwrap_for_yml(msg_string):
 class InferenceBaseJob:
     """Base class for inference jobs supporting multiple frameworks."""
 
+    # Class-level results dictionary shared across all test iterations
+    all_test_results = {}
+
     def __init__(
         self,
         c_phdl,
@@ -46,7 +49,7 @@ class InferenceBaseJob:
         hf_token,
         gpu_type='mi300',
         distributed_inference=False,
-        server_launch_poll_count=20,
+        server_launch_poll_count=30,
     ):
         # Client instance phdl
         self.c_phdl = c_phdl
@@ -67,7 +70,7 @@ class InferenceBaseJob:
 
         self.job_cmd = ''
         self.job_cmd_list = []
-        self.inference_result_dict = {}
+        self.inference_results_dict = {}
         print(self.gpu_type)
 
         # Needed only in the case of distributed inference - placeholder for future
@@ -130,7 +133,7 @@ class InferenceBaseJob:
         # Allow derived classes to override server launch wait duration
         self.default_server_precheck_wait_time = 30
         self.default_server_wait_time = 330
-        self.default_server_poll_wait_time = 60
+        self.default_server_poll_wait_time = 120
         self.default_server_poll_count = server_launch_poll_count
         self.default_server_precheck_error_pattern = re.compile(
             'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback|failed to start',
@@ -192,6 +195,10 @@ class InferenceBaseJob:
         """Get log subdirectory name for this framework."""
         raise NotImplementedError("Derived class must implement get_log_subdir()")
 
+    def collect_test_result(self, status):
+        """Collect test results. Override in derived class if needed."""
+        pass
+
     def run_preinference_tasks(
         self,
     ):
@@ -245,6 +252,19 @@ class InferenceBaseJob:
     def build_server_inference_job_cmd(
         self,
     ):
+        # Build VLLM env vars from config, with defaults if not specified
+        vllm_env_vars = self.bp_dict.get(
+            'vllm_env_vars',
+            {
+                'VLLM_USE_AITER_UNIFIED_ATTENTION': '1',
+                'VLLM_ROCM_USE_AITER_MHA': '0',
+                'VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4': '1',
+            },
+        )
+
+        # Convert dict to export statements
+        vllm_exports = '\n'.join([f'export {k}={v}' for k, v in vllm_env_vars.items()])
+
         s_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                     export MODEL={self.bp_dict['model']}
                     export ISL={self.bp_dict['input_sequence_length']}
@@ -254,9 +274,7 @@ class InferenceBaseJob:
                     export TP={self.bp_dict['tensor_parallelism']}
                     export CONC={self.bp_dict['max_concurrency']}
                     export HF_TOKEN={self.hf_token}
-                    export VLLM_USE_AITER_UNIFIED_ATTENTION=1
-                    export VLLM_ROCM_USE_AITER_MHA=0
-                    export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1
+                    {vllm_exports}
                     export PORT={self.bp_dict['port_no']}'  > /tmp/server_env_script.sh"
                     '''
         time.sleep(3)
@@ -570,14 +588,14 @@ class InferenceBaseJob:
                     inference_pass = False
         return inference_pass
 
-    def poll_for_inference_completion(self, waittime_between_iters=120, iterations=15, \
-            total_timeout=3600, require_all_nodes=True):
+    def poll_for_inference_completion(
+        self, waittime_between_iters=120, iterations=15, total_timeout=3600, require_all_nodes=True
+    ):
         # Initial wait to give inference time to start logging
         time.sleep(60)
 
-        num_prompts = self.bp_dict['num_prompts']
         # Assume 1000 prompts completes in 120 secs ..
-        #iterations = int(float(num_prompts) / 60)
+        # iterations = int(float(num_prompts) / 60)
         self.inference_poll_iterations = iterations
         completion_pattern = self.get_completion_pattern()
 
@@ -647,32 +665,93 @@ class InferenceBaseJob:
     def verify_inference_results(
         self,
     ):
-        print('Verify Inference Completion Msg')
-        for node in self.inference_result_dict.keys():
-            for metric_name in self.expected_result_dict[node].keys():
-                if metric_name in expected_result_dict:
-                    # latency metric, so actual should be lower than expected ..
-                    if re.search('ms', metric_name, re.I):
-                        if float(self.inference_result_dict[node][metric_name]) > float(
-                            self.expected_result_dict[metric_name]
-                        ):
-                            fail_test(
-                                f"FAIL - The latency metric {metric_name} actual value higher than expected \
-                                Actual = {self.inference_result_dict[node][metric_name]},  \
-                                Expected = {self.expected_result_dict[metric_name]}"
-                            )
-                    else:
-                        if float(self.inference_result_dict[node][metric_name]) < float(
-                            self.expected_result_dict[metric_name]
-                        ):
-                            fail_test(
-                                f"FAIL - The latency metric {metric_name} actual value lower than expected \
-                                Actual = {self.inference_result_dict[node][metric_name]}, \
-                                Expected = {self.expected_result_dict[metric_name]}"
-                            )
+        """
+        Validate inference results against configuration-specific expected thresholds.
 
-        # Scan Dmesg for errors ..
-        self.inference_end_time = self.s_phdl.exec('date +"%a %b %e %H:%M"')
-        time.sleep(2)
-        verify_dmesg_for_errors(self.s_phdl, self.inference_start_time, self.inference_end_time)
-        print(self.inference_result_dict)
+        Uses nested result_dict with keys like "ISL=1024,OSL=1024,TP=1,CONC=16" to
+        validate each test configuration against its specific baseline.
+        """
+        print('Verify Inference Completion Msg')
+
+        # Build configuration key from current test parameters
+        isl = self.bp_dict['input_sequence_length']
+        osl = self.bp_dict['output_sequence_length']
+        tp = self.bp_dict['tensor_parallelism']
+        conc = self.bp_dict['max_concurrency']
+
+        config_key = f"ISL={isl},OSL={osl},TP={tp},CONC={conc}"
+
+        # Get expected results for this specific configuration
+        if 'result_dict' not in self.bp_dict:
+            print(f"WARNING: No result_dict found in benchmark_params for {self.model_name}, skipping validation")
+            return
+
+        result_dict = self.bp_dict['result_dict']
+
+        # Check if this config has expected thresholds
+        if config_key not in result_dict:
+            print(f"WARNING: No expected results for config {config_key}, skipping validation")
+            print(f"Available configs: {list(result_dict.keys())}")
+            return
+
+        expected_result_dict = result_dict[config_key]
+        print(f"Validating results for config: {config_key}")
+        print(f"Expected thresholds: {expected_result_dict}")
+
+        validation_passed = True
+        try:
+            # Validate metrics on a per-node basis
+            for node in self.inference_results_dict.keys():
+                print(f"Validating node: {node}")
+                print(f"Actual results: {self.inference_results_dict[node]}")
+
+                for metric_name in expected_result_dict.keys():
+                    if metric_name not in self.inference_results_dict[node]:
+                        print(f"WARNING: Metric {metric_name} not found in actual results, skipping")
+                        continue
+
+                    actual_value = float(self.inference_results_dict[node][metric_name])
+                    expected_value = float(expected_result_dict[metric_name])
+
+                    # Latency metrics (ms): lower is better
+                    if re.search('ms', metric_name, re.I):
+                        if actual_value > expected_value:
+                            fail_test(
+                                f"FAIL - Latency metric '{metric_name}' exceeded threshold for {config_key}\n"
+                                f"  Actual: {actual_value} ms\n"
+                                f"  Expected: <= {expected_value} ms\n"
+                                f"  Difference: +{actual_value - expected_value:.2f} ms ({((actual_value / expected_value - 1) * 100):.1f}% worse)"
+                            )
+                        else:
+                            print(f"✓ {metric_name}: {actual_value} ms <= {expected_value} ms")
+
+                    # Throughput metrics (per_sec): higher is better
+                    else:
+                        if actual_value < expected_value:
+                            fail_test(
+                                f"FAIL - Throughput metric '{metric_name}' below threshold for {config_key}\n"
+                                f"  Actual: {actual_value}\n"
+                                f"  Expected: >= {expected_value}\n"
+                                f"  Difference: -{expected_value - actual_value:.2f} ({((1 - actual_value / expected_value) * 100):.1f}% worse)"
+                            )
+                        else:
+                            print(f"✓ {metric_name}: {actual_value} >= {expected_value}")
+        except Exception as e:
+            validation_passed = False
+            raise e
+        finally:
+            # Scan Dmesg for errors
+            self.inference_end_time = self.s_phdl.exec('date +"%a %b %e %H:%M"')
+            time.sleep(2)
+            verify_dmesg_for_errors(self.s_phdl, self.inference_start_time, self.inference_end_time)
+
+            if validation_passed:
+                print(f"✓ All validations passed for {config_key}")
+                print(self.inference_results_dict)
+                # Auto-store results
+                self.collect_test_result()
+            else:
+                print(f"✗ Validations failed for {config_key}")
+                print(self.inference_results_dict)
+                # Auto-store results even on failure
+                self.collect_test_result()
