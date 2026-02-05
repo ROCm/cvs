@@ -280,6 +280,7 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
         step_function=config_dict['step_function'],
         warmup_iterations=config_dict['warmup_iterations'],
         no_of_iterations=config_dict['no_of_iterations'],
+        no_of_cycles=config_dict['no_of_cycles'],
         check_iteration_count=config_dict['check_iteration_count'],
         debug_level=config_dict['debug_level'],
         rccl_result_file=config_dict['rccl_result_file'],
