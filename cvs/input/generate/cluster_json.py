@@ -10,7 +10,7 @@ import argparse
 import sys
 from jinja2 import Template
 from importlib import resources
-from cvs.input.generate.base import GeneratorPlugin
+from cvs.cli_plugins.generate_plugin import GeneratorPlugin
 
 
 class ClusterJsonGenerator(GeneratorPlugin):
