@@ -125,18 +125,43 @@ class ListPlugin(SubcommandPlugin):
                     display = base + (param or "")
                     test_rows.append(display)
             print(f"\nAvailable tests in {test_name}:")
-            for func in sorted(set(test_rows)):
-                print(f"  - {func}")
-            if not test_rows:
+            print("-" * 80)
+            if test_rows:
+                for func in sorted(set(test_rows)):
+                    print(f"  • {func}")
+                print(f"\nTotal: {len(set(test_rows))} tests")
+            else:
                 print(output)
         else:
-            # List all test files, categorized by package
-            print("Available tests:")
+            # List all test files, categorized by package and module path
+            print("\nAvailable Tests")
+            print("=" * 80)
+
             for pkg_name in sorted(self.test_map.keys()):
-                print(f"{pkg_name}:")
-                for test_name in sorted(self.test_map[pkg_name].keys()):
-                    print(f"  - {test_name}")
-                print()  # Blank line between packages
+                print(f"\nPackage: {pkg_name}")
+                print("-" * 80)
+
+                # Group tests by their parent module path
+                grouped_tests = {}
+                for test_name, module_path in self.test_map[pkg_name].items():
+                    # Extract parent module (everything except the last part)
+                    parent_module = ".".join(module_path.split(".")[:-1])
+                    if parent_module not in grouped_tests:
+                        grouped_tests[parent_module] = []
+                    grouped_tests[parent_module].append(test_name)
+
+                # Display grouped tests
+                for parent_module in sorted(grouped_tests.keys()):
+                    test_count = len(grouped_tests[parent_module])
+                    test_word = "test suite" if test_count == 1 else "test suites"
+                    print(f"\n  {parent_module} ({test_count} {test_word})")
+                    for test_name in sorted(grouped_tests[parent_module]):
+                        print(f"    • {test_name}")
+
+            # Print summary
+            total_tests = sum(len(tests) for tests in self.test_map.values())
+            print(f"\n{'=' * 80}")
+            print(f"Total: {total_tests} test suites across {len(self.test_map)} package(s)\n")
 
     def get_name(self):
         return "list"

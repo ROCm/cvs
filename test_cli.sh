@@ -68,7 +68,7 @@ run_test "cvs list" "$CVS list"
 # Test: cvs list <test_name> for each test suite
 echo "Testing: cvs list <test_name> for each test suite"
 echo "===================="
-for test in $($CVS list | grep -v "Available tests:" | grep -v "^$" | awk '{print $2}'); do
+for test in $($CVS list | grep "•" | awk '{print $2}'); do
     run_test "cvs list $test" "$CVS list $test"
 done
 
