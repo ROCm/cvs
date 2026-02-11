@@ -205,6 +205,58 @@ def test_setup_env(mori_obj):
     update_test_result()
 
 
+
+def test_shmem_api(mori_obj):
+    globals.error_list = []
+    mori_obj.run_shmem_apitest()
+    update_test_result()
+
+
+#def test_dispatch_combine(mori_obj):
+#    globals.error_list = []
+#    mori_obj.run_dispatch_combine()
+#    update_test_result()
+
+
+#def test_bench_dispatch_combine(mori_obj):
+#    globals.error_list = []
+#    mori_obj.run_bench_dispatch_combine()
+#    update_test_result()
+
+
+def test_concurrent_put_threads(mori_obj):
+    globals.error_list = []
+    mori_obj.run_concurrent_put_threads()
+    update_test_result()
+
+
+def test_concurrent_put_imm_threads(mori_obj):
+    globals.error_list = []
+    mori_obj.run_concurrent_put_imm_threads()
+    update_test_result()
+
+
+def test_concurrent_put_signal_thread(mori_obj):
+    globals.error_list = []
+    mori_obj.run_concurrent_put_signal_thread()
+    update_test_result()
+
+
+
+def test_ibgda_write_test(mori_obj):
+    globals.error_list = []
+    mori_obj.run_ibgda_dist_write(no_of_procs=2,
+        min_val=2,
+        max_val='64m',
+        ctas=2,
+        threads=256,
+        qp_count=4,
+        iters=1
+        )
+
+    update_test_result()
+
+
 # -----------------------------------------------------------------------------
 # Input Test Matrix
 #

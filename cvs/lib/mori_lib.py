@@ -7,8 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import re
 import time
-from typing import List, Dict
-
+from typing import List, Dict, Tuple
 
 from cvs.lib import globals
 from cvs.lib.utils_lib import *
@@ -110,6 +109,62 @@ def parse_pretty_tables_multi_rank(text: str) -> dict:
     return output_dict
 
 
+
+
+
+def parse_ibgda_output(text: str) -> Tuple[Dict, List[Dict]]:
+    metadata = {}
+    results = []
+
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+
+    # ---- Parse metadata line ----
+    # Example:
+    # Blocks: 4, Threads: 256, Iterations: 10, QPs:4
+    meta_pattern = re.compile(
+        r"Blocks:\s*(\d+),\s*Threads:\s*(\d+),\s*Iterations:\s*(\d+),\s*QPs:\s*(\d+)"
+    )
+
+    for line in lines:
+        match = meta_pattern.search(line)
+        if match:
+            metadata = {
+                "blocks": int(match.group(1)),
+                "threads": int(match.group(2)),
+                "iterations": int(match.group(3)),
+                "qps": int(match.group(4)),
+            }
+            break
+
+    # ---- Parse table rows ----
+    # Expected columns:
+    # Index Size(B) bw(GB) Time(ms) Rate(Mpps)
+    row_pattern = re.compile(
+        r"^\d+\s+"
+        r"(\d+)\s+"          # Size(B)
+        r"([\d.]+)\s+"       # bw(GB)
+        r"([\d.]+)\s+"       # Time(ms)
+        r"([\d.]+)$"         # Rate(Mpps)
+    )
+
+    for line in lines:
+        if line.startswith("Index") or line.startswith("IBGDA"):
+            continue
+
+        match = row_pattern.match(line)
+        if match:
+            results.append({
+                "size_bytes": int(match.group(1)),
+                "bandwidth_gb": float(match.group(2)),
+                "time_ms": float(match.group(3)),
+                "rate_mpps": float(match.group(4)),
+            })
+
+    return metadata, results
+
+
+
+
 class MoriBenchmark:
     def __init__(self, phdl, mori_dict, gpu_type):
         self.phdl = phdl
@@ -135,7 +190,7 @@ class MoriBenchmark:
     ):
         cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
               export PYTHONPATH={self.mori_dir}:$PYTHONPATH
-              export LD_LIBRARY_PATH={self.torchlib_dir}:$LD_LIBRARY_PATH
+              #export LD_LIBRARY_PATH={self.torchlib_dir}:$LD_LIBRARY_PATH
               export NCCL_SOCKET_IFNAME={self.oob_port}
               export GLOO_SOCKET_IFNAME={self.oob_port}
               export GLOO_TCP_IFNAME={self.oob_port}
@@ -188,6 +243,148 @@ class MoriBenchmark:
                             {self.container_name} on node {node}'
                     )
 
+
+    def run_shmem_apitest(
+        self,
+        ):
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  " \
+                    source /tmp/mori_env_script.sh && \
+                    cd {self.mori_dir} && \
+                    pytest -vvv ./tests/python/shmem/test_api.py" '''
+        out_dict = self.phdl.exec(cmd)
+        for node in out_dict.keys():
+            if not re.search( 'PASSED', out_dict[node], re.I ):
+                fail_test(f'ERROR - shmem test_api.py did not run properly, no PASSED test results seen')
+            if re.search( 'FAIL', out_dict[node] ):
+                fail_test(f'ERROR - one or more shmem test_api.py tests failed')
+
+
+    def run_ibgda_dist_write(
+        self,
+        no_of_procs=2,
+        min_val=2,
+        max_val='16m',
+        ctas=2,
+        threads=256,
+        qp_count=4,
+        iters=1
+        ):
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  " \
+                    source /tmp/mori_env_script.sh && \
+                    cd {self.mori_dir} && \
+                    mpiexec --allow-run-as-root -x MORI_GLOBAL_LOG_LEVEL=TRACE \
+                    -np {no_of_procs} ./build/examples/dist_write -c {ctas} -t {threads} \
+                    -b {min_val} -e {max_val} -f 2 -q {qp_count} -n {iters}" '''
+        out_dict = self.phdl.exec(cmd)
+        exp_res_dict = self.expected_results_dict['ibgda_write']
+        for node in out_dict.keys():
+            if not re.search( 'Index\s+Size', out_dict[node], re.I ):
+                fail_test(f'ERROR - dist_write did not complete properly - results not seen')
+            else:
+                meta_data, results = parse_ibgda_output( out_dict[node] )
+                print(results)
+                m_key = f'''PROCS:{no_of_procs},CTAS:{ctas},THREADS:{threads},QP_COUNT:{qp_count}'''
+                if m_key in exp_res_dict.keys():
+                    for row_dict in results:
+                        act_msg_size = row_dict['size_bytes']
+                        actual_bw = row_dict['bandwidth_gb']
+                        print(f'exp_res_dict = {exp_res_dict}')
+                        print(f'exp_res_dict = {exp_res_dict[m_key].keys()}')
+                        print(act_msg_size)
+                        for exp_msg_size in list(exp_res_dict[m_key].keys()):
+                            exp_bw = exp_res_dict[m_key][exp_msg_size]['max_bw']
+                            if int(act_msg_size) == int(exp_msg_size):
+                                if float(actual_bw) < float(exp_bw):
+                                    fail_test(f'IBGDA Mori BW less than expected for  \
+                                      PROCS:{no_of_procs},CTAS:{ctas},THREADS:{threads},QP_COUNT:{qp_count} \
+                                      expected = {exp_bw}, actual = {actual_bw}')
+                                else:
+                                    print(f'IBGDA Mori BW is as expected for  \
+                                      PROCS:{no_of_procs},CTAS:{ctas},THREADS:{threads},QP_COUNT:{qp_count} \
+                                      expected = {exp_bw}, actual = {actual_bw}')
+
+
+
+
+    def run_dispatch_combine(
+        self,
+        ):
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  " \
+                    source /tmp/mori_env_script.sh && \
+                    cd {self.mori_dir} && \
+                    pytest -vvv ./tests/python/ops/test_dispatch_combine.py" '''
+        out_dict = self.phdl.exec(cmd)
+        for node in out_dict.keys():
+            if not re.search( 'PASSED', out_dict[node], re.I ):
+                fail_test(f'ERROR - test_dispatch_combine.py did not run properly, no PASSED test results seen')
+            if re.search( 'FAIL', out_dict[node], re.I ):
+                fail_test(f'ERROR - one or more test_dispatch_combine.py tests failed') 
+
+
+
+    def run_bench_dispatch_combine(
+        self,
+        ):
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  " \
+                    source /tmp/mori_env_script.sh && \
+                    cd {self.mori_dir} && \
+                    pytest -vvv ./tests/python/ops/bench_dispatch_combine.py" '''
+        out_dict = self.phdl.exec(cmd)
+        for node in out_dict.keys():
+            if not re.search( 'PASSED', out_dict[node], re.I ):
+                fail_test(f'ERROR - bench_dispatch_combine.py did not run properly, no PASSED test results seen')
+            if re.search( 'FAIL', out_dict[node], re.I ):
+                fail_test(f'ERROR - one or more bench_dispatch_combine.py tests failed') 
+
+
+
+    def run_concurrent_put_threads(
+        self,
+        ):
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  " \
+                    source /tmp/mori_env_script.sh && \
+                    cd {self.mori_dir} && \
+                    mpiexec --allow-run-as-root -np 2 ./build/examples/concurrent_put_thread" '''
+        out_dict = self.phdl.exec(cmd)
+        for node in out_dict.keys():
+            if not re.search( 'PASSED', out_dict[node], re.I ):
+                fail_test(f'ERROR - test concurrent_put_thread did not run properly, no PASSED test results seen')
+            if re.search( 'FAIL', out_dict[node], re.I ):
+                fail_test(f'ERROR - one or more concurrent_put_thread tests failed') 
+
+
+    def run_concurrent_put_imm_threads(
+        self,
+        ):
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  " \
+                    source /tmp/mori_env_script.sh && \
+                    cd {self.mori_dir} && \
+                    mpiexec --allow-run-as-root -np 2 ./build/examples/concurrent_put_imm_thread" '''
+        out_dict = self.phdl.exec(cmd)
+        for node in out_dict.keys():
+            if not re.search( 'PASSED', out_dict[node], re.I ):
+                fail_test(f'ERROR - test concurrent_put_imm_thread did not run properly, no PASSED test results seen')
+            if re.search( 'FAIL', out_dict[node], re.I ):
+                fail_test(f'ERROR - one or more concurrent_put_imm_thread tests failed') 
+
+
+    def run_concurrent_put_signal_thread(
+        self,
+        ):
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  " \
+                    source /tmp/mori_env_script.sh && \
+                    cd {self.mori_dir} && \
+                    mpiexec --allow-run-as-root -np 2 ./build/examples/concurrent_put_signal_thread" '''
+        out_dict = self.phdl.exec(cmd)
+        for node in out_dict.keys():
+            if not re.search( 'PASSED', out_dict[node], re.I ):
+                fail_test(f'ERROR - test concurrent_put_signal_thread did not run properly, no PASSED test results seen')
+            if re.search( 'FAIL', out_dict[node], re.I ):
+                fail_test(f'ERROR - one or more concurrent_signal_imm_thread tests failed') 
+
+
+
+
     def run_mori_torch_io_test(
         self,
         op_type='read',
@@ -197,7 +394,7 @@ class MoriBenchmark:
         no_of_qp_per_transfer=1,
         no_of_initiators=8,
         no_of_targets=8,
-    ):
+        ):
         """
         Run MORI Torch-based IO benchmark across multiple nodes using torchrun,
         collect performance results, parse them, and validate against expected
@@ -284,8 +481,18 @@ class MoriBenchmark:
         # ------------------------------------------------------------------
         # act_res_dict = parse_pretty_table_to_dict( script_out )
         act_res_dict = parse_pretty_tables_multi_rank(script_out)
-        exp_res_dict = self.expected_results_dict[op_type]
-        m_key = str(buffer_size) + ',' + str(transfer_batch_size) + ',' + str(no_of_qp_per_transfer)
+        if op_type == "read":
+            op_key = "io_read"
+        elif op_type == "write":
+            op_key = "io_write"
+
+        print('^^^^^^^^^^^^^^^^^^^^')
+        print(self.expected_results_dict.keys())
+        print('^^^^^^^^^^^^^^^^^^^^')
+        exp_res_dict = self.expected_results_dict[op_key]
+        m_key = 'BUFF_SIZE:' + str(buffer_size) + ',' + \
+                'TRANSFER_SIZE:' + str(transfer_batch_size) + ',' + \
+                'QP_COUNT:' + str(no_of_qp_per_transfer)
         # ------------------------------------------------------------------
         # Validate actual results against expected thresholds
         # ------------------------------------------------------------------
@@ -297,6 +504,7 @@ class MoriBenchmark:
                     for msg_size in exp_res_dict[m_key].keys():
                         exp_max_bw = exp_res_dict[m_key][msg_size]['max_bw']
                         exp_avg_lat = exp_res_dict[m_key][msg_size]['avg_lat']
+                        #print(f'############ {row_dict['MsgSize_B']}, {msg_size}' )
                         if int(row_dict['MsgSize_B']) == int(msg_size):
                             # Validate bandwidth: actual must be >= expected
                             if float(row_dict['Avg_BW_GBps']) < float(exp_max_bw):
@@ -306,9 +514,23 @@ class MoriBenchmark:
                                       expected BW {exp_max_bw}, \
                                       buffer_size,transfer_batch_size,no_of_qp_per_transfer = \
                                       {m_key}''')
+                            else:
+                                print(f'''BW is as expected for \
+                                      rank {rank_no}, Msg size {msg_size}, \
+                                      actual BW {row_dict['Avg_BW_GBps']}, \
+                                      expected BW {exp_max_bw}, \
+                                      buffer_size,transfer_batch_size,no_of_qp_per_transfer = \
+                                      {m_key}''')
                             # Validate latency: actual must be <= expected
                             if float(row_dict['Avg_Lat_us']) > float(exp_avg_lat):
                                 fail_test(f'''Latency is higher than expected for \
+                                      rank {rank_no}, Msg size {msg_size}, \
+                                      actual Avg Lat {row_dict['Avg_Lat_us']}, \
+                                      expected Avg Lat {exp_avg_lat}, \
+                                      buffer_size,transfer_batch_size,no_of_qp_per_transfer = \
+                                      {m_key}''')
+                            else:
+                                print(f'''Latency is as expected for \
                                       rank {rank_no}, Msg size {msg_size}, \
                                       actual Avg Lat {row_dict['Avg_Lat_us']}, \
                                       expected Avg Lat {exp_avg_lat}, \
