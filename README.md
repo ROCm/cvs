@@ -258,7 +258,7 @@ CLUSTER_FILE=/tmp/cvs/input/cluster_file/cluster.json cvs exec --cmd "hostname"
 
 # Execute other commands
 cvs exec --cmd "uptime" --cluster_file /tmp/cvs/input/cluster_file/cluster.json
-cvs exec --cmd "nvidia-smi --query-gpu=name,memory.total --format=csv" --cluster_file /tmp/cvs/input/cluster_file/cluster.json
+cvs exec --cmd "rocm-smi --showproductname --showmeminfo vram" --cluster_file /tmp/cvs/input/cluster_file/cluster.json
 ```
 
 The `exec` command supports the following options:
