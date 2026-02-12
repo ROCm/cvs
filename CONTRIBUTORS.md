@@ -2,6 +2,16 @@
 
 Welcome to the CVS (ROCm Cluster Validation Suite) project! This guide will help you get started with contributing to the codebase.
 
+## Prerequisites
+
+- Python 3.9 or later
+- Git
+
+**Debian/Ubuntu Systems:** On Debian and Ubuntu distributions, install the `venv` module:
+```bash
+sudo apt install python3-venv
+```
+
 ## Development Setup
 
 1. Clone the repository:
@@ -12,15 +22,15 @@ Welcome to the CVS (ROCm Cluster Validation Suite) project! This guide will help
 
 2. Set up the development environment:
    ```bash
-   make venv
-   source test_venv/bin/activate  # On Linux/macOS
+   make test-venv
+   source .test_venv/bin/activate  # On Linux/macOS
    # or
-   test_venv\Scripts\activate     # On Windows
+   .test_venv\Scripts\activate     # On Windows
    ```
 
 3. Install the package in development mode:
    ```bash
-   make install
+   make installtest
    ```
 
 ## Running Tests
@@ -127,8 +137,8 @@ This creates a source distribution in the `dist/` directory.
 ## Available Make Targets
 
 - `make help` - Show all available targets
-- `make venv` - Create virtual environment
-- `make install` - Install package in development mode
+- `make test-venv` - Create test virtual environment
+- `make installtest` - Install package in development mode
 - `make test` - Run all tests
 - `make lint` - Check code quality (linting only) (linting only)
 - `make fmt` - Format code

@@ -1,22 +1,27 @@
-VENV_DIR = test_venv
-RUFF_VENV_DIR = ruff_venv
+TEST_VENV_DIR = .test_venv
+CVS_VENV_DIR = .cvs_venv
+RUFF_VENV_DIR = .ruff_venv
 RUFF_VERSION = 0.14.8
 PYTHON := $(shell command -v python3 || command -v python)
-PIP = $(VENV_DIR)/bin/pip
+PIP = $(TEST_VENV_DIR)/bin/pip
+CVS_PIP = $(CVS_VENV_DIR)/bin/pip
 RUFF_PIP = $(RUFF_VENV_DIR)/bin/pip
 RUFF = $(RUFF_VENV_DIR)/bin/ruff
-CVS = $(VENV_DIR)/bin/cvs
+CVS = $(TEST_VENV_DIR)/bin/cvs
 
-.PHONY: all help build venv install ut test clean_venv clean_build clean_pycache clean
+.PHONY: all help sdist build test-venv cvs-venv install installtest ut test clean_test_venv clean_cvs_venv clean_sdist clean_pycache clean
 
-all: build venv install test
+all: build test-venv installtest test
 
 help:
 	@echo "Available targets:"
-	@echo "  build      - Build source distribution"
-	@echo "  venv       - Create virtual environment"
+	@echo "  sdist      - Build source distribution"
+	@echo "  build      - Format/lint check and then build source distribution"
+	@echo "  test-venv  - Create virtual environment"
+	@echo "  cvs-venv   - Create cvs virtual environment"
 	@echo "  ruff-venv  - Create ruff virtual environment"
-	@echo "  install    - Install from built distribution"
+	@echo "  install    - Install from built distribution in .cvs_venv"
+	@echo "  installtest    - Install from built distribution"
 	@echo "  ut         - Execute all Unittests"
 	@echo "  test       - Execute all UTs and cvs cli tests"
 	@echo "  lint       - Run ruff linter (checks code quality, not formatting)"
@@ -24,16 +29,18 @@ help:
 	@echo "  fmt-check  - Check ruff formatting without modifying files"
 	@echo "  lint-fix   - Run ruff linter with auto-fix (fixes code quality issues, not formatting)"
 	@echo "  unsafe-lint-fix - Interactive unsafe lint fixes"
-	@echo "  all        - Run build, venv, install, and test"
+	@echo "  all        - Run build, test-venv, installtest, and test"
 	@echo "  clean      - Remove virtual environment, build artifacts, and Python cache files"
 
-build: clean_build fmt-check lint
+sdist: clean_sdist
 	@echo "Building source distribution..."
 	$(PYTHON) setup.py sdist
 
-venv: clean_venv
+build: fmt-check lint sdist
+
+test-venv: clean_test_venv
 	@echo "Creating virtual environment..."
-	$(PYTHON) -m venv $(VENV_DIR)
+	$(PYTHON) -m venv $(TEST_VENV_DIR)
 	@echo "Upgrading pip..."
 	$(PIP) install --upgrade pip
 
@@ -45,13 +52,23 @@ ruff-venv:
 		$(RUFF_PIP) install ruff==$(RUFF_VERSION); \
 	fi
 
-install: venv build
+cvs-venv: clean_cvs_venv
+	@echo "Creating cvs virtual environment..."
+	$(PYTHON) -m venv $(CVS_VENV_DIR)
+	@echo "Upgrading pip..."
+	$(CVS_PIP) install --upgrade pip
+
+install: cvs-venv sdist
+	@echo "Installing from built distribution..."
+	$(CVS_PIP) install dist/*.tar.gz
+
+installtest: test-venv build
 	@echo "Installing from built distribution..."
 	$(PIP) install dist/*.tar.gz
 
-ut: install
+ut: installtest
 	@echo "Unit Testing cvs..."
-	$(VENV_DIR)/bin/python run_all_unittests.py
+	$(TEST_VENV_DIR)/bin/python run_all_unittests.py
 
 test: ut
 	@echo "Testing cvs commands..."
@@ -117,13 +134,21 @@ unsafe-lint-fix: ruff-venv
 	@echo "Running formatter..."
 	$(RUFF) format .
 
-clean_venv:
+clean_test_venv:
 	@echo "Removing virtual environment..."
-	@if [ -n "$$VIRTUAL_ENV" ] && [ "$$VIRTUAL_ENV" = "$$(pwd)/$(VENV_DIR)" ]; then \
+	@if [ -n "$$VIRTUAL_ENV" ] && [ "$$VIRTUAL_ENV" = "$$(pwd)/$(TEST_VENV_DIR)" ]; then \
 		echo "ERROR: You are currently in the venv. Please run 'deactivate' first."; \
 		exit 1; \
 	fi
-	rm -rf $(VENV_DIR)
+	rm -rf $(TEST_VENV_DIR)
+
+clean_cvs_venv:
+	@echo "Removing cvs virtual environment..."
+	@if [ -n "$$VIRTUAL_ENV" ] && [ "$$VIRTUAL_ENV" = "$$(pwd)/$(CVS_VENV_DIR)" ]; then \
+		echo "ERROR: You are currently in the cvs venv. Please run 'deactivate' first."; \
+		exit 1; \
+	fi
+	rm -rf $(CVS_VENV_DIR)
 
 clean_ruff_venv:
 	@echo "Removing ruff virtual environment..."
@@ -133,7 +158,7 @@ clean_ruff_venv:
 	fi
 	rm -rf $(RUFF_VENV_DIR)
 
-clean_build:
+clean_sdist:
 	@echo "Removing build artifacts..."
 	rm -rf dist/ *.egg-info/ src/*.egg-info/
 
@@ -143,4 +168,4 @@ clean_pycache:
 	find . -name "*.pyc" -delete 2>/dev/null || true
 	find . -name "*.pyo" -delete 2>/dev/null || true
 
-clean: clean_venv clean_ruff_venv clean_build clean_pycache
+clean: clean_test_venv clean_cvs_venv clean_ruff_venv clean_sdist clean_pycache

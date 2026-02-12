@@ -23,9 +23,45 @@ CVS Repository is organized as the following directories
 
 # How to install
 
-CVS is packaged as a proper Python package and can be installed using pip. There are two main ways to install CVS:
+CVS is packaged as a proper Python package and can be installed using pip.
 
-## Method 1: Install from Source
+## Prerequisites
+
+- Python 3.9 or later
+- Git
+
+### Debian/Ubuntu Systems
+
+On Debian and Ubuntu distributions, the `venv` module is not included in the base Python package. Install it before proceeding:
+
+```bash
+sudo apt install python3-venv
+```
+
+## Method 1: Install from Source (Quick Method using Makefile)
+
+1. **Clone the repository and install using make:**
+```bash
+git clone https://github.com/ROCm/cvs
+cd cvs
+make install
+```
+
+This will automatically:
+- Build the source distribution
+- Create a virtual environment named `.cvs_venv/` under repository root `cvs/`
+- Install CVS in the virtual environment
+
+2. **Activate the virtual environment:**
+```bash
+source .cvs_venv/bin/activate
+```
+
+This is the quickest way to install CVS from source, allowing you to use the latest development version of the software.
+
+## Method 2: Install from Source (Manual Method)
+
+For users who want to install CVS in a custom virtual environment:
 
 1. **Clone the repository and build cvs python pkg:**
 ```bash
@@ -36,7 +72,7 @@ python setup.py sdist
 
 2. **Create and activate a virtual environment (recommended):**
 ```bash
-python3 -m venv cvs_env
+python3 -m venv cvs_env  # or any custom name
 source cvs_env/bin/activate  # On Windows: cvs_env\Scripts\activate
 ```
 
@@ -45,22 +81,7 @@ source cvs_env/bin/activate  # On Windows: cvs_env\Scripts\activate
 pip install dist/cvs*.tar.gz
 ```
 
-This installs CVS from source, allowing you to use the latest developement version of the software.
-
-## Method 2: Install from Released Distribution
-
-If CVS is available as a released package as a distribution file:
-
-1. **Create and activate a virtual environment (recommended):**
-```bash
-python3 -m venv cvs_env
-source cvs_env/bin/activate  # On Windows: cvs_env\Scripts\activate
-```
-
-2. **Install from a local distribution file:**
-```bash
-pip install cvs-0.1.0.tar.gz
-```
+This method gives you more control over the virtual environment name and location.
 
 ## Verification
 
@@ -77,17 +98,20 @@ The `cvs` command will now be available globally in your environment. You can ru
 
 To upgrade CVS to the latest version:
 
-## If installed from source:
+## If installed from source using make:
+```bash
+cd /path/to/cvs/source
+git pull  # Get latest changes
+make install
+source .cvs_venv/bin/activate
+```
+
+## If installed from source manually:
 ```bash
 cd /path/to/cvs/source
 git pull  # Get latest changes
 python setup.py sdist
 pip install --upgrade dist/cvs*.tar.gz
-```
-
-## If installed from local distribution:
-```bash
-pip install --upgrade cvs-0.1.1.tar.gz
 ```
 
 After upgrading, verify the installation:
