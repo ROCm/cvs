@@ -41,17 +41,24 @@ It's recommended to run CVS from head node that is not a part of the test cluste
 This is to avoid loss of data if the node requires a reboot (such as during a system failure).
 
 
-Recommended installation (pip)
-------------------------------
+Method 1: Quick installation using Makefile (Recommended)
+----------------------------------------------------------
 
-CVS is packaged as a Python package and can be installed using pip. This is the recommended method.
+This is the quickest way to install CVS from source.
 
-1. Clone the repository:
+1. Clone the repository and install using make:
 
    .. code:: bash
 
      git clone https://github.com/ROCm/cvs
      cd cvs
+     make install
+
+   This will automatically:
+
+   - Build the source distribution
+   - Create a virtual environment in ``cvs_venv/``
+   - Install CVS in the virtual environment
 
    The CVS GitHub repository is organized in these directories:
 
@@ -60,22 +67,47 @@ CVS is packaged as a Python package and can be installed using pip. This is the 
    -   ``input``: This is a collection of the input JSON files that are provided to the PyTest scripts using the two arguments ``--cluster_file`` and the ``--config_file``. The ``--cluster_file`` is a JSON file which captures all the aspects of the cluster test bed, such as the IP address/hostnames, username, keyfile, and more.
    -   ``utils``: This is a collection of standalone scripts that can be run natively without PyTest. They offer different utility functions.
 
+2. Activate the virtual environment:
+
+   .. code:: bash
+
+     source cvs_venv/bin/activate
+
+After activation, verify CVS is available:
+
+   .. code:: bash
+
+     cvs list
+
+If you see a list of available test suites, CVS is installed correctly.
+
+Method 2: Manual installation
+------------------------------
+
+For users who want to install CVS in a custom virtual environment:
+
+1. Clone the repository:
+
+   .. code:: bash
+
+     git clone https://github.com/ROCm/cvs
+     cd cvs
+
 2. Build CVS:
 
    .. code:: bash
 
-     make build
+     python setup.py sdist
 
-3. (Recommended) Create and activate a Python virtual environment, then install CVS:
+3. Create and activate a Python virtual environment, then install CVS:
 
    .. code:: bash
 
-     python3 -m venv cvs_env
+     python3 -m venv cvs_env  # or any custom name
      source cvs_env/bin/activate
      pip install dist/cvs*.tar.gz
 
-
-This will install CVS and its dependencies into your environment. For more details, see the README.md in the CVS repository.
+This method gives you more control over the virtual environment name and location.
 
 After installation, verify CVS is available:
 
