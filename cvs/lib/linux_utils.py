@@ -856,3 +856,182 @@ def get_gpu_numa_dict(phdl):
 
     print(gpu_numa_dict)
     return gpu_numa_dict
+    """Detect Linux distro and return distro type"""
+    out_dict = phdl.exec('cat /etc/os-release')
+    for node, output in out_dict.items():
+        if re.search('ubuntu|debian', output, re.I):
+            return 'debian'
+        elif re.search('rhel|centos|fedora|rocky|alma', output, re.I):
+            return 'rhel'
+        elif re.search('sles|suse', output, re.I):
+            return 'suse'
+    return 'debian'  # Default fallback
+
+def get_package_manager_cmd(distro, action='install'):
+    #based on distro find  correct cmds
+    commands = {
+        'debian': {
+            'update': 'sudo apt-get update -y',
+            'install': 'sudo apt-get install -y',
+            'remove': 'sudo apt-get remove -y',
+        },
+        'rhel': {
+            'update': 'sudo dnf check-update || true',
+            'install': 'sudo dnf install -y',
+            'remove': 'sudo dnf remove -y',
+        },
+        'suse': {
+            'update': 'sudo zypper refresh',
+            'install': 'sudo zypper install -y',
+            'remove': 'sudo zypper remove -y',
+        }
+    }
+    return commands.get(distro, commands['debian']).get(action, '')
+
+def translate_package_name(package, distro):
+    #some pkgs differ in naming across distro. use right ones
+    if distro == 'debian':
+        return package
+    
+    # Package name mappings for non-Debian distros
+    package_map = {
+        'rhel': {
+            'libgtest-dev': 'gtest-devel',
+            'libpci-dev': 'pciutils-devel',
+            'libpci3': 'pciutils',
+            'libyaml-cpp-dev': 'yaml-cpp-devel',
+            'libibverbs-dev': 'libibverbs-devel',
+            'librdmacm-dev': 'librdmacm-devel',
+            'libibumad-dev': 'libibumad-devel',
+            'openmpi-bin': 'openmpi',
+            'openmpi-common': 'openmpi',
+            'libopenmpi-dev': 'openmpi-devel',
+            'hipblaslt-dev': 'hipblaslt-devel',
+            'ibverbs-providers': 'rdma-core',
+            'build-essential': ['gcc', 'gcc-c++', 'make'],  # Install separately as multiple packages
+            'apt-transport-https': None,  # Not needed
+            'software-properties-common': None,  # Not needed
+        },
+        'suse': {
+            'libgtest-dev': 'gtest',
+            'libpci-dev': 'pciutils-devel',
+            'libpci3': 'pciutils',
+            'libyaml-cpp-dev': 'libyaml-cpp-devel',
+            'openmpi-bin': 'openmpi',
+            'libopenmpi-dev': 'openmpi-devel',
+            'build-essential': ['gcc', 'gcc-c++', 'make']
+        }
+    }
+    
+    map_dict = package_map.get(distro, {})
+    return map_dict.get(package, package)
+
+def map_packages(distro, packages):
+    #update package names and flatten if needed
+    result = []
+    for pkg in packages:
+        translated = translate_package_name(pkg, distro)
+        
+        if translated is None:
+            # Skip packages not needed on this distro
+            continue
+        elif isinstance(translated, list):
+            # Package expands to multiple packages (e.g., build-essential)
+            result.extend(translated)
+        else:
+            # Single package
+            result.append(translated)
+    
+    return result
+
+def install_package(hdl, package, distro=None, timeout=200):
+    # Install a package using the appropriate package manager for the detected distro.
+    if distro is None:
+        distro = detect_distro(hdl)
+    
+    # Translate package name for the distro
+    translated_pkg = translate_package_name(package, distro)
+    
+    # Skip if package is not needed on this distro
+    if translated_pkg is None:
+        log.info(f'Package {package} not needed on {distro}, skipping')
+        return {}
+    
+    # Get the install command
+    install_cmd = get_package_manager_cmd(distro, 'install')
+    
+    # Execute and return out_dict for error checking
+    out_dict = hdl.exec(f'{install_cmd} {translated_pkg}', timeout=timeout)
+    return out_dict
+
+def update_package_cache(hdl, distro=None, timeout=600):
+    """
+    Update package manager cache and return out_dict for error checking.
+    
+    Returns:
+        out_dict: Command output dictionary for error checking
+    """
+    if distro is None:
+        distro = detect_distro(hdl)
+    
+    update_cmd = get_package_manager_cmd(distro, 'update')
+    out_dict = hdl.exec(update_cmd, timeout=timeout)
+    return out_dict
+
+def install_build_tools(hdl, distro, timeout=200):
+    """Install build tools appropriate for the distro"""
+    if distro == 'debian':
+        return install_package(hdl, 'build-essential', distro, timeout)
+    elif distro in ['rhel', 'suse']:
+        results = {}
+        for pkg in ['gcc', 'gcc-c++', 'make']:
+            out_dict = install_package(hdl, pkg, distro, timeout)
+            results.update(out_dict)
+        return results
+
+#linux distro discovery and package management
+def detect_distro(phdl):
+    """Detect Linux distro and return distro type"""
+    out_dict = phdl.exec('cat /etc/os-release')
+    for node, output in out_dict.items():
+        if re.search('ubuntu|debian', output, re.I):
+            return 'debian'
+        elif re.search('rhel|centos|fedora|rocky|alma', output, re.I):
+            return 'rhel'
+        elif re.search('sles|suse', output, re.I):
+            return 'suse'
+    return 'debian'  # Default fallback
+    """Detect Linux distro and return distro type"""
+    out_dict = phdl.exec('cat /etc/os-release')
+    for node, output in out_dict.items():
+        if re.search('ubuntu|debian', output, re.I):
+            return 'debian'
+        elif re.search('rhel|centos|fedora|rocky|alma', output, re.I):
+            return 'rhel'
+        elif re.search('sles|suse', output, re.I):
+            return 'suse'
+    return 'debian'  # Default fallback
+
+def get_package_manager_cmd(distro, action='install'):
+    #based on distro find  correct cmds
+    commands = {
+        'debian': {
+            'update': 'sudo apt-get update -y',
+            'install': 'sudo apt-get install -y',
+            'remove': 'sudo apt-get remove -y',
+        },
+        'rhel': {
+            'update': 'sudo dnf check-update || true',
+            'install': 'sudo dnf install -y',
+            'remove': 'sudo dnf remove -y',
+        },
+        'suse': {
+            'update': 'sudo zypper refresh',
+            'install': 'sudo zypper install -y',
+            'remove': 'sudo zypper remove -y',
+        }
+    }
+    return commands.get(distro, commands['debian']).get(action, '')
+
+
+
