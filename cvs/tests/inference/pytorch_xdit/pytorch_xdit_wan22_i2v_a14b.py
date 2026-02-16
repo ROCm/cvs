@@ -14,6 +14,7 @@ import re
 import shlex
 import socket
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
@@ -196,6 +197,73 @@ class OpenSshPssh:
         return out
 
 
+class OpenSshMultiPssh:
+    """
+    Multi-host drop-in replacement for `Pssh` using the system `ssh` client.
+
+    parallel-ssh/libssh2 commonly fails to authenticate on HPC environments where OpenSSH works.
+    This class runs per-host SSH commands concurrently with a bounded thread pool.
+    """
+
+    def __init__(self, hosts: list[str], user: str | None = None, pkey: str | None = None, max_workers: int = 32):
+        self.host_list = hosts
+        self.user = user
+        self.pkey = pkey
+        self.max_workers = max_workers
+
+    def _dest(self, host: str) -> str:
+        return f"{self.user}@{host}" if self.user else host
+
+    def _ssh_args(self, host: str) -> list[str]:
+        args = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "ConnectTimeout=10",
+        ]
+        if self.pkey:
+            args += ["-i", self.pkey]
+        args.append(self._dest(host))
+        return args
+
+    def _run_one(self, host: str, cmd: str, timeout=None, print_console=True) -> tuple[str, str]:
+        remote_cmd = f"bash -lc {shlex.quote(cmd)}"
+        ssh_cmd = self._ssh_args(host) + [remote_cmd]
+        completed = subprocess.run(
+            ssh_cmd,
+            text=True,
+            capture_output=True,
+            timeout=timeout if timeout is None else int(timeout),
+        )
+        out_str = (completed.stdout or "") + (completed.stderr or "")
+        if print_console:
+            printable = " ".join(shlex.quote(a) for a in ssh_cmd[:-1]) + " " + shlex.quote(_redact_secrets(cmd))
+            print(f"cmd = {printable}")
+            print(out_str)
+        return host, out_str
+
+    def exec(self, cmd: str, timeout=None, print_console=True):
+        return self.exec_cmd_list([cmd] * len(self.host_list), timeout=timeout, print_console=print_console)
+
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        if len(cmd_list) != len(self.host_list):
+            raise ValueError(f"cmd_list length ({len(cmd_list)}) must match host_list length ({len(self.host_list)})")
+        out: dict[str, str] = {}
+        workers = min(int(self.max_workers), max(1, len(self.host_list)))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = [
+                ex.submit(self._run_one, host, cmd, timeout, print_console)
+                for host, cmd in zip(self.host_list, cmd_list)
+            ]
+            for f in as_completed(futs):
+                host, out_str = f.result()
+                out[host] = out_str
+        return out
+
+
 def _redact_secrets(s: str) -> str:
     """
     Best-effort redaction for secrets that may appear in command strings/logs.
@@ -305,9 +373,11 @@ def hf_token(inference_dict):
     """
     Load the Hugging Face access token from the file path specified in config.
 
-    Returns empty string if file not found (will be caught later if download needed).
+    Returns empty string if not configured or file not found.
     """
     hf_token_file = inference_dict['hf_token_file']
+    if not hf_token_file:
+        return ""
     try:
         with open(hf_token_file, 'r') as fp:
             hf_token = fp.read().rstrip("\n")
@@ -344,14 +414,25 @@ def s_phdl(cluster_dict):
             pkey=cluster_dict.get("priv_key_file"),
         )
 
-    # Default: use parallel-ssh for remote execution
-    return Pssh(
-        log,
-        node_list,
-        user=cluster_dict.get('username'),
-        password=cluster_dict.get('password'),
-        pkey=cluster_dict.get('priv_key_file'),
-    )
+    # Multi-node mode: prefer system OpenSSH for robustness; fall back to parallel-ssh only if it works.
+    try:
+        p = Pssh(
+            log,
+            node_list,
+            user=cluster_dict.get('username'),
+            password=cluster_dict.get('password'),
+            pkey=cluster_dict.get('priv_key_file'),
+        )
+        # Smoke-test authentication quickly; if it fails, we'll fall back.
+        p.exec("true", timeout=10, print_console=False)
+        return p
+    except Exception as e:
+        log.warning(f"parallel-ssh authentication failed; falling back to OpenSSH for multi-node: {e}")
+        return OpenSshMultiPssh(
+            hosts=node_list,
+            user=cluster_dict.get("username"),
+            pkey=cluster_dict.get("priv_key_file"),
+        )
 
 
 @pytest.fixture(scope="module")
@@ -376,25 +457,29 @@ def gpu_type(s_phdl):
 
 def test_cleanup_stale_containers(s_phdl, inference_dict):
     """
-    Clean up potentially stale Docker containers before tests.
+    Clean up potentially stale Docker containers before tests on all nodes.
 
-    Kills the specific container and removes all containers/volumes.
+    Kills the specific container and removes all containers/volumes across all nodes.
     """
     container_name = inference_dict['container_name']
-    log.info(f"Cleaning up stale containers: {container_name}")
+    log.info(f"Cleaning up stale containers: {container_name} on {len(s_phdl.host_list)} node(s)")
 
+    # Cleanup runs on all nodes in parallel via Pssh
     docker_lib.kill_docker_container(s_phdl, container_name)
     docker_lib.delete_all_containers_and_volumes(s_phdl)
 
-    log.info("Container cleanup completed")
+    log.info("Container cleanup completed on all nodes")
 
 
 def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
     """
-    Verify HF model cache exists, or download if missing.
+    Verify the model is present locally on all nodes (no downloads).
 
-    Uses short-lived container with 'hf download' to populate cache.
-    Fails if HF_TOKEN is missing and download is required.
+    This benchmark is intended for large-scale parallel runs (100s of nodes). We must
+    avoid triggering Hugging Face downloads at runtime. Users should provide either:
+    - an explicit local filesystem path in config['model_repo'] (preferred), or
+    - a Hugging Face repo id in config['model_repo'] with the model already pre-cached
+      under config['hf_home'] (offline mode).
     """
     globals.error_list = []
 
@@ -402,63 +487,68 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
     model_rev = inference_dict['model_rev']
     hf_home = inference_dict['hf_home']
 
-    # Construct expected snapshot directory path
-    model_path_safe = model_repo.replace("/", "--")
-    snapshot_dir = f"{hf_home}/hub/models--{model_path_safe}/snapshots/{model_rev}"
+    log.info(f"Verifying model presence on {len(s_phdl.host_list)} node(s)")
 
-    log.info(f"Checking for model cache at: {snapshot_dir}")
+    # Preferred mode: config supplies explicit host path to the checkpoint directory.
+    if isinstance(model_repo, str) and model_repo.strip().startswith("/"):
+        host_model_path = model_repo.strip()
+        check_cmd = f"test -d {shlex.quote(host_model_path)} && echo 'EXISTS' || echo 'MISSING'"
+        check_result = s_phdl.exec(check_cmd)
 
-    # Check if snapshot directory exists
-    head_node = s_phdl.host_list[0]
-    check_cmd = f"test -d {snapshot_dir} && echo 'EXISTS' || echo 'MISSING'"
-    check_result = s_phdl.exec(check_cmd)
+        missing_nodes = []
+        for node, output in check_result.items():
+            if "EXISTS" not in (output or ""):
+                missing_nodes.append(node)
+                log.error(f"Local model path not found on {node}: {host_model_path}")
+            else:
+                log.info(f"Model found on {node}: {host_model_path}")
 
-    if "EXISTS" in check_result[head_node]:
-        log.info(f"Model cache found at {snapshot_dir}")
+        if missing_nodes:
+            fail_test(
+                f"Local model path not found on {len(missing_nodes)} node(s): {', '.join(missing_nodes)}. "
+                f"Pre-stage the model on all nodes and set config['model_repo'] to that path."
+            )
+            update_test_result()
+            return
+
+        inference_dict["_resolved_model_mount_host"] = host_model_path
+        inference_dict["_resolved_ckpt_dir_container"] = "/model"
+        log.info(f"Using local model path: {host_model_path} (mounted to /model in container) on all nodes")
         update_test_result()
         return
 
-    log.info(f"Model cache not found, downloading {model_repo}@{model_rev}...")
+    # Backward-compatible offline mode: config supplies HF repo id; model must already be cached under hf_home.
+    model_path_safe = model_repo.replace("/", "--")
+    snapshot_dir_host = f"{hf_home}/hub/models--{model_path_safe}/snapshots/{model_rev}"
+    log.info(f"Checking for pre-cached snapshot at: {snapshot_dir_host} on all nodes")
+    check_cmd = f"test -d {shlex.quote(snapshot_dir_host)} && echo 'EXISTS' || echo 'MISSING'"
+    check_result = s_phdl.exec(check_cmd)
 
-    # Require HF token for download
-    if not hf_token:
+    missing_nodes = []
+    for node, output in check_result.items():
+        if "EXISTS" not in (output or ""):
+            missing_nodes.append(node)
+            log.error(f"Pre-cached model snapshot not found on {node}: {snapshot_dir_host}")
+        else:
+            log.info(f"Pre-cached model snapshot found on {node}: {snapshot_dir_host}")
+
+    if missing_nodes:
         fail_test(
-            f"HF token required to download {model_repo}. "
-            f"Please ensure {inference_dict['hf_token_file']} exists and contains a valid token."
+            f"Pre-cached model snapshot not found on {len(missing_nodes)} node(s): {', '.join(missing_nodes)}. "
+            f"Pre-populate HF cache under {hf_home} (no downloads are performed by this test)."
         )
         update_test_result()
         return
 
-    # Run download container
-    container_image = inference_dict['container_image']
-    download_cmd = (
-        f"docker run --rm "
-        f"--mount type=bind,source={hf_home},target=/hf_home "
-        f"-e HF_HOME=/hf_home "
-        f"-e HF_TOKEN={hf_token} "
-        f"{container_image} "
-        f"hf download {model_repo} --revision {model_rev}"
-    )
-
-    log.info(f"Running download: {_redact_secrets(download_cmd)}")
-
-    try:
-        download_result = s_phdl.exec(download_cmd, timeout=1800)  # 30 min timeout
-        log.info(f"Download output: {download_result[head_node]}")
-
-        # Verify download succeeded
-        verify_result = s_phdl.exec(check_cmd)
-        if "EXISTS" not in verify_result[head_node]:
-            fail_test("Model download failed: snapshot directory still missing after download")
-    except Exception as e:
-        fail_test(f"Model download failed with exception: {e}")
+    inference_dict["_resolved_ckpt_dir_container"] = f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
+    log.info(f"Using pre-cached snapshot: {inference_dict['_resolved_ckpt_dir_container']} on all nodes")
 
     update_test_result()
 
 
 def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_token):
     """
-    Run WAN 2.2 I2V-A14B benchmark inside pytorch-xdit container.
+    Run WAN 2.2 I2V-A14B benchmark inside pytorch-xdit container on all nodes in parallel.
 
     Executes torchrun with configured parameters and mounts:
     - HF cache to /hf_home
@@ -482,21 +572,19 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     compile_flag = "--compile" if wan_params['compile'] else ""
     torchrun_nproc = wan_params['torchrun_nproc']
 
-    # Create output directory
-    head_node = s_phdl.host_list[0]
+    # Get hostnames from all nodes
+    log.info(f"Getting hostnames from {len(s_phdl.host_list)} node(s)")
     hostname_result = s_phdl.exec('hostname')
-    hostname = hostname_result[head_node].strip()
-    output_dir = f"{output_base_dir}/wan_22_{hostname}_outputs"
-    outputs_dir = f"{output_dir}/outputs"
+    node_to_hostname = {node: hostname_result[node].strip() for node in s_phdl.host_list}
 
-    log.info(f"Creating output directory: {outputs_dir}")
-    s_phdl.exec(f"mkdir -p {outputs_dir}")
+    # Prefer the resolved checkpoint dir computed in test_verify_hf_cache_or_download.
+    ckpt_dir = inference_dict.get("_resolved_ckpt_dir_container")
+    if not ckpt_dir:
+        # Fallback to prior behavior but still offline (assumes cache is pre-populated).
+        model_path_safe = model_repo.replace("/", "--")
+        ckpt_dir = f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
 
-    # Construct checkpoint directory path
-    model_path_safe = model_repo.replace("/", "--")
-    ckpt_dir = f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
-
-    # Build docker run command
+    # Build common docker command components
     device_list = inference_dict['container_config']['device_list']
     volume_dict = inference_dict['container_config']['volume_dict']
     env_dict = inference_dict['container_config']['env_dict']
@@ -504,13 +592,7 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     # Build device arguments
     device_args = " ".join([f"--device={dev}" for dev in device_list])
 
-    # Build volume arguments (add our required mounts)
-    volume_dict_full = volume_dict.copy()
-    volume_dict_full[output_dir] = "/outputs"
-    volume_dict_full[hf_home] = "/hf_home"
-    volume_args = " ".join([f"--mount type=bind,source={src},target={dst}" for src, dst in volume_dict_full.items()])
-
-    # Build environment arguments
+    # Build environment arguments (common to all nodes)
     env_dict_full = env_dict.copy()
     env_dict_full['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
     env_dict_full['OMP_NUM_THREADS'] = '16'
@@ -519,7 +601,7 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
         env_dict_full['HF_TOKEN'] = hf_token
     env_args = " ".join([f"-e {key}={value}" for key, value in env_dict_full.items()])
 
-    # Build torchrun command
+    # Build torchrun command (common to all nodes)
     torchrun_cmd = (
         f"torchrun --nproc_per_node={torchrun_nproc} /app/Wan2.2/run.py "
         f"--task i2v-A14B "
@@ -539,39 +621,64 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
         f"{compile_flag}"
     )
 
-    # Full docker command
-    docker_cmd = (
-        f"docker run "
-        f"--cap-add=SYS_PTRACE "
-        f"--security-opt seccomp=unconfined "
-        f"--user root "
-        f"{device_args} "
-        f"--ipc=host "
-        f"--network host "
-        f"--rm "
-        f"--privileged "
-        f"--name {container_name} "
-        f"{volume_args} "
-        f"{env_args} "
-        f"{container_image} "
-        f"{torchrun_cmd}"
-    )
+    # Create per-node output directories and build per-node docker commands
+    mkdir_cmds = []
+    docker_cmds = []
 
-    log.info(f"Running WAN 2.2 benchmark on {head_node}")
-    log.info(f"Output directory: {output_dir}")
-    log.debug(f"Docker command: {_redact_secrets(docker_cmd)}")
+    for node in s_phdl.host_list:
+        hostname = node_to_hostname[node]
+        output_dir = f"{output_base_dir}/wan_22_{hostname}_outputs"
+        outputs_dir = f"{output_dir}/outputs"
+
+        # Create output directory command
+        mkdir_cmds.append(f"mkdir -p {outputs_dir}")
+
+        # Build volume arguments with per-node output directory
+        volume_dict_full = volume_dict.copy()
+        volume_dict_full[output_dir] = "/outputs"
+        volume_dict_full[hf_home] = "/hf_home"
+        # If user provided an explicit local model path, mount it consistently to /model.
+        if inference_dict.get("_resolved_model_mount_host"):
+            volume_dict_full[inference_dict["_resolved_model_mount_host"]] = "/model"
+        volume_args = " ".join(
+            [f"--mount type=bind,source={src},target={dst}" for src, dst in volume_dict_full.items()]
+        )
+
+        # Full docker command for this node
+        docker_cmd = (
+            f"docker run "
+            f"--cap-add=SYS_PTRACE "
+            f"--security-opt seccomp=unconfined "
+            f"--user root "
+            f"{device_args} "
+            f"--ipc=host "
+            f"--network host "
+            f"--rm "
+            f"--privileged "
+            f"--name {container_name} "
+            f"{volume_args} "
+            f"{env_args} "
+            f"{container_image} "
+            f"{torchrun_cmd}"
+        )
+        docker_cmds.append(docker_cmd)
+        log.info(f"Node {node} ({hostname}) will write to: {output_dir}")
+
+    # Create output directories on all nodes in parallel
+    log.info(f"Creating output directories on {len(s_phdl.host_list)} node(s)")
+    s_phdl.exec_cmd_list(mkdir_cmds)
+
+    log.info(f"Running WAN 2.2 benchmark on {len(s_phdl.host_list)} node(s) in parallel")
+    log.debug(f"Docker command (sample): {_redact_secrets(docker_cmds[0])}")
 
     try:
-        # Run with generous timeout (benchmarks can take 10+ minutes)
-        log.info("Starting benchmark (this may take several minutes)...")
-        benchmark_result = s_phdl.exec(docker_cmd, timeout=1800)  # 30 min timeout
+        # Run benchmarks on all nodes in parallel
+        log.info("Starting benchmarks (this may take several minutes)...")
+        benchmark_results = s_phdl.exec_cmd_list(docker_cmds, timeout=1800)  # 30 min timeout
 
-        log.info("Benchmark completed")
-        log.debug(f"Benchmark output:\n{benchmark_result[head_node]}")
+        log.info("Benchmarks completed on all nodes")
 
-        # Check for common failure patterns
-        output = benchmark_result[head_node]
-        # Avoid overly-generic "error" matching; focus on patterns that strongly indicate failure.
+        # Check for common failure patterns on each node
         fatal_patterns = [
             r"\bTraceback\b",
             r"\bModuleNotFoundError\b",
@@ -579,14 +686,23 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
             r"No AMD GPU detected",
             r"0 active drivers \(\[\]\)\. There should only be one\.",
         ]
-        if any(re.search(p, output, re.I) for p in fatal_patterns):
-            fail_test("Benchmark output indicates a failure (see logs above).")
+
+        failed_nodes = []
+        for node, output in benchmark_results.items():
+            if any(re.search(p, output, re.I) for p in fatal_patterns):
+                log.error(f"Benchmark on {node} indicates a failure")
+                failed_nodes.append(node)
+            else:
+                log.info(f"Benchmark on {node} completed successfully")
+
+        if failed_nodes:
+            fail_test(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
 
     except Exception as e:
         fail_test(f"Benchmark execution failed with exception: {e}")
 
-    # Store output directory for next test
-    inference_dict['_test_output_dir'] = output_dir
+    # Note: _test_output_dir is no longer set since we run on multiple nodes.
+    # The parsing test will use output_base_dir to find all wan_22_*_outputs directories.
 
     update_test_result()
 
@@ -624,17 +740,37 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
             update_test_result()
             return
 
-    # If multiple run directories exist under output_base_dir, aggregate like `wan.sh`
+    node_count = len(getattr(s_phdl, "host_list", []) or [])
+
+    # If running on multiple nodes, aggregate like `wan.sh`.
+    # For single-node runs, do NOT aggregate across output_base_dir because it may contain
+    # stale run directories from other nodes / previous executions.
     base_dir = inference_dict.get("output_base_dir")
     wan_params = benchmark_params_dict["wan22_i2v_a14b"]
     expected_results = wan_params["expected_results"]
 
-    if base_dir:
+    agg, agg_errors = None, []
+    if base_dir and node_count > 1:
+        # Filter aggregation to the current nodes only (avoid mixing with stale dirs).
+        try:
+            hostnames = s_phdl.exec("hostname", print_console=False)
+            expected_dirnames = []
+            for _, hn in (hostnames or {}).items():
+                h = (hn or "").strip()
+                if h:
+                    expected_dirnames.append(f"wan_22_{h}_outputs")
+        except Exception:
+            expected_dirnames = []
+
         agg, agg_errors = WanOutputParser.parse_runs_under_base_dir(
-            base_dir=base_dir, expected_artifact="video.mp4", run_glob="wan_22_*_outputs", require_artifact=True
+            base_dir=base_dir,
+            expected_artifact="video.mp4",
+            run_glob="wan_22_*_outputs",
+            require_artifact=True,
+            allowed_run_dir_names=expected_dirnames or None,
         )
-    else:
-        agg, agg_errors = None, ["output_base_dir not set in config; cannot aggregate runs"]
+    elif not base_dir:
+        agg_errors = ["output_base_dir not set in config; cannot aggregate runs"]
 
     for e in agg_errors:
         log.warning(f"Parse warning: {e}")
