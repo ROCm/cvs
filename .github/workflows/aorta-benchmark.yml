@@ -1,0 +1,64 @@
+name: CVS Aorta Benchmark
+
+on:
+  push:
+    branches:
+      - users/arravikum/aorta_benchmark
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: "Type of Benchmark test run"
+        type: string
+        required: true
+        default: "Aorta Benchmark"
+  pull_request:
+    types:
+      - labeled
+      - opened
+      - synchronize
+      
+
+permissions:
+  contents: read
+
+jobs:
+  cvs-aorta-benchmark:
+    name: cvs Aorta Benchmark Tests
+    runs-on: linux-vultr-mi325-scale-runner
+    steps:
+      - name: Test Aorta Benchmark Tests
+        shell: bash
+        run: |
+          cd /home/arravikum/cvs_aorta/cvs-sbatch
+          ./run_direct.sh --cluster ./cluster_config.json --config ./config_aorta_test.yaml --test ../cvs/cvs/tests/benchmark/test_aorta.py
+
+      - name: Collect pytest HTML report
+        if: always()
+        shell: bash
+        run: |
+          echo "Searching for pytest_report.html..."
+
+          REPORT_PATH=$(ls -t /tmp/cvs_*/pytest_report.html 2>/dev/null | head -n1)
+
+          if [ -z "$REPORT_PATH" ]; then
+            echo "No pytest_report.html found"
+            exit 0
+          fi
+
+          echo "Found report at: $REPORT_PATH"
+          cp "$REPORT_PATH" ./pytest_report.html
+          ls -lah ./pytest_report.html
+
+
+      - name: Upload pytest HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aorta-benchmark-pytest-report
+          path: pytest_report.html
+
+
+
+
+
+          
