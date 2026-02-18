@@ -26,16 +26,35 @@ jobs:
     name: cvs Aorta Benchmark Tests
     runs-on: linux-vultr-mi325-scale-runner
     steps:
-      - name: Checkout TheRock repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: "ROCm/cvs"
-
       - name: Test Aorta Benchmark Tests
         shell: bash
         run: |
           cd /home/arravikum/cvs_aorta/cvs-sbatch
           ./run_direct.sh --cluster ./cluster_config.json --config ./config_aorta_test.yaml --test ../cvs/cvs/tests/benchmark/test_aorta.py
+
+      - name: Collect pytest HTML report
+        if: always()
+        shell: bash
+        run: |
+          echo "Searching for latest pytest_report.html..."
+          REPORT_PATH=$(find /tmp -type f -name pytest_report.html -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | awk '{print $2}')
+          
+          if [ -z "$REPORT_PATH" ]; then
+            echo "No pytest_report.html found"
+            exit 0
+          fi
+
+          echo "Found report at: $REPORT_PATH"
+          cp "$REPORT_PATH" ./pytest_report.html
+          ls -lah ./pytest_report.html
+
+      - name: Upload pytest HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aorta-benchmark-pytest-report
+          path: pytest_report.html
+
 
 
 
