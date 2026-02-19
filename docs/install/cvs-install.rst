@@ -294,9 +294,9 @@ JAX / Megatron training configuration files
 
    .. code:: bash
 
-     cvs copy-config training/jax/mi300x_distributed_llama3_1_70b.json --output ~/my_training_config.json
+     cvs copy-config training/jax/mi300x_jax_llama3_1_70b_distributed.json --output ~/my_training_config.json
      # Or for Megatron:
-     cvs copy-config training/megatron/mi3xx_distributed_megatron_llama.json --output ~/my_megatron_config.json
+     cvs copy-config training/megatron/mi3xx_megatron_llama_distributed.json --output ~/my_megatron_config.json
 
 3. Edit the file and modify parameters with the ``<changeme>`` value to your specifications.
 4. Change any other parameters relevant to your testing requirements. 
