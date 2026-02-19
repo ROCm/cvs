@@ -15,34 +15,74 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
 
 .. code:: text
 
-  Available tests:
-    - agfhc_cvs
-    - babelstream_cvs
-    - csp_qual_agfhc
-    - distributed_llama3_1_405b
-    - distributed_llama3_1_70b
-    - distributed_llama3_1_8b
-    - distributed_llama_3_1_70b
-    - host_configs_cvs
-    - ib_perf_bw_test
-    - install_agfhc
-    - install_babelstream
-    - install_ibperf_tools
-    - install_rocblas
-    - install_rvs
-    - install_transferbench
-    - jax_llama3_1_405b_training
-    - jax_llama3_1_70b_training
-    - jax_llama_training
-    - megatron_llama_training
-    - rccl_multinode_cvs
-    - rccl_multinode_default_cvs
-    - rccl_singlenode_cvs
-    - rocblas_cvs
-    - rvs_cvs
-    - singlenode_llama_3_1_70b
-    - singlenode_llama_3_1_8b
-    - transferbench_cvs
+  Available Tests
+  ================================================================================
+  
+  Package: cvs
+  --------------------------------------------------------------------------------
+  
+    cvs.tests.benchmark (1 test suite)
+      • test_aorta
+  
+    cvs.tests.health (4 test suites)
+      • agfhc_cvs
+      • csp_qual_agfhc
+      • rvs_cvs
+      • transferbench_cvs
+  
+    cvs.tests.health.install (5 test suites)
+      • install_agfhc
+      • install_babelstream
+      • install_rocblas
+      • install_rvs
+      • install_transferbench
+  
+    cvs.tests.ibperf (2 test suites)
+      • ib_perf_bw_test
+      • install_ibperf_tools
+  
+    cvs.tests.inference.inferencemax (1 test suite)
+      • inferencemax_gpt_oss_120b_single
+  
+    cvs.tests.inference.pytorch_xdit (2 test suites)
+      • pytorch_xdit_flux1_dev_single
+      • pytorch_xdit_wan22_14b_single
+  
+    cvs.tests.inference.sglang (2 test suites)
+      • sglang_deepseek_r1_671b_distributed
+      • sglang_llama_70b_distributed
+  
+    cvs.tests.inference.vllm (4 test suites)
+      • vllm_deepseek31_685b_single
+      • vllm_gpt_oss_120b_single
+      • vllm_qwen3_235b_single
+      • vllm_qwen3_80b_single
+  
+    cvs.tests.mori (1 test suite)
+      • mori_benchmark_test
+  
+    cvs.tests.platform (1 test suite)
+      • host_configs_cvs
+  
+    cvs.tests.rccl (4 test suites)
+      • rccl_heatmap_cvs
+      • rccl_multinode_cvs
+      • rccl_multinode_default_cvs
+      • rccl_singlenode_cvs
+  
+    cvs.tests.training.jax (3 test suites)
+      • jax_llama3_1_405b_distributed
+      • jax_llama3_1_70b_distributed
+      • jax_llama3_1_70b_single
+  
+    cvs.tests.training.megatron (4 test suites)
+      • megatron_llama3_1_70b_distributed
+      • megatron_llama3_1_70b_single
+      • megatron_llama3_1_8b_distributed
+      • megatron_llama3_1_8b_single
+  
+  ================================================================================
+  Total: 34 test suites across 1 package(s)
 
 
 Run all tests in a file:
@@ -411,21 +451,21 @@ You can list all available Megatron training test cases using the CLI:
     - test_rocblas_int8_benchmark
 .. code:: bash
 
-  cvs list singlenode_llama_3_1_70b
+  cvs list megatron_llama3_1_70b_single
 
 .. code:: text
 
-  Available tests in singlenode_llama_3_1_70b:
+  Available tests in megatron_llama3_1_70b_single:
     - test_cleanup_stale_containers
     - test_launch_megatron_containers
     - test_llama_3_1_fp8_single_node
 .. code:: bash
 
-  cvs list singlenode_llama_3_1_8b
+  cvs list megatron_llama3_1_8b_single
 
 .. code:: text
 
-  Available tests in singlenode_llama_3_1_8b:
+  Available tests in megatron_llama3_1_8b_single:
     - test_cleanup_stale_containers
     - test_launch_megatron_containers
     - test_llama_3_1_fp8_single_node
@@ -457,42 +497,42 @@ Single Node 8b MI3XX
 
 .. code:: bash
 
-  cvs run singlenode_llama_3_1_8b --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi3xx_singlenode_megatron_llama.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+  cvs run megatron_llama3_1_8b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi3xx_megatron_llama_single.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
 
 Single Node 8b MI35X
 ~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
-  cvs run singlenode_llama_3_1_8b --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi35x_singlenode_megatron_llama.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+  cvs run megatron_llama3_1_8b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi35x_megatron_llama_single.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
 
 Single Node 70b MI3XX
 ~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
-  cvs run singlenode_llama_3_1_70b --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi3xx_singlenode_megatron_llama.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+  cvs run megatron_llama3_1_70b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi3xx_megatron_llama_single.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
 
 Single Node 70b MI35X
 ~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
-  cvs run singlenode_llama_3_1_70b --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi35x_singlenode_megatron_llama.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+  cvs run megatron_llama3_1_70b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi35x_megatron_llama_single.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
 
 Distributed 8b
 ~~~~~~~~~~~~~~
 
 .. code:: bash
 
-  cvs run distributed_llama3_1_8b --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi3xx_distributed_megatron_llama.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+  cvs run megatron_llama3_1_8b_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi3xx_megatron_llama_distributed.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
 
 Distributed 70b
 ~~~~~~~~~~~~~~~
 
 .. code:: bash
 
-  cvs run distributed_llama3_1_70b --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi3xx_distributed_megatron_llama.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+  cvs run megatron_llama3_1_70b_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi3xx_megatron_llama_distributed.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
 
 Test results
 ============

@@ -77,7 +77,7 @@ class TestCopyConfigPlugin(unittest.TestCase):
         """Test overwrite behavior with and without --force flag"""
 
         # Use a specific config file for testing
-        test_config_path = "training/jax/mi300x_distributed_llama3_1_70b.json"
+        test_config_path = "training/jax/mi300x_jax_llama3_1_70b_distributed.json"
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = os.path.join(temp_dir, "test_config.json")
@@ -158,7 +158,7 @@ class TestCopyConfigPlugin(unittest.TestCase):
         """Test overwrite behavior for single file copy with and without --force"""
 
         # Use a specific config file for testing
-        test_config_path = "training/jax/mi300x_distributed_llama3_1_70b.json"
+        test_config_path = "training/jax/mi300x_jax_llama3_1_70b_distributed.json"
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = os.path.join(temp_dir, "test_config.json")
