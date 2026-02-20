@@ -32,6 +32,7 @@ class ParseStatus(Enum):
     SUCCESS = "success"
     PARTIAL = "partial"  # Some results parsed, some failed
     FAILED = "failed"
+    NO_DATA = "no_data"  # No data to parse (e.g., TraceLens skipped, Chrome traces disabled)
 
 
 T = TypeVar('T', bound=BaseModel)
@@ -389,8 +390,12 @@ class AortaBenchmarkConfigFile(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # Catch typos in top-level keys
 
-    # Required: Path to aorta repository
+    # Path to Aorta repository on host (will be bind-mounted). If missing and aorta_auto_clone is true, it is cloned.
     aorta_path: str = Field(description="Path to Aorta repository on host (will be bind-mounted)")
+
+    # Optional: clone Aorta repo when aorta_path does not exist
+    aorta_auto_clone: bool = Field(default=False, description="If true and aorta_path missing, clone from aorta_clone_url")
+    aorta_clone_url: Optional[str] = Field(default=None, description="Git URL to clone when aorta_auto_clone is true")
 
     # Container settings
     container_mount_path: str = Field(default="/mnt", description="Mount point inside container for aorta_path")
@@ -458,6 +463,9 @@ class AortaBenchmarkConfigFile(BaseModel):
 
         aorta = Path(self.aorta_path)
         if not aorta.exists():
+            if self.aorta_auto_clone and self.aorta_clone_url:
+                # Runner will clone in setup(); skip path checks here
+                return errors
             errors.append(f"aorta_path does not exist: {self.aorta_path}")
         else:
             # Check internal paths
@@ -781,3 +789,4 @@ def validate_config_file(
     except Exception as e:
         # Re-raise with file context
         raise ValueError(f"Invalid configuration in {config_path}:\n{e}") from e
+

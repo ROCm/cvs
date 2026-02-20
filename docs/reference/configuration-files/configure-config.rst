@@ -21,6 +21,7 @@ The following list provides a link to code snippets and the parameters for each 
 - :doc:`Health </reference/configuration-files/health>`
 - :doc:`InfiniBand (IB Perf) </reference/configuration-files/ib>`
 - :doc:`RCCL </reference/configuration-files/rccl>`
+- :doc:`Aorta benchmark </reference/configuration-files/aorta>`
 - :doc:`JAX </reference/configuration-files/jax>`
 - :doc:`Megatron </reference/configuration-files/megatron>`
 
