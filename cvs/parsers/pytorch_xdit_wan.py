@@ -140,6 +140,7 @@ class WanOutputParser:
         expected_artifact: str = "video.mp4",
         run_glob: str = "wan_22_*_outputs",
         require_artifact: bool = True,
+        allowed_run_dir_names: Optional[List[str]] = None,
     ) -> Tuple[Optional[WanAggregateResult], List[str]]:
         """
         Parse multiple WAN run directories under a base directory and compute an overall average.
@@ -156,8 +157,14 @@ class WanOutputParser:
             return None, [f"Base directory does not exist: {base_dir}"]
 
         run_dirs = sorted([p for p in base.glob(run_glob) if p.is_dir()])
+        if allowed_run_dir_names is not None:
+            allowed = set(allowed_run_dir_names)
+            run_dirs = [p for p in run_dirs if p.name in allowed]
         if not run_dirs:
-            return None, [f"No run directories found under {base_dir} matching {run_glob}"]
+            msg = f"No run directories found under {base_dir} matching {run_glob}"
+            if allowed_run_dir_names is not None:
+                msg += f" (filtered to {len(allowed_run_dir_names)} expected run dir(s))"
+            return None, [msg]
 
         per_run: List[WanRunSummary] = []
         for run_dir in run_dirs:
