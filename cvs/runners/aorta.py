@@ -10,13 +10,14 @@ All rights reserved.
 
 from __future__ import annotations
 
+import logging
+import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
-import time
-import logging
 
 if TYPE_CHECKING:
     import docker
@@ -105,6 +106,10 @@ class AortaConfig(RunConfig):
     # NOTE: No default - must be explicitly provided via config file
     aorta_path: Path = field(default_factory=Path)
 
+    # Optional: clone repo when aorta_path does not exist
+    aorta_auto_clone: bool = False
+    aorta_clone_url: Optional[str] = None
+
     # Mount point inside container
     container_mount_path: str = "/mnt"
 
@@ -170,8 +175,12 @@ class AortaRunner(BaseRunner):
         """Validate Aorta-specific configuration."""
         errors = super().validate_config()
 
-        if not self.config.aorta_path.exists():
-            errors.append(f"Aorta path does not exist: {self.config.aorta_path}")
+        aorta_exists = self.config.aorta_path.exists()
+        if not aorta_exists and not (self.config.aorta_auto_clone and self.config.aorta_clone_url):
+            errors.append(f"Aorta path does not exist: {self.config.aorta_path} (set aorta_auto_clone and aorta_clone_url to clone)")
+
+        if not aorta_exists:
+            return errors  # Will clone in setup(); skip path checks
 
         config_path = self.config.aorta_path / self.config.base_config
         if not config_path.exists():
@@ -232,6 +241,30 @@ class AortaRunner(BaseRunner):
         except Exception as e:
             log.warning(f"Error cleaning up container on {node}: {e}")
 
+    def _get_remote_uid_gid(self, node: str) -> Optional[Tuple[int, int]]:
+        """
+        Get UID and GID for config.username on the given node via SSH.
+        Used so the container can run as the host user and avoid permission issues (e.g. no chmod 777).
+        """
+        try:
+            uid_out = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", f"{self.config.username}@{node}", "id -u"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            gid_out = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", f"{self.config.username}@{node}", "id -g"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if uid_out.returncode == 0 and gid_out.returncode == 0 and uid_out.stdout.strip() and gid_out.stdout.strip():
+                return (int(uid_out.stdout.strip()), int(gid_out.stdout.strip()))
+        except (subprocess.TimeoutExpired, ValueError, FileNotFoundError) as e:
+            log.debug(f"Could not get remote UID/GID for {node}: {e}")
+        return None
+
     def _launch_container(self, client: docker.DockerClient, node: str) -> Container:
         """
         Launch Aorta container on a node.
@@ -251,6 +284,8 @@ class AortaRunner(BaseRunner):
         # Build device list for GPU access
         devices = ["/dev/kfd", "/dev/dri"]
 
+        # Run as root so the container can access GPUs (/dev/kfd, /dev/dri). After teardown we chown
+        # the aorta path to the host user so you don't need chmod 777 for the next run.
         log.info(f"Launching container {cfg.container_name} on {node}")
         log.info(f"  Image: {cfg.image}")
         log.info(f"  Mount: {self.config.aorta_path} -> {self.config.container_mount_path}")
@@ -431,11 +466,36 @@ class AortaRunner(BaseRunner):
         except Exception as e:
             return (node, False, str(e))
 
+    def _ensure_aorta_repo(self) -> bool:
+        """Clone Aorta repo into aorta_path if it does not exist and auto_clone is enabled."""
+        if self.config.aorta_path.exists():
+            return True
+        if not self.config.aorta_auto_clone or not self.config.aorta_clone_url:
+            return False
+        path = self.config.aorta_path
+        parent = path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        log.info(f"Cloning Aorta from {self.config.aorta_clone_url} into {path}")
+        try:
+            subprocess.run(
+                ["git", "clone", self.config.aorta_clone_url, str(path)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            log.info(f"Aorta repository cloned to {path}")
+            return True
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+            log.error(f"Failed to clone Aorta repo: {e}")
+            return False
+
     def setup(self) -> bool:
         """
         Set up Aorta environment using parallel deployment.
 
-        Uses ThreadPoolExecutor for concurrent setup across all nodes:
+        If aorta_path is missing and aorta_auto_clone is true, clones the repo first.
+        Then:
         1. Connect to Docker daemon on each node
         2. Pull image if needed
         3. Launch container with GPU access and aorta bind mount
@@ -443,6 +503,10 @@ class AortaRunner(BaseRunner):
 
         This significantly reduces setup time for multi-node clusters.
         """
+        if not self.config.aorta_path.exists() and not self._ensure_aorta_repo():
+            log.error("Aorta path does not exist and auto-clone failed or is disabled")
+            return False
+
         nodes = self.config.nodes
         num_nodes = len(nodes)
 
@@ -526,7 +590,15 @@ class AortaRunner(BaseRunner):
                     override_args += f' --override {key}="{value}"'
 
             # Execute experiment script with streaming output for real-time feedback
-            exp_cmd = f"bash {self.config.container_mount_path}/{self.config.experiment_script}"
+            # Note: override_args is passed via environment if the script supports it
+            if override_args:
+                env["AORTA_OVERRIDE_ARGS"] = override_args.strip()
+                log.info(f"Training overrides: {override_args.strip()}")
+
+            # Pass the base config file to the experiment script
+            # launch_rocm.sh expects: CONFIG=${1:-default.yaml}
+            config_path = f"{self.config.container_mount_path}/{self.config.base_config}"
+            exp_cmd = f"bash {self.config.container_mount_path}/{self.config.experiment_script} {config_path}"
             log.info(f"Running experiment: {exp_cmd}")
             log.info("Streaming output (this may take several minutes)...")
 
@@ -551,26 +623,75 @@ class AortaRunner(BaseRunner):
                     error_message=f"Experiment exited with code {exit_code}",
                 )
 
-            # Determine output directory from environment
+            # Find torch_profiler directory - Aorta saves traces to output_dir/torch_profiler
+            # The output_dir is configured in the YAML config (e.g., "overlap_debug_repro")
+            # We search for the most recent torch_profiler directory
             nch = self.config.environment.NCCL_MAX_NCHANNELS
             compute_ch = 256 - nch
-            output_dir_name = f"nodes1_rccl_develop_commsCh{nch}_computeCh{compute_ch}"
-            output_dir = self.config.aorta_path / output_dir_name
 
-            # Collect artifact paths
-            trace_dir = output_dir / "torch_profiler"
-            if trace_dir.exists():
+            trace_dir = None
+            output_dir = None
+
+            # Search for torch_profiler directories in aorta_path (handles nested dirs like artifacts/*/torch_profiler)
+            for candidate in self.config.aorta_path.glob("**/torch_profiler"):
+                if candidate.is_dir():
+                    # Use the most recently modified one (check mtime of rank subdirs or files inside)
+                    try:
+                        # Get mtime of most recent file in the directory
+                        latest_file = max(
+                            candidate.glob("**/*"), key=lambda p: p.stat().st_mtime if p.is_file() else 0, default=None
+                        )
+                        candidate_mtime = (
+                            latest_file.stat().st_mtime
+                            if latest_file and latest_file.is_file()
+                            else candidate.stat().st_mtime
+                        )
+                    except (ValueError, OSError):
+                        candidate_mtime = candidate.stat().st_mtime
+
+                    if trace_dir is None:
+                        trace_dir = candidate
+                        output_dir = candidate.parent
+                        trace_mtime = candidate_mtime
+                    elif candidate_mtime > trace_mtime:
+                        trace_dir = candidate
+                        output_dir = candidate.parent
+                        trace_mtime = candidate_mtime
+
+            # Required artifact for host-side parsing: torch_traces (parse runs on host, not in container)
+            if trace_dir and trace_dir.exists():
                 artifacts["torch_traces"] = trace_dir
-                log.info(f"Found trace artifacts at {trace_dir}")
+                log.info(f"Found trace artifacts at {trace_dir} (host_parse_path will use these)")
             else:
-                log.warning(f"Expected trace directory not found: {trace_dir}")
+                # Fallback to legacy path format
+                output_dir_name = f"nodes1_rccl_develop_commsCh{nch}_computeCh{compute_ch}"
+                output_dir = self.config.aorta_path / output_dir_name
+                trace_dir = output_dir / "torch_profiler"
+                if trace_dir.exists():
+                    artifacts["torch_traces"] = trace_dir
+                    log.info(f"Found trace artifacts at {trace_dir} (host_parse_path will use these)")
+                else:
+                    log.warning(
+                        "No torch_profiler directory found; host cannot produce benchmark metrics without torch_traces"
+                    )
 
-            # Run post-benchmark analysis using Aorta's scripts
-            if self.config.analysis.enable_tracelens and trace_dir.exists():
+            # Optional container_analysis_path: run TraceLens in container only if enabled and deps present.
+            # Parsing/validation use host venv by default; container reports are consumed when present.
+            if self.config.analysis.enable_tracelens and trace_dir and trace_dir.exists():
+                log.info("Container TraceLens analysis (optional): attempting in-container report generation")
                 analysis_result = self._run_tracelens_analysis(container, output_dir)
                 if analysis_result:
                     artifacts["tracelens_analysis"] = analysis_result
-                    log.info(f"TraceLens analysis completed: {analysis_result}")
+                    log.info(f"Container TraceLens analysis completed: {analysis_result}")
+                else:
+                    log.info("Container TraceLens skipped or failed; host will parse raw traces")
+
+            # Run GEMM analysis if enabled (optional, same as TraceLens)
+            if self.config.analysis.enable_gemm_analysis and trace_dir and trace_dir.exists():
+                gemm_result = self._run_gemm_analysis(container, output_dir)
+                if gemm_result:
+                    artifacts["gemm_analysis"] = gemm_result
+                    log.info(f"GEMM analysis completed: {gemm_result}")
 
             # Also collect training logs
             log_file = self.config.aorta_path / f"training_{node}.log"
@@ -628,6 +749,13 @@ class AortaRunner(BaseRunner):
             log.info(f"TraceLens analysis already exists, skipping: {analysis_dir}")
             return analysis_dir
 
+        # Fast dependency check to avoid running long scripts that will fail immediately.
+        check_cmd = 'python3 -c "import TraceLens"'
+        check_exit, _ = self._exec_in_container(container, check_cmd)
+        if check_exit != 0:
+            log.warning("TraceLens python package not available in container; skipping TraceLens analysis")
+            return None
+
         # Build the analysis command
         # The script path is relative to container mount
         script_path = f"{self.config.container_mount_path}/{self.config.analysis.tracelens_script}"
@@ -667,6 +795,81 @@ class AortaRunner(BaseRunner):
             log.exception(f"TraceLens analysis failed: {e}")
             return None
 
+    def _run_gemm_analysis(self, container: Container, output_dir: Path) -> Optional[Path]:
+        """
+        Run Aorta's GEMM analysis on the collected traces.
+
+        This uses Aorta's `gemm_analysis/run_tracelens_analysis.sh` script which:
+        1. Discovers configurations (thread configs, channel settings)
+        2. Generates individual TraceLens reports per rank
+        3. Generates collective multi-rank reports
+        4. Compares channels across thread configurations
+
+        Args:
+            container: Docker container to run analysis in
+            output_dir: Directory containing torch_profiler traces
+
+        Returns:
+            Path to tracelens_analysis directory, or None if analysis failed
+        """
+        analysis_dir = output_dir / "tracelens_analysis"
+
+        # Skip if already exists and skip_if_exists is set
+        if self.config.analysis.skip_if_exists and analysis_dir.exists():
+            log.info(f"GEMM analysis already exists, skipping: {analysis_dir}")
+            return analysis_dir
+
+        # Build the analysis command
+        # The script path is relative to container mount
+        script_path = f"{self.config.container_mount_path}/{self.config.analysis.gemm_script}"
+        trace_path = str(output_dir).replace(str(self.config.aorta_path), self.config.container_mount_path)
+
+        # Check if this is a sweep directory structure or single config
+        # For single config runs (like our benchmark), use tracelens_single_config
+        # The gemm_analysis script expects sweep directory structure with *thread dirs
+        torch_profiler_dir = output_dir / "torch_profiler"
+
+        if torch_profiler_dir.exists():
+            # Single config - use the parent directory
+            analysis_cmd = f"bash {script_path} {trace_path}"
+        else:
+            # Sweep structure - pass the sweep directory
+            analysis_cmd = f"bash {script_path} {trace_path}"
+
+        log.info(f"Running GEMM analysis: {analysis_cmd}")
+        log.info("This may take several minutes depending on trace size...")
+
+        try:
+            exit_code, output = self._exec_in_container(
+                container,
+                analysis_cmd,
+                stream=True,  # Stream for real-time feedback
+            )
+
+            if exit_code != 0:
+                log.error(f"GEMM analysis failed with exit code {exit_code}")
+                log.error(f"Output: {output[:2000]}...")  # Truncate for readability
+                return None
+
+            # Verify the output was created
+            if analysis_dir.exists():
+                # Log what was generated
+                individual_count = len(list(analysis_dir.glob("**/individual_reports/*.xlsx")))
+                collective_count = len(list(analysis_dir.glob("**/collective_reports/*.xlsx")))
+                comparison_count = len(list(analysis_dir.glob("comparisons/*.xlsx")))
+                log.info("GEMM analysis complete:")
+                log.info(f"  Individual reports: {individual_count}")
+                log.info(f"  Collective reports: {collective_count}")
+                log.info(f"  Comparison reports: {comparison_count}")
+                return analysis_dir
+            else:
+                log.warning(f"GEMM analysis completed but output not found: {analysis_dir}")
+                return None
+
+        except Exception as e:
+            log.exception(f"GEMM analysis failed: {e}")
+            return None
+
     def teardown(self) -> bool:
         """
         Cleanup containers and connections.
@@ -683,6 +886,27 @@ class AortaRunner(BaseRunner):
                 container.stop(timeout=30)
                 container.remove(force=True)
                 log.info(f"Container removed on {node}")
+                # Chown aorta path to host user so next run does not require chmod 777 (container runs as root for GPU access)
+                uid_gid = self._get_remote_uid_gid(node)
+                if uid_gid is not None:
+                    try:
+                        r = subprocess.run(
+                            [
+                                "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                                f"{self.config.username}@{node}",
+                                "chown", "-R", f"{uid_gid[0]}:{uid_gid[1]}", str(self.config.aorta_path),
+                            ],
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        if r.returncode == 0:
+                            log.info(f"Chowned {self.config.aorta_path} to {self.config.username} on {node}")
+                        else:
+                            log.debug(f"Chown on {node} returned {r.returncode}: {r.stderr or r.stdout}")
+                    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+                        log.debug(f"Chown on {node} skipped: {e}")
             except Exception as e:
                 log.warning(f"Error removing container on {node}: {e}")
                 success = False
