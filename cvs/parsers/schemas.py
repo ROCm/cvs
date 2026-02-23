@@ -394,7 +394,9 @@ class AortaBenchmarkConfigFile(BaseModel):
     aorta_path: str = Field(description="Path to Aorta repository on host (will be bind-mounted)")
 
     # Optional: clone Aorta repo when aorta_path does not exist
-    aorta_auto_clone: bool = Field(default=False, description="If true and aorta_path missing, clone from aorta_clone_url")
+    aorta_auto_clone: bool = Field(
+        default=False, description="If true and aorta_path missing, clone from aorta_clone_url"
+    )
     aorta_clone_url: Optional[str] = Field(default=None, description="Git URL to clone when aorta_auto_clone is true")
 
     # Container settings
@@ -789,4 +791,3 @@ def validate_config_file(
     except Exception as e:
         # Re-raise with file context
         raise ValueError(f"Invalid configuration in {config_path}:\n{e}") from e
-

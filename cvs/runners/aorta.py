@@ -177,7 +177,9 @@ class AortaRunner(BaseRunner):
 
         aorta_exists = self.config.aorta_path.exists()
         if not aorta_exists and not (self.config.aorta_auto_clone and self.config.aorta_clone_url):
-            errors.append(f"Aorta path does not exist: {self.config.aorta_path} (set aorta_auto_clone and aorta_clone_url to clone)")
+            errors.append(
+                f"Aorta path does not exist: {self.config.aorta_path} (set aorta_auto_clone and aorta_clone_url to clone)"
+            )
 
         if not aorta_exists:
             return errors  # Will clone in setup(); skip path checks
@@ -259,7 +261,12 @@ class AortaRunner(BaseRunner):
                 text=True,
                 timeout=15,
             )
-            if uid_out.returncode == 0 and gid_out.returncode == 0 and uid_out.stdout.strip() and gid_out.stdout.strip():
+            if (
+                uid_out.returncode == 0
+                and gid_out.returncode == 0
+                and uid_out.stdout.strip()
+                and gid_out.stdout.strip()
+            ):
                 return (int(uid_out.stdout.strip()), int(gid_out.stdout.strip()))
         except (subprocess.TimeoutExpired, ValueError, FileNotFoundError) as e:
             log.debug(f"Could not get remote UID/GID for {node}: {e}")
@@ -892,9 +899,16 @@ class AortaRunner(BaseRunner):
                     try:
                         r = subprocess.run(
                             [
-                                "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                                "ssh",
+                                "-o",
+                                "BatchMode=yes",
+                                "-o",
+                                "ConnectTimeout=10",
                                 f"{self.config.username}@{node}",
-                                "chown", "-R", f"{uid_gid[0]}:{uid_gid[1]}", str(self.config.aorta_path),
+                                "chown",
+                                "-R",
+                                f"{uid_gid[0]}:{uid_gid[1]}",
+                                str(self.config.aorta_path),
                             ],
                             check=False,
                             capture_output=True,
