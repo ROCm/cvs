@@ -184,7 +184,7 @@ From the CVS repo root (directory containing ``cvs`` and ``input``):
 
 .. code-block:: bash
 
-  pytest cvs/tests/benchmark/test_aorta.py \
+  cvs run test_aorta \
       --cluster_file input/cluster_file/cluster.json \
       --config_file input/config_file/aorta/aorta_benchmark.yaml \
       -v --log-cli-level=INFO
