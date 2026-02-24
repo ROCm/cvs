@@ -79,7 +79,9 @@ class Pssh:
         """
         initial_unreachable_len = len(self.unreachable_hosts)
         failed_hosts = [
-            item.host for item in output if item.exception and isinstance(item.exception, (ConnectionError,Timeout,SessionError))
+            item.host
+            for item in output
+            if item.exception and isinstance(item.exception, (ConnectionError, Timeout, SessionError))
         ]
         unreachable = self.check_connectivity(failed_hosts)
         for host in unreachable:
