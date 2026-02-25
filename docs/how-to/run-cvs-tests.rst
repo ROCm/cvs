@@ -648,7 +648,7 @@ Use these scripts to run the Inferencemax tests.
   cvs run inferencemax_gpt_oss_120b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencemax/mi300x_inferencemax_gpt_oss_120b_single.json --html=/var/www/html/cvs/inferencemax.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencemax.log -vvv -s
 
 
-Pytorch xedit test scripts
+Pytorch xdit test scripts
 ------------------------------
 
 You can list all available Pytorch xedit test cases using the CLI:
@@ -679,7 +679,7 @@ You can list all available Pytorch xedit test cases using the CLI:
     - test_verify_hf_cache_or_download
     
 
-Use these scripts to run the Pytorch xedit tests.
+Use these scripts to run the Pytorch xdit tests.
 
 .. code:: bash
 
