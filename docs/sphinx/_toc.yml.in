@@ -34,6 +34,8 @@ subtrees:
         title: IB Perf
       - file: reference/configuration-files/rccl
         title: RCCL
+      - file: reference/configuration-files/aorta
+        title: Aorta benchmark
       - file: reference/configuration-files/jax
         title: JAX
       - file: reference/configuration-files/megatron

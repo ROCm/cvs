@@ -6,7 +6,7 @@ This directory contains inference microbenchmark tests for PyTorch XDit models (
 
 ## WAN 2.2 Image-to-Video A14B Test
 
-Test file: `pytorch_xdit_wan22_i2v_a14b.py`
+Test file: `pytorch_xdit_wan22_14b_single.py`
 
 ### Overview
 
@@ -44,22 +44,22 @@ Runs WAN 2.2 I2V-A14B inference inside the `amdsiloai/pytorch-xdit:v25.11.2` con
 #### Basic invocation
 
 ```bash
-cvs run pytorch_xdit_wan22_i2v_a14b \
+cvs run pytorch_xdit_wan22_14b_single \
   --cluster_file=/path/to/cluster.json \
-  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_wan22_i2v_a14b.json
+  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json
 ```
 
 #### Example with absolute paths
 
 ```bash
-cvs run pytorch_xdit_wan22_i2v_a14b \
+cvs run pytorch_xdit_wan22_14b_single \
   --cluster_file=/home/user/cluster.json \
-  --config_file=/home/user/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_wan22_i2v_a14b.json
+  --config_file=/home/user/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json
 ```
 
 ### Configuration
 
-Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_wan22_i2v_a14b.json`:
+Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json`:
 
 ```json
 {
@@ -223,7 +223,7 @@ The test auto-detects GPU type from `rocm-smi` output:
 cvs list
 
 # List test functions within this test module
-cvs list pytorch_xdit_wan22_i2v_a14b
+cvs list pytorch_xdit_wan22_14b_single
 ```
 
 ### Example Output
@@ -232,10 +232,10 @@ cvs list pytorch_xdit_wan22_i2v_a14b
 ============================= test session starts ==============================
 collecting ... collected 4 items
 
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_i2v_a14b.py::test_cleanup_stale_containers PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_i2v_a14b.py::test_verify_hf_cache_or_download PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_i2v_a14b.py::test_run_wan22_benchmark PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_i2v_a14b.py::test_parse_and_validate_results PASSED
+cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_14b_single.py::test_cleanup_stale_containers PASSED
+cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_14b_single.py::test_verify_hf_cache_or_download PASSED
+cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_14b_single.py::test_run_wan22_benchmark PASSED
+cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_14b_single.py::test_parse_and_validate_results PASSED
 
 ============================== 4 passed in 652.34s ==============================
 ```
@@ -244,7 +244,7 @@ cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_i2v_a14b.py::test_parse_
 
 ## FLUX.1-dev Text-to-Image Test
 
-Test file: `pytorch_xdit_flux1_dev_t2i.py`
+Test file: `pytorch_xdit_flux1_dev_single.py`
 
 ### Overview
 
@@ -283,22 +283,22 @@ Runs FLUX.1-dev text-to-image inference inside the `amdsiloai/pytorch-xdit:v25.1
 #### Basic invocation
 
 ```bash
-cvs run pytorch_xdit_flux1_dev_t2i \
+cvs run pytorch_xdit_flux1_dev_single \
   --cluster_file=/path/to/cluster.json \
-  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_flux1_dev_t2i.json
+  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json
 ```
 
 #### Example with absolute paths
 
 ```bash
-cvs run pytorch_xdit_flux1_dev_t2i \
+cvs run pytorch_xdit_flux1_dev_single \
   --cluster_file=/home/user/cluster.json \
-  --config_file=/home/user/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_flux1_dev_t2i.json
+  --config_file=/home/user/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json
 ```
 
 ### Configuration
 
-Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_flux1_dev_t2i.json`:
+Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json`:
 
 ```json
 {
@@ -484,7 +484,7 @@ The test auto-detects GPU type from `rocm-smi` output:
 cvs list
 
 # List test functions within this test module
-cvs list pytorch_xdit_flux1_dev_t2i
+cvs list pytorch_xdit_flux1_dev_single
 ```
 
 ### Example Output
@@ -493,10 +493,10 @@ cvs list pytorch_xdit_flux1_dev_t2i
 ============================= test session starts ==============================
 collecting ... collected 4 items
 
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_t2i.py::test_cleanup_stale_containers PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_t2i.py::test_verify_hf_cache_or_download PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_t2i.py::test_run_flux1_benchmark PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_t2i.py::test_parse_and_validate_results PASSED
+cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_single.py::test_cleanup_stale_containers PASSED
+cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_single.py::test_verify_hf_cache_or_download PASSED
+cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_single.py::test_run_flux1_benchmark PASSED
+cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_single.py::test_parse_and_validate_results PASSED
 
 ============================== 4 passed in 485.21s ==============================
 ```

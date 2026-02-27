@@ -17,6 +17,7 @@ exclude = [
     "*.egg-info/**",    # Package info
     "__pycache__/**",   # Cache files
     ".git/**",          # Git files
-    "test_venv/**",     # Virtual environments
-    "ruff_venv/**",     # Ruff environment
+    ".test_venv/**",     # Virtual environments
+    ".cvs_venv/**",      # CVS environment
+    ".ruff_venv/**",     # Ruff environment
 ]
