@@ -10,7 +10,8 @@ class TestPsshExec(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.mock_pssh_client = mock_pssh_client
         self.host_list = ["host1", "host2"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
 
     def test_exec_successful(self):
         # Test: Execute command successfully on all hosts
@@ -89,7 +90,8 @@ class TestPsshExec(unittest.TestCase):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
         self.pssh.stop_on_errors = False
         self.pssh.check_connectivity = mock_check_connectivity
         from pssh.exceptions import ConnectionError
@@ -127,7 +129,8 @@ class TestPsshExec(unittest.TestCase):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
         self.pssh.stop_on_errors = False
         self.pssh.check_connectivity = mock_check_connectivity
         from pssh.exceptions import Timeout
@@ -165,7 +168,8 @@ class TestPsshExec(unittest.TestCase):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2", "host3"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
         self.pssh.stop_on_errors = False
         self.pssh.check_connectivity = mock_check_connectivity
         from pssh.exceptions import ConnectionError
@@ -211,7 +215,8 @@ class TestPsshExec(unittest.TestCase):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
         self.pssh.stop_on_errors = False
         from pssh.exceptions import Timeout
 
@@ -248,7 +253,8 @@ class TestPsshExec(unittest.TestCase):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
         self.pssh.stop_on_errors = False
         from pssh.exceptions import Timeout
 
@@ -355,7 +361,8 @@ class TestPsshExecCmdList(unittest.TestCase):
         mock_pssh_client.return_value = self.mock_client
         self.mock_pssh_client = mock_pssh_client
         self.host_list = ["host1", "host2"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
 
     def test_exec_cmd_list_successful(self):
         # Test: Execute different commands on different hosts successfully
@@ -437,7 +444,8 @@ class TestPsshExecCmdList(unittest.TestCase):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
         self.pssh.stop_on_errors = False
         self.pssh.check_connectivity = mock_check_connectivity
         cmd_list = ["echo success", "echo fail"]
@@ -476,7 +484,8 @@ class TestPsshExecCmdList(unittest.TestCase):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
         self.pssh.stop_on_errors = False
         self.pssh.check_connectivity = mock_check_connectivity
         cmd_list = ["echo success", "echo fail"]
@@ -516,7 +525,8 @@ class TestPsshExecCmdList(unittest.TestCase):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
         self.pssh.stop_on_errors = False
         self.pssh.check_connectivity = mock_check_connectivity
         cmd_list = ["echo success", "echo fail"]
@@ -554,7 +564,8 @@ class TestPsshExecCmdList(unittest.TestCase):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2", "host3"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
         self.pssh.stop_on_errors = False
         self.pssh.check_connectivity = mock_check_connectivity
         cmd_list = ["echo success", "echo fail1", "echo fail2"]
@@ -603,7 +614,8 @@ class TestPsshExecCmdList(unittest.TestCase):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
-        self.pssh = Pssh("log", self.host_list, user="user", password="pass")
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
         self.pssh.stop_on_errors = False
         self.pssh.check_connectivity = mock_check_connectivity
         cmd_list = ["echo success", "echo fail"]
