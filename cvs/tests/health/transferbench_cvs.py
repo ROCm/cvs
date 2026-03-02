@@ -184,7 +184,9 @@ def parse_tb_example_test_results(out_dict, exp_dict):
 
         match = re.search(r'Executor:\s+GPU\s+00\s+│\s*([0-9\.]+)\s+GB/s', test3_out, re.I)
         if not match:
-            fail_test(f"G0->G1 transfer bandwidth pattern not found in Test 3 output on node {node}. Output: {test3_out}")
+            fail_test(
+                f"G0->G1 transfer bandwidth pattern not found in Test 3 output on node {node}. Output: {test3_out}"
+            )
             continue
         test3_res_0_1 = match.group(1)
         if float(test3_res_0_1) < float(exp_dict['test3_0_to_1']):
@@ -194,7 +196,9 @@ def parse_tb_example_test_results(out_dict, exp_dict):
 
         match = re.search(r'Executor:\s+GPU\s+01\s+│\s*([0-9\.]+)\s+GB/s', test3_out, re.I)
         if not match:
-            fail_test(f"G1->G0 transfer bandwidth pattern not found in Test 3 output on node {node}. Output: {test3_out}")
+            fail_test(
+                f"G1->G0 transfer bandwidth pattern not found in Test 3 output on node {node}. Output: {test3_out}"
+            )
             continue
         test3_res_1_0 = match.group(1)
         if float(test3_res_1_0) < float(exp_dict['test3_1_to_0']):
