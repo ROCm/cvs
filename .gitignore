@@ -6,8 +6,9 @@ __pycache__/
 *.egg-info/
 
 # Virtual environments
-test_venv/
-ruff_venv/
+.test_venv/
+.cvs_venv/
+.ruff_venv/
 
 # Build distributions
 dist/

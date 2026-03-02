@@ -124,9 +124,50 @@ class AortaReportParser:
             report_files = sorted(individual_dir.glob("perf_*ch_rank*.xlsx"))
 
         if not report_files:
-            return ParseResult(
-                status=ParseStatus.FAILED, errors=[f"No perf_rank*.xlsx files found in {individual_dir}"]
+            # Check if raw traces exist - if so, TraceLens likely couldn't generate reports
+            # (e.g., chrome_trace: false in config to avoid ROCm crashes)
+            parent_dir = analysis_dir.parent
+            torch_profiler_dir = parent_dir / "torch_profiler"
+
+            # Check for trace files (handles both .json and .pt.trace.json patterns)
+            raw_traces_exist = False
+            if torch_profiler_dir.exists():
+                # Try multiple patterns since trace file naming varies
+                for pattern in ["rank*/*.json", "rank*/*.pt.trace.json", "**/*.json"]:
+                    if any(torch_profiler_dir.glob(pattern)):
+                        raw_traces_exist = True
+                        break
+
+            # Also check if torch_profiler dir exists with rank subdirs (even if empty)
+            # This indicates profiling was attempted but may have failed or chrome_trace was disabled
+            has_profiler_structure = torch_profiler_dir.exists() and any(
+                d.is_dir() and d.name.startswith("rank") for d in torch_profiler_dir.iterdir()
             )
+
+            if raw_traces_exist:
+                # Raw traces exist but no Excel reports - this is expected when chrome_trace is disabled
+                return ParseResult(
+                    status=ParseStatus.NO_DATA,
+                    warnings=[
+                        f"No Excel reports in {individual_dir}. "
+                        "Raw .pt.trace.json files exist and can be viewed in Perfetto (ui.perfetto.dev). "
+                        "To generate Excel reports, enable chrome_trace in the Aorta config."
+                    ],
+                )
+            elif has_profiler_structure:
+                # Profiler structure exists but no trace files - likely crashed or config issue
+                return ParseResult(
+                    status=ParseStatus.NO_DATA,
+                    warnings=[
+                        f"No Excel reports in {individual_dir}. "
+                        "Profiler directories exist but contain no trace files. "
+                        "This may indicate a crashed run or profiling was disabled."
+                    ],
+                )
+            else:
+                return ParseResult(
+                    status=ParseStatus.FAILED, errors=[f"No perf_rank*.xlsx files found in {individual_dir}"]
+                )
 
         log.info(f"Found {len(report_files)} individual reports to parse")
 

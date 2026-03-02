@@ -9,8 +9,8 @@ JAX training configuration files
 The JAX training tests perform end-to-end orchestration and validation of a distributed JAX training run (Llama 3.1) across a multi-node cluster using Docker containers, 
 remote execution, and the project's JAX library. 
 
-Change the parameters as needed in the JAX training configuration files: ``mi300x_singlenode_llama3_1_70b.json`` and ``mi35x_singlenode_llama_3_1_70b.json`` for single node configuration,
-and ``mi300x_distributed_llama3_1_70b.json`` and ``mi300x_distributed_llama_3_1_405b.json`` for distributed node configuration.
+Change the parameters as needed in the JAX training configuration files: ``mi300x_jax_llama3_1_70b_single.json`` and ``mi35x_jax_llama3_1_70b_single.json`` for single node configuration,
+and ``mi300x_jax_llama3_1_70b_distributed.json`` and ``mi300x_jax_llama3_1_405b_distributed.json`` for distributed node configuration.
 
 .. note::
 
@@ -20,12 +20,12 @@ and ``mi300x_distributed_llama3_1_70b.json`` and ``mi300x_distributed_llama_3_1_
 Single node configuration
 =========================
 
-``mi300x_singlenode_llama3_1_70b.json``
+``mi300x_jax_llama3_1_70b_single.json``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-This is the ``mi300x_singlenode_llama3_1_70b.json`` configuration file:
+This is the ``mi300x_jax_llama3_1_70b_single.json`` configuration file:
 
-.. dropdown:: ``mi300x_singlenode_llama3_1_70b.json``
+.. dropdown:: ``mi300x_jax_llama3_1_70b_single.json``
 
   .. code:: json
     
@@ -550,12 +550,12 @@ This section also contains the ``result_dict`` parameter. It describes the expec
 
 
 
-``mi35x_singlenode_llama_3_1_70b.json``
+``mi35x_jax_llama3_1_70b_single.json``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-This is the ``mi35x_singlenode_llama_3_1_70b.json`` configuration file:
+This is the ``mi35x_jax_llama3_1_70b_single.json`` configuration file:
 
-.. dropdown:: ``mi35x_singlenode_llama_3_1_70b.json``
+.. dropdown:: ``mi35x_jax_llama3_1_70b_single.json``
 
   .. code:: json
 

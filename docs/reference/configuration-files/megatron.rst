@@ -16,9 +16,9 @@ The Megatron tests check:
 - **Performance targets**: Throughput and memory usage within expected ranges
 - **Result verification**: Expected tokens/sec and TFLOPS metrics
 
-Change the parameters as needed in the Megatron training configuration files: ``mi3xx_singlenode_megatron_llama.json`` and ``mi3xx_distributed_megatron_llama.json`` for single node and distributed node configurations, respectively.
+Change the parameters as needed in the Megatron training configuration files: ``mi3xx_megatron_llama_single.json`` and ``mi3xx_megatron_llama_distributed.json`` for single node and distributed node configurations, respectively.
 
-Further, you can configure the ``mi35x_singlenode_megatron_llama.json`` file to run Megatron on a single node MI35x.
+Further, you can configure the ``mi35x_megatron_llama_single.json`` file to run Megatron on a single node MI35x.
 
 .. note::
 
@@ -28,9 +28,9 @@ Further, you can configure the ``mi35x_singlenode_megatron_llama.json`` file to 
 Single node configuration
 =========================
 
-This is the ``mi3xx_singlenode_megatron_llama.json`` configuration file:
+This is the ``mi3xx_megatron_llama_single.json`` configuration file:
 
-.. dropdown:: ``mi3xx_singlenode_megatron_llama.json``
+.. dropdown:: ``mi3xx_megatron_llama_single.json``
 
   .. code:: json
       
@@ -464,9 +464,9 @@ This section also contains the ``result_dict`` parameter. It describes the expec
 Single node MI35x configuration 
 ===============================
 
-The ``mi35x_singlenode_megatron_llama.json`` config file is used to run Megatron on a MI35x on a single node.
+The ``mi35x_megatron_llama_single.json`` config file is used to run Megatron on a MI35x on a single node.
 
-.. dropdown:: ``mi35x_singlenode_megatron_llama.json`` 
+.. dropdown:: ``mi35x_megatron_llama_single.json`` 
 
   .. code:: json
 
@@ -885,9 +885,9 @@ This section also contains the ``result_dict`` parameter. It describes the expec
 Distributed node configuration
 ==============================
 
-This is the multi-node ``mi3xx_distributed_megatron_llama.json`` configuration file:
+This is the multi-node ``mi3xx_megatron_llama_distributed.json`` configuration file:
 
-.. dropdown:: ``mi3xx_distributed_megatron_llama.json`` 
+.. dropdown:: ``mi3xx_megatron_llama_distributed.json`` 
 
   .. code:: json
   
