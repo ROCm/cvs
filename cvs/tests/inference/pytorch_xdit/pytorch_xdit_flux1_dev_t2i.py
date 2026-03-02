@@ -14,7 +14,6 @@ import re
 import socket
 import shlex
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
@@ -114,9 +113,8 @@ class LocalPssh:
     """
     Minimal drop-in replacement for `Pssh` that executes commands locally.
 
-    This is needed on HPC systems where SSH authentication works interactively
-    (Kerberos/certs/hostbased) but libssh2-based clients (parallel-ssh) cannot
-    authenticate non-interactively.
+    This is used only when the target resolves to the current machine to avoid
+    unnecessary SSH hops for true localhost single-node runs.
     """
 
     def __init__(self, host: str):
@@ -153,148 +151,6 @@ class LocalPssh:
                 print(f"cmd = {_redact_secrets(cmd)}")
                 print(out_str)
             out[host] = out_str
-        return out
-
-
-class OpenSshPssh:
-    """
-    Drop-in replacement for `Pssh` that executes commands via the system `ssh` client.
-
-    This is much more compatible with HPC environments than libssh2-based clients
-    (parallel-ssh), and supports:
-    - ssh-agent
-    - Kerberos/SSSD-style usernames (e.g., user@realm)
-    - ProxyJump and other ~/.ssh/config behaviors
-    """
-
-    def __init__(self, host: str, user: str | None = None, pkey: str | None = None):
-        self.host_list = [host]
-        self.user = user
-        self.pkey = pkey
-
-    def _dest(self, host: str) -> str:
-        return f"{self.user}@{host}" if self.user else host
-
-    def _ssh_args(self, host: str) -> list[str]:
-        args = [
-            "ssh",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "StrictHostKeyChecking=accept-new",
-            "-o",
-            "ConnectTimeout=10",
-        ]
-        if self.pkey:
-            args += ["-i", self.pkey]
-        args.append(self._dest(host))
-        return args
-
-    def exec(self, cmd: str, timeout=None, print_console=True):
-        host = self.host_list[0]
-        # IMPORTANT: ssh concatenates argv into a single remote command string without
-        # escaping. If we pass ["bash","-lc",cmd], bash will receive only the first word
-        # of cmd as the -c payload (e.g., "docker"), and the remaining words as $0/$1...
-        # which leads to running `docker` with no args (prints docker help).
-        remote_cmd = f"bash -lc {shlex.quote(cmd)}"
-        ssh_cmd = self._ssh_args(host) + [remote_cmd]
-        completed = subprocess.run(
-            ssh_cmd,
-            text=True,
-            capture_output=True,
-            timeout=timeout if timeout is None else int(timeout),
-        )
-        out = (completed.stdout or "") + (completed.stderr or "")
-        if print_console:
-            printable = " ".join(shlex.quote(a) for a in ssh_cmd[:-1]) + " " + shlex.quote(_redact_secrets(cmd))
-            print(f"cmd = {printable}")
-            print(out)
-        return {host: out}
-
-    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
-        out = {}
-        for host, cmd in zip(self.host_list, cmd_list):
-            remote_cmd = f"bash -lc {shlex.quote(cmd)}"
-            ssh_cmd = self._ssh_args(host) + [remote_cmd]
-            completed = subprocess.run(
-                ssh_cmd,
-                text=True,
-                capture_output=True,
-                timeout=timeout if timeout is None else int(timeout),
-            )
-            out_str = (completed.stdout or "") + (completed.stderr or "")
-            if print_console:
-                printable = " ".join(shlex.quote(a) for a in ssh_cmd[:-1]) + " " + shlex.quote(_redact_secrets(cmd))
-                print(f"cmd = {printable}")
-                print(out_str)
-            out[host] = out_str
-        return out
-
-
-class OpenSshMultiPssh:
-    """
-    Multi-host drop-in replacement for `Pssh` using the system `ssh` client.
-
-    parallel-ssh/libssh2 commonly fails to authenticate on HPC environments where OpenSSH works.
-    This class runs per-host SSH commands concurrently with a bounded thread pool.
-    """
-
-    def __init__(self, hosts: list[str], user: str | None = None, pkey: str | None = None, max_workers: int = 32):
-        self.host_list = hosts
-        self.user = user
-        self.pkey = pkey
-        self.max_workers = max_workers
-
-    def _dest(self, host: str) -> str:
-        return f"{self.user}@{host}" if self.user else host
-
-    def _ssh_args(self, host: str) -> list[str]:
-        args = [
-            "ssh",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "StrictHostKeyChecking=accept-new",
-            "-o",
-            "ConnectTimeout=10",
-        ]
-        if self.pkey:
-            args += ["-i", self.pkey]
-        args.append(self._dest(host))
-        return args
-
-    def _run_one(self, host: str, cmd: str, timeout=None, print_console=True) -> tuple[str, str]:
-        remote_cmd = f"bash -lc {shlex.quote(cmd)}"
-        ssh_cmd = self._ssh_args(host) + [remote_cmd]
-        completed = subprocess.run(
-            ssh_cmd,
-            text=True,
-            capture_output=True,
-            timeout=timeout if timeout is None else int(timeout),
-        )
-        out_str = (completed.stdout or "") + (completed.stderr or "")
-        if print_console:
-            printable = " ".join(shlex.quote(a) for a in ssh_cmd[:-1]) + " " + shlex.quote(_redact_secrets(cmd))
-            print(f"cmd = {printable}")
-            print(out_str)
-        return host, out_str
-
-    def exec(self, cmd: str, timeout=None, print_console=True):
-        return self.exec_cmd_list([cmd] * len(self.host_list), timeout=timeout, print_console=print_console)
-
-    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
-        if len(cmd_list) != len(self.host_list):
-            raise ValueError(f"cmd_list length ({len(cmd_list)}) must match host_list length ({len(self.host_list)})")
-        out: dict[str, str] = {}
-        workers = min(int(self.max_workers), max(1, len(self.host_list)))
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs = [
-                ex.submit(self._run_one, host, cmd, timeout, print_console)
-                for host, cmd in zip(self.host_list, cmd_list)
-            ]
-            for f in as_completed(futs):
-                host, out_str = f.result()
-                out[host] = out_str
         return out
 
 
@@ -429,33 +285,23 @@ def s_phdl(cluster_dict):
         if _is_local_target(target):
             log.info(f"Using local execution mode for single-node target {target}")
             return LocalPssh(host=target)
-        # parallel-ssh/libssh2 commonly fails in environments where OpenSSH works.
-        log.info(f"Using OpenSSH execution mode for single-node target {target}")
-        return OpenSshPssh(
-            host=target,
+        log.info(f"Using parallel-ssh execution mode for single-node target {target}")
+        return Pssh(
+            log,
+            [target],
             user=cluster_dict.get("username"),
+            password=cluster_dict.get("password"),
             pkey=cluster_dict.get("priv_key_file"),
         )
 
-    # Multi-node mode: prefer system OpenSSH for robustness; fall back to parallel-ssh only if it works.
-    try:
-        p = Pssh(
-            log,
-            node_list,
-            user=cluster_dict.get('username'),
-            password=cluster_dict.get('password'),
-            pkey=cluster_dict.get('priv_key_file'),
-        )
-        # Smoke-test authentication quickly; if it fails, we'll fall back.
-        p.exec("true", timeout=10, print_console=False)
-        return p
-    except Exception as e:
-        log.warning(f"parallel-ssh authentication failed; falling back to OpenSSH for multi-node: {e}")
-        return OpenSshMultiPssh(
-            hosts=node_list,
-            user=cluster_dict.get("username"),
-            pkey=cluster_dict.get("priv_key_file"),
-        )
+    log.info(f"Using parallel-ssh execution mode for {len(node_list)} node(s)")
+    return Pssh(
+        log,
+        node_list,
+        user=cluster_dict.get('username'),
+        password=cluster_dict.get('password'),
+        pkey=cluster_dict.get('priv_key_file'),
+    )
 
 
 @pytest.fixture(scope="module")
