@@ -115,21 +115,6 @@ Automatically:
 - Loads configuration
 - Tests endpoints
 
-### refresh-ssh-keys.sh
-
-Update SSH keys in running container:
-```bash
-bash refresh-ssh-keys.sh
-```
-
-Use after changing SSH keys.
-
-### setup-ssh-keys.sh
-
-Initial SSH key setup (run once after first start):
-```bash
-bash setup-ssh-keys.sh
-```
 
 ## Architecture
 
