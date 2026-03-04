@@ -9,6 +9,7 @@ import datetime
 import shutil
 import zipfile
 from pathlib import Path
+import uuid
 
 import pytest_html
 from cvs.lib import globals
@@ -79,6 +80,9 @@ class HtmlReportManager:
         else:
             reduced_nodeid = report.nodeid
         safe_name = reduced_nodeid.replace("::", "_").replace("/", "_").replace("\\", "_")
+        # Add a random suffix from a UUID to ensure unique filenames for concurrent/repeated test case runs
+        temp_id = str(uuid.uuid4()).split("-")[-1]
+        safe_name = f"{safe_name}_{temp_id}"
 
         log_dir = self.htmlpath.parent / self._test_html_dir
         log_dir.mkdir(parents=True, exist_ok=True)
