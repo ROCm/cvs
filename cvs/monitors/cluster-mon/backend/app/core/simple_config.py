@@ -5,7 +5,7 @@ Avoids Pydantic BaseSettings nested model issues.
 
 import yaml
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 
 
 class SimpleConfig:
@@ -14,7 +14,6 @@ class SimpleConfig:
     def __init__(self, yaml_path: str = None):
         # Auto-detect config path for both dev and Docker
         if yaml_path is None:
-            import os
             # Try Docker path first
             docker_path = Path("/app/config/cluster.yaml")
             if docker_path.exists():
@@ -49,6 +48,7 @@ class SimpleConfig:
         """Load node IPs from nodes file."""
         # Try multiple possible paths
         import os
+
         possible_paths = [
             Path("/app/config/nodes.txt"),  # Docker path (first priority)
             Path("../config/nodes.txt"),  # Development path
@@ -70,6 +70,7 @@ class SimpleConfig:
     @property
     def ssh_username(self) -> str:
         import os
+
         default_user = os.getenv("USER", "root")
         return self.config_data.get("ssh", {}).get("username", default_user)
 
@@ -78,6 +79,7 @@ class SimpleConfig:
         # SECURITY: Password is stored in memory only (app_state), never in YAML
         try:
             from app.main import app_state
+
             return app_state.ssh_password
         except:
             return None
@@ -104,6 +106,7 @@ class SimpleConfig:
     @property
     def jump_host_username(self) -> str:
         import os
+
         default_user = os.getenv("USER", "root")
         return self.config_data.get("ssh", {}).get("jump_host", {}).get("username", default_user)
 
@@ -113,6 +116,7 @@ class SimpleConfig:
         # However, for testing/development, we also check YAML
         try:
             from app.main import app_state
+
             if app_state.jump_host_password:
                 return app_state.jump_host_password
         except:
@@ -131,17 +135,20 @@ class SimpleConfig:
     def node_username_via_jumphost(self) -> str:
         """Username for cluster nodes when using jump host."""
         import os
+
         default_user = os.getenv("USER", "root")
         # First check for node_username_via_jumphost at ssh level, then check jump_host.node_username
-        return self.config_data.get("ssh", {}).get("node_username_via_jumphost") or \
-               self.config_data.get("ssh", {}).get("jump_host", {}).get("node_username", default_user)
+        return self.config_data.get("ssh", {}).get("node_username_via_jumphost") or self.config_data.get("ssh", {}).get(
+            "jump_host", {}
+        ).get("node_username", default_user)
 
     @property
     def node_key_file_on_jumphost(self) -> str:
         """Path to private key ON JUMP HOST for accessing cluster nodes."""
         # First check for node_key_file_on_jumphost at ssh level, then check jump_host.node_key_file
-        return self.config_data.get("ssh", {}).get("node_key_file_on_jumphost") or \
-               self.config_data.get("ssh", {}).get("jump_host", {}).get("node_key_file", "~/.ssh/id_rsa")
+        return self.config_data.get("ssh", {}).get("node_key_file_on_jumphost") or self.config_data.get("ssh", {}).get(
+            "jump_host", {}
+        ).get("node_key_file", "~/.ssh/id_rsa")
 
     # Polling Configuration
     @property
@@ -169,6 +176,7 @@ class SimpleConfig:
     @property
     def cors_origins(self) -> List[str]:
         import os
+
         # Allow all origins in Docker, or specific origins from environment variable
         cors_env = os.getenv("CORS_ORIGINS", "*")
         if cors_env == "*":
@@ -225,12 +233,16 @@ class SimpleConfig:
         class PollingConfig:
             def __init__(self, parent):
                 import os
+
                 # Allow environment variable override
                 self.interval = int(os.getenv('POLLING__INTERVAL', parent.polling_interval))
                 self.batch_size = parent.polling_batch_size
                 self.stagger_delay = parent.polling_stagger_delay
-                self.failure_threshold = int(os.getenv('POLLING__FAILURE_THRESHOLD',
-                                            parent.config_data.get('polling', {}).get('failure_threshold', 5)))
+                self.failure_threshold = int(
+                    os.getenv(
+                        'POLLING__FAILURE_THRESHOLD', parent.config_data.get('polling', {}).get('failure_threshold', 5)
+                    )
+                )
 
         return PollingConfig(self)
 

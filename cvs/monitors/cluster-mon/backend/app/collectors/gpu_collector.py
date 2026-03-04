@@ -5,7 +5,7 @@ Adapted from CVS rocm_plib.py
 
 import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -26,8 +26,8 @@ class GPUMetricsCollector:
             Dictionary mapping host -> parsed JSON data
         """
         parsed = {}
-        #logger.info('#========== before parse ===========#')
-        #logger.info(output_dict)
+        # logger.info('#========== before parse ===========#')
+        # logger.info(output_dict)
         for host, output in output_dict.items():
             try:
                 if output and not output.startswith("ERROR") and not output.startswith("ABORT"):
@@ -39,7 +39,7 @@ class GPUMetricsCollector:
                         # Find the start of JSON (first '[' or '{')
                         json_start = min(
                             (output.find('[') if '[' in output else len(output)),
-                            (output.find('{') if '{' in output else len(output))
+                            (output.find('{') if '{' in output else len(output)),
                         )
                         if json_start < len(output):
                             output = output[json_start:].strip()
@@ -60,8 +60,8 @@ class GPUMetricsCollector:
                 logger.error(f"Output was: {output[:500]}")
                 parsed[host] = {"error": f"JSON parse error: {str(e)}"}
 
-        #logger.info('#=========== parsed value ===============#')
-        #logger.info(parsed)
+        # logger.info('#=========== parsed value ===============#')
+        # logger.info(parsed)
         return parsed
 
     async def collect_gpu_utilization(self, ssh_manager) -> Dict[str, Any]:
@@ -292,7 +292,7 @@ class GPUMetricsCollector:
                         for i, line in enumerate(lines):
                             if bdf in line:
                                 # Look for LnkSta in next ~50 lines (within same device section)
-                                for j in range(i+1, min(i+50, len(lines))):
+                                for j in range(i + 1, min(i + 50, len(lines))):
                                     if 'LnkSta:' in lines[j]:
                                         width_match = re.search(r'Width (x\d+)', lines[j])
                                         speed_match = re.search(r'Speed ([0-9.]+GT/s)', lines[j])
@@ -432,7 +432,7 @@ class GPUMetricsCollector:
                     util_data[node][gpu_id] = {
                         'GPU use (%)': str(gfx_val),
                         'GFX Activity': str(gfx_val),
-                        'UMC Activity': str(umc_val)
+                        'UMC Activity': str(umc_val),
                     }
             else:
                 util_data[node] = data
@@ -504,9 +504,12 @@ class GPUMetricsCollector:
                     mem_val = mem_obj.get('value', 0) if isinstance(mem_obj, dict) else 0
 
                     # Handle "N/A" strings
-                    if edge_obj == "N/A": edge_val = 0
-                    if hotspot_obj == "N/A": hotspot_val = 0
-                    if mem_obj == "N/A": mem_val = 0
+                    if edge_obj == "N/A":
+                        edge_val = 0
+                    if hotspot_obj == "N/A":
+                        hotspot_val = 0
+                    if mem_obj == "N/A":
+                        mem_val = 0
 
                     temp_data[node][gpu_id] = {
                         'Temperature (Sensor edge) (C)': str(edge_val),
@@ -550,42 +553,42 @@ class GPUMetricsCollector:
             if gpu_list:
                 pcie_info[node] = {}
                 for gpu in gpu_list:
-                        gpu_id = f"card{gpu.get('gpu', 0)}"
-                        pcie_data = gpu.get('pcie', {})
+                    gpu_id = f"card{gpu.get('gpu', 0)}"
+                    pcie_data = gpu.get('pcie', {})
 
-                        if pcie_data:
-                            # Flatten nested values for frontend display
-                            width = pcie_data.get('width', '-')
-                            if width != '-' and width != 'N/A':
-                                width = f"x{width}"
+                    if pcie_data:
+                        # Flatten nested values for frontend display
+                        width = pcie_data.get('width', '-')
+                        if width != '-' and width != 'N/A':
+                            width = f"x{width}"
 
-                            # Flatten speed object
-                            speed_obj = pcie_data.get('speed', {})
-                            if isinstance(speed_obj, dict):
-                                speed_val = speed_obj.get('value', '-')
-                                speed_unit = speed_obj.get('unit', 'GT/s')
-                                speed = f"{speed_val} {speed_unit}" if speed_val != '-' else '-'
-                            else:
-                                speed = str(speed_obj) if speed_obj and speed_obj != 'N/A' else '-'
+                        # Flatten speed object
+                        speed_obj = pcie_data.get('speed', {})
+                        if isinstance(speed_obj, dict):
+                            speed_val = speed_obj.get('value', '-')
+                            speed_unit = speed_obj.get('unit', 'GT/s')
+                            speed = f"{speed_val} {speed_unit}" if speed_val != '-' else '-'
+                        else:
+                            speed = str(speed_obj) if speed_obj and speed_obj != 'N/A' else '-'
 
-                            # Flatten bandwidth object
-                            bw_obj = pcie_data.get('bandwidth', {})
-                            if isinstance(bw_obj, dict):
-                                bw_val = bw_obj.get('value', '-')
-                                bw_unit = bw_obj.get('unit', 'Mb/s')
-                                bandwidth = f"{bw_val} {bw_unit}" if bw_val != '-' else '-'
-                            else:
-                                bandwidth = str(bw_obj) if bw_obj and bw_obj != 'N/A' else '-'
+                        # Flatten bandwidth object
+                        bw_obj = pcie_data.get('bandwidth', {})
+                        if isinstance(bw_obj, dict):
+                            bw_val = bw_obj.get('value', '-')
+                            bw_unit = bw_obj.get('unit', 'Mb/s')
+                            bandwidth = f"{bw_val} {bw_unit}" if bw_val != '-' else '-'
+                        else:
+                            bandwidth = str(bw_obj) if bw_obj and bw_obj != 'N/A' else '-'
 
-                            pcie_info[node][gpu_id] = {
-                                'width': width,
-                                'speed': speed,
-                                'bandwidth': bandwidth,
-                                'replay_count': pcie_data.get('replay_count', 0),
-                                'l0_to_recovery_count': pcie_data.get('l0_to_recovery_count', 0),
-                                'nak_sent_count': pcie_data.get('nak_sent_count', 0),
-                                'nak_received_count': pcie_data.get('nak_received_count', 0),
-                            }
+                        pcie_info[node][gpu_id] = {
+                            'width': width,
+                            'speed': speed,
+                            'bandwidth': bandwidth,
+                            'replay_count': pcie_data.get('replay_count', 0),
+                            'l0_to_recovery_count': pcie_data.get('l0_to_recovery_count', 0),
+                            'nak_sent_count': pcie_data.get('nak_sent_count', 0),
+                            'nak_received_count': pcie_data.get('nak_received_count', 0),
+                        }
 
             elif isinstance(data, list):
                 # Direct list format - also flatten
@@ -806,9 +809,12 @@ class GPUMetricsCollector:
                 # Extract temperature (prefer junction/hotspot, fallback to edge or mem)
                 if gpu_id in node_temp:
                     # Try junction (hotspot) first, then edge, then mem
-                    temp_val = node_temp[gpu_id].get("Temperature (Sensor junction) (C)",
-                                 node_temp[gpu_id].get("Temperature (Sensor edge) (C)",
-                                   node_temp[gpu_id].get("Temperature (Sensor memory) (C)", 0)))
+                    temp_val = node_temp[gpu_id].get(
+                        "Temperature (Sensor junction) (C)",
+                        node_temp[gpu_id].get(
+                            "Temperature (Sensor edge) (C)", node_temp[gpu_id].get("Temperature (Sensor memory) (C)", 0)
+                        ),
+                    )
                     try:
                         gpu_metrics["temperature_c"] = float(temp_val) if temp_val and temp_val != 'N/A' else 0.0
                     except (ValueError, TypeError):

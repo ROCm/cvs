@@ -179,7 +179,9 @@ async def get_cluster_status() -> Dict[str, Any]:
         if isinstance(node_data, dict) and "error" not in node_data:
             for gpu_id, gpu_metrics in node_data.items():
                 if isinstance(gpu_metrics, dict):
-                    temp = gpu_metrics.get("Temperature (Sensor junction) (C)") or gpu_metrics.get("Temperature (Sensor edge) (C)")
+                    temp = gpu_metrics.get("Temperature (Sensor junction) (C)") or gpu_metrics.get(
+                        "Temperature (Sensor edge) (C)"
+                    )
                     if temp:
                         total_temp += float(temp)
                         temp_count += 1
@@ -242,11 +244,7 @@ async def get_cluster_health() -> Dict[str, Any]:
         # Create alerts for unhealthy nodes
         if node_status == "unhealthy":
             for issue in issues:
-                health_data["alerts"].append({
-                    "severity": "warning",
-                    "node": node,
-                    "message": issue
-                })
+                health_data["alerts"].append({"severity": "warning", "node": node, "message": issue})
 
     # Check unreachable nodes
     for node in app_state.ssh_manager.unreachable_hosts:
@@ -254,10 +252,6 @@ async def get_cluster_health() -> Dict[str, Any]:
             "status": "unreachable",
             "issues": ["Node is unreachable via SSH"],
         }
-        health_data["alerts"].append({
-            "severity": "critical",
-            "node": node,
-            "message": f"Node {node} is unreachable"
-        })
+        health_data["alerts"].append({"severity": "critical", "node": node, "message": f"Node {node} is unreachable"})
 
     return health_data

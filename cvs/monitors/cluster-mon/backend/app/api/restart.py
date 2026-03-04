@@ -19,6 +19,7 @@ async def restart_backend() -> Dict[str, Any]:
     This triggers a graceful shutdown and restart by executing
     the backend in a new process.
     """
+
     async def do_restart():
         await asyncio.sleep(1)
         # Restart using os.execv to replace current process

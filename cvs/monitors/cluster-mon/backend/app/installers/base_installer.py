@@ -3,7 +3,7 @@ Base installer class for package installation on cluster nodes.
 """
 
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
@@ -170,29 +170,26 @@ fi
 
             # Create temporary SSH manager for just these nodes
             from app.core.parallel_ssh import ParallelSSHManager
+
             temp_manager = ParallelSSHManager(
                 host_list=os_nodes,
                 user=self.ssh_manager.pssh.user,
                 password=getattr(self.ssh_manager.pssh, 'password', None),
                 pkey=getattr(self.ssh_manager.pssh, 'pkey', '~/.ssh/id_rsa'),
                 timeout=300,  # 5 minute timeout for installation
-                stop_on_errors=False
+                stop_on_errors=False,
             )
 
             results = temp_manager.exec(install_cmd, timeout=300)
 
             for node in os_nodes:
                 if node in results:
-                    installation_results[node] = {
-                        "success": True,
-                        "os_type": os_type,
-                        "output": results[node]
-                    }
+                    installation_results[node] = {"success": True, "os_type": os_type, "output": results[node]}
                 else:
                     installation_results[node] = {
                         "success": False,
                         "os_type": os_type,
-                        "error": "Installation command failed or timed out"
+                        "error": "Installation command failed or timed out",
                     }
 
         # Add already installed nodes to results
@@ -201,7 +198,7 @@ fi
                 "success": True,
                 "os_type": os_map.get(node, 'unknown'),
                 "already_installed": True,
-                "message": "Package already installed"
+                "message": "Package already installed",
             }
 
         # Add unsupported OS nodes to results
@@ -209,7 +206,7 @@ fi
             installation_results[item["node"]] = {
                 "success": False,
                 "os_type": item["os"],
-                "error": f"Unsupported OS: {item['os']}"
+                "error": f"Unsupported OS: {item['os']}",
             }
 
         # Summary
@@ -225,5 +222,5 @@ fi
             "failed": failed,
             "already_installed": len(already_installed),
             "unsupported_os": len(unsupported_os),
-            "results": installation_results
+            "results": installation_results,
         }

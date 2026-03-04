@@ -221,10 +221,7 @@ class NICSoftwareCollector:
                     # Parse PCI address and device info
                     match = re.match(r"([\da-f:\.]+)\s+(.+)", line, re.I)
                     if match:
-                        devices.append({
-                            "pci_address": match.group(1),
-                            "description": match.group(2).strip()
-                        })
+                        devices.append({"pci_address": match.group(1), "description": match.group(2).strip()})
 
             pci_info[host] = {"devices": devices}
 

@@ -80,7 +80,7 @@ class NICDevlinkCollector:
                     versions = dev_data.get("versions", {})
                     fixed = versions.get("fixed", {})
                     running = versions.get("running", {})
-                    stored = versions.get("stored", {})
+                    versions.get("stored", {})
 
                     # Determine vendor based on driver
                     if driver == "bnxt_en":
@@ -97,12 +97,7 @@ class NICDevlinkCollector:
                     # Normalize firmware versions across vendors
                     # Broadcom Thor2 and NVIDIA CX7 use "fw" field
                     # AMD AINIC uses specific fields like "fw.a35_fip_a"
-                    fw_version = (
-                        running.get("fw") or
-                        running.get("fw.version") or
-                        running.get("fw.a35_fip_a") or
-                        "-"
-                    )
+                    fw_version = running.get("fw") or running.get("fw.version") or running.get("fw.a35_fip_a") or "-"
 
                     fw_psid = fixed.get("fw.psid") or "-"
                     fw_mgmt = running.get("fw.mgmt") or "-"

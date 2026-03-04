@@ -122,7 +122,9 @@ class NICMetricsCollector:
                                     if key not in metadata_keys and isinstance(value, (int, float)):
                                         rdma_stats[node][dev_key][key] = value
 
-                                logger.info(f"Node {node}: Device {dev_key} - parsed {len(rdma_stats[node][dev_key])} stats")
+                                logger.info(
+                                    f"Node {node}: Device {dev_key} - parsed {len(rdma_stats[node][dev_key])} stats"
+                                )
 
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to parse RDMA stats JSON for {node}: {e}")
@@ -430,7 +432,6 @@ class NICMetricsCollector:
                 "lldp": {...}
             }
         """
-        import asyncio
 
         logger.info("Collecting all NIC metrics")
 

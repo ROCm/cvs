@@ -29,7 +29,4 @@ async def get_dmesg_errors() -> Dict[str, Any]:
         return logs_data
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to collect logs: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to collect logs: {str(e)}")

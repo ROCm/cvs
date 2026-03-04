@@ -6,7 +6,7 @@ Supports AMD AINIC, NVIDIA/Mellanox CX7, Broadcom Thor2.
 import re
 import json
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ class NICAdvancedCollector:
         logger.info("Collecting NIC PCIe information (optimized)")
 
         # Get ALL NIC PCIe info in one command per node
-        #cmd = "sudo lspci -vvv 2>/dev/null | grep -A 30 -i 'ethernet\\|network' | grep -E '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:'"
+        # cmd = "sudo lspci -vvv 2>/dev/null | grep -A 30 -i 'ethernet\\|network' | grep -E '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:'"
         cmd = "sudo lspci -vvv 2>/dev/null | egrep -A 30 -i 'ethernet\\|network' | egrep '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:'"
         result = await ssh_manager.exec_async(cmd)
 
@@ -129,7 +129,9 @@ class NICAdvancedCollector:
                     'link_width_current': link_sta_width,
                 }
 
-        logger.info(f"NIC PCIe collection complete: {len(pcie_info)} nodes, {sum(len(v) for v in pcie_info.values())} devices total")
+        logger.info(
+            f"NIC PCIe collection complete: {len(pcie_info)} nodes, {sum(len(v) for v in pcie_info.values())} devices total"
+        )
         return pcie_info
 
     async def collect_congestion_info(self, ssh_manager) -> Dict[str, Any]:

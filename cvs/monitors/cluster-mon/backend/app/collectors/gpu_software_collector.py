@@ -42,8 +42,10 @@ class GPUSoftwareCollector:
         logger.info("Collecting ROCM version")
 
         # Get actual ROCm version from file
-        import asyncio
-        rocm_ver_output = await ssh_manager.exec_async("cat /opt/rocm*/.info/version 2>/dev/null | head -1 || echo 'N/A'")
+
+        rocm_ver_output = await ssh_manager.exec_async(
+            "cat /opt/rocm*/.info/version 2>/dev/null | head -1 || echo 'N/A'"
+        )
         driver_output = await ssh_manager.exec_async("rocm-smi --showdriverversion 2>/dev/null || echo 'Not available'")
 
         rocm_version = {}

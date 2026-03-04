@@ -4,7 +4,6 @@ Based on working test_auth_script.py approach.
 """
 
 import paramiko
-from pssh.clients import ParallelSSHClient
 from typing import List, Optional, Dict
 import logging
 
@@ -61,7 +60,9 @@ class JumpHostPssh:
         """Connect to jump host using paramiko."""
         logger.info(f"Connecting to jump host: {self.jump_host}")
         logger.info(f"  Jump user: {self.jump_user}")
-        logger.info(f"  Jump password: {'***SET*** (length={len(self.jump_password)})' if self.jump_password else 'NOT SET'}")
+        logger.info(
+            f"  Jump password: {'***SET*** (length={len(self.jump_password)})' if self.jump_password else 'NOT SET'}"
+        )
         logger.info(f"  Jump pkey: {self.jump_pkey if self.jump_pkey else 'NOT SET'}")
 
         self.jump_client = paramiko.SSHClient()
@@ -70,8 +71,10 @@ class JumpHostPssh:
         try:
             if self.jump_password:
                 logger.info(f"Attempting password authentication to {self.jump_host}...")
-                logger.info(f"  Password value check: {self.jump_password[:3]}*** (showing first 3 chars for verification)")
-                logger.info(f"Using password authentication for jump host")
+                logger.info(
+                    f"  Password value check: {self.jump_password[:3]}*** (showing first 3 chars for verification)"
+                )
+                logger.info("Using password authentication for jump host")
                 self.jump_client.connect(
                     hostname=self.jump_host,
                     username=self.jump_user,
@@ -111,8 +114,8 @@ class JumpHostPssh:
         logger.info(f"  Target user: {self.target_user}")
         logger.info(f"  Target pkey (on jump host): {self.target_pkey}")
         logger.info(f"  Max parallel: {self.max_parallel}")
-        logger.info(f"  Method: Execute SSH commands on jump host using key file there")
-        logger.info(f"✅ Ready to execute commands via jump host")
+        logger.info("  Method: Execute SSH commands on jump host using key file there")
+        logger.info("✅ Ready to execute commands via jump host")
 
     def _execute_on_node(self, node: str, cmd: str, timeout: Optional[int] = None) -> str:
         """Execute command on a single node via jump host."""
@@ -160,8 +163,7 @@ class JumpHostPssh:
             with ThreadPoolExecutor(max_workers=self.max_parallel) as executor:
                 # Submit all tasks
                 future_to_node = {
-                    executor.submit(self._execute_on_node, node, cmd, timeout): node
-                    for node in self.target_hosts
+                    executor.submit(self._execute_on_node, node, cmd, timeout): node for node in self.target_hosts
                 }
 
                 # Collect results as they complete

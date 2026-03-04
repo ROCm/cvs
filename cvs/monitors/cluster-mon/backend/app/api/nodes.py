@@ -84,9 +84,9 @@ async def list_nodes() -> List[Dict[str, Any]]:
                             util = gpu_entry.get("GPU use (%)", 0)
                         total_util += float(util) if util else 0
 
-                node_info["avg_gpu_util"] = round(
-                    total_util / node_info["gpu_count"], 2
-                ) if node_info["gpu_count"] > 0 else 0
+                node_info["avg_gpu_util"] = (
+                    round(total_util / node_info["gpu_count"], 2) if node_info["gpu_count"] > 0 else 0
+                )
 
             # Handle dict format (old rocm-smi format)
             elif isinstance(node_util, dict) and 'error' not in node_util:
@@ -97,9 +97,9 @@ async def list_nodes() -> List[Dict[str, Any]]:
                         util = gpu_metrics.get("GPU use (%)", 0)
                         total_util += float(util) if util else 0
 
-                node_info["avg_gpu_util"] = round(
-                    total_util / node_info["gpu_count"], 2
-                ) if node_info["gpu_count"] > 0 else 0
+                node_info["avg_gpu_util"] = (
+                    round(total_util / node_info["gpu_count"], 2) if node_info["gpu_count"] > 0 else 0
+                )
 
         if node in temp_data:
             node_temp = temp_data[node]
@@ -114,7 +114,9 @@ async def list_nodes() -> List[Dict[str, Any]]:
                         temp_data_field = gpu_entry.get("temperature", {})
                         if isinstance(temp_data_field, dict):
                             # Try different sensor names
-                            temp = temp_data_field.get("hotspot", temp_data_field.get("edge", temp_data_field.get("junction", 0)))
+                            temp = temp_data_field.get(
+                                "hotspot", temp_data_field.get("edge", temp_data_field.get("junction", 0))
+                            )
                             if isinstance(temp, dict):
                                 temp = temp.get("value", 0)
                         else:
@@ -131,9 +133,12 @@ async def list_nodes() -> List[Dict[str, Any]]:
                 for gpu_temp in node_temp.values():
                     if isinstance(gpu_temp, dict):
                         # Try junction (hotspot) first, then edge, then memory
-                        temp = gpu_temp.get("Temperature (Sensor junction) (C)",
-                                 gpu_temp.get("Temperature (Sensor edge) (C)",
-                                   gpu_temp.get("Temperature (Sensor memory) (C)", 0)))
+                        temp = gpu_temp.get(
+                            "Temperature (Sensor junction) (C)",
+                            gpu_temp.get(
+                                "Temperature (Sensor edge) (C)", gpu_temp.get("Temperature (Sensor memory) (C)", 0)
+                            ),
+                        )
                         if temp:
                             try:
                                 total_temp += float(temp)
@@ -228,9 +233,12 @@ async def get_node_details(node_id: str) -> Dict[str, Any]:
 
             # Temperature - try junction (hotspot) first, then edge, then memory
             if gpu_id in temp_data and isinstance(temp_data[gpu_id], dict):
-                temp = temp_data[gpu_id].get("Temperature (Sensor junction) (C)",
-                         temp_data[gpu_id].get("Temperature (Sensor edge) (C)",
-                           temp_data[gpu_id].get("Temperature (Sensor memory) (C)", 0)))
+                temp = temp_data[gpu_id].get(
+                    "Temperature (Sensor junction) (C)",
+                    temp_data[gpu_id].get(
+                        "Temperature (Sensor edge) (C)", temp_data[gpu_id].get("Temperature (Sensor memory) (C)", 0)
+                    ),
+                )
                 try:
                     gpu_info["temperature_c"] = float(temp) if temp else 0.0
                 except (ValueError, TypeError):

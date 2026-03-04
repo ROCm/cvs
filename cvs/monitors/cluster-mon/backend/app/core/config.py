@@ -86,11 +86,13 @@ class Settings(BaseSettings):
 
     # API
     api_prefix: str = "/api"
-    cors_origins: List[str] = Field(default_factory=lambda: [
-        "http://localhost:3000",
-        "http://localhost:5173",
-        # Configured via environment or simple_config.py
-    ])
+    cors_origins: List[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            # Configured via environment or simple_config.py
+        ]
+    )
 
     class Config:
         env_file = ".env"
@@ -168,5 +170,6 @@ try:
 except Exception as e:
     print(f"Error loading YAML config: {e}")
     import traceback
+
     traceback.print_exc()
     settings = Settings()

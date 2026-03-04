@@ -31,8 +31,19 @@ class Pssh:
     """
 
     def __init__(
-        self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True,
-        timeout=30, proxy_host=None, proxy_user=None, proxy_password=None, proxy_pkey=None
+        self,
+        log,
+        host_list,
+        user=None,
+        password=None,
+        pkey='id_rsa',
+        host_key_check=False,
+        stop_on_errors=True,
+        timeout=30,
+        proxy_host=None,
+        proxy_user=None,
+        proxy_password=None,
+        proxy_pkey=None,
     ):
         self.log = log
         self.host_list = host_list
@@ -47,10 +58,7 @@ class Pssh:
         self.timeout = timeout
 
         # Build client parameters
-        client_params = {
-            'user': self.user,
-            'keepalive_seconds': 30
-        }
+        client_params = {'user': self.user, 'keepalive_seconds': 30}
 
         # Add authentication
         if self.password is None:
@@ -63,7 +71,7 @@ class Pssh:
 
         # Add jump host/proxy if configured
         if proxy_host:
-            logger.info(f"Configuring jump host proxy:")
+            logger.info("Configuring jump host proxy:")
             logger.info(f"  Proxy host: {proxy_host}")
             logger.info(f"  Proxy user: {proxy_user}")
             logger.info(f"  Proxy password: {'***SET***' if proxy_password else 'NOT SET'}")
@@ -77,7 +85,7 @@ class Pssh:
             elif proxy_pkey:
                 client_params['proxy_pkey'] = proxy_pkey
 
-        logger.info(f"Creating ParallelSSHClient with params:")
+        logger.info("Creating ParallelSSHClient with params:")
         logger.info(f"  Hosts: {self.reachable_hosts}")
         logger.info(f"  User: {client_params.get('user')}")
         logger.info(f"  Password: {'***SET***' if client_params.get('password') else 'NOT SET'}")
@@ -86,7 +94,7 @@ class Pssh:
         logger.info(f"  Proxy password: {'***SET***' if client_params.get('proxy_password') else 'NOT SET'}")
 
         self.client = ParallelSSHClient(self.reachable_hosts, **client_params)
-        logger.info(f"✅ ParallelSSHClient created successfully")
+        logger.info("✅ ParallelSSHClient created successfully")
 
     def check_connectivity(self, hosts):
         """
@@ -341,8 +349,6 @@ def scp(src, dst, srcusername, srcpassword, dstusername=None, dstpassword=None):
         time.sleep(1)
         ssh.exec_command('sshpass -p %s scp %s %s@%s:%s' % (dstpassword, srcfile, dstusername, dstip, dstfile))
 
-
     async def exec_async(self, cmd, timeout=None, print_console=True):
         '''Async wrapper - just calls exec() directly'''
         return self.exec(cmd, timeout, print_console)
-

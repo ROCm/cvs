@@ -7,8 +7,6 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import yaml
 import os
-import signal
-import asyncio
 from pathlib import Path
 
 router = APIRouter()
@@ -75,6 +73,7 @@ async def update_configuration(config: ClusterConfigUpdate) -> Dict[str, Any]:
     Saves nodes to config/nodes.txt and updates cluster.yaml
     """
     import logging
+
     logger = logging.getLogger(__name__)
 
     logger.info("=" * 80)
@@ -148,6 +147,7 @@ async def update_configuration(config: ClusterConfigUpdate) -> Dict[str, Any]:
 
         # SECURITY: Store password in memory only, never persist to disk
         from app.main import app_state
+
         if config.auth_method == "password" and config.password:
             app_state.ssh_password = config.password
         else:
@@ -213,7 +213,9 @@ async def update_configuration(config: ClusterConfigUpdate) -> Dict[str, Any]:
         logger.info("=" * 80)
 
         password_note = ""
-        if config.auth_method == "password" or (config.use_jump_host and config.jump_host and config.jump_host.auth_method == "password"):
+        if config.auth_method == "password" or (
+            config.use_jump_host and config.jump_host and config.jump_host.auth_method == "password"
+        ):
             password_note = " Passwords are stored in memory only."
 
         return {

@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from typing import List
+from typing import List, Union, Optional
 import os
 from pathlib import Path
 
@@ -32,16 +32,12 @@ rotating_handler = RotatingFileHandler(
     backupCount=3,  # Keep 3 backup files (backend.log.1, backend.log.2, backend.log.3)
 )
 rotating_handler.setLevel(LOG_LEVEL)
-rotating_handler.setFormatter(
-    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-)
+rotating_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
 # Also keep console output
 console_handler = logging.StreamHandler()
 console_handler.setLevel(LOG_LEVEL)
-console_handler.setFormatter(
-    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-)
+console_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
 # Configure root logger
 logging.basicConfig(
@@ -64,7 +60,7 @@ class AppState:
     """Global application state."""
 
     def __init__(self):
-        self.ssh_manager: ParallelSSHManager = None
+        self.ssh_manager: Optional[Union[Pssh, JumpHostPssh]] = None
         self.gpu_collector: GPUMetricsCollector = None
         self.nic_collector: NICMetricsCollector = None
         self.latest_metrics: dict = {}
@@ -132,17 +128,14 @@ async def reload_configuration():
         # 4. Reload configuration from files
         logger.info("Reloading configuration from cluster.yaml and nodes.txt...")
         from app.core.simple_config import SimpleConfig
+
         new_config = SimpleConfig()
 
         # 5. Load new nodes
         nodes = new_config.load_nodes_from_file()
         if not nodes:
             logger.warning("No nodes found in configuration after reload")
-            return {
-                "success": False,
-                "error": "No nodes configured in nodes.txt",
-                "nodes_count": 0
-            }
+            return {"success": False, "error": "No nodes configured in nodes.txt", "nodes_count": 0}
 
         logger.info(f"Loaded {len(nodes)} nodes from configuration")
 
@@ -152,7 +145,11 @@ async def reload_configuration():
 
         if not using_jump_password and not using_direct_password:
             # Using key-based auth - verify key exists
-            key_file_path = new_config.ssh.jump_host.key_file if (new_config.ssh.jump_host.enabled and new_config.ssh.jump_host.host) else new_config.ssh.key_file
+            key_file_path = (
+                new_config.ssh.jump_host.key_file
+                if (new_config.ssh.jump_host.enabled and new_config.ssh.jump_host.host)
+                else new_config.ssh.key_file
+            )
             key_file_expanded = os.path.expanduser(key_file_path) if key_file_path.startswith("~") else key_file_path
 
             logger.info(f"Checking for SSH key (key-based auth): {key_file_expanded}")
@@ -163,25 +160,26 @@ async def reload_configuration():
                     "success": False,
                     "error": f"SSH key file not found: {key_file_path}. Please upload SSH keys via the Configuration UI.",
                     "nodes_count": len(nodes),
-                    "requires_key_upload": True
+                    "requires_key_upload": True,
                 }
             else:
                 logger.info(f"✅ SSH key file found: {key_file_expanded}")
                 # List the key file to verify
                 import subprocess
+
                 try:
                     result = subprocess.run(['ls', '-l', key_file_expanded], capture_output=True, text=True)
                     logger.info(f"Key file details: {result.stdout.strip()}")
                 except:
                     pass
         else:
-            logger.info(f"✅ Using password authentication - no key file check needed")
+            logger.info("✅ Using password authentication - no key file check needed")
 
         # 7. Reinitialize SSH manager with new configuration
         try:
             if new_config.ssh.jump_host.enabled and new_config.ssh.jump_host.host:
                 num_nodes = len(nodes)
-                max_parallel = min(num_nodes, 5)
+                min(num_nodes, 5)
 
                 logger.info(f"Reinitializing with jump host: {new_config.ssh.jump_host.host}")
                 logger.info(f"Jump Host Username: {new_config.ssh.jump_host.username}")
@@ -200,7 +198,7 @@ async def reload_configuration():
                     max_parallel=min(len(nodes), 5),  # Limit to 5 to avoid exhausting paramiko channels (conservative)
                     timeout=new_config.ssh.timeout,
                 )
-                logger.info(f"JumpHostPssh initialized successfully")
+                logger.info("JumpHostPssh initialized successfully")
             else:
                 logger.info("Reinitializing with direct SSH (no jump host)")
                 logger.info(f"Username: {new_config.ssh.username}")
@@ -218,11 +216,7 @@ async def reload_configuration():
                 logger.info("Direct SSH manager reinitialized")
         except Exception as e:
             logger.error(f"Failed to reinitialize SSH manager: {e}")
-            return {
-                "success": False,
-                "error": f"Failed to initialize SSH manager: {str(e)}",
-                "nodes_count": len(nodes)
-            }
+            return {"success": False, "error": f"Failed to initialize SSH manager: {str(e)}", "nodes_count": len(nodes)}
 
         # 7. Restart metrics collection
         if app_state.ssh_manager and nodes:
@@ -236,16 +230,12 @@ async def reload_configuration():
             "success": True,
             "message": "Configuration reloaded successfully",
             "nodes_count": len(nodes),
-            "jump_host_enabled": new_config.ssh.jump_host.enabled
+            "jump_host_enabled": new_config.ssh.jump_host.enabled,
         }
 
     except Exception as e:
         logger.error(f"Error during configuration reload: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e),
-            "nodes_count": 0
-        }
+        return {"success": False, "error": str(e), "nodes_count": 0}
 
 
 def update_node_status(node: str, is_error: bool, error_type: str = 'unreachable'):
@@ -272,7 +262,9 @@ def update_node_status(node: str, is_error: bool, error_type: str = 'unreachable
         # Only change status after consecutive failures exceed threshold
         if app_state.node_failure_count[node] >= failure_threshold:
             app_state.node_health_status[node] = error_type
-            logger.warning(f"Node {node} marked as {error_type} after {app_state.node_failure_count[node]} consecutive failures")
+            logger.warning(
+                f"Node {node} marked as {error_type} after {app_state.node_failure_count[node]} consecutive failures"
+            )
     else:
         # Success - reset counter and mark healthy
         if app_state.node_failure_count[node] > 0:
@@ -535,5 +527,5 @@ else:
             "status": "running",
             "nodes": len(settings.nodes) if settings.nodes else 0,
             "collecting": app_state.is_collecting,
-            "note": "Frontend not built. Run 'cd frontend && npm run build' to build the UI."
+            "note": "Frontend not built. Run 'cd frontend && npm run build' to build the UI.",
         }
