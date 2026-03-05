@@ -10,20 +10,15 @@ For details on arguments and their purpose, see the main README under the CVS pa
 Example from the CVS repo root (directory containing ``cvs`` and ``input``):
 
 ```bash
-cvs run test_aorta \
-    --cluster_file input/cluster_file/cluster.json \
-    --config_file input/config_file/aorta/aorta_benchmark.yaml \
-    -v --log-cli-level=INFO
+(myenv) [user@host]~/cvs:(main)$ pwd
+/home/user/cvs/cvs
+(myenv) [user@host]~/cvs:(main)$ cvs run test_aorta --cluster_file input/cluster_file/cluster.json --config_file input/config_file/aorta/aorta_benchmark.yaml --html=logs/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html --log-file=logs/aorta.log -vvv -s
 ```
 
 With HTML report and full logging (see also `docs/reference/configuration-files/aorta.rst`):
 
 ```bash
-cvs run test_aorta \
-    --cluster_file input/cluster_file/cluster.json \
-    --config_file input/config_file/aorta/aorta_benchmark.yaml \
-    --html=/var/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/test.log -vvv -s
+cvs run test_aorta --cluster_file input/cluster_file/cluster.json --config_file input/config_file/aorta/aorta_benchmark.yaml --html=logs/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html --log-file=logs/aorta.log -v --log-cli-level=INFO
 ```
 
 # Config and expected results

@@ -302,4 +302,88 @@ JAX / Megatron training configuration files
 4. Change any other parameters relevant to your testing requirements. 
 
 
+Inference
+---------
 
+CVS provides comprehensive inference testing configurations for various LLM serving frameworks and models.
+
+**InferenceMAX (vLLM Benchmarking)**
+
+1. Copy the InferenceMAX configuration file:
+
+   .. code:: bash
+
+     cvs copy-config inference/mi300x_singlenode_inferencemax.json --output ~/my_inferencemax_config.json
+
+2. Edit the file and modify these parameters:
+
+   - ``container_image``: Docker image with vLLM
+   - ``nnodes``: Number of nodes in the cluster
+
+**vLLM Single-Node (MI355X)**
+
+1. Copy the vLLM single-node configuration file:
+
+   .. code:: bash
+
+     cvs copy-config inference/mi355x_singlenode_vllm.json --output ~/my_vllm_config.json
+
+2. Edit the file and configure:
+
+   - ``container_image``: vLLM container for MI355X
+   - ``nnodes``: Number of nodes in the cluster     
+   - ``data_cache_dir``: Model cache directory
+
+**SGLang Disaggregated Prefill-Decode**
+
+1. Copy the SGLang disaggregated configuration file:
+
+   .. code:: bash
+
+     cvs copy-config inference/sglang_disagg_pd.json --output ~/my_sglang_config.json
+
+2. Edit the file and configure:
+
+   - ``container_image``: SGLang container
+   - modify parameters with the ``<changeme>`` value to your specifications.
+
+
+**Text-to-Image Generation (Flux.1)**
+
+1. Copy the Flux.1 text-to-image configuration file:
+
+   .. code:: bash
+
+     cvs copy-config inference/flux1_t2i.json --output ~/my_flux1_config.json
+
+2. Edit the file and configure:
+
+   - ``container_image``: xDiT container
+
+
+**Image-to-Video Generation (WAN 2.2)**
+
+1. Copy the WAN 2.2 image-to-video configuration file:
+
+   .. code:: bash
+
+     cvs copy-config inference/wan22_i2v.json --output ~/my_wan22_config.json
+
+2. Edit the file and configure:
+
+   - ``container_image``: xDiT container for video
+
+
+MORI
+-----
+
+1. Copy the MORI RDMA configuration file:
+
+   .. code:: bash
+
+     cvs copy-config mori/mori_config.json --output ~/my_mori_config.json
+
+2. Edit the file and configure:
+
+     - ``no_of_nodes``: Number of nodes in the cluster
+     - modify parameters with the ``<changeme>`` value to your specifications.

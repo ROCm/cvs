@@ -350,16 +350,53 @@ You can list all available RCCL multinode test cases using the CLI:
     - test_collect_hostinfo
     - test_collect_networkinfo
     - test_disable_firewall
-    - test_singlenode_perf
-    - test_singlenode_perf
-    - test_singlenode_perf
-    - test_singlenode_perf
-    - test_singlenode_perf
-    - test_singlenode_perf
-    - test_singlenode_perf
-    - test_singlenode_perf
-    - test_singlenode_perf
     - test_gen_graph
+    - test_singlenode_perf[all_gather_perf]
+    - test_singlenode_perf[all_reduce_perf]
+    - test_singlenode_perf[alltoall_perf]
+    - test_singlenode_perf[alltoallv_perf]
+    - test_singlenode_perf[broadcast_perf]
+    - test_singlenode_perf[gather_perf]
+    - test_singlenode_perf[reduce_scatter_perf]
+    - test_singlenode_perf[scatter_perf]
+    - test_singlenode_perf[sendrecv_perf]
+
+.. code:: bash
+
+  cvs list rccl_multinode_default_cvs
+
+.. code:: text
+
+  Available tests in rccl_multinode_default_cvs:
+    - test_collect_hostinfo
+    - test_collect_networkinfo
+    - test_disable_firewall
+    - test_singlenode_perf[all_gather_perf]
+    - test_singlenode_perf[all_reduce_perf]
+    - test_singlenode_perf[alltoall_perf]
+    - test_singlenode_perf[alltoallv_perf]
+    - test_singlenode_perf[broadcast_perf]
+    - test_singlenode_perf[gather_perf]
+    - test_singlenode_perf[reduce_scatter_perf]
+    - test_singlenode_perf[scatter_perf]
+    - test_singlenode_perf[sendrecv_perf]
+    - test_gen_graph
+
+
+.. code:: bash
+
+  cvs list rccl_heatmap_cvs
+
+.. code:: text
+
+  Available tests in rccl_heatmap_cvs:
+
+    - test_collect_hostinfo
+    - test_collect_networkinfo
+    - test_disable_firewall
+    - test_rccl_perf
+    - test_gen_graph
+    - test_gen_heatmap  
 
 .. code:: bash
 
@@ -414,16 +451,20 @@ Use these scripts to start RCCL tests with CVS:
 
   cvs run rccl_heatmap_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_heatmap.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_heatmap.log -vvv -s
 
-JAX training test scripts
-You can run all JAX llama training tests using the CVS CLI:
+You can run all RCCL multinode default tests using the CVS CLI:
 
 .. code:: bash
 
-  cvs run jax_llama3_1_405b_training --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jax/llama3_1_405b_config.json --html=/var/www/html/cvs/jax_llama3_1_405b.html --capture=tee-sys --self-contained-html --log-file=/tmp/jax_llama3_1_405b.log -vvv -s
+ cvs list rccl_multinode_default_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_singlenode_config.json --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_singlenode.log -vvv -s
 
-  cvs run jax_llama3_1_70b_training --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jax/llama3_1_70b_config.json --html=/var/www/html/cvs/jax_llama3_1_70b.html --capture=tee-sys --self-contained-html --log-file=/tmp/jax_llama3_1_70b.log -vvv -s
+You can run all RCCL heatmap tests using the CVS CLI:
 
-  cvs run jax_llama_training --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jax/llama_config.json --html=/var/www/html/cvs/jax_llama.html --capture=tee-sys --self-contained-html --log-file=/tmp/jax_llama.log -vvv -s
+.. code:: bash
+
+ cvs list rccl_heatmap_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_singlenode_config.json --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_singlenode.log -vvv -s
+
+
+JAX training test scripts
 -------------------------
 
 
@@ -431,11 +472,11 @@ You can list all available JAX training test cases using the CLI:
 
 .. code:: bash
 
-  cvs list jax_llama3_1_405b_training
+  cvs list jax_llama3_1_405b_distributed
 
 .. code:: text
 
-  Available tests in jax_llama3_1_405b_training:
+  Available tests in jax_llama3_1_405b_distributed:
     - test_disable_firewall
     - test_cleanup_stale_containers
     - test_launch_jax_containers
@@ -443,11 +484,11 @@ You can list all available JAX training test cases using the CLI:
 
 .. code:: bash
 
-  cvs list jax_llama3_1_70b_training
+  cvs list jax_llama3_1_70b_distributed
 
 .. code:: text
 
-  Available tests in jax_llama3_1_70b_training:
+  Available tests in jax_llama3_1_70b_distributed:
     - test_disable_firewall
     - test_cleanup_stale_containers
     - test_launch_jax_containers
@@ -455,14 +496,38 @@ You can list all available JAX training test cases using the CLI:
 
 .. code:: bash
 
-  cvs list jax_llama_training
+  cvs list jax_llama3_1_70b_single
 
 .. code:: text
 
-  Available tests in jax_llama_training:
+  Available tests in jax_llama3_1_70b_single:
     - test_cleanup_stale_containers
+    - test_disable_firewall
     - test_launch_jax_containers
-    - test_llama_3_1_fp8_distributed
+    - test_llama_3_1_70b_singlenode_training
+
+
+You can run all JAX llama training tests using the CVS CLI:
+
+
+.. code:: bash
+
+  cvs run jax_llama3_1_405b_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jax/mi300x_jax_llama3_1_405b_distributed.json --html=/var/www/html/cvs/jax_llama3_1_405b_distributed.html --capture=tee-sys --self-contained-html --log-file=/tmp/jax_llama3_1_405b_distributed.log -vvv -s
+
+.. code:: bash
+
+  cvs run jax_llama3_1_70b_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jax/mi300x_jax_llama3_1_70b_distributed.json --html=/var/www/html/cvs/jax_llama3_1_70b_distributed.html --capture=tee-sys --self-contained-html --log-file=/tmp/jax_llama3_1_70b_distributed.log -vvv -s
+
+.. code:: bash
+
+  cvs run jax_llama3_1_70b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jax/mi300x_jax_llama3_1_70b_single.json --html=/var/www/html/cvs/jax_llama3_1_70b_single.html --capture=tee-sys --self-contained-html --log-file=/tmp/jax_llama3_1_70b_single.log -vvv -s
+
+.. code:: bash
+
+  cvs run jax_llama3_1_70b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jax/mi35x_jax_llama3_1_70b_single.json --html=/var/www/html/cvs/jax_llama3_1_70b_single.html --capture=tee-sys --self-contained-html --log-file=/tmp/jax_llama3_1_70b_single.log -vvv -s
+  
+-------------------------
+
 
 Megatron training test scripts
 ------------------------------
@@ -471,25 +536,16 @@ You can list all available Megatron training test cases using the CLI:
 
 .. code:: bash
 
-  cvs list megatron_llama_training
+  cvs list megatron_llama3_1_70b_distributed
 
 .. code:: text
 
-  Available tests in megatron_llama_training:
+  Available tests in megatron_llama3_1_70b_distributed:
     - test_cleanup_stale_containers
+    - test_disable_firewall  
     - test_launch_megatron_containers
     - test_llama_3_1_fp8_single_node
-.. code:: bash
 
-  cvs list rocblas_cvs
-
-.. code:: text
-
-  Available tests in rocblas_cvs:
-    - test_rocblas_install
-    - test_rocblas_fp32_benchmark
-    - test_rocblas_bf16_benchmark
-    - test_rocblas_int8_benchmark
 .. code:: bash
 
   cvs list megatron_llama3_1_70b_single
@@ -500,14 +556,16 @@ You can list all available Megatron training test cases using the CLI:
     - test_cleanup_stale_containers
     - test_launch_megatron_containers
     - test_llama_3_1_fp8_single_node
+
 .. code:: bash
 
-  cvs list megatron_llama3_1_8b_single
+  cvs list megatron_llama3_1_8b_distributed
 
 .. code:: text
 
-  Available tests in megatron_llama3_1_8b_single:
+  Available tests in megatron_llama3_1_8b_distributed:
     - test_cleanup_stale_containers
+    - test_disable_firewall
     - test_launch_megatron_containers
     - test_llama_3_1_fp8_single_node
 Use these scripts to run the Megatron tests.
@@ -553,6 +611,237 @@ Distributed 70b
 .. code:: bash
 
   cvs run megatron_llama3_1_70b_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/megatron/mi3xx_megatron_llama_distributed.json --html=/var/www/html/cvs/megatron.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+
+Mori test scripts
+------------------------------
+
+You can list all available Mori test cases using the CLI:
+
+.. code:: bash
+
+  cvs list mori_benchmark_test
+
+.. code:: text
+
+  Available tests in mori_benchmark_test:
+    - test_cleanup_stale_containers
+    - test_concurrent_put_imm_threads
+    - test_concurrent_put_signal_thread
+    - test_concurrent_put_threads
+    - test_ibgda_write_test
+    - test_install_container_packages
+    - test_io_read[16384-128-1]
+    - test_io_read[16384-128-8]
+    - test_io_read[32768-128-1]
+    - test_io_read[32768-128-8]
+    - test_io_read[32768-256-1]
+    - test_io_read[32768-256-8]
+    - test_io_write[16384-128-1]
+    - test_io_write[16384-128-8]
+    - test_io_write[32768-128-1]
+    - test_io_write[32768-128-8]
+    - test_io_write[32768-256-1]
+    - test_io_write[32768-256-8]
+    - test_launch_mori_container
+    - test_setup_env
+    - test_setup_ibv_devices
+    - test_shmem_api
+
+Use these scripts to run the Mori tests.
+
+.. code:: bash
+
+  cvs run mori_benchmark_test --cluster_file input/cluster_file/cluster.json --config_file input/config_file/mori/mi35x_mori_config.json --html=/var/www/html/cvs/mori.html --capture=tee-sys --self-contained-html --log-file=/tmp/mori.log -vvv -s
+
+
+Inferencemax test scripts
+------------------------------
+
+You can list all available Inferencemax test cases using the CLI:
+
+.. code:: bash
+
+  cvs list inferencemax_gpt_oss_120b_single
+
+.. code:: text
+
+  Available tests in inferencemax_gpt_oss_120b_single:
+    - test_cleanup_stale_containers
+    - test_gpt_oss_120_single_node
+    - test_launch_inference_containers
+
+Use these scripts to run the Inferencemax tests.
+
+.. code:: bash
+
+  cvs run inferencemax_gpt_oss_120b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencemax/mi300x_inferencemax_gpt_oss_120b_single.json --html=/var/www/html/cvs/inferencemax.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencemax.log -vvv -s
+
+
+Pytorch xdit test scripts
+------------------------------
+
+You can list all available Pytorch xedit test cases using the CLI:
+
+.. code:: bash
+
+  cvs list pytorch_xdit_flux1_dev_single
+
+.. code:: text
+
+  Available tests in pytorch_xdit_flux1_dev_single:
+    - test_cleanup_stale_containers
+    - test_parse_and_validate_results
+    - test_run_flux1_benchmark
+    - test_verify_hf_cache_or_download
+
+
+.. code:: bash
+
+  cvs list pytorch_xdit_wan22_14b_single
+
+.. code:: text
+
+  Available tests in pytorch_xdit_wan22_14b_single:
+    - test_cleanup_stale_containers
+    - test_parse_and_validate_results
+    - test_run_wan22_benchmark
+    - test_verify_hf_cache_or_download
+    
+
+Use these scripts to run the Pytorch xdit tests.
+
+.. code:: bash
+
+  cvs run pytorch_xdit_flux1_dev_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json --html=/var/www/html/cvs/pytorch_xdit_flux1.html --capture=tee-sys --self-contained-html --log-file=/tmp/pytorch_xdit_flux1.log -vvv -s
+
+.. code:: bash
+
+  cvs run pytorch_xdit_wan22_14b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json --html=/var/www/html/cvs/pytorch_xdit_wan22.html --capture=tee-sys --self-contained-html --log-file=/tmp/pytorch_xdit_wan22.log -vvv -s
+  
+
+Sglang test scripts
+------------------------------
+
+You can list all available Sglang test cases using the CLI:
+
+.. code:: bash
+
+  cvs list sglang_deepseek_r1_671b_distributed
+
+.. code:: text
+
+  Available tests in sglang_deepseek_r1_671b_distributed:
+    - test_cleanup_stale_containers
+    - test_launch_decode_servers
+    - test_launch_inference_containers
+    - test_launch_prefill_servers
+    - test_launch_proxy_router
+    - test_poll_for_server_ready
+    - test_rms_norm
+    - test_run_benchmark_test
+    - test_run_gsm8k_benchmark_test
+    - test_setup_ibv_devices
+
+.. code:: bash
+
+  cvs list sglang_llama_70b_distributed
+
+.. code:: text
+
+  Available tests in sglang_llama_70b_distributed:
+    - test_cleanup_stale_containers
+    - test_launch_decode_servers
+    - test_launch_inference_containers
+    - test_launch_prefill_servers
+    - test_launch_proxy_router
+    - test_poll_for_server_ready
+    - test_rms_norm
+    - test_run_benchmark_test
+    - test_run_gsm8k_benchmark_test
+    - test_setup_ibv_devices
+    
+Use these scripts to run the Sglang tests.
+
+.. code:: bash
+
+  cvs run sglang_deepseek_r1_671b_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/sglang/mi35x_sglang_distributed.json --html=/var/www/html/cvs/sglang.html --capture=tee-sys --self-contained-html --log-file=/tmp/sglang.log -vvv -s
+
+.. code:: bash
+
+  cvs run sglang_llama_70b_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/sglang/mi35x_sglang_distributed.json --html=/var/www/html/cvs/sglang.html --capture=tee-sys --self-contained-html --log-file=/tmp/sglang.log -vvv -s
+
+
+VLLM test scripts
+------------------------------
+
+You can list all available VLLM test cases using the CLI:
+
+.. code:: bash
+
+  cvs list vllm_deepseek31_685b_single
+
+.. code:: text
+
+  Available tests in vllm_deepseek31_685b_single:
+    - test_cleanup_stale_containers
+    - test_launch_inference_containers
+    - test_print_results_table
+    - test_vllm_inference
+
+.. code:: bash
+
+  cvs list vllm_gpt_oss_120b_single
+
+.. code:: text
+
+  Available tests in vllm_gpt_oss_120b_single:
+    - test_cleanup_stale_containers
+    - test_launch_inference_containers
+    - test_print_results_table
+    - test_vllm_inference
+    
+.. code:: bash
+
+  cvs list vllm_qwen3_235b_single
+
+.. code:: text
+
+  Available tests in vllm_qwen3_235b_single:
+    - test_cleanup_stale_containers
+    - test_launch_inference_containers
+    - test_print_results_table
+    - test_vllm_inference
+
+.. code:: bash
+
+  cvs list vllm_qwen3_80b_single
+
+.. code:: text
+
+  Available tests in vllm_qwen3_80b_single:
+    - test_cleanup_stale_containers
+    - test_launch_inference_containers
+    - test_print_results_table
+    - test_vllm_inference
+
+Use these scripts to run the VLLM tests.
+
+.. code:: bash
+
+  cvs run vllm_deepseek31_685b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/vllm/mi355x_vllm_single.json --html=/var/www/html/cvs/deepseek.html --capture=tee-sys --self-contained-html --log-file=/tmp/deepseek.log -vvv -s
+
+.. code:: bash
+
+  cvs run vllm_gpt_oss_120b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/vllm/mi355x_vllm_single.json --html=/var/www/html/cvs/gpt.html --capture=tee-sys --self-contained-html --log-file=/tmp/gpt.log -vvv -s
+
+.. code:: bash
+
+  cvs run vllm_qwen3_235b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/vllm/mi355x_vllm_single.json --html=/var/www/html/cvs/qwen235.html --capture=tee-sys --self-contained-html --log-file=/tmp/qwen235.log -vvv -s
+
+.. code:: bash
+
+  cvs run vllm_qwen3_80b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/vllm/mi355x_vllm_single.json --html=/var/www/html/cvs/qwen80.html --capture=tee-sys --self-contained-html --log-file=/tmp/qwen80.log -vvv -s
+
 
 Test results
 ============

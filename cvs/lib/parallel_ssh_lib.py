@@ -7,7 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from __future__ import print_function
 from pssh.clients import ParallelSSHClient
-from pssh.exceptions import Timeout, ConnectionError
+from pssh.exceptions import Timeout, ConnectionError, SessionError
 
 import time
 
@@ -79,7 +79,9 @@ class Pssh:
         """
         initial_unreachable_len = len(self.unreachable_hosts)
         failed_hosts = [
-            item.host for item in output if item.exception and isinstance(item.exception, (ConnectionError, Timeout))
+            item.host
+            for item in output
+            if item.exception and isinstance(item.exception, (ConnectionError, Timeout, SessionError))
         ]
         unreachable = self.check_connectivity(failed_hosts)
         for host in unreachable:

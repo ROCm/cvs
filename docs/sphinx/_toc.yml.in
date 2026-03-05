@@ -34,12 +34,24 @@ subtrees:
         title: IB Perf
       - file: reference/configuration-files/rccl
         title: RCCL
-      - file: reference/configuration-files/aorta
-        title: Aorta benchmark
       - file: reference/configuration-files/jax
         title: JAX
       - file: reference/configuration-files/megatron
         title: Megatron
+      - file: reference/configuration-files/mori
+        title: MORI
+      - file: reference/configuration-files/aorta
+        title: Aorta
+      - file: reference/configuration-files/inferencemax
+        title: InferenceMAX
+      - file: reference/configuration-files/vllm_singlenode_mi355x
+        title: vLLM Single-Node MI355X
+      - file: reference/configuration-files/sglang_disagg_pd
+        title: SGLang Disaggregated
+      - file: reference/configuration-files/flux1_t2i
+        title: Flux.1 Text-to-Image
+      - file: reference/configuration-files/wan22_i2v
+        title: WAN 2.2 Image-to-Video
 
 - caption: About
   entries:
