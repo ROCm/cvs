@@ -398,17 +398,58 @@ You can list all available RCCL multinode test cases using the CLI:
     - test_gen_graph
     - test_gen_heatmap  
 
-You can run all RCCL multinode tests using the CVS CLI:
+.. code:: bash
+
+  cvs list rccl_multinode_default_cvs
+
+.. code:: text
+
+  Available tests in rccl_multinode_default_cvs:
+    - test_collect_hostinfo
+    - test_collect_networkinfo
+    - test_disable_firewall
+    - test_rccl_perf
+    - test_gen_graph
 
 .. code:: bash
 
-  cvs run rccl_multinode_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_multinode_config.json --html=/var/www/html/cvs/rccl_multinode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_multinode.log -vvv -s
+  cvs list rccl_heatmap_cvs
 
-You can run all RCCL singlenode tests using the CVS CLI:
+.. code:: text
+
+  Available tests in rccl_heatmap_cvs:
+    - test_collect_hostinfo
+    - test_collect_networkinfo
+    - test_disable_firewall
+    - test_rccl_perf
+    - test_gen_graph
+    - test_gen_heatmap
+
+Use these scripts to start RCCL tests with CVS:
+
+1. Run RCCL multinode parameter sweep:
 
 .. code:: bash
 
-  cvs run rccl_singlenode_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_singlenode_config.json --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_singlenode.log -vvv -s
+  cvs run rccl_multinode_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_multinode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_multinode.log -vvv -s
+
+2. Run RCCL multinode with RCCL defaults:
+
+.. code:: bash
+
+  cvs run rccl_multinode_default_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_multinode_default.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_multinode_default.log -vvv -s
+
+3. Run RCCL single-node:
+
+.. code:: bash
+
+  cvs run rccl_singlenode_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/single_node_mi355_rccl.json --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_singlenode.log -vvv -s
+
+4. Run RCCL heatmap:
+
+.. code:: bash
+
+  cvs run rccl_heatmap_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_heatmap.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_heatmap.log -vvv -s
 
 You can run all RCCL multinode default tests using the CVS CLI:
 
@@ -527,18 +568,6 @@ You can list all available Megatron training test cases using the CLI:
     - test_disable_firewall
     - test_launch_megatron_containers
     - test_llama_3_1_fp8_single_node
-
-.. code:: bash
-
-  cvs list megatron_llama3_1_8b_single
-
-.. code:: text
-
-  Available tests in megatron_llama3_1_8b_single:
-    - test_cleanup_stale_containers
-    - test_launch_megatron_containers
-    - test_llama_3_1_fp8_single_node
-    
 Use these scripts to run the Megatron tests.
 
 Single Node 8b MI3XX

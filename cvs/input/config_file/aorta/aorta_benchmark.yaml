@@ -68,7 +68,9 @@ analysis:
   gemm_script: scripts/gemm_analysis/run_tracelens_analysis.sh
   skip_if_exists: false
 
-# Expected results (tuned for host raw-trace parsing on MI300; use stricter values with TraceLens Excel reports)
+# Expected results: default thresholds for gfx942 (e.g. MI300). Change these as per your
+# testing config (GPU, node count, workload); see docs/reference/configuration-files/aorta.rst.
+# Tuned for host raw-trace parsing; use stricter values (e.g. min_compute_ratio 0.5+) with TraceLens Excel reports.
 expected_results:
   max_avg_iteration_ms: 12000
   min_compute_ratio: 0.01   # host parsing often 1–10%; use 0.5+ for TraceLens/Excel metrics

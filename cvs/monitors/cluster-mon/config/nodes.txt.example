@@ -1,0 +1,9 @@
+# GPU Cluster Nodes
+# One hostname or IP per line
+# Lines starting with # are ignored
+
+# Example nodes:
+# node1.cluster.local
+# node2.cluster.local
+# 192.x.x.x
+# 10.x.x.x

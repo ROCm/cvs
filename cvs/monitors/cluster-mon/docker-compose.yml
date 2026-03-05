@@ -1,0 +1,42 @@
+version: '3.8'
+
+# WARNING: Docker can interfere with iptables and block SSH access
+# See DOCKER_IPTABLES_WARNING.md for prevention steps
+# Option 1: Set "iptables": false in /etc/docker/daemon.json
+# Option 2: Use network_mode: "host" (uncomment below)
+
+services:
+  cvs-cluster-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cvs-cluster-monitor
+
+    # Network mode: Use "host" to avoid iptables issues (recommended for production)
+    # Uncomment the line below and comment out the ports section
+    # network_mode: "host"
+
+    # Port mapping (used with bridge network, default)
+    # Comment out if using network_mode: "host"
+    ports:
+      - "8005:8001"
+    volumes:
+      # Mount config directory for cluster.yaml and nodes.txt
+      - ./config:/app/config
+      # SSH keys are uploaded via web UI - no volume mounts needed
+    environment:
+      # Polling configuration
+      - POLLING__INTERVAL=${POLLING__INTERVAL:-60}
+      - POLLING__FAILURE_THRESHOLD=${POLLING__FAILURE_THRESHOLD:-5}
+      # Debug mode
+      - DEBUG=${DEBUG:-false}
+      # Cluster monitor home
+      - CLUSTER_MONITOR_HOME=/app
+    restart: unless-stopped
+    # Health check disabled - uncomment if needed
+    # healthcheck:
+    #   test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8001/health', timeout=5)"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s

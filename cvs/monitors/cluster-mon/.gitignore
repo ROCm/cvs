@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+*.egg
+
+# Node
+node_modules/
+dist/
+.vite/
+build/
+
+# Logs
+*.log
+*.log.*
+.nfs*
+
+# Runtime
+*.pid
+backend_wrapper.log
+
+# Config (with secrets)
+config/cluster.yaml
+config/nodes.txt
+.env
+!.env.example
+
+# SSH keys (never commit!)
+.ssh-temp/
+ssh-keys/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Compiled files
+*.pyc
+*.pyo
+
+# Test coverage
+.coverage
+htmlcov/
+.tox/
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Local development
+*.local
