@@ -12,7 +12,7 @@ CVS is a collection of tests scripts that can validate AMD AI clusters end to en
 4. Distributed Training Tests - Run Llama 70B and 405B model distributed trainings with JAX and Megatron frameworks.
 5. Distributed Inferencing Tests - Work in Progress
 
-CVS leverages the PyTest open source framework to run the tests and generate reports and can be launched from a head-node or any linux management station which has connectivity to the cluster nodes via SSH. The single node tests are run in parallel cluster wide using the parallel-ssh open source python modules to optimize the time for running them. Currently CVS has been validated only on Ubuntu based Linux distro clusters. 
+CVS leverages the PyTest open source framework to run the tests and generate reports and can be launched from a head-node or any linux management station which has connectivity to the cluster nodes via SSH. The single node tests are run in parallel cluster wide using the parallel-ssh open source python modules to optimize the time for running them. Currently CVS has been validated only on Ubuntu based Linux distro clusters.
 
 CVS Repository is organized as the following directories
 
@@ -376,3 +376,29 @@ cvs run rccl_multinode_cvs \
 ```
 
 You can also create wrapper shell scripts to run multiple test suites by putting different `cvs run` commands in a bash script.
+
+# Development
+
+## Pre-commit Hooks
+
+This repository uses [pre-commit](https://pre-commit.com/) to run linting and formatting checks before each commit. The hooks enforce the same [Ruff](https://docs.astral.sh/ruff/) rules used in CI.
+
+### Setup
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Once installed, the hooks run automatically on every `git commit` and check only the staged files. If a hook fails (e.g. a formatting issue), it will auto-fix the file — just re-stage the changes and commit again.
+
+
+### Running manually
+
+```bash
+# Run on all files
+pre-commit run --all-files
+
+# Run on specific files
+pre-commit run --files cvs/main.py cvs/utils.py
+```
