@@ -256,6 +256,7 @@ class InferenceBaseJob:
                     export VLLM_USE_AITER_UNIFIED_ATTENTION=1
                     export VLLM_ROCM_USE_AITER_MHA=0
                     export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1
+                    export RESULT_FILENAME=results
                     export PORT={self.bp_dict['port_no']}'  > /tmp/server_env_script.sh"
                     '''
         time.sleep(3)
@@ -312,7 +313,7 @@ class InferenceBaseJob:
         # Start the server side inference job
         cmd_list = []
         for i in range(0, int(self.nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash {script_name} > {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file} 2>&1 &" '''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash benchmarks/single_node/{script_name} > {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file} 2>&1 &" '''
             cmd_list.append(cmd)
         out_dict = self.s_phdl.exec_cmd_list(cmd_list)
 

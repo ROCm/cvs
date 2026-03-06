@@ -42,7 +42,7 @@
             "tokenizer_mode": "auto",
             "percentiles_metrics": "ttft,tpot,itl,e2el",
             "metric_percentiles": "99",
-            "server_script": "gptoss_fp4_mi300x.sh",
+            "server_script": "gptoss_fp4_mi355x.sh",
             "bench_serv_script": "benchmark_serving.py",
             "result_dict": {
                 "output_throughput_per_sec": "4200",

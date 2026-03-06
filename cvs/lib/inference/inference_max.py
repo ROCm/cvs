@@ -21,7 +21,7 @@ class InferenceMaxJob(InferenceBaseJob):
 
     def get_server_script_directory(self):
         """InferenceMAX scripts are in the cloned repo."""
-        return '/app/InferenceMAX/benchmarks'
+        return '/app/InferenceX'
 
     def get_result_filename(self):
         """InferenceMAX result filename."""
@@ -43,7 +43,7 @@ class InferenceMaxJob(InferenceBaseJob):
             if re.search('error|fail', out_dict[node], re.I):
                 fail_test('Errors or failures seen in pulling InferenceMAX repo from Github, pls check')
         time.sleep(3)
-        self.s_phdl.exec(f'''docker exec {self.container_name} /bin/bash -c "ls -ld /app/InferenceMAX" ''')
+        self.s_phdl.exec(f'''docker exec {self.container_name} /bin/bash -c "ls -ld /app/InferenceX" ''')
 
     def start_inference_server_job(self):
         """Start InferenceMAX server - clone repo, then call base implementation."""
