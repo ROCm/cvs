@@ -379,42 +379,4 @@ You can also create wrapper shell scripts to run multiple test suites by putting
 
 # Development
 
-## Pre-commit Hooks
-
-This repository uses [pre-commit](https://pre-commit.com/) to run linting and formatting checks before each commit. The hooks enforce the same [Ruff](https://docs.astral.sh/ruff/) rules used in CI.
-
-### Setup
-
-```bash
-pip install pre-commit
-pre-commit install
-```
-
-Once installed, the hooks run automatically on every `git commit` and check only the staged files. If a hook fails (e.g. a formatting issue), it will auto-fix the file — just re-stage the changes and commit again.
-
-
-### Running manually
-
-```bash
-# Run on all files
-pre-commit run --all-files
-
-# Run on specific files
-pre-commit run --files cvs/main.py cvs/utils.py
-```
-
-### Skipping hooks
-
-> **Note:** Disabling hooks is not recommended. These options are provided only for cases where you need to bypass the checks temporarily.
-
-To bypass all pre-commit hooks for a single commit:
-
-```bash
-git commit --no-verify
-```
-
-To remove the hooks from your local repo:
-
-```bash
-pre-commit uninstall
-```
+For development setup including pre-commit hooks, code quality checks, and contribution guidelines, see [CONTRIBUTORS.md](CONTRIBUTORS.md).
