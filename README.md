@@ -402,3 +402,19 @@ pre-commit run --all-files
 # Run on specific files
 pre-commit run --files cvs/main.py cvs/utils.py
 ```
+
+### Skipping hooks
+
+> **Note:** Disabling hooks is not recommended. These options are provided only for cases where you need to bypass the checks temporarily.
+
+To bypass all pre-commit hooks for a single commit:
+
+```bash
+git commit --no-verify
+```
+
+To remove the hooks from your local repo:
+
+```bash
+pre-commit uninstall
+```
