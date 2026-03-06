@@ -1,13 +1,27 @@
-'''
+"""
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
-'''
+"""
 
 import importlib.metadata
-import os
 import sys
+from pathlib import Path
+
+import pytest
+
+from cvs.lib.report_plugins import HtmlReportManager
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config):
+    if config.args:
+        suite_name = Path(config.args[0]).stem
+    else:
+        suite_name = "test"
+    config._test_html_dir = f"{suite_name}_html"
+    config._html_report_manager = HtmlReportManager(config)
 
 
 # Add all additional cmd line arguments for the script
@@ -41,13 +55,12 @@ def pytest_metadata(metadata):
 
     # Get CVS version - try package metadata first, fallback to version.txt
     try:
-        cvs_version = importlib.metadata.version('cvs')
+        cvs_version = importlib.metadata.version("cvs")
     except importlib.metadata.PackageNotFoundError:
         # Fallback for development mode (running from cloned repo)
         try:
-            version_file = os.path.join(os.path.dirname(__file__), "..", "version.txt")
-            with open(version_file) as f:
-                cvs_version = f.read().strip()
+            version_file = Path(__file__).parent.parent / "version.txt"
+            cvs_version = version_file.read_text().strip()
         except Exception as e:
             cvs_version = f"Unknown (Error: {e})"
 
@@ -63,6 +76,44 @@ def pytest_metadata(metadata):
             config_file = sys.argv[i + 1]
 
     # Add custom metadata
-    metadata['CVS version'] = cvs_version
-    metadata['Cluster File'] = cluster_file
-    metadata['Config File'] = config_file
+    metadata["CVS version"] = cvs_version
+    metadata["Cluster File"] = cluster_file
+    metadata["Config File"] = config_file
+
+
+# Order of execution of hooks: (function names are standard names recognized by plugin manager)
+# pytest_sessionstart
+# pytest_runtest_makereport (for each test phase)
+# pytest_html_results_table_html (when pytest-html renders each row)
+# pytest_html_results_summary (when pytest-html builds summary section)
+# pytest_sessionfinish (end of session)
+
+
+# Prepare a clean per-run log directory before tests start.
+def pytest_sessionstart(session):
+    session.config._html_report_manager.setup_log_dir()
+
+
+# Capture each test report and attach a per-test external log link.
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):  # noqa: ARG001
+    outcome = yield
+    report = outcome.get_result()
+    report.extras = item.config._html_report_manager.write_test_log(report, item.originalname)
+
+
+# Replace inline pytest-html log content with a short externalized-log message.
+def pytest_html_results_table_html(report, data):
+    HtmlReportManager.replace_table_html(report, data)
+
+
+# Inject CSS overrides to simplify/hide unused report UI controls.
+def pytest_html_results_summary(prefix, summary, postfix):
+    HtmlReportManager.inject_style_overrides(prefix)
+
+
+# Bundle the final HTML report and per-test log files into a zip at session end.
+@pytest.hookimpl(hookwrapper=True)
+def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
+    yield  # wait for pytest-html and all other plugins to finish writing the report
+    session.config._html_report_manager.create_zip_bundle(session)
