@@ -61,7 +61,6 @@ def parse_tb_a2a_bw(out_dict, exp_dict):
         print(exp_dict)
         rtotal_list = re.findall(
             r'(?:│\s+)?RTotal\s+(?:│\s+)?([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s*',
-
             out_dict[node],
         )
         if not rtotal_list:
@@ -183,7 +182,11 @@ def parse_tb_example_test_results(out_dict, exp_dict):
             continue
         test3_out = match.group(1)
 
-        match = re.search(r'(?:Transfer|Executor:\s+GPU)\s+[0-9]+\s+[|│]\s*([0-9\.]+)\s+GB/s(?:[\s0-9\.\|a-z]+\s+G0\s*-\>)?', test3_out, re.I)
+        match = re.search(
+            r'(?:Transfer|Executor:\s+GPU)\s+[0-9]+\s+[|│]\s*([0-9\.]+)\s+GB/s(?:[\s0-9\.\|a-z]+\s+G0\s*-\>)?',
+            test3_out,
+            re.I,
+        )
         if not match:
             fail_test(
                 f"G0->G1 transfer bandwidth pattern not found in Test 3 output on node {node}. Output: {test3_out}"
@@ -195,7 +198,11 @@ def parse_tb_example_test_results(out_dict, exp_dict):
                 f"Transfer Bench example test3 failed actual value {test3_res_0_1} is less than expected {exp_dict['test3_0_to_1']}"
             )
 
-        match = re.search(r'(?:Transfer|Executor:\s+GPU)\s+[0-9]+\s+[|│]\s*([0-9\.]+)\s+GB/s(?:[\s0-9\.\|a-z]+\s+G1\s*-\>)?', test3_out, re.I)
+        match = re.search(
+            r'(?:Transfer|Executor:\s+GPU)\s+[0-9]+\s+[|│]\s*([0-9\.]+)\s+GB/s(?:[\s0-9\.\|a-z]+\s+G1\s*-\>)?',
+            test3_out,
+            re.I,
+        )
         if not match:
             fail_test(
                 f"G1->G0 transfer bandwidth pattern not found in Test 3 output on node {node}. Output: {test3_out}"
