@@ -24,14 +24,14 @@ permissions:
 jobs:
   cvs-sglang-jaxmax-benchmark:
     name: cvs sglang-jaxmax Benchmark Tests
-    runs-on: linux-TW-mi355-scale-runner
+    runs-on: linux-SA-ROCm-scale-runner
     steps:
 
       - name: Test sglang Benchmark Tests
         shell: bash
         run: |
-          source /home/arravikum@amd.com/TheRock/.venv/bin/activate
-          cd /home/arravikum@amd.com/cvs_sglang_jax/cvs/cvs
+          source /home/amd/TheRock/.venv/bin/activate
+          cd /home/amd/cvs_sglang_jax_tests/cvs/cvs
           pytest -vvv \
             --log-file=./sglang.log \
             -s ./tests/inference/sglang/disagg_pd_deepseek_r1.py \
