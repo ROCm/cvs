@@ -1,0 +1,278 @@
+{
+    "_comments__": "Config file for Primus-based DeepSeek distributed training on MI355X. Change nnodes and other parameters based on your cluster size.",
+    
+    "config":
+    {
+        "container_image": "docker.io/tasimage/primus:pr-563-ainic",
+        "container_name": "primus_deepseek_v3",
+        "primus_path": "/workspace/Primus",
+        "distributed_training": "True",
+        
+        "_example_nnodes_8node": "8",
+        "_example_nnodes_128node": "128",
+        "nnodes": "<changeme>",
+        
+        "_example_master_address": "X.X.X.X",
+        "master_address": "<changeme>",
+        
+        "_example_training_iterations_testing": "20",
+        "_example_training_iterations_production": "50",
+        "training_iterations": "<changeme>",
+        
+        "_comments_nic_type": "For MI355X clusters with AINIC support",
+        "nic_type": "ainic",
+        "using_ainic": "True",
+        
+        "_example_nccl_ib_hca": "ionic_0:1,ionic_2:1,ionic_3:1,ionic_4:1,ionic_5:1,ionic_7:1,ionic_8:1,ionic_9:1",
+        "nccl_ib_hca": "<changeme>",
+        
+        "_example_nccl_socket_ifname": "ens9np0",
+        "nccl_socket_ifname": "<changeme>",
+        
+        "_example_gloo_socket_ifname": "ens9np0", 
+        "gloo_socket_ifname": "<changeme>",
+        
+        "nccl_ib_timeout": "23",
+        "nccl_debug": "ERROR",
+        
+        "enable_numa_binding": "True",
+        "hsa_kernarg_pool_size": "12582912",
+        
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "shm_size": "128G",
+        
+        "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
+        "data_cache_dir": "/home/{user-id}/cache",
+        "log_dir": "/home/{user-id}/LOG_DIR",
+        
+        "_comments_mock_data": "Set to True for testing without real data, False for production runs",
+        "_example_mock_data_testing": "True",
+        "_example_mock_data_production": "False",
+        "mock_data": "<changeme>",
+        
+        "verify_network_errors": "False",
+        
+        "data_prep": 
+        {
+            "_comments_enabled": "Set to True to tokenize C4 dataset before training",
+            "_example_enabled_testing": "False",
+            "_example_enabled_production": "True",
+            "enabled": "<changeme>",
+            
+            "_example_num_shards_testing": "50",
+            "_example_num_shards_production": "200",
+            "num_shards": "<changeme>",
+            
+            "data_dir": "/shared/c4",
+            "tokenized_data_path": "/shared/c4/tokenized/c4_en_train_text_document",
+            "workers": "null",
+            
+            "_example_timeout_testing": "1800",
+            "_example_timeout_production": "3600",
+            "timeout": "<changeme>"
+        },
+        
+        "container_config":
+        {
+            "_comments_device_list": "Required devices for ROCm and RDMA access",
+            "device_list": ["/dev/dri", "/dev/kfd"],
+            "volume_dict":
+            {
+                "/shared": "/shared",
+                "/shared_aig": "/shared_aig",
+                "/data": "/data",
+                "/home/{user-id}": "/home/{user-id}",
+                "_comments_ainic_libraries": "Required for AINIC userspace - mount these ionic libraries (adjust version as needed)",
+                "_example_dev_infiniband": "/dev/infiniband",
+                "_example_libionic_versioned": "/usr/lib/x86_64-linux-gnu/libionic.so.1.1.54.0-184",
+                "_example_libionic_so1": "/usr/lib/x86_64-linux-gnu/libionic.so.1",
+                "_example_libionic_so": "/usr/lib/x86_64-linux-gnu/libionic.so",
+                "_example_libionic_rdma": "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so",
+                "_example_ionic_driver": "/etc/libibverbs.d/ionic.driver"
+            }
+        }
+    },
+    
+    "model_params":
+    {
+        "multi_node":
+        {
+            "deepseek_v3":
+            {
+                "mi300x":
+                {
+                    "model_type": "deepseek_v3",
+                    "num_layers": "61",
+                    "hidden_size": "7168",
+                    "num_attention_heads": "128",
+                    
+                    "_example_seq_length_testing": "2048",
+                    "_example_seq_length_production": "4096",
+                    "seq_length": "<changeme>",
+                    
+                    "_example_max_position_embeddings_testing": "2048",
+                    "_example_max_position_embeddings_production": "4096",
+                    "max_position_embeddings": "<changeme>",
+                    
+                    "_comments_batch_sizes": "For 8 nodes use micro_batch_size=1, global_batch_size=64. For 128 nodes use micro_batch_size=2, global_batch_size=16384",
+                    "_example_micro_batch_size_8node": "1",
+                    "_example_micro_batch_size_128node": "2",
+                    "micro_batch_size": "<changeme>",
+                    
+                    "_example_global_batch_size_8node": "64",
+                    "_example_global_batch_size_128node": "16384",
+                    "global_batch_size": "<changeme>",
+                    
+                    "tensor_parallel": "1",
+                    
+                    "_comments_parallelism": "For 8 nodes use PP=4, EP=4, VPP=1. For 128 nodes use PP=8, EP=8, VPP=2",
+                    "_example_pipeline_parallel_8node": "4",
+                    "_example_pipeline_parallel_128node": "8",
+                    "pipeline_parallel": "<changeme>",
+                    
+                    "_example_expert_parallel_8node": "4",
+                    "_example_expert_parallel_128node": "8",
+                    "expert_parallel": "<changeme>",
+                    
+                    "_example_virtual_pipeline_parallel_8node": "1",
+                    "_example_virtual_pipeline_parallel_128node": "2",
+                    "virtual_pipeline_parallel": "<changeme>",
+                    
+                    "data_parallel": "-1",
+                    
+                    "_comments_moe": "MixturePertEoExperts configuration for DeepSeek V3",
+                    "num_experts": "256",
+                    "moe_top_k": "8",
+                    "moe_layer_freq": "1",
+                    
+                    "_comments_recompute": "Activation checkpointing settings",
+                    "_example_recompute_num_layers_8node": "1",
+                    "_example_recompute_num_layers_128node": "3",
+                    "recompute_num_layers": "<changeme>",
+                    "recompute_granularity": "full",
+                    "recompute_method": "block",
+                    
+                    "_comments_optimizations": "Primus-specific turbo optimizations for MI355X",
+                    "turbo_deepep": "True",
+                    "turbo_grouped_mlp": "False",
+                    "legacy_grouped_gemm": "True",
+                    
+                    "_example_manual_gc_testing": "False",
+                    "_example_manual_gc_production": "True",
+                    "manual_gc": "<changeme>",
+                    "manual_gc_interval": "1",
+                    
+                    "_example_pp_warmup_testing": "False",
+                    "_example_pp_warmup_production": "True",
+                    "pp_warmup": "<changeme>",
+                    
+                    "_comments_learning_rate": "Learning rate schedule",
+                    "lr": "1.0e-5",
+                    "min_lr": "0.0",
+                    
+                    "_example_lr_warmup_iters_8node": "10",
+                    "_example_lr_warmup_iters_128node": "200",
+                    "lr_warmup_iters": "<changeme>",
+                    
+                    "_example_lr_decay_iters_8node": "100",
+                    "_example_lr_decay_iters_128node": "5000",
+                    "lr_decay_iters": "<changeme>",
+                    "lr_decay_style": "cosine",
+                    
+                    "_comments_monitoring": "Logging and profiling settings",
+                    "_example_disable_wandb_testing": "True",
+                    "_example_disable_wandb_production": "False",
+                    "disable_wandb": "<changeme>",
+                    
+                    "disable_tensorboard": "False",
+                    "profile": "False",
+                    "use_pytorch_profiler": "False",
+                    "profile_step_start": "6",
+                    "profile_step_end": "7",
+                    
+                    "result_dict":
+                    {
+                        "_comments_results": "Expected performance metrics - update based on your testing",
+                        "_example_throughput_8node": "3000.0",
+                        "_example_throughput_128node": "50000.0",
+                        "expected_min_throughput_tokens_per_sec": "<changeme>",
+                        
+                        "_example_max_loss": "10.0",
+                        "expected_max_loss": "<changeme>"
+                    }
+                }
+            },
+            
+            "deepseek_v2_lite":
+            {
+                "mi300x":
+                {
+                    "model_type": "deepseek_v2_lite",
+                    "num_layers": "27",
+                    
+                    "_example_seq_length_testing": "2048",
+                    "_example_seq_length_production": "4096",
+                    "seq_length": "<changeme>",
+                    
+                    "_example_max_position_embeddings_testing": "2048",
+                    "_example_max_position_embeddings_production": "4096",
+                    "max_position_embeddings": "<changeme>",
+                    
+                    "_comments_batch_sizes": "For 8 nodes use micro_batch_size=4, global_batch_size=256. For 128 nodes use micro_batch_size=12, global_batch_size=12288",
+                    "_example_micro_batch_size_8node": "4",
+                    "_example_micro_batch_size_128node": "12",
+                    "micro_batch_size": "<changeme>",
+                    
+                    "_example_global_batch_size_8node": "256",
+                    "_example_global_batch_size_128node": "12288",
+                    "global_batch_size": "<changeme>",
+                    
+                    "tensor_parallel": "1",
+                    
+                    "_comments_parallelism": "For 8 nodes use PP=2, EP=4. For 128 nodes use PP=4, EP=4",
+                    "_example_pipeline_parallel_8node": "2",
+                    "_example_pipeline_parallel_128node": "4",
+                    "pipeline_parallel": "<changeme>",
+                    
+                    "expert_parallel": "4",
+                    "virtual_pipeline_parallel": "1",
+                    "data_parallel": "-1",
+                    
+                    "moe_layer_freq": "1",
+                    "recompute_num_layers": "0",
+                    
+                    "_comments_optimizations": "Primus-specific turbo optimizations",
+                    "turbo_grouped_mlp": "False",
+                    "turbo_deepep": "True",
+                    "legacy_grouped_gemm": "True",
+                    "manual_gc": "False",
+                    "pp_warmup": "False",
+                    
+                    "_comments_learning_rate": "Learning rate schedule",
+                    "lr": "1.0e-5",
+                    "min_lr": "0.0",
+                    
+                    "_example_lr_warmup_iters_8node": "5",
+                    "_example_lr_warmup_iters_128node": "100",
+                    "lr_warmup_iters": "<changeme>",
+                    
+                    "_example_lr_decay_iters_8node": "50",
+                    "_example_lr_decay_iters_128node": "2000",
+                    "lr_decay_iters": "<changeme>",
+                    "lr_decay_style": "cosine",
+                    
+                    "disable_wandb": "True",
+                    "disable_tensorboard": "True",
+                    "profile": "False",
+                    
+                    "result_dict":
+                    {
+                        "_example_throughput_8node": "10000.0",
+                        "_example_throughput_128node": "100000.0",
+                        "expected_min_throughput_tokens_per_sec": "<changeme>"
+                    }
+                }
+            }
+        }
+    }
+}
