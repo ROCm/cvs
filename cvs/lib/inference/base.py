@@ -190,7 +190,11 @@ class InferenceBaseJob:
     def get_log_subdir(self):
         """Get log subdirectory name for this framework."""
         raise NotImplementedError("Derived class must implement get_log_subdir()")
-
+    
+    def get_server_script_path(self):
+        """Get directory where server scripts are located."""
+        raise NotImplementedError("Derived class must implement get_server_script_directory()")
+    
     def run_preinference_tasks(
         self,
     ):
@@ -309,11 +313,12 @@ class InferenceBaseJob:
         script_dir = self.get_server_script_directory()
         script_name = self.server_script
         log_file = f'{self.server_script}_server.log'
+        script_path=self.get_server_script_path()
 
         # Start the server side inference job
         cmd_list = []
         for i in range(0, int(self.nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash benchmarks/single_node/{script_name} > {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file} 2>&1 &" '''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash {script_path} > {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file} 2>&1 &" '''
             cmd_list.append(cmd)
         out_dict = self.s_phdl.exec_cmd_list(cmd_list)
 

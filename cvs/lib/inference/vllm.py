@@ -19,6 +19,10 @@ class VllmJob(InferenceBaseJob):
         super().__init__(*args, **kwargs)
         self.if_dict.setdefault('benchmark_server_script_path', '/host_scripts')
 
+    def get_server_script_path(self):
+        """vLLM scripts are mounted from host."""
+        return self.server_script
+
     def get_server_script_directory(self):
         """vLLM scripts are mounted from host."""
         return self.if_dict['benchmark_server_script_path']
