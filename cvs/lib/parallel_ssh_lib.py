@@ -169,11 +169,25 @@ class Pssh:
         Returns a dictionary of host as key and command output as values
         """
         print(f'cmd = {cmd}')
+
+        # Log command execution
+        if self.log:
+            if timeout is not None:
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {cmd}")
+            else:
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {cmd}")
+
         if timeout is None:
             output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors)
         else:
             output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
         cmd_output = self._process_output(output, cmd=cmd, print_console=print_console)
+
+        # Log per-host execution completion
+        if self.log:
+            for host in cmd_output.keys():
+                self.log.debug(f"Command completed on {host}: {cmd}")
+
         return cmd_output
 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
@@ -183,6 +197,14 @@ class Pssh:
         Returns a dictionary of host as key and command output as values
         """
         print(cmd_list)
+
+        # Log command list execution
+        if self.log:
+            if timeout is not None:
+                self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]")
+            else:
+                self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s)")
+
         if timeout is None:
             output = self.client.run_command('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
         else:
@@ -190,6 +212,12 @@ class Pssh:
                 '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors
             )
         cmd_output = self._process_output(output, cmd_list=cmd_list, print_console=print_console)
+
+        # Log per-host command execution
+        if self.log:
+            for host, cmd in zip(self.reachable_hosts, cmd_list):
+                self.log.debug(f"Command on {host}: {cmd}")
+
         return cmd_output
 
     def scp_file(self, local_file, remote_file, recurse=False):
