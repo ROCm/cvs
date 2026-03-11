@@ -190,11 +190,11 @@ class InferenceBaseJob:
     def get_log_subdir(self):
         """Get log subdirectory name for this framework."""
         raise NotImplementedError("Derived class must implement get_log_subdir()")
-    
+
     def get_server_script_path(self):
         """Get directory where server scripts are located."""
-        raise NotImplementedError("Derived class must implement get_server_script_directory()")
-    
+        raise NotImplementedError("Derived class must implement get_server_script_path()")
+
     def run_preinference_tasks(
         self,
     ):
@@ -311,9 +311,8 @@ class InferenceBaseJob:
     def launch_server(self):
         """Launch inference server."""
         script_dir = self.get_server_script_directory()
-        script_name = self.server_script
         log_file = f'{self.server_script}_server.log'
-        script_path=self.get_server_script_path()
+        script_path = self.get_server_script_path()
 
         # Start the server side inference job
         cmd_list = []
