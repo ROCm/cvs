@@ -11,10 +11,17 @@ import re
 import json
 
 
+
+>>>>>>> 90e3ff4 (unnecessary path add removed)
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
-
+from cvs.lib.linux_utils import (
+    detect_distro,
+    install_package,
+    update_package_cache,
+    map_packages
+)
 from cvs.lib import globals
 
 log = globals.log
@@ -189,28 +196,34 @@ def test_install_ib_perf(phdl, shdl, config_dict):
     # install standard rdma packages
     globals.error_list = []
 
-    if re.search('true', config_dict['install_perf_package'], re.I):
-        shdl.exec(f'mkdir -p {config_dict["install_dir"]}')
-        phdl.exec('sudo apt update -y', timeout=200)
-        phdl.exec('sudo apt install -y git build-essential autoconf automake libtool pkg-config', timeout=200)
-        phdl.exec('sudo apt install -y libibverbs-dev librdmacm-dev ibverbs-providers rdma-core', timeout=200)
-        phdl.exec('sudo apt install -y libibumad-dev')
-        phdl.exec('sudo apt install -y libpci-dev')
-        phdl.exec('sudo apt install -y numactl')
-        shdl.exec(f'cd {config_dict["install_dir"]}; git clone https://github.com/linux-rdma/perftest')
-        shdl.exec(f'cd {config_dict["install_dir"]}/perftest; ./autogen.sh', timeout=100)
-        shdl.exec(
-            f'cd {config_dict["install_dir"]}/perftest; ./configure --prefix={config_dict["install_dir"]}/perftest --with-rocm={config_dict["rocm_dir"]} --enable-rocm',
-            timeout=200,
-        )
-        shdl.exec(f'cd {config_dict["install_dir"]}/perftest; make', timeout=100)
-        shdl.exec(f'cd {config_dict["install_dir"]}/perftest; make install', timeout=100)
+    if re.search( 'true', config_dict['install_perf_package'], re.I ):
+        shdl.exec( f'mkdir -p {config_dict["install_dir"]}')
+        distro = detect_distro(phdl)
+        out_dict = update_package_cache(phdl, distro, timeout=600)
+        # Check for errors if needed
+        for node in out_dict.keys():
+            if re.search('error|failed', out_dict[node], re.I):
+                log.warning(f'Package update warning on {node}')
+
+        packages = ['git', 'build-essential', 'autoconf', 'automake', 'libtool', 
+            'pkg-config', 'libibverbs-dev', 'librdmacm-dev', 
+            'ibverbs-providers', 'rdma-core', 'libibumad-dev', 
+            'libpci-dev', 'numactl']
+        package_list = map_packages(distro, packages)
+        for package in package_list:
+            out_dict = install_package(phdl, package, distro, timeout=200)
+            for node in out_dict.keys():
+                if re.search('error|failed|unable to locate', out_dict[node], re.I):
+                    fail_test(f'Failed to install {package} on {node}')
+        shdl.exec( f'cd {config_dict["install_dir"]}; git clone https://github.com/linux-rdma/perftest' )
+        shdl.exec( f'cd {config_dict["install_dir"]}/perftest; ./autogen.sh', timeout=100 )
+        shdl.exec( f'cd {config_dict["install_dir"]}/perftest; ./configure --prefix={config_dict["install_dir"]}/perftest --with-rocm={config_dict["rocm_dir"]} --enable-rocm', timeout=200 )
+        shdl.exec( f'cd {config_dict["install_dir"]}/perftest; make', timeout=100 )
+        shdl.exec( f'cd {config_dict["install_dir"]}/perftest; make install', timeout=100 )
 
         # Verify if the installation went fine ..
         out_dict = phdl.exec(f'{config_dict["install_dir"]}/perftest/ib_write_bw -h | grep -i rocm --color=never')
         for node in out_dict.keys():
-            if not re.search('GPUDirect RDMA', out_dict[node], re.I):
-                fail_test(
-                    f'IB Perf package installation on node {node} failed, ib_write_bw not showing expected use_rocm output'
-                )
+            if not re.search( 'GPUDirect RDMA', out_dict[node], re.I ):
+                fail_test( f'IB Perf package installation on node {node} failed, ib_write_bw not showing expected use_rocm output')
     update_test_result()
