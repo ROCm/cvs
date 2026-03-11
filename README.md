@@ -12,7 +12,7 @@ CVS is a collection of tests scripts that can validate AMD AI clusters end to en
 4. Distributed Training Tests - Run Llama 70B and 405B model distributed trainings with JAX and Megatron frameworks.
 5. Distributed Inferencing Tests - Work in Progress
 
-CVS leverages the PyTest open source framework to run the tests and generate reports and can be launched from a head-node or any linux management station which has connectivity to the cluster nodes via SSH. The single node tests are run in parallel cluster wide using the parallel-ssh open source python modules to optimize the time for running them. Currently CVS has been validated only on Ubuntu based Linux distro clusters. 
+CVS leverages the PyTest open source framework to run the tests and generate reports and can be launched from a head-node or any linux management station which has connectivity to the cluster nodes via SSH. The single node tests are run in parallel cluster wide using the parallel-ssh open source python modules to optimize the time for running them. Currently CVS has been validated only on Ubuntu based Linux distro clusters.
 
 CVS Repository is organized as the following directories
 
@@ -376,3 +376,7 @@ cvs run rccl_multinode_cvs \
 ```
 
 You can also create wrapper shell scripts to run multiple test suites by putting different `cvs run` commands in a bash script.
+
+# Development
+
+For development setup including pre-commit hooks, code quality checks, and contribution guidelines, see [CONTRIBUTORS.md](CONTRIBUTORS.md).

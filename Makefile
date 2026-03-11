@@ -9,7 +9,7 @@ RUFF_PIP = $(RUFF_VENV_DIR)/bin/pip
 RUFF = $(RUFF_VENV_DIR)/bin/ruff
 CVS = $(TEST_VENV_DIR)/bin/cvs
 
-.PHONY: all help sdist build test-venv cvs-venv install installtest ut test clean_test_venv clean_cvs_venv clean_sdist clean_pycache clean
+.PHONY: all help sdist build test-venv cvs-venv install installtest ut test pre-commit clean_test_venv clean_cvs_venv clean_sdist clean_pycache clean
 
 all: build test-venv installtest test
 
@@ -29,14 +29,20 @@ help:
 	@echo "  fmt-check  - Check ruff formatting without modifying files"
 	@echo "  lint-fix   - Run ruff linter with auto-fix (fixes code quality issues, not formatting)"
 	@echo "  unsafe-lint-fix - Interactive unsafe lint fixes"
+	@echo "  pre-commit - Install pre-commit hooks for local development"
 	@echo "  all        - Run build, test-venv, installtest, and test"
 	@echo "  clean      - Remove virtual environment, build artifacts, and Python cache files"
+
+pre-commit: test-venv
+	@echo "Installing pre-commit..."; $(PIP) install pre-commit
+	$(TEST_VENV_DIR)/bin/pre-commit install
+	@echo "Pre-commit hooks installed successfully."
 
 sdist: clean_sdist
 	@echo "Building source distribution..."
 	$(PYTHON) setup.py sdist
 
-build: fmt-check lint sdist
+build: sdist
 
 test-venv: clean_test_venv
 	@echo "Creating virtual environment..."
