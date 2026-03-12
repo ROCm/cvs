@@ -33,7 +33,7 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting RDMA link info")
-        output = ssh_manager.exec("rdma link")
+        output = ssh_manager.exec("rdma link", timeout=60)
 
         rdma_dict = {}
         for node, out_str in output.items():
@@ -81,7 +81,8 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting RDMA statistics (includes congestion control metrics)")
-        output = ssh_manager.exec("rdma statistic show --json 2>/dev/null || echo '{}'")
+        # Use bash -c to properly handle shell redirection and || operator
+        output = ssh_manager.exec("bash -c 'rdma statistic show --json 2>/dev/null || echo \"{}\"'", timeout=60)
 
         logger.info(f"RDMA stats output received from {len(output)} nodes")
 
@@ -164,7 +165,7 @@ class NICMetricsCollector:
 
         # Run 'ip -s link' once per node to get all interface stats
         cmd = "ip -s link show"
-        output = ssh_manager.exec(cmd)
+        output = ssh_manager.exec(cmd, timeout=60)
 
         eth_stats = {}
 
@@ -262,7 +263,7 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting IP address info")
-        output = ssh_manager.exec("ip addr show | grep -A 5 mtu --color=never")
+        output = ssh_manager.exec("bash -c 'ip addr show | grep -A 5 mtu --color=never'", timeout=60)
 
         ip_dict = {}
 
@@ -337,7 +338,8 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting LLDP info")
-        output = ssh_manager.exec("sudo lldpctl -f json 2>/dev/null || echo '{}'")
+        # Use bash -c to properly handle shell redirection and || operator
+        output = ssh_manager.exec("bash -c 'sudo lldpctl -f json 2>/dev/null || echo \"{}\"'", timeout=60)
 
         lldp_dict = {}
         for node, out_str in output.items():
@@ -488,7 +490,7 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting RDMA resources")
-        output = ssh_manager.exec("rdma res")
+        output = ssh_manager.exec("rdma res", timeout=60)
 
         rdma_res = {}
         for node, out_str in output.items():

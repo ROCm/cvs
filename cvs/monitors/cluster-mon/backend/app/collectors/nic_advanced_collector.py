@@ -25,7 +25,7 @@ class NICAdvancedCollector:
         # Get ALL NIC PCIe info in one command per node
         # cmd = "sudo lspci -vvv 2>/dev/null | grep -A 30 -i 'ethernet\\|network' | grep -E '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:'"
         cmd = "sudo lspci -vvv 2>/dev/null | egrep -A 30 -i 'ethernet\\|network' | egrep '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:'"
-        result = await ssh_manager.exec_async(cmd)
+        result = await ssh_manager.exec_async(cmd, timeout=120)
 
         logger.info(f"NIC PCIe lspci returned results from {len(result)} nodes")
 
@@ -155,7 +155,9 @@ class NICAdvancedCollector:
         logger.info("Collecting congestion control information from rdma statistic (optimized)")
 
         # Use rdma statistic show with JSON for reliable parsing
-        output = await ssh_manager.exec_async("rdma statistic show --json 2>/dev/null || echo '[]'")
+        output = await ssh_manager.exec_async(
+            "bash -c 'rdma statistic show --json 2>/dev/null || echo \"[]\"'", timeout=60
+        )
 
         congestion_info = {}
 
@@ -231,22 +233,20 @@ class NICAdvancedCollector:
         """
         Collect all advanced NIC information.
         """
-        import asyncio
 
         logger.info("Collecting all advanced NIC information")
 
-        results = await asyncio.gather(
-            self.collect_nic_pcie_info(ssh_manager),
-            self.collect_congestion_info(ssh_manager),
-            self.collect_mellanox_info(ssh_manager),
-            self.collect_broadcom_info(ssh_manager),
-            return_exceptions=True,
-        )
+        # IMPORTANT: Run commands SEQUENTIALLY to avoid parallel-ssh thread safety issues
+        # asyncio.gather() was causing "munmap_chunk(): invalid pointer" crashes
+        nic_pcie = await self.collect_nic_pcie_info(ssh_manager)
+        congestion = await self.collect_congestion_info(ssh_manager)
+        mellanox = await self.collect_mellanox_info(ssh_manager)
+        broadcom = await self.collect_broadcom_info(ssh_manager)
 
         return {
             "timestamp": datetime.utcnow().isoformat() + "Z",
-            "nic_pcie": results[0] if not isinstance(results[0], Exception) else {},
-            "congestion": results[1] if not isinstance(results[1], Exception) else {},
-            "mellanox": results[2] if not isinstance(results[2], Exception) else {},
-            "broadcom": results[3] if not isinstance(results[3], Exception) else {},
+            "nic_pcie": nic_pcie if not isinstance(nic_pcie, Exception) else {},
+            "congestion": congestion if not isinstance(congestion, Exception) else {},
+            "mellanox": mellanox if not isinstance(mellanox, Exception) else {},
+            "broadcom": broadcom if not isinstance(broadcom, Exception) else {},
         }

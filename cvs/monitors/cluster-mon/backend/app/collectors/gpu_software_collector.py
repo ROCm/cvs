@@ -44,9 +44,11 @@ class GPUSoftwareCollector:
         # Get actual ROCm version from file
 
         rocm_ver_output = await ssh_manager.exec_async(
-            "cat /opt/rocm*/.info/version 2>/dev/null | head -1 || echo 'N/A'"
+            "bash -c 'cat /opt/rocm*/.info/version 2>/dev/null | head -1 || echo \"N/A\"'", timeout=60
         )
-        driver_output = await ssh_manager.exec_async("rocm-smi --showdriverversion 2>/dev/null || echo 'Not available'")
+        driver_output = await ssh_manager.exec_async(
+            "bash -c 'rocm-smi --showdriverversion 2>/dev/null || echo \"Not available\"'", timeout=60
+        )
 
         rocm_version = {}
         for host in rocm_ver_output.keys():
@@ -82,7 +84,7 @@ class GPUSoftwareCollector:
         Command: amd-smi firmware --json
         """
         logger.info("Collecting GPU firmware information")
-        output = await ssh_manager.exec_async("amd-smi firmware --json")
+        output = await ssh_manager.exec_async("amd-smi firmware --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_amd_smi_version(self, ssh_manager) -> Dict[str, Any]:
@@ -92,7 +94,9 @@ class GPUSoftwareCollector:
         Command: amd-smi version --json
         """
         logger.info("Collecting AMD SMI version")
-        output = await ssh_manager.exec_async("amd-smi version --json 2>/dev/null || amd-smi --version")
+        output = await ssh_manager.exec_async(
+            "bash -c 'amd-smi version --json 2>/dev/null || amd-smi --version'", timeout=60
+        )
         return self.parse_json_output(output)
 
     async def collect_rocm_info(self, ssh_manager) -> Dict[str, Any]:
@@ -102,7 +106,7 @@ class GPUSoftwareCollector:
         Command: /opt/rocm/bin/rocminfo
         """
         logger.info("Collecting ROCM info")
-        output = await ssh_manager.exec_async("/opt/rocm/bin/rocminfo 2>/dev/null | head -50")
+        output = await ssh_manager.exec_async("bash -c '/opt/rocm/bin/rocminfo 2>/dev/null | head -50'", timeout=60)
 
         rocm_info = {}
         for host, out_str in output.items():
@@ -129,7 +133,9 @@ class GPUSoftwareCollector:
         Command: modinfo amdgpu | grep version
         """
         logger.info("Collecting GPU driver version")
-        output = await ssh_manager.exec_async("modinfo amdgpu 2>/dev/null | grep version | head -5")
+        output = await ssh_manager.exec_async(
+            "bash -c 'modinfo amdgpu 2>/dev/null | grep version | head -5'", timeout=60
+        )
 
         driver_info = {}
         for host, out_str in output.items():
@@ -197,19 +203,13 @@ class GPUSoftwareCollector:
 
         Returns consolidated software info for all nodes.
         """
-        import asyncio
 
         logger.info("Collecting all GPU software information (optimized)")
 
-        # OPTIMIZATION: amd-smi version --json gives ALL version info!
-        results = await asyncio.gather(
-            ssh_manager.exec_async("amd-smi version --json"),
-            ssh_manager.exec_async("amd-smi firmware --json"),
-            return_exceptions=True,
-        )
-
-        version_output = results[0] if not isinstance(results[0], Exception) else {}
-        firmware_output = results[1] if not isinstance(results[1], Exception) else {}
+        # IMPORTANT: Run commands SEQUENTIALLY to avoid parallel-ssh thread safety issues
+        # asyncio.gather() was causing "munmap_chunk(): invalid pointer" crashes
+        version_output = await ssh_manager.exec_async("amd-smi version --json", timeout=60)
+        firmware_output = await ssh_manager.exec_async("amd-smi firmware --json", timeout=120)
 
         # Parse amd-smi version --json output
         rocm_version_info = {}

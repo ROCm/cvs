@@ -41,19 +41,10 @@ class BaseInstaller(ABC):
         nodes = self.ssh_manager.get_reachable_hosts()
         logger.info(f"Detecting OS on {len(nodes)} nodes...")
 
-        # Command to detect OS
-        detect_cmd = """
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    echo "$ID"
-elif [ -f /etc/redhat-release ]; then
-    echo "rhel"
-else
-    echo "unknown"
-fi
-"""
+        # Command to detect OS - wrapped in bash -c for proper shell interpretation
+        detect_cmd = "bash -c 'if [ -f /etc/os-release ]; then . /etc/os-release; echo \"$ID\"; elif [ -f /etc/redhat-release ]; then echo \"rhel\"; else echo \"unknown\"; fi'"
 
-        results = self.ssh_manager.exec(detect_cmd)
+        results = self.ssh_manager.exec(detect_cmd, timeout=30)
 
         os_map = {}
         for node in nodes:
@@ -78,12 +69,18 @@ fi
         logger.info(f"Checking if {self.get_package_name()} is installed on {len(nodes)} nodes...")
 
         check_cmd = self.get_check_command()
-        results = self.ssh_manager.exec(check_cmd)
+        results = self.ssh_manager.exec(check_cmd, timeout=140)
 
         installed_map = {}
         for node in nodes:
-            # If command succeeds (node in results and got output), package is installed
-            installed = node in results and results[node] and results[node].strip() != ""
+            # Check if 'which' command found the executable (returns path like /usr/bin/lldpcli)
+            # If command fails, output contains errors like "Command not found", "not found", "no such"
+            output = results.get(node, "").strip()
+            installed = (
+                node in results
+                and output
+                and not any(err in output.lower() for err in ['not found', 'no such', 'command not found'])
+            )
             installed_map[node] = installed
 
             if installed:
@@ -168,23 +165,27 @@ fi
             install_cmd = self.get_install_command(os_type)
             logger.info(f"Installing on {len(os_nodes)} {os_type} nodes: {install_cmd}")
 
-            # Create temporary SSH manager for just these nodes
-            from app.core.parallel_ssh import ParallelSSHManager
+            # Wrap command with bash -c for proper shell interpretation
+            wrapped_cmd = f"bash -c '{install_cmd}'"
 
-            temp_manager = ParallelSSHManager(
-                host_list=os_nodes,
-                user=self.ssh_manager.pssh.user,
-                password=getattr(self.ssh_manager.pssh, 'password', None),
-                pkey=getattr(self.ssh_manager.pssh, 'pkey', '~/.ssh/id_rsa'),
-                timeout=300,  # 5 minute timeout for installation
-                stop_on_errors=False,
-            )
+            # Build command list - install command for target nodes, echo skip for others
+            all_reachable = self.ssh_manager.get_reachable_hosts()
+            cmd_list = []
+            for node in all_reachable:
+                if node in os_nodes:
+                    cmd_list.append((node, wrapped_cmd))
+                else:
+                    cmd_list.append((node, "echo 'Skipped - different OS'"))
 
-            results = temp_manager.exec(install_cmd, timeout=300)
+            # Execute using exec_cmd_list (different commands per host)
+            results = self.ssh_manager.exec_cmd_list([cmd for _, cmd in cmd_list], timeout=300)
 
             for node in os_nodes:
                 if node in results:
-                    installation_results[node] = {"success": True, "os_type": os_type, "output": results[node]}
+                    output = results[node]
+                    # Check if installation succeeded (no obvious errors)
+                    success = not any(err in output.lower() for err in ['error', 'failed', 'unable to', 'could not'])
+                    installation_results[node] = {"success": success, "os_type": os_type, "output": output}
                 else:
                     installation_results[node] = {
                         "success": False,
