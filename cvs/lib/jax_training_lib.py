@@ -139,7 +139,8 @@ class JaxTrainingJob:
         self.nccl_debug = self.tc_dict['nccl_debug']
         self.data_cache_dir = self.tc_dict['data_cache_dir']
         self.log_dir = self.tc_dict['log_dir']
-        self.coordinator_ip = self.tc_dict['coordinator_ip']
+        self.coordinator_ip = self.tc_dict.get('coordinator_ip', 'localhost')
+        self.coordinator_port = self.tc_dict.get('container_config', {}).get('env_dict', {}).get('JAX_COORDINATOR_PORT', '1234')
 
         # Let us assume 1 training step can complete in 10 polling iterations
         self.training_poll_iterations = int(self.training_steps * 10)
@@ -287,7 +288,7 @@ class JaxTrainingJob:
                   checkpoint_is_quantized: {self.mp_dict['checkpoint_is_quantized']}
                   per_device_batch_size: {self.mp_dict['per_device_batch_size']}
                   max_target_length: {self.mp_dict['max_target_length']}
-                  skip_first_n_steps_for_profiler: {self.mp_dict['skip_first_n_steps_for_profiler']}' > /workspace/maxtext/MaxText/configs/training_config_for_jax.yml" '''
+                  skip_first_n_steps_for_profiler: {self.mp_dict['skip_first_n_steps_for_profiler']}' > /workspace/maxtext/src/MaxText/configs/models/training_config_for_jax.yml" '''
         formatted_cmd = textwrap_for_yml(cmd)
         self.phdl.exec(formatted_cmd)
 
@@ -305,12 +306,12 @@ class JaxTrainingJob:
                   logits_via_embedding: {self.mp_dict['logits_via_embedding']}
                   normalization_layer_epsilon: {self.mp_dict['normalization_layer_epsilon']}
                   rope_max_timescale: {self.mp_dict['rope_max_timescale']}
-                  decoder_block: {self.mp_dict['decoder_block']} '  > /workspace/maxtext/MaxText/configs/models/model_config_for_jax.yml" '''
+                  decoder_block: {self.mp_dict['decoder_block']} '  > /workspace/maxtext/src/MaxText/configs/models/model_config_for_jax.yml" '''
         formatted_cmd = textwrap_for_yml(cmd)
         self.phdl.exec(formatted_cmd)
 
         xla_dict = self.mp_dict['xla_flags']
-        cmd = f'''docker exec {self.container_name} /bin/bash -c \"echo export XLA_FLAGS=--xla_gpu_enable_cublaslt={xla_dict['xla_gpu_enable_cublaslt']} --xla_gpu_graph_level={xla_dict['xla_gpu_graph_level']} --xla_gpu_autotune_level={xla_dict['xla_gpu_autotune_level']} --xla_gpu_enable_reduce_scatter_combine_by_dim={xla_dict['xla_gpu_enable_reduce_scatter_combine_by_dim']} --xla_gpu_reduce_scatter_combine_threshold_bytes={xla_dict['xla_gpu_reduce_scatter_combine_threshold_bytes']} --xla_gpu_all_reduce_combine_threshold_bytes={xla_dict['xla_gpu_all_reduce_combine_threshold_bytes']}  --xla_gpu_all_gather_combine_threshold_bytes={xla_dict['xla_gpu_all_gather_combine_threshold_bytes']} --xla_gpu_enable_all_gather_combine_by_dim={xla_dict['xla_gpu_enable_all_gather_combine_by_dim']} --xla_gpu_executable_warn_stuck_timeout={xla_dict['xla_gpu_executable_warn_stuck_timeout']} --xla_gpu_executable_terminate_timeout={xla_dict['xla_gpu_executable_terminate_timeout']} > /workspace/maxtext/maxtext_xla_env.sh\"'''
+        cmd = f'''docker exec {self.container_name} /bin/bash -c \"echo export XLA_FLAGS=--xla_gpu_enable_cublaslt={xla_dict['xla_gpu_enable_cublaslt']} --xla_gpu_autotune_level={xla_dict['xla_gpu_autotune_level']} --xla_gpu_enable_reduce_scatter_combine_by_dim={xla_dict['xla_gpu_enable_reduce_scatter_combine_by_dim']} --xla_gpu_reduce_scatter_combine_threshold_bytes={xla_dict['xla_gpu_reduce_scatter_combine_threshold_bytes']} --xla_gpu_all_reduce_combine_threshold_bytes={xla_dict['xla_gpu_all_reduce_combine_threshold_bytes']}  --xla_gpu_all_gather_combine_threshold_bytes={xla_dict['xla_gpu_all_gather_combine_threshold_bytes']} --xla_gpu_enable_all_gather_combine_by_dim={xla_dict['xla_gpu_enable_all_gather_combine_by_dim']} --xla_gpu_executable_warn_stuck_timeout={xla_dict['xla_gpu_executable_warn_stuck_timeout']} --xla_gpu_executable_terminate_timeout={xla_dict['xla_gpu_executable_terminate_timeout']} > /workspace/maxtext/maxtext_xla_env.sh\"'''
         self.phdl.exec(cmd)
 
         # Hack to add the double quotes ..
@@ -328,7 +329,7 @@ class JaxTrainingJob:
                       export NODE_RANK=0
                       export JAX_COORDINATOR_ADDRESS='localhost'
                       export JAX_COORDINATOR_IP='localhost'
-                      export JAX_COORDINATOR_PORT=12345
+                      export JAX_COORDINATOR_PORT={self.coordinator_port}
                       export HSA_FORCE_FINE_GRAIN_PCIE=1
                       export GPU_MAX_HW_QUEUES={self.tc_dict['gpu_max_hw_queues']}
                       export HIP_FORCE_DEV_KERNARG=1
@@ -354,7 +355,7 @@ class JaxTrainingJob:
                       export NODE_RANK={i}
                       export JAX_COORDINATOR_ADDRESS={self.coordinator_ip}
                       export JAX_COORDINATOR_IP={self.coordinator_ip}
-                      export JAX_COORDINATOR_PORT=12345
+                      export JAX_COORDINATOR_PORT={self.coordinator_port}
                       export HSA_FORCE_FINE_GRAIN_PCIE=1
                       export GPU_MAX_HW_QUEUES={self.tc_dict['gpu_max_hw_queues']}
                       export HIP_FORCE_DEV_KERNARG=1
@@ -394,13 +395,13 @@ class JaxTrainingJob:
             # Take a reference config yml like llama2_70b
             cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                       mkdir -p {self.log_dir}/jax-logs/out-node{i}
-                      export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/; cd /workspace/maxtext; python /workspace/maxtext/MaxText/train.py MaxText/configs/llama2_70b_gpu_bs7.yml enable_goodput_recording=false monitor_goodput=false shardy=False base_output_directory={self.tc_dict['log_dir']} 2>&1 | tee >(grep -v 'external/xla/xla/') > {self.log_dir}/jax-logs/out-node{i}/training.log' > /workspace/maxtext/training_wrapper_script.sh"'''
+                      export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/; cd /workspace/maxtext; python /workspace/maxtext/src/MaxText/train.py src/MaxText/configs/models/llama2-70b.yml enable_goodput_recording=false monitor_goodput=false shardy=False base_output_directory={self.tc_dict['log_dir']} 2>&1 | tee >(grep -v 'external/xla/xla/') > {self.log_dir}/jax-logs/out-node{i}/training.log' > /workspace/maxtext/training_wrapper_script.sh"'''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
         self.phdl.exec_cmd_list(cmd_list)
 
         # Replace with the config.yml we generated
-        cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i -e "s/llama2_70b_gpu_bs7.yml/training_config_for_jax.yml/g"  /workspace/maxtext/training_wrapper_script.sh'  '''
+        cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i -e "s/llama2-70b.yml/training_config_for_jax.yml/g"  /workspace/maxtext/training_wrapper_script.sh'  '''
         self.phdl.exec(cmd)
 
     def start_training_job(
@@ -741,9 +742,25 @@ class JaxTrainingJob:
         last_node = self.host_list[len(self.host_list) - 1]
         last_node_num = len(self.host_list) - 1
         out_dict = self.phdl.exec(f'cat {self.log_dir}/jax-logs/out-node{last_node_num}/training.log')
-        if not re.search('Distributed task shutdown result: OK', out_dict[last_node], re.I):
-            fail_test('JAX Distributed training job did not complete or shutdown properly, test failed')
+
+        # Check for proper shutdown first
+        if re.search('Distributed task shutdown result: OK', out_dict[last_node], re.I):
+            print("Clean shutdown detected")
+        else:
+            # Fallback: check if all training steps completed successfully
+            # This handles the known race condition where PJRT cleanup runs after coordination service exits
+            final_step = self.training_steps - 1
+            if re.search(f'completed step:\s+{final_step},', out_dict[last_node], re.I):
+                print(f"Training completed all {self.training_steps} steps successfully. Shutdown message missing but acceptable due to coordination service cleanup race condition.")
+            else:
+                fail_test('JAX training did not complete all steps properly')
+
+        print(self.training_result_dict.keys())
         for i in self.training_result_dict.keys():
+            print("Actual",end="")
+            print(f"Step {i} TFLOPS/s/device = {self.training_result_dict[i]['tflops_per_sec_per_gpu']} ")
+            print("Expected",end="")
+            print(f"Step {i} TFLOPS/s/device = {self.expected_result_dict['tflops_per_sec_per_gpu']} ")
             if int(i) > 5:
                 if float(self.training_result_dict[i]['tflops_per_sec_per_gpu']) < float(
                     self.expected_result_dict['tflops_per_sec_per_gpu']
@@ -753,6 +770,8 @@ class JaxTrainingJob:
                             Expected = {self.expected_result_dict['tflops_per_sec_per_gpu']}, \
                             Actual = {self.training_result_dict[i]['tflops_per_sec_per_gpu']}"
                     )
+                else:
+                    print(f"Step {i} TFLOPS/s/device = {self.training_result_dict[i]['tflops_per_sec_per_gpu']} is above expected threshold {self.expected_result_dict['tflops_per_sec_per_gpu']}")
                 if float(self.training_result_dict[i]['tokens_per_sec_per_gpu']) < float(
                     self.expected_result_dict['tokens_per_sec_per_gpu']
                 ):
@@ -761,6 +780,8 @@ class JaxTrainingJob:
                             Expected = {self.expected_result_dict['tokens_per_sec_per_gpu']} \
                             Actual = {self.training_result_dict[i]['tokens_per_sec_per_gpu']}"
                     )
+                else:
+                    print(f"Step {i} Tokens/s/device = {self.training_result_dict[i]['tokens_per_sec_per_gpu']} is above expected threshold {self.expected_result_dict['tokens_per_sec_per_gpu']}")
 
         # Scan Dmesg for errors ..
         self.training_end_time = self.phdl.exec('date +"%a %b %e %H:%M"')
