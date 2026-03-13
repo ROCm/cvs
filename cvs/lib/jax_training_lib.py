@@ -140,7 +140,9 @@ class JaxTrainingJob:
         self.data_cache_dir = self.tc_dict['data_cache_dir']
         self.log_dir = self.tc_dict['log_dir']
         self.coordinator_ip = self.tc_dict.get('coordinator_ip', 'localhost')
-        self.coordinator_port = self.tc_dict.get('container_config', {}).get('env_dict', {}).get('JAX_COORDINATOR_PORT', '1234')
+        self.coordinator_port = (
+            self.tc_dict.get('container_config', {}).get('env_dict', {}).get('JAX_COORDINATOR_PORT', '1234')
+        )
 
         # Let us assume 1 training step can complete in 10 polling iterations
         self.training_poll_iterations = int(self.training_steps * 10)
@@ -751,15 +753,17 @@ class JaxTrainingJob:
             # This handles the known race condition where PJRT cleanup runs after coordination service exits
             final_step = self.training_steps - 1
             if re.search(f'completed step:\s+{final_step},', out_dict[last_node], re.I):
-                print(f"Training completed all {self.training_steps} steps successfully. Shutdown message missing but acceptable due to coordination service cleanup race condition.")
+                print(
+                    f"Training completed all {self.training_steps} steps successfully. Shutdown message missing but acceptable due to coordination service cleanup race condition."
+                )
             else:
                 fail_test('JAX training did not complete all steps properly')
 
         print(self.training_result_dict.keys())
         for i in self.training_result_dict.keys():
-            print("Actual",end="")
+            print("Actual", end="")
             print(f"Step {i} TFLOPS/s/device = {self.training_result_dict[i]['tflops_per_sec_per_gpu']} ")
-            print("Expected",end="")
+            print("Expected", end="")
             print(f"Step {i} TFLOPS/s/device = {self.expected_result_dict['tflops_per_sec_per_gpu']} ")
             if int(i) > 5:
                 if float(self.training_result_dict[i]['tflops_per_sec_per_gpu']) < float(
@@ -771,7 +775,9 @@ class JaxTrainingJob:
                             Actual = {self.training_result_dict[i]['tflops_per_sec_per_gpu']}"
                     )
                 else:
-                    print(f"Step {i} TFLOPS/s/device = {self.training_result_dict[i]['tflops_per_sec_per_gpu']} is above expected threshold {self.expected_result_dict['tflops_per_sec_per_gpu']}")
+                    print(
+                        f"Step {i} TFLOPS/s/device = {self.training_result_dict[i]['tflops_per_sec_per_gpu']} is above expected threshold {self.expected_result_dict['tflops_per_sec_per_gpu']}"
+                    )
                 if float(self.training_result_dict[i]['tokens_per_sec_per_gpu']) < float(
                     self.expected_result_dict['tokens_per_sec_per_gpu']
                 ):
@@ -781,7 +787,9 @@ class JaxTrainingJob:
                             Actual = {self.training_result_dict[i]['tokens_per_sec_per_gpu']}"
                     )
                 else:
-                    print(f"Step {i} Tokens/s/device = {self.training_result_dict[i]['tokens_per_sec_per_gpu']} is above expected threshold {self.expected_result_dict['tokens_per_sec_per_gpu']}")
+                    print(
+                        f"Step {i} Tokens/s/device = {self.training_result_dict[i]['tokens_per_sec_per_gpu']} is above expected threshold {self.expected_result_dict['tokens_per_sec_per_gpu']}"
+                    )
 
         # Scan Dmesg for errors ..
         self.training_end_time = self.phdl.exec('date +"%a %b %e %H:%M"')
