@@ -1,7 +1,5 @@
 {
-
-    "agfhc":
-    {
+    "agfhc": {
         "path": "/opt/amd/agfhc",
         "package_tar_ball": "/home/{user-id}/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
         "install_dir": "/home/{user-id}/INSTALL/agfhc/",
@@ -10,41 +8,38 @@
         "nfs_install": "True",
         "hbm_test_duration": "00:01:30"
     },
-    "transferbench":
-    {
-       "path": "/home/{user-id}/INSTALL/TransferBench",
-       "example_tests_path": "/home/{user-id}/INSTALL/TransferBench/examples",
-       "git_install_path": "/home/{user-id}/INSTALL/",
-       "git_url": "https://github.com/ROCm/TransferBench.git",
-       "nfs_install": "True",
-       "results":
-       {
-           "bytes_to_transfer": "268435456",
-           "path": "/home/{user-id}/INSTALL/TransferBench",
-           "gpu_to_gpu_a2a_rtotal": "320.0",
-           "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
-           "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
-           "best_gpu0_bw": "480.0",
-           "32_cu_local_read": "1650",
-           "32_cu_local_write": "1250.0",
-           "32_cu_local_copy": "1250.0",
-           "32_cu_rem_read": "48.0",
-           "32_cu_rem_write": "48.0",
-           "32_cu_rem_copy": "48.0",
-           "example_results":
-           {
-               "test1": "47.1",
-               "test2": "48.4",
-               "test3_0_to_1": "31.9",
-               "test3_1_to_0": "38.9",
-               "test4": "1264",
-               "test6": "48.6"
-           }
-
-       }
+    "transferbench": {
+        "path": "/home/{user-id}/INSTALL/TransferBench",
+        "example_tests_path": "/home/{user-id}/INSTALL/TransferBench/examples",
+        "git_install_path": "/home/{user-id}/INSTALL/",
+        "git_url": "https://github.com/ROCm/TransferBench.git",
+        "nfs_install": "True",
+        "_comment_rocm_path": "ROCm installation path. Set the placeholder changeme to auto-detect from /opt/rocm or /opt/rocm/core-*",
+        "rocm_path": "<changeme>",
+        "results": {
+            "bytes_to_transfer": "268435456",
+            "path": "/home/{user-id}/INSTALL/TransferBench",
+            "gpu_to_gpu_a2a_rtotal": "320.0",
+            "avg_gpu_to_gpu_p2p_unidir_bw": "33.9",
+            "avg_gpu_to_gpu_p2p_bidir_bw": "43.9",
+            "best_gpu0_bw": "480.0",
+            "32_cu_local_read": "1650",
+            "32_cu_local_write": "1250.0",
+            "32_cu_local_copy": "1250.0",
+            "32_cu_rem_read": "48.0",
+            "32_cu_rem_write": "48.0",
+            "32_cu_rem_copy": "48.0",
+            "example_results": {
+                "test1": "47.1",
+                "test2": "48.4",
+                "test3_0_to_1": "31.9",
+                "test3_1_to_0": "38.9",
+                "test4": "1264",
+                "test6": "48.6"
+            }
+        }
     },
-    "rvs":
-    {
+    "rvs": {
         "path": "/opt/rocm/bin",
         "git_install_path": "/home/{user-id}/INSTALL/rvs",
         "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
@@ -121,5 +116,4 @@
             }
         ]
     }
-
 }
