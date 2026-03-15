@@ -25,11 +25,11 @@ log = globals.log
 def detect_rocm_path(phdl, config_rocm_path):
     """
     Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
-    
+
     Args:
         phdl: Parallel SSH handle
         config_rocm_path (str): Configured ROCm path from config file (empty string for auto-detect)
-    
+
     Returns:
         str: Detected ROCm path
     """
@@ -37,10 +37,10 @@ def detect_rocm_path(phdl, config_rocm_path):
     if config_rocm_path and config_rocm_path != '<changeme>':
         log.info(f'Using configured ROCm path: {config_rocm_path}')
         return config_rocm_path
-    
+
     # Auto-detect ROCm path
     log.info('Auto-detecting ROCm path...')
-    
+
     # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
     out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
     for node, output in out_dict.items():
@@ -48,14 +48,14 @@ def detect_rocm_path(phdl, config_rocm_path):
             rocm_path = output.strip()
             log.info(f'Detected ROCm path (new layout): {rocm_path}')
             return rocm_path
-    
+
     # Fall back to legacy /opt/rocm
     out_dict = phdl.exec('test -d /opt/rocm && echo "/opt/rocm"')
     for node, output in out_dict.items():
         if '/opt/rocm' in output:
             log.info('Detected ROCm path (legacy layout): /opt/rocm')
             return '/opt/rocm'
-    
+
     # If nothing found, default to /opt/rocm (will fail gracefully later)
     log.warning('Could not detect ROCm path, defaulting to /opt/rocm')
     return '/opt/rocm'
@@ -64,11 +64,11 @@ def detect_rocm_path(phdl, config_rocm_path):
 def detect_hip_compiler(phdl, rocm_path):
     """
     Detect the HIP compiler (hipcc or amdclang++) for the given ROCm installation.
-    
+
     Args:
         phdl: Parallel SSH handle
         rocm_path (str): ROCm installation path
-    
+
     Returns:
         str: Full path to the HIP compiler
     """
@@ -78,14 +78,14 @@ def detect_hip_compiler(phdl, rocm_path):
         if output and 'hipcc' in output:
             log.info(f'Detected HIP compiler: {rocm_path}/bin/hipcc')
             return f'{rocm_path}/bin/hipcc'
-    
+
     # Fall back to amdclang++ (older ROCm versions)
     out_dict = phdl.exec(f'test -f {rocm_path}/bin/amdclang++ && echo "{rocm_path}/bin/amdclang++"')
     for node, output in out_dict.items():
         if output and 'amdclang++' in output:
             log.info(f'Detected HIP compiler: {rocm_path}/bin/amdclang++')
             return f'{rocm_path}/bin/amdclang++'
-    
+
     # Default to hipcc if nothing found
     log.warning(f'Could not detect HIP compiler, defaulting to {rocm_path}/bin/hipcc')
     return f'{rocm_path}/bin/hipcc'
@@ -262,9 +262,11 @@ def test_install_transferbench(phdl, shdl, config_dict):
     # Detect ROCm path and compiler
     rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
     hip_compiler = detect_hip_compiler(phdl, rocm_path)
-    
+
     # Build with explicit ROCM_PATH and HIPCC
-    out_dict = hdl.exec(f'cd {git_install_path}/TransferBench;ROCM_PATH={rocm_path} HIPCC={hip_compiler} make', timeout=500)
+    out_dict = hdl.exec(
+        f'cd {git_install_path}/TransferBench;ROCM_PATH={rocm_path} HIPCC={hip_compiler} make', timeout=500
+    )
 
     # Verify installation happened fine on all nodes
     out_dict = phdl.exec(f'ls -l {git_install_path}/TransferBench')
