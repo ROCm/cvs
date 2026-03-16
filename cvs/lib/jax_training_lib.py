@@ -13,6 +13,7 @@ from cvs.lib import globals
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
+from cvs.lib import docker_lib
 
 log = globals.log
 
@@ -175,6 +176,28 @@ class JaxTrainingJob:
                     per_gpu_batch_size = int(self.batch_size) / 32
                     self.batch_size = per_gpu_batch_size * int(self.nnodes) * 8
 
+    def get_maxtext_paths(self, container_name):
+        """
+        Auto-detect MaxText installation and return relevant paths.
+
+        Args:
+            container_name (str): Name of the Docker container
+
+        Returns:
+            dict: {'base': str, 'config': str, 'reference_config': str}
+        """
+        # (base_path, config_subdir, reference_config)
+        path_configs = [
+            ('/workspace/maxtext/src/MaxText', 'configs/models', 'llama2-70b.yml'),
+            ('/workspace/maxtext/MaxText', 'configs', 'llama2_70b_gpu_bs7.yml'),
+        ]
+
+        for base, config_subdir, ref_config in path_configs:
+            if docker_lib.path_exists_in_container(self.phdl, container_name, base):
+                return {'base': base, 'config': f"{base}/{config_subdir}", 'reference_config': ref_config}
+
+        raise RuntimeError(f"MaxText not found in container '{container_name}'")
+
     def run_pretraining_tasks(
         self,
     ):
@@ -248,6 +271,9 @@ class JaxTrainingJob:
         - self.mp_dict and self.tc_dict contain all referenced keys.
         """
 
+        # Auto-detect MaxText paths in the container
+        maxtext_paths = self.get_maxtext_paths(self.container_name)
+
         cmd = f'''docker exec {self.container_name} /bin/bash -c "echo 'base_config: base.yml
                   run_name: {self.model_name}-job
                   hardware: gpu
@@ -290,7 +316,7 @@ class JaxTrainingJob:
                   checkpoint_is_quantized: {self.mp_dict['checkpoint_is_quantized']}
                   per_device_batch_size: {self.mp_dict['per_device_batch_size']}
                   max_target_length: {self.mp_dict['max_target_length']}
-                  skip_first_n_steps_for_profiler: {self.mp_dict['skip_first_n_steps_for_profiler']}' > /workspace/maxtext/src/MaxText/configs/models/training_config_for_jax.yml" '''
+                  skip_first_n_steps_for_profiler: {self.mp_dict['skip_first_n_steps_for_profiler']}' > {maxtext_paths['config']}/training_config_for_jax.yml" '''
         formatted_cmd = textwrap_for_yml(cmd)
         self.phdl.exec(formatted_cmd)
 
@@ -308,7 +334,7 @@ class JaxTrainingJob:
                   logits_via_embedding: {self.mp_dict['logits_via_embedding']}
                   normalization_layer_epsilon: {self.mp_dict['normalization_layer_epsilon']}
                   rope_max_timescale: {self.mp_dict['rope_max_timescale']}
-                  decoder_block: {self.mp_dict['decoder_block']} '  > /workspace/maxtext/src/MaxText/configs/models/model_config_for_jax.yml" '''
+                  decoder_block: {self.mp_dict['decoder_block']} '  > {maxtext_paths['config']}/model_config_for_jax.yml" '''
         formatted_cmd = textwrap_for_yml(cmd)
         self.phdl.exec(formatted_cmd)
 
@@ -397,13 +423,13 @@ class JaxTrainingJob:
             # Take a reference config yml like llama2_70b
             cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                       mkdir -p {self.log_dir}/jax-logs/out-node{i}
-                      export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/; cd /workspace/maxtext; python /workspace/maxtext/src/MaxText/train.py src/MaxText/configs/models/llama2-70b.yml enable_goodput_recording=false monitor_goodput=false shardy=False base_output_directory={self.tc_dict['log_dir']} 2>&1 | tee >(grep -v 'external/xla/xla/') > {self.log_dir}/jax-logs/out-node{i}/training.log' > /workspace/maxtext/training_wrapper_script.sh"'''
+                      export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/; cd /workspace/maxtext; python {maxtext_paths['base']}/train.py {maxtext_paths['config']}/{maxtext_paths['reference_config']} enable_goodput_recording=false monitor_goodput=false shardy=False base_output_directory={self.tc_dict['log_dir']} 2>&1 | tee >(grep -v 'external/xla/xla/') > {self.log_dir}/jax-logs/out-node{i}/training.log' > /workspace/maxtext/training_wrapper_script.sh"'''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
         self.phdl.exec_cmd_list(cmd_list)
 
         # Replace with the config.yml we generated
-        cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i -e "s/llama2-70b.yml/training_config_for_jax.yml/g"  /workspace/maxtext/training_wrapper_script.sh'  '''
+        cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i -e "s/{maxtext_paths['reference_config']}/training_config_for_jax.yml/g"  /workspace/maxtext/training_wrapper_script.sh'  '''
         self.phdl.exec(cmd)
 
     def start_training_job(

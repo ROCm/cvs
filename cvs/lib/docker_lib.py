@@ -144,3 +144,22 @@ def launch_docker_container(
                     out_dict = phdl.exec(cmd, timeout=timeout)
                     time.sleep(3)
                     fail_test(f'Failed to launch container {container_name} on node {node}')
+
+
+def path_exists_in_container(phdl, container_name, path):
+    """
+    Check if a path exists inside a Docker container.
+
+    Args:
+        phdl: Process/host handle abstraction
+        container_name (str): Name of the Docker container
+        path (str): Path to check inside the container
+
+    Returns:
+        bool: True if path exists, False otherwise
+    """
+    cmd = f'docker exec {container_name} test -d {path} && echo "1" || echo "0"'
+    result = phdl.exec(cmd)
+    # Check the first node in the host list
+    first_node = list(result.keys())[0] if result else None
+    return "1" in str(result.get(first_node, "")) if first_node else False
