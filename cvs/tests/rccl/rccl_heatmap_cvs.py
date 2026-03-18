@@ -376,8 +376,9 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
         cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
     # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
-    if not re.search('None', config_dict['env_source_script'], re.I):
-        phdl.exec(f'bash {config_dict["env_source_script"]}')
+    env_source_script = config_dict.get('env_source_script', None)
+    if env_source_script:
+        phdl.exec(f'bash {env_source_script}')
 
     # Execute the RCCL cluster test with parameters sourced from config_dict
     result_dict = rccl_lib.rccl_cluster_test_default(
@@ -387,42 +388,46 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
         cluster_node_list=node_list,
         vpc_node_list=vpc_node_list,
         user_name=cluster_dict['username'],
-        ib_hca_list=config_dict['ib_hca_list'],
-        net_dev_list=config_dict['net_dev_list'],
-        oob_port=config_dict['oob_port'],
+        ib_hca_list=config_dict.get(
+            'ib_hca_list', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7'
+        ),
+        net_dev_list=config_dict.get(
+            'net_dev_list', 'ens28np0,ens27np0,ens25np0,ens26np0,ens24np0,ens23np0,ens21np0,ens22np0'
+        ),
+        oob_port=config_dict.get('oob_port', 'eth0'),
         no_of_global_ranks=no_of_global_ranks,
-        rocm_path_var=config_dict['rocm_path_var'],
-        mpi_dir=config_dict['mpi_dir'],
-        mpi_path_var=config_dict['mpi_path_var'],
-        rccl_dir=config_dict['rccl_dir'],
-        rccl_path_var=config_dict['rccl_path_var'],
-        rccl_tests_dir=config_dict['rccl_tests_dir'],
+        rocm_path_var=config_dict.get('rocm_path_var', '/opt/rocm/'),
+        mpi_dir=config_dict.get('mpi_dir', '/usr/bin'),
+        mpi_path_var=config_dict.get('mpi_path_var', '/usr'),
+        rccl_dir=config_dict.get('rccl_dir', '/opt/rocm/'),
+        rccl_path_var=config_dict.get('rccl_path_var', '/opt/rocm/lib'),
+        rccl_tests_dir=config_dict.get('rccl_tests_dir', '/opt/rccl-tests/build'),
         nccl_socket_ifname=config_dict.get('nccl_socket_ifname', ''),
-        gid_index=config_dict['gid_index'],
-        start_msg_size=config_dict['start_msg_size'],
-        end_msg_size=config_dict['end_msg_size'],
-        step_function=config_dict['step_function'],
-        threads_per_gpu=config_dict['threads_per_gpu'],
-        no_of_cycles=config_dict['no_of_cycles'],
+        gid_index=config_dict.get('gid_index', '1'),
+        start_msg_size=config_dict.get('start_msg_size', '1024'),
+        end_msg_size=config_dict.get('end_msg_size', '16g'),
+        step_function=config_dict.get('step_function', '2'),
+        threads_per_gpu=config_dict.get('threads_per_gpu', '1'),
+        no_of_cycles=config_dict.get('no_of_cycles', '1'),
         data_types=[data_type],
-        warmup_iterations=config_dict['warmup_iterations'],
-        no_of_iterations=config_dict['no_of_iterations'],
-        check_iteration_count=config_dict['check_iteration_count'],
-        debug_level=config_dict['debug_level'],
+        warmup_iterations=config_dict.get('warmup_iterations', '10'),
+        no_of_iterations=config_dict.get('no_of_iterations', '20'),
+        check_iteration_count=config_dict.get('check_iteration_count', '1'),
+        debug_level=config_dict.get('debug_level', 'ERROR'),
         rccl_result_file=f"/tmp/rccl_{rccl_collective}_{data_type}_{gpu_count}_ch{channel_config}.json",
-        no_of_local_ranks=config_dict['no_of_local_ranks'],
-        ucx_tls=config_dict['ucx_tls'],
-        nccl_net_plugin=config_dict['nccl_net_plugin'],
+        no_of_local_ranks=config_dict.get('no_of_local_ranks', '8'),
+        ucx_tls=config_dict.get('ucx_tls', 'tcp'),
+        nccl_net_plugin=config_dict.get('nccl_net_plugin', 'none'),
         mpi_pml=config_dict.get('mpi_pml', 'auto'),
         user_key_file=cluster_dict['priv_key_file'],
-        verify_bus_bw=config_dict['verify_bus_bw'],
-        verify_bw_dip=config_dict['verify_bw_dip'],
-        verify_lat_dip=config_dict['verify_lat_dip'],
-        nic_model=config_dict['nic_model'],
-        exp_results_dict=config_dict['results'],
+        verify_bus_bw=config_dict.get('verify_bus_bw', 'False'),
+        verify_bw_dip=config_dict.get('verify_bw_dip', 'True'),
+        verify_lat_dip=config_dict.get('verify_lat_dip', 'True'),
+        nic_model=config_dict.get('nic_model', 'thor'),
+        exp_results_dict=config_dict.get('results', None),
         min_channels=min_channels,
         max_channels=max_channels,
-        env_source_script=config_dict['env_source_script'],
+        env_source_script=config_dict.get('env_source_script', None),
     )
 
     print(result_dict)
@@ -473,7 +478,7 @@ def test_gen_heatmap(phdl, cluster_dict, config_dict):
     # Convert raw results to graph format for HTML reports
     rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
     rccl_res_json_file = f'/tmp/rccl_result_{time_stamp}.json'
-    rccl_ref_json_file = config_dict['golden_reference_json_file']
+    rccl_ref_json_file = config_dict.get('golden_reference_json_file', '/home/{user-id}/JSONS/mi300_reference.json')
     heatmap_title = config_dict.get('heatmap_title', 'RCCL Performance Heatmap')
 
     # Collect system metadata from compute nodes

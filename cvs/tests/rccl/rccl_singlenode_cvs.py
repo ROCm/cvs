@@ -263,33 +263,34 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
         cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
     # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
-    if not re.search('None', config_dict['env_source_script'], re.I):
-        phdl.exec(f"bash {config_dict['env_source_script']}")
+    env_source_script = config_dict.get('env_source_script', None)
+    if env_source_script:
+        phdl.exec(f"bash {env_source_script}")
 
     # Execute the RCCL cluster test with parameters sourced from config_dict
     result_dict = rccl_lib.rccl_single_node_test(
         phdl,
         test_name=rccl_collective,
         cluster_node_list=node_list,
-        rocm_path_var=config_dict['rocm_path_var'],
-        rccl_dir=config_dict['rccl_dir'],
-        rccl_path_var=config_dict['rccl_path_var'],
-        rccl_tests_dir=config_dict['rccl_tests_dir'],
-        start_msg_size=config_dict['start_msg_size'],
-        end_msg_size=config_dict['end_msg_size'],
-        step_function=config_dict['step_function'],
-        warmup_iterations=config_dict['warmup_iterations'],
-        no_of_iterations=config_dict['no_of_iterations'],
-        no_of_cycles=config_dict['no_of_cycles'],
-        check_iteration_count=config_dict['check_iteration_count'],
-        debug_level=config_dict['debug_level'],
-        rccl_result_file=config_dict['rccl_result_file'],
-        no_of_local_ranks=config_dict['no_of_local_ranks'],
-        verify_bus_bw=config_dict['verify_bus_bw'],
-        verify_bw_dip=config_dict['verify_bw_dip'],
-        verify_lat_dip=config_dict['verify_lat_dip'],
-        exp_results_dict=config_dict['results'],
-        env_source_script=config_dict['env_source_script'],
+        rocm_path_var=config_dict.get('rocm_path_var', '/opt/rocm/'),
+        rccl_dir=config_dict.get('rccl_dir', '/opt/rocm/'),
+        rccl_path_var=config_dict.get('rccl_path_var', '/opt/rocm/lib'),
+        rccl_tests_dir=config_dict.get('rccl_tests_dir', '/opt/rccl-tests/build'),
+        start_msg_size=config_dict.get('start_msg_size', '1024'),
+        end_msg_size=config_dict.get('end_msg_size', '16g'),
+        step_function=config_dict.get('step_function', '2'),
+        warmup_iterations=config_dict.get('warmup_iterations', '10'),
+        no_of_iterations=config_dict.get('no_of_iterations', '1'),
+        no_of_cycles=config_dict.get('no_of_cycles', '1'),
+        check_iteration_count=config_dict.get('check_iteration_count', '1'),
+        debug_level=config_dict.get('debug_level', 'ERROR'),
+        rccl_result_file=config_dict.get('rccl_result_file', '/tmp/rccl_result_file.json'),
+        no_of_local_ranks=config_dict.get('no_of_local_ranks', '8'),
+        verify_bus_bw=config_dict.get('verify_bus_bw', 'False'),
+        verify_bw_dip=config_dict.get('verify_bw_dip', 'True'),
+        verify_lat_dip=config_dict.get('verify_lat_dip', 'True'),
+        exp_results_dict=config_dict.get('results', None),
+        env_source_script=config_dict.get('env_source_script', None),
     )
 
     print(result_dict)
