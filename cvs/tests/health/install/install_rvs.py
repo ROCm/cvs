@@ -25,11 +25,11 @@ log = globals.log
 def detect_rocm_path(phdl, config_rocm_path):
     """
     Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
-    
+
     Args:
         phdl: Parallel SSH handle
         config_rocm_path (str): Configured ROCm path from config file (empty string for auto-detect)
-    
+
     Returns:
         str: Detected ROCm path
     """
@@ -37,10 +37,10 @@ def detect_rocm_path(phdl, config_rocm_path):
     if config_rocm_path and config_rocm_path != '<changeme>':
         log.info(f'Using configured ROCm path: {config_rocm_path}')
         return config_rocm_path
-    
+
     # Auto-detect ROCm path
     log.info('Auto-detecting ROCm path...')
-    
+
     # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
     out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
     for node, output in out_dict.items():
@@ -48,14 +48,14 @@ def detect_rocm_path(phdl, config_rocm_path):
             rocm_path = output.strip()
             log.info(f'Detected ROCm path (new layout): {rocm_path}')
             return rocm_path
-    
+
     # Fall back to legacy /opt/rocm
     out_dict = phdl.exec('test -d /opt/rocm && echo "/opt/rocm"')
     for node, output in out_dict.items():
         if '/opt/rocm' in output:
             log.info('Detected ROCm path (legacy layout): /opt/rocm')
             return '/opt/rocm'
-    
+
     # If nothing found, default to /opt/rocm (will fail gracefully later)
     log.warning('Could not detect ROCm path, defaulting to /opt/rocm')
     return '/opt/rocm'
@@ -64,11 +64,11 @@ def detect_rocm_path(phdl, config_rocm_path):
 def detect_hip_compiler(phdl, rocm_path):
     """
     Detect the HIP compiler (hipcc or amdclang++) for the given ROCm installation.
-    
+
     Args:
         phdl: Parallel SSH handle
         rocm_path (str): ROCm installation path
-    
+
     Returns:
         str: Full path to the HIP compiler
     """
@@ -78,14 +78,14 @@ def detect_hip_compiler(phdl, rocm_path):
         if output and 'hipcc' in output:
             log.info(f'Detected HIP compiler: {rocm_path}/bin/hipcc')
             return f'{rocm_path}/bin/hipcc'
-    
+
     # Fall back to amdclang++ (older ROCm versions)
     out_dict = phdl.exec(f'test -f {rocm_path}/bin/amdclang++ && echo "{rocm_path}/bin/amdclang++"')
     for node, output in out_dict.items():
         if output and 'amdclang++' in output:
             log.info(f'Detected HIP compiler: {rocm_path}/bin/amdclang++')
             return f'{rocm_path}/bin/amdclang++'
-    
+
     # Default to hipcc if nothing found
     log.warning(f'Could not detect HIP compiler, defaulting to {rocm_path}/bin/hipcc')
     return f'{rocm_path}/bin/hipcc'
@@ -246,17 +246,23 @@ def test_install_rvs(phdl, shdl, config_dict):
     # Detect ROCm path early for use throughout function
     rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
     log.info(f"Using ROCm path: {rocm_path}")
-    
+
     # Update config paths to use detected rocm_path (support both old and new ROCm layouts)
     if 'config_path_mi300x' in config_dict:
         # Replace /opt/rocm or <changeme> with detected rocm_path
-        config_dict['config_path_mi300x'] = config_dict['config_path_mi300x'].replace('/opt/rocm', rocm_path).replace('<changeme>', rocm_path)
+        config_dict['config_path_mi300x'] = (
+            config_dict['config_path_mi300x'].replace('/opt/rocm', rocm_path).replace('<changeme>', rocm_path)
+        )
     if 'config_path_default' in config_dict:
-        config_dict['config_path_default'] = config_dict['config_path_default'].replace('/opt/rocm', rocm_path).replace('<changeme>', rocm_path)
+        config_dict['config_path_default'] = (
+            config_dict['config_path_default'].replace('/opt/rocm', rocm_path).replace('<changeme>', rocm_path)
+        )
     if 'path' in config_dict:
         config_dict['path'] = config_dict['path'].replace('/opt/rocm', rocm_path).replace('<changeme>', rocm_path)
-    
-    log.info(f"Using config paths: MI300X={config_dict.get('config_path_mi300x')}, default={config_dict.get('config_path_default')}")
+
+    log.info(
+        f"Using config paths: MI300X={config_dict.get('config_path_mi300x')}, default={config_dict.get('config_path_default')}"
+    )
 
     log.info('Testcase install RVS (ROCmValidationSuite)')
     git_install_path = config_dict['git_install_path']
@@ -326,7 +332,7 @@ def test_install_rvs(phdl, shdl, config_dict):
                 out_dict = hdl.exec(
                     f'cd {git_install_path}/ROCmValidationSuite/build; make -C -j$(nproc)', timeout=1200
                 )
-                
+
                 out_dict = hdl.exec(
                     f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc) package', timeout=1200
                 )
