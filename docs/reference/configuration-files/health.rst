@@ -37,6 +37,8 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
           "git_install_path": "/home/{user-id}/INSTALL/",
           "git_url": "https://github.com/ROCm/TransferBench.git",
           "nfs_install": "True",
+          "_comment_rocm_path": "ROCm installation path. Set the placeholder changeme to auto-detect from /opt/rocm or /opt/rocm/core-*",
+          "rocm_path": "<changeme>",
           "results":
           {
               "bytes_to_transfer": "268435456",
@@ -65,10 +67,12 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
         },
         "rvs":
         {
-            "path": "/opt/rocm/bin",
+            "path": "<changeme>/bin",
             "git_install_path": "/home/{user-id}/INSTALL/rvs",
             "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
             "nfs_install": "True",
+            "_comment_rocm_path": "ROCm installation path.Set to placeholder changeme auto-detect from /opt/rocm or /opt/rocm/core-*",
+            "rocm_path": "<changeme>",            
             "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",
             "config_path_default": "/opt/rocm/share/rocm-validation-suite/conf",
             "_comment_rvs_test_level": "RVS test level configuration (0-5). 0: Run individual tests (skip level test), 1-5: Run LEVEL config test if RVS >= 1.3.0, else run individual tests. Default is 4.",
@@ -211,6 +215,9 @@ TransferBench
    * - ``nfs_install``
      - True
      - Set the flag to install nfs
+   * - ``rocm_path``
+     - changeme
+     - Set the path of rocm       
    * - ``bytes_to_transfer``
      - 268435456
      - Amount of data to transfer in bytes (256 MB); this is the payload size for bandwidth tests
@@ -274,7 +281,7 @@ ROCm Validation Suite (RVS)
      - Default values
      - Description
    * - ``path``
-     - ``/opt/rocm/bin``
+     - ``<changeme>/bin``
      - Path where the RVS test is installed
    * - ``git_install_path``
      - ``/home/{user-id}/INSTALL/rvs``
@@ -285,6 +292,9 @@ ROCm Validation Suite (RVS)
    * - ``nfs_install``
      - True
      - Set the flag to install nfs
+   * - ``rocm_path``
+     - changeme
+     - Set the path of rocm       
    * - ``config_path_mi300x``
      - ``/opt/rocm/share/`` |br| ``rocm-validation-suite`` |br| ``/conf/MI300X``
      - Path for Instinct MI300X configuration 
