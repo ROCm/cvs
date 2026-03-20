@@ -216,7 +216,7 @@ TransferBench
      - True
      - Set the flag to install nfs
    * - ``rocm_path``
-     - changeme
+     - ``<changeme>``
      - Set the path of rocm       
    * - ``bytes_to_transfer``
      - 268435456
@@ -293,7 +293,7 @@ ROCm Validation Suite (RVS)
      - True
      - Set the flag to install nfs
    * - ``rocm_path``
-     - changeme
+     - ``<changeme>``
      - Set the path of rocm       
    * - ``config_path_mi300x``
      - ``/opt/rocm/share/`` |br| ``rocm-validation-suite`` |br| ``/conf/MI300X``
