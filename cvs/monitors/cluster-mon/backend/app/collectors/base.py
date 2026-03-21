@@ -109,6 +109,11 @@ class BaseCollector(ABC):
             # Update latest_metrics for WebSocket broadcast
             if hasattr(app_state, 'latest_metrics'):
                 app_state.latest_metrics[self.name] = result.data
+                # Shared timestamp key: last-writer-wins across collectors.
+                # This preserves the existing WebSocket contract
+                # {"gpu": ..., "nic": ..., "timestamp": "..."}.
+                # Clients needing per-collector timestamps should use
+                # GET /api/collectors/status instead.
                 app_state.latest_metrics["timestamp"] = result.timestamp
 
             # Broadcast (imported lazily to avoid circular imports)
@@ -126,5 +131,5 @@ def _update_node_status_via_app_state(app_state: Any, node: str, has_error: bool
     try:
         from app.main import update_node_status
         update_node_status(node, has_error, "unreachable")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"update_node_status not available: {e}")

@@ -134,10 +134,11 @@ async def test_run_times_out_and_produces_error_result():
                 pass
 
     # The collector_results should have an ERROR entry from timeout
-    if "hanging" in app_state.collector_results:
-        result = app_state.collector_results["hanging"]
-        assert result.state == CollectorState.ERROR
-        assert "timed out" in result.error.lower()
+    assert "hanging" in app_state.collector_results, \
+        "Expected collector_results to have 'hanging' entry after timeout"
+    result = app_state.collector_results["hanging"]
+    assert result.state == CollectorState.ERROR
+    assert "timed out" in result.error.lower()
 
 
 @pytest.mark.asyncio
