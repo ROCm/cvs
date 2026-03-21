@@ -66,7 +66,7 @@ class RCCLDataStore:
             return []
         try:
             entries = await self._r.xrevrange(self.SNAPSHOT_STREAM, count=count)
-            return [json.loads(e[1][b"data"]) for e in entries]
+            return [json.loads(e[1]["data"]) for e in entries]
         except Exception as e:
             logger.warning(f"RCCLDataStore.get_recent_snapshots failed: {e}")
             return []
@@ -92,7 +92,7 @@ class RCCLDataStore:
             start_id = f"{int(start_ts * 1000)}-0"
             end_id = f"{int(end_ts * 1000)}-0"
             entries = await self._r.xrange(self.EVENT_STREAM, min=start_id, max=end_id)
-            return [json.loads(e[1][b"data"]) for e in entries]
+            return [json.loads(e[1]["data"]) for e in entries]
         except Exception as e:
             logger.warning(f"RCCLDataStore.get_events_in_range failed: {e}")
             return []

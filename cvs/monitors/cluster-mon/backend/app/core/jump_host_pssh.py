@@ -87,7 +87,7 @@ class JumpHostPssh:
 
         self._create_parallel_client()
 
-        self._exec_lock = threading.Lock()
+        self._exec_lock = threading.RLock()  # reentrant: exec() holds lock; _execute_on_node() acquires again
 
     def _is_jump_host_alive(self):
         """Check if jump host connection is still active."""

@@ -147,7 +147,7 @@ def _start_collector_task(c: BaseCollector) -> asyncio.Task:
             new_task = _start_collector_task(c)
             app_state.collector_tasks[c.name] = new_task
 
-        asyncio.get_event_loop().call_soon(lambda: asyncio.create_task(_restart()))
+        asyncio.get_running_loop().call_soon(lambda: asyncio.create_task(_restart()))
 
     task = asyncio.create_task(
         c.run(app_state.ssh_manager, app_state),
@@ -363,77 +363,6 @@ def update_node_status(node: str, is_error: bool, error_type: str = 'unreachable
     return app_state.node_health_status[node]
 
 
-async def collect_metrics_loop():
-    """Background task to collect metrics periodically."""
-    logger.info("Starting metrics collection loop")
-
-    while app_state.is_collecting:
-        try:
-            logger.info("Collecting metrics...")
-
-            # Collect GPU and NIC metrics with connection error handling
-            try:
-                gpu_metrics = await app_state.gpu_collector.collect_all_metrics(app_state.ssh_manager)
-                nic_metrics = await app_state.nic_collector.collect_all_metrics(app_state.ssh_manager)
-            except ConnectionError as e:
-                # Connection error during metrics collection - trigger immediate re-probe
-                logger.error(f"ConnectionError during metrics collection: {e}")
-                logger.info("Triggering immediate host re-probe...")
-
-                # Trigger immediate re-probe
-                if app_state.ssh_manager:
-                    changed = await asyncio.to_thread(app_state.ssh_manager.refresh_host_reachability)
-                    if changed:
-                        await asyncio.to_thread(app_state.ssh_manager.recreate_client)
-                        logger.info("SSH client recreated with updated reachable hosts")
-
-                # Continue to next iteration (skip this round)
-                logger.info("Skipping this metrics collection round, will retry next interval")
-                await asyncio.sleep(settings.polling.interval)
-                continue
-
-            # Package metrics
-            metrics_payload = {
-                "timestamp": gpu_metrics.get("timestamp") if isinstance(gpu_metrics, dict) else None,
-                "gpu": gpu_metrics if not isinstance(gpu_metrics, Exception) else {"error": str(gpu_metrics)},
-                "nic": nic_metrics if not isinstance(nic_metrics, Exception) else {"error": str(nic_metrics)},
-            }
-
-            # Update node status based on metrics collection success/failure
-            # Check each node and update failure counters
-            if isinstance(gpu_metrics, dict):
-                util_data = gpu_metrics.get("utilization", {})
-                for node in app_state.ssh_manager.host_list:
-                    has_error = False
-
-                    if node in util_data:
-                        node_data = util_data[node]
-                        if isinstance(node_data, dict) and 'error' in node_data:
-                            has_error = True
-
-                    # Update status with stability check (5 consecutive failures required)
-                    update_node_status(node, has_error, 'unreachable')
-
-            # Store in app state
-            app_state.latest_metrics = metrics_payload
-
-            # Broadcast to WebSocket clients
-            await broadcast_metrics(metrics_payload)
-
-            logger.info(f"Metrics collected successfully. {len(app_state.websocket_clients)} clients notified")
-
-        except asyncio.CancelledError:
-            logger.info("Metrics collection task cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"Error in metrics collection loop: {e}", exc_info=True)
-
-        # Wait for next interval
-        await asyncio.sleep(settings.polling.interval)
-
-    logger.info("Metrics collection loop stopped")
-
-
 async def broadcast_metrics(metrics: dict):
     """Broadcast metrics to all connected WebSocket clients (non-blocking per client)."""
     if not app_state.websocket_clients:
@@ -600,19 +529,6 @@ async def lifespan(app: FastAPI):
                 )
                 logger.info("✅ Direct SSH manager initialized")
 
-            # Start metrics collection using unified collector registry
-            if app_state.ssh_manager:
-                logger.info("Starting metrics collection (BaseCollector pattern)...")
-                app_state.is_collecting = True
-
-                for cls in REGISTERED_COLLECTORS:
-                    c = cls()
-                    app_state.collectors[c.name] = c
-                    app_state.collector_tasks[c.name] = _start_collector_task(c)
-
-                app_state.probe_task = asyncio.create_task(periodic_host_probe())
-                logger.info("✅ Metrics collection started")
-
         except Exception as e:
             logger.error(f"Failed to auto-initialize SSH manager: {e}", exc_info=True)
             logger.warning("Will wait for manual configuration via web UI")
@@ -633,6 +549,19 @@ async def lifespan(app: FastAPI):
     # Initialize RCCL data store (uses app_state.redis, degrades if None)
     from app.collectors.rccl_data_store import RCCLDataStore
     app_state.rccl_data_store = RCCLDataStore(app_state.redis)
+
+    # Start metrics collection using unified collector registry
+    if app_state.ssh_manager:
+        logger.info("Starting metrics collection (BaseCollector pattern)...")
+        app_state.is_collecting = True
+
+        for cls in REGISTERED_COLLECTORS:
+            c = cls()
+            app_state.collectors[c.name] = c
+            app_state.collector_tasks[c.name] = _start_collector_task(c)
+
+        app_state.probe_task = asyncio.create_task(periodic_host_probe())
+        logger.info("✅ Metrics collection started")
 
     yield
 
