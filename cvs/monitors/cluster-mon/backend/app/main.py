@@ -22,10 +22,7 @@ from app.collectors.nic_collector import NICMetricsCollector
 from app.collectors.base import BaseCollector, CollectorResult, CollectorState
 from app.api import router as api_router
 
-try:
-    import redis.asyncio as aioredis
-except ImportError:
-    aioredis = None
+import redis.asyncio as aioredis
 
 # Configure logging based on DEBUG environment variable
 # Using RotatingFileHandler for circular log files with 1MB max size
@@ -613,6 +610,19 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to auto-initialize SSH manager: {e}", exc_info=True)
             logger.warning("Will wait for manual configuration via web UI")
+
+    # Initialize Redis (optional — app continues without it)
+    try:
+        app_state.redis = aioredis.from_url(
+            settings.storage.redis.url,
+            db=settings.storage.redis.db,
+            decode_responses=True,
+        )
+        await app_state.redis.ping()
+        logger.info(f"Redis connected: {settings.storage.redis.url}")
+    except Exception as e:
+        logger.warning(f"Redis unavailable: {e}. History features disabled.")
+        app_state.redis = None
 
     yield
 
