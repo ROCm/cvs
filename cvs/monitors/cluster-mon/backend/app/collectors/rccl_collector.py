@@ -125,6 +125,13 @@ class RCCLCollector(BaseCollector):
             if hasattr(app_state, 'latest_rccl_snapshot'):
                 app_state.latest_rccl_snapshot = snapshot_dict
 
+            # Broadcast RCCL snapshot to WebSocket clients
+            try:
+                from app.main import broadcast_rccl
+                await broadcast_rccl(snapshot_dict)
+            except Exception:
+                pass
+
             collector_state = (
                 CollectorState.OK
                 if self.job_state in (RCCLJobState.HEALTHY, RCCLJobState.DEGRADED)

@@ -87,7 +87,8 @@ class JumpHostPssh:
 
         self._create_parallel_client()
 
-        self._exec_lock = threading.RLock()  # reentrant: exec() holds lock; _execute_on_node() acquires again
+        self._exec_lock = threading.Lock()    # serializes concurrent exec() calls
+        self._hosts_lock = threading.Lock()   # protects unreachable_hosts/reachable_hosts mutations
 
     def _is_jump_host_alive(self):
         """Check if jump host connection is still active."""
@@ -198,7 +199,7 @@ class JumpHostPssh:
                     x in error.lower()
                     for x in ['connection timed out', 'connection refused', 'no route to host', 'host is down']
                 ):
-                    with self._exec_lock:
+                    with self._hosts_lock:
                         if node not in self.unreachable_hosts:
                             logger.warning(f"[{node}] Marking as unreachable: {error[:200]}")
                             self.unreachable_hosts.append(node)
@@ -215,7 +216,7 @@ class JumpHostPssh:
             # Check if it's a timeout exception
             error_str = str(e).lower()
             if 'timeout' in error_str or 'timed out' in error_str:
-                with self._exec_lock:
+                with self._hosts_lock:
                     if node not in self.unreachable_hosts:
                         logger.warning(f"[{node}] Marking as unreachable due to timeout: {e}")
                         self.unreachable_hosts.append(node)
@@ -350,8 +351,9 @@ class JumpHostPssh:
                     logger.info(f"  Newly unreachable ({len(newly_unreachable)}): {list(newly_unreachable)[:10]}")
 
             # Update lists
-            self.reachable_hosts = new_reachable
-            self.unreachable_hosts = new_unreachable
+            with self._hosts_lock:
+                self.reachable_hosts = new_reachable
+                self.unreachable_hosts = new_unreachable
 
             return len(old_reachable) != len(new_reachable_set) or old_reachable != new_reachable_set
 
