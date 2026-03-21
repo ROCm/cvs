@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Settings, Cpu, Network, Activity, Package, HardDrive, Share2, FileText } from 'lucide-react'
+import { LayoutDashboard, Settings, Cpu, Network, Activity, Package, HardDrive, Share2, FileText, Clock } from 'lucide-react'
 import { cn } from '@/utils/cn'
 
 const navigation = [
@@ -11,6 +11,9 @@ const navigation = [
   { name: 'GPU SW', href: '/gpu-software', icon: Package },
   { name: 'NIC SW', href: '/nic-software', icon: HardDrive },
   { name: 'Logs', href: '/logs', icon: FileText },
+  { name: 'RCCL Health', href: '/rccl-health', icon: Activity },
+  { name: 'RAS Topology', href: '/rccl-topology', icon: Share2 },
+  { name: 'Timeline', href: '/rccl-timeline', icon: Clock },
 ]
 
 export function Sidebar() {

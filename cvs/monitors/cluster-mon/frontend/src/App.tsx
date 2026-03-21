@@ -9,6 +9,9 @@ import { TopologyPage } from './pages/TopologyPage'
 import { GPUSoftwarePage } from './pages/GPUSoftwarePage'
 import { NICSoftwarePage } from './pages/NICSoftwarePage'
 import { LogsPage } from './pages/LogsPage'
+import { RCCLHealthPage } from './pages/RCCLHealthPage'
+import { RCCLTopologyPage } from './pages/RCCLTopologyPage'
+import { RCCLTimelinePage } from './pages/RCCLTimelinePage'
 import { NodeDetailsModal } from './components/NodeDetailsModal'
 
 function App() {
@@ -26,6 +29,9 @@ function App() {
           <Route path="gpu-software" element={<GPUSoftwarePage />} />
           <Route path="nic-software" element={<NICSoftwarePage />} />
           <Route path="logs" element={<LogsPage />} />
+          <Route path="rccl-health" element={<RCCLHealthPage />} />
+          <Route path="rccl-topology" element={<RCCLTopologyPage />} />
+          <Route path="rccl-timeline" element={<RCCLTimelinePage />} />
         </Route>
       </Routes>
       <NodeDetailsModal />
