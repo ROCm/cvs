@@ -101,16 +101,15 @@ def test_rccl_models_import():
     assert snapshot.communicators == []
 
 
-def test_rccl_data_store_degrades_without_redis():
+@pytest.mark.asyncio
+async def test_rccl_data_store_degrades_without_redis():
     from app.collectors.rccl_data_store import RCCLDataStore
     store = RCCLDataStore(redis_client=None)
-    # All methods should be awaitable and return gracefully with no Redis
-    import asyncio
-    asyncio.run(store.push_snapshot({"timestamp": 1.0}))
-    asyncio.run(store.push_event({"timestamp": 1.0}))
-    result = asyncio.run(store.get_recent_snapshots())
+    await store.push_snapshot({"timestamp": 1.0})
+    await store.push_event({"timestamp": 1.0})
+    result = await store.get_recent_snapshots()
     assert result == []
-    result = asyncio.run(store.get_current_snapshot())
+    result = await store.get_current_snapshot()
     assert result is None
 
 

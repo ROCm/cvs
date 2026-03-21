@@ -83,9 +83,9 @@ class Pssh:
 
         # Add authentication
         if self.password is None:
-            print(self.reachable_hosts)
-            print(self.user)
-            print(self.pkey)
+            logger.debug(f"Reachable hosts: {self.reachable_hosts}")
+            logger.debug(f"SSH user: {self.user}")
+            logger.debug(f"SSH key: {self.pkey}")
             client_params['pkey'] = self.pkey
         else:
             client_params['password'] = self.password
