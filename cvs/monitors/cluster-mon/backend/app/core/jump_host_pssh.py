@@ -96,7 +96,7 @@ class JumpHostPssh:
         try:
             transport = self.jump_client.get_transport()
             return transport is not None and transport.is_active()
-        except:
+        except Exception:
             return False
 
     def _ensure_jump_host_connection(self):
@@ -110,7 +110,7 @@ class JumpHostPssh:
             if self.jump_client:
                 try:
                     self.jump_client.close()
-                except:
+                except Exception:
                     pass
 
             # Reconnect
@@ -135,9 +135,6 @@ class JumpHostPssh:
         try:
             if self.jump_password:
                 logger.info(f"Attempting password authentication to {self.jump_host}...")
-                logger.info(
-                    f"  Password value check: {self.jump_password[:3]}*** (showing first 3 chars for verification)"
-                )
                 logger.info("Using password authentication for jump host")
                 self.jump_client.connect(
                     hostname=self.jump_host,
@@ -201,11 +198,12 @@ class JumpHostPssh:
                     x in error.lower()
                     for x in ['connection timed out', 'connection refused', 'no route to host', 'host is down']
                 ):
-                    if node not in self.unreachable_hosts:
-                        logger.warning(f"[{node}] Marking as unreachable: {error[:200]}")
-                        self.unreachable_hosts.append(node)
-                        if node in self.reachable_hosts:
-                            self.reachable_hosts.remove(node)
+                    with self._exec_lock:
+                        if node not in self.unreachable_hosts:
+                            logger.warning(f"[{node}] Marking as unreachable: {error[:200]}")
+                            self.unreachable_hosts.append(node)
+                            if node in self.reachable_hosts:
+                                self.reachable_hosts.remove(node)
                     return f"ABORT: Host Unreachable Error - {error[:100]}"
                 elif not output:
                     logger.warning(f"[{node}] stderr: {error[:200]}")
@@ -217,11 +215,12 @@ class JumpHostPssh:
             # Check if it's a timeout exception
             error_str = str(e).lower()
             if 'timeout' in error_str or 'timed out' in error_str:
-                if node not in self.unreachable_hosts:
-                    logger.warning(f"[{node}] Marking as unreachable due to timeout: {e}")
-                    self.unreachable_hosts.append(node)
-                    if node in self.reachable_hosts:
-                        self.reachable_hosts.remove(node)
+                with self._exec_lock:
+                    if node not in self.unreachable_hosts:
+                        logger.warning(f"[{node}] Marking as unreachable due to timeout: {e}")
+                        self.unreachable_hosts.append(node)
+                        if node in self.reachable_hosts:
+                            self.reachable_hosts.remove(node)
                 return "ABORT: Host Unreachable Error - Timeout"
 
             logger.error(f"[{node}] Exception: {e}")
@@ -450,11 +449,11 @@ class JumpHostPssh:
         if self.client:
             try:
                 self.client.disconnect()
-            except:
+            except Exception:
                 pass
         if self.jump_client:
             try:
                 self.jump_client.close()
                 logger.info("✅ Jump host connection closed")
-            except:
+            except Exception:
                 pass
