@@ -8,11 +8,19 @@ import logging
 from typing import Dict, Any
 from datetime import datetime
 
+from app.collectors.base import BaseCollector, CollectorResult, CollectorState
+from app.core.config import settings as _settings
+
 logger = logging.getLogger(__name__)
 
 
-class GPUMetricsCollector:
+class GPUMetricsCollector(BaseCollector):
     """Collects GPU metrics via rocm-smi and amd-smi commands."""
+
+    name = "gpu"
+    poll_interval: int = 60   # will be set after class definition
+    collect_timeout: float = 48.0  # 80% of poll_interval default
+    critical = True  # GPU collection failure is critical
 
     @staticmethod
     def parse_json_output(output_dict: Dict[str, str]) -> Dict[str, Any]:
@@ -378,6 +386,37 @@ class GPUMetricsCollector:
         }
 
         return metrics
+
+    async def collect(self, ssh_manager) -> CollectorResult:
+        """
+        BaseCollector interface. Calls collect_all_metrics() and wraps result.
+        node_errors is populated so BaseCollector.run() can call update_node_status().
+        """
+        try:
+            metrics = await self.collect_all_metrics(ssh_manager)
+        except Exception as e:
+            return CollectorResult(
+                collector_name=self.name,
+                timestamp=CollectorResult.now_iso(),
+                state=CollectorState.ERROR,
+                data={},
+                error=str(e),
+            )
+
+        # Determine per-node errors from metrics
+        node_errors: dict[str, bool] = {}
+        util_data = metrics.get("utilization", {}) if isinstance(metrics, dict) else {}
+        for node, node_data in util_data.items():
+            has_error = isinstance(node_data, dict) and "error" in node_data
+            node_errors[node] = has_error
+
+        return CollectorResult(
+            collector_name=self.name,
+            timestamp=metrics.get("timestamp", CollectorResult.now_iso()) if isinstance(metrics, dict) else CollectorResult.now_iso(),
+            state=CollectorState.OK,
+            data=metrics if isinstance(metrics, dict) else {},
+            node_errors=node_errors,
+        )
 
     def _parse_utilization_from_amd_smi(self, amd_smi_data: Dict) -> Dict:
         """Parse utilization from amd-smi metric output."""
@@ -823,3 +862,7 @@ class GPUMetricsCollector:
                 normalized[node]["gpus"].append(gpu_metrics)
 
         return normalized
+
+
+GPUMetricsCollector.poll_interval = _settings.polling.interval
+GPUMetricsCollector.collect_timeout = _settings.polling.interval * 0.8
