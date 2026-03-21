@@ -363,31 +363,80 @@ def update_node_status(node: str, is_error: bool, error_type: str = 'unreachable
     return app_state.node_health_status[node]
 
 
-async def broadcast_metrics(metrics: dict):
-    """Broadcast metrics to all connected WebSocket clients (non-blocking per client)."""
-    if not app_state.websocket_clients:
-        return
+class ConnectionManager:
+    """
+    WebSocket connection manager with per-client bounded queues.
+    Slow clients are disconnected instead of blocking the broadcast loop.
+    """
+    def __init__(self, max_queue_size: int = 64):
+        self._clients: dict[int, WebSocket] = {}
+        self._queues: dict[int, asyncio.Queue] = {}
+        self._send_tasks: dict[int, asyncio.Task] = {}
 
-    disconnected_clients = []
-    message = {"type": "metrics", "data": metrics}
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        client_id = id(websocket)
+        self._clients[client_id] = websocket
+        q: asyncio.Queue = asyncio.Queue(maxsize=64)
+        self._queues[client_id] = q
+        self._send_tasks[client_id] = asyncio.create_task(
+            self._sender(client_id, websocket, q)
+        )
 
-    for client in list(app_state.websocket_clients):
+    async def _sender(self, client_id: int, ws: WebSocket, queue: asyncio.Queue):
         try:
-            # Use asyncio.wait_for to prevent one slow client from blocking others
-            await asyncio.wait_for(
-                client.send_json(message),
-                timeout=5.0,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("WebSocket client timed out on send — disconnecting")
-            disconnected_clients.append(client)
-        except Exception as e:
-            logger.warning(f"Failed to send metrics to client: {e}")
-            disconnected_clients.append(client)
+            while True:
+                message = await queue.get()
+                await ws.send_json(message)
+        except Exception:
+            pass
+        finally:
+            await self._remove(client_id)
 
-    for client in disconnected_clients:
-        if client in app_state.websocket_clients:
-            app_state.websocket_clients.remove(client)
+    async def disconnect(self, websocket: WebSocket):
+        await self._remove(id(websocket))
+
+    async def _remove(self, client_id: int):
+        task = self._send_tasks.pop(client_id, None)
+        if task and not task.done():
+            task.cancel()
+        self._queues.pop(client_id, None)
+        ws = self._clients.pop(client_id, None)
+        if ws:
+            try:
+                await ws.close()
+            except Exception:
+                pass
+
+    def broadcast(self, message: dict):
+        """Non-blocking broadcast: enqueues to each client's queue."""
+        to_remove = []
+        for client_id, q in self._queues.items():
+            try:
+                q.put_nowait(message)
+            except asyncio.QueueFull:
+                logger.warning(f"WebSocket client {client_id} queue full — disconnecting")
+                to_remove.append(client_id)
+        for client_id in to_remove:
+            asyncio.create_task(self._remove(client_id))
+
+    @property
+    def client_count(self) -> int:
+        return len(self._clients)
+
+
+metrics_ws_manager = ConnectionManager()
+rccl_ws_manager = ConnectionManager()
+
+
+async def broadcast_metrics(metrics: dict):
+    """Broadcast metrics to all connected WebSocket clients (non-blocking)."""
+    metrics_ws_manager.broadcast({"type": "metrics", "data": metrics})
+
+
+async def broadcast_rccl(snapshot: dict):
+    """Broadcast RCCL snapshot to /ws/rccl WebSocket clients (non-blocking)."""
+    rccl_ws_manager.broadcast({"type": "rccl_snapshot", "data": snapshot})
 
 
 async def periodic_host_probe():
@@ -610,44 +659,23 @@ app.add_middleware(
 
 # WebSocket endpoint
 @app.websocket("/ws/metrics")
-async def websocket_metrics(websocket: WebSocket):
-    """WebSocket endpoint for real-time metrics streaming."""
-    await websocket.accept()
-    app_state.websocket_clients.append(websocket)
-    logger.info(f"WebSocket client connected. Total clients: {len(app_state.websocket_clients)}")
-
+async def websocket_endpoint(websocket: WebSocket):
+    await metrics_ws_manager.connect(websocket)
     try:
-        # Send initial metrics
-        if app_state.latest_metrics:
-            await websocket.send_json({"type": "metrics", "data": app_state.latest_metrics})
-
-        # Keep connection alive
         while True:
-            # Wait for client messages (ping/pong)
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_text("pong")
-
+            await websocket.receive_text()
     except WebSocketDisconnect:
-        logger.info("WebSocket client disconnected")
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-    finally:
-        if websocket in app_state.websocket_clients:
-            app_state.websocket_clients.remove(websocket)
+        await metrics_ws_manager.disconnect(websocket)
 
 
 @app.websocket("/ws/rccl")
 async def websocket_rccl(websocket: WebSocket):
-    """WebSocket endpoint for real-time RCCL event streaming."""
-    await websocket.accept()
-    app_state.rccl_websocket_clients.append(websocket)
+    await rccl_ws_manager.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()  # Keep alive; server pushes via broadcast_rccl()
+            await websocket.receive_text()
     except WebSocketDisconnect:
-        if websocket in app_state.rccl_websocket_clients:
-            app_state.rccl_websocket_clients.remove(websocket)
+        await rccl_ws_manager.disconnect(websocket)
 
 
 # Include API router FIRST (highest priority)
@@ -662,7 +690,7 @@ async def health():
         "status": "healthy",
         "ssh_manager": app_state.ssh_manager is not None,
         "collecting": app_state.is_collecting,
-        "clients": len(app_state.websocket_clients),
+        "clients": metrics_ws_manager.client_count,
     }
 
 

@@ -89,7 +89,7 @@ class GPUMetricsCollector(BaseCollector):
         """
         logger.info("Collecting GPU utilization")
         # Use amd-smi metric which provides comprehensive GPU metrics
-        output = ssh_manager.exec("amd-smi metric --json", timeout=120)
+        output = await ssh_manager.exec_async("amd-smi metric --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_gpu_memory(self, ssh_manager) -> Dict[str, Any]:
@@ -108,7 +108,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting GPU memory usage")
-        output = ssh_manager.exec("amd-smi metric --json", timeout=120)
+        output = await ssh_manager.exec_async("amd-smi metric --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_gpu_temperature(self, ssh_manager) -> Dict[str, Any]:
@@ -128,7 +128,7 @@ class GPUMetricsCollector(BaseCollector):
         """
         logger.info("Collecting GPU temperature")
         # amd-smi metric provides temperature in the main metric output
-        output = ssh_manager.exec("amd-smi metric --json", timeout=120)
+        output = await ssh_manager.exec_async("amd-smi metric --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_gpu_power(self, ssh_manager) -> Dict[str, Any]:
@@ -147,7 +147,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting GPU power metrics")
-        output = ssh_manager.exec("amd-smi metric --power --json", timeout=120)
+        output = await ssh_manager.exec_async("amd-smi metric --power --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_gpu_metrics(self, ssh_manager) -> Dict[str, Any]:
@@ -166,7 +166,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting comprehensive GPU metrics")
-        output = ssh_manager.exec("amd-smi metric --json", timeout=120)
+        output = await ssh_manager.exec_async("amd-smi metric --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_pcie_metrics(self, ssh_manager) -> Dict[str, Any]:
@@ -185,7 +185,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting PCIe metrics")
-        output = ssh_manager.exec("amd-smi metric --pcie --json", timeout=120)
+        output = await ssh_manager.exec_async("amd-smi metric --pcie --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_xgmi_metrics(self, ssh_manager) -> Dict[str, Any]:
@@ -204,7 +204,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting XGMI metrics")
-        output = ssh_manager.exec("amd-smi metric --xgmi-err --json", timeout=120)
+        output = await ssh_manager.exec_async("amd-smi metric --xgmi-err --json", timeout=120)
         logger.info('%%%%%%%%%%%')
         logger.info('parsed value of xgmi')
         logger.info(output)
@@ -227,7 +227,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting RAS error metrics")
-        output = ssh_manager.exec("amd-smi metric --ecc --json", timeout=120)
+        output = await ssh_manager.exec_async("amd-smi metric --ecc --json", timeout=120)
         logger.info('%%%%%%%%%%')
         logger.info('Output of ecc')
         logger.info(output)
@@ -247,7 +247,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting GPU info")
-        output = ssh_manager.exec("rocm-smi --loglevel error --showproductname --json", timeout=120)
+        output = await ssh_manager.exec_async("rocm-smi --loglevel error --showproductname --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_pcie_info(self, ssh_manager) -> Dict[str, Any]:
@@ -267,13 +267,13 @@ class GPUMetricsCollector(BaseCollector):
         logger.info("Collecting PCIe link info via lspci")
 
         # First get BDF (Bus/Device/Function) addresses from amd-smi
-        static_output = ssh_manager.exec("amd-smi static --json", timeout=120)
+        static_output = await ssh_manager.exec_async("amd-smi static --json", timeout=120)
         static_data = self.parse_json_output(static_output)
 
         # OPTIMIZATION: Run lspci once per node instead of once per GPU
         # This reduces 288 commands (36 nodes * 8 GPUs) to just 36 commands!
         logger.info("Running lspci once per node (optimized)")
-        lspci_output = ssh_manager.exec("bash -c 'sudo lspci -vvv 2>/dev/null'", timeout=120)
+        lspci_output = await ssh_manager.exec_async("bash -c 'sudo lspci -vvv 2>/dev/null'", timeout=120)
 
         pcie_info = {}
         import re
@@ -337,14 +337,12 @@ class GPUMetricsCollector(BaseCollector):
                 "info": {...}
             }
         """
-        import asyncio
-
         logger.info("Collecting all GPU metrics")
 
         # OPTIMIZATION: Call amd-smi metric --json ONCE to get ALL data
         # This single command includes: utilization, memory, temperature, PCIe, XGMI, and ECC metrics
         logger.info("Calling amd-smi metric --json for comprehensive GPU data")
-        amd_smi_output = await asyncio.to_thread(ssh_manager.exec, "amd-smi metric --json")
+        amd_smi_output = await ssh_manager.exec_async("amd-smi metric --json")
         amd_smi_data = self.parse_json_output(amd_smi_output)
 
         # Parse all metrics from single amd-smi output
@@ -354,15 +352,15 @@ class GPUMetricsCollector(BaseCollector):
 
         # Call dedicated commands for PCIe and ECC for cleaner data
         logger.info("Collecting PCIe metrics with dedicated command")
-        pcie_output = await asyncio.to_thread(ssh_manager.exec, "amd-smi metric --pcie --json")
+        pcie_output = await ssh_manager.exec_async("amd-smi metric --pcie --json")
         pcie_data = self.parse_json_output(pcie_output)
 
         logger.info("Collecting XGMI metrics with dedicated command")
-        xgmi_output = await asyncio.to_thread(ssh_manager.exec, "amd-smi metric --xgmi-err --json")
+        xgmi_output = await ssh_manager.exec_async("amd-smi metric --xgmi-err --json")
         xgmi_data = self.parse_json_output(xgmi_output)
 
         logger.info("Collecting ECC/RAS metrics with dedicated command")
-        ecc_output = await asyncio.to_thread(ssh_manager.exec, "amd-smi metric --ecc --json")
+        ecc_output = await ssh_manager.exec_async("amd-smi metric --ecc --json")
         ecc_data = self.parse_json_output(ecc_output)
 
         # Parse for frontend display
