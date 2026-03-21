@@ -7,7 +7,7 @@ import re
 import json
 import logging
 from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.collectors.base import BaseCollector, CollectorResult, CollectorState
 from app.core.config import settings as _settings
@@ -493,7 +493,7 @@ class NICMetricsCollector(BaseCollector):
         filtered_lldp = self._filter_lldp_by_rdma(lldp_data, rdma_links_data)
 
         metrics = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
             "rdma_links": rdma_links_data,
             "rdma_stats": results[1] if not isinstance(results[1], Exception) else {},
             "rdma_resources": rdma_res,

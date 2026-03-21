@@ -304,9 +304,9 @@ class Pssh:
         cmd_output = {}
         i = 0
         for item in output:
-            logger.info('#----------------------------------------------------------#')
-            logger.info(f'Host == {item.host} ==')
-            logger.info('#----------------------------------------------------------#')
+            logger.debug('#----------------------------------------------------------#')
+            logger.debug(f'Host == {item.host} ==')
+            logger.debug('#----------------------------------------------------------#')
             cmd_out_str = ''
             if cmd_list:
                 logger.debug(cmd_list[i])
@@ -315,11 +315,11 @@ class Pssh:
             try:
                 for line in item.stdout or []:
                     if print_console:
-                        logger.info(line)
+                        logger.debug(line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
                 for line in item.stderr or []:
                     if print_console:
-                        logger.info(line)
+                        logger.debug(line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
             except Timeout as e:
                 if not self.stop_on_errors:
@@ -331,7 +331,7 @@ class Pssh:
                 exc_str = exc_str.replace('\t', '   ')
                 if isinstance(item.exception, Timeout):
                     exc_str += "\nABORT: Timeout Error in Host: " + item.host
-                logger.info(exc_str)
+                logger.debug(exc_str)
                 cmd_out_str += exc_str + '\n'
             if cmd_list:
                 i += 1
@@ -388,7 +388,7 @@ class Pssh:
             logger.info(f"  Timeout: {timeout if timeout else 'default'}")
             logger.info(f"  Stop on errors: {self.stop_on_errors}")
 
-            logger.info(f'cmd = {cmd}')
+            logger.debug(f'cmd = {cmd}')
 
             try:
                 if timeout is None:
@@ -417,7 +417,7 @@ class Pssh:
         which runs the same command on all hosts.
         Returns a dictionary of host as key and command output as values
         """
-        logger.info(cmd_list)
+        logger.debug(cmd_list)
         if timeout is None:
             output = self.client.run_command('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
         else:

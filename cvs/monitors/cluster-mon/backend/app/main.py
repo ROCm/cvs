@@ -116,6 +116,15 @@ class AppState:
 
 app_state = AppState()
 
+_reload_lock = asyncio.Lock()
+
+
+# SSH Transport Scaling Note:
+# The SSH-based collection transport has a practical limit of ~500-800 nodes at
+# 60-second poll intervals. Known constraints at 600 nodes: 3-5GB RSS, pool_size
+# reduced to 50, global threading lock serializes SSH batches. For clusters
+# significantly larger, consider deploying lightweight push agents (Telegraf
+# amd_rocm_smi plugin or rocm-smi-exporter) on compute nodes.
 
 REGISTERED_COLLECTORS: list[type[BaseCollector]] = [
     GPUMetricsCollector,
@@ -169,6 +178,11 @@ async def reload_configuration():
     Returns:
         dict: Status of reload operation with success/error details
     """
+    async with _reload_lock:
+        return await _reload_configuration_inner()
+
+
+async def _reload_configuration_inner():
     try:
         logger.info("Starting configuration reload (topology-diff)...")
 
@@ -426,12 +440,13 @@ class ConnectionManager:
         self._clients: dict[int, WebSocket] = {}
         self._queues: dict[int, asyncio.Queue] = {}
         self._send_tasks: dict[int, asyncio.Task] = {}
+        self._max_queue_size = max_queue_size
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         client_id = id(websocket)
         self._clients[client_id] = websocket
-        q: asyncio.Queue = asyncio.Queue(maxsize=64)
+        q: asyncio.Queue = asyncio.Queue(maxsize=self._max_queue_size)
         self._queues[client_id] = q
         self._send_tasks[client_id] = asyncio.create_task(
             self._sender(client_id, websocket, q)
@@ -442,8 +457,8 @@ class ConnectionManager:
             while True:
                 message = await queue.get()
                 await ws.send_json(message)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"WebSocket sender error for client {client_id}: {e}")
         finally:
             await self._remove(client_id)
 
