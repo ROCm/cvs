@@ -251,7 +251,7 @@ async def get_current_configuration() -> Dict[str, Any]:
     """
     Get current configuration including all SSH and jump host settings.
     """
-    from app.core.simple_config import config as settings
+    from app.core.config import settings
 
     nodes = settings.load_nodes_from_file()
 
