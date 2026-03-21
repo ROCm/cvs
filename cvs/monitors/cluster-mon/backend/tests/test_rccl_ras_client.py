@@ -1,5 +1,5 @@
 """
-Tests for RCCLRasClient against MockNcclRasServer.
+Tests for RCCLRasClient against MockRcclRasServer.
 """
 import asyncio
 import pytest
@@ -10,7 +10,7 @@ from app.collectors.rccl_ras_client import (
     ProtocolVersionError,
     ProtocolVersion,
 )
-from tests.mock_ncclras_server import MockNcclRasServer
+from tests.mock_rcclras_server import MockRcclRasServer
 
 
 SAMPLE_STATUS = b"""RCCL version 2.28.3 compiled with ROCm 6.0
@@ -29,7 +29,7 @@ Communicator abc123 HEALTHY
 
 @pytest.fixture
 async def mock_server():
-    server = MockNcclRasServer(fixture_data=SAMPLE_STATUS, protocol_version=2)
+    server = MockRcclRasServer(fixture_data=SAMPLE_STATUS, protocol_version=2)
     port = await server.start()
     yield port
     await server.stop()

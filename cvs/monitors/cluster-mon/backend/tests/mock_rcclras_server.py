@@ -1,5 +1,5 @@
 """
-Mock ncclras TCP server for unit testing.
+Mock rcclras TCP server for unit testing.
 Replays a fixture response over TCP so collector tests run without a real RCCL job.
 """
 
@@ -7,8 +7,8 @@ import asyncio
 from typing import Optional
 
 
-class MockNcclRasServer:
-    """Minimal ncclras server for unit testing. Replays a fixed fixture response."""
+class MockRcclRasServer:
+    """Minimal rcclras server for unit testing. Replays a fixed fixture response."""
 
     def __init__(self, fixture_data: bytes, protocol_version: int = 2):
         self.fixture_data = fixture_data

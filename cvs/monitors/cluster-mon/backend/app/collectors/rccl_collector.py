@@ -1,7 +1,7 @@
 """
 RCCL Collector -- CVS cluster-mon Phase 1.
 
-Implements BaseCollector. Polls ncclras via SSH port-forward on each cycle.
+Implements BaseCollector. Polls rcclras via SSH port-forward on each cycle.
 Lifecycle managed by the unified REGISTERED_COLLECTORS loop in main.py.
 
 Critical=False: RCCLJobState.NO_JOB is expected when no RCCL job is running
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class RCCLCollector(BaseCollector):
     """
-    Polls ncclras (the RCCL RAS TCP service on port 28028) via SSH port-forward.
+    Polls rcclras (the RCCL RAS TCP service on port 28028) via SSH port-forward.
 
     - name = "rccl"
     - poll_interval: read from settings.rccl.poll_interval (default 30s)
@@ -72,7 +72,7 @@ class RCCLCollector(BaseCollector):
         One RCCL poll cycle:
         1. Pick one healthy node as 'leader' (VERBOSE STATUS -> triggers RAS_COLL_COMMS).
         2. Open SSH port-forward to leader:ras_port.
-        3. Run ncclras protocol: handshake -> set_timeout -> get_status(verbose=True).
+        3. Run rcclras protocol: handshake -> set_timeout -> get_status(verbose=True).
         4. Parse response -> RCCLSnapshot -> store in Redis and app_state.
         5. Return CollectorResult.
 
@@ -187,12 +187,12 @@ class RCCLCollector(BaseCollector):
         """
         Phase 1 text parser stub.
 
-        The full parser must be written test-first against captured ncclras fixture
+        The full parser must be written test-first against captured rcclras fixture
         files (see plan Section 4a). This stub returns a minimal snapshot indicating
         the job is running so the HEALTHY/DEGRADED state machine works end-to-end.
 
-        TODO: Replace with regex-based parser against real ncclras VERBOSE STATUS output.
-        Run: ncclras -v > tests/fixtures/rccl_verbose_status_healthy.txt
+        TODO: Replace with regex-based parser against real rcclras VERBOSE STATUS output.
+        Run: rcclras -v > tests/fixtures/rccl_verbose_status_healthy.txt
         """
         import time
         from app.models.rccl_models import RCCLSnapshot, RCCLJobState

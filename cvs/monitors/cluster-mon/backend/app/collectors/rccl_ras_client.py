@@ -1,12 +1,12 @@
 """
-Async ncclras TCP client for the CVS RCCL monitoring extension.
+Async rcclras TCP client for the CVS RCCL monitoring extension.
 
-Speaks the ncclras wire protocol (newline-terminated ASCII over TCP).
+Speaks the rcclras wire protocol (newline-terminated ASCII over TCP).
 Connection is owned by the caller's context manager (ssh_manager.open_port_forward).
 
 Warning: Protocol version caveat: Values 3 and 4 for JSON_FORMAT and MONITOR_MODE
-are ASSUMPTIONS -- not verified against actual ncclras server responses for
-v2.28.9 and v2.29.2. Verify by running a v2.28.9 ncclras server and checking
+are ASSUMPTIONS -- not verified against actual rcclras server responses for
+v2.28.9 and v2.29.2. Verify by running a v2.28.9 rcclras server and checking
 its handshake response before implementing version-gated features. If the
 server always responds SERVER PROTOCOL 2, the version guards will never
 activate and an alternative feature-detection mechanism will be required.
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProtocolError(Exception):
-    """Raised when the ncclras server responds unexpectedly."""
+    """Raised when the rcclras server responds unexpectedly."""
 
 
 class ProtocolVersionError(ProtocolError):
@@ -35,7 +35,7 @@ class ProtocolVersion:
 
 class RCCLRasClient:
     """
-    Async ncclras TCP client.
+    Async rcclras TCP client.
 
     Takes pre-connected reader/writer (from ssh_manager.open_port_forward()).
     Connection lifetime is managed by the caller's context manager -- do not
@@ -59,7 +59,7 @@ class RCCLRasClient:
         """
         Send CLIENT PROTOCOL 2, read SERVER PROTOCOL N.
         Returns server protocol version.
-        Protocol mismatch is logged but not fatal (matches ncclras behavior).
+        Protocol mismatch is logged but not fatal (matches rcclras behavior).
         """
         self._writer.write(b"CLIENT PROTOCOL 2\n")
         await self._writer.drain()
