@@ -55,14 +55,13 @@ def test_settings_has_all_sections():
     assert hasattr(s, 'rccl')
 
 
-def test_settings_env_nested_delimiter():
+def test_settings_env_nested_delimiter(monkeypatch):
     """Verify env_nested_delimiter is set so POLLING__INTERVAL=30 works."""
     from app.core.config import Settings
-    import os
-    os.environ['POLLING__INTERVAL'] = '45'
+    monkeypatch.setenv('POLLING__INTERVAL', '45')
     s = Settings()
     assert s.polling.interval == 45
-    del os.environ['POLLING__INTERVAL']
+    # monkeypatch automatically cleans up after the test
 
 
 def test_settings_load_nodes_from_file_missing():
