@@ -184,31 +184,9 @@ class RCCLCollector(BaseCollector):
             )
 
     def _parse_text_response(self, raw_text: str, leader: str) -> RCCLSnapshot:
-        """
-        Phase 1 text parser stub.
-
-        The full parser must be written test-first against captured rcclras fixture
-        files (see plan Section 4a). This stub returns a minimal snapshot indicating
-        the job is running so the HEALTHY/DEGRADED state machine works end-to-end.
-
-        TODO: Replace with regex-based parser against real rcclras VERBOSE STATUS output.
-        Run: rcclras -v > tests/fixtures/rccl_verbose_status_healthy.txt
-        """
-        import time
-        from app.models.rccl_models import RCCLSnapshot, RCCLJobState
-
-        # Detect obvious failure patterns from raw text
-        if not raw_text.strip():
-            return RCCLSnapshot.empty(state=RCCLJobState.NO_JOB)
-
-        # Return minimal healthy snapshot -- communicators empty until full parser is built
-        return RCCLSnapshot(
-            timestamp=time.time(),
-            state=RCCLJobState.HEALTHY,
-            communicators=[],
-            peers=[],
-            dead_peers=[],
-        )
+        """Parse rcclras VERBOSE STATUS text output using RCCLTextParser."""
+        from app.collectors.rccl_text_parser import RCCLTextParser
+        return RCCLTextParser().parse(raw_text)
 
 
 try:
