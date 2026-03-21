@@ -6,7 +6,7 @@ Adapted from CVS rocm_plib.py
 import json
 import logging
 from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.collectors.base import BaseCollector, CollectorResult, CollectorState
 from app.core.config import settings as _settings
@@ -205,10 +205,6 @@ class GPUMetricsCollector(BaseCollector):
         """
         logger.info("Collecting XGMI metrics")
         output = await ssh_manager.exec_async("amd-smi metric --xgmi-err --json", timeout=120)
-        logger.info('%%%%%%%%%%%')
-        logger.info('parsed value of xgmi')
-        logger.info(output)
-        logger.info(self.parse_json_output(output))
         return self.parse_json_output(output)
 
     async def collect_ras_errors(self, ssh_manager) -> Dict[str, Any]:
@@ -228,9 +224,6 @@ class GPUMetricsCollector(BaseCollector):
         """
         logger.info("Collecting RAS error metrics")
         output = await ssh_manager.exec_async("amd-smi metric --ecc --json", timeout=120)
-        logger.info('%%%%%%%%%%')
-        logger.info('Output of ecc')
-        logger.info(output)
         return self.parse_json_output(output)
 
     async def collect_gpu_info(self, ssh_manager) -> Dict[str, Any]:
@@ -371,7 +364,7 @@ class GPUMetricsCollector(BaseCollector):
 
         # Package results
         metrics = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
             "utilization": utilization,
             "memory": memory,
             "temperature": temperature,
@@ -665,50 +658,6 @@ class GPUMetricsCollector(BaseCollector):
                             'nak_received_count': pcie_data.get('nak_received_count', 0),
                         }
 
-        return pcie_info
-
-    def _parse_pcie_metrics_from_amd_smi_OLD(self, amd_smi_data: Dict) -> Dict:
-        """OLD VERSION - keeping for reference"""
-        pcie_info = {}
-        for node, data in amd_smi_data.items():
-            if isinstance(data, dict) and 'gpu_data' in data:
-                pcie_info[node] = {}
-                for gpu in data['gpu_data']:
-                    gpu_id = f"card{gpu.get('gpu', 0)}"
-                    pcie_data = gpu.get('pcie', {})
-
-                    # Parse width
-                    width = pcie_data.get('width', '-')
-                    if width != '-':
-                        width = f"x{width}"  # Format as x16, x8, etc.
-
-                    # Parse speed
-                    speed_data = pcie_data.get('speed', {})
-                    if isinstance(speed_data, dict):
-                        speed_value = speed_data.get('value', '-')
-                        speed_unit = speed_data.get('unit', 'GT/s')
-                        speed = f"{speed_value}{speed_unit}" if speed_value != '-' else '-'
-                    else:
-                        speed = str(speed_data) if speed_data else '-'
-
-                    # Parse bandwidth
-                    bandwidth_data = pcie_data.get('bandwidth', {})
-                    if isinstance(bandwidth_data, dict):
-                        bw_value = bandwidth_data.get('value', '-')
-                        bw_unit = bandwidth_data.get('unit', 'Mb/s')
-                        bandwidth = f"{bw_value} {bw_unit}" if bw_value != '-' else '-'
-                    else:
-                        bandwidth = str(bandwidth_data) if bandwidth_data else '-'
-
-                    pcie_info[node][gpu_id] = {
-                        'width': width,
-                        'speed': speed,
-                        'bandwidth': bandwidth,
-                        'replay_count': pcie_data.get('replay_count', 0),
-                        'l0_to_recovery_count': pcie_data.get('l0_to_recovery_count', 0),
-                        'nak_sent_count': pcie_data.get('nak_sent_count', 0),
-                        'nak_received_count': pcie_data.get('nak_received_count', 0),
-                    }
         return pcie_info
 
     def _parse_xgmi_metrics_from_amd_smi(self, amd_smi_data: Dict) -> Dict:

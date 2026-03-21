@@ -126,7 +126,7 @@ class JumpHostPssh:
         logger.info(f"Connecting to jump host: {self.jump_host}")
         logger.info(f"  Jump user: {self.jump_user}")
         logger.info(
-            f"  Jump password: {'***SET*** (length={len(self.jump_password)})' if self.jump_password else 'NOT SET'}"
+            f"  Jump password: {'***SET***' if self.jump_password else 'NOT SET'}"
         )
         logger.info(f"  Jump pkey: {self.jump_pkey if self.jump_pkey else 'NOT SET'}")
 
