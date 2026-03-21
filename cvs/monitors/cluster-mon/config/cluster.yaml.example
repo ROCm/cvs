@@ -23,3 +23,17 @@ cluster:
   alerts:
     gpu_temp_threshold: 85.0
     gpu_util_threshold: 95.0
+
+  storage:
+    redis:
+      url: redis://localhost:6379
+      db: 0
+      password: null          # set to a string to enable Redis AUTH
+      snapshot_max_entries: 1000
+      event_max_entries: 10000
+
+  rccl:
+    ras_port: 28028
+    poll_interval: 30
+    collective_timeout_secs: 10
+    debug_log_path: null

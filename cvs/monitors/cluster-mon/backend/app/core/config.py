@@ -44,6 +44,7 @@ class AlertsConfig(BaseModel):
 class RedisConfig(BaseModel):
     url: str = "redis://localhost:6379"
     db: int = 0
+    password: Optional[str] = None
     snapshot_max_entries: int = 1000
     event_max_entries: int = 10000
 

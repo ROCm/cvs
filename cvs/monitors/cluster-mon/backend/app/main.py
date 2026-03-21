@@ -164,59 +164,50 @@ def _start_collector_task(c: BaseCollector) -> asyncio.Task:
 async def reload_configuration():
     """
     Reload configuration without restarting the entire process.
-    Stops metrics collection, closes SSH connections, reloads config, reinitializes, and restarts.
+    Uses topology-diff to restart only collectors whose config actually changed.
 
     Returns:
         dict: Status of reload operation with success/error details
     """
     try:
-        logger.info("Starting configuration reload...")
+        logger.info("Starting configuration reload (topology-diff)...")
 
-        # 1. Stop metrics collection and periodic probe
-        if app_state.is_collecting:
-            logger.info("Stopping metrics collection and periodic probe...")
-            app_state.is_collecting = False
-            for task in app_state.collector_tasks.values():
-                task.cancel()
-            if app_state.collector_tasks:
-                await asyncio.gather(*app_state.collector_tasks.values(), return_exceptions=True)
-            app_state.collector_tasks.clear()
-            app_state.collectors.clear()
-            if app_state.collection_task:
-                app_state.collection_task.cancel()
-                try:
-                    await app_state.collection_task
-                except asyncio.CancelledError:
-                    pass
-            if app_state.probe_task:
-                app_state.probe_task.cancel()
-                try:
-                    await app_state.probe_task
-                except asyncio.CancelledError:
-                    pass
-
-        # 2. Close existing SSH connections
-        if app_state.ssh_manager:
-            logger.info("Closing existing SSH connections...")
-            app_state.ssh_manager.destroy_clients()
-            app_state.ssh_manager = None
-
-        # 3. Clear cached data
-        app_state.latest_metrics = {}
-        app_state.node_failure_count = {}
-        app_state.node_health_status = {}
-        app_state.cached_gpu_software = {}
-        app_state.cached_nic_software = {}
-        app_state.cached_nic_advanced = {}
-        app_state.gpu_software_cache_time = 0
-        app_state.nic_software_cache_time = 0
-        app_state.nic_advanced_cache_time = 0
-
-        # 4. Reload configuration from files
-        logger.info("Reloading configuration from cluster.yaml and nodes.txt...")
+        # 1. Snapshot old settings and load new settings
         from app.core.config import Settings
+        import app.core.config as config_module
 
+        old_settings = config_module.settings
         new_config = Settings()  # re-reads YAML and env vars
+
+        # 2. Determine which config sections changed
+        ssh_changed = (
+            old_settings.ssh.model_dump() != new_config.ssh.model_dump()
+        )
+        rccl_changed = (
+            old_settings.rccl.model_dump() != new_config.rccl.model_dump()
+        )
+        polling_changed = (
+            old_settings.polling.model_dump() != new_config.polling.model_dump()
+        )
+
+        logger.info(
+            f"Config diff: ssh_changed={ssh_changed}, rccl_changed={rccl_changed}, "
+            f"polling_changed={polling_changed}"
+        )
+
+        # 3. Update the global settings reference
+        config_module.settings = new_config
+
+        # 4. Determine which collectors need restart
+        collectors_to_restart: set[str] = set()
+        if polling_changed:
+            # Interval changed — restart all polling collectors
+            collectors_to_restart = {cls.name for cls in REGISTERED_COLLECTORS}
+        else:
+            if ssh_changed:
+                collectors_to_restart.update({"gpu", "nic"})  # SSH-dependent
+            if rccl_changed:
+                collectors_to_restart.add("rccl")
 
         # 5. Load new nodes
         nodes = new_config.load_nodes_from_file()
@@ -241,7 +232,7 @@ async def reload_configuration():
 
             logger.info(f"Checking for SSH key (key-based auth): {key_file_expanded}")
             if not os.path.exists(key_file_expanded):
-                logger.warning(f"❌ SSH key file not found: {key_file_expanded}")
+                logger.warning(f"SSH key file not found: {key_file_expanded}")
                 logger.warning("Please upload SSH keys via Configuration UI or run refresh-ssh-keys.sh")
                 return {
                     "success": False,
@@ -250,7 +241,7 @@ async def reload_configuration():
                     "requires_key_upload": True,
                 }
             else:
-                logger.info(f"✅ SSH key file found: {key_file_expanded}")
+                logger.info(f"SSH key file found: {key_file_expanded}")
                 # List the key file to verify
                 import subprocess
 
@@ -260,62 +251,120 @@ async def reload_configuration():
                 except:
                     pass
         else:
-            logger.info("✅ Using password authentication - no key file check needed")
+            logger.info("Using password authentication - no key file check needed")
 
-        # 7. Reinitialize SSH manager with new configuration
-        try:
-            if new_config.ssh.jump_host.enabled and new_config.ssh.jump_host.host:
-                num_nodes = len(nodes)
-                min(num_nodes, 5)
+        # 7. Cancel only affected collector tasks
+        for name in collectors_to_restart:
+            task = app_state.collector_tasks.get(name)
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            # Also cancel any pending restart tasks
+            restart_key = f"_restart_{name}"
+            restart_task = app_state.collector_tasks.get(restart_key)
+            if restart_task:
+                restart_task.cancel()
+                try:
+                    await restart_task
+                except asyncio.CancelledError:
+                    pass
 
-                logger.info(f"Reinitializing with jump host: {new_config.ssh.jump_host.host}")
-                logger.info(f"Jump Host Username: {new_config.ssh.jump_host.username}")
-                logger.info(f"Cluster Nodes: {len(nodes)} nodes")
-                logger.info(f"Cluster Username: {new_config.ssh.jump_host.node_username}")
+        # If nothing changed, we can skip SSH and collector restart
+        if not collectors_to_restart and not ssh_changed:
+            logger.info("No config sections changed — nothing to restart")
+            return {
+                "success": True,
+                "message": "Configuration reloaded (no changes detected)",
+                "nodes_count": len(nodes),
+                "jump_host_enabled": new_config.ssh.jump_host.enabled,
+            }
 
-                # Use JumpHostPssh - working approach from test_auth_script.py
-                app_state.ssh_manager = JumpHostPssh(
-                    jump_host=new_config.ssh.jump_host.host,
-                    jump_user=new_config.ssh.jump_host.username,
-                    jump_password=new_config.ssh.jump_host.password,
-                    jump_pkey=new_config.ssh.jump_host.key_file if not new_config.ssh.jump_host.password else None,
-                    target_hosts=nodes,
-                    target_user=new_config.ssh.jump_host.node_username,
-                    target_pkey=new_config.ssh.jump_host.node_key_file,
-                    max_parallel=min(len(nodes), 5),  # Limit to 5 to avoid exhausting paramiko channels (conservative)
-                    timeout=new_config.ssh.timeout,
-                )
-                logger.info("JumpHostPssh initialized successfully")
-            else:
-                logger.info("Reinitializing with direct SSH (no jump host)")
-                logger.info(f"Username: {new_config.ssh.username}")
-                logger.info(f"Nodes: {len(nodes)} nodes")
+        # 8. Recreate SSH manager only if SSH config changed
+        if ssh_changed:
+            # Stop probe task — it depends on the SSH manager
+            if app_state.probe_task:
+                app_state.probe_task.cancel()
+                try:
+                    await app_state.probe_task
+                except asyncio.CancelledError:
+                    pass
 
-                app_state.ssh_manager = Pssh(
-                    log=logger,
-                    host_list=nodes,
-                    user=new_config.ssh.username,
-                    password=app_state.ssh_password,  # Use in-memory password
-                    pkey=new_config.ssh.key_file,
-                    timeout=new_config.ssh.timeout,
-                    stop_on_errors=False,
-                )
-                logger.info("Direct SSH manager reinitialized")
-        except Exception as e:
-            logger.error(f"Failed to reinitialize SSH manager: {e}")
-            return {"success": False, "error": f"Failed to initialize SSH manager: {str(e)}", "nodes_count": len(nodes)}
+            if app_state.ssh_manager:
+                logger.info("Closing existing SSH connections (ssh config changed)...")
+                app_state.ssh_manager.destroy_clients()
+                app_state.ssh_manager = None
 
-        # 7. Restart metrics collection and periodic probe
-        if app_state.ssh_manager and nodes:
-            logger.info("Restarting metrics collection and periodic probe...")
-            app_state.is_collecting = True
+            # Clear cached data (node topology may have changed)
+            app_state.latest_metrics = {}
+            app_state.node_failure_count = {}
+            app_state.node_health_status = {}
+            app_state.cached_gpu_software = {}
+            app_state.cached_nic_software = {}
+            app_state.cached_nic_advanced = {}
+            app_state.gpu_software_cache_time = 0
+            app_state.nic_software_cache_time = 0
+            app_state.nic_advanced_cache_time = 0
+
+            try:
+                if new_config.ssh.jump_host.enabled and new_config.ssh.jump_host.host:
+                    num_nodes = len(nodes)
+                    min(num_nodes, 5)
+
+                    logger.info(f"Reinitializing with jump host: {new_config.ssh.jump_host.host}")
+                    logger.info(f"Jump Host Username: {new_config.ssh.jump_host.username}")
+                    logger.info(f"Cluster Nodes: {len(nodes)} nodes")
+                    logger.info(f"Cluster Username: {new_config.ssh.jump_host.node_username}")
+
+                    # Use JumpHostPssh - working approach from test_auth_script.py
+                    app_state.ssh_manager = JumpHostPssh(
+                        jump_host=new_config.ssh.jump_host.host,
+                        jump_user=new_config.ssh.jump_host.username,
+                        jump_password=new_config.ssh.jump_host.password,
+                        jump_pkey=new_config.ssh.jump_host.key_file if not new_config.ssh.jump_host.password else None,
+                        target_hosts=nodes,
+                        target_user=new_config.ssh.jump_host.node_username,
+                        target_pkey=new_config.ssh.jump_host.node_key_file,
+                        max_parallel=min(len(nodes), 5),  # Limit to 5 to avoid exhausting paramiko channels (conservative)
+                        timeout=new_config.ssh.timeout,
+                    )
+                    logger.info("JumpHostPssh initialized successfully")
+                else:
+                    logger.info("Reinitializing with direct SSH (no jump host)")
+                    logger.info(f"Username: {new_config.ssh.username}")
+                    logger.info(f"Nodes: {len(nodes)} nodes")
+
+                    app_state.ssh_manager = Pssh(
+                        log=logger,
+                        host_list=nodes,
+                        user=new_config.ssh.username,
+                        password=app_state.ssh_password,  # Use in-memory password
+                        pkey=new_config.ssh.key_file,
+                        timeout=new_config.ssh.timeout,
+                        stop_on_errors=False,
+                    )
+                    logger.info("Direct SSH manager reinitialized")
+            except Exception as e:
+                logger.error(f"Failed to reinitialize SSH manager: {e}")
+                return {"success": False, "error": f"Failed to initialize SSH manager: {str(e)}", "nodes_count": len(nodes)}
+
+            # Restart probe task with new SSH manager
             app_state.probe_requested = asyncio.Event()
-            for cls in REGISTERED_COLLECTORS:
-                c = cls()
-                app_state.collectors[c.name] = c
-                app_state.collector_tasks[c.name] = _start_collector_task(c)
             app_state.probe_task = asyncio.create_task(periodic_host_probe())
-            logger.info("Metrics collection and periodic probe restarted")
+
+        # 9. Restart only the affected collectors
+        if app_state.ssh_manager and nodes:
+            app_state.is_collecting = True
+            for cls in REGISTERED_COLLECTORS:
+                if cls.name in collectors_to_restart:
+                    c = cls()
+                    app_state.collectors[c.name] = c
+                    app_state.collector_tasks[c.name] = _start_collector_task(c)
+                    logger.info(f"Restarted collector: {c.name}")
+                else:
+                    logger.info(f"Collector unchanged, kept running: {cls.name}")
 
         logger.info("Configuration reload completed successfully!")
         return {
@@ -323,6 +372,7 @@ async def reload_configuration():
             "message": "Configuration reloaded successfully",
             "nodes_count": len(nodes),
             "jump_host_enabled": new_config.ssh.jump_host.enabled,
+            "collectors_restarted": list(collectors_to_restart),
         }
 
     except Exception as e:
@@ -588,10 +638,15 @@ async def lifespan(app: FastAPI):
 
     # Initialize Redis (optional — app continues without it)
     try:
+        redis_kwargs = {
+            "db": settings.storage.redis.db,
+            "decode_responses": True,
+        }
+        if settings.storage.redis.password:
+            redis_kwargs["password"] = settings.storage.redis.password
         app_state.redis = aioredis.from_url(
             settings.storage.redis.url,
-            db=settings.storage.redis.db,
-            decode_responses=True,
+            **redis_kwargs,
         )
         await app_state.redis.ping()
         logger.info(f"Redis connected: {settings.storage.redis.url}")

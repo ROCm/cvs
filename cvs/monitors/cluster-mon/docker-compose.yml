@@ -11,9 +11,9 @@ services:
     restart: unless-stopped
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --appendfsync everysec
+    command: redis-server --appendonly yes --appendfsync everysec --requirepass ${REDIS_PASSWORD:-cvs_cluster_mon}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-cvs_cluster_mon}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -52,6 +52,7 @@ services:
       - CLUSTER_MONITOR_HOME=/app
       # Redis connection (uses Docker service name as hostname)
       - STORAGE__REDIS__URL=redis://redis:6379
+      - STORAGE__REDIS__PASSWORD=${REDIS_PASSWORD:-cvs_cluster_mon}
     restart: unless-stopped
     # Health check disabled - uncomment if needed
     # healthcheck:
