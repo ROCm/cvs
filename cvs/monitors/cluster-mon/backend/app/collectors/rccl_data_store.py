@@ -19,13 +19,17 @@ class RCCLDataStore:
     EVENT_STREAM = "rccl:events"         # Stream, capped at 10000 entries
     CURRENT_KEY = "rccl:current"         # Hash, latest snapshot only
 
-    def __init__(self, redis_client):
+    def __init__(self, redis_client, snapshot_max: int = 1000, event_max: int = 10000):
         """
         Args:
             redis_client: redis.asyncio.Redis instance from app_state.redis, or None.
                           All methods degrade silently when redis_client is None.
+            snapshot_max: Maximum number of entries in the snapshot stream.
+            event_max: Maximum number of entries in the event stream.
         """
         self._r = redis_client
+        self._snapshot_max = snapshot_max
+        self._event_max = event_max
 
     async def push_snapshot(self, snapshot: dict) -> None:
         """Atomically append snapshot to ring buffer and update current."""
@@ -36,7 +40,7 @@ class RCCLDataStore:
             await self._r.xadd(
                 self.SNAPSHOT_STREAM,
                 {"data": payload},
-                maxlen=1000,
+                maxlen=self._snapshot_max,
             )
             await self._r.hset(
                 self.CURRENT_KEY,
@@ -54,7 +58,7 @@ class RCCLDataStore:
             await self._r.xadd(
                 self.EVENT_STREAM,
                 {"data": json.dumps(event)},
-                maxlen=10000,
+                maxlen=self._event_max,
                 approximate=True,
             )
         except Exception as e:

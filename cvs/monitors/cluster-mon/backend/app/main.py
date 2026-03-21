@@ -147,7 +147,11 @@ def _start_collector_task(c: BaseCollector) -> asyncio.Task:
             new_task = _start_collector_task(c)
             app_state.collector_tasks[c.name] = new_task
 
-        asyncio.get_running_loop().call_soon(lambda: asyncio.create_task(_restart()))
+        def _schedule_restart():
+            restart_task = asyncio.create_task(_restart(), name=f"restart-{c.name}")
+            app_state.collector_tasks[f"_restart_{c.name}"] = restart_task
+
+        asyncio.get_running_loop().call_soon(_schedule_restart)
 
     task = asyncio.create_task(
         c.run(app_state.ssh_manager, app_state),
@@ -267,7 +271,7 @@ async def reload_configuration():
                 logger.info(f"Reinitializing with jump host: {new_config.ssh.jump_host.host}")
                 logger.info(f"Jump Host Username: {new_config.ssh.jump_host.username}")
                 logger.info(f"Cluster Nodes: {len(nodes)} nodes")
-                logger.info(f"Cluster Username: {new_config.node_username_via_jumphost}")
+                logger.info(f"Cluster Username: {new_config.ssh.jump_host.node_username}")
 
                 # Use JumpHostPssh - working approach from test_auth_script.py
                 app_state.ssh_manager = JumpHostPssh(
@@ -276,8 +280,8 @@ async def reload_configuration():
                     jump_password=new_config.ssh.jump_host.password,
                     jump_pkey=new_config.ssh.jump_host.key_file if not new_config.ssh.jump_host.password else None,
                     target_hosts=nodes,
-                    target_user=new_config.node_username_via_jumphost,
-                    target_pkey=new_config.node_key_file_on_jumphost,
+                    target_user=new_config.ssh.jump_host.node_username,
+                    target_pkey=new_config.ssh.jump_host.node_key_file,
                     max_parallel=min(len(nodes), 5),  # Limit to 5 to avoid exhausting paramiko channels (conservative)
                     timeout=new_config.ssh.timeout,
                 )
@@ -548,7 +552,7 @@ async def lifespan(app: FastAPI):
                 logger.info(f"Initializing with jump host: {settings.ssh.jump_host.host}")
                 logger.info(f"Jump Host Username: {settings.ssh.jump_host.username}")
                 logger.info(f"Cluster Nodes: {len(nodes)} nodes")
-                logger.info(f"Cluster Username: {settings.node_username_via_jumphost}")
+                logger.info(f"Cluster Username: {settings.ssh.jump_host.node_username}")
 
                 app_state.ssh_manager = JumpHostPssh(
                     jump_host=settings.ssh.jump_host.host,
@@ -556,8 +560,8 @@ async def lifespan(app: FastAPI):
                     jump_password=settings.ssh.jump_host.password,
                     jump_pkey=settings.ssh.jump_host.key_file if not settings.ssh.jump_host.password else None,
                     target_hosts=nodes,
-                    target_user=settings.node_username_via_jumphost,
-                    target_pkey=settings.node_key_file_on_jumphost,
+                    target_user=settings.ssh.jump_host.node_username,
+                    target_pkey=settings.ssh.jump_host.node_key_file,
                     max_parallel=min(len(nodes), 5),
                     timeout=settings.ssh.timeout,
                 )
@@ -597,7 +601,11 @@ async def lifespan(app: FastAPI):
 
     # Initialize RCCL data store (uses app_state.redis, degrades if None)
     from app.collectors.rccl_data_store import RCCLDataStore
-    app_state.rccl_data_store = RCCLDataStore(app_state.redis)
+    app_state.rccl_data_store = RCCLDataStore(
+        app_state.redis,
+        snapshot_max=settings.storage.redis.snapshot_max_entries,
+        event_max=settings.storage.redis.event_max_entries,
+    )
 
     # Start metrics collection using unified collector registry
     if app_state.ssh_manager:

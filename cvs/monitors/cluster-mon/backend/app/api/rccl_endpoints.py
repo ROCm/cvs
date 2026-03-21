@@ -6,6 +6,7 @@ Phase 1: status, communicators, events, markers.
 import logging
 from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Query
+from app.models.rccl_models import RCCLMarker
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ async def get_rccl_events(
 
 
 @router.post("/markers", status_code=201)
-async def post_rccl_marker(marker: dict) -> dict[str, str]:
+async def post_rccl_marker(marker: RCCLMarker) -> dict[str, str]:
     """
     PyTorch callback endpoint for training step/loss markers.
     Stores marker as an event in the RCCL event stream.
@@ -83,11 +84,12 @@ async def post_rccl_marker(marker: dict) -> dict[str, str]:
     from app.main import app_state
     import time
 
-    marker.setdefault("event_type", "training_marker")
-    marker.setdefault("timestamp", time.time())
+    event = marker.model_dump()
+    event.setdefault("event_type", "training_marker")
+    event.setdefault("timestamp", time.time())
 
     data_store = getattr(app_state, 'rccl_data_store', None)
     if data_store:
-        await data_store.push_event(marker)
+        await data_store.push_event(event)
 
     return {"status": "accepted"}

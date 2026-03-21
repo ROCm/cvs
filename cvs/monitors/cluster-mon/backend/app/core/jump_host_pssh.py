@@ -410,6 +410,10 @@ class JumpHostPssh:
         Yields:
             (reader, writer) connected to node:remote_port via the jump host
         """
+        # Ensure jump host connection is alive before opening port forward
+        if not await asyncio.to_thread(self._is_jump_host_alive):
+            await asyncio.to_thread(self._ensure_jump_host_connection)
+
         asyncio_end, thread_end = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             channel = await asyncio.to_thread(
