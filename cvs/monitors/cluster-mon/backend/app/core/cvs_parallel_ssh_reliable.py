@@ -9,6 +9,10 @@ from __future__ import print_function
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError
 
+import asyncio
+import socket
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 import time
 import logging
 import threading
@@ -20,6 +24,7 @@ from scp import SCPClient
 
 # TCP probe for fast reachability detection
 from app.core.host_probe import discover_reachable_hosts
+from app.core.ssh_port_forward import _run_bridge
 
 # Module-level logger
 logger = logging.getLogger(__name__)
@@ -112,6 +117,9 @@ class Pssh:
             f"Probe completed in {probe_duration:.2f}s: "
             f"{len(self.reachable_hosts)} reachable, {len(self.unreachable_hosts)} unreachable"
         )
+
+        self._pf_clients: dict[str, paramiko.SSHClient] = {}
+        self._pf_lock = threading.Lock()  # protects _pf_clients dict
 
         # Only create ParallelSSHClient with reachable hosts
         if not self.reachable_hosts:
@@ -442,10 +450,95 @@ class Pssh:
         print('Rebooting Connections')
         self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
 
+    def _get_pf_transport(self, node: str) -> paramiko.Transport:
+        """
+        Get or create a dedicated paramiko SSH client for port-forwarding to node.
+        Thread-safe. Separate from the pssh connection pool (which does not expose transports).
+
+        Security note: Uses AutoAddPolicy() (TOFU). See plan for hardening options.
+        """
+        with self._pf_lock:
+            client = self._pf_clients.get(node)
+            transport = client.get_transport() if client else None
+            if transport is None or not transport.is_active():
+                new_client = paramiko.SSHClient()
+                new_client.set_missing_host_key_policy(
+                    paramiko.AutoAddPolicy()
+                    # Security note: AutoAddPolicy() accepts any host key without
+                    # verification (TOFU). Production hardening: pre-distribute known
+                    # host keys via Ansible/Puppet and use RejectPolicy() + a
+                    # pre-populated known_hosts file, or use OpenSSH certificate auth.
+                )
+                new_client.connect(
+                    node,
+                    username=self.user,
+                    key_filename=self.pkey,
+                    password=self.password,
+                    timeout=self.timeout,
+                )
+                if client:
+                    try:
+                        client.close()  # close the stale connection before replacing
+                    except Exception:
+                        pass
+                self._pf_clients[node] = new_client
+            return self._pf_clients[node].get_transport()
+
+    @asynccontextmanager
+    async def open_port_forward(
+        self, node: str, remote_port: int
+    ) -> AsyncIterator[tuple]:
+        """
+        Open a single-hop SSH tunnel: monitoring_host -> node:remote_port.
+
+        Yields (asyncio.StreamReader, asyncio.StreamWriter) ready for asyncio use.
+        Uses a Unix socketpair() -- no ephemeral TCP port allocation, no TOCTOU race.
+        """
+        asyncio_end, thread_end = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            transport = await asyncio.to_thread(self._get_pf_transport, node)
+            channel = await asyncio.to_thread(
+                transport.open_channel,
+                "direct-tcpip",
+                (node, remote_port),
+                ("127.0.0.1", 0),
+            )
+        except Exception:
+            asyncio_end.close()
+            thread_end.close()
+            raise
+
+        _run_bridge(channel, thread_end)
+
+        try:
+            reader, writer = await asyncio.open_connection(sock=asyncio_end)
+        except Exception:
+            asyncio_end.close()
+            channel.close()
+            raise
+
+        try:
+            yield reader, writer
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            channel.close()
+            thread_end.close()
+
     def destroy_clients(self):
         print('Destroying Current phdl connections ..')
         if self.client:
             del self.client
+        with self._pf_lock:
+            for c in self._pf_clients.values():
+                try:
+                    c.close()
+                except Exception:
+                    pass
+            self._pf_clients.clear()
 
     async def exec_async(self, cmd, timeout=None, print_console=True):
         """
