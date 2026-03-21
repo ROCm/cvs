@@ -19,6 +19,7 @@ from app.core.cvs_parallel_ssh_reliable import Pssh
 from app.core.jump_host_pssh import JumpHostPssh
 from app.collectors.gpu_collector import GPUMetricsCollector
 from app.collectors.nic_collector import NICMetricsCollector
+from app.collectors.rccl_collector import RCCLCollector
 from app.collectors.base import BaseCollector, CollectorResult, CollectorState
 from app.api import router as api_router
 
@@ -107,6 +108,11 @@ class AppState:
         # Redis client
         self.redis: Optional[object] = None
 
+        # RCCL state
+        self.rccl_data_store = None   # RCCLDataStore, set in lifespan
+        self.latest_rccl_snapshot: Optional[dict] = None
+        self.rccl_websocket_clients: List[WebSocket] = []
+
 
 app_state = AppState()
 
@@ -114,7 +120,7 @@ app_state = AppState()
 REGISTERED_COLLECTORS: list[type[BaseCollector]] = [
     GPUMetricsCollector,
     NICMetricsCollector,
-    # RCCLCollector added in Batch 6
+    RCCLCollector,
 ]
 
 
@@ -624,6 +630,10 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Redis unavailable: {e}. History features disabled.")
         app_state.redis = None
 
+    # Initialize RCCL data store (uses app_state.redis, degrades if None)
+    from app.collectors.rccl_data_store import RCCLDataStore
+    app_state.rccl_data_store = RCCLDataStore(app_state.redis)
+
     yield
 
     # Shutdown
@@ -696,6 +706,19 @@ async def websocket_metrics(websocket: WebSocket):
     finally:
         if websocket in app_state.websocket_clients:
             app_state.websocket_clients.remove(websocket)
+
+
+@app.websocket("/ws/rccl")
+async def websocket_rccl(websocket: WebSocket):
+    """WebSocket endpoint for real-time RCCL event streaming."""
+    await websocket.accept()
+    app_state.rccl_websocket_clients.append(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # Keep alive; server pushes via broadcast_rccl()
+    except WebSocketDisconnect:
+        if websocket in app_state.rccl_websocket_clients:
+            app_state.rccl_websocket_clients.remove(websocket)
 
 
 # Include API router FIRST (highest priority)
