@@ -25,7 +25,9 @@ class NICSoftwareCollector:
         logger.info("Collecting NIC firmware versions")
 
         # First get list of interfaces
-        ip_output = await ssh_manager.exec_async("ip -o link show | awk -F': ' '{print $2}' | grep -v lo")
+        ip_output = await ssh_manager.exec_async(
+            "bash -c \"ip -o link show | awk -F': ' '{print \\$2}' | grep -v lo\"", timeout=60
+        )
 
         firmware_info = {}
 
@@ -39,7 +41,7 @@ class NICSoftwareCollector:
 
             for iface in interfaces[:10]:  # Limit to first 10 interfaces
                 cmd = f"sudo ethtool -i {iface} 2>/dev/null"
-                output = await ssh_manager.exec_async(cmd)
+                output = await ssh_manager.exec_async(cmd, timeout=60)
 
                 if host in output and output[host]:
                     info = {}
@@ -77,7 +79,7 @@ class NICSoftwareCollector:
             driver_info[host] = {}
 
             # Check Mellanox (NVIDIA CX7)
-            output = await ssh_manager.exec_async(commands[0])
+            output = await ssh_manager.exec_async(commands[0], timeout=60)
             if host in output and output[host] and "modinfo" not in output[host]:
                 mlx_info = {}
                 for line in output[host].split("\n"):
@@ -88,7 +90,7 @@ class NICSoftwareCollector:
                     driver_info[host]["mlx5_core"] = mlx_info
 
             # Check Broadcom (Thor2)
-            output = await ssh_manager.exec_async(commands[1])
+            output = await ssh_manager.exec_async(commands[1], timeout=60)
             if host in output and output[host] and "modinfo" not in output[host]:
                 bnxt_info = {}
                 for line in output[host].split("\n"):
@@ -99,7 +101,7 @@ class NICSoftwareCollector:
                     driver_info[host]["bnxt_en"] = bnxt_info
 
             # Check AMD AINIC
-            output = await ssh_manager.exec_async(commands[2])
+            output = await ssh_manager.exec_async(commands[2], timeout=60)
             if host in output and output[host] and "Not loaded" not in output[host]:
                 amd_info = {}
                 for line in output[host].split("\n"):
@@ -118,7 +120,9 @@ class NICSoftwareCollector:
         Returns comprehensive RDMA counter statistics.
         """
         logger.info("Collecting detailed RDMA statistics")
-        output = await ssh_manager.exec_async("rdma statistic show --json 2>/dev/null || echo '[]'")
+        output = await ssh_manager.exec_async(
+            "bash -c 'rdma statistic show --json 2>/dev/null || echo \"[]\"'", timeout=60
+        )
 
         rdma_stats = {}
         for host, out_str in output.items():
@@ -171,7 +175,9 @@ class NICSoftwareCollector:
         logger.info("Collecting detailed ethtool statistics")
 
         # Get list of interfaces first
-        ip_output = await ssh_manager.exec_async("ip -o link show | awk -F': ' '{print $2}' | grep -v lo")
+        ip_output = await ssh_manager.exec_async(
+            "bash -c \"ip -o link show | awk -F': ' '{print \\$2}' | grep -v lo\"", timeout=60
+        )
 
         eth_stats = {}
 
@@ -185,7 +191,7 @@ class NICSoftwareCollector:
 
             for iface in interfaces[:10]:  # Limit to first 10
                 cmd = f"sudo ethtool -S {iface} 2>/dev/null"
-                output = await ssh_manager.exec_async(cmd)
+                output = await ssh_manager.exec_async(cmd, timeout=60)
 
                 if host in output and output[host] and "NOT_AVAILABLE" not in output[host]:
                     stats = {}
@@ -207,7 +213,7 @@ class NICSoftwareCollector:
         Command: lspci -nn | grep -i network
         """
         logger.info("Collecting PCI device info for NICs")
-        output = await ssh_manager.exec_async("lspci -nn | grep -i 'network\\|ethernet'")
+        output = await ssh_manager.exec_async("bash -c \"lspci -nn | grep -i 'network\\|ethernet'\"", timeout=60)
 
         pci_info = {}
         for host, out_str in output.items():
@@ -233,26 +239,24 @@ class NICSoftwareCollector:
 
         Returns consolidated NIC software info.
         """
-        import asyncio
 
         logger.info("Collecting all NIC software information")
 
-        results = await asyncio.gather(
-            self.collect_nic_firmware_version(ssh_manager),
-            self.collect_nic_driver_version(ssh_manager),
-            self.collect_rdma_statistics_detailed(ssh_manager),
-            self.collect_ethtool_statistics_detailed(ssh_manager),
-            self.collect_pci_device_info(ssh_manager),
-            return_exceptions=True,
-        )
+        # IMPORTANT: Run commands SEQUENTIALLY to avoid parallel-ssh thread safety issues
+        # asyncio.gather() was causing "munmap_chunk(): invalid pointer" crashes
+        nic_firmware = await self.collect_nic_firmware_version(ssh_manager)
+        nic_drivers = await self.collect_nic_driver_version(ssh_manager)
+        rdma_statistics = await self.collect_rdma_statistics_detailed(ssh_manager)
+        ethtool_statistics = await self.collect_ethtool_statistics_detailed(ssh_manager)
+        pci_devices = await self.collect_pci_device_info(ssh_manager)
 
         software_info = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
-            "nic_firmware": results[0] if not isinstance(results[0], Exception) else {},
-            "nic_drivers": results[1] if not isinstance(results[1], Exception) else {},
-            "rdma_statistics": results[2] if not isinstance(results[2], Exception) else {},
-            "ethtool_statistics": results[3] if not isinstance(results[3], Exception) else {},
-            "pci_devices": results[4] if not isinstance(results[4], Exception) else {},
+            "nic_firmware": nic_firmware if not isinstance(nic_firmware, Exception) else {},
+            "nic_drivers": nic_drivers if not isinstance(nic_drivers, Exception) else {},
+            "rdma_statistics": rdma_statistics if not isinstance(rdma_statistics, Exception) else {},
+            "ethtool_statistics": ethtool_statistics if not isinstance(ethtool_statistics, Exception) else {},
+            "pci_devices": pci_devices if not isinstance(pci_devices, Exception) else {},
         }
 
         return software_info

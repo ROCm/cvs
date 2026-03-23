@@ -127,8 +127,18 @@ async def get_cluster_status() -> Dict[str, Any]:
     temp_data = gpu_data.get("temperature", {})
 
     # Calculate cluster stats
-    total_nodes = len(app_state.ssh_manager.host_list) if app_state.ssh_manager else 0
-    unreachable_nodes = len(app_state.ssh_manager.unreachable_hosts) if app_state.ssh_manager else 0
+    if not app_state.ssh_manager:
+        return {
+            "total_nodes": 0,
+            "healthy_nodes": 0,
+            "unhealthy_nodes": 0,
+            "unreachable_nodes": 0,
+            "total_gpus": 0,
+            "status": "no_ssh_manager",
+        }
+
+    total_nodes = len(app_state.ssh_manager.host_list)
+    unreachable_nodes = len(app_state.ssh_manager.unreachable_hosts)
 
     # Check health of each reachable node
     healthy_nodes = 0

@@ -11,14 +11,21 @@ from pssh.exceptions import Timeout, ConnectionError
 
 import time
 import logging
+import threading
 
 # Following used only for scp of file
 import paramiko
 from paramiko import SSHClient
 from scp import SCPClient
 
+# TCP probe for fast reachability detection
+from app.core.host_probe import discover_reachable_hosts
+
 # Module-level logger
 logger = logging.getLogger(__name__)
+
+# Global lock to prevent concurrent SSH operations (parallel-ssh is not thread-safe)
+_ssh_lock = threading.Lock()
 
 
 class Pssh:
@@ -58,7 +65,16 @@ class Pssh:
         self.timeout = timeout
 
         # Build client parameters
-        client_params = {'user': self.user, 'keepalive_seconds': 30}
+        # Set num_retries=1 (one retry) for faster failure on unreachable nodes
+        # NOTE: Do NOT set 'timeout' here - it acts as default read timeout for ALL commands
+        #       Connection timeout is handled by num_retries and SSH protocol defaults
+        # pool_size: Balance between parallelism and resource usage (50 for large clusters)
+        client_params = {
+            'user': self.user,
+            'num_retries': 1,  # Only retry once (total 2 attempts) for fast failure on unreachable nodes
+            'pool_size': 50,  # Reduced from 100 for stability with 617 hosts
+            # keepalive_seconds: Omitted - use library default to avoid interference with long commands
+        }
 
         # Add authentication
         if self.password is None:
@@ -85,6 +101,24 @@ class Pssh:
             elif proxy_pkey:
                 client_params['proxy_pkey'] = proxy_pkey
 
+        # Probe hosts for reachability before SSH connection
+        logger.info(f"Probing {len(host_list)} hosts for reachability...")
+        probe_start = time.time()
+        self.reachable_hosts, self.unreachable_hosts = discover_reachable_hosts(
+            host_list, port=22, timeout=5, max_workers=100
+        )
+        probe_duration = time.time() - probe_start
+        logger.info(
+            f"Probe completed in {probe_duration:.2f}s: "
+            f"{len(self.reachable_hosts)} reachable, {len(self.unreachable_hosts)} unreachable"
+        )
+
+        # Only create ParallelSSHClient with reachable hosts
+        if not self.reachable_hosts:
+            logger.warning("No reachable hosts found! SSH manager will be inactive")
+            self.client = None
+            return
+
         logger.info("Creating ParallelSSHClient with params:")
         logger.info(f"  Hosts: {self.reachable_hosts}")
         logger.info(f"  User: {client_params.get('user')}")
@@ -95,11 +129,16 @@ class Pssh:
 
         self.client = ParallelSSHClient(self.reachable_hosts, **client_params)
         logger.info("✅ ParallelSSHClient created successfully")
+        logger.info(f"Ready to execute commands on {len(self.reachable_hosts)} reachable hosts")
 
     def check_connectivity(self, hosts):
         """
         Check connectivity for a list of hosts using one ParallelSSHClient.
-        Returns a list of unreachable hosts.
+        Returns a list of TRULY unreachable hosts (connection failures only, not slow hosts).
+        Uses generous timeout to avoid false positives.
+
+        NOTE: This method is now primarily used by prune_unreachable_hosts().
+        Initial reachability is determined by TCP probes in __init__().
         """
         if not hosts:
             return []
@@ -108,12 +147,101 @@ class Pssh:
             user=self.user,
             pkey=self.pkey if self.password is None else None,
             password=self.password,
-            num_retries=0,
-            timeout=2,
+            num_retries=0,  # No retries for connectivity check
+            pool_size=50,  # Reduced from 100 for stability
         )
-        output = temp_client.run_command('echo 1', stop_on_errors=False, read_timeout=2)
-        unreachable = [item.host for item in output if item.exception]
+        # Use 15 second timeout - enough for slow hosts but fast enough for unreachable detection
+        output = temp_client.run_command('echo 1', stop_on_errors=False, read_timeout=15)
+
+        # Only mark hosts with ConnectionError as unreachable (not Timeout - could just be slow)
+        unreachable = [item.host for item in output if item.exception and isinstance(item.exception, ConnectionError)]
         return unreachable
+
+    def refresh_host_reachability(self):
+        """
+        Re-probe all hosts and update reachable/unreachable lists.
+        Returns True if the reachable host list changed.
+
+        This is called periodically (every 5 minutes) and on mid-execution failures
+        to detect nodes that have come online or gone offline.
+        """
+        logger.info("Refreshing host reachability...")
+        old_reachable = set(self.reachable_hosts)
+
+        # Re-probe all original hosts
+        new_reachable, new_unreachable = discover_reachable_hosts(self.host_list, port=22, timeout=5, max_workers=100)
+
+        # Check for changes
+        new_reachable_set = set(new_reachable)
+        newly_reachable = new_reachable_set - old_reachable
+        newly_unreachable = old_reachable - new_reachable_set
+
+        if newly_reachable or newly_unreachable:
+            logger.info("Host reachability changed:")
+            if newly_reachable:
+                logger.info(f"  Newly reachable ({len(newly_reachable)}): {list(newly_reachable)[:10]}")
+            if newly_unreachable:
+                logger.info(f"  Newly unreachable ({len(newly_unreachable)}): {list(newly_unreachable)[:10]}")
+
+        # Update lists
+        self.reachable_hosts = new_reachable
+        self.unreachable_hosts = new_unreachable
+
+        return len(old_reachable) != len(new_reachable_set) or old_reachable != new_reachable_set
+
+    def recreate_client(self):
+        """
+        Recreate ParallelSSHClient with current reachable_hosts.
+        Called after host reachability changes are detected.
+        """
+        if not self.reachable_hosts:
+            logger.warning("No reachable hosts! Clearing client.")
+            if self.client:
+                try:
+                    self.client.disconnect()
+                except:
+                    pass
+                self.client = None
+            return
+
+        logger.info(f"Recreating ParallelSSHClient with {len(self.reachable_hosts)} reachable hosts...")
+
+        # Disconnect old client
+        if self.client:
+            try:
+                self.client.disconnect()
+            except:
+                pass
+
+        # Build client parameters (same as __init__)
+        client_params = {
+            'user': self.user,
+            'num_retries': 1,
+            'pool_size': 50,  # Reduced from 100 for stability with 617 hosts
+        }
+
+        if self.password is None:
+            client_params['pkey'] = self.pkey
+        else:
+            client_params['password'] = self.password
+
+        # Recreate client
+        self.client = ParallelSSHClient(self.reachable_hosts, **client_params)
+        logger.info("✅ ParallelSSHClient recreated successfully")
+
+    def _handle_connection_failure(self):
+        """
+        Handle connection failures during command execution.
+        Re-probes all hosts and recreates client if reachability changed.
+        """
+        logger.info("Handling connection failure - re-probing hosts...")
+        changed = self.refresh_host_reachability()
+
+        if changed:
+            logger.info("Host reachability changed - recreating client")
+            self.recreate_client()
+        else:
+            logger.info("No reachability changes detected")
 
     def prune_unreachable_hosts(self, output):
         """
@@ -137,11 +265,19 @@ class Pssh:
             # Recreate client with filtered reachable_hosts, only if hosts were actually pruned
             if self.password is None:
                 self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30
+                    self.reachable_hosts,
+                    user=self.user,
+                    pkey=self.pkey,
+                    num_retries=1,
+                    pool_size=50,
                 )
             else:
                 self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+                    self.reachable_hosts,
+                    user=self.user,
+                    password=self.password,
+                    num_retries=1,
+                    pool_size=50,
                 )
 
     def inform_unreachability(self, cmd_output):
@@ -227,29 +363,45 @@ class Pssh:
 
     def exec(self, cmd, timeout=None, print_console=True):
         """
-        Returns a dictionary of host as key and command output as values
+        Returns a dictionary of host as key and command output as values.
+        Thread-safe: Uses lock to prevent concurrent SSH operations.
         """
-        logger.info(f"CVS Pssh executing: {cmd[:100]}...")
-        logger.info(f"Calling ParallelSSHClient.run_command() on {len(self.host_list)} nodes...")
-        logger.info(f"  Timeout: {timeout if timeout else 'default'}")
-        logger.info(f"  Stop on errors: {self.stop_on_errors}")
+        # Check if client is available
+        if not self.client:
+            logger.warning("No SSH client available (no reachable hosts)")
+            # Return error for all original hosts
+            return {host: "ABORT: Host Unreachable Error" for host in self.host_list}
 
-        print(f'cmd = {cmd}')
+        # CRITICAL: Acquire lock to prevent concurrent SSH operations
+        # parallel-ssh/paramiko/libssh2 are NOT thread-safe
+        with _ssh_lock:
+            logger.info(f"CVS Pssh executing: {cmd[:100]}...")
+            logger.info(f"Calling ParallelSSHClient.run_command() on {len(self.reachable_hosts)} reachable nodes...")
+            logger.info(f"  Timeout: {timeout if timeout else 'default'}")
+            logger.info(f"  Stop on errors: {self.stop_on_errors}")
 
-        try:
-            if timeout is None:
-                logger.info("Starting run_command (no timeout)...")
-                output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors)
-            else:
-                logger.info(f"Starting run_command (read_timeout={timeout})...")
-                output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
+            print(f'cmd = {cmd}')
 
-            logger.info(f"✅ run_command returned {len(list(output))} results")
-            cmd_output = self._process_output(output, cmd=cmd, print_console=print_console)
-        except Exception as e:
-            logger.error(f"❌ run_command raised exception: {e}", exc_info=True)
-            raise
-        return cmd_output
+            try:
+                if timeout is None:
+                    logger.info("Starting run_command (no timeout)...")
+                    output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors)
+                else:
+                    logger.info(f"Starting run_command (read_timeout={timeout})...")
+                    output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
+
+                logger.info(f"✅ run_command returned {len(list(output))} results")
+                cmd_output = self._process_output(output, cmd=cmd, print_console=print_console)
+            except ConnectionError as e:
+                # Connection error during execution - trigger re-probe
+                logger.warning(f"ConnectionError during execution: {e}")
+                logger.info("Triggering host re-probe...")
+                self._handle_connection_failure()
+                raise
+            except Exception as e:
+                logger.error(f"❌ run_command raised exception: {e}", exc_info=True)
+                raise
+            return cmd_output
 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
         """
@@ -278,13 +430,32 @@ class Pssh:
                 raise Exception("Expected IOError exception, got none")
         return
 
+    def get_reachable_hosts(self):
+        """Return list of reachable hosts."""
+        return self.reachable_hosts.copy()
+
+    def get_unreachable_hosts(self):
+        """Return list of unreachable hosts."""
+        return self.unreachable_hosts.copy()
+
     def reboot_connections(self):
         print('Rebooting Connections')
         self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
 
     def destroy_clients(self):
         print('Destroying Current phdl connections ..')
-        del self.client
+        if self.client:
+            del self.client
+
+    async def exec_async(self, cmd, timeout=None, print_console=True):
+        """
+        Async wrapper for exec() that runs in a thread pool to avoid blocking the event loop.
+
+        This allows async API endpoints to call SSH commands without blocking other requests.
+        """
+        import asyncio
+
+        return await asyncio.to_thread(self.exec, cmd, timeout, print_console)
 
 
 def scp(src, dst, srcusername, srcpassword, dstusername=None, dstpassword=None):
@@ -348,7 +519,3 @@ def scp(src, dst, srcusername, srcpassword, dstusername=None, dstpassword=None):
         ssh.exec_command('ssh-keyscan %s >> ~/.ssh/known_hosts' % (dstip))
         time.sleep(1)
         ssh.exec_command('sshpass -p %s scp %s %s@%s:%s' % (dstpassword, srcfile, dstusername, dstip, dstfile))
-
-    async def exec_async(self, cmd, timeout=None, print_console=True):
-        '''Async wrapper - just calls exec() directly'''
-        return self.exec(cmd, timeout, print_console)

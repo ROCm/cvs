@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from typing import List, Union, Optional
 import os
+import time
 from pathlib import Path
 
 from app.core.simple_config import config as settings
@@ -81,6 +82,10 @@ class AppState:
         # SECURITY: Passwords stored in memory only (never persisted to disk)
         self.ssh_password: str = None  # Direct SSH password
         self.jump_host_password: str = None  # Jump host password
+        # Periodic host probe task
+        self.probe_task: Optional[asyncio.Task] = None
+        self.last_probe_time: Optional[float] = None
+        self.probe_count: int = 0  # Track number of probes for periodic client recreation
 
 
 app_state = AppState()
@@ -97,14 +102,20 @@ async def reload_configuration():
     try:
         logger.info("Starting configuration reload...")
 
-        # 1. Stop metrics collection
+        # 1. Stop metrics collection and periodic probe
         if app_state.is_collecting:
-            logger.info("Stopping metrics collection...")
+            logger.info("Stopping metrics collection and periodic probe...")
             app_state.is_collecting = False
             if app_state.collection_task:
                 app_state.collection_task.cancel()
                 try:
                     await app_state.collection_task
+                except asyncio.CancelledError:
+                    pass
+            if app_state.probe_task:
+                app_state.probe_task.cancel()
+                try:
+                    await app_state.probe_task
                 except asyncio.CancelledError:
                     pass
 
@@ -218,12 +229,13 @@ async def reload_configuration():
             logger.error(f"Failed to reinitialize SSH manager: {e}")
             return {"success": False, "error": f"Failed to initialize SSH manager: {str(e)}", "nodes_count": len(nodes)}
 
-        # 7. Restart metrics collection
+        # 7. Restart metrics collection and periodic probe
         if app_state.ssh_manager and nodes:
-            logger.info("Restarting metrics collection...")
+            logger.info("Restarting metrics collection and periodic probe...")
             app_state.is_collecting = True
             app_state.collection_task = asyncio.create_task(collect_metrics_loop())
-            logger.info("Metrics collection restarted")
+            app_state.probe_task = asyncio.create_task(periodic_host_probe())
+            logger.info("Metrics collection and periodic probe restarted")
 
         logger.info("Configuration reload completed successfully!")
         return {
@@ -283,9 +295,26 @@ async def collect_metrics_loop():
         try:
             logger.info("Collecting metrics...")
 
-            # Collect GPU and NIC metrics
-            gpu_metrics = await app_state.gpu_collector.collect_all_metrics(app_state.ssh_manager)
-            nic_metrics = await app_state.nic_collector.collect_all_metrics(app_state.ssh_manager)
+            # Collect GPU and NIC metrics with connection error handling
+            try:
+                gpu_metrics = await app_state.gpu_collector.collect_all_metrics(app_state.ssh_manager)
+                nic_metrics = await app_state.nic_collector.collect_all_metrics(app_state.ssh_manager)
+            except ConnectionError as e:
+                # Connection error during metrics collection - trigger immediate re-probe
+                logger.error(f"ConnectionError during metrics collection: {e}")
+                logger.info("Triggering immediate host re-probe...")
+
+                # Trigger immediate re-probe
+                if app_state.ssh_manager:
+                    changed = await asyncio.to_thread(app_state.ssh_manager.refresh_host_reachability)
+                    if changed:
+                        await asyncio.to_thread(app_state.ssh_manager.recreate_client)
+                        logger.info("SSH client recreated with updated reachable hosts")
+
+                # Continue to next iteration (skip this round)
+                logger.info("Skipping this metrics collection round, will retry next interval")
+                await asyncio.sleep(settings.polling.interval)
+                continue
 
             # Package metrics
             metrics_payload = {
@@ -317,6 +346,9 @@ async def collect_metrics_loop():
 
             logger.info(f"Metrics collected successfully. {len(app_state.websocket_clients)} clients notified")
 
+        except asyncio.CancelledError:
+            logger.info("Metrics collection task cancelled")
+            raise
         except Exception as e:
             logger.error(f"Error in metrics collection loop: {e}", exc_info=True)
 
@@ -345,6 +377,82 @@ async def broadcast_metrics(metrics: dict):
         app_state.websocket_clients.remove(client)
 
 
+async def periodic_host_probe():
+    """
+    Periodically re-probe hosts every 5 minutes to detect changes.
+
+    This background task runs continuously while metrics collection is active.
+    It detects nodes that have come online or gone offline and updates the
+    SSH client accordingly.
+    """
+    PROBE_INTERVAL = 300  # 5 minutes
+
+    logger.info("Periodic host probe task started (every 5 minutes)")
+
+    while app_state.is_collecting:
+        try:
+            await asyncio.sleep(PROBE_INTERVAL)
+
+            if not app_state.ssh_manager:
+                logger.debug("Skipping periodic probe - no SSH manager")
+                continue
+
+            logger.info("Running periodic host probe...")
+
+            # Get current lists before probe
+            old_reachable = set(app_state.ssh_manager.reachable_hosts)
+            old_unreachable = set(app_state.ssh_manager.unreachable_hosts)
+
+            # Re-probe (run in executor to avoid blocking event loop)
+            changed = await asyncio.to_thread(app_state.ssh_manager.refresh_host_reachability)
+
+            new_reachable = set(app_state.ssh_manager.reachable_hosts)
+            new_unreachable = set(app_state.ssh_manager.unreachable_hosts)
+            logger.info(new_unreachable)
+
+            # Check for changes
+            newly_reachable = new_reachable - old_reachable
+            newly_unreachable = old_unreachable - new_reachable
+
+            # Increment probe counter
+            app_state.probe_count += 1
+
+            # Determine if client recreation is needed
+            should_recreate = False
+            recreation_reason = ""
+
+            if newly_reachable or newly_unreachable:
+                logger.info("Host reachability changed during periodic probe:")
+                if newly_reachable:
+                    logger.info(f"  Newly reachable: {newly_reachable}")
+                if newly_unreachable:
+                    logger.info(f"  Newly unreachable: {newly_unreachable}")
+                should_recreate = changed
+                recreation_reason = "reachability changed"
+            elif app_state.probe_count % 12 == 0:
+                # Force recreation every 12 probes (1 hour) to refresh stale connections
+                should_recreate = True
+                recreation_reason = f"periodic refresh (probe #{app_state.probe_count})"
+                logger.info(f"Forcing SSH client recreation after {app_state.probe_count} probes (1 hour)")
+
+            # Recreate client if needed
+            if should_recreate:
+                await asyncio.to_thread(app_state.ssh_manager.recreate_client)
+                logger.info(f"✅ SSH client recreated - reason: {recreation_reason}")
+
+            app_state.last_probe_time = time.time()
+            logger.info(f"Periodic probe completed - next probe in {PROBE_INTERVAL} seconds")
+
+        except asyncio.CancelledError:
+            logger.info("Periodic probe task cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"Periodic probe failed: {e}", exc_info=True)
+            # Continue running despite errors
+
+    logger.info("Periodic host probe task stopped")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
@@ -352,89 +460,84 @@ async def lifespan(app: FastAPI):
 
     # Load nodes from file
     nodes = settings.load_nodes_from_file()
-    if not nodes:
-        logger.warning("No nodes configured! Please add nodes to config/nodes.txt")
-        logger.info("Waiting for user to configure nodes via web UI...")
-    else:
-        logger.info(f"Configuration found: {len(nodes)} nodes")
-        logger.info("SSH manager will be initialized when user saves configuration")
-
-    # Don't initialize SSH or start metrics collection on startup
-    # Wait for user to configure and click "Save Configuration and Start Monitoring"
-    logger.info("Application ready - waiting for configuration via web UI")
 
     # Initialize collectors (lightweight, no SSH needed)
     app_state.gpu_collector = GPUMetricsCollector()
     app_state.nic_collector = NICMetricsCollector()
     logger.info("Collectors initialized")
 
-    # SSH initialization disabled on startup - will be triggered via reload endpoint
-    # (Keeping old code commented for reference)
-    """
-    # Old code - SSH initialized on startup (caused blocking issues)
-    try:
-        if settings.ssh.jump_host.enabled and settings.ssh.jump_host.host:
-            logger.info(f"Using jump host with pssh ParallelSSHClient: {settings.ssh.jump_host.host}")
-            logger.info(f"SSH Configuration Details:")
-            logger.info(f"  Jump Host: {settings.ssh.jump_host.host}")
-            logger.info(f"  Jump Host Username: {settings.ssh.jump_host.username}")
-            logger.info(f"  Jump Host Key File: {settings.ssh.jump_host.key_file}")
-            logger.info(f"  Jump Host Password: {'***SET***' if settings.ssh.jump_host.password else 'NOT SET'}")
-            logger.info(f"  Cluster Nodes: {len(nodes)} nodes")
-            logger.info(f"  Cluster Username: {settings.node_username_via_jumphost}")
-            logger.info(f"  Cluster Key File (on jump host): {settings.node_key_file_on_jumphost}")
+    if not nodes:
+        logger.warning("No nodes configured! Please add nodes to config/nodes.txt")
+        logger.info("Waiting for user to configure nodes via web UI...")
+    else:
+        logger.info(f"Configuration found: {len(nodes)} nodes")
+        logger.info("Auto-initializing SSH manager on startup...")
 
-            # Use ParallelSSHManager with proxy parameters (uses pssh native jump host support)
-            app_state.ssh_manager = ParallelSSHManager(
-                host_list=nodes,
-                user=settings.node_username_via_jumphost,
-                password=None,  # Nodes use key-based auth from jump host
-                pkey=settings.node_key_file_on_jumphost,
-                timeout=settings.ssh.timeout,
-                stop_on_errors=False,
-                proxy_host=settings.ssh.jump_host.host,
-                proxy_user=settings.ssh.jump_host.username,
-                proxy_password=app_state.jump_host_password,
-                proxy_pkey=settings.ssh.jump_host.key_file,
-            )
-            logger.info(f"ParallelSSHClient initialized with jump host proxy (native pssh)")
-        else:
-            # Direct SSH to nodes (no jump host)
-            logger.info("Using direct SSH (no jump host)")
-            logger.info(f"SSH Configuration Details:")
-            logger.info(f"  Nodes: {len(nodes)} nodes")
-            logger.info(f"  Username: {settings.ssh.username}")
-            logger.info(f"  Key File: {settings.ssh.key_file}")
-            logger.info(f"  Password: {'***SET***' if settings.ssh.password else 'NOT SET'}")
-            logger.info(f"  Timeout: {settings.ssh.timeout}s")
+        # Auto-initialize SSH manager if configuration exists
+        try:
+            if settings.ssh.jump_host.enabled and settings.ssh.jump_host.host:
+                logger.info(f"Initializing with jump host: {settings.ssh.jump_host.host}")
+                logger.info(f"Jump Host Username: {settings.ssh.jump_host.username}")
+                logger.info(f"Cluster Nodes: {len(nodes)} nodes")
+                logger.info(f"Cluster Username: {settings.node_username_via_jumphost}")
 
-            app_state.ssh_manager = ParallelSSHManager(
-                host_list=nodes,
-                user=settings.ssh.username,
-                password=settings.ssh.password,
-                pkey=settings.ssh.key_file,
-                timeout=settings.ssh.timeout,
-                stop_on_errors=False,
-            )
-            logger.info("Direct SSH manager initialized")
-    except Exception as e:
-        logger.error(f"Failed to initialize SSH manager: {e}")
-    """
+                app_state.ssh_manager = JumpHostPssh(
+                    jump_host=settings.ssh.jump_host.host,
+                    jump_user=settings.ssh.jump_host.username,
+                    jump_password=settings.ssh.jump_host.password,
+                    jump_pkey=settings.ssh.jump_host.key_file if not settings.ssh.jump_host.password else None,
+                    target_hosts=nodes,
+                    target_user=settings.node_username_via_jumphost,
+                    target_pkey=settings.node_key_file_on_jumphost,
+                    max_parallel=min(len(nodes), 5),
+                    timeout=settings.ssh.timeout,
+                )
+                logger.info("✅ JumpHostPssh initialized successfully")
+            else:
+                logger.info("Initializing with direct SSH (no jump host)")
+                logger.info(f"Username: {settings.ssh.username}")
+                logger.info(f"Nodes: {len(nodes)} nodes")
 
-    # Metrics collection will start after user saves configuration
-    logger.info("Ready to accept configuration via web UI")
+                app_state.ssh_manager = Pssh(
+                    log=logger,
+                    host_list=nodes,
+                    user=settings.ssh.username,
+                    password=settings.ssh.password,
+                    pkey=settings.ssh.key_file,
+                    timeout=settings.ssh.timeout,
+                    stop_on_errors=False,
+                )
+                logger.info("✅ Direct SSH manager initialized")
+
+            # Start metrics collection automatically if SSH manager initialized
+            if app_state.ssh_manager:
+                logger.info("Starting metrics collection and periodic probe...")
+                app_state.is_collecting = True
+                app_state.collection_task = asyncio.create_task(collect_metrics_loop())
+                app_state.probe_task = asyncio.create_task(periodic_host_probe())
+                logger.info("✅ Metrics collection started automatically")
+
+        except Exception as e:
+            logger.error(f"Failed to auto-initialize SSH manager: {e}", exc_info=True)
+            logger.warning("Will wait for manual configuration via web UI")
 
     yield
 
     # Shutdown
     logger.info("Shutting down CVS Cluster Monitor")
 
-    # Stop metrics collection
+    # Stop metrics collection and periodic probe
     app_state.is_collecting = False
     if app_state.collection_task:
         app_state.collection_task.cancel()
         try:
             await app_state.collection_task
+        except asyncio.CancelledError:
+            pass
+    if app_state.probe_task:
+        app_state.probe_task.cancel()
+        try:
+            await app_state.probe_task
         except asyncio.CancelledError:
             pass
 

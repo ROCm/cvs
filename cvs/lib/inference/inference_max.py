@@ -22,7 +22,7 @@ class InferenceMaxJob(InferenceBaseJob):
     def get_server_script_directory(self):
         """InferenceMAX scripts are in the cloned repo."""
         return '/app/InferenceX'
-    
+
     def get_server_script_path(self):
         """InferenceMAX scripts are in the cloned repo."""
         base = "single_node" if int(self.nnodes) == 1 else "multi_node"

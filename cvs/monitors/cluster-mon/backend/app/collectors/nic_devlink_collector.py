@@ -46,7 +46,9 @@ class NICDevlinkCollector:
             }
         """
         logger.info("Collecting NIC devlink information")
-        output = await ssh_manager.exec_async("devlink dev info --json 2>/dev/null || echo '{}'")
+        output = await ssh_manager.exec_async(
+            "bash -c 'devlink dev info --json 2>/dev/null || echo \"{}\"'", timeout=60
+        )
 
         devlink_info = {}
 
