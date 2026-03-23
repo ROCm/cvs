@@ -1,0 +1,357 @@
+name: Upload test artifacts (diff + flatten + upload)
+description: >
+  Compute newly generated xls/xlsx/csv/png artifacts by diffing a pre-snapshot
+  vs post-snapshot, flatten into the report dir, then upload individual files
+  to AWS S3 via OIDC and optionally to GitHub Actions artifacts.
+  Skips S3 when s3_bucket is DUMMY_S3_BUCKET.
+
+inputs:
+  artifact_name:
+    description: Artifact name (used as S3 key component and GitHub artifact name)
+    required: true
+  log_output_file:
+    description: Workspace-relative path to the main log file (e.g. logs/execution.log)
+    required: true
+  html_output_file:
+    description: Workspace-relative path to the main HTML report (e.g. logs/report.html)
+    required: true
+  xml_output_file:
+    description: Workspace-relative path to the junit xml
+    required: true
+  log_scan_folder:
+    description: Absolute folder to scan for artifacts (post-test)
+    required: false
+    default: ''
+  pre_artifact_list_file:
+    description: Absolute path to the newline-delimited PRE snapshot list file
+    required: false
+    default: ''
+  if_no_files_found:
+    description: actions/upload-artifact if-no-files-found behavior
+    required: false
+    default: warn
+  s3_bucket:
+    description: Target S3 bucket name (set to DUMMY_S3_BUCKET to skip S3)
+    required: true
+  s3_prefix:
+    description: S3 key prefix for organizing artifacts
+    required: false
+    default: ci-artifacts
+  aws_role_arn:
+    description: IAM role ARN for OIDC-based AWS authentication
+    required: false
+    default: ''
+  aws_region:
+    description: AWS region for S3 operations
+    required: false
+    default: us-east-1
+  upload_to_github:
+    description: Also upload to GitHub Actions artifacts (true/false)
+    required: false
+    default: 'true'
+  summary_label:
+    description: Label key in TEST_SUMMARY_JSON to update with S3 console URL
+    required: false
+    default: ''
+
+outputs:
+  s3_uri:
+    description: Full S3 URI where artifacts were uploaded
+    value: ${{ steps.s3_upload.outputs.s3_uri }}
+  s3_console_url:
+    description: AWS S3 Console URL to browse uploaded artifacts
+    value: ${{ steps.s3_upload.outputs.s3_console_url }}
+  upload_paths:
+    description: Newline-delimited list of workspace-relative file paths uploaded
+    value: ${{ steps.prep.outputs.upload_paths }}
+
+runs:
+  using: composite
+  steps:
+    - id: prep
+      shell: bash
+      run: |
+        set -xeuo pipefail
+
+        LOG_OUTPUT_FILE="${{ inputs.log_output_file }}"
+        HTML_OUTPUT_FILE="${{ inputs.html_output_file }}"
+        XML_OUTPUT_FILE="${{ inputs.xml_output_file }}"
+        LOG_SCAN_FOLDER="${{ inputs.log_scan_folder }}"
+        PRE_ARTIFACT_LIST_FILE="${{ inputs.pre_artifact_list_file }}"
+        ARTIFACT_NAME="${{ inputs.artifact_name }}"
+
+        WORK_DIR="${RUNNER_TEMP}/upload-flat-${ARTIFACT_NAME}"
+        mkdir -p "${WORK_DIR}"
+        POST_ARTIFACT_LIST_FILE="${WORK_DIR}/cvs_post_artifacts.txt"
+        NEW_ARTIFACT_LIST_FILE="${WORK_DIR}/cvs_new_artifacts.txt"
+
+        if [[ -n "${LOG_SCAN_FOLDER}" && -d "${LOG_SCAN_FOLDER}" ]]; then
+          find "${LOG_SCAN_FOLDER}" -type f \( -iname '*.xls' -o -iname '*.xlsx' -o -iname '*.csv' -o -iname '*.png' -o -iname '*.txt' -o -iname '*.log' -o -iname '*.json' \) -print | LC_ALL=C sort > "${POST_ARTIFACT_LIST_FILE}" || true
+        else
+          : > "${POST_ARTIFACT_LIST_FILE}"
+        fi
+
+        if [[ -n "${PRE_ARTIFACT_LIST_FILE}" && -f "${PRE_ARTIFACT_LIST_FILE}" ]]; then
+          comm -13 "${PRE_ARTIFACT_LIST_FILE}" "${POST_ARTIFACT_LIST_FILE}" > "${NEW_ARTIFACT_LIST_FILE}" || true
+        else
+          cp "${POST_ARTIFACT_LIST_FILE}" "${NEW_ARTIFACT_LIST_FILE}" || true
+        fi
+
+        DEST_DIR_REL="$(dirname "${HTML_OUTPUT_FILE}")"
+        DEST_DIR_ABS="${GITHUB_WORKSPACE}/${DEST_DIR_REL}"
+        mkdir -p "${DEST_DIR_ABS}"
+
+        FLAT_LIST_FILE="${WORK_DIR}/cvs_new_artifacts_flat.txt"
+        : > "${FLAT_LIST_FILE}"
+
+        copy_one() {
+          local src="$1"
+          [[ -z "${src}" ]] && return 0
+          [[ ! -f "${src}" ]] && return 0
+
+          local base dest_abs dest_rel i
+          base="$(basename "${src}")"
+          dest_abs="${DEST_DIR_ABS}/${base}"
+          dest_rel="${DEST_DIR_REL}/${base}"
+          i=1
+          while [[ -e "${dest_abs}" ]]; do
+            dest_abs="${DEST_DIR_ABS}/${base}.dup${i}"
+            dest_rel="${DEST_DIR_REL}/${base}.dup${i}"
+            i=$((i+1))
+          done
+
+          cp -f "${src}" "${dest_abs}"
+          echo "${dest_rel}" >> "${FLAT_LIST_FILE}"
+        }
+
+        if [[ -f "${NEW_ARTIFACT_LIST_FILE}" ]]; then
+          while IFS= read -r p; do
+            [[ -z "${p}" ]] && continue
+            copy_one "${p}"
+          done < "${NEW_ARTIFACT_LIST_FILE}"
+        fi
+
+        UPLOAD_LIST_FILE="${WORK_DIR}/cvs_upload_paths.txt"
+        : > "${UPLOAD_LIST_FILE}"
+        echo "${LOG_OUTPUT_FILE}" >> "${UPLOAD_LIST_FILE}"
+        echo "${HTML_OUTPUT_FILE}" >> "${UPLOAD_LIST_FILE}"
+        echo "${XML_OUTPUT_FILE}" >> "${UPLOAD_LIST_FILE}"
+        cat "${FLAT_LIST_FILE}" >> "${UPLOAD_LIST_FILE}" || true
+        echo "===== HTML output zip file ====="
+        ZIP_FILE=$(find "${DEST_DIR_REL}" -name "${ARTIFACT_NAME}*.zip" -type f | sort -r | head -n 1)
+        echo "${ZIP_FILE}" | tee -a "${UPLOAD_LIST_FILE}"
+
+        echo "===== Upload paths ====="
+        cat "${UPLOAD_LIST_FILE}" || true
+
+        {
+          echo "upload_paths<<EOF"
+          cat "${UPLOAD_LIST_FILE}"
+          echo "EOF"
+        } >> "${GITHUB_OUTPUT}"
+
+    - id: s3_upload
+      name: Authenticate and upload artifacts to S3
+      shell: bash
+      env:
+        S3_BUCKET: ${{ inputs.s3_bucket }}
+        S3_PREFIX: ${{ inputs.s3_prefix }}
+        ARTIFACT_NAME: ${{ inputs.artifact_name }}
+        AWS_REGION: ${{ inputs.aws_region }}
+        AWS_ROLE_ARN: ${{ inputs.aws_role_arn }}
+        SUMMARY_LABEL: ${{ inputs.summary_label }}
+      run: |
+        set -uo pipefail
+
+        if [[ "${S3_BUCKET}" == "DUMMY_S3_BUCKET" ]]; then
+          echo "Skipping S3 upload (DUMMY_S3_BUCKET placeholder)."
+          echo "s3_uri=" >> "${GITHUB_OUTPUT}"
+          echo "s3_console_url=" >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+
+        PIP_BIN="$(python3 -m site --user-base 2>/dev/null || echo "${HOME}/.local")/bin"
+        export PATH="${PIP_BIN}:${PATH}"
+
+        for tool in curl jq; do
+          if ! command -v "${tool}" &>/dev/null; then
+            echo "::error::Required tool '${tool}' not found on this runner"
+            exit 1
+          fi
+        done
+
+        if ! command -v aws &>/dev/null; then
+          echo "AWS CLI not found, installing via pip..."
+          pip3 install --quiet --user awscli
+          if ! command -v aws &>/dev/null; then
+            echo "::error::AWS CLI install succeeded but 'aws' still not on PATH"
+            exit 1
+          fi
+        fi
+        echo "aws: $(command -v aws) — $(aws --version)"
+
+        if [[ -z "${AWS_ROLE_ARN}" ]]; then
+          echo "::error::AWS_ROLE_ARN is required for S3 upload when not using DUMMY_S3_BUCKET"
+          exit 1
+        fi
+
+        echo "::group::OIDC credential exchange"
+
+        if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" || -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+          echo "::error::OIDC token endpoint not available. Set permissions: id-token: write"
+          exit 1
+        fi
+
+        OIDC_TOKEN=$(curl -sSf \
+          -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
+          | jq -r '.value')
+
+        if [[ -z "${OIDC_TOKEN}" || "${OIDC_TOKEN}" == "null" ]]; then
+          echo "::error::Failed to obtain OIDC token from GitHub"
+          exit 1
+        fi
+        echo "::add-mask::${OIDC_TOKEN}"
+        echo "OIDC token obtained"
+
+        CREDS=$(AWS_DEFAULT_REGION="${AWS_REGION}" aws sts assume-role-with-web-identity \
+          --role-arn "${AWS_ROLE_ARN}" \
+          --role-session-name "gha-s3-upload-${GITHUB_RUN_ID}" \
+          --web-identity-token "${OIDC_TOKEN}" \
+          --duration-seconds 900 \
+          --output json)
+
+        export AWS_ACCESS_KEY_ID=$(echo "${CREDS}" | jq -r '.Credentials.AccessKeyId')
+        export AWS_SECRET_ACCESS_KEY=$(echo "${CREDS}" | jq -r '.Credentials.SecretAccessKey')
+        export AWS_SESSION_TOKEN=$(echo "${CREDS}" | jq -r '.Credentials.SessionToken')
+        export AWS_DEFAULT_REGION="${AWS_REGION}"
+
+        echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+        echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+        echo "::add-mask::${AWS_SESSION_TOKEN}"
+
+        echo "Role assumed: ${AWS_ROLE_ARN}"
+        echo "::endgroup::"
+
+        echo "::group::AWS identity verification"
+        aws sts get-caller-identity
+        echo "::endgroup::"
+
+        if [[ -n "${GITHUB_HEAD_REF:-}" ]]; then
+          REF_NAME="${GITHUB_HEAD_REF}"
+        else
+          REF_NAME="${GITHUB_REF_NAME:-unknown}"
+        fi
+        REF_NAME="${REF_NAME//[^a-zA-Z0-9._\-]/_}"
+
+        WORKFLOW_NAME="${GITHUB_WORKFLOW:-unknown}"
+        WORKFLOW_NAME="${WORKFLOW_NAME//[^a-zA-Z0-9._\-]/_}"
+
+        S3_KEY_PREFIX="${S3_PREFIX}/${WORKFLOW_NAME}/${REF_NAME}/${GITHUB_RUN_ID}/${ARTIFACT_NAME}"
+        S3_BASE="s3://${S3_BUCKET}/${S3_KEY_PREFIX}"
+        S3_CONSOLE_URL="https://${AWS_REGION}.console.aws.amazon.com/s3/buckets/${S3_BUCKET}?region=${AWS_REGION}&prefix=${S3_KEY_PREFIX}/&tab=objects"
+
+        UPLOAD_LIST="${RUNNER_TEMP}/upload-flat-${ARTIFACT_NAME}/cvs_upload_paths.txt"
+
+        echo "::group::S3 upload configuration"
+        echo "S3 bucket:       ${S3_BUCKET}"
+        echo "S3 key prefix:   ${S3_KEY_PREFIX}"
+        echo "S3 URI:          ${S3_BASE}"
+        echo "::endgroup::"
+
+        echo "::group::S3 upload progress"
+        UPLOADED=0
+        FAILED=0
+        TOTAL=0
+
+        while IFS= read -r file; do
+          [[ -z "${file}" ]] && continue
+          TOTAL=$((TOTAL + 1))
+        done < "${UPLOAD_LIST}"
+
+        IDX=0
+        while IFS= read -r file; do
+          [[ -z "${file}" ]] && continue
+          IDX=$((IDX + 1))
+          src="${GITHUB_WORKSPACE}/${file}"
+          filename="$(basename "${file}")"
+          s3_uri="s3://${S3_BUCKET}/${S3_KEY_PREFIX}/${filename}"
+
+          if [[ ! -f "${src}" ]]; then
+            echo "[${IDX}/${TOTAL}] SKIP (not found): ${file}"
+            FAILED=$((FAILED + 1))
+            continue
+          fi
+
+          if [[ "${filename,,}" == *.zip ]]; then
+            EXTRACT_DIR="${RUNNER_TEMP}/extract_${IDX}"
+            mkdir -p "${EXTRACT_DIR}"
+            if unzip -o "${src}" -d "${EXTRACT_DIR}"; then
+              INNER_COUNT=$(find "${EXTRACT_DIR}" -type f | wc -l)
+              INNER_IDX=0
+              while IFS= read -r inner_file; do
+                INNER_IDX=$((INNER_IDX + 1))
+                inner_rel="${inner_file#${EXTRACT_DIR}/}"
+                inner_s3_uri="s3://${S3_BUCKET}/${S3_KEY_PREFIX}/${inner_rel}"
+                if aws s3 cp "${inner_file}" "${inner_s3_uri}" --sse AES256; then
+                  UPLOADED=$((UPLOADED + 1))
+                else
+                  FAILED=$((FAILED + 1))
+                fi
+              done < <(find "${EXTRACT_DIR}" -type f)
+              rm -rf "${EXTRACT_DIR}"
+            else
+              if aws s3 cp "${src}" "${s3_uri}" --sse AES256; then
+                UPLOADED=$((UPLOADED + 1))
+              else
+                FAILED=$((FAILED + 1))
+              fi
+            fi
+          else
+            if aws s3 cp "${src}" "${s3_uri}" --sse AES256; then
+              UPLOADED=$((UPLOADED + 1))
+            else
+              FAILED=$((FAILED + 1))
+            fi
+          fi
+        done < "${UPLOAD_LIST}"
+        echo "::endgroup::"
+
+        TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        TIMESTAMP_FILE="${RUNNER_TEMP}/.last_modified"
+        printf '{"timestamp":"%s","workflow":"%s","run_id":"%s","ref":"%s","sha":"%s","artifact_name":"%s","files_uploaded":%d}\n' \
+          "${TIMESTAMP}" \
+          "${GITHUB_WORKFLOW:-unknown}" \
+          "${GITHUB_RUN_ID:-unknown}" \
+          "${GITHUB_REF_NAME:-unknown}" \
+          "${GITHUB_SHA:-unknown}" \
+          "${ARTIFACT_NAME}" \
+          "${UPLOADED}" > "${TIMESTAMP_FILE}"
+        aws s3 cp "${TIMESTAMP_FILE}" "${S3_BASE}/.last_modified" \
+          --sse AES256 --content-type application/json || true
+
+        echo "Result: ${UPLOADED} uploaded, ${FAILED} failed (of ${TOTAL} total)"
+
+        if [[ ${UPLOADED} -eq 0 ]]; then
+          echo "::error::No files were uploaded to S3"
+          exit 1
+        fi
+
+        echo "s3_uri=${S3_BASE}" >> "${GITHUB_OUTPUT}"
+        echo "s3_console_url=${S3_CONSOLE_URL}" >> "${GITHUB_OUTPUT}"
+
+        if [[ -n "${SUMMARY_LABEL}" ]]; then
+          python3 "${GITHUB_WORKSPACE}/.github/build_tools/print_test_xml_result.py" \
+            --set-s3-url \
+            --label "${SUMMARY_LABEL}" \
+            --s3-url "${S3_CONSOLE_URL}" \
+            --summary-env-var TEST_SUMMARY_JSON
+        fi
+
+    - name: Upload to GitHub Actions artifacts
+      if: ${{ inputs.upload_to_github == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact_name }}
+        if-no-files-found: ${{ inputs.if_no_files_found }}
+        path: ${{ steps.prep.outputs.upload_paths }}

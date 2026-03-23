@@ -1,0 +1,126 @@
+name: Run CVS test suite (snapshot + run + upload)
+description: >-
+  Takes a pre-test artifact snapshot, runs a CVS test suite with standard flags,
+  updates the test summary, and uploads artifacts via upload-artifacts-flat.
+
+inputs:
+  test_name:
+    description: Summary label for the test (e.g. rvs_cvs)
+    required: true
+  cvs_run_command:
+    description: >-
+      The cvs run command name. Defaults to test_name if not specified.
+    required: false
+    default: ''
+  artifact_name:
+    description: Artifact name for upload. Defaults to test_name if not specified.
+    required: false
+    default: ''
+  cluster_file:
+    description: Path to the generated cluster JSON file
+    required: true
+  config_file:
+    description: Path to the CVS config JSON or YAML file
+    required: true
+  log_output_file:
+    description: Path to the main log file (e.g. logs/execution.log)
+    required: true
+  html_output_file:
+    description: Path to the HTML report file (e.g. logs/report.html)
+    required: true
+  log_level:
+    description: CVS log level flags (e.g. -vvv)
+    required: false
+    default: '-vvv'
+  log_folder:
+    description: Directory for XML output files (e.g. logs)
+    required: false
+    default: logs
+  log_scan_folder:
+    description: Absolute path to the folder to scan for new artifacts
+    required: true
+  aws_role_arn:
+    description: IAM role ARN for OIDC-based AWS authentication (not used when S3 bucket is DUMMY)
+    required: false
+    default: ''
+  aws_region:
+    description: AWS region for S3 operations
+    required: false
+    default: us-east-1
+  s3_bucket:
+    description: Target S3 bucket name (use DUMMY_S3_BUCKET to skip S3 upload)
+    required: true
+  s3_prefix:
+    description: S3 key prefix
+    required: false
+    default: ci-artifacts
+  venv_activate:
+    description: Path to the venv activate script
+    required: false
+    default: .cvs_venv/bin/activate
+
+runs:
+  using: composite
+  steps:
+    - name: Snapshot pre-test artifacts
+      id: snapshot
+      shell: bash
+      run: |
+        set -xeuo pipefail
+        LOG_SCAN_FOLDER="${{ inputs.log_scan_folder }}"
+        PRE_ARTIFACT_LIST_FILE="${RUNNER_TEMP}/cvs_pre_artifacts_${{ inputs.test_name }}.txt"
+
+        if [[ -n "${LOG_SCAN_FOLDER}" && -d "${LOG_SCAN_FOLDER}" ]]; then
+          find "${LOG_SCAN_FOLDER}" -type f \( -iname '*.xls' -o -iname '*.xlsx' -o -iname '*.csv' -o -iname '*.png' -o -iname '*.txt' -o -iname '*.log' -o -iname '*.json' \) -print | LC_ALL=C sort > "${PRE_ARTIFACT_LIST_FILE}" || true
+        else
+          : > "${PRE_ARTIFACT_LIST_FILE}"
+        fi
+
+        echo "pre_artifact_list_file=${PRE_ARTIFACT_LIST_FILE}" >> "${GITHUB_OUTPUT}"
+
+    - name: Run ${{ inputs.test_name }}
+      id: run
+      shell: bash
+      env:
+        CVS_COMMAND: ${{ inputs.cvs_run_command != '' && inputs.cvs_run_command || inputs.test_name }}
+        XML_OUTPUT_FILE: ${{ inputs.log_folder }}/${{ inputs.test_name }}.xml
+      run: |
+        set -xeuo pipefail
+        source "${{ inputs.venv_activate }}"
+        mkdir -p "${{ inputs.log_folder }}" || true
+
+        cvs_rc=0
+        cvs run "${CVS_COMMAND}" \
+          --cluster_file "${{ inputs.cluster_file }}" \
+          --config_file "${{ inputs.config_file }}" \
+          --log-file "${{ inputs.log_output_file }}" \
+          --html "${{ inputs.html_output_file }}" \
+          --junitxml="${XML_OUTPUT_FILE}" \
+          --capture=tee-sys \
+          --self-contained-html \
+          ${{ inputs.log_level }} || cvs_rc=$?
+
+        python3 .github/build_tools/print_test_xml_result.py \
+          --update-summary \
+          --summary-env-var TEST_SUMMARY_JSON \
+          --label "${{ inputs.test_name }}" \
+          --xml "${XML_OUTPUT_FILE}" || true
+
+        exit ${cvs_rc}
+
+    - name: Upload test artifacts
+      if: always()
+      uses: ./.github/actions/upload-artifacts-flat
+      with:
+        artifact_name: ${{ inputs.artifact_name || inputs.test_name }}
+        log_output_file: ${{ inputs.log_output_file }}
+        html_output_file: ${{ inputs.html_output_file }}
+        xml_output_file: ${{ inputs.log_folder }}/${{ inputs.test_name }}.xml
+        log_scan_folder: ${{ inputs.log_scan_folder }}
+        pre_artifact_list_file: ${{ steps.snapshot.outputs.pre_artifact_list_file }}
+        if_no_files_found: warn
+        aws_role_arn: ${{ inputs.aws_role_arn }}
+        aws_region: ${{ inputs.aws_region }}
+        s3_bucket: ${{ inputs.s3_bucket }}
+        s3_prefix: ${{ inputs.s3_prefix }}
+        summary_label: ${{ inputs.artifact_name || inputs.test_name }}

@@ -1,0 +1,266 @@
+# On-demand and scheduled CVS test runs on a self-hosted Ubuntu runner.
+# Requires repository variables (and secrets) for cluster SSH and optional schedule defaults.
+
+name: CVS on-demand tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: Test suite (must match an id in .github/cvs-ci-suite-matrix.json)
+        required: true
+        type: choice
+        default: rvs_cvs
+        options:
+          - test_aorta
+          - agfhc_cvs
+          - rvs_cvs
+          - transferbench_cvs
+          - ib_perf_bw_test
+          - install_ibperf_tools
+          - inferencemax_gpt_oss_120b_single
+          - vllm_deepseek31_685b_single
+          - vllm_gpt_oss_120b_single
+          - vllm_qwen3_235b_single
+          - vllm_qwen3_80b_single
+          - sglang_deepseek_r1_671b_distributed
+          - sglang_llama_70b_distributed
+          - mori_benchmark_test
+          - host_configs_cvs
+          - rccl_heatmap_cvs
+          - rccl_multinode_cvs
+          - rccl_multinode_default_cvs
+          - rccl_singlenode_cvs
+          - jax_llama3_1_405b_distributed
+          - jax_llama3_1_70b_distributed
+          - jax_llama3_1_70b_single
+          - megatron_llama3_1_70b_distributed
+          - megatron_llama3_1_70b_single
+          - megatron_llama3_1_8b_distributed
+          - megatron_llama3_1_8b_single
+      node_count:
+        description: Cluster size (1 = CLUSTER_N_IP; 4 = CLUSTER_4N_IPS). Distributed training/inference suites require 4.
+        required: true
+        type: choice
+        default: "1"
+        options:
+          - "1"
+          - "4"
+      config_file_override:
+        description: Optional path under repo root to a config file (replaces matrix default), e.g. cvs/input/config_file/health/mi300_health_config.json
+        required: false
+        type: string
+        default: ""
+      config_overrides:
+        description: Runtime key=value overrides (nested keys use dots). Separators ; or ,
+        required: false
+        type: string
+        default: ""
+      s3_bucket:
+        description: S3 bucket (use DUMMY_S3_BUCKET until real bucket is configured)
+        required: false
+        type: string
+        default: DUMMY_S3_BUCKET
+      optional_ssh_precheck:
+        description: If true, fail early when first cluster IP does not respond on port 22
+        required: false
+        type: boolean
+        default: false
+
+  schedule:
+    # Weekly; override cron in repo or disable if not using scheduled runs
+    - cron: "0 10 * * 0"
+
+concurrency:
+  group: cvs-on-demand-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  cvs-test:
+    runs-on: [self-hosted, cvs-ci-runner]
+    timeout-minutes: 720
+    env:
+      LOG_FOLDER: logs
+      LOG_OUTPUT_FILE: logs/cvs-ci-execution.log
+      HTML_OUTPUT_FILE: logs/cvs-ci-report.html
+      CVS_LOG_LEVEL: -vvv
+      TEST_SUMMARY_JSON: "{}"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve inputs (scheduled vs dispatch)
+        id: ctx
+        shell: bash
+        env:
+          IN_SUITE: ${{ github.event.inputs.test_suite }}
+          IN_NODES: ${{ github.event.inputs.node_count }}
+          DEF_SUITE: ${{ vars.CVS_CI_DEFAULT_SUITE }}
+          DEF_NODES: ${{ vars.CVS_CI_DEFAULT_NODE_COUNT }}
+        run: |
+          set -euo pipefail
+          SUITE="${IN_SUITE:-}"
+          NODES="${IN_NODES:-}"
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            SUITE="${DEF_SUITE:-rvs_cvs}"
+            NODES="${DEF_NODES:-1}"
+          fi
+          echo "effective_suite=${SUITE}" >> "${GITHUB_OUTPUT}"
+          echo "effective_node_count=${NODES}" >> "${GITHUB_OUTPUT}"
+          echo "Using suite=${SUITE} node_count=${NODES}"
+
+      - name: Install CVS (make install + venv)
+        shell: bash
+        run: |
+          set -xeuo pipefail
+          make install
+          source .cvs_venv/bin/activate
+          which cvs
+          cvs list
+
+      - name: Resolve suite and paths
+        shell: bash
+        env:
+          SUITE: ${{ steps.ctx.outputs.effective_suite }}
+          NODE_COUNT: ${{ steps.ctx.outputs.effective_node_count }}
+          CONFIG_OVERRIDE_DISPATCH: ${{ github.event.inputs.config_file_override }}
+          CONFIG_OVERRIDE_SCHEDULE: ${{ vars.CVS_CI_DEFAULT_CONFIG_OVERRIDE }}
+        run: |
+          set -xeuo pipefail
+          source .cvs_venv/bin/activate
+          CONFIG_OVERRIDE=""
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            CONFIG_OVERRIDE="${CONFIG_OVERRIDE_SCHEDULE:-}"
+          else
+            CONFIG_OVERRIDE="${CONFIG_OVERRIDE_DISPATCH:-}"
+          fi
+          CO_ARGS=()
+          if [[ -n "${CONFIG_OVERRIDE}" ]]; then
+            CO_ARGS=(--config-override "${CONFIG_OVERRIDE}")
+          fi
+          python3 .github/build_tools/ci_resolve_suite.py \
+            --matrix .github/cvs-ci-suite-matrix.json \
+            --suite-id "${SUITE}" \
+            --node-count "${NODE_COUNT}" \
+            --workspace "${GITHUB_WORKSPACE}" \
+            "${CO_ARGS[@]}"
+
+      - name: Patch config
+        shell: bash
+        env:
+          OVERRIDES_DISPATCH: ${{ github.event.inputs.config_overrides }}
+          OVERRIDES_SCHEDULE: ${{ vars.CVS_CI_DEFAULT_CONFIG_OVERRIDES }}
+        run: |
+          set -xeuo pipefail
+          source .cvs_venv/bin/activate
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            OVERRIDES="${OVERRIDES_SCHEDULE:-}"
+          else
+            OVERRIDES="${OVERRIDES_DISPATCH:-}"
+          fi
+          python3 .github/build_tools/ci_patch_config.py \
+            --input "${SOURCE_CONFIG_FILE}" \
+            --output "${PATCHED_CONFIG_FILE}" \
+            --overrides "${OVERRIDES:-}"
+
+      - name: Optional SSH precheck
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.optional_ssh_precheck == true }}
+        shell: bash
+        env:
+          NODE_COUNT: ${{ steps.ctx.outputs.effective_node_count }}
+          CLUSTER_N_IP: ${{ vars.CLUSTER_N_IP }}
+          CLUSTER_4N_IPS: ${{ vars.CLUSTER_4N_IPS }}
+        run: |
+          set -euo pipefail
+          if [[ "${NODE_COUNT}" == "1" ]]; then
+            IP="${CLUSTER_N_IP:?Set CLUSTER_N_IP variable}"
+          else
+            IP="${CLUSTER_4N_IPS%%,*}"
+            IP="${IP:?Set CLUSTER_4N_IPS variable}"
+          fi
+          echo "Checking SSH port 22 on ${IP} ..."
+          timeout 5 bash -c "cat < /dev/null > /dev/tcp/${IP}/22" || { echo "::error::SSH unreachable on ${IP}:22"; exit 1; }
+
+      - name: Generate cluster JSON
+        shell: bash
+        env:
+          NODE_COUNT: ${{ steps.ctx.outputs.effective_node_count }}
+          CLUSTER_N_IP: ${{ vars.CLUSTER_N_IP }}
+          CLUSTER_4N_IPS: ${{ vars.CLUSTER_4N_IPS }}
+          CLUSTER_USERNAME: ${{ vars.CLUSTER_USERNAME }}
+          CLUSTER_PRIV_KEY_FILE: ${{ vars.CLUSTER_PRIV_KEY_FILE }}
+        run: |
+          set -xeuo pipefail
+          source .cvs_venv/bin/activate
+          if [[ "${NODE_COUNT}" == "1" ]]; then
+            HOSTS="${CLUSTER_N_IP:?Set CLUSTER_N_IP (repository variable)}"
+          else
+            HOSTS="${CLUSTER_4N_IPS:?Set CLUSTER_4N_IPS (repository variable)}"
+          fi
+          python3 .github/build_tools/ci_generate_cluster.py \
+            --hosts "${HOSTS}" \
+            --username "${CLUSTER_USERNAME:?Set CLUSTER_USERNAME secret}" \
+            --key-file "${CLUSTER_PRIV_KEY_FILE:?Set CLUSTER_PRIV_KEY_FILE secret}" \
+            --output "${CLUSTER_FILE}"
+
+      - name: Resolve log scan folder
+        shell: bash
+        env:
+          PATCHED_CONFIG_FILE: ${{ env.PATCHED_CONFIG_FILE }}
+        run: |
+          set -xeuo pipefail
+          LF="$(python3 .github/build_tools/ci_resolve_log_folder.py)"
+          echo "LOG_SCAN_FOLDER=${LF}" >> "${GITHUB_ENV}"
+          echo "LOG_SCAN_FOLDER=${LF}"
+
+      - name: Stage configs for artifacts
+        shell: bash
+        run: |
+          set -xeuo pipefail
+          mkdir -p "${LOG_FOLDER}/config"
+          cp -v "${CLUSTER_FILE}" "${LOG_FOLDER}/config/cluster.generated.json" || true
+          cp -v "${PATCHED_CONFIG_FILE}" "${LOG_FOLDER}/config/" || true
+
+      - name: Run CVS test
+        id: cvs_run
+        uses: ./.github/actions/run-cvs-test
+        with:
+          test_name: ${{ env.CVS_TEST }}
+          cluster_file: ${{ env.CLUSTER_FILE }}
+          config_file: ${{ env.PATCHED_CONFIG_FILE }}
+          log_output_file: ${{ env.LOG_OUTPUT_FILE }}
+          html_output_file: ${{ env.HTML_OUTPUT_FILE }}
+          log_level: ${{ env.CVS_LOG_LEVEL }}
+          log_folder: ${{ env.LOG_FOLDER }}
+          log_scan_folder: ${{ env.LOG_SCAN_FOLDER }}
+          aws_role_arn: ${{ secrets.AWS_RESOURCE_ARN }}
+          aws_region: ${{ vars.AWS_S3_REGION || 'us-east-1' }}
+          s3_bucket: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.s3_bucket || vars.AWS_S3_BUCKET || 'DUMMY_S3_BUCKET' }}
+          s3_prefix: ci-artifacts
+          venv_activate: .cvs_venv/bin/activate
+
+      - name: Upload staged config snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cvs-ci-config-snapshot
+          path: |
+            ${{ env.LOG_FOLDER }}/config/
+          if-no-files-found: warn
+
+      - name: Display test summary
+        if: always()
+        shell: bash
+        run: |
+          set -xeuo pipefail
+          source .cvs_venv/bin/activate
+          python3 .github/build_tools/print_test_xml_result.py \
+            --from-summary-env \
+            --summary-env-var TEST_SUMMARY_JSON || true

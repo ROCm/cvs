@@ -1,0 +1,187 @@
+{
+  "comment": "node_mode: one = 1-node cluster only; four = 4-node cluster only (distributed training/inference).",
+  "suites": [
+    {
+      "id": "test_aorta",
+      "category": "benchmark",
+      "cvs_test": "test_aorta",
+      "default_config": "config_file/aorta/aorta_benchmark.yaml",
+      "node_mode": "one"
+    },
+    {
+      "id": "agfhc_cvs",
+      "category": "health",
+      "cvs_test": "agfhc_cvs",
+      "default_config": "config_file/health/mi300_health_config.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "rvs_cvs",
+      "category": "health",
+      "cvs_test": "rvs_cvs",
+      "default_config": "config_file/health/mi300_health_config.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "transferbench_cvs",
+      "category": "health",
+      "cvs_test": "transferbench_cvs",
+      "default_config": "config_file/health/mi300_health_config.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "ib_perf_bw_test",
+      "category": "ibperf",
+      "cvs_test": "ib_perf_bw_test",
+      "default_config": "config_file/ibperf/ibperf_config.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "install_ibperf_tools",
+      "category": "ibperf",
+      "cvs_test": "install_ibperf_tools",
+      "default_config": "config_file/ibperf/ibperf_config.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "inferencemax_gpt_oss_120b_single",
+      "category": "inference",
+      "cvs_test": "inferencemax_gpt_oss_120b_single",
+      "default_config": "config_file/inference/inferencemax/mi300x_inferencemax_gpt_oss_120b_single.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "vllm_deepseek31_685b_single",
+      "category": "inference",
+      "cvs_test": "vllm_deepseek31_685b_single",
+      "default_config": "config_file/inference/vllm/mi355x_vllm_single.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "vllm_gpt_oss_120b_single",
+      "category": "inference",
+      "cvs_test": "vllm_gpt_oss_120b_single",
+      "default_config": "config_file/inference/vllm/mi355x_vllm_single.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "vllm_qwen3_235b_single",
+      "category": "inference",
+      "cvs_test": "vllm_qwen3_235b_single",
+      "default_config": "config_file/inference/vllm/mi355x_vllm_single.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "vllm_qwen3_80b_single",
+      "category": "inference",
+      "cvs_test": "vllm_qwen3_80b_single",
+      "default_config": "config_file/inference/vllm/mi355x_vllm_single.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "sglang_deepseek_r1_671b_distributed",
+      "category": "inference",
+      "cvs_test": "sglang_deepseek_r1_671b_distributed",
+      "default_config": "config_file/inference/sglang/mi35x_sglang_distributed.json",
+      "node_mode": "four"
+    },
+    {
+      "id": "sglang_llama_70b_distributed",
+      "category": "inference",
+      "cvs_test": "sglang_llama_70b_distributed",
+      "default_config": "config_file/inference/sglang/mi35x_sglang_distributed.json",
+      "node_mode": "four"
+    },
+    {
+      "id": "mori_benchmark_test",
+      "category": "mori",
+      "cvs_test": "mori_benchmark_test",
+      "default_config": "config_file/mori/mi35x_mori_config.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "host_configs_cvs",
+      "category": "platform",
+      "cvs_test": "host_configs_cvs",
+      "default_config": "config_file/platform/host_config.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "rccl_heatmap_cvs",
+      "category": "rccl",
+      "cvs_test": "rccl_heatmap_cvs",
+      "default_config": "config_file/rccl/rccl_config.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "rccl_multinode_cvs",
+      "category": "rccl",
+      "cvs_test": "rccl_multinode_cvs",
+      "default_config": "config_file/rccl/rccl_config.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "rccl_multinode_default_cvs",
+      "category": "rccl",
+      "cvs_test": "rccl_multinode_default_cvs",
+      "default_config": "config_file/rccl/rccl_config.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "rccl_singlenode_cvs",
+      "category": "rccl",
+      "cvs_test": "rccl_singlenode_cvs",
+      "default_config": "config_file/rccl/single_node_mi355_rccl.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "jax_llama3_1_405b_distributed",
+      "category": "training_jax",
+      "cvs_test": "jax_llama3_1_405b_distributed",
+      "default_config": "config_file/training/jax/mi300x_jax_llama3_1_405b_distributed.json",
+      "node_mode": "four"
+    },
+    {
+      "id": "jax_llama3_1_70b_distributed",
+      "category": "training_jax",
+      "cvs_test": "jax_llama3_1_70b_distributed",
+      "default_config": "config_file/training/jax/mi300x_jax_llama3_1_70b_distributed.json",
+      "node_mode": "four"
+    },
+    {
+      "id": "jax_llama3_1_70b_single",
+      "category": "training_jax",
+      "cvs_test": "jax_llama3_1_70b_single",
+      "default_config": "config_file/training/jax/mi300x_jax_llama3_1_70b_single.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "megatron_llama3_1_70b_distributed",
+      "category": "training_megatron",
+      "cvs_test": "megatron_llama3_1_70b_distributed",
+      "default_config": "config_file/training/megatron/mi3xx_megatron_llama_distributed.json",
+      "node_mode": "four"
+    },
+    {
+      "id": "megatron_llama3_1_70b_single",
+      "category": "training_megatron",
+      "cvs_test": "megatron_llama3_1_70b_single",
+      "default_config": "config_file/training/megatron/mi3xx_megatron_llama_single.json",
+      "node_mode": "one"
+    },
+    {
+      "id": "megatron_llama3_1_8b_distributed",
+      "category": "training_megatron",
+      "cvs_test": "megatron_llama3_1_8b_distributed",
+      "default_config": "config_file/training/megatron/mi3xx_megatron_llama_distributed.json",
+      "node_mode": "four"
+    },
+    {
+      "id": "megatron_llama3_1_8b_single",
+      "category": "training_megatron",
+      "cvs_test": "megatron_llama3_1_8b_single",
+      "default_config": "config_file/training/megatron/mi3xx_megatron_llama_single.json",
+      "node_mode": "one"
+    }
+  ]
+}
