@@ -312,7 +312,7 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
     update_test_result()
 
 
-def test_gen_graph():
+def test_gen_graph(request):
     print('Final Global result dict')
     print(rccl_res_dict)
     rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
@@ -329,4 +329,14 @@ def test_gen_graph():
     html_lib.add_json_data(html_file, json.dumps(rccl_graph_dict))
     html_lib.add_html_end(html_file)
 
-    print(f'Perf report is saved under {html_file}, pls copy it to your web server under /var/www/html folder to view')
+    # Add the HTML file to the report bundle with clickable link
+    copied_path = request.config._html_report_manager.add_html_to_report(
+        html_file, link_name="RCCL Single Node Performance Report", request=request
+    )
+
+    if copied_path:
+        print(f'Perf report saved and added to report bundle: {copied_path}')
+    else:
+        print(
+            f'Perf report is saved under {html_file}, pls copy it to your web server under /var/www/html folder to view'
+        )

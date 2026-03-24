@@ -67,16 +67,15 @@ def pytest_metadata(metadata):
         except Exception as e:
             cvs_version = f"Unknown (Error: {e})"
 
-    # Get command line arguments directly from sys.argv
+    # Parse command line arguments to get our custom options (just for display)
     cluster_file = "Not specified"
     config_file = "Not specified"
 
-    # Parse command line arguments to get our custom options
     for i, arg in enumerate(sys.argv):
         if arg == "--cluster_file" and i + 1 < len(sys.argv):
-            cluster_file = sys.argv[i + 1]
+            cluster_file = Path(sys.argv[i + 1]).name  # Just filename for display
         elif arg == "--config_file" and i + 1 < len(sys.argv):
-            config_file = sys.argv[i + 1]
+            config_file = Path(sys.argv[i + 1]).name  # Just filename for display
 
     # Add custom metadata
     metadata["CVS version"] = cvs_version
@@ -110,7 +109,7 @@ def pytest_html_results_table_html(report, data):
     HtmlReportManager.replace_table_html(report, data)
 
 
-# Inject CSS overrides to simplify/hide unused report UI controls.
+# Inject CSS overrides in Summary section.
 def pytest_html_results_summary(prefix, summary, postfix):
     HtmlReportManager.inject_style_overrides(prefix)
 
