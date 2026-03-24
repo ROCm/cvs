@@ -445,7 +445,7 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
     update_test_result()
 
 
-def test_gen_graph():
+def test_gen_graph(request):
     print('Final Global result dict')
     print(rccl_res_dict)
     rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
@@ -462,10 +462,21 @@ def test_gen_graph():
     html_lib.build_rccl_result_default_table(html_file, rccl_graph_dict)
     html_lib.add_json_data(html_file, json.dumps(rccl_graph_dict))
     html_lib.add_html_end(html_file)
-    print(f'Perf report is saved under {html_file}, pls copy it to your web server under /var/www/html folder to view')
+
+    # Add the HTML file to the report bundle with clickable link
+    copied_path = request.config._html_report_manager.add_html_to_report(
+        html_file, link_name="RCCL Heatmap Performance Report", request=request
+    )
+
+    if copied_path:
+        print(f'Perf report saved and added to report bundle: {copied_path}')
+    else:
+        print(
+            f'Perf report is saved under {html_file}, pls copy it to your web server under /var/www/html folder to view'
+        )
 
 
-def test_gen_heatmap(phdl, cluster_dict, config_dict):
+def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
     print('Generate Heatmap')
     current_datetime = datetime.now()
     time_stamp = current_datetime.strftime("%Y-%m-%d-%H-%M-%S")
@@ -533,6 +544,14 @@ def test_gen_heatmap(phdl, cluster_dict, config_dict):
     html_lib.build_rccl_heatmap_metadata_table(heatmap_file, structured_json_file, rccl_ref_json_file)
     html_lib.build_rccl_heatmap_table(heatmap_file, 'Heatmap data Table', rccl_res_json_file, rccl_ref_json_file)
     html_lib.add_html_end(heatmap_file)
+
+    # Add the heatmap HTML file to the report bundle with clickable link
+    copied_path = request.config._html_report_manager.add_html_to_report(
+        heatmap_file, link_name="RCCL Heatmap Visualization", request=request
+    )
+
+    if copied_path:
+        print(f'Heatmap report saved and added to report bundle: {copied_path}')
 
     # Get management/login node IP from cluster config
     mgmt_node = cluster_dict.get('head_node_dict', {}).get('mgmt_ip', None)
