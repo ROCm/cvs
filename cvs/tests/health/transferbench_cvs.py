@@ -251,8 +251,9 @@ def parse_tb_example_test_results(out_dict, exp_dict):
 @pytest.fixture(scope="module")
 def phdl(cluster_dict):
     print(cluster_dict)
+    rocm_version = cluster_dict.get("module_load")
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'],rocm_version=rocm_version)
     return phdl
 
 

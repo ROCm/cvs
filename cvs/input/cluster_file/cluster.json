@@ -12,6 +12,7 @@
     {
         "mgmt_ip": "{xx.xx.xx.xx|hostname}"
     },
+    "module_load" :"rocm-7.1.1",
     "node_dict":
     {
         "{xx.xx.xx.xx|hostname}":

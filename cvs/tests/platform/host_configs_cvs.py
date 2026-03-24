@@ -114,8 +114,9 @@ def phdl(cluster_dict):
       - Assumes Pssh is available in scope and accepts (log, node_list, user, pkey) in its constructor.
     """
     print(cluster_dict)
+    rocm_version = cluster_dict.get("module_load")
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'],rocm_version=rocm_version)
     return phdl
 
 

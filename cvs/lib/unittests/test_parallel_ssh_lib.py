@@ -37,6 +37,51 @@ class TestPsshExec(unittest.TestCase):
         self.assertIn("output1 line1", result["host1"])
         self.assertIn("output2 line1", result["host2"])
 
+    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+
+    # ✅ NEW TEST for Module load
+    def test_exec_with_rocm_env(self, mock_pssh_client):
+        mock_client = MagicMock()
+        mock_pssh_client.return_value = mock_client
+        self.log=MagicMock()
+        pssh = Pssh(self.log, ["host1"], user="user", password="pass", rocm_version="rocm-test")
+
+        mock_output = MagicMock()
+        mock_output.host = "host1"
+        mock_output.stdout = ["ok"]
+        mock_output.stderr = []
+        mock_output.exception = None
+
+        mock_client.run_command.return_value = [mock_output]
+
+        result = pssh.exec("echo hello")
+
+        expected_prefix = (
+            "source /etc/profile.d/modules.sh && "
+            "module load rocm-test  ; echo hello"
+        )
+
+        mock_client.run_command.assert_called_once_with(expected_prefix, stop_on_errors=True)
+        self.assertIn("host1", result)
+
+    # ✅ NEW TEST for Module load
+    def test_exec_without_rocm_env(self):
+        self.pssh.rocm_version = None
+        self.pssh.rocm_env = ""
+
+        mock_output = MagicMock()
+        mock_output.host = "host1"
+        mock_output.stdout = ["ok"]
+        mock_output.stderr = []
+        mock_output.exception = None
+
+        self.mock_client.run_command.return_value = [mock_output]
+
+        result = self.pssh.exec("echo hello")
+
+        self.mock_client.run_command.assert_called_once_with("echo hello", stop_on_errors=True)
+        self.assertIn("host1", result)
+
     def test_exec_with_connection_error_stop_on_errors_true(self):
         # Test: Handle exceptions with stop_on_errors=True (default)
         # Exception should be raised, and no result returned (no partial results)
@@ -388,6 +433,46 @@ class TestPsshExecCmdList(unittest.TestCase):
         self.assertIn("host2", result)
         self.assertIn("host1", result["host1"])
         self.assertIn("host2", result["host2"])
+
+
+
+    #NEW TEST for Module load
+    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    def test_exec_cmd_list_with_rocm_env(self, mock_pssh_client):
+        mock_client = MagicMock()
+        mock_pssh_client.return_value = mock_client
+
+        #pssh = Pssh("log", ["host1", "host2"], user="user", password="pass", rocm_version="rocm-test")
+        self.host_list = ["host1", "host2"]
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass", rocm_version="rocm-test")
+        cmd_list = ["echo h1", "echo h2"]
+
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["h1"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = ["h2"]
+        mock_output2.stderr = []
+        mock_output2.exception = None
+
+        mock_client.run_command.return_value = [mock_output1, mock_output2]
+
+        result = self.pssh.exec_cmd_list(cmd_list)
+
+        expected_cmds = [
+        "source /etc/profile.d/modules.sh && module load rocm-test  ; echo h1",
+        "source /etc/profile.d/modules.sh && module load rocm-test  ; echo h2",
+        ]
+
+        mock_client.run_command.assert_called_once_with("%s", host_args=expected_cmds, stop_on_errors=True)
+        self.assertIn("host1", result)
+        self.assertIn("host2", result)
+
 
     @patch.object(Pssh, "check_connectivity")
     def test_exec_cmd_list_with_connection_error_stop_on_errors_false(self, mock_check_connectivity):
