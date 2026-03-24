@@ -146,14 +146,7 @@ class HtmlReportManager:
         report_dir = htmlpath.parent
         timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H%M%S")
 
-        invocation_params = getattr(session.config, "invocation_params", None)
-        invocation_args = getattr(invocation_params, "args", [])
-        suite_name_part = htmlpath.stem
-        for arg in invocation_args:
-            bare = arg.split("::")[0]
-            if not bare.startswith("-") and bare.endswith(".py"):
-                suite_name_part = Path(bare).stem
-                break
+        suite_name_part = getattr(session.config, "_suite_name", htmlpath.stem)
 
         zip_path = report_dir / f"{suite_name_part}_{timestamp}.zip"
         log_dir = report_dir / self._test_html_dir

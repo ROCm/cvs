@@ -22,6 +22,7 @@ def pytest_configure(config):
         if not bare.startswith("-") and bare.endswith(".py"):
             suite_name = Path(bare).stem
             break
+    config._suite_name = suite_name
     config._test_html_dir = f"{suite_name}_html"
     config._html_report_manager = HtmlReportManager(config)
 
