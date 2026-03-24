@@ -154,9 +154,11 @@ def s_phdl(cluster_dict):
       - This fixture has module scope, so a single connection handle is reused for all tests in the module.
     """
     print(cluster_dict)
-    rocm_version=rocm_version
+    rocm_version = rocm_version
     node_list = list(cluster_dict['node_dict'].keys())
-    s_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'],rocm_version=rocm_version)
+    s_phdl = Pssh(
+        log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], rocm_version=rocm_version
+    )
     return s_phdl
 
 
@@ -182,9 +184,11 @@ def c_phdl(cluster_dict):
       - This fixture has module scope, so a single connection handle is reused for all tests in the module.
     """
     print(cluster_dict)
-    rocm_version=rocm_version
+    rocm_version = rocm_version
     node_list = list(cluster_dict['node_dict'].keys())
-    c_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'],rocm_version=rocm_version)
+    c_phdl = Pssh(
+        log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], rocm_version=rocm_version
+    )
     return c_phdl
 
 

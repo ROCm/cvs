@@ -314,7 +314,6 @@ class InferenceBaseJob:
         log_file = f'{self.server_script}_server.log'
         script_path = self.get_server_script_path()
 
-
         # Start the server side inference job
         cmd_list = []
         for i in range(0, int(self.nnodes)):

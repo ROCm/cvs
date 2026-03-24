@@ -27,7 +27,15 @@ class Pssh:
     """
 
     def __init__(
-        self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True,rocm_version=None
+        self,
+        log,
+        host_list,
+        user=None,
+        password=None,
+        pkey='id_rsa',
+        host_key_check=False,
+        stop_on_errors=True,
+        rocm_version=None,
     ):
         self.log = log
         self.host_list = host_list
@@ -40,10 +48,7 @@ class Pssh:
         self.unreachable_hosts = []
         self.rocm_version = rocm_version
 
-        self.rocm_env = (
-            "source /etc/profile.d/modules.sh && "
-            f"module load {self.rocm_version} "
-            )
+        self.rocm_env = f"source /etc/profile.d/modules.sh && module load {self.rocm_version} "
 
         if self.password is None:
             print(self.reachable_hosts)
@@ -184,7 +189,9 @@ class Pssh:
         # Log command execution
         if self.log:
             if timeout is not None:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}")
+                self.log.debug(
+                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
+                )
             else:
                 self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
 
