@@ -37,6 +37,7 @@ class Pssh:
         host_key_check=False,
         stop_on_errors=True,
         env_vars=None,
+        **ssh_client_kwargs
     ):
         self.log = log
         self.host_list = host_list
@@ -47,17 +48,29 @@ class Pssh:
         self.host_key_check = host_key_check
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
+        self.ssh_client_kwargs = ssh_client_kwargs
         self.env_prefix = build_env_prefix(env_vars)
-        self.log.debug(f"Environ vars: {self.env_prefix}")
+        if self.log:
+            self.log.debug(f"Environ vars: {self.env_prefix}")
 
         if self.password is None:
             print(self.reachable_hosts)
             print(self.user)
             print(self.pkey)
-            self.client = ParallelSSHClient(self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30)
+            self.client = ParallelSSHClient(
+                self.reachable_hosts,
+                user=self.user,
+                pkey=self.pkey,
+                keepalive_seconds=30,
+                **self.ssh_client_kwargs
+            )
         else:
             self.client = ParallelSSHClient(
-                self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+                self.reachable_hosts,
+                user=self.user,
+                password=self.password,
+                keepalive_seconds=30,
+                **self.ssh_client_kwargs
             )
 
     def check_connectivity(self, hosts):
@@ -72,42 +85,74 @@ class Pssh:
             user=self.user,
             pkey=self.pkey if self.password is None else None,
             password=self.password,
-            num_retries=0,
-            timeout=2,
+            **self.ssh_client_kwargs
         )
         output = temp_client.run_command('echo 1', stop_on_errors=False, read_timeout=2)
         unreachable = [item.host for item in output if item.exception]
         return unreachable
 
-    def prune_unreachable_hosts(self, output):
+    def prune_unreachable_hosts(self, output=None):
         """
-        Prune unreachable hosts from self.reachable_hosts if they have ConnectionError or Timeout exceptions and also fail connectivity check.
+        Prune unreachable hosts from self.reachable_hosts and recreate the client.
 
+        Args:
+            output: Command output from run_command. If provided, will identify failed hosts
+                   and verify connectivity. If None, will prune based on current reachable_hosts state.
+
+        When output is provided:
         Targeted pruning: Only ConnectionError and Timeout exceptions trigger pruning to avoid removing hosts for transient failures
         like authentication errors or SSH protocol issues, which may succeed on next try. ConnectionErrors and Timeouts are indicative
         of potential unreachability, so we perform an additional connectivity check before pruning. This ensures
         that hosts are not permanently removed from the list for recoverable errors.
+
+        When output is None:
+        Simply recreates the client and updates host_list based on current reachable_hosts state.
         """
         initial_unreachable_len = len(self.unreachable_hosts)
-        failed_hosts = [
-            item.host
-            for item in output
-            if item.exception and isinstance(item.exception, (ConnectionError, Timeout, SessionError))
-        ]
-        unreachable = self.check_connectivity(failed_hosts)
-        for host in unreachable:
-            print(f"Host {host} is unreachable, pruning from reachable hosts list.")
-            self.unreachable_hosts.append(host)
-            self.reachable_hosts.remove(host)
-        if len(self.unreachable_hosts) > initial_unreachable_len:
-            # Recreate client with filtered reachable_hosts, only if hosts were actually pruned
+
+        if output is not None:
+            # Original behavior: analyze command output and verify connectivity
+            failed_hosts = [
+                item.host
+                for item in output
+                if item.exception and isinstance(item.exception, (ConnectionError, Timeout, SessionError))
+            ]
+            unreachable = self.check_connectivity(failed_hosts)
+            for host in unreachable:
+                print(f"Host {host} is unreachable, pruning from reachable hosts list.")
+                self.unreachable_hosts.append(host)
+                self.reachable_hosts.remove(host)
+        else:
+            # New behavior: prune based on current reachable_hosts state
+            if hasattr(self, 'reachable_hosts') and self.reachable_hosts:
+                # Update host_list to match current reachable_hosts
+                original_count = len(self.host_list)
+                pruned_hosts = [h for h in self.host_list if h not in self.reachable_hosts]
+                self.host_list = list(self.reachable_hosts)
+
+                if pruned_hosts and self.log:
+                    pruned_count = original_count - len(self.host_list)
+                    self.log.info(
+                        f"Pruned {pruned_count} unreachable nodes from phdl. Now managing {len(self.host_list)} reachable nodes."
+                    )
+
+        # Recreate client if hosts were actually pruned or if called without output
+        if len(self.unreachable_hosts) > initial_unreachable_len or output is None:
             if self.password is None:
                 self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30
+                    self.reachable_hosts,
+                    user=self.user,
+                    pkey=self.pkey,
+                    keepalive_seconds=30,
+                    **self.ssh_client_kwargs
                 )
             else:
                 self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+                    self.reachable_hosts,
+                    user=self.user,
+                    password=self.password,
+                    keepalive_seconds=30,
+                    **self.ssh_client_kwargs
                 )
 
     def inform_unreachability(self, cmd_output):
@@ -261,6 +306,55 @@ class Pssh:
     def destroy_clients(self):
         print('Destroying Current phdl connections ..')
         del self.client
+
+    def copy_script_list(self, node_script_map, remote_path="/tmp/script.sh"):
+        """
+        Copy different script files to different nodes in parallel using SCP.
+
+        Args:
+            node_script_map: {node: local_script_path} dictionary
+            remote_path: Target path on remote nodes
+
+        Returns:
+            List of results: ["node: SUCCESS/FAILED - details"]
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        def copy_to_node(node, local_script):
+            try:
+                ssh_client = SSHClient()
+                ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+                if self.password is None:
+                    ssh_client.connect(node, username=self.user, key_filename=self.pkey)
+                else:
+                    ssh_client.connect(node, username=self.user, password=self.password)
+
+                with SCPClient(ssh_client.get_transport()) as scp:
+                    scp.put(local_script, remote_path)
+
+                ssh_client.close()
+                return f"{node}: SUCCESS"
+            except Exception as e:
+                return f"{node}: FAILED - {e}"
+
+        # Copy to all nodes in parallel (50 concurrent transfers)
+        with ThreadPoolExecutor(max_workers=50) as executor:
+            futures = [
+                executor.submit(copy_to_node, node, script_path) for node, script_path in node_script_map.items()
+            ]
+            results = [future.result() for future in futures]
+
+        # Log results
+        if self.log:
+            successful = [r for r in results if "SUCCESS" in r]
+            failed = [r for r in results if "FAILED" in r]
+            self.log.info(f"Script copy completed: {len(successful)} successful, {len(failed)} failed")
+            if failed:
+                for failure in failed:
+                    self.log.warning(f"Copy failed: {failure}")
+
+        return results
 
 
 def scp(src, dst, srcusername, srcpassword, dstusername=None, dstpassword=None):
