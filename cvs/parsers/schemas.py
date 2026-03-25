@@ -750,15 +750,75 @@ class PytorchXditFluxConfig(BaseModel):
         return v
 
 
+# =============================================================================
+# Preflight Check Configuration Schema
+# =============================================================================
+
+
+class PreflightConfigFile(BaseModel):
+    """
+    Schema for preflight check configuration file.
+
+    Validates preflight check parameters before running cluster validation.
+    """
+
+    model_config = ConfigDict(extra="allow")  # Allow comment fields
+
+    gid_index: str = Field(default="3", description="GID index to check on all RDMA interfaces (typically 3 for RoCE)")
+    expected_rocm_version: str = Field(default="6.2.0", description="Expected ROCm version across all cluster nodes")
+    rdma_connectivity_check: str = Field(
+        default="basic", description="RDMA connectivity testing: basic, full_mesh, sample, or skip"
+    )
+    rdma_interfaces: List[str] = Field(
+        default_factory=lambda: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
+        description="List of specific RDMA interface names to check and test",
+    )
+    rping_timeout: str = Field(
+        default="10", description="Timeout in seconds for RDMA connectivity tests using ibv_rc_pingpong"
+    )
+    rping_port_range: str = Field(
+        default="9000-9999", description="Port range for RDMA connectivity tests (format: start-end)"
+    )
+    generate_html_report: str = Field(default="true", description="Whether to generate HTML report")
+    report_output_dir: str = Field(default="/tmp/preflight_reports", description="Directory for report output")
+
+    @field_validator('rdma_connectivity_check')
+    @classmethod
+    def validate_connectivity_check(cls, v: str) -> str:
+        """Validate RDMA connectivity check setting."""
+        valid_modes = ['basic', 'full_mesh', 'sample', 'skip']
+        if v not in valid_modes:
+            raise ValueError(f"rdma_connectivity_check must be one of: {', '.join(valid_modes)}")
+        return v
+
+    @field_validator('rping_port_range')
+    @classmethod
+    def validate_port_range(cls, v: str) -> str:
+        """Validate port range format."""
+        try:
+            start, end = map(int, v.split('-'))
+            if start >= end or start < 1024 or end > 65535:
+                raise ValueError("Invalid port range")
+        except (ValueError, AttributeError):
+            raise ValueError("rping_port_range must be in format 'start-end' with valid port numbers")
+        return v
+
+
 def validate_config_file(
     config_path: Union[str, Path], config_type: str = "auto"
-) -> Union[AortaBenchmarkConfigFile, ClusterConfigFile, PytorchXditWanConfigFile, PytorchXditFluxConfigFile]:
+) -> Union[
+    AortaBenchmarkConfigFile,
+    ClusterConfigFile,
+    PytorchXditWanConfigFile,
+    PytorchXditFluxConfigFile,
+    PreflightConfigFile,
+]:
     """
     Load and validate a configuration file.
 
     Args:
         config_path: Path to configuration file (YAML or JSON)
-        config_type: Type of config - "aorta", "cluster", "pytorch_xdit_wan", "pytorch_xdit_flux", or "auto" (detect from content)
+        config_type: Type of config - "aorta", "cluster", "pytorch_xdit_wan", "pytorch_xdit_flux", "preflight", or "auto" (detect from content)
 
     Returns:
         Validated Pydantic model
@@ -789,6 +849,8 @@ def validate_config_file(
     if config_type == "auto":
         if "node_dict" in raw_config:
             config_type = "cluster"
+        elif "preflight" in raw_config:
+            config_type = "preflight"
         elif "aorta_path" in raw_config:
             config_type = "aorta"
         elif "config" in raw_config and "benchmark_params" in raw_config:
@@ -808,13 +870,19 @@ def validate_config_file(
         else:
             raise ValueError(
                 f"Cannot auto-detect config type for {config_path}. "
-                f"Specify config_type='aorta', config_type='cluster', config_type='pytorch_xdit_wan', or config_type='pytorch_xdit_flux'"
+                f"Specify config_type='aorta', config_type='cluster', config_type='pytorch_xdit_wan', config_type='pytorch_xdit_flux', or config_type='preflight'"
             )
 
     # Validate with appropriate schema
     try:
         if config_type == "cluster":
             return ClusterConfigFile.model_validate(raw_config)
+        elif config_type == "preflight":
+            # Extract preflight section for validation
+            if "preflight" in raw_config:
+                return PreflightConfigFile.model_validate(raw_config["preflight"])
+            else:
+                raise ValueError("Preflight config must contain 'preflight' section")
         elif config_type == "aorta":
             return AortaBenchmarkConfigFile.model_validate(raw_config)
         elif config_type == "pytorch_xdit_wan":

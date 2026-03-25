@@ -1,0 +1,23 @@
+{
+  "preflight": {
+    "_comment_gid": "GID index to check on all RDMA interfaces (typically 3 for RoCE)",
+    "gid_index": "3",
+    
+    "_comment_rocm": "Expected ROCm version across all cluster nodes",
+    "expected_rocm_version": "6.2.0",
+    
+    "_comment_connectivity": "RDMA connectivity testing: basic (adjacent pairs), full_mesh (all pairs), sample (20% random), or skip",
+    "rdma_connectivity_check": "basic",
+    
+    "_comment_interfaces": "List of specific RDMA interface names to check and test",
+    "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
+    
+    "_comment_connectivity_tool": "RDMA connectivity testing uses ibv_rc_pingpong (direct IB verbs) for RCCL-compatible testing",
+    "rping_timeout": "10",
+    "rping_port_range": "9000-9999",
+    
+    "_comment_reporting": "Report generation settings",
+    "generate_html_report": "true",
+    "report_output_dir": "/tmp/preflight_reports"
+  }
+}
