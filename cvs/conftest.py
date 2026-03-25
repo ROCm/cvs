@@ -16,10 +16,13 @@ from cvs.lib.report_plugins import HtmlReportManager
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
-    if config.args:
-        suite_name = Path(config.args[0]).stem
-    else:
-        suite_name = "test"
+    suite_name = "test"
+    for arg in config.args:
+        bare = arg.split("::")[0]
+        if not bare.startswith("-") and bare.endswith(".py"):
+            suite_name = Path(bare).stem
+            break
+    config._suite_name = suite_name
     config._test_html_dir = f"{suite_name}_html"
     config._html_report_manager = HtmlReportManager(config)
 
