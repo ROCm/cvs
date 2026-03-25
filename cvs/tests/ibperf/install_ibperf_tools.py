@@ -135,7 +135,9 @@ def phdl(cluster_dict):
     node_list = list(cluster_dict['node_dict'].keys())
     if len(node_list) % 2 != 0:
         node_list.pop()
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name)
+    phdl = Pssh(
+        log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name
+    )
     return phdl
 
 

@@ -138,7 +138,9 @@ def phdl(cluster_dict):
     print(cluster_dict)
     module_name = cluster_dict.get("module_name")
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name)
+    phdl = Pssh(
+        log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name
+    )
     return phdl
 
 
@@ -161,7 +163,9 @@ def shdl(cluster_dict):
     module_name = cluster_dict.get("module_name")
     node_list = list(cluster_dict['node_dict'].keys())
     head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name)
+    shdl = Pssh(
+        log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name
+    )
     return shdl
 
 

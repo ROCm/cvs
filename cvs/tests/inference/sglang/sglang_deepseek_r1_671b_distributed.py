@@ -137,7 +137,11 @@ def p_phdl(cluster_dict, inference_dict):
     print(cluster_dict)
     module_name = cluster_dict.get("module_name")
     p_phdl = Pssh(
-        log, inference_dict['prefill_node_list'], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name
+        log,
+        inference_dict['prefill_node_list'],
+        user=cluster_dict['username'],
+        pkey=cluster_dict['priv_key_file'],
+        module_name=module_name,
     )
     return p_phdl
 
@@ -146,7 +150,11 @@ def p_phdl(cluster_dict, inference_dict):
 def d_phdl(cluster_dict, inference_dict):
     module_name = cluster_dict.get("module_name")
     d_phdl = Pssh(
-        log, inference_dict['decode_node_list'], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name
+        log,
+        inference_dict['decode_node_list'],
+        user=cluster_dict['username'],
+        pkey=cluster_dict['priv_key_file'],
+        module_name=module_name,
     )
     return d_phdl
 
@@ -156,7 +164,9 @@ def r_phdl(cluster_dict, inference_dict):
     module_name = cluster_dict.get("module_name")
     node_list = []
     node_list.append(inference_dict['proxy_router_node'])
-    r_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name)
+    r_phdl = Pssh(
+        log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name
+    )
     return r_phdl
 
 
@@ -165,7 +175,9 @@ def b_phdl(cluster_dict, inference_dict):
     module_name = cluster_dict.get("module_name")
     node_list = []
     node_list.append(inference_dict['benchmark_serv_node'])
-    b_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name)
+    b_phdl = Pssh(
+        log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], module_name=module_name
+    )
     return b_phdl
 
 
