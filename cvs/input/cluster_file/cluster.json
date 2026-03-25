@@ -12,6 +12,8 @@
     {
         "mgmt_ip": "{xx.xx.xx.xx|hostname}"
     },
+    "_module_name_comment": "If your cluster supports multiple rocm env via modules, choose the module to use by cvs scripts",
+    "module_name" :"",
     "node_dict":
     {
         "{xx.xx.xx.xx|hostname}":

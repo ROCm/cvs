@@ -27,7 +27,7 @@ class Pssh:
     """
 
     def __init__(
-        self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True
+        self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True,module_name=None
     ):
         self.log = log
         self.host_list = host_list
@@ -38,6 +38,12 @@ class Pssh:
         self.host_key_check = host_key_check
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
+        self.module_name = module_name
+
+        self.rocm_env = (
+            "source /etc/profile.d/modules.sh && "
+            f"module load {self.module_name} "
+            )
 
         if self.password is None:
             print(self.reachable_hosts)
@@ -168,20 +174,25 @@ class Pssh:
         """
         Returns a dictionary of host as key and command output as values
         """
-        print(f'cmd = {cmd}')
+        if self.module_name:
+            full_cmd = f"{self.rocm_env} ; {cmd}"
+        else:
+            full_cmd = cmd
+
+        print(f'cmd = {full_cmd}')
 
         # Log command execution
         if self.log:
             if timeout is not None:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {cmd}")
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}")
             else:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {cmd}")
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
 
         if timeout is None:
-            output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors)
+            output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
         else:
-            output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
-        cmd_output = self._process_output(output, cmd=cmd, print_console=print_console)
+            output = self.client.run_command(full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
+        cmd_output = self._process_output(output, cmd=full_cmd, print_console=print_console)
 
         # Log per-host execution completion
         if self.log:
@@ -196,6 +207,11 @@ class Pssh:
         which runs the same command on all hosts.
         Returns a dictionary of host as key and command output as values
         """
+        if self.module_name:
+            cmd_list = [f"{self.rocm_env} ; {cmd}" for cmd in cmd_list]
+        else:
+            cmd_list = cmd_list
+
         print(cmd_list)
 
         # Log command list execution
