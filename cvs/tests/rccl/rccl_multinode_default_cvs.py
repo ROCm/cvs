@@ -189,6 +189,55 @@ def vpc_node_list(cluster_dict):
 # Start of test cases.
 
 
+def pytest_generate_tests(metafunc):
+    """
+    Dynamically generate test parameters based on config file.
+
+    This function is called by pytest to customize test parametrization.
+    It reads the rccl_collectives from the config file and uses them
+    for parametrizing the test_rccl_perf function.
+    """
+    if "rccl_collective" in metafunc.fixturenames:
+        # Get config_dict fixture to access the configuration
+        config_dict = None
+
+        # Try to get config from pytest config (if available)
+        if hasattr(metafunc.config, 'getoption'):
+            try:
+                config_file = metafunc.config.getoption("config_file", default=None)
+                if config_file:
+                    import json
+
+                    with open(config_file) as f:
+                        config_data = json.load(f)
+                    config_dict = config_data.get('rccl', {})
+            except Exception:
+                # If we can't read config, fall back to defaults
+                pass
+
+        # Get collectives from config or use defaults
+        if config_dict and 'rccl_collectives' in config_dict:
+            collectives = config_dict['rccl_collectives']
+            log.info(f"Using collectives from config: {collectives}")
+        else:
+            # Fallback to default collectives if config not available
+            collectives = [
+                "all_reduce_perf",
+                "all_gather_perf",
+                "scatter_perf",
+                "gather_perf",
+                "reduce_scatter_perf",
+                "sendrecv_perf",
+                "alltoall_perf",
+                "alltoallv_perf",
+                "broadcast_perf",
+            ]
+            log.info("Using default collectives (config not available)")
+
+        # Parametrize the test with the collectives list
+        metafunc.parametrize("rccl_collective", collectives)
+
+
 def test_collect_hostinfo(phdl):
     """
     Collect basic ROCm/host info from all nodes.
@@ -234,21 +283,7 @@ def test_disable_firewall(phdl):
     update_test_result()
 
 
-# Change this to choose what collectives to run ..
-@pytest.mark.parametrize(
-    "rccl_collective",
-    [
-        "all_reduce_perf",
-        "all_gather_perf",
-        "scatter_perf",
-        "gather_perf",
-        "reduce_scatter_perf",
-        "sendrecv_perf",
-        "alltoall_perf",
-        "alltoallv_perf",
-        "broadcast_perf",
-    ],
-)
+# RCCL collectives are now configurable via rccl_collectives parameter in config file
 def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     """
     Execute RCCL performance test across the cluster with given parameters.
@@ -317,7 +352,6 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         rocm_path_var=config_dict.get('rocm_path_var', '/opt/rocm/'),
         mpi_dir=config_dict.get('mpi_dir', '/usr/bin'),
         mpi_path_var=config_dict.get('mpi_path_var', '/usr'),
-        rccl_dir=config_dict.get('rccl_dir', '/opt/rocm/'),
         rccl_path_var=config_dict.get('rccl_path_var', '/opt/rocm/lib'),
         rccl_tests_dir=config_dict.get('rccl_tests_dir', '/opt/rccl-tests/build'),
         nccl_socket_ifname=config_dict.get('nccl_socket_ifname', ''),
@@ -328,6 +362,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         threads_per_gpu=config_dict.get('threads_per_gpu', '1'),
         warmup_iterations=config_dict.get('warmup_iterations', '10'),
         no_of_iterations=config_dict.get('no_of_iterations', '20'),
+        data_types=config_dict.get('data_types', ['float']),
         no_of_cycles=config_dict.get('no_of_cycles', '1'),
         check_iteration_count=config_dict.get('check_iteration_count', '1'),
         debug_level=config_dict.get('debug_level', 'ERROR'),

@@ -382,7 +382,6 @@ def test_rccl_perf(
         rocm_path_var=config_dict.get('rocm_path_var', '/opt/rocm/'),
         mpi_dir=config_dict.get('mpi_dir', '/usr/bin'),
         mpi_path_var=config_dict.get('mpi_path_var', '/usr'),
-        rccl_dir=config_dict.get('rccl_dir', '/opt/rocm/'),
         rccl_path_var=config_dict.get('rccl_path_var', '/opt/rocm/lib'),
         rccl_tests_dir=config_dict.get('rccl_tests_dir', '/opt/rccl-tests/build'),
         nccl_socket_ifname=config_dict.get('nccl_socket_ifname', ''),

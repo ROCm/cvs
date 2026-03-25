@@ -273,7 +273,6 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
         test_name=rccl_collective,
         cluster_node_list=node_list,
         rocm_path_var=config_dict.get('rocm_path_var', '/opt/rocm/'),
-        rccl_dir=config_dict.get('rccl_dir', '/opt/rocm/'),
         rccl_path_var=config_dict.get('rccl_path_var', '/opt/rocm/lib'),
         rccl_tests_dir=config_dict.get('rccl_tests_dir', '/opt/rccl-tests/build'),
         start_msg_size=config_dict.get('start_msg_size', '1024'),

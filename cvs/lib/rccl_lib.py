@@ -476,7 +476,6 @@ def rccl_cluster_test(
     rocm_path_var,
     mpi_dir,
     mpi_path_var,
-    rccl_dir,
     rccl_path_var,
     rccl_tests_dir,
     nccl_socket_ifname="",
@@ -532,7 +531,7 @@ def rccl_cluster_test(
       net_dev_list: UCX network device(s) to use (UCX_NET_DEVICES).
       oob_port: Interface for MPI TCP OOB (btl_tcp_if_include).
       no_of_global_ranks: Total MPI ranks to launch across the cluster.
-      rocm_path_var, mpi_dir, mpi_path_var, rccl_dir, rccl_path_var, rccl_tests_dir: Installation paths.
+      rocm_path_var, mpi_dir, mpi_path_var, rccl_path_var, rccl_tests_dir: Installation paths.
       nccl_algo, nccl_proto, gid_index, qp_count, ...: NCCL/UCX/MPI tuning parameters.
       start_msg_size, end_msg_size, step_function: Message size sweep setup.
       threads_per_gpu, warmup_iterations, check_iteration_count: Test execution tuning.
@@ -693,7 +692,6 @@ def rccl_cluster_test_default(
     rocm_path_var,
     mpi_dir,
     mpi_path_var,
-    rccl_dir,
     rccl_path_var,
     rccl_tests_dir,
     nccl_socket_ifname="",
@@ -750,7 +748,7 @@ def rccl_cluster_test_default(
       net_dev_list: UCX network device(s) to use (UCX_NET_DEVICES).
       oob_port: Interface for MPI TCP OOB (btl_tcp_if_include).
       no_of_global_ranks: Total MPI ranks to launch across the cluster.
-      rocm_path_var, mpi_dir, mpi_path_var, rccl_dir, rccl_path_var, rccl_tests_dir: Installation paths.
+      rocm_path_var, mpi_dir, mpi_path_var, rccl_path_var, rccl_tests_dir: Installation paths.
       nccl_algo, nccl_proto, gid_index, qp_count, ...: NCCL/UCX/MPI tuning parameters.
       start_msg_size, end_msg_size, step_function: Message size sweep setup.
       threads_per_gpu, warmup_iterations, check_iteration_count: Test execution tuning.
@@ -1009,7 +1007,6 @@ def rccl_single_node_test(
     test_name,
     cluster_node_list,
     rocm_path_var,
-    rccl_dir,
     rccl_path_var,
     rccl_tests_dir,
     start_msg_size=1024,
@@ -1035,7 +1032,7 @@ def rccl_single_node_test(
       phdl: Parallel ssh handle to run commands on all nodes.
       test_name: RCCL test binary name (e.g., all_reduce_perf).
       cluster_node_list: List of cluster node hostnames/IPs
-      rocm_path_var, rccl_dir, rccl_path_var, rccl_tests_dir: Installation paths.
+      rocm_path_var, rccl_path_var, rccl_tests_dir: Installation paths.
       start_msg_size, end_msg_size, step_function: Message size sweep setup.
       threads_per_gpu, warmup_iterations, check_iteration_count: Test execution tuning.
       debug_level: NCCL_DEBUG level.

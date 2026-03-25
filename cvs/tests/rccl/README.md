@@ -37,7 +37,7 @@ These RCCL binaries can be selected through `rccl_collective`:
 ## Prerequisites
 
 1. **Cluster file**: Provide a valid cluster file (for example `input/cluster_file/cluster.json`) with node definitions, username, key path, and reachable node IPs.
-2. **RCCL test binaries**: Install `rccl-tests` and ensure paths in config are correct (`rccl_dir`, `rccl_tests_dir`, `rccl_path_var`).
+2. **RCCL test binaries**: Install `rccl-tests` and ensure paths in config are correct (`rccl_tests_dir`, `rccl_path_var`).
 3. **MPI/ROCm paths**: Ensure `mpi_dir`, `mpi_path_var`, and `rocm_path_var` in config match your environment.
 4. **Passwordless SSH**: Nodes should be able to run distributed MPI launch commands without interactive prompts.
 5. **Expected results**: Update `results` thresholds for your hardware and cluster size (defaults are sample values only).
