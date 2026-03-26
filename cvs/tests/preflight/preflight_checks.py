@@ -22,6 +22,19 @@ log = globals.log
 preflight_results = {}
 
 
+# Override update_test_result for preflight tests to be reporting-only
+def preflight_update_test_result():
+    """
+    Preflight-specific test result handler that reports issues but doesn't fail tests.
+    This allows preflight to be a comprehensive reporting tool rather than a pass/fail test.
+    """
+    if len(globals.error_list) > 0:
+        log.info(f"Preflight detected {len(globals.error_list)} issues (see detailed logs above)")
+        # Clear the error list to prevent test failure
+        globals.error_list.clear()
+    # Always pass - preflight is for reporting, not failing
+
+
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
     """
@@ -122,7 +135,7 @@ def phdl(cluster_dict):
     node_list = list(cluster_dict['node_dict'].keys())
     log.info(f"Creating parallel SSH handle for {len(node_list)} nodes")
 
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], stop_on_errors=False)
     return phdl
 
 
@@ -140,7 +153,9 @@ def shdl(cluster_dict):
     head_node = cluster_dict['head_node_dict']['mgmt_ip']
     log.info(f"Creating single SSH handle for head node: {head_node}")
 
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    shdl = Pssh(
+        log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], stop_on_errors=False
+    )
     return shdl
 
 
@@ -148,9 +163,12 @@ def test_node_reachability(phdl):
     """
     Test basic SSH connectivity to all cluster nodes.
 
-    This is a prerequisite test that ensures all nodes are reachable
-    before running the actual preflight checks.
+    Logs unreachable nodes but continues with reachable ones.
+    This allows preflight tests to run on available nodes.
     """
+    # Clear any previous errors for preflight reporting mode
+    globals.error_list.clear()
+
     log.info("Testing node reachability via SSH")
 
     # Simple connectivity test
@@ -158,16 +176,37 @@ def test_node_reachability(phdl):
     out_dict = phdl.exec(cmd)
 
     failed_nodes = []
+    reachable_nodes = []
+
     for node, output in out_dict.items():
         if 'SSH_OK' not in output:
             failed_nodes.append(node)
-            fail_test(f"Node {node} is not reachable via SSH")
+            if 'ABORT: Host Unreachable Error' in output:
+                log.warning(f"Node {node} is unreachable (will be excluded from further tests)")
+            else:
+                log.error(f"Node {node} failed connectivity test: {output.strip()}")
+        else:
+            reachable_nodes.append(node)
 
     if failed_nodes:
-        fail_test(f"Failed to reach nodes: {', '.join(failed_nodes)}")
+        log.warning(f"Unreachable nodes ({len(failed_nodes)}): {', '.join(failed_nodes)}")
+        log.info(f"Continuing preflight tests with {len(reachable_nodes)} reachable nodes")
 
-    log.info(f"All {len(out_dict)} nodes are reachable via SSH")
-    update_test_result()
+    log.info(f"Node reachability: {len(reachable_nodes)}/{len(out_dict)} nodes reachable")
+
+    # Store reachability results for summary
+    global preflight_results
+    preflight_results['node_reachability'] = {
+        'total_nodes': len(out_dict),
+        'reachable_nodes': len(reachable_nodes),
+        'unreachable_nodes': failed_nodes,
+        'status': 'PASS' if len(failed_nodes) == 0 else 'WARNING',
+    }
+
+    # Prune unreachable nodes from phdl so subsequent tests only run on reachable nodes
+    phdl.prune_unreachable_nodes()
+
+    preflight_update_test_result()
 
 
 def test_gid_consistency(phdl, config_dict):
@@ -203,12 +242,12 @@ def test_gid_consistency(phdl, config_dict):
                 ok_interfaces += 1
 
     if failed_nodes:
-        fail_test(f"GID consistency check failed on nodes: {', '.join(failed_nodes)}")
+        log.warning(f"GID consistency issues on {len(failed_nodes)} nodes: {', '.join(failed_nodes)}")
+    else:
+        log.info("GID consistency check: All nodes passed")
 
-    log.info(
-        f"GID consistency check passed: {ok_interfaces}/{total_interfaces} interfaces have valid GID index {gid_index}"
-    )
-    update_test_result()
+    log.info(f"GID consistency results: {ok_interfaces}/{total_interfaces} interfaces have valid GID index {gid_index}")
+    preflight_update_test_result()
 
 
 def test_rocm_version_consistency(phdl, config_dict):
@@ -243,10 +282,14 @@ def test_rocm_version_consistency(phdl, config_dict):
                 log.error(f"Node {node}: {error}")
 
     if failed_nodes:
-        fail_test(f"ROCm version consistency check failed on nodes: {', '.join(failed_nodes)}")
+        log.warning(f"ROCm version inconsistencies on {len(failed_nodes)} nodes: {', '.join(failed_nodes)}")
+    else:
+        log.info("ROCm version consistency check: All reachable nodes passed")
 
-    log.info(f"ROCm version consistency check passed: All {len(results)} nodes running version {expected_version}")
-    update_test_result()
+    log.info(
+        f"ROCm version results: {len(results) - len(failed_nodes)}/{len(results)} nodes have expected version {expected_version}"
+    )
+    preflight_update_test_result()
 
 
 def test_interface_name_consistency(phdl, config_dict):
@@ -281,12 +324,14 @@ def test_interface_name_consistency(phdl, config_dict):
                 compliant_interfaces += 1
 
     if failed_nodes:
-        fail_test(f"Interface naming consistency check failed on nodes: {', '.join(failed_nodes)}")
+        log.warning(f"Interface naming inconsistencies on {len(failed_nodes)} nodes: {', '.join(failed_nodes)}")
+    else:
+        log.info("Interface naming consistency check: All reachable nodes passed")
 
     log.info(
-        f"Interface presence check passed: {compliant_interfaces}/{total_interfaces} interfaces are expected interfaces"
+        f"Interface presence results: {compliant_interfaces}/{total_interfaces} interfaces are expected interfaces"
     )
-    update_test_result()
+    preflight_update_test_result()
 
 
 def test_rdma_connectivity(phdl, cluster_dict, config_dict):
@@ -307,13 +352,14 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     timeout = int(config_dict.get('rping_timeout', '10'))
     expected_interfaces = config_dict.get('rdma_interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"])
     gid_index = config_dict.get('gid_index', '3')
+    parallel_group_size = config_dict.get('parallel_group_size', 128)
 
     log.info(
-        f"Testing RDMA connectivity using ibv_rc_pingpong (mode: {mode}, timeout: {timeout}s, interfaces: {expected_interfaces}, GID: {gid_index})"
+        f"Testing RDMA connectivity using parallel algorithm (mode: {mode}, group_size: {parallel_group_size}, timeout: {timeout}s, interfaces: {expected_interfaces}, GID: {gid_index})"
     )
 
     results = preflight_lib.check_rdma_connectivity(
-        phdl, node_list, mode, port_range, timeout, expected_interfaces, gid_index
+        phdl, node_list, mode, port_range, timeout, expected_interfaces, gid_index, parallel_group_size, config_dict
     )
     preflight_results['rdma_connectivity'] = results
 
@@ -332,12 +378,157 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
                 for error in pair_result['error_details']:
                     log.error(f"Pair {pair_key}: {error}")
 
-        fail_test(f"RDMA connectivity check failed for {results['failed_pairs']} pairs: {', '.join(failed_pairs[:5])}")
+        log.warning(
+            f"RDMA connectivity issues: {results['failed_pairs']} failed pairs out of {results['total_pairs']} total"
+        )
+        for pair in failed_pairs[:5]:  # Log first 5 failed pairs
+            log.warning(f"Failed pair: {pair}")
+    else:
+        log.info("RDMA connectivity check: All tested pairs connected successfully")
 
     log.info(
-        f"RDMA connectivity check passed: {results['successful_pairs']}/{results['total_pairs']} pairs connected successfully"
+        f"RDMA connectivity results: {results['successful_pairs']}/{results['total_pairs']} pairs connected successfully"
     )
-    update_test_result()
+    preflight_update_test_result()
+
+
+@pytest.mark.skip(reason="SSH connectivity test - work in progress")
+def test_ssh_full_mesh_connectivity(phdl, cluster_dict, config_dict):
+    """
+    Test SSH connectivity between all cluster nodes (full mesh).
+
+    This test validates that every node can SSH to every other node,
+    which is critical for MPI job launches and distributed computing frameworks.
+    Catches SSH key distribution issues, firewall problems, and hostname resolution
+    failures that could cause distributed jobs to fail.
+    """
+    global preflight_results
+
+    # Check if SSH full mesh testing is enabled
+    if not config_dict.get('ssh_full_mesh_check', False):
+        log.info("SSH full mesh connectivity testing is disabled - skipping")
+        preflight_results['ssh_connectivity'] = {
+            'status': 'SKIPPED',
+            'message': 'SSH full mesh testing disabled in configuration',
+        }
+        pytest.skip("SSH full mesh testing disabled in configuration")
+        return
+
+    log.info("Testing SSH full mesh connectivity between all cluster nodes")
+
+    # Get SSH timeout from config
+    ssh_timeout = config_dict.get('ssh_connection_timeout', 5)
+
+    # Get reachable nodes from cluster
+    node_list = list(cluster_dict['node_dict'].keys())
+    log.info(f"Testing SSH connectivity across {len(node_list)} nodes")
+
+    # Run SSH full mesh connectivity test
+    results = preflight_lib.test_ssh_full_mesh_connectivity(
+        phdl, node_list, timeout=ssh_timeout, config_dict=config_dict
+    )
+
+    # Store results for report generation
+    preflight_results['ssh_connectivity'] = results
+
+    # Determine test outcome
+    if results.get('skipped', False):
+        log.info("SSH connectivity test was skipped")
+        preflight_results['ssh_connectivity']['status'] = 'SKIPPED'
+        preflight_results['ssh_connectivity']['message'] = 'Insufficient nodes for SSH mesh testing'
+        pytest.skip("Need at least 2 nodes for SSH mesh testing")
+        return
+
+    total_pairs = results['total_pairs']
+    successful_pairs = results['successful_pairs']
+    failed_pairs = results['failed_pairs']
+
+    # Calculate success rate
+    success_rate = (successful_pairs / total_pairs * 100) if total_pairs > 0 else 0
+
+    # Log detailed results
+    if successful_pairs == 0 and total_pairs > 0:
+        # No successful connections parsed - this indicates a test infrastructure issue
+        preflight_results['ssh_connectivity']['status'] = 'ERROR'
+        preflight_results['ssh_connectivity']['message'] = (
+            f'SSH test infrastructure error: no results parsed from {total_pairs} expected tests'
+        )
+
+        log.error(f"SSH test infrastructure error: no results were parsed from any of the {total_pairs} expected tests")
+        log.error("This suggests an issue with script execution or result collection, not SSH connectivity itself")
+
+        log.error(
+            f"SSH full mesh test infrastructure failed: no results parsed from {total_pairs} tests. "
+            f"Check script execution and result collection logic."
+        )
+
+    elif failed_pairs > 0:
+        preflight_results['ssh_connectivity']['status'] = 'FAIL'
+        preflight_results['ssh_connectivity']['message'] = (
+            f'{successful_pairs}/{total_pairs} SSH connections successful ({success_rate:.1f}%)'
+        )
+
+        log.error(f"SSH connectivity issues detected: {failed_pairs}/{total_pairs} connections failed")
+
+        # Analyze failure patterns
+        pair_results = results.get('pair_results', {})
+        failed_connections = [(pair, error) for pair, error in pair_results.items() if 'SUCCESS' not in error]
+
+        # Group failures by error type for better analysis
+        error_patterns = {}
+        problematic_nodes = set()
+
+        for pair, error in failed_connections:
+            source_node, target_node = pair.split(' → ')
+            problematic_nodes.add(target_node)  # Target nodes are usually the problem
+
+            # Categorize error types
+            if 'Host key verification failed' in error:
+                error_type = 'Host key verification failed'
+            elif 'Connection timed out' in error or 'Connection refused' in error:
+                error_type = 'Connection/Network issue'
+            elif 'Permission denied' in error:
+                error_type = 'SSH key/Authentication issue'
+            elif 'Name resolution failed' in error:
+                error_type = 'Hostname resolution issue'
+            else:
+                error_type = 'Other SSH issue'
+
+            if error_type not in error_patterns:
+                error_patterns[error_type] = []
+            error_patterns[error_type].append(pair)
+
+        # Log error analysis
+        log.error("SSH connectivity failure analysis:")
+        for error_type, affected_pairs in error_patterns.items():
+            log.error(f"  {error_type}: {len(affected_pairs)} connections")
+            # Show a few examples
+            for pair in affected_pairs[:3]:
+                log.error(f"    Example: {pair}")
+            if len(affected_pairs) > 3:
+                log.error(f"    ... and {len(affected_pairs) - 3} more")
+
+        # Identify most problematic nodes
+        if problematic_nodes:
+            log.error(f"Nodes with SSH connectivity issues: {', '.join(sorted(problematic_nodes))}")
+
+        # Log critical failure for distributed computing
+        log.error(
+            f"SSH full mesh connectivity failed: {failed_pairs}/{total_pairs} connections failed. "
+            f"This will prevent MPI jobs and distributed frameworks from working properly. "
+            f"Check SSH keys, firewalls, and hostname resolution on problematic nodes."
+        )
+
+    else:
+        # successful_pairs > 0 and failed_pairs == 0
+        preflight_results['ssh_connectivity']['status'] = 'PASS'
+        preflight_results['ssh_connectivity']['message'] = f'All {total_pairs} SSH connections successful'
+
+        log.info("SSH full mesh connectivity: All tested connections successful")
+        log.info("✅ Cluster is ready for MPI and distributed computing workloads")
+
+    log.info(f"SSH connectivity results: {successful_pairs}/{total_pairs} connections successful ({success_rate:.1f}%)")
+    preflight_update_test_result()
 
 
 def test_generate_preflight_report(config_dict, request):
@@ -352,11 +543,14 @@ def test_generate_preflight_report(config_dict, request):
     log.info("Generating preflight check report")
 
     # Ensure we have results from all checks
-    required_checks = ['gid_consistency', 'rocm_versions', 'interface_names', 'rdma_connectivity']
+    required_checks = ['gid_consistency', 'rocm_versions', 'interface_names', 'rdma_connectivity', 'ssh_connectivity']
     missing_checks = [check for check in required_checks if check not in preflight_results]
 
     if missing_checks:
-        fail_test(f"Missing results for checks: {', '.join(missing_checks)}")
+        log.error(f"Missing results for checks: {', '.join(missing_checks)}")
+        # Create empty results for missing checks to allow report generation
+        for check in missing_checks:
+            preflight_results[check] = {'status': 'SKIPPED', 'message': 'Check was skipped due to earlier failures'}
 
     # Generate comprehensive summary
     summary = preflight_lib.generate_preflight_summary(
@@ -364,6 +558,8 @@ def test_generate_preflight_report(config_dict, request):
         preflight_results['rdma_connectivity'],
         preflight_results['rocm_versions'],
         preflight_results['interface_names'],
+        preflight_results.get('node_reachability'),
+        preflight_results.get('ssh_connectivity'),
     )
 
     preflight_results['summary'] = summary
@@ -411,9 +607,10 @@ def test_generate_preflight_report(config_dict, request):
             log.warning(f"Failed to add preflight report to bundle: {e}")
             log.info(f"Preflight report available at: {html_report_path}")
 
-    # Fail the test if overall status is FAIL
+    # Report overall status but don't fail the test
     if summary['overall_status'] == 'FAIL':
-        fail_test("One or more preflight checks failed - see detailed results above")
-
-    log.info("All preflight checks passed - cluster is ready for performance testing")
-    update_test_result()
+        log.warning("One or more preflight checks detected issues - see detailed results above")
+        log.info("Preflight report generated successfully - review HTML report for detailed analysis")
+    else:
+        log.info("All preflight checks passed - cluster is ready for performance testing")
+    preflight_update_test_result()

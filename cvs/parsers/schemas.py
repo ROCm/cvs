@@ -781,12 +781,35 @@ class PreflightConfigFile(BaseModel):
     )
     generate_html_report: str = Field(default="true", description="Whether to generate HTML report")
     report_output_dir: str = Field(default="/tmp/preflight_reports", description="Directory for report output")
+    parallel_group_size: int = Field(
+        default=128,
+        ge=2,
+        le=512,
+        description="Group size for parallel RDMA connectivity testing (2-512 nodes per group). Smaller groups use fewer resources per node but require more rounds.",
+    )
+
+    scriptlet_debug: bool = Field(
+        default=False,
+        description="Enable debug mode for ScriptLet operations. When enabled, scripts and logs are preserved for debugging.",
+    )
+
+    ssh_full_mesh_check: bool = Field(
+        default=False,
+        description="Enable full mesh SSH connectivity testing between all cluster nodes.",
+    )
+
+    ssh_connection_timeout: int = Field(
+        default=5,
+        ge=1,
+        le=30,
+        description="Timeout in seconds for SSH connection attempts during full mesh testing.",
+    )
 
     @field_validator('rdma_connectivity_check')
     @classmethod
     def validate_connectivity_check(cls, v: str) -> str:
         """Validate RDMA connectivity check setting."""
-        valid_modes = ['basic', 'full_mesh', 'sample', 'skip']
+        valid_modes = ['basic', 'full_mesh', 'cross_interface_full_mesh', 'sample', 'skip']
         if v not in valid_modes:
             raise ValueError(f"rdma_connectivity_check must be one of: {', '.join(valid_modes)}")
         return v

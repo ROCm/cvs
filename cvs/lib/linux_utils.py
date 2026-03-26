@@ -226,7 +226,7 @@ def get_rdma_nic_dict(phdl):
     rdma_dict = {}
 
     # Run 'rdma link' across node(s); expect a dict: { node_name: "<multiline stdout>", ... }
-    out_dict = phdl.exec('sudo rdma link')
+    out_dict = phdl.exec('rdma link')
     # gid_dict_t = phdl.exec('sudo show_gids | grep -i v2 --color=never')
     for node in out_dict.keys():
         rdma_dict[node] = {}
@@ -281,7 +281,7 @@ def get_active_rdma_nic_dict(phdl):
     """
 
     rdma_dict = {}
-    out_dict = phdl.exec('sudo rdma link')
+    out_dict = phdl.exec('rdma link')
     # gid_dict_t = phdl.exec('sudo show_gids | grep -i v2 --color=never')
     for node in out_dict.keys():
         rdma_dict[node] = {}

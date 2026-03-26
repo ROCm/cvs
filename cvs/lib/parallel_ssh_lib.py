@@ -43,10 +43,24 @@ class Pssh:
             print(self.reachable_hosts)
             print(self.user)
             print(self.pkey)
-            self.client = ParallelSSHClient(self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30)
+            self.client = ParallelSSHClient(
+                self.reachable_hosts,
+                user=self.user,
+                pkey=self.pkey,
+                keepalive_seconds=30,
+                timeout=15,
+                num_retries=1,
+                retry_delay=2,
+            )
         else:
             self.client = ParallelSSHClient(
-                self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+                self.reachable_hosts,
+                user=self.user,
+                password=self.password,
+                keepalive_seconds=30,
+                timeout=15,
+                num_retries=1,
+                retry_delay=2,
             )
 
     def check_connectivity(self, hosts):
@@ -61,8 +75,9 @@ class Pssh:
             user=self.user,
             pkey=self.pkey if self.password is None else None,
             password=self.password,
-            num_retries=0,
-            timeout=2,
+            num_retries=1,
+            retry_delay=2,
+            timeout=15,
         )
         output = temp_client.run_command('echo 1', stop_on_errors=False, read_timeout=2)
         unreachable = [item.host for item in output if item.exception]
@@ -92,11 +107,23 @@ class Pssh:
             # Recreate client with filtered reachable_hosts, only if hosts were actually pruned
             if self.password is None:
                 self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30
+                    self.reachable_hosts,
+                    user=self.user,
+                    pkey=self.pkey,
+                    keepalive_seconds=30,
+                    timeout=15,
+                    num_retries=1,
+                    retry_delay=2,
                 )
             else:
                 self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+                    self.reachable_hosts,
+                    user=self.user,
+                    password=self.password,
+                    keepalive_seconds=30,
+                    timeout=15,
+                    num_retries=1,
+                    retry_delay=2,
                 )
 
     def inform_unreachability(self, cmd_output):
@@ -238,6 +265,84 @@ class Pssh:
     def destroy_clients(self):
         print('Destroying Current phdl connections ..')
         del self.client
+
+    def prune_unreachable_nodes(self):
+        """
+        Remove unreachable nodes from the phdl object so subsequent operations
+        only run on reachable nodes.
+        """
+        if hasattr(self, 'reachable_hosts') and self.reachable_hosts:
+            original_count = len(self.host_list)
+            self.host_list = list(self.reachable_hosts)
+
+            # Recreate the ParallelSSHClient with only reachable hosts
+            if self.password is None:
+                self.client = ParallelSSHClient(
+                    self.host_list,
+                    user=self.user,
+                    pkey=self.pkey,
+                )
+            else:
+                self.client = ParallelSSHClient(
+                    self.host_list,
+                    user=self.user,
+                    password=self.password,
+                )
+
+            if self.log:
+                pruned_count = original_count - len(self.host_list)
+                self.log.info(
+                    f"Pruned {pruned_count} unreachable nodes from phdl. Now managing {len(self.host_list)} reachable nodes."
+                )
+
+    def copy_script_list(self, node_script_map, remote_path="/tmp/script.sh"):
+        """
+        Copy different script files to different nodes in parallel using SCP.
+
+        Args:
+            node_script_map: {node: local_script_path} dictionary
+            remote_path: Target path on remote nodes
+
+        Returns:
+            List of results: ["node: SUCCESS/FAILED - details"]
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        def copy_to_node(node, local_script):
+            try:
+                ssh_client = SSHClient()
+                ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+                if self.password is None:
+                    ssh_client.connect(node, username=self.user, key_filename=self.pkey)
+                else:
+                    ssh_client.connect(node, username=self.user, password=self.password)
+
+                with SCPClient(ssh_client.get_transport()) as scp:
+                    scp.put(local_script, remote_path)
+
+                ssh_client.close()
+                return f"{node}: SUCCESS"
+            except Exception as e:
+                return f"{node}: FAILED - {e}"
+
+        # Copy to all nodes in parallel (50 concurrent transfers)
+        with ThreadPoolExecutor(max_workers=50) as executor:
+            futures = [
+                executor.submit(copy_to_node, node, script_path) for node, script_path in node_script_map.items()
+            ]
+            results = [future.result() for future in futures]
+
+        # Log results
+        if self.log:
+            successful = [r for r in results if "SUCCESS" in r]
+            failed = [r for r in results if "FAILED" in r]
+            self.log.info(f"Script copy completed: {len(successful)} successful, {len(failed)} failed")
+            if failed:
+                for failure in failed:
+                    self.log.warning(f"Copy failed: {failure}")
+
+        return results
 
 
 def scp(src, dst, srcusername, srcpassword, dstusername=None, dstpassword=None):
