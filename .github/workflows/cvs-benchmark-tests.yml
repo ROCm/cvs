@@ -37,7 +37,7 @@ jobs:
             -s ./tests/inference/sglang/disagg_pd_deepseek_r1.py \
             --cluster_file ./input/cluster_file/4_nodes.json \
             --config_file ./input/config_file/inference/sglang/sglang_disagg_pd_mi35x.json \
-            --html=/home/arravikum@amd.com/latest_deepseek_4p_4d.html \
+            --html=/home/amd/latest_deepseek_4p_4d.html \
             --capture=tee-sys \
             --self-contained-html
 
