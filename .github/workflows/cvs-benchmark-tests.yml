@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p $GITHUB_WORKSPACE/artifacts
-          cp /home/arravikum@amd.com/latest_deepseek_4p_4d.html \
+          cp /home/amd/latest_deepseek_4p_4d.html \
              $GITHUB_WORKSPACE/artifacts/latest_deepseek_4p_4d.html
 
       - name: Upload benchmark HTML report
