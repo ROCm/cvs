@@ -39,6 +39,8 @@ export function RCCLTimelinePage() {
   const [timeRange, setTimeRange] = useState(3600) // 1 hour default
   const [filterType, setFilterType] = useState<string>('')
 
+  const [truncated, setTruncated] = useState(false)
+
   const fetchEvents = useCallback(async () => {
     try {
       setLoading(true)
@@ -47,8 +49,10 @@ export function RCCLTimelinePage() {
         now - timeRange,
         now,
         filterType || undefined
-      ) as RCCLEvent[]
-      setEvents(data.sort((a, b) => b.timestamp - a.timestamp))
+      ) as { events: RCCLEvent[]; truncated: boolean }
+      const events = Array.isArray(data) ? data : (data.events ?? [])
+      setEvents(events.sort((a: RCCLEvent, b: RCCLEvent) => b.timestamp - a.timestamp))
+      setTruncated(Array.isArray(data) ? false : (data.truncated ?? false))
     } catch {
       // silently handle
     } finally {
@@ -114,7 +118,7 @@ export function RCCLTimelinePage() {
         </div>
       </div>
 
-      {/* Event count */}
+      {/* Event count + truncation warning */}
       <Card>
         <CardContent className="p-4">
           <div className="flex items-center gap-4">
@@ -122,6 +126,11 @@ export function RCCLTimelinePage() {
             <span className="text-sm text-gray-600">
               {events.length} events in the selected time range
             </span>
+            {truncated && (
+              <span className="text-xs text-yellow-700 bg-yellow-100 px-2 py-0.5 rounded-full">
+                In-memory log capped — oldest events may be missing. Enable Redis for full history.
+              </span>
+            )}
           </div>
         </CardContent>
       </Card>

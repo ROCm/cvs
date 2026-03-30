@@ -57,14 +57,14 @@ async def get_rccl_events(
     since: Optional[float] = Query(None, description="Start timestamp (unix)"),
     until: Optional[float] = Query(None, description="End timestamp (unix)"),
     event_type: Optional[str] = Query(None, alias="type"),
-) -> list[dict]:
-    """Filtered event log from Redis event stream."""
+) -> dict:
+    """Filtered event log from Redis event stream (or in-memory fallback)."""
     from app.main import app_state
     import time
 
     data_store = getattr(app_state, 'rccl_data_store', None)
     if data_store is None:
-        return []
+        return {"events": [], "truncated": False}
 
     start = since or (time.time() - 3600)  # default: last hour
     end = until or time.time()
@@ -72,7 +72,11 @@ async def get_rccl_events(
 
     if event_type:
         events = [e for e in events if e.get("event_type") == event_type]
-    return events
+
+    return {
+        "events": events,
+        "truncated": data_store.is_memory_capped,
+    }
 
 
 @router.post("/markers", status_code=201)

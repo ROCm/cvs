@@ -62,7 +62,9 @@ class RCCLDataStore:
                 mapping={"data": payload, "ts": str(snapshot.get("timestamp", ""))},
             )
         except Exception as e:
-            logger.warning(f"RCCLDataStore.push_snapshot failed: {e}")
+            logger.warning(f"RCCLDataStore.push_snapshot failed (falling back to memory): {e}")
+            self._mem_snapshots.append(snapshot)
+            self._mem_current = snapshot
 
     async def push_event(self, event: dict) -> None:
         """Atomically append event to event stream."""
@@ -78,7 +80,8 @@ class RCCLDataStore:
                 approximate=True,
             )
         except Exception as e:
-            logger.warning(f"RCCLDataStore.push_event failed: {e}")
+            logger.warning(f"RCCLDataStore.push_event failed (falling back to memory): {e}")
+            self._mem_events.append(event)
 
     async def get_recent_snapshots(self, count: int = 50) -> list[dict]:
         """Return the most recent N snapshots, newest first."""
@@ -104,13 +107,20 @@ class RCCLDataStore:
             logger.warning(f"RCCLDataStore.get_current_snapshot failed: {e}")
             return None
 
+    @property
+    def is_memory_capped(self) -> bool:
+        """True when the in-memory event buffer has reached its maximum capacity."""
+        return self._r is None and len(self._mem_events) >= _MEMORY_EVENT_MAX
+
     async def get_events_in_range(self, start_ts: float, end_ts: float) -> list[dict]:
-        """Return events within a UTC timestamp range using stream entry IDs."""
+        """Return events within a UTC timestamp range using stream entry IDs.
+        In-memory results are sorted by timestamp to handle NTP clock adjustments."""
         if self._r is None:
-            return [
+            results = [
                 e for e in self._mem_events
                 if start_ts <= e.get("timestamp", 0) <= end_ts
             ]
+            return sorted(results, key=lambda e: e.get("timestamp", 0))
         try:
             start_id = f"{int(start_ts * 1000)}-0"
             end_id = f"{int(end_ts * 1000)}-0"

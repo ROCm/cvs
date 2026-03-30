@@ -104,7 +104,28 @@ class RCCLRasClient:
         cmd = b"VERBOSE STATUS\n" if verbose else b"STATUS\n"
         self._writer.write(cmd)
         await self._writer.drain()
-        data = await asyncio.wait_for(self._reader.read(-1), timeout=30.0)
+        # rcclras streams the response in chunks (e.g. sends header, then waits for
+        # all ranks to report before sending the communicator table).
+        # asyncio.StreamReader.read(n) returns as soon as ANY data is available —
+        # it does NOT wait for EOF.  We must loop until read() returns b'' (EOF).
+        # The 30s timeout wraps the entire accumulation, and we cap at 1 MB total.
+        chunks: list[bytes] = []
+        total = 0
+        _MAX = 1024 * 1024
+
+        async def _read_all() -> bytes:
+            nonlocal total
+            while total < _MAX:
+                chunk = await self._reader.read(_MAX - total)
+                if not chunk:  # EOF
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            return b"".join(chunks)
+
+        data = await asyncio.wait_for(_read_all(), timeout=30.0)
+        if total >= _MAX:
+            logger.warning("rcclras VERBOSE STATUS response truncated at 1 MB — unexpected output size")
         return data.decode()
 
     async def start_monitor(self, groups: str = "all") -> AsyncIterator[str]:
