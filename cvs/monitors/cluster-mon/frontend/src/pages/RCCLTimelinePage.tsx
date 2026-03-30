@@ -13,12 +13,23 @@ interface RCCLEvent {
   step?: number
   loss?: number
   rank?: number
+  from_state?: string
+  to_state?: string
+  leader_node?: string
 }
 
 const EVENT_COLORS: Record<string, string> = {
   lifecycle: 'bg-blue-100 text-blue-800',
   trace: 'bg-purple-100 text-purple-800',
   training_marker: 'bg-green-100 text-green-800',
+  job_start: 'bg-green-100 text-green-800',
+  job_start_degraded: 'bg-yellow-100 text-yellow-800',
+  job_end: 'bg-gray-100 text-gray-700',
+  job_degraded: 'bg-orange-100 text-orange-800',
+  job_recovered: 'bg-green-100 text-green-800',
+  node_unreachable: 'bg-red-100 text-red-800',
+  collector_error: 'bg-red-100 text-red-800',
+  state_change: 'bg-blue-100 text-blue-800',
   error: 'bg-red-100 text-red-800',
 }
 
@@ -83,9 +94,13 @@ export function RCCLTimelinePage() {
             className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
           >
             <option value="">All types</option>
-            <option value="lifecycle">Lifecycle</option>
-            <option value="trace">Trace</option>
+            <option value="job_start">Job Start</option>
+            <option value="job_end">Job End</option>
+            <option value="job_degraded">Degraded</option>
+            <option value="job_recovered">Recovered</option>
+            <option value="node_unreachable">Unreachable</option>
             <option value="training_marker">Training</option>
+            <option value="trace">Trace</option>
           </select>
 
           <button
@@ -157,6 +172,14 @@ export function RCCLTimelinePage() {
                           <span className="text-xs text-gray-500">Rank {event.rank}</span>
                         )}
                       </div>
+                      {event.from_state && event.to_state && (
+                        <p className="text-sm text-gray-700 font-mono">
+                          {event.from_state} → {event.to_state}
+                        </p>
+                      )}
+                      {event.leader_node && (
+                        <p className="text-xs text-gray-500 mt-0.5">Leader: {event.leader_node}</p>
+                      )}
                       {event.details && (
                         <p className="text-sm text-gray-700">{event.details}</p>
                       )}

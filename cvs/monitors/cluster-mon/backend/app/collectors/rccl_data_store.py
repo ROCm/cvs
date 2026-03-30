@@ -4,13 +4,21 @@ Redis-backed RCCL data store using Redis Streams.
 XADD+MAXLEN is atomic (single command), fixing the LPUSH+LTRIM race condition.
 Stream IDs embed millisecond timestamps, enabling time-range queries without
 a separate sorted set.
+
+When redis_client is None, falls back to a bounded in-memory buffer so that
+events and snapshots are available for the current session without Redis.
 """
 
+import collections
 import json
 import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# In-memory fallback caps (no Redis)
+_MEMORY_EVENT_MAX = 500
+_MEMORY_SNAPSHOT_MAX = 100
 
 
 class RCCLDataStore:
@@ -23,17 +31,24 @@ class RCCLDataStore:
         """
         Args:
             redis_client: redis.asyncio.Redis instance from app_state.redis, or None.
-                          All methods degrade silently when redis_client is None.
+                          When None, an in-memory deque is used as a fallback so that
+                          events are available for the current session.
             snapshot_max: Maximum number of entries in the snapshot stream.
             event_max: Maximum number of entries in the event stream.
         """
         self._r = redis_client
         self._snapshot_max = snapshot_max
         self._event_max = event_max
+        # In-memory fallback buffers (used only when Redis is unavailable)
+        self._mem_events: collections.deque[dict] = collections.deque(maxlen=_MEMORY_EVENT_MAX)
+        self._mem_snapshots: collections.deque[dict] = collections.deque(maxlen=_MEMORY_SNAPSHOT_MAX)
+        self._mem_current: Optional[dict] = None
 
     async def push_snapshot(self, snapshot: dict) -> None:
         """Atomically append snapshot to ring buffer and update current."""
         if self._r is None:
+            self._mem_snapshots.append(snapshot)
+            self._mem_current = snapshot
             return
         try:
             payload = json.dumps(snapshot)
@@ -52,6 +67,7 @@ class RCCLDataStore:
     async def push_event(self, event: dict) -> None:
         """Atomically append event to event stream."""
         if self._r is None:
+            self._mem_events.append(event)
             return
         try:
             # approximate=True trims in whole radix tree nodes — efficient for high-volume
@@ -67,7 +83,7 @@ class RCCLDataStore:
     async def get_recent_snapshots(self, count: int = 50) -> list[dict]:
         """Return the most recent N snapshots, newest first."""
         if self._r is None:
-            return []
+            return list(reversed(list(self._mem_snapshots)))[:count]
         try:
             entries = await self._r.xrevrange(self.SNAPSHOT_STREAM, count=count)
             return [json.loads(e[1]["data"]) for e in entries]
@@ -78,7 +94,7 @@ class RCCLDataStore:
     async def get_current_snapshot(self) -> Optional[dict]:
         """Return the latest snapshot from the CURRENT_KEY hash."""
         if self._r is None:
-            return None
+            return self._mem_current
         try:
             result = await self._r.hget(self.CURRENT_KEY, "data")
             if result:
@@ -91,7 +107,10 @@ class RCCLDataStore:
     async def get_events_in_range(self, start_ts: float, end_ts: float) -> list[dict]:
         """Return events within a UTC timestamp range using stream entry IDs."""
         if self._r is None:
-            return []
+            return [
+                e for e in self._mem_events
+                if start_ts <= e.get("timestamp", 0) <= end_ts
+            ]
         try:
             start_id = f"{int(start_ts * 1000)}-0"
             end_id = f"{int(end_ts * 1000)}-0"

@@ -103,14 +103,17 @@ def test_rccl_models_import():
 
 @pytest.mark.asyncio
 async def test_rccl_data_store_degrades_without_redis():
+    """Without Redis, in-memory fallback buffers are used."""
     from app.collectors.rccl_data_store import RCCLDataStore
     store = RCCLDataStore(redis_client=None)
     await store.push_snapshot({"timestamp": 1.0})
     await store.push_event({"timestamp": 1.0})
     result = await store.get_recent_snapshots()
-    assert result == []
+    assert result == [{"timestamp": 1.0}]
     result = await store.get_current_snapshot()
-    assert result is None
+    assert result == {"timestamp": 1.0}
+    events = await store.get_events_in_range(0.0, 2.0)
+    assert events == [{"timestamp": 1.0}]
 
 
 def test_ncclfunction_enum_str_values():
