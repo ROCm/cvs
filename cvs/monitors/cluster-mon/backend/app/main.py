@@ -373,7 +373,15 @@ async def _reload_configuration_inner():
             app_state.is_collecting = True
             for cls in REGISTERED_COLLECTORS:
                 if cls.name in collectors_to_restart:
+                    old_collector = app_state.collectors.get(cls.name)
                     c = cls()
+                    # Transfer stateful fields so a config reload doesn't emit a
+                    # spurious job_start event (new instance initialises to NO_JOB).
+                    if old_collector is not None:
+                        if hasattr(old_collector, 'job_state') and hasattr(c, 'job_state'):
+                            c.job_state = old_collector.job_state
+                        if hasattr(c, '_bootstrapped'):
+                            c._bootstrapped = True  # skip bootstrap — state already known
                     app_state.collectors[c.name] = c
                     app_state.collector_tasks[c.name] = _start_collector_task(c)
                     logger.info(f"Restarted collector: {c.name}")
@@ -441,6 +449,7 @@ class ConnectionManager:
         self._queues: dict[int, asyncio.Queue] = {}
         self._send_tasks: dict[int, asyncio.Task] = {}
         self._max_queue_size = max_queue_size
+        self._closing: set[int] = set()  # guard against concurrent double-close
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -466,16 +475,22 @@ class ConnectionManager:
         await self._remove(id(websocket))
 
     async def _remove(self, client_id: int):
-        task = self._send_tasks.pop(client_id, None)
-        if task and not task.done():
-            task.cancel()
-        self._queues.pop(client_id, None)
-        ws = self._clients.pop(client_id, None)
-        if ws:
-            try:
-                await ws.close()
-            except Exception:
-                pass
+        if client_id in self._closing:
+            return
+        self._closing.add(client_id)
+        try:
+            task = self._send_tasks.pop(client_id, None)
+            if task and not task.done():
+                task.cancel()
+            self._queues.pop(client_id, None)
+            ws = self._clients.pop(client_id, None)
+            if ws:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+        finally:
+            self._closing.discard(client_id)
 
     def broadcast(self, message: dict):
         """Non-blocking broadcast: enqueues to each client's queue."""
@@ -704,22 +719,34 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down CVS Cluster Monitor")
 
-    # Stop collection
+    # 1. Signal all background loops to stop accepting new work
     app_state.is_collecting = False
+
+    # 2. Cancel collector tasks.  Collectors call SSH inside asyncio.to_thread()
+    #    which cannot be interrupted once the thread has started.  Set client to
+    #    None first so any in-flight thread that finishes and tries to issue the
+    #    next SSH command gets the "no client" early-return rather than an
+    #    AttributeError after destroy_clients() deletes the attribute.
+    if app_state.ssh_manager:
+        app_state.ssh_manager.client = None  # type: ignore[assignment]
+
     for task in app_state.collector_tasks.values():
         task.cancel()
     if app_state.collector_tasks:
         await asyncio.gather(*app_state.collector_tasks.values(), return_exceptions=True)
+
     if app_state.probe_task:
         app_state.probe_task.cancel()
         try:
             await app_state.probe_task
         except asyncio.CancelledError:
             pass
-    # Close Redis
+
+    # 3. Close Redis
     if app_state.redis:
         await app_state.redis.aclose()
-    # Close SSH
+
+    # 4. Destroy SSH connections (client already None, this cleans up port-forward state)
     if app_state.ssh_manager:
         app_state.ssh_manager.destroy_clients()
 

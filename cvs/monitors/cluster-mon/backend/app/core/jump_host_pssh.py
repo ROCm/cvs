@@ -419,7 +419,7 @@ class JumpHostPssh:
             channel = await asyncio.to_thread(
                 self.jump_transport.open_channel,
                 "direct-tcpip",
-                (node, remote_port),
+                ("::1", remote_port),  # rcclras binds to IPv6 loopback only
                 ("127.0.0.1", 0),
             )
         except Exception:

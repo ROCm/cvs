@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, AlertTriangle, XCircle, CheckCircle, Radio } from 'lucide-react'
+import { RefreshCw, AlertTriangle, XCircle, CheckCircle, Radio, Clock } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { api } from '@/services/api'
 
@@ -24,6 +24,7 @@ interface RCCLStatus {
       node_addr: string
       pid: number
       cuda_dev: number
+      status?: { async_error: number; init_state: number }
     }>
   }>
   dead_peers?: string[]
@@ -37,10 +38,15 @@ const STATE_CONFIG: Record<string, { label: string; color: string; bg: string; i
   error: { label: 'Error', color: 'text-red-600', bg: 'bg-red-50', icon: XCircle },
 }
 
+const POLL_INTERVAL_MS = 10000
+// Backend RCCL collector polls every 30s. Stale = missed 2 full backend cycles.
+const STALE_THRESHOLD_S = 75
+
 export function RCCLHealthPage() {
   const [status, setStatus] = useState<RCCLStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now() / 1000)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -57,9 +63,18 @@ export function RCCLHealthPage() {
 
   useEffect(() => {
     fetchStatus()
-    const interval = setInterval(fetchStatus, 10000) // refresh every 10s
+    const interval = setInterval(fetchStatus, POLL_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [fetchStatus])
+
+  // Tick every second so the staleness indicator stays live
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now() / 1000), 1000)
+    return () => clearInterval(tick)
+  }, [])
+
+  const snapshotAge = status?.timestamp ? now - status.timestamp : null
+  const isStale = snapshotAge !== null && snapshotAge > STALE_THRESHOLD_S
 
   const stateConfig = STATE_CONFIG[status?.state || 'no_job'] || STATE_CONFIG.no_job
   const StateIcon = stateConfig.icon
@@ -72,19 +87,40 @@ export function RCCLHealthPage() {
           <h1 className="text-2xl font-bold text-gray-900">RCCL Health</h1>
           <p className="text-sm text-gray-500 mt-1">Real-time RCCL communicator monitoring via rcclras</p>
         </div>
-        <button
-          onClick={fetchStatus}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          disabled={loading}
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {snapshotAge !== null && (
+            <span className={`flex items-center gap-1 text-xs ${isStale ? 'text-red-500 font-semibold' : 'text-gray-400'}`}>
+              <Clock className="h-3 w-3" />
+              {isStale ? 'Stale — ' : ''}
+              {snapshotAge < 60
+                ? `${Math.round(snapshotAge)}s ago`
+                : `${Math.round(snapshotAge / 60)}m ago`}
+            </span>
+          )}
+          <button
+            onClick={fetchStatus}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            disabled={loading}
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
           {error}
+        </div>
+      )}
+
+      {isStale && !error && (
+        <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg flex items-center gap-2 text-sm">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          Data may be stale — last snapshot was {snapshotAge !== null && snapshotAge < 60
+            ? `${Math.round(snapshotAge)} seconds`
+            : `${Math.round((snapshotAge ?? 0) / 60)} minutes`} ago.
+          The collector may be unreachable or the rcclras server may be down.
         </div>
       )}
 

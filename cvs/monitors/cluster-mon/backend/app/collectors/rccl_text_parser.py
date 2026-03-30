@@ -40,9 +40,22 @@ class RCCLTextParser:
     _HIP_DRIVER_RE = re.compile(
         r"HIP runtime version (\d+),\s*amdgpu driver version (\d+)"
     )
-    _JOB_SUMMARY_RE = re.compile(
+    # Anchored to the "Job summary" section to avoid matching spurious 5-integer lines.
+    # Lookahead stops at the next section header (word chars followed by a === underline)
+    # or end-of-string.  We deliberately do NOT use (?=^\S|\Z) because the column header
+    # line "(total)   per node ..." starts at column 0 and would prematurely end the match.
+    _JOB_SUMMARY_SECTION_RE = re.compile(
+        r"^Job summary\s*\n=+\s*\n(.*?)(?=^\w[^\n]*\n=+|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    _JOB_SUMMARY_ROW_RE = re.compile(
         r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$",
         re.MULTILINE,
+    )
+    # Anchored to the "Communicators" section (same lookahead rationale as above)
+    _COMM_SECTION_RE = re.compile(
+        r"^Communicators.*?\n=+\s*\n(.*?)(?=^\w[^\n]*\n=+|\Z)",
+        re.MULTILINE | re.DOTALL,
     )
     _COMM_ROW_RE = re.compile(
         r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+(?:-\d+)?)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$",
@@ -95,10 +108,11 @@ class RCCLTextParser:
         hip_version = int(hip_match.group(1)) if hip_match else 0
         driver_version = int(hip_match.group(2)) if hip_match else 0
 
-        # Job summary numbers table
-        # Format:   Nodes  Processes  GPUs  Processes  GPUs
-        #              1          8     1          8      8
-        summary_match = self._JOB_SUMMARY_RE.search(text)
+        # Job summary numbers table — search within the "Job summary" section only
+        # to avoid false-matching any other line that happens to have 5 integers.
+        section_match = self._JOB_SUMMARY_SECTION_RE.search(text)
+        section = section_match.group(1) if section_match else ""
+        summary_match = self._JOB_SUMMARY_ROW_RE.search(section)
         if not summary_match:
             return None
 
@@ -129,18 +143,21 @@ class RCCLTextParser:
         Extract communicator groups from the table after 'Communicators'.
 
         Format:
-        Group  Comms  Nodes  Ranks  Ranks  Ranks  Status  Errors
-            #  in grp  per c  per n  per c  in grp
-            0      1      1      8      8      8  RUNNING     OK
+        Group  Comms  Nodes  Ranks    Ranks    Ranks   Status  Errors
+            #  in grp per c  per node per comm in group
+            0      1      2    7-8       16       15   RUNNING  INCOMPLETE
         """
+        # Search within the Communicators section to avoid matching other tables
+        section_match = self._COMM_SECTION_RE.search(text)
+        section = section_match.group(1) if section_match else text
+
         comms = []
-        for match in self._COMM_ROW_RE.finditer(text):
+        for match in self._COMM_ROW_RE.finditer(section):
             group_num = int(match.group(1))
             comms_in_group = int(match.group(2))
-            nodes_per_comm = int(match.group(3))
-            # ranks_per_node may be a range like "7-8" on heterogeneous topologies
-            ranks_per_comm = int(match.group(5))
-            ranks_in_group = int(match.group(6))
+            # ranks_per_node (group 4) may be a range like "7-8" on heterogeneous topologies
+            ranks_per_comm = int(match.group(5))   # expected ranks in ONE communicator
+            ranks_in_group = int(match.group(6))   # actual respondents across ALL comms in group
             status = match.group(7)
             errors = match.group(8)
 
@@ -152,16 +169,16 @@ class RCCLTextParser:
             else:
                 health = RCCLJobState.HEALTHY
 
-            # responding_ranks = "Ranks in group" (actual respondents)
-            # total_ranks = "Ranks per comm" (expected total)
-            # missing_ranks = total - responding
-            missing = ranks_per_comm - ranks_in_group
+            # "Ranks in group" spans ALL communicators in the group, so total expected
+            # = ranks_per_comm * comms_in_group. Missing = expected - responding.
+            total_expected = ranks_per_comm * comms_in_group
+            missing = max(0, total_expected - ranks_in_group)
 
             # In v2.28.3, we don't get per-communicator hashes from the table,
             # so use group number as placeholder
             comms.append(RCCLCommunicator(
                 comm_hash=f"group_{group_num}",
-                total_ranks=ranks_per_comm,
+                total_ranks=total_expected,
                 responding_ranks=ranks_in_group,
                 missing_ranks=missing,
                 ranks=[],         # Per-rank detail only in verbose with outliers
@@ -184,8 +201,11 @@ class RCCLTextParser:
         """Extract error lines from the Errors section."""
         errors = []
         # Find content between "Errors" header and "Warnings" header (or end)
+        # Stop at any section header (word followed by === underline) or end of string.
+        # Using \Z (end-of-string) instead of $ (end-of-line) so the lazy .*?
+        # doesn't stop at the first line ending when re.MULTILINE is active.
         errors_section = re.search(
-            r"^Errors\s*\n=+\s*\n(.*?)(?=^Warnings\s*\n=+|\Z)",
+            r"^Errors\s*\n=+\s*\n(.*?)(?=^\w[^\n]*\n=+|\Z)",
             text,
             re.MULTILINE | re.DOTALL,
         )
