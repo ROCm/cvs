@@ -42,7 +42,10 @@ async def test_slow_client_disconnected_on_full_queue(manager):
     ws.accept = AsyncMock()
     ws.close = AsyncMock()
     # Make send_json block forever to fill the queue
-    ws.send_json = AsyncMock(side_effect=lambda msg: asyncio.sleep(100))
+    async def _block(_msg):
+        await asyncio.sleep(100)
+
+    ws.send_json = AsyncMock(side_effect=_block)
 
     await manager.connect(ws)
     assert manager.client_count == 1

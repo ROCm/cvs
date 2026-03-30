@@ -500,7 +500,7 @@ class Pssh:
             channel = await asyncio.to_thread(
                 transport.open_channel,
                 "direct-tcpip",
-                (node, remote_port),
+                ("::1", remote_port),
                 ("127.0.0.1", 0),
             )
         except Exception:

@@ -27,18 +27,18 @@ def test_rccl_collector_attrs():
     assert hasattr(RCCLCollector, 'collect_timeout')
 
 
-def test_pick_leader_returns_healthy_node():
+def test_healthy_nodes_returns_all_healthy():
     collector = RCCLCollector()
     app_state = _make_app_state(["node1", "node2"])
-    leader = collector._pick_leader(app_state)
-    assert leader in ("node1", "node2")
+    nodes = collector._healthy_nodes(app_state)
+    assert set(nodes) == {"node1", "node2"}
 
 
-def test_pick_leader_returns_none_when_all_unhealthy():
+def test_healthy_nodes_returns_empty_when_all_unhealthy():
     collector = RCCLCollector()
     app_state = MagicMock()
     app_state.node_health_status = {"node1": "unhealthy", "node2": "unreachable"}
-    assert collector._pick_leader(app_state) is None
+    assert collector._healthy_nodes(app_state) == []
 
 
 @pytest.mark.asyncio

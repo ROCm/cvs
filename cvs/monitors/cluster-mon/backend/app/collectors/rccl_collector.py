@@ -10,7 +10,10 @@ and does NOT count as a collector failure for overall_status purposes.
 
 import asyncio
 import logging
+import time
 from typing import Optional, Any
+
+from paramiko.ssh_exception import ChannelException
 
 from app.collectors.base import BaseCollector, CollectorResult, CollectorState
 from app.collectors.rccl_ras_client import RCCLRasClient, ProtocolError
@@ -38,16 +41,18 @@ class RCCLCollector(BaseCollector):
         self.job_state: RCCLJobState = RCCLJobState.NO_JOB
         self._app_state: Optional[Any] = None  # set in run() before collect()
 
-    def _pick_leader(self, app_state: Any) -> Optional[str]:
+    def _healthy_nodes(self, app_state: Any) -> list[str]:
         """
-        Return the first node with healthy status from app_state.node_health_status.
-        The existing host probe already maintains this dict -- no extra reachability
-        check needed. Returns None if all nodes are unhealthy/unreachable.
+        Return all nodes with healthy status from app_state.node_health_status,
+        in the order they appear in the config. The rcclras listener (port 28028)
+        only runs on nodes that are part of an active RCCL job, which may be any
+        subset of the configured nodes — so we must try each one.
         """
-        for node, status in app_state.node_health_status.items():
-            if status == "healthy":
-                return node
-        return None
+        return [
+            node
+            for node, status in app_state.node_health_status.items()
+            if status == "healthy"
+        ]
 
     def _health_from_snapshot(self, snapshot: RCCLSnapshot) -> RCCLJobState:
         """Derive job state from snapshot: HEALTHY if no missing ranks, DEGRADED otherwise."""
@@ -92,101 +97,142 @@ class RCCLCollector(BaseCollector):
                 error="collect() called before run() -- app_state not set",
             )
 
-        leader = self._pick_leader(app_state)
-        if leader is None:
+        candidates = self._healthy_nodes(app_state)
+        if not candidates:
             self.job_state = RCCLJobState.UNREACHABLE
             return CollectorResult(
                 collector_name=self.name,
                 timestamp=CollectorResult.now_iso(),
                 state=CollectorState.UNREACHABLE,
                 data={},
-                error="No healthy nodes available for RCCL leader",
+                error="No healthy nodes available for RCCL polling",
             )
 
         ras_port = settings.rccl.ras_port
         collective_timeout = settings.rccl.collective_timeout_secs
 
-        try:
-            async with ssh_manager.open_port_forward(leader, ras_port) as (reader, writer):
-                client = RCCLRasClient(reader, writer)
-                await client.handshake()
-                await client.set_timeout(collective_timeout)
-                raw_text = await client.get_status(verbose=True)
-                # Connection closed automatically when context exits
-
-            # Phase 1: text parser (placeholder -- returns minimal snapshot)
-            snapshot = self._parse_text_response(raw_text, leader)
-            self.job_state = self._health_from_snapshot(snapshot)
-            snapshot_dict = snapshot.model_dump()
-
-            # Store in Redis and app_state (non-blocking, degrades gracefully)
-            if hasattr(app_state, 'rccl_data_store') and app_state.rccl_data_store:
-                await app_state.rccl_data_store.push_snapshot(snapshot_dict)
-            if hasattr(app_state, 'latest_rccl_snapshot'):
-                app_state.latest_rccl_snapshot = snapshot_dict
-
-            # Broadcast RCCL snapshot to WebSocket clients
+        # Try each healthy node — rcclras only listens on nodes that are part of
+        # an active RCCL job, which may be a subset of the configured nodes.
+        for leader in candidates:
             try:
-                from app.main import broadcast_rccl
-                await broadcast_rccl(snapshot_dict)
-            except Exception:
-                pass
+                async with ssh_manager.open_port_forward(leader, ras_port) as (reader, writer):
+                    client = RCCLRasClient(reader, writer)
+                    await client.handshake()
+                    await client.set_timeout(collective_timeout)
+                    raw_text = await client.get_status(verbose=True)
 
-            collector_state = (
-                CollectorState.OK
-                if self.job_state in (RCCLJobState.HEALTHY, RCCLJobState.DEGRADED)
-                else CollectorState.NO_SERVICE
-            )
-            return CollectorResult(
-                collector_name=self.name,
-                timestamp=CollectorResult.now_iso(),
-                state=collector_state,
-                data=snapshot_dict,
-            )
+                snapshot = self._parse_text_response(raw_text, leader)
+                self.job_state = self._health_from_snapshot(snapshot)
+                snapshot_dict = snapshot.model_dump()
 
-        except ConnectionRefusedError:
-            self.job_state = RCCLJobState.NO_JOB
-            return CollectorResult(
-                collector_name=self.name,
-                timestamp=CollectorResult.now_iso(),
-                state=CollectorState.NO_SERVICE,
-                data={},
-                error=f"Port {ras_port} not listening on {leader} -- no RCCL job running",
-            )
-        except asyncio.TimeoutError:
-            self.job_state = RCCLJobState.UNREACHABLE
-            return CollectorResult(
-                collector_name=self.name,
-                timestamp=CollectorResult.now_iso(),
-                state=CollectorState.UNREACHABLE,
-                data={},
-                error=f"RAS collective timed out on {leader}",
-            )
-        except ProtocolError as e:
-            self.job_state = RCCLJobState.ERROR
-            logger.error(f"RAS protocol error on {leader}: {e}")
-            return CollectorResult(
-                collector_name=self.name,
-                timestamp=CollectorResult.now_iso(),
-                state=CollectorState.ERROR,
-                data={},
-                error=str(e),
-            )
-        except Exception as e:
-            self.job_state = RCCLJobState.ERROR
-            logger.error(f"RCCL collect() unexpected error on {leader}: {e}", exc_info=True)
-            return CollectorResult(
-                collector_name=self.name,
-                timestamp=CollectorResult.now_iso(),
-                state=CollectorState.ERROR,
-                data={},
-                error=str(e),
-            )
+                if hasattr(app_state, 'rccl_data_store') and app_state.rccl_data_store:
+                    await app_state.rccl_data_store.push_snapshot(snapshot_dict)
+                if hasattr(app_state, 'latest_rccl_snapshot'):
+                    app_state.latest_rccl_snapshot = snapshot_dict
+
+                try:
+                    from app.main import broadcast_rccl
+                    await broadcast_rccl(snapshot_dict)
+                except Exception:
+                    pass
+
+                collector_state = (
+                    CollectorState.OK
+                    if self.job_state in (RCCLJobState.HEALTHY, RCCLJobState.DEGRADED)
+                    else CollectorState.NO_SERVICE
+                )
+                return CollectorResult(
+                    collector_name=self.name,
+                    timestamp=CollectorResult.now_iso(),
+                    state=collector_state,
+                    data=snapshot_dict,
+                )
+
+            except (ConnectionRefusedError, ChannelException):
+                # Port 28028 closed on this node — no RCCL job here, try next.
+                logger.debug(f"No rcclras listener on {leader}:{ras_port}, trying next node")
+                continue
+            except asyncio.TimeoutError:
+                self.job_state = RCCLJobState.UNREACHABLE
+                return CollectorResult(
+                    collector_name=self.name,
+                    timestamp=CollectorResult.now_iso(),
+                    state=CollectorState.UNREACHABLE,
+                    data={},
+                    error=f"RAS collective timed out on {leader}",
+                )
+            except ProtocolError as e:
+                self.job_state = RCCLJobState.ERROR
+                logger.error(f"RAS protocol error on {leader}: {e}")
+                return CollectorResult(
+                    collector_name=self.name,
+                    timestamp=CollectorResult.now_iso(),
+                    state=CollectorState.ERROR,
+                    data={},
+                    error=str(e),
+                )
+            except Exception as e:
+                self.job_state = RCCLJobState.ERROR
+                logger.error(f"RCCL collect() unexpected error on {leader}: {e}", exc_info=True)
+                return CollectorResult(
+                    collector_name=self.name,
+                    timestamp=CollectorResult.now_iso(),
+                    state=CollectorState.ERROR,
+                    data={},
+                    error=str(e),
+                )
+
+        # All healthy nodes tried — no rcclras listener found anywhere.
+        self.job_state = RCCLJobState.NO_JOB
+        return CollectorResult(
+            collector_name=self.name,
+            timestamp=CollectorResult.now_iso(),
+            state=CollectorState.NO_SERVICE,
+            data={},
+            error=f"Port {ras_port} not listening on any healthy node -- no RCCL job running",
+        )
 
     def _parse_text_response(self, raw_text: str, leader: str) -> RCCLSnapshot:
         """Parse rcclras VERBOSE STATUS text output using RCCLTextParser."""
         from app.collectors.rccl_text_parser import RCCLTextParser
         return RCCLTextParser().parse(raw_text)
+
+    async def _push_state_event(
+        self,
+        prev: RCCLJobState,
+        curr: RCCLJobState,
+        app_state: Any,
+        leader: Optional[str] = None,
+    ) -> None:
+        """Push a state_change event when job_state transitions between polls."""
+        if prev == curr:
+            return
+        data_store = getattr(app_state, 'rccl_data_store', None)
+        if not data_store:
+            return
+
+        _TYPE_MAP = {
+            (RCCLJobState.NO_JOB,      RCCLJobState.HEALTHY):    "job_start",
+            (RCCLJobState.NO_JOB,      RCCLJobState.DEGRADED):   "job_start_degraded",
+            (RCCLJobState.HEALTHY,     RCCLJobState.DEGRADED):   "job_degraded",
+            (RCCLJobState.DEGRADED,    RCCLJobState.HEALTHY):    "job_recovered",
+            (RCCLJobState.HEALTHY,     RCCLJobState.NO_JOB):     "job_end",
+            (RCCLJobState.DEGRADED,    RCCLJobState.NO_JOB):     "job_end",
+            (RCCLJobState.HEALTHY,     RCCLJobState.UNREACHABLE):"node_unreachable",
+            (RCCLJobState.DEGRADED,    RCCLJobState.UNREACHABLE):"node_unreachable",
+            (RCCLJobState.HEALTHY,     RCCLJobState.ERROR):      "collector_error",
+            (RCCLJobState.DEGRADED,    RCCLJobState.ERROR):      "collector_error",
+        }
+        event_type = _TYPE_MAP.get((prev, curr), "state_change")
+
+        await data_store.push_event({
+            "event_type": event_type,
+            "timestamp": time.time(),
+            "from_state": prev,
+            "to_state": curr,
+            "leader_node": leader,
+        })
+        logger.info(f"RCCL state transition: {prev} → {curr} (event: {event_type})")
 
 
 try:

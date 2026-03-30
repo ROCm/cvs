@@ -680,6 +680,15 @@ async def lifespan(app: FastAPI):
     # Start metrics collection using unified collector registry
     if app_state.ssh_manager:
         logger.info("Starting metrics collection (BaseCollector pattern)...")
+
+        # Pre-seed node_health_status so RCCL collector can pick a leader on its
+        # first poll cycle, before any GPU/NIC poll has completed.
+        startup_nodes = settings.load_nodes_from_file()
+        for node in startup_nodes:
+            if node not in app_state.node_health_status:
+                app_state.node_health_status[node] = "healthy"
+                app_state.node_failure_count[node] = 0
+
         app_state.is_collecting = True
 
         for cls in REGISTERED_COLLECTORS:
