@@ -383,6 +383,12 @@ class Pssh:
         # CRITICAL: Acquire lock to prevent concurrent SSH operations
         # parallel-ssh/paramiko/libssh2 are NOT thread-safe
         with _ssh_lock:
+            # Re-check after acquiring the lock: destroy_clients() may have run
+            # while we were waiting, setting self.client = None.
+            if not self.client:
+                logger.info("SSH client destroyed before command could run (shutdown race) — skipping")
+                return {host: "ABORT: Host Unreachable Error" for host in self.host_list}
+
             logger.info(f"CVS Pssh executing: {cmd[:100]}...")
             logger.info(f"Calling ParallelSSHClient.run_command() on {len(self.reachable_hosts)} reachable nodes...")
             logger.info(f"  Timeout: {timeout if timeout else 'default'}")
@@ -530,8 +536,8 @@ class Pssh:
 
     def destroy_clients(self):
         logger.info('Destroying Current phdl connections ..')
-        if self.client:
-            del self.client
+        with _ssh_lock:
+            self.client = None  # set to None (not del) so exec() guard stays valid
         with self._pf_lock:
             for c in self._pf_clients.values():
                 try:

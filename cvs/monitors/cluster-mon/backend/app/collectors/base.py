@@ -54,6 +54,13 @@ class BaseCollector(ABC):
         """
         ...
 
+    async def on_collect_timeout(self, app_state: Any) -> None:
+        """
+        Called when collect() is cancelled by the outer collect_timeout.
+        Override in subclasses to update internal state machines on timeout.
+        The default implementation is a no-op.
+        """
+
     async def run(self, ssh_manager, app_state: Any) -> None:
         """
         Default task body. Loops until app_state.is_collecting is False.
@@ -70,6 +77,7 @@ class BaseCollector(ABC):
                 logger.warning(
                     f"{self.name} collect() timed out after {self.collect_timeout}s"
                 )
+                await self.on_collect_timeout(app_state)
                 result = CollectorResult(
                     collector_name=self.name,
                     timestamp=CollectorResult.now_iso(),
