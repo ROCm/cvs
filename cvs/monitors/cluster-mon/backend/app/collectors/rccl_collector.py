@@ -55,13 +55,9 @@ class RCCLCollector(BaseCollector):
         ]
 
     def _health_from_snapshot(self, snapshot: RCCLSnapshot) -> RCCLJobState:
-        """Derive job state from snapshot: HEALTHY if no missing ranks, DEGRADED otherwise."""
-        if not snapshot.communicators:
-            return RCCLJobState.HEALTHY
-        for comm in snapshot.communicators:
-            if comm.missing_ranks > 0:
-                return RCCLJobState.DEGRADED
-        return RCCLJobState.HEALTHY
+        """Return the job state already computed by the parser (covers missing ranks,
+        async errors, dead peers, and inconsistent topology)."""
+        return snapshot.state
 
     async def run(self, ssh_manager, app_state: Any) -> None:
         """
@@ -97,9 +93,14 @@ class RCCLCollector(BaseCollector):
                 error="collect() called before run() -- app_state not set",
             )
 
+        prev_state = self.job_state
+
         candidates = self._healthy_nodes(app_state)
         if not candidates:
             self.job_state = RCCLJobState.UNREACHABLE
+            await self._push_state_event(prev_state, self.job_state, app_state)
+            if hasattr(app_state, 'latest_rccl_snapshot'):
+                app_state.latest_rccl_snapshot = {"state": "unreachable"}
             return CollectorResult(
                 collector_name=self.name,
                 timestamp=CollectorResult.now_iso(),
@@ -123,6 +124,7 @@ class RCCLCollector(BaseCollector):
 
                 snapshot = self._parse_text_response(raw_text, leader)
                 self.job_state = self._health_from_snapshot(snapshot)
+                await self._push_state_event(prev_state, self.job_state, app_state, leader)
                 snapshot_dict = snapshot.model_dump()
 
                 if hasattr(app_state, 'rccl_data_store') and app_state.rccl_data_store:
@@ -154,6 +156,7 @@ class RCCLCollector(BaseCollector):
                 continue
             except asyncio.TimeoutError:
                 self.job_state = RCCLJobState.UNREACHABLE
+                await self._push_state_event(prev_state, self.job_state, app_state, leader)
                 return CollectorResult(
                     collector_name=self.name,
                     timestamp=CollectorResult.now_iso(),
@@ -184,6 +187,9 @@ class RCCLCollector(BaseCollector):
 
         # All healthy nodes tried — no rcclras listener found anywhere.
         self.job_state = RCCLJobState.NO_JOB
+        await self._push_state_event(prev_state, self.job_state, app_state)
+        if hasattr(app_state, 'latest_rccl_snapshot'):
+            app_state.latest_rccl_snapshot = {"state": "no_job"}
         return CollectorResult(
             collector_name=self.name,
             timestamp=CollectorResult.now_iso(),

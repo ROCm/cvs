@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, Activity, AlertTriangle, XCircle, CheckCircle, Radio } from 'lucide-react'
+import { RefreshCw, AlertTriangle, XCircle, CheckCircle, Radio } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { api } from '@/services/api'
 
 interface RCCLStatus {
   state: string
   timestamp?: number
+  errors?: string[]
   job_summary?: {
     total_nodes: number
     total_processes: number
@@ -128,6 +129,23 @@ export function RCCLHealthPage() {
         </Card>
       )}
 
+      {/* Errors from rcclras */}
+      {status?.errors && status.errors.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-red-600 flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5" />
+              Errors ({status.errors.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="text-xs text-red-800 bg-red-50 rounded-lg p-4 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
+              {status.errors.join('\n')}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Communicators */}
       {status?.communicators && status.communicators.length > 0 && (
         <div className="space-y-4">
@@ -135,13 +153,16 @@ export function RCCLHealthPage() {
             Communicators ({status.communicators.length})
           </h3>
           {status.communicators.map((comm) => {
-            const healthColor = comm.health === 'healthy' ? 'green' : comm.health === 'degraded' ? 'yellow' : 'red'
+            const badgeClass =
+              comm.health === 'healthy' ? 'bg-green-100 text-green-700' :
+              comm.health === 'degraded' ? 'bg-yellow-100 text-yellow-700' :
+              'bg-red-100 text-red-700'
             return (
               <Card key={comm.comm_hash}>
                 <CardHeader>
                   <CardTitle className="flex items-center justify-between">
                     <span className="font-mono text-sm">{comm.comm_hash}</span>
-                    <span className={`px-3 py-1 rounded-full text-sm font-medium bg-${healthColor}-100 text-${healthColor}-700`}>
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${badgeClass}`}>
                       {comm.health}
                     </span>
                   </CardTitle>
@@ -174,17 +195,27 @@ export function RCCLHealthPage() {
                             <th className="text-left py-2 px-3 font-medium text-gray-500">Node</th>
                             <th className="text-left py-2 px-3 font-medium text-gray-500">PID</th>
                             <th className="text-left py-2 px-3 font-medium text-gray-500">GPU</th>
+                            <th className="text-left py-2 px-3 font-medium text-gray-500">Status</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {comm.ranks.map((rank) => (
-                            <tr key={rank.comm_rank} className="border-b border-gray-100 hover:bg-gray-50">
-                              <td className="py-2 px-3 font-mono">{rank.comm_rank}</td>
-                              <td className="py-2 px-3 font-mono">{rank.node_addr}</td>
-                              <td className="py-2 px-3">{rank.pid}</td>
-                              <td className="py-2 px-3">{rank.cuda_dev}</td>
-                            </tr>
-                          ))}
+                          {comm.ranks.map((rank) => {
+                            const hasError = rank.status?.async_error !== 0 || rank.status?.init_state !== 0
+                            return (
+                              <tr key={rank.comm_rank} className={`border-b border-gray-100 ${hasError ? 'bg-red-50' : 'hover:bg-gray-50'}`}>
+                                <td className="py-2 px-3 font-mono">{rank.comm_rank}</td>
+                                <td className="py-2 px-3 font-mono">{rank.node_addr}</td>
+                                <td className="py-2 px-3">{rank.pid}</td>
+                                <td className="py-2 px-3">{rank.cuda_dev}</td>
+                                <td className="py-2 px-3">
+                                  {hasError
+                                    ? <span className="text-xs text-red-600 font-medium">error ({rank.status?.async_error})</span>
+                                    : <span className="text-xs text-green-600">ok</span>
+                                  }
+                                </td>
+                              </tr>
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>

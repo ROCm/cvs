@@ -89,6 +89,45 @@ def test_health_from_snapshot_healthy():
     assert collector._health_from_snapshot(snapshot) == RCCLJobState.HEALTHY
 
 
+@pytest.mark.asyncio
+async def test_state_change_event_emitted_on_job_start():
+    """Transition NO_JOB → HEALTHY should push a job_start event."""
+    collector = RCCLCollector()
+    collector.job_state = RCCLJobState.NO_JOB
+
+    data_store = MagicMock()
+    data_store.push_event = AsyncMock()
+
+    app_state = MagicMock()
+    app_state.rccl_data_store = data_store
+
+    await collector._push_state_event(
+        RCCLJobState.NO_JOB, RCCLJobState.HEALTHY, app_state, leader="node1"
+    )
+
+    data_store.push_event.assert_called_once()
+    event = data_store.push_event.call_args[0][0]
+    assert event["event_type"] == "job_start"
+    assert event["from_state"] == RCCLJobState.NO_JOB
+    assert event["to_state"] == RCCLJobState.HEALTHY
+    assert event["leader_node"] == "node1"
+
+
+@pytest.mark.asyncio
+async def test_no_event_when_state_unchanged():
+    """No event should be emitted when state does not change."""
+    collector = RCCLCollector()
+    data_store = MagicMock()
+    data_store.push_event = AsyncMock()
+    app_state = MagicMock()
+    app_state.rccl_data_store = data_store
+
+    await collector._push_state_event(
+        RCCLJobState.HEALTHY, RCCLJobState.HEALTHY, app_state
+    )
+    data_store.push_event.assert_not_called()
+
+
 def test_rccl_endpoints_importable():
     from app.api.rccl_endpoints import router
     routes = [r.path for r in router.routes]

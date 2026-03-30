@@ -90,6 +90,7 @@ class RCCLSnapshot(BaseModel):
     communicators: list[RCCLCommunicator] = []
     peers: list[RCCLPeer] = []
     dead_peers: list[str] = []  # IP:port strings of declared-dead peers
+    errors: list[str] = []     # Raw error lines from the Errors section
 
     @classmethod
     def empty(cls, state: RCCLJobState = RCCLJobState.NO_JOB) -> "RCCLSnapshot":

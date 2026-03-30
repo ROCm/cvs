@@ -127,6 +127,36 @@ def test_parse_degraded_errors_section_not_empty(parser, degraded_output):
     assert snapshot.state == RCCLJobState.DEGRADED
 
 
+# -- 2-node degraded fixture (ranks_per_node shown as range "7-8") ------------
+
+@pytest.fixture
+def degraded_2node_output():
+    return (FIXTURES_DIR / "rccl_verbose_status_degraded_2node.txt").read_text()
+
+
+def test_parse_degraded_2node_state(parser, degraded_2node_output):
+    snapshot = parser.parse(degraded_2node_output)
+    assert snapshot.state == RCCLJobState.DEGRADED
+
+
+def test_parse_degraded_2node_communicator_parsed(parser, degraded_2node_output):
+    """ranks_per_node='7-8' range must not prevent communicator row from matching."""
+    snapshot = parser.parse(degraded_2node_output)
+    assert len(snapshot.communicators) == 1
+    comm = snapshot.communicators[0]
+    assert comm.total_ranks == 16
+    assert comm.responding_ranks == 15
+    assert comm.missing_ranks == 1
+    assert comm.health == RCCLJobState.DEGRADED
+
+
+def test_parse_degraded_2node_job_summary(parser, degraded_2node_output):
+    snapshot = parser.parse(degraded_2node_output)
+    assert snapshot.job_summary is not None
+    assert snapshot.job_summary.total_nodes == 2
+    assert snapshot.job_summary.total_gpus == 16
+
+
 # -- Connection reset / error tests ------------------------------------------
 
 def test_parse_connection_reset(parser, connection_reset_output):

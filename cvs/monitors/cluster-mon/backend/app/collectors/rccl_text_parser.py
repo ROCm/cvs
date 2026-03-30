@@ -45,7 +45,7 @@ class RCCLTextParser:
         re.MULTILINE,
     )
     _COMM_ROW_RE = re.compile(
-        r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$",
+        r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+(?:-\d+)?)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*$",
         re.MULTILINE,
     )
     _CONNECTION_REFUSED_RE = re.compile(
@@ -78,6 +78,7 @@ class RCCLTextParser:
                 communicators=communicators,
                 peers=[],       # Not in v2.28.3 text output
                 dead_peers=dead_peers,
+                errors=errors,
             )
         except Exception as e:
             logger.error(f"Failed to parse rcclras output: {e}", exc_info=True)
@@ -137,7 +138,7 @@ class RCCLTextParser:
             group_num = int(match.group(1))
             comms_in_group = int(match.group(2))
             nodes_per_comm = int(match.group(3))
-            ranks_per_node = int(match.group(4))
+            # ranks_per_node may be a range like "7-8" on heterogeneous topologies
             ranks_per_comm = int(match.group(5))
             ranks_in_group = int(match.group(6))
             status = match.group(7)
@@ -184,7 +185,7 @@ class RCCLTextParser:
         errors = []
         # Find content between "Errors" header and "Warnings" header (or end)
         errors_section = re.search(
-            r"^Errors\s*\n=+\s*\n(.*?)(?=^Warnings\s*\n=+|$)",
+            r"^Errors\s*\n=+\s*\n(.*?)(?=^Warnings\s*\n=+|\Z)",
             text,
             re.MULTILINE | re.DOTALL,
         )
