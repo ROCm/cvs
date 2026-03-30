@@ -6,6 +6,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+try:
+    from enum import StrEnum  # Python 3.11+
+except ImportError:
+    class StrEnum(str, Enum):  # type: ignore[no-redef]
+        """Backport for Python 3.10: str+Enum with correct f-string behavior."""
 from typing import Any, Optional
 import asyncio
 import logging
@@ -13,7 +18,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class CollectorState(str, Enum):
+class CollectorState(StrEnum):
     OK = "ok"
     NO_SERVICE = "no_service"  # Service not running (e.g. no RCCL job)
     UNREACHABLE = "unreachable"  # SSH/TCP timeout — node down

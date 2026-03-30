@@ -105,7 +105,11 @@ export function RCCLTopologyPage() {
           {(data?.peers?.length || 0) === 0 ? (
             <div className="text-center py-12 text-gray-400">
               <Share2 className="h-12 w-12 mx-auto mb-4 opacity-30" />
-              <p>No peer data available. Start an RCCL job to see the mesh topology.</p>
+              <p className="font-medium text-gray-500">Peer mesh not supported in RCCL v2.28.3</p>
+              <p className="text-sm mt-1">
+                Per-peer connectivity data is not included in the rcclras text output for this version.
+                Support is planned with the NCCL Inspector integration (rcclras v2.29+).
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
