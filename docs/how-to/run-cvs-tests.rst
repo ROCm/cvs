@@ -64,11 +64,8 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
     cvs.tests.platform (1 test suite)
       • host_configs_cvs
   
-    cvs.tests.rccl (4 test suites)
-      • rccl_heatmap_cvs
-      • rccl_multinode_cvs
-      • rccl_multinode_default_cvs
-      • rccl_singlenode_cvs
+    cvs.tests.rccl (1 test suite)
+      • rccl_cvs
   
     cvs.tests.training.jax (3 test suites)
       • jax_llama3_1_405b_distributed
@@ -82,7 +79,7 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
       • megatron_llama3_1_8b_single
   
   ================================================================================
-  Total: 34 test suites across 1 package(s)
+  Total: 31 test suites across 1 package(s)
 
 
 Run all tests in a file:
@@ -324,144 +321,26 @@ Use these scripts to start the test:
 ROCm Communication Collectives Library (RCCL) test script
 ---------------------------------------------------------
 
+RCCL now uses one suite, ``rccl_cvs``. The suite supports both ``single_node`` and ``multi_node`` runs through the same config file and writes one consolidated JSON artifact instead of RCCL-specific HTML and heatmap side artifacts.
 
-You can list all available RCCL multinode test cases using the CLI:
+You can list the available RCCL test case using the CLI:
 
 .. code:: bash
 
-  cvs list rccl_multinode_cvs
+  cvs list rccl_cvs
 
 .. code:: text
 
-  Available tests in rccl_multinode_cvs:
-    - test_collect_hostinfo
-    - test_collect_networkinfo
-    - test_disable_firewall
-    - test_rccl_perf
-    - test_gen_graph
+  Available tests in rccl_cvs:
+    - test_rccl_cvs
+
+Use this command to start RCCL with CVS:
 
 .. code:: bash
 
-  cvs list rccl_singlenode_cvs
+  cvs run rccl_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl.log -vvv -s
 
-.. code:: text
-
-  Available tests in rccl_singlenode_cvs:
-    - test_collect_hostinfo
-    - test_collect_networkinfo
-    - test_disable_firewall
-    - test_gen_graph
-    - test_singlenode_perf[all_gather_perf]
-    - test_singlenode_perf[all_reduce_perf]
-    - test_singlenode_perf[alltoall_perf]
-    - test_singlenode_perf[alltoallv_perf]
-    - test_singlenode_perf[broadcast_perf]
-    - test_singlenode_perf[gather_perf]
-    - test_singlenode_perf[reduce_scatter_perf]
-    - test_singlenode_perf[scatter_perf]
-    - test_singlenode_perf[sendrecv_perf]
-
-.. code:: bash
-
-  cvs list rccl_multinode_default_cvs
-
-.. code:: text
-
-  Available tests in rccl_multinode_default_cvs:
-    - test_collect_hostinfo
-    - test_collect_networkinfo
-    - test_disable_firewall
-    - test_singlenode_perf[all_gather_perf]
-    - test_singlenode_perf[all_reduce_perf]
-    - test_singlenode_perf[alltoall_perf]
-    - test_singlenode_perf[alltoallv_perf]
-    - test_singlenode_perf[broadcast_perf]
-    - test_singlenode_perf[gather_perf]
-    - test_singlenode_perf[reduce_scatter_perf]
-    - test_singlenode_perf[scatter_perf]
-    - test_singlenode_perf[sendrecv_perf]
-    - test_gen_graph
-
-
-.. code:: bash
-
-  cvs list rccl_heatmap_cvs
-
-.. code:: text
-
-  Available tests in rccl_heatmap_cvs:
-
-    - test_collect_hostinfo
-    - test_collect_networkinfo
-    - test_disable_firewall
-    - test_rccl_perf
-    - test_gen_graph
-    - test_gen_heatmap  
-
-.. code:: bash
-
-  cvs list rccl_multinode_default_cvs
-
-.. code:: text
-
-  Available tests in rccl_multinode_default_cvs:
-    - test_collect_hostinfo
-    - test_collect_networkinfo
-    - test_disable_firewall
-    - test_rccl_perf
-    - test_gen_graph
-
-.. code:: bash
-
-  cvs list rccl_heatmap_cvs
-
-.. code:: text
-
-  Available tests in rccl_heatmap_cvs:
-    - test_collect_hostinfo
-    - test_collect_networkinfo
-    - test_disable_firewall
-    - test_rccl_perf
-    - test_gen_graph
-    - test_gen_heatmap
-
-Use these scripts to start RCCL tests with CVS:
-
-1. Run RCCL multinode parameter sweep:
-
-.. code:: bash
-
-  cvs run rccl_multinode_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_multinode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_multinode.log -vvv -s
-
-2. Run RCCL multinode with RCCL defaults:
-
-.. code:: bash
-
-  cvs run rccl_multinode_default_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_multinode_default.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_multinode_default.log -vvv -s
-
-3. Run RCCL single-node:
-
-.. code:: bash
-
-  cvs run rccl_singlenode_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/single_node_mi355_rccl.json --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_singlenode.log -vvv -s
-
-4. Run RCCL heatmap:
-
-.. code:: bash
-
-  cvs run rccl_heatmap_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_heatmap.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_heatmap.log -vvv -s
-
-You can run all RCCL multinode default tests using the CVS CLI:
-
-.. code:: bash
-
- cvs list rccl_multinode_default_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_singlenode_config.json --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_singlenode.log -vvv -s
-
-You can run all RCCL heatmap tests using the CVS CLI:
-
-.. code:: bash
-
- cvs list rccl_heatmap_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_singlenode_config.json --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_singlenode.log -vvv -s
+Set ``mode`` in ``input/config_file/rccl/rccl_config.json`` to ``single_node`` or ``multi_node`` depending on the target run. Keep NCCL, UCX, and plugin tuning in ``env_script`` rather than the RCCL config itself.
 
 
 JAX training test scripts

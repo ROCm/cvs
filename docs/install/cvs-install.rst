@@ -264,22 +264,18 @@ InfiniBand (IB Perf)
 ROCm Communication Collectives Library (RCCL)
 ---------------------------------------------
 
-1. Copy the RCCL configuration file(s) you need:
+1. Copy the RCCL configuration file:
 
    .. code:: bash
 
      cvs copy-config rccl/rccl_config.json --output ~/my_rccl_config.json
-     # Or for single node:
-     cvs copy-config rccl/single_node_mi355_rccl.json --output ~/my_single_node_rccl.json
 
-2. Edit the file(s) and change the directory paths to your desired location in these variables:
+2. Edit the file and change the directory paths to your desired location in these variables:
 
-   - ``rccl_dir``
    - ``rccl_tests_dir``
-   - ``mpi_dir``
-   - ``mpi_path_var`` 
-   - ``rccl_path_var``
-   - ``rocm_path_var``
+   - ``mpi_root`` or ``mpirun_path``
+   - ``rocm_path``
+   - ``env_script``
 
 JAX / Megatron training configuration files
 --------------------------------------------
