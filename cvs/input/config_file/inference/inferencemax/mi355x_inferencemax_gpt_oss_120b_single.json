@@ -5,6 +5,7 @@
         "_example_nnodes": "4",
         "nnodes": "4",
         "inferencemax_repo": "https://github.com/SemiAnalysisAI/InferenceX.git",
+        "inferencemax_commit_id": "c5bbe050ccef019615db0ceb4dd983cc2faa6335",
         "benchmark_script_repo": "https://github.com/kimbochen/bench_serving.git",
         "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "128G",
