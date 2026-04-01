@@ -107,6 +107,32 @@ link bnxt_re1/1 state DOWN physical_state LINK_DOWN netdev ens27np1"""
         # Verify non-ACTIVE device is excluded
         self.assertNotIn('bnxt_re1', result['node1'])
 
+    def test_get_active_rdma_nic_dict_with_underscore_devices(self):
+        """Test that get_active_rdma_nic_dict also works with standard ACTIVE devices with underscore names."""
+        # Mock phdl object
+        mock_phdl = MagicMock()
+
+        # Simulate rdma link output with mixed states and underscore device names
+        rdma_link_output = """link rdma0/1 state ACTIVE physical_state LINK_UP netdev tw_eth0
+link rdma1/1 state DOWN physical_state LINK_DOWN netdev tw_eth1"""
+
+        mock_phdl.exec.return_value = {'node1': rdma_link_output}
+
+        # Call the function
+        result = linux_utils.get_active_rdma_nic_dict(mock_phdl)
+
+        # Verify only ACTIVE devices are included
+        self.assertIn('node1', result)
+        self.assertEqual(len(result['node1']), 1)  # Only rdma0 is ACTIVE
+
+        # Verify ACTIVE device with hyphenated name is correctly captured
+        self.assertIn('rdma0', result['node1'])
+        self.assertEqual(result['node1']['rdma0']['eth_device'], 'tw_eth0')
+        self.assertEqual(result['node1']['rdma0']['device_status'], 'ACTIVE')
+
+        # Verify non-ACTIVE device is excluded
+        self.assertNotIn('rdma1', result['node1'])  # DOWN state
+
 
 if __name__ == '__main__':
     unittest.main()
