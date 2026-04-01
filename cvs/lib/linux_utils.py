@@ -63,7 +63,7 @@ def get_lshw_network_dict(phdl):
         for line in out_dict[node].split("\n"):
             # Pattern 1: lines with pci bus, device name, then the 'network' class and description
             # Example: "pci@0000:03:00.0 enp3s0 network 8411 PCI Express Gigabit Ethernet Controller"
-            pattern = r"pci\@([0-9a-f\:\.]+)\s+([a-z0-9\-\.]+)\s+network\s+([a-z0-9\s\[\]\/\-\_]+)"
+            pattern = r"pci\@([0-9a-f\:\.]+)\s+([a-z0-9_.\-]+)\s+network\s+([a-z0-9\s\[\]\/\-\_]+)"
 
             # Pattern 2: lines with pci bus and 'network' class/description but without a device name
             # Example: "pci@0000:00:03.0 network Virtio network device"
@@ -287,16 +287,18 @@ def get_active_rdma_nic_dict(phdl):
         rdma_dict[node] = {}
         for line in out_dict[node].split("\n"):
             if re.search('^link', line):
-                pattern = r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z_]+)\s+netdev\s+([a-zA-Z0-9.-]+)"
+                pattern = r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z_]+)\s+netdev\s+([a-zA-Z0-9._-]+)"
                 match = re.search(pattern, line)
-                dev = match.group(1)
-                status = match.group(3)
-                if re.search('ACTIVE', status, re.I):
-                    rdma_dict[node][dev] = {}
-                    rdma_dict[node][dev]['port'] = match.group(2)
-                    rdma_dict[node][dev]['device_status'] = status
-                    rdma_dict[node][dev]['link_status'] = match.group(4)
-                    rdma_dict[node][dev]['eth_device'] = match.group(5)
+                # dereference match only when it is non-null
+                if match:
+                    dev = match.group(1)
+                    status = match.group(3)
+                    if re.search('ACTIVE', status, re.I):
+                        rdma_dict[node][dev] = {}
+                        rdma_dict[node][dev]['port'] = match.group(2)
+                        rdma_dict[node][dev]['device_status'] = status
+                        rdma_dict[node][dev]['link_status'] = match.group(4)
+                        rdma_dict[node][dev]['eth_device'] = match.group(5)
     return rdma_dict
 
 
