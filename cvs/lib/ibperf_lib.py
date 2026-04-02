@@ -11,6 +11,7 @@ import xlsxwriter
 
 from cvs.lib.utils_lib import *
 
+
 def detect_rocm_path(phdl, config_rocm_path):
     """
     Detect the ROCm installation path, supporting both old (/opt/rocm) and new
@@ -61,7 +62,6 @@ def detect_rocm_path(phdl, config_rocm_path):
 
     log.warning('Could not detect ROCm path with required libraries, defaulting to /opt/rocm')
     return '/opt/rocm'
-
 
 
 def get_ib_bw_pps(phdl, msg_size, cmd):
