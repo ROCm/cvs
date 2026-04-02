@@ -134,7 +134,12 @@ def phdl(cluster_dict):
     """
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
+
+    if len(node_list) < 2:
+        raise ValueError("At least 2 nodes are required to run this test")
+    
     if len(node_list) % 2 != 0:
+        log.info(f'Odd number of nodes ({len(node_list)}) detected; popping last node {node_list[-1]} from the cluster to make the count even')
         node_list.pop()
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
@@ -179,7 +184,10 @@ def vpc_node_list(cluster_dict):
     """
     vpc_node_list = []
     node_list = list(cluster_dict['node_dict'].keys())
+    if len(node_list) < 2:
+        raise ValueError('At least 2 nodes are required to run this test')
     if len(node_list) % 2 != 0:
+        log.info(f'Odd number of nodes ({len(node_list)}) detected; popping last node from the cluster to make the count even')
         node_list.pop()
     for node in node_list:
         vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
@@ -215,6 +223,7 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
             if rdma_nic_dict[node][rdma_dev]['eth_device'] in bck_nic_dict_lshw[node]:
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
+    rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
     for msg_size in config_dict['msg_size_list']:
         ib_bw_dict[bw_test][msg_size] = {}
         for qp_count in config_dict['qp_count_list']:
@@ -233,6 +242,7 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
                 qp_count,
                 int(config_dict['port_no']),
                 int(config_dict['duration']),
+                rocm_path=rocm_path,
             )
             end_time = phdl.exec('date +"%a %b %e %H:%M"')
             verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
@@ -273,6 +283,7 @@ def test_ib_lat_perf(phdl, lat_test, config_dict):
     print(f'%%%%%% gpu_nic_dict %%%%% {gpu_nic_dict}')
     print(f'%%%%%% gpu_numa_dict %%%%% {gpu_numa_dict}')
 
+    rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
     for msg_size in config_dict['msg_size_list']:
         ib_lat_dict[lat_test][msg_size] = {}
         # Log a message to Dmesg to create a timestamp record
@@ -288,6 +299,7 @@ def test_ib_lat_perf(phdl, lat_test, config_dict):
             msg_size,
             config_dict['gid_index'],
             int(config_dict['port_no']),
+            rocm_path=rocm_path,
         )
         end_time = phdl.exec('date +"%a %b %e %H:%M"')
         verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
