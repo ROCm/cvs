@@ -3,7 +3,8 @@
     {
        "install_perf_package": "True",
        "install_dir": "/home/{user-id}/",
-       "rocm_dir": "/opt/rocm",
+       "rocm_dir": "<changeme>",
+       "_comment_rocm_dir": "ROCm installation path. Set to auto-detect from /opt/rocm or /opt/rocm/core-* if left as changeme",
        "qp_count_list": [ "8", "16" ],
        "ib_bw_test_list": [ "ib_write_bw", "ib_send_bw"],
        "ib_lat_test_list": [ "ib_write_lat", "ib_send_lat", "ib_read_lat" ],

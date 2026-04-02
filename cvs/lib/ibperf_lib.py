@@ -11,6 +11,58 @@ import xlsxwriter
 
 from cvs.lib.utils_lib import *
 
+def detect_rocm_path(phdl, config_rocm_path):
+    """
+    Detect the ROCm installation path, supporting both old (/opt/rocm) and new
+    (/opt/rocm/core-X.Y) layouts.
+
+    Args:
+        phdl: Parallel SSH handle
+        config_rocm_path (str): Configured ROCm path from config file
+                                (empty string or '<changeme>' for auto-detect)
+
+    Returns:
+        str: Detected ROCm path
+    """
+    if config_rocm_path and config_rocm_path != '<changeme>':
+        out_dict = phdl.exec(
+            f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+        )
+        for node, output in out_dict.items():
+            if output.strip() and 'libamdhip64.so' in output:
+                log.info(f'Using configured ROCm path: {config_rocm_path} (validated)')
+                return config_rocm_path
+            else:
+                log.warning(
+                    f'Configured ROCm path {config_rocm_path} does not contain required libraries, will auto-detect'
+                )
+
+    log.info('Auto-detecting ROCm path...')
+
+    # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
+    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    for node, output in out_dict.items():
+        if output and '/opt/rocm/core-' in output:
+            rocm_path = output.strip()
+            validate_dict = phdl.exec(
+                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+            )
+            for _, lib_output in validate_dict.items():
+                if lib_output.strip() and 'libamdhip64.so' in lib_output:
+                    log.info(f'Detected ROCm path (new layout): {rocm_path}')
+                    return rocm_path
+
+    # Fall back to legacy /opt/rocm
+    out_dict = phdl.exec('test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1')
+    for node, output in out_dict.items():
+        if output.strip() and 'libamdhip64.so' in output:
+            log.info('Detected ROCm path (legacy layout): /opt/rocm')
+            return '/opt/rocm'
+
+    log.warning('Could not detect ROCm path with required libraries, defaulting to /opt/rocm')
+    return '/opt/rocm'
+
+
 
 def get_ib_bw_pps(phdl, msg_size, cmd):
     res_dict = {}
@@ -136,6 +188,7 @@ def run_ib_perf_bw_test(
     qp_count=8,
     port_no=1516,
     duration=60,
+    rocm_path='',
 ):
     app_port = port_no
     result_dict = {}
@@ -144,6 +197,9 @@ def run_ib_perf_bw_test(
     phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt')
     phdl.exec('sudo rm -rf /tmp/ib_perf*')
     phdl.exec('touch /tmp/ib_cmds_file.txt')
+    if rocm_path:
+        log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
+        phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
     server_addr = None
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
@@ -213,7 +269,7 @@ def run_ib_perf_bw_test(
 
 
 def run_ib_perf_lat_test(
-    phdl, lat_test, gpu_numa_dict, gpu_nic_dict, bck_nic_dict, app_path, msg_size, gid_index, port_no=1516
+    phdl, lat_test, gpu_numa_dict, gpu_nic_dict, bck_nic_dict, app_path, msg_size, gid_index, port_no=1516, rocm_path=''
 ):
     app_port = port_no
     result_dict = {}
@@ -222,6 +278,9 @@ def run_ib_perf_lat_test(
     phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt')
     phdl.exec('sudo rm -rf /tmp/ib_perf*')
     phdl.exec('touch /tmp/ib_cmds_file.txt')
+    if rocm_path:
+        log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
+        phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
     server_addr = None
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
