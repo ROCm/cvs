@@ -558,7 +558,9 @@ def rccl_cluster_test(
 
     # Environment variables exported into the mpirun context
     PATH = f'{MPI_PATH}/bin:{ROCM_PATH}/bin:$PATH'
-    LD_LIBRARY_PATH = f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
+    LD_LIBRARY_PATH = (
+        f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
+    )
 
     print(f'%% VPC Node IPs {vpc_node_list}')
 
@@ -784,7 +786,9 @@ def rccl_cluster_test_default(
 
     # Environment variables exported into the mpirun context
     PATH = f'{MPI_PATH}/bin:{ROCM_PATH}/bin:$PATH'
-    LD_LIBRARY_PATH = f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
+    LD_LIBRARY_PATH = (
+        f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
+    )
 
     print(f'%% VPC Node IPs {vpc_node_list}')
 
