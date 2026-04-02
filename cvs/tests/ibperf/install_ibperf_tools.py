@@ -132,7 +132,10 @@ def phdl(cluster_dict):
     """
     print(cluster_dict)
     node_list = list(cluster_dict['node_dict'].keys())
+    if len(node_list) < 2:
+        raise ValueError('At least 2 nodes are required to run this test')
     if len(node_list) % 2 != 0:
+        log.info(f'Odd number of nodes ({len(node_list)}) detected; popping last node from the cluster to make the count even')
         node_list.pop()
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
@@ -177,11 +180,62 @@ def vpc_node_list(cluster_dict):
     """
     vpc_node_list = []
     node_list = list(cluster_dict['node_dict'].keys())
+
+    if len(node_list) < 2:
+        raise ValueError('At least 2 nodes are required to run this test')
+  
     if len(node_list) % 2 != 0:
+        log.info(f'Odd number of nodes ({len(node_list)}) detected; popping last node from the cluster to make the count even')
         node_list.pop()
     for node in node_list:
         vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
     return vpc_node_list
+
+
+
+def detect_rocm_path(phdl, config_rocm_path):
+    """
+    Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
+    Args:
+        phdl: Parallel SSH handle
+        config_rocm_path (str): Configured ROCm path from config file ('<changeme>' for auto-detect)
+    Returns:
+        str: Detected ROCm path
+    """
+    # If rocm_path is explicitly configured, validate and use it
+    if config_rocm_path and config_rocm_path != '<changeme>':
+        out_dict = phdl.exec(f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1')
+        for node, output in out_dict.items():
+            if output.strip() and 'libamdhip64.so' in output:
+                log.info(f'Using configured ROCm path: {config_rocm_path} (validated)')
+                return config_rocm_path
+            else:
+                log.warning(f'Configured ROCm path {config_rocm_path} does not contain required libraries, will auto-detect')
+
+    # Auto-detect ROCm path
+    log.info('Auto-detecting ROCm path...')
+
+    # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
+    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    for node, output in out_dict.items():
+        if output and '/opt/rocm/core-' in output:
+            rocm_path = output.strip()
+            validate_dict = phdl.exec(f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1')
+            for _, lib_output in validate_dict.items():
+                if lib_output.strip() and 'libamdhip64.so' in lib_output:
+                    log.info(f'Detected ROCm path (new layout): {rocm_path}')
+                    return rocm_path
+
+    # Fall back to legacy /opt/rocm
+    out_dict = phdl.exec('test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1')
+    for node, output in out_dict.items():
+        if output.strip() and 'libamdhip64.so' in output:
+            log.info('Detected ROCm path (legacy layout): /opt/rocm')
+            return '/opt/rocm'
+
+    log.warning('Could not detect ROCm path with required libraries, defaulting to /opt/rocm')
+    return '/opt/rocm'
+
 
 
 def test_install_ib_perf(phdl, shdl, config_dict):
@@ -199,8 +253,10 @@ def test_install_ib_perf(phdl, shdl, config_dict):
         phdl.exec('sudo apt install -y numactl')
         shdl.exec(f'cd {config_dict["install_dir"]}; git clone https://github.com/linux-rdma/perftest')
         shdl.exec(f'cd {config_dict["install_dir"]}/perftest; ./autogen.sh', timeout=100)
+        rocm_path = detect_rocm_path(shdl, config_dict.get('rocm_dir', '<changeme>'))
+        log.info(f'Using ROCm path for perftest configure: {rocm_path}')
         shdl.exec(
-            f'cd {config_dict["install_dir"]}/perftest; ./configure --prefix={config_dict["install_dir"]}/perftest --with-rocm={config_dict["rocm_dir"]} --enable-rocm',
+            f'cd {config_dict["install_dir"]}/perftest; ./configure --prefix={config_dict["install_dir"]}/perftest --with-rocm={rocm_path} --enable-rocm',
             timeout=200,
         )
         shdl.exec(f'cd {config_dict["install_dir"]}/perftest; make', timeout=100)

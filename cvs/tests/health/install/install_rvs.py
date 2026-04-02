@@ -277,13 +277,15 @@ def test_install_rvs(phdl, shdl, config_dict):
             rvs_found = True
 
     # Check if RVS config files exist
+    # Check MI300X path first (same order as final verification) and suppress stderr
+    # so a missing fallback path's "No such file" does not contaminate the output.
     out_dict = phdl.exec(
-        f'ls -l {config_dict["config_path_default"]}/gst_single.conf || ls -l {config_dict["config_path_mi300x"]}/gst_single.conf',
+        f'ls -l {config_dict["config_path_mi300x"]}/gst_single.conf 2>/dev/null || ls -l {config_dict["config_path_default"]}/gst_single.conf 2>/dev/null',
         timeout=30,
     )
     config_found = False
     for node in out_dict.keys():
-        if not re.search('No such file', out_dict[node], re.I):
+        if re.search(r'gst_single\.conf', out_dict[node], re.I):
             log.info(f'RVS configuration files found on node {node}')
             config_found = True
 
@@ -302,12 +304,43 @@ def test_install_rvs(phdl, shdl, config_dict):
 
         for node in out_dict.keys():
             if re.search(
-                'Unable to locate package|Package.*not found|E: Could not get lock|dpkg: error', out_dict[node], re.I
+                'Unable to locate package|Package.*not found|E: Could not get lock|dpkg: error'
+                '|has no installation candidate|unmet dependencies|not available',
+                out_dict[node],
+                re.I,
             ):
                 log.info(f'RVS package installation failed on node {node}, will try building from source')
             else:
                 log.info(f'RVS package installation successful on node {node}')
                 package_installed = True
+
+        # After apt-get install, verify the binary actually exists and locate it.
+        # The rocm-validation-suite package may install to /opt/rocm even when the
+        # detected rocm_path is /opt/rocm/core-X.Y (new layout), causing path mismatches.
+        if package_installed:
+            verify_bin = phdl.exec(
+                f'which rvs 2>/dev/null || ls {rocm_path}/bin/rvs 2>/dev/null || ls /opt/rocm/bin/rvs 2>/dev/null',
+                timeout=60,
+            )
+            rvs_bin_found = False
+            for node, output in verify_bin.items():
+                stripped = output.strip()
+                if stripped and 'rvs' in stripped and not re.search('No such file', stripped, re.I):
+                    rvs_bin_found = True
+                    # If the binary landed at /opt/rocm instead of rocm_path, realign all paths
+                    if '/opt/rocm/bin/rvs' in stripped and not stripped.startswith(rocm_path):
+                        actual_rocm = '/opt/rocm'
+                        log.info(
+                            f'RVS installed to {actual_rocm}/bin/rvs; updating rocm_path from {rocm_path} to {actual_rocm}'
+                        )
+                        for key in ('path', 'config_path_mi300x', 'config_path_default'):
+                            if key in config_dict:
+                                config_dict[key] = config_dict[key].replace(rocm_path, actual_rocm)
+                        rocm_path = actual_rocm
+                    break
+            if not rvs_bin_found:
+                log.info('RVS binary not found after package install, falling back to source build')
+                package_installed = False
 
         # If package installation failed, build from source
         if not package_installed:
@@ -330,19 +363,19 @@ def test_install_rvs(phdl, shdl, config_dict):
                     timeout=1200,
                 )
                 out_dict = hdl.exec(
-                    f'cd {git_install_path}/ROCmValidationSuite/build; make -C -j$(nproc)', timeout=1200
+                    f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc)', timeout=1200
                 )
 
                 out_dict = hdl.exec(
                     f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc) package', timeout=1200
                 )
                 out_dict = hdl.exec(
-                    f'cd {git_install_path}/ROCmValidationSuite/build; sudo make install',
+                    f'cd {git_install_path}/ROCmValidationSuite/build; sudo make install; echo "RVS_INSTALL_STATUS:$?"',
                     timeout=1200,
                 )
 
                 for node in out_dict.keys():
-                    if re.search('Error|FAILED|No such file', out_dict[node], re.I):
+                    if not re.search(r'RVS_INSTALL_STATUS:0', out_dict[node]):
                         fail_test(f'RVS build/installation failed on node {node}')
 
             except Exception as e:
