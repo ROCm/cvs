@@ -558,7 +558,7 @@ def rccl_cluster_test(
 
     # Environment variables exported into the mpirun context
     PATH = f'{MPI_PATH}/bin:{ROCM_PATH}/bin:$PATH'
-    LD_LIBRARY_PATH = f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:$LD_LIBRARY_PATH'
+    LD_LIBRARY_PATH = f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
 
     print(f'%% VPC Node IPs {vpc_node_list}')
 
@@ -592,7 +592,7 @@ def rccl_cluster_test(
     test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
         -d {data_type} -n {no_of_iterations} -N {no_of_cycles} \
-        -Z json -x {rccl_result_file}'
+        -Z json -X {rccl_result_file}'
 
     if env_source_script and env_source_script.lower() != 'none':
         test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
@@ -784,7 +784,7 @@ def rccl_cluster_test_default(
 
     # Environment variables exported into the mpirun context
     PATH = f'{MPI_PATH}/bin:{ROCM_PATH}/bin:$PATH'
-    LD_LIBRARY_PATH = f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:$LD_LIBRARY_PATH'
+    LD_LIBRARY_PATH = f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
 
     print(f'%% VPC Node IPs {vpc_node_list}')
 
@@ -827,7 +827,7 @@ def rccl_cluster_test_default(
         test_cmd = (
             f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
             -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-            -d {dtype} -n {no_of_iterations} -N {no_of_cycles} -Z json -x {dtype_result_file}'
+            -d {dtype} -n {no_of_iterations} -N {no_of_cycles} -Z json -X {dtype_result_file}'
         )
 
         if env_source_script and env_source_script.lower() != 'none':
@@ -1058,13 +1058,13 @@ def rccl_single_node_test(
 
     # Environment variables exported into the mpirun context
     PATH = f'{ROCM_PATH}/bin:$PATH'
-    LD_LIBRARY_PATH = f'{RCCL_PATH}:{ROCM_PATH}/lib:$LD_LIBRARY_PATH'
+    LD_LIBRARY_PATH = f'{RCCL_PATH}:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
 
     # Build the test command
     # Wrap test binary in shell to source env script if provided
     test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} -n {no_of_iterations} -N {no_of_cycles} \
-        -Z json -x {rccl_result_file}'
+        -Z json -X {rccl_result_file}'
 
     if env_source_script and env_source_script.lower() != 'none':
         test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'

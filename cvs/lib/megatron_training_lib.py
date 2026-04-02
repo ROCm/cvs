@@ -28,6 +28,49 @@ err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_bu
 # Library for building Megatron training jobs ..
 
 
+def detect_rocm_path(phdl, config_rocm_path):
+    """
+    Detect the ROCm installation path, supporting both old (/opt/rocm) and
+    new (/opt/rocm/core-X.Y) layouts.
+
+    Args:
+        phdl: Parallel SSH handle.
+        config_rocm_path (str): Configured ROCm path from config file
+                                (empty string or '<changeme>' for auto-detect).
+
+    Returns:
+        str: Detected ROCm path.
+    """
+    if config_rocm_path and config_rocm_path != '<changeme>':
+        log.info(f'Using configured ROCm path: {config_rocm_path}')
+        return config_rocm_path
+
+    log.info('Auto-detecting ROCm path...')
+
+    # Try new ROCm layout first (/opt/rocm/core-X.Y)
+    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    for node, output in out_dict.items():
+        if output and '/opt/rocm/core-' in output:
+            rocm_path = output.strip()
+            validate_dict = phdl.exec(
+                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+            )
+            for _, lib_output in validate_dict.items():
+                if lib_output.strip() and 'libamdhip64.so' in lib_output:
+                    log.info(f'Detected ROCm path (new layout): {rocm_path}')
+                    return rocm_path
+
+    # Fall back to legacy /opt/rocm
+    out_dict = phdl.exec('test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1')
+    for node, output in out_dict.items():
+        if output.strip() and 'libamdhip64.so' in output:
+            log.info('Detected ROCm path (legacy layout): /opt/rocm')
+            return '/opt/rocm'
+
+    log.warning('Could not detect ROCm path, defaulting to /opt/rocm')
+    return '/opt/rocm'
+
+
 class MegatronLlamaTrainingJob:
     """
     Orchestrates a Megatron-LM Llama training job across one or more nodes.
@@ -129,6 +172,7 @@ class MegatronLlamaTrainingJob:
         tdict.setdefault('log_dir', f'{self.home_dir}/LOGS')
         tdict.setdefault('master_address', '127.0.0.1')
         tdict.setdefault('verify_network_errors', 'False')
+        tdict.setdefault('rocm_dir', '')
 
         self.container_image = tdict['container_image']
         self.container_name = tdict['container_name']
@@ -146,6 +190,7 @@ class MegatronLlamaTrainingJob:
         self.log_dir = tdict['log_dir']
         self.master_address = tdict['master_address']
         self.verify_network_errors = tdict['verify_network_errors']
+        self.rocm_path = detect_rocm_path(self.phdl, tdict['rocm_dir'])
 
         # Get the model parameters dict
         print('^^^^')
@@ -275,7 +320,7 @@ class MegatronLlamaTrainingJob:
             + f'export HF_TOKEN="{self.hf_token}"; '
             + f'export DATA_CACHE_PATH={self.data_cache_dir}; '
             + f'export TOKENIZER_MODEL={self.tokenizer_model}; '
-            + 'export LD_LIBRARY_PATH=/usr/local/lib/:/opt/rocm/lib:$LD_LIBRARY_PATH; '
+            + f'export LD_LIBRARY_PATH=/usr/local/lib/:{self.rocm_path}/lib:$LD_LIBRARY_PATH; '
             + f'export LOG_DIR={self.log_dir}; '
             + 'export EXP_NAME="megatron_training"; '
         )
