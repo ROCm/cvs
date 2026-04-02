@@ -137,9 +137,11 @@ def phdl(cluster_dict):
 
     if len(node_list) < 2:
         raise ValueError("At least 2 nodes are required to run this test")
-    
+
     if len(node_list) % 2 != 0:
-        log.info(f'Odd number of nodes ({len(node_list)}) detected; popping last node {node_list[-1]} from the cluster to make the count even')
+        log.info(
+            f'Odd number of nodes ({len(node_list)}) detected; popping last node {node_list[-1]} from the cluster to make the count even'
+        )
         node_list.pop()
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
     return phdl
@@ -187,7 +189,9 @@ def vpc_node_list(cluster_dict):
     if len(node_list) < 2:
         raise ValueError('At least 2 nodes are required to run this test')
     if len(node_list) % 2 != 0:
-        log.info(f'Odd number of nodes ({len(node_list)}) detected; popping last node from the cluster to make the count even')
+        log.info(
+            f'Odd number of nodes ({len(node_list)}) detected; popping last node from the cluster to make the count even'
+        )
         node_list.pop()
     for node in node_list:
         vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
