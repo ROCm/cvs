@@ -155,6 +155,37 @@ Here's the test script:
 
   cvs run host_configs_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/platform/host_config.json --html=/var/www/html/cvs/host.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
 
+
+====================
+
+Aorta test
+--------------------
+
+The benchmark tests run distributed training benchmarks validated by CVS. The Aorta benchmark executes an Aorta-based workload in a Docker container with RCCL, collects PyTorch profiler traces, and validates iteration time, compute ratio, overlap ratio, and rank balance against configurable thresholds.
+
+You can list all available aorta test cases using the CLI:
+
+.. code:: bash
+
+  cvs list test_aorta
+
+.. code:: text
+
+  Available tests in host_configs_cvs:
+    - test_validate_runner_config
+    - test_run_benchmark
+    - test_parse_results
+    - test_validate_thresholds
+    - test_generate_report
+
+Here's the test script:
+
+.. code:: bash
+
+  cvs run test_aorta --cluster_file input/cluster_file/cluster.json --config_file input/config_file/aorta/aorta_benchmark.yaml --html=/var/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html --log-file=/tmp/aorta.log -vvv -s
+                                                                                                            133,1         14%
+
+
 Burn-in health test scripts
 ---------------------------
 
@@ -308,6 +339,7 @@ You can list all available IB Perf test cases using the CLI:
     - test_build_ib_lat_perf_chart
 
 Use these scripts to start the test:
+Note: Atleast two nodes are required to run IB Perf installation and tests.
 
 1. Run the installation: 
 
