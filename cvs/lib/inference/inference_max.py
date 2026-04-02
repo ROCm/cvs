@@ -18,7 +18,7 @@ class InferenceMaxJob(InferenceBaseJob):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.if_dict.setdefault('inferencemax_repo', 'https://github.com/SemiAnalysisAI/InferenceX.git')
-        self.if_dict.setdefault('inferencemax_commit_id', 'c5bbe050ccef019615db0ceb4dd983cc2faa6335')
+        self.inferencemax_commit_id = 'c5bbe050ccef019615db0ceb4dd983cc2faa6335'
 
     def get_server_script_directory(self):
         """InferenceMAX scripts are in the cloned repo."""
@@ -43,7 +43,7 @@ class InferenceMaxJob(InferenceBaseJob):
 
     def clone_inferencemax_repo(self):
         """Clone InferenceMAX repository."""
-        cmd = f'''docker exec {self.container_name} /bin/bash -c "git clone {self.if_dict['inferencemax_repo']} && cd InferenceX && git checkout {self.if_dict['inferencemax_commit_id']}" '''
+        cmd = f'''docker exec {self.container_name} /bin/bash -c "git clone {self.if_dict['inferencemax_repo']} && cd InferenceX && git checkout {self.inferencemax_commit_id}" '''
         out_dict = self.s_phdl.exec(cmd)
         for node in out_dict.keys():
             if re.search('error|fail', out_dict[node], re.I):
