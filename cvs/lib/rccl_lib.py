@@ -1115,3 +1115,233 @@ def rccl_single_node_test(
             check_lat_dip(test_name, result_out, test_exp_dict)
 
     return result_out
+
+
+def install_mpi(shdl, install_path, rocm_path, ucx_version="1.18.0", ompi_version="5.0.7"):
+    """Install UCX and OpenMPI for RCCL tests with MPI support.
+
+    Args:
+        shdl: Single SSH handle for executing commands on head node (shared storage)
+        install_path (str): Directory where UCX and OpenMPI should be installed
+        rocm_path (str): Path to ROCm installation
+        ucx_version (str, optional): UCX version to build. Defaults to "1.18.0"
+        ompi_version (str, optional): OpenMPI version to build. Defaults to "5.0.7"
+
+    Returns:
+        dict: Paths to UCX and OpenMPI installations
+
+    Raises:
+        Exception: If download, build, or installation fails
+    """
+    ucx_dir = f"ucx-{ucx_version}"
+    ompi_dir = f"ompi-{ompi_version}"
+    ompi_base_ver = ".".join(ompi_version.split(".")[:-1])  # e.g., "5.0" from "5.0.7"
+
+    ucx_install_dir = f"{install_path}/{ucx_dir}/install"
+    ompi_install_dir = f"{install_path}/{ompi_dir}/install"
+
+    # Check if installations already exist
+    check_ucx = shdl.exec(f"test -d {ucx_install_dir} && echo EXISTS", timeout=10, print_console=False)
+    check_ompi = shdl.exec(f"test -d {ompi_install_dir} && echo EXISTS", timeout=10, print_console=False)
+
+    ucx_exists = any("EXISTS" in v for v in check_ucx.values())
+    ompi_exists = any("EXISTS" in v for v in check_ompi.values())
+
+    if ucx_exists and ompi_exists:
+        log.info("UCX and OpenMPI already installed in shared storage")
+        # Check if directory links exist, create them if missing
+        check_links = shdl.exec(
+            f"test -L {install_path}/bin && test -L {install_path}/lib && test -L {install_path}/include && echo LINKS_EXIST",
+            timeout=10,
+            print_console=False,
+        )
+        links_exist = any("LINKS_EXIST" in v for v in check_links.values())
+
+        if not links_exist:
+            log.info("[MPI] Directory links missing, creating them...")
+            link_cmd = f"""
+            cd {install_path} &&
+            ln -sf {ompi_install_dir}/bin bin &&
+            ln -sf {ompi_install_dir}/lib lib &&
+            ln -sf {ompi_install_dir}/include include
+            """
+            try:
+                shdl.exec(link_cmd, timeout=30, print_console=False)
+                log.info("[MPI] Directory soft links created successfully")
+            except Exception as e:
+                raise Exception(f"Failed to create MPI directory links: {e}")
+        else:
+            log.info("[MPI] Directory links already exist")
+
+        return {"ucx_path": ucx_install_dir, "ompi_path": install_path}
+
+    # Install UCX
+    if not ucx_exists:
+        log.info(f"[MPI] Installing UCX {ucx_version}...")
+        ucx_cmd = f"""
+        mkdir -p {install_path} &&
+        cd {install_path} &&
+        rm -rf {ucx_dir} ucx-{ucx_version}.tar.gz &&
+        wget https://github.com/openucx/ucx/releases/download/v{ucx_version}/ucx-{ucx_version}.tar.gz &&
+        mkdir -p {ucx_dir} &&
+        tar -zxf ucx-{ucx_version}.tar.gz -C {ucx_dir} --strip-components=1 &&
+        cd {ucx_dir} &&
+        mkdir -p build &&
+        cd build &&
+        ../configure --prefix={ucx_install_dir} --with-rocm={rocm_path} &&
+        make -j$(nproc) &&
+        make install
+        """
+        try:
+            shdl.exec(ucx_cmd, timeout=600, print_console=False)
+        except Exception as e:
+            raise Exception(f"Failed to install UCX: {e}")
+
+    # Install OpenMPI
+    if not ompi_exists:
+        log.info(f"[MPI] Installing OpenMPI {ompi_version}...")
+        ompi_cmd = f"""
+        mkdir -p {install_path} &&
+        cd {install_path} &&
+        rm -rf {ompi_dir} openmpi-{ompi_version}.tar.gz &&
+        wget https://download.open-mpi.org/release/open-mpi/v{ompi_base_ver}/openmpi-{ompi_version}.tar.gz &&
+        mkdir -p {ompi_dir} &&
+        tar -zxf openmpi-{ompi_version}.tar.gz -C {ompi_dir} --strip-components=1 &&
+        cd {ompi_dir} &&
+        mkdir -p build &&
+        cd build &&
+        ../configure --prefix={ompi_install_dir} --with-ucx={ucx_install_dir} --disable-oshmem --disable-mpi-fortran &&
+        make -j$(nproc) &&
+        make install
+        """
+        try:
+            shdl.exec(ompi_cmd, timeout=900, print_console=False)
+        except Exception as e:
+            raise Exception(f"Failed to install OpenMPI: {e}")
+
+    # Create directory-level soft links for MPI
+    # Structure: /mnt/scratch1/amd/ichristo/mpi/bin -> ompi-5.0.7/install/bin
+    link_cmd = f"""
+    cd {install_path} &&
+    ln -sf {ompi_install_dir}/bin bin &&
+    ln -sf {ompi_install_dir}/lib lib &&
+    ln -sf {ompi_install_dir}/include include
+    """
+    log.info("[MPI] Creating directory soft links for MPI bin, lib, and include...")
+    try:
+        shdl.exec(link_cmd, timeout=30, print_console=False)
+    except Exception as e:
+        raise Exception(f"Failed to create MPI soft links: {e}")
+
+    # Verify installations
+    verify_ucx = shdl.exec(f"test -d {ucx_install_dir} && echo EXISTS", timeout=10, print_console=False)
+    verify_ompi = shdl.exec(f"test -f {install_path}/bin/mpirun && echo EXISTS", timeout=10, print_console=False)
+
+    ucx_verified = any("EXISTS" in v for v in verify_ucx.values())
+    ompi_verified = any("EXISTS" in v for v in verify_ompi.values())
+
+    if not ucx_verified:
+        raise Exception("UCX installation verification failed")
+    if not ompi_verified:
+        raise Exception("OpenMPI installation verification failed")
+
+    log.info("[MPI] UCX and OpenMPI installation complete on all nodes")
+    return {"ucx_path": ucx_install_dir, "ompi_path": install_path}
+
+
+def install_rccl_tests(
+    shdl,
+    install_path,
+    repo_url="https://github.com/ROCm/rocm-systems.git",
+    repo_branch="develop",
+    with_mpi=False,
+    mpi_home=None,
+    rccl_home=None,
+):
+    """Install rccl-tests from ROCm/rocm-systems monorepo.
+
+    Args:
+        shdl: Single SSH handle for executing commands on head node (shared storage)
+        install_path (str): Directory where rccl-tests should be installed
+        repo_url (str, optional): Git repository URL. Defaults to ROCm/rocm-systems
+        repo_branch (str, optional): Git branch to clone. Defaults to 'develop'
+        with_mpi (bool, optional): Build with MPI support. Defaults to False
+        mpi_home (str, optional): Path to MPI installation. Required if with_mpi=True
+        rccl_home (str, optional): Path to RCCL installation. Required if with_mpi=True
+
+    Returns:
+        str: Path to the install directory containing all *_perf binaries
+
+    Raises:
+        Exception: If clone, build, or verification fails
+    """
+    if with_mpi and (not mpi_home or not rccl_home):
+        raise ValueError("mpi_home and rccl_home are required when with_mpi=True")
+    sparse_dir = "projects/rccl-tests"
+    clone_root = f"{install_path}/rocm-systems"
+
+    # Check if installation already exists (check for any *_perf binary)
+    check = shdl.exec(
+        f"ls {install_path}/*_perf 2>/dev/null | head -1 | grep -q _perf && echo EXISTS",
+        timeout=10,
+        print_console=False,
+    )
+    if any("EXISTS" in v for v in check.values()):
+        log.info(f"rccl-tests binaries already present in shared storage: {install_path}")
+        return install_path
+
+    # Clone rocm-systems repository
+    clone_cmd = (
+        f"mkdir -p {install_path} && "
+        f"rm -rf {clone_root} && "
+        f"git clone --depth 1 --filter=blob:none --sparse "
+        f"-b {repo_branch} {repo_url} {clone_root} && "
+        f"cd {clone_root} && git sparse-checkout set {sparse_dir}"
+    )
+    log.info(f"[rccl-tests] Cloning {sparse_dir} from rocm-systems to shared storage...")
+    try:
+        shdl.exec(clone_cmd, timeout=180, print_console=False)
+    except Exception as e:
+        raise Exception(f"Failed to clone rccl-tests: {e}")
+
+    # Build rccl-tests using install.sh script
+    gpu_target = "$(/opt/rocm/bin/rocm_agent_enumerator | grep -v gfx000 | head -1)"
+
+    if with_mpi:
+        build_cmd = f"cd {clone_root}/{sparse_dir} && ./install.sh --mpi --mpi_home {mpi_home} --rccl_home {rccl_home} --rocm_home {rccl_home} --gpu_targets {gpu_target}"
+        log.info("[rccl-tests] Building rccl-tests with MPI support using install.sh in shared storage...")
+    else:
+        build_cmd = f"cd {clone_root}/{sparse_dir} && ./install.sh --rccl_home {rccl_home} --rocm_home {rccl_home} --gpu_targets {gpu_target}"
+        log.info("[rccl-tests] Building rccl-tests without MPI using install.sh in shared storage...")
+
+    try:
+        shdl.exec(build_cmd, timeout=300, print_console=False)
+    except Exception as e:
+        raise Exception(f"Failed to build rccl-tests: {e}")
+
+    # Create soft links for all *_perf binaries
+    link_cmd = (
+        f"cd {install_path} && "
+        f"for perf_binary in {clone_root}/{sparse_dir}/build/*_perf; do "
+        f"  if [ -f \"$perf_binary\" ]; then "
+        f"    ln -sf \"$perf_binary\" \"$(basename \"$perf_binary\")\"; "
+        f"  fi; "
+        f"done"
+    )
+    log.info("[rccl-tests] Creating soft links for *_perf binaries...")
+    try:
+        shdl.exec(link_cmd, timeout=30, print_console=False)
+    except Exception as e:
+        raise Exception(f"Failed to create soft links: {e}")
+
+    # Verify installation (check for any *_perf binary)
+    verify = shdl.exec(
+        f"ls {install_path}/*_perf 2>/dev/null | head -1 | grep -q _perf && echo EXISTS",
+        timeout=10,
+        print_console=False,
+    )
+    if not any("EXISTS" in v for v in verify.values()):
+        raise Exception("rccl-tests build completed but no *_perf binaries found in shared storage")
+
+    log.info(f"[rccl-tests] Build complete in shared storage: {install_path}")
+    return install_path
