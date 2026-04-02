@@ -23,7 +23,7 @@ Here's a code snippet of the ``ibperf_config.json`` file for reference:
         {
           "install_perf_package": "True",
           "install_dir": "/home/{user-id}/",
-          "rocm_dir": "/opt/rocm",
+          "rocm_dir": "<changeme>",
           "qp_count_list": [ "8", "16" ],
           "ib_bw_test_list": [ "ib_write_bw", "ib_send_bw"],
           "ib_lat_test_list": [ "ib_write_lat", "ib_send_lat", "ib_read_lat" ],
@@ -72,8 +72,8 @@ Here's an exhaustive list of the available parameters in the IB Perf configurati
      - ``/home/{user-id}/``
      - Installation directory for performance testing tools
    * - ``rocm_dir``
-     - ``/opt/rocm``
-     - ROCm installation path   
+     - ``<changeme>``
+     - 	Set the path of rocm
    * - ``qp_count_list``
      - Values:
         - 8 
