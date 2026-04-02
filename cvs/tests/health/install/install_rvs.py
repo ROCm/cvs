@@ -362,9 +362,7 @@ def test_install_rvs(phdl, shdl, config_dict):
                     f'cd {git_install_path}/ROCmValidationSuite; cmake -B ./build -DROCM_PATH={rocm_path} -DCMAKE_INSTALL_PREFIX={rocm_path} -DCPACK_PACKAGING_INSTALL_PREFIX={rocm_path} -DHIP_PLATFORM=amd',
                     timeout=1200,
                 )
-                out_dict = hdl.exec(
-                    f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc)', timeout=1200
-                )
+                out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc)', timeout=1200)
 
                 out_dict = hdl.exec(
                     f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc) package', timeout=1200
