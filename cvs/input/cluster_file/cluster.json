@@ -12,6 +12,10 @@
     {
         "mgmt_ip": "{xx.xx.xx.xx|hostname}"
     },
+    "env_vars": 
+    {
+        "ROCM":"/shared/apps/ubuntu/opt/rocm-7.11.0/bin/"
+    },
     "node_dict":
     {
         "{xx.xx.xx.xx|hostname}":
