@@ -244,8 +244,9 @@ def s_phdl(cluster_dict):
       - This fixture has module scope, so a single connection handle is reused for all tests in the module.
     """
     print(cluster_dict)
+    env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
-    s_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    s_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
     return s_phdl
 
 
@@ -271,8 +272,9 @@ def c_phdl(cluster_dict):
       - This fixture has module scope, so a single connection handle is reused for all tests in the module.
     """
     print(cluster_dict)
+    env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
-    c_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    c_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
     return c_phdl
 
 

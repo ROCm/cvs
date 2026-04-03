@@ -4,30 +4,30 @@ All rights reserved. This notice is intended as a precaution against inadvertent
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
-
+ 
 from __future__ import print_function
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError, SessionError
-
+ 
 import time
-
+ 
 # Following used only for scp of file
 import paramiko
 from paramiko import SSHClient
 from scp import SCPClient
-
-
+ 
+ 
 class Pssh:
     """
     ParallelSessions - Uses the pssh library that is based of Paramiko, that lets you take
     multiple parallel ssh sessions to hosts and execute commands.
-
+ 
     Input host_config should be in this format ..
     mandatory args =  user, password (or) 'private_key': load_private_key('my_key.pem')
     """
-
+ 
     def __init__(
-        self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True
+        self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True, env_vars=None
     ):
         self.log = log
         self.host_list = host_list
@@ -38,7 +38,8 @@ class Pssh:
         self.host_key_check = host_key_check
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
-
+        self.env_prefix = f"export PATH={':'.join(env_vars.values())}:$PATH" if env_vars else None
+ 
         if self.password is None:
             print(self.reachable_hosts)
             print(self.user)
@@ -48,7 +49,7 @@ class Pssh:
             self.client = ParallelSSHClient(
                 self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
             )
-
+ 
     def check_connectivity(self, hosts):
         """
         Check connectivity for a list of hosts using one ParallelSSHClient.
@@ -67,11 +68,11 @@ class Pssh:
         output = temp_client.run_command('echo 1', stop_on_errors=False, read_timeout=2)
         unreachable = [item.host for item in output if item.exception]
         return unreachable
-
+ 
     def prune_unreachable_hosts(self, output):
         """
         Prune unreachable hosts from self.reachable_hosts if they have ConnectionError or Timeout exceptions and also fail connectivity check.
-
+ 
         Targeted pruning: Only ConnectionError and Timeout exceptions trigger pruning to avoid removing hosts for transient failures
         like authentication errors or SSH protocol issues, which may succeed on next try. ConnectionErrors and Timeouts are indicative
         of potential unreachability, so we perform an additional connectivity check before pruning. This ensures
@@ -98,7 +99,7 @@ class Pssh:
                 self.client = ParallelSSHClient(
                     self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
                 )
-
+ 
     def inform_unreachability(self, cmd_output):
         """
         Update cmd_output with "Host Unreachable" for all hosts in self.unreachable_hosts.
@@ -106,7 +107,7 @@ class Pssh:
         """
         for host in self.unreachable_hosts:
             cmd_output[host] = cmd_output.get(host, "") + "\nABORT: Host Unreachable Error"
-
+ 
     def _process_output(self, output, cmd=None, cmd_list=None, print_console=True):
         """
         Helper method to process output from run_command, collect results, and handle pruning.
@@ -147,13 +148,13 @@ class Pssh:
             if cmd_list:
                 i += 1
             cmd_output[item.host] = cmd_out_str
-
+ 
         if not self.stop_on_errors:
             self.prune_unreachable_hosts(output)
             self.inform_unreachability(cmd_output)
-
+ 
         return cmd_output
-
+ 
     def _handle_timeout_exception(self, output, e):
         """
         Helper method to handle Timeout exceptions by setting exceptions for all hosts in output.
@@ -163,48 +164,60 @@ class Pssh:
             for item in output:
                 if item.exception is None:
                     item.exception = e
-
+ 
     def exec(self, cmd, timeout=None, print_console=True):
         """
         Returns a dictionary of host as key and command output as values
         """
-        print(f'cmd = {cmd}')
-
+        if self.env_prefix:
+            full_cmd = f"{self.env_prefix} ; {cmd}"
+        else:
+            full_cmd = cmd
+ 
+        print(f'cmd = {full_cmd}')
+ 
         # Log command execution
         if self.log:
             if timeout is not None:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {cmd}")
+                self.log.debug(
+                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
+                )
             else:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {cmd}")
-
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
+ 
         if timeout is None:
-            output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors)
+            output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
         else:
-            output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
-        cmd_output = self._process_output(output, cmd=cmd, print_console=print_console)
-
+            output = self.client.run_command(full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
+        cmd_output = self._process_output(output, cmd=full_cmd, print_console=print_console)
+ 
         # Log per-host execution completion
         if self.log:
             for host in cmd_output.keys():
                 self.log.debug(f"Command completed on {host}: {cmd}")
-
+ 
         return cmd_output
-
+ 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
         """
         Run different commands on different hosts compared to to exec
         which runs the same command on all hosts.
         Returns a dictionary of host as key and command output as values
         """
+        if self.env_prefix:
+            cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
+        else:
+            cmd_list = cmd_list
+ 
         print(cmd_list)
-
+ 
         # Log command list execution
         if self.log:
             if timeout is not None:
                 self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]")
             else:
                 self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s)")
-
+ 
         if timeout is None:
             output = self.client.run_command('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
         else:
@@ -212,14 +225,14 @@ class Pssh:
                 '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors
             )
         cmd_output = self._process_output(output, cmd_list=cmd_list, print_console=print_console)
-
+ 
         # Log per-host command execution
         if self.log:
             for host, cmd in zip(self.reachable_hosts, cmd_list):
                 self.log.debug(f"Command on {host}: {cmd}")
-
+ 
         return cmd_output
-
+ 
     def scp_file(self, local_file, remote_file, recurse=False):
         print('About to copy local file {} to remote {} on all Hosts'.format(local_file, remote_file))
         cmds = self.client.copy_file(local_file, remote_file, recurse=recurse)
@@ -230,16 +243,16 @@ class Pssh:
             except IOError:
                 raise Exception("Expected IOError exception, got none")
         return
-
+ 
     def reboot_connections(self):
         print('Rebooting Connections')
         self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
-
+ 
     def destroy_clients(self):
         print('Destroying Current phdl connections ..')
         del self.client
-
-
+ 
+ 
 def scp(src, dst, srcusername, srcpassword, dstusername=None, dstpassword=None):
     """
     This method gets/puts files from one server to another
@@ -253,7 +266,7 @@ def scp(src, dst, srcusername, srcpassword, dstusername=None, dstpassword=None):
         To copy remote file '/tmp/x' from 1.1.1.1 to remote server 1.1.1.2 '/home/user/x'
         scp('1.1.1.1:/tmp/x','1.1.1.2:/home/user/x','root','docker','root','docker')
     """
-
+ 
     ssh = SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.load_system_host_keys()
@@ -263,7 +276,7 @@ def scp(src, dst, srcusername, srcpassword, dstusername=None, dstpassword=None):
     get_put = 1
     srcip = None
     dstip = None
-
+ 
     if len(srclist) == 2:
         srcip = srclist[0]
         srcfile = srclist[1]
@@ -271,7 +284,7 @@ def scp(src, dst, srcusername, srcpassword, dstusername=None, dstpassword=None):
         get_put = 0
     else:
         srcfile = srclist[0]
-
+ 
     if len(dstlist) == 2:
         dstip = dstlist[0]
         dstfile = dstlist[1]

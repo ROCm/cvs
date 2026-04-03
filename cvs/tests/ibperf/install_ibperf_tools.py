@@ -131,10 +131,11 @@ def phdl(cluster_dict):
       - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
     """
     print(cluster_dict)
+    env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     if len(node_list) % 2 != 0:
         node_list.pop()
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
     return phdl
 
 
@@ -155,8 +156,9 @@ def shdl(cluster_dict):
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
     """
     node_list = list(cluster_dict['node_dict'].keys())
+    env_vars = cluster_dict.get("env_vars")
     head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
     return shdl
 
 
