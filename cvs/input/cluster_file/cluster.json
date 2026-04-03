@@ -12,11 +12,8 @@
     {
         "mgmt_ip": "{xx.xx.xx.xx|hostname}"
     },
-    "env_vars": 
-    {
-        "_env_var_comment": "If your cluster supports multiple rocm env via modules, choose the module and provide the path to use by cvs scripts",
-        "ROCM":""
-    },
+    "_env_varS_comment": "Custom env variables to be exported before executing each command, Example in a cluster with multiple rocm installed set ROCM_PATH : /opt/rocm-7.2",
+    "env_vars": {},
     "node_dict":
     {
         "{xx.xx.xx.xx|hostname}":
