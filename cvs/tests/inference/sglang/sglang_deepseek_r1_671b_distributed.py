@@ -137,7 +137,11 @@ def p_phdl(cluster_dict, inference_dict):
     print(cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     p_phdl = Pssh(
-        log, inference_dict['prefill_node_list'], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars
+        log,
+        inference_dict['prefill_node_list'],
+        user=cluster_dict['username'],
+        pkey=cluster_dict['priv_key_file'],
+        env_vars=env_vars,
     )
     return p_phdl
 
@@ -146,7 +150,11 @@ def p_phdl(cluster_dict, inference_dict):
 def d_phdl(cluster_dict, inference_dict):
     env_vars = cluster_dict.get("env_vars")
     d_phdl = Pssh(
-        log, inference_dict['decode_node_list'], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars
+        log,
+        inference_dict['decode_node_list'],
+        user=cluster_dict['username'],
+        pkey=cluster_dict['priv_key_file'],
+        env_vars=env_vars,
     )
     return d_phdl
 
