@@ -1,14 +1,16 @@
 # RCCL Performance Tests
 
-RCCL in CVS now uses one suite, `rccl_cvs`, with one small config surface and one consolidated JSON artifact. The RCCL config keeps benchmark intent only; NCCL, UCX, plugin, and site-specific environment tuning should live in the user-provided `env_script`.
+RCCL in CVS uses one suite, `rccl_cvs`, with a strict nested config (`rccl.run`, `rccl.validation`, `rccl.artifacts`) and a canonical run-directory artifact (`run.json`). Benchmark intent stays in JSON; NCCL, UCX, plugin, and site-specific tuning belong in `rccl.run.env_script`.
+
+The JSON file must have **only** the top-level key `rccl`. Legacy fields (`mode`, `results` / `results_file`, flat shapes) and unknown keys anywhere in the nested schema are rejected. Optional `matrix` is valid only as omitted, `null`, or `{}` until matrix expansion is implemented in this runner.
 
 ## Supported suite
 
-Use `rccl_cvs` for both single-node and multi-node runs.
+Use `rccl_cvs` for both single-node and multi-node runs. Topology is **inferred** from `num_ranks` and `ranks_per_node` (there is no `mode` field).
 
 ## Collective tests covered
 
-Select any of these RCCL binaries through `collectives`:
+Select any of these RCCL binaries through `rccl.run.collectives`:
 
 - `all_reduce_perf`
 - `all_gather_perf`
@@ -23,10 +25,10 @@ Select any of these RCCL binaries through `collectives`:
 ## Prerequisites
 
 1. Provide a valid cluster file such as `input/cluster_file/cluster.json`.
-2. Install `rccl-tests` and set `rccl_tests_dir` in the config.
-3. For multi-node runs, set either `mpi_root` or `mpirun_path`.
-4. Keep runtime tuning in `env_script` so the benchmark command stays minimal.
-5. Update `results` thresholds for your platform before using them for pass/fail decisions.
+2. Install `rccl-tests` and set `rccl.run.rccl_tests_dir` in the config.
+3. For multi-node runs (`num_ranks / ranks_per_node > 1`), set either `rccl.run.mpi_root` or `rccl.run.mpirun_path`.
+4. Keep runtime tuning in `rccl.run.env_script` so the benchmark command stays minimal.
+5. For `validation.profile` `thresholds` or `strict`, maintain `validation.thresholds` or `validation.thresholds_file` for your platform.
 
 ## How to run with CVS
 
@@ -36,7 +38,7 @@ Run from the CVS repo root:
 cvs list rccl_cvs
 ```
 
-Multi-node example:
+Example:
 
 ```bash
 cvs run rccl_cvs \
@@ -46,38 +48,26 @@ cvs run rccl_cvs \
   --log-file=/tmp/rccl.log -vvv -s
 ```
 
-Single-node example:
-
-```bash
-cvs run rccl_cvs \
-  --cluster_file input/cluster_file/cluster.json \
-  --config_file input/config_file/rccl/rccl_config.json \
-  --html=/var/www/html/cvs/rccl_single.html --capture=tee-sys --self-contained-html \
-  --log-file=/tmp/rccl_single.log -vvv -s
-```
-
-Switch between the two paths by changing `mode` in the config.
+Use `num_ranks` equal to `ranks_per_node` for a single-node launch; use a larger `num_ranks` (and enough cluster nodes) for multi-node.
 
 ## Config quick reference
 
 Edit `input/config_file/rccl/rccl_config.json` before running:
 
-- Install paths: `rccl_tests_dir`, `mpi_root` or `mpirun_path`, `rocm_path`, `env_script`
-- Mode and scale: `mode`, `num_ranks`, `ranks_per_node`
-- Benchmark args: `collectives`, `datatype`, `start_size`, `end_size`, `step_factor`, `warmups`, `iterations`, `cycles`
-- Validation: `verify_bus_bw`, `verify_bw_dip`, `verify_lat_dip`, `results` or `results_file`
-- Artifact: `output_json`
+- `rccl.run`: paths (`rccl_tests_dir`, `mpi_root` / `mpirun_path`, `rocm_path`, `env_script`, `rccl_library_path`), ranks (`num_ranks`, `ranks_per_node` as integers), benchmark args (`collectives`, `datatype`, size sweep fields, `warmups`, `iterations`, `cycles`)
+- `rccl.validation`: `profile` (`none` | `smoke` | `thresholds` | `strict`), optional `thresholds` or `thresholds_file`
+- `rccl.artifacts`: `output_dir`, `export_raw`
 
 Placeholder handling still works in RCCL config paths, including `{user-id}`.
 
-Example threshold format:
+Example inline thresholds (numeric values; message sizes as decimal strings matching rccl-tests `size`):
 
 ```json
-"results": {
+"thresholds": {
   "all_reduce_perf": {
     "bus_bw": {
-      "8589934592": "330.00",
-      "17179869184": "350.00"
+      "8589934592": 330.0,
+      "17179869184": 350.0
     }
   }
 }
@@ -89,8 +79,8 @@ If using AINIC + ANP:
 
 1. Ensure ANP is installed on all target nodes.
 2. Edit `input/config_file/rccl/ainic_env_script.sh` with your ANP path.
-3. Point `env_script` at that file.
+3. Point `rccl.run.env_script` at that file.
 
 ## Output artifact
 
-`rccl_cvs` writes one JSON artifact to `output_json`. It contains run metadata, one entry per collective, parsed rccl-tests rows, and the validation summary for each collective.
+`rccl_cvs` writes `{output_dir}/{run_id}/run.json`. **`run.json` is the only normative machine-readable result** (`schema_version` `rccl_cvs.run.v1`); there is no separate `summary.json`. The layout is described in `docs/reference/configuration-files/rccl.rst` (Result artifact section). Contents include topology, cluster nodes, echoed config, filtered env vars after `env_script`, one `cases[]` entry per collective (no-matrix path uses `case_id` values `c0_<collective>`, `c1_<collective>`, …), `metrics.rows`, and `summary`. If `export_raw` is true, optional raw rccl-tests JSON is stored per case under `{output_dir}/{run_id}/raw/<case_id>.json` for debugging only.

@@ -321,7 +321,7 @@ Use these scripts to start the test:
 ROCm Communication Collectives Library (RCCL) test script
 ---------------------------------------------------------
 
-RCCL now uses one suite, ``rccl_cvs``. The suite supports both ``single_node`` and ``multi_node`` runs through the same config file and writes one consolidated JSON artifact instead of RCCL-specific HTML and heatmap side artifacts.
+RCCL now uses one suite, ``rccl_cvs``. The suite uses a nested ``rccl.run`` / ``rccl.validation`` / ``rccl.artifacts`` config; single-node versus multi-node is inferred from ``num_ranks`` and ``ranks_per_node`` (no ``mode`` field). Each run writes ``run.json`` under ``{rccl.artifacts.output_dir}/{run_id}/`` (see the **Result artifact** section in :doc:`../reference/configuration-files/rccl`).
 
 You can list the available RCCL test case using the CLI:
 
@@ -340,7 +340,13 @@ Use this command to start RCCL with CVS:
 
   cvs run rccl_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl.log -vvv -s
 
-Set ``mode`` in ``input/config_file/rccl/rccl_config.json`` to ``single_node`` or ``multi_node`` depending on the target run. Keep NCCL, UCX, and plugin tuning in ``env_script`` rather than the RCCL config itself.
+Adjust ``rccl.run.num_ranks`` and ``rccl.run.ranks_per_node`` so ``num_ranks / ranks_per_node`` matches the node count you intend (``1`` for single-node). Keep NCCL, UCX, and plugin tuning in ``rccl.run.env_script`` rather than the RCCL JSON.
+
+To run the focused RCCL contract unit tests (config load, thresholds shape, schema helpers) from the CVS repo root with ``PYTHONPATH`` pointing at the package tree:
+
+.. code:: bash
+
+   PYTHONPATH=cvs python -m unittest cvs.lib.unittests.test_rccl_cvs cvs.unittests.test_rccl_schema_validation -v
 
 
 JAX training test scripts

@@ -7,7 +7,7 @@ import json
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.rccl_simple import load_rccl_config, run_rccl
+from cvs.lib.rccl_cvs import load_rccl_config, run_rccl
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders, update_test_result
 
 

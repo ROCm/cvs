@@ -1,48 +1,53 @@
 {
   "rccl": {
-    "mode": "multi_node",
-    "rccl_tests_dir": "/opt/rccl-tests/build",
-    "mpi_root": "/usr",
-    "rocm_path": "/opt/rocm",
-    "env_script": "/root/env_source_file.sh",
-    "num_ranks": "16",
-    "ranks_per_node": "8",
-    "collectives": [
-      "all_reduce_perf",
-      "all_gather_perf",
-      "broadcast_perf"
-    ],
-    "datatype": "float",
-    "start_size": "1024",
-    "end_size": "16g",
-    "step_factor": "2",
-    "warmups": "10",
-    "iterations": "20",
-    "cycles": "1",
-    "verify_bus_bw": "False",
-    "verify_bw_dip": "True",
-    "verify_lat_dip": "True",
-    "output_json": "/tmp/rccl_result.json",
-    "_comment_env_script": "Put NCCL, UCX, plugin, and site-specific runtime tuning in env_script instead of the CVS JSON.",
-    "results": {
-      "all_reduce_perf": {
-        "bus_bw": {
-          "8589934592": "330.00",
-          "17179869184": "350.00"
-        }
-      },
-      "all_gather_perf": {
-        "bus_bw": {
-          "8589934592": "330.00",
-          "17179869184": "350.00"
-        }
-      },
-      "broadcast_perf": {
-        "bus_bw": {
-          "8589934592": "310.00",
-          "17179869184": "312.00"
+    "run": {
+      "rccl_tests_dir": "/opt/rccl-tests/build",
+      "mpi_root": "/usr",
+      "rocm_path": "/opt/rocm",
+      "env_script": "/root/env_source_file.sh",
+      "rccl_library_path": null,
+      "num_ranks": 16,
+      "ranks_per_node": 8,
+      "collectives": [
+        "all_reduce_perf",
+        "all_gather_perf",
+        "broadcast_perf"
+      ],
+      "datatype": "float",
+      "start_size": "1024",
+      "end_size": "16g",
+      "step_factor": "2",
+      "warmups": "10",
+      "iterations": "20",
+      "cycles": "1"
+    },
+    "validation": {
+      "profile": "strict",
+      "thresholds": {
+        "all_reduce_perf": {
+          "bus_bw": {
+            "8589934592": 330.0,
+            "17179869184": 350.0
+          }
+        },
+        "all_gather_perf": {
+          "bus_bw": {
+            "8589934592": 330.0,
+            "17179869184": 350.0
+          }
+        },
+        "broadcast_perf": {
+          "bus_bw": {
+            "8589934592": 310.0,
+            "17179869184": 312.0
+          }
         }
       }
-    }
+    },
+    "artifacts": {
+      "output_dir": "/tmp/rccl_cvs_out",
+      "export_raw": false
+    },
+    "_comment_env_script": "Put NCCL, UCX, plugin, and site-specific runtime tuning in env_script instead of the CVS JSON."
   }
 }
