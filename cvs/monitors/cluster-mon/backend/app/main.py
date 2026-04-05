@@ -20,6 +20,7 @@ from app.core.jump_host_pssh import JumpHostPssh
 from app.collectors.gpu_collector import GPUMetricsCollector
 from app.collectors.nic_collector import NICMetricsCollector
 from app.collectors.rccl_collector import RCCLCollector
+from app.collectors.inspector_collector import InspectorCollector
 from app.collectors.base import BaseCollector, CollectorResult, CollectorState
 from app.api import router as api_router
 
@@ -130,6 +131,7 @@ REGISTERED_COLLECTORS: list[type[BaseCollector]] = [
     GPUMetricsCollector,
     NICMetricsCollector,
     RCCLCollector,
+    InspectorCollector,
 ]
 
 

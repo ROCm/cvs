@@ -132,6 +132,14 @@ class ApiClient {
   async getCollectorsStatus() {
     return this.request('/collectors/status')
   }
+
+  async getRCCLPerformance() {
+    return this.request('/rccl/performance')
+  }
+
+  async getRCCLPerformanceHistory(count = 50) {
+    return this.request(`/rccl/performance/history?count=${count}`)
+  }
 }
 
 export const api = new ApiClient(API_BASE_URL)

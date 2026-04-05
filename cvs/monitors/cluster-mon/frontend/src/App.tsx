@@ -12,6 +12,7 @@ import { LogsPage } from './pages/LogsPage'
 import { RCCLHealthPage } from './pages/RCCLHealthPage'
 import { RCCLTopologyPage } from './pages/RCCLTopologyPage'
 import { RCCLTimelinePage } from './pages/RCCLTimelinePage'
+import { RCCLPerformancePage } from './pages/RCCLPerformancePage'
 import { NodeDetailsModal } from './components/NodeDetailsModal'
 
 function App() {
@@ -32,6 +33,7 @@ function App() {
           <Route path="rccl-health" element={<RCCLHealthPage />} />
           <Route path="rccl-topology" element={<RCCLTopologyPage />} />
           <Route path="rccl-timeline" element={<RCCLTimelinePage />} />
+          <Route path="rccl-performance" element={<RCCLPerformancePage />} />
         </Route>
       </Routes>
       <NodeDetailsModal />

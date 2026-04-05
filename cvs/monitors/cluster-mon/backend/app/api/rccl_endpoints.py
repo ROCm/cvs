@@ -79,6 +79,48 @@ async def get_rccl_events(
     }
 
 
+@router.get("/performance")
+async def get_rccl_performance() -> dict:
+    """
+    Latest Inspector performance snapshot.
+    Returns bandwidth stats across all ranks from the most recent poll cycle.
+    Returns 503 when Inspector collector is disabled or has not run yet.
+    """
+    from app.main import app_state
+    from fastapi import Response
+    import time
+
+    data_store = getattr(app_state, 'rccl_data_store', None)
+    if data_store is None:
+        raise HTTPException(status_code=503, detail="Data store not initialized")
+
+    snapshot = await data_store.get_inspector_current()
+    if snapshot is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No Inspector snapshot available. Check that rccl.inspector.enabled=true and a job is running.",
+        )
+    return snapshot
+
+
+@router.get("/performance/history")
+async def get_rccl_performance_history(
+    count: int = Query(50, ge=1, le=500, description="Number of snapshots to return"),
+) -> dict:
+    """
+    Recent Inspector performance snapshots for time-series charting.
+    Returns up to `count` snapshots, newest first.
+    """
+    from app.main import app_state
+
+    data_store = getattr(app_state, 'rccl_data_store', None)
+    if data_store is None:
+        return {"snapshots": []}
+
+    snapshots = await data_store.get_inspector_snapshots(count=count)
+    return {"snapshots": snapshots, "count": len(snapshots)}
+
+
 @router.post("/markers", status_code=201)
 async def post_rccl_marker(marker: RCCLMarker) -> dict[str, str]:
     """

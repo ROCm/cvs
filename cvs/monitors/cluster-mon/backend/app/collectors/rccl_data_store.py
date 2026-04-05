@@ -19,13 +19,16 @@ logger = logging.getLogger(__name__)
 # In-memory fallback caps (no Redis)
 _MEMORY_EVENT_MAX = 500
 _MEMORY_SNAPSHOT_MAX = 100
+_MEMORY_INSPECTOR_MAX = 100
 
 
 class RCCLDataStore:
     # Redis Streams — atomic append+cap in one command
-    SNAPSHOT_STREAM = "rccl:snapshots"   # Stream, capped at 1000 entries
-    EVENT_STREAM = "rccl:events"         # Stream, capped at 10000 entries
-    CURRENT_KEY = "rccl:current"         # Hash, latest snapshot only
+    SNAPSHOT_STREAM = "rccl:snapshots"            # Stream, capped at 1000 entries
+    EVENT_STREAM = "rccl:events"                  # Stream, capped at 10000 entries
+    CURRENT_KEY = "rccl:current"                  # Hash, latest snapshot only
+    INSPECTOR_STREAM = "rccl:inspector:snapshots"  # Stream, capped at 1000 entries
+    INSPECTOR_CURRENT_KEY = "rccl:inspector:current"  # Hash, latest Inspector snapshot
 
     def __init__(self, redis_client, snapshot_max: int = 1000, event_max: int = 10000):
         """
@@ -43,6 +46,8 @@ class RCCLDataStore:
         self._mem_events: collections.deque[dict] = collections.deque(maxlen=_MEMORY_EVENT_MAX)
         self._mem_snapshots: collections.deque[dict] = collections.deque(maxlen=_MEMORY_SNAPSHOT_MAX)
         self._mem_current: Optional[dict] = None
+        self._mem_inspector_snapshots: collections.deque[dict] = collections.deque(maxlen=_MEMORY_INSPECTOR_MAX)
+        self._mem_inspector_current: Optional[dict] = None
 
     async def push_snapshot(self, snapshot: dict) -> None:
         """Atomically append snapshot to ring buffer and update current."""
@@ -111,6 +116,52 @@ class RCCLDataStore:
     def is_memory_capped(self) -> bool:
         """True when the in-memory event buffer has reached its maximum capacity."""
         return self._r is None and len(self._mem_events) >= _MEMORY_EVENT_MAX
+
+    async def push_inspector_snapshot(self, snapshot: dict) -> None:
+        """Append an Inspector performance snapshot and update the current-key."""
+        if self._r is None:
+            self._mem_inspector_snapshots.append(snapshot)
+            self._mem_inspector_current = snapshot
+            return
+        try:
+            payload = json.dumps(snapshot)
+            await self._r.xadd(
+                self.INSPECTOR_STREAM,
+                {"data": payload},
+                maxlen=self._snapshot_max,
+            )
+            await self._r.hset(
+                self.INSPECTOR_CURRENT_KEY,
+                mapping={"data": payload, "ts": str(snapshot.get("timestamp", ""))},
+            )
+        except Exception as e:
+            logger.warning(f"RCCLDataStore.push_inspector_snapshot failed (falling back to memory): {e}")
+            self._mem_inspector_snapshots.append(snapshot)
+            self._mem_inspector_current = snapshot
+
+    async def get_inspector_current(self) -> Optional[dict]:
+        """Return the latest Inspector snapshot."""
+        if self._r is None:
+            return self._mem_inspector_current
+        try:
+            result = await self._r.hget(self.INSPECTOR_CURRENT_KEY, "data")
+            if result:
+                return json.loads(result)
+            return None
+        except Exception as e:
+            logger.warning(f"RCCLDataStore.get_inspector_current failed: {e}")
+            return None
+
+    async def get_inspector_snapshots(self, count: int = 50) -> list[dict]:
+        """Return the most recent N Inspector snapshots, newest first."""
+        if self._r is None:
+            return list(reversed(list(self._mem_inspector_snapshots)))[:count]
+        try:
+            entries = await self._r.xrevrange(self.INSPECTOR_STREAM, count=count)
+            return [json.loads(e[1]["data"]) for e in entries]
+        except Exception as e:
+            logger.warning(f"RCCLDataStore.get_inspector_snapshots failed: {e}")
+            return []
 
     async def get_events_in_range(self, start_ts: float, end_ts: float) -> list[dict]:
         """Return events within a UTC timestamp range using stream entry IDs.
