@@ -53,12 +53,22 @@ class StorageConfig(BaseModel):
     redis: RedisConfig = Field(default_factory=RedisConfig)
 
 
+class InspectorConfig(BaseModel):
+    """Configuration for the RCCL Inspector plugin collector."""
+    enabled: bool = False
+    mode: str = "file"                  # "file" (NFS) or "ssh"
+    dump_dir: Optional[str] = None      # NFS path where Inspector writes .log files
+    poll_interval: int = 30             # seconds between collection cycles
+    max_records_per_file: int = 100     # tail last N lines per log file
+
+
 class RCCLConfig(BaseModel):
     """Forward-declaration for RCCL extension config. No runtime behaviour in base robustness spec."""
     ras_port: int = 28028
     poll_interval: int = 30
     collective_timeout_secs: int = 10
     debug_log_path: Optional[str] = None
+    inspector: InspectorConfig = Field(default_factory=InspectorConfig)
 
 
 class _YamlSource(PydanticBaseSettingsSource):

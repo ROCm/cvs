@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Settings, Cpu, Network, Activity, Package, HardDrive, Share2, FileText, Clock, GitFork } from 'lucide-react'
+import { LayoutDashboard, Settings, Cpu, Network, Activity, Package, HardDrive, Share2, FileText, Clock, GitFork, Zap } from 'lucide-react'
 import { cn } from '@/utils/cn'
 
 const mainNav = [
@@ -17,6 +17,7 @@ const rcclNav = [
   { name: 'RCCL Health', href: '/rccl-health', icon: Activity },
   { name: 'RAS Topology', href: '/rccl-topology', icon: GitFork },
   { name: 'Timeline', href: '/rccl-timeline', icon: Clock },
+  { name: 'Performance', href: '/rccl-performance', icon: Zap },
 ]
 
 function NavItem({ name, href, icon: Icon }: { name: string; href: string; icon: React.ElementType }) {

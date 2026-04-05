@@ -37,3 +37,10 @@ cluster:
     poll_interval: 30
     collective_timeout_secs: 10
     debug_log_path: null
+
+    inspector:
+      enabled: false              # set to true when an RCCL job is running with Inspector plugin
+      mode: ssh                   # "ssh" (remote NFS, default) or "file" (local NFS)
+      dump_dir: null              # NFS path: e.g. /nfs/shared/inspector-logs/<job_id>
+      poll_interval: 10           # seconds between collection cycles
+      max_records_per_file: 500   # tail last N lines per .log file

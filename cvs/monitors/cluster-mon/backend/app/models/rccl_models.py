@@ -112,3 +112,61 @@ class RCCLMarker(BaseModel):
     loss: Optional[float] = None
     rank: int
     timestamp: str         # ISO 8601
+
+
+# ---------------------------------------------------------------------------
+# Inspector plugin models
+# ---------------------------------------------------------------------------
+
+class InspectorKernelChannel(BaseModel):
+    """Per-channel kernel timing from NCCL_INSPECTOR_DUMP_VERBOSE=1."""
+    channel_id: int
+    # Sequence numbers — monotonic counters across all profiler events
+    kernel_start_sn: Optional[int] = None
+    kernel_stop_sn: Optional[int] = None
+    kernel_record_sn: Optional[int] = None
+    # Raw timestamps — units depend on timing_source:
+    #   kernel_gpu:       GPU clock ticks (not directly convertible without clock freq)
+    #   kernel_cpu / collective_cpu: microseconds
+    kernel_start_ts: Optional[int] = None
+    kernel_stop_ts: Optional[int] = None
+    kernel_record_ts: Optional[int] = None
+
+
+class InspectorEventTrace(BaseModel):
+    """Verbose event trace from coll_perf.event_trace_sn / event_trace_ts."""
+    coll_start_sn: Optional[int] = None
+    coll_stop_sn: Optional[int] = None
+    coll_start_ts: Optional[int] = None
+    coll_stop_ts: Optional[int] = None
+    channels: list[InspectorKernelChannel] = []
+
+
+class InspectorCollPerf(BaseModel):
+    """Single completed collective record from one Inspector JSONL line."""
+    timestamp: float            # dump_timestamp_us / 1e6 (Unix seconds)
+    comm_hash: str              # header.id — communicator identity
+    rank: int                   # header.rank
+    nranks: int                 # header.n_ranks
+    nnodes: int                 # header.nnodes
+    hostname: str               # metadata.hostname
+    pid: int                    # metadata.pid
+    collective: str             # coll_perf.coll (e.g. "AllReduce")
+    sequence_num: int           # coll_perf.coll_sn — monotonic counter per comm
+    msg_size_bytes: int         # coll_perf.coll_msg_size_bytes
+    exec_time_us: int           # coll_perf.coll_exec_time_us
+    timing_source: str          # coll_perf.coll_timing_source
+    algo_bw_gbps: float         # coll_perf.coll_algobw_gbs
+    bus_bw_gbps: float          # coll_perf.coll_busbw_gbs
+    event_trace: Optional[InspectorEventTrace] = None  # present only with NCCL_INSPECTOR_DUMP_VERBOSE=1
+
+
+class InspectorSnapshot(BaseModel):
+    """Aggregated Inspector data across all ranks collected in one poll cycle."""
+    timestamp: float
+    records: list[InspectorCollPerf]
+    avg_bus_bw_gbps: Optional[float] = None
+    min_bus_bw_gbps: Optional[float] = None
+    max_bus_bw_gbps: Optional[float] = None
+    slowest_rank: Optional[int] = None
+    collective_breakdown: dict[str, int] = {}  # collective name → count
