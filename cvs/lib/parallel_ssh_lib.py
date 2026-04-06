@@ -15,7 +15,7 @@ import time
 import paramiko
 from paramiko import SSHClient
 from scp import SCPClient
-from env_lib import build_env_prefix
+from csv.lib.env_lib import build_env_prefix
 
 
 class Pssh:
