@@ -15,7 +15,7 @@
     "_env_vars_comment": "Custom env variables to be exported before executing each command",
     "_env_vars_example":
     {
-        "PATH": "/opt/rocm-7.2"
+        "PATH": "/shared/apps/ubuntu/opt/rocm-7.11.0/bin:$PATH"
     },
     "env_vars": {},
     "node_dict":
