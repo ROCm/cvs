@@ -15,6 +15,7 @@ import time
 import paramiko
 from paramiko import SSHClient
 from scp import SCPClient
+import shlex
 
 
 class Pssh:
@@ -46,7 +47,13 @@ class Pssh:
         self.host_key_check = host_key_check
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
-        self.env_prefix = f"export PATH={':'.join(env_vars.values())}:$PATH" if env_vars else None
+        self.env_prefix = (
+        " ".join(
+        f"export {key}={shlex.quote(str(value))}"
+        for key, value in env_vars.items()
+        )
+        if env_vars else ""
+        )
 
         if self.password is None:
             print(self.reachable_hosts)
