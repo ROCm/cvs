@@ -48,6 +48,7 @@ class Pssh:
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
         self.env_prefix = build_env_prefix(env_vars)
+        self.log.Debug(f"Environ vars: {self.env_prefix}")
 
         if self.password is None:
             print(self.reachable_hosts)

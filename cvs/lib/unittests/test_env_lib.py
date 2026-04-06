@@ -5,7 +5,7 @@ Unit tests for env_lib.build_env_prefix using Python's built-in unittest framewo
 """
 
 import unittest
-from env_lib import build_env_prefix
+from cvs.lib.env_lib import build_env_prefix
 
 
 class TestBuildEnvPrefix(unittest.TestCase):
