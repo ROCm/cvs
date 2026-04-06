@@ -1,6 +1,6 @@
 # RCCL Performance Tests
 
-RCCL in CVS uses one suite, `rccl_cvs`, with a strict nested config (`rccl.run`, `rccl.validation`, `rccl.artifacts`) and a canonical run-directory artifact (`run.json`). Benchmark intent stays in JSON; NCCL, UCX, plugin, and site-specific tuning belong in `rccl.run.env_script`.
+RCCL in CVS uses one suite, `rccl_cvs`, with a strict nested config (`rccl.run`, `rccl.validation`, `rccl.artifacts`) and a canonical run-directory artifact (`run.json`). Benchmark intent stays in JSON; **all install paths** (`RCCL_TESTS_BUILD_DIR`, `ROCM_HOME`, `MPI_HOME`, `RCCL_HOME`, etc.) are set only via **required** `rccl.run.env_script`. NCCL, UCX, plugin, and site-specific tuning belong there too.
 
 The JSON file must have **only** the top-level key `rccl`. Legacy fields (`mode`, `results` / `results_file`, flat shapes) and unknown keys anywhere in the nested schema are rejected. Optional `matrix` is valid only as omitted, `null`, or `{}` until matrix expansion is implemented in this runner.
 
@@ -25,10 +25,9 @@ Select any of these RCCL binaries through `rccl.run.collectives`:
 ## Prerequisites
 
 1. Provide a valid cluster file such as `input/cluster_file/cluster.json`.
-2. Install `rccl-tests` and set `rccl.run.rccl_tests_dir` in the config.
-3. For multi-node runs (`num_ranks / ranks_per_node > 1`), set either `rccl.run.mpi_root` or `rccl.run.mpirun_path`.
-4. Keep runtime tuning in `rccl.run.env_script` so the benchmark command stays minimal.
-5. For `validation.profile` `thresholds` or `strict`, maintain `validation.thresholds` or `validation.thresholds_file` for your platform.
+2. Install `rccl-tests` and point `RCCL_TESTS_BUILD_DIR` in `rccl.run.env_script` at the build directory containing the `*_perf` binaries.
+3. For multi-node runs (`num_ranks / ranks_per_node > 1`), export `MPI_HOME` in `env_script` (the runner uses `${MPI_HOME}/bin/mpirun`).
+4. For `validation.profile` `thresholds` or `strict`, maintain `validation.thresholds` or `validation.thresholds_file` for your platform.
 
 ## How to run with CVS
 
@@ -54,7 +53,7 @@ Use `num_ranks` equal to `ranks_per_node` for a single-node launch; use a larger
 
 Edit `input/config_file/rccl/rccl_config.json` before running:
 
-- `rccl.run`: paths (`rccl_tests_dir`, `mpi_root` / `mpirun_path`, `rocm_path`, `env_script`, `rccl_library_path`), ranks (`num_ranks`, `ranks_per_node` as integers), benchmark args (`collectives`, `datatype`, size sweep fields, `warmups`, `iterations`, `cycles`)
+- `rccl.run`: **required** `env_script`; ranks (`num_ranks`, `ranks_per_node` as integers); benchmark args (`collectives`, `datatype`, size sweep fields, `warmups`, `iterations`, `cycles`). No JSON path fields.
 - `rccl.validation`: `profile` (`none` | `smoke` | `thresholds` | `strict`), optional `thresholds` or `thresholds_file`
 - `rccl.artifacts`: `output_dir`, `export_raw`
 

@@ -1,11 +1,7 @@
 {
   "rccl": {
     "run": {
-      "rccl_tests_dir": "/opt/rccl-tests/build",
-      "mpi_root": "/usr",
-      "rocm_path": "/opt/rocm",
       "env_script": "/root/env_source_file.sh",
-      "rccl_library_path": null,
       "num_ranks": 16,
       "ranks_per_node": 8,
       "collectives": [
@@ -48,6 +44,6 @@
       "output_dir": "/tmp/rccl_cvs_out",
       "export_raw": false
     },
-    "_comment_env_script": "Put NCCL, UCX, plugin, and site-specific runtime tuning in env_script instead of the CVS JSON."
+    "_comment_env_script": "Required. Source before benchmarks: export RCCL_TESTS_BUILD_DIR, ROCM_HOME, MPI_HOME; extend PATH/LD_LIBRARY_PATH (e.g. RCCL_HOME). Multi-node runs require MPI_HOME. NCCL/UCX/plugin tuning belongs here only — not in JSON."
   }
 }

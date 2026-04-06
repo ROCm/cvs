@@ -13,8 +13,10 @@ from cvs.lib.rccl_cvs import (  # noqa: E402
     RcclConfig,
     _build_summary,
     _ensure_unique_case_id,
+    _matching_rows,
     _no_matrix_case_id,
     _resolved_case_payload,
+    _scan_rccl_stdout,
     _slug,
     build_collective_command,
     load_rccl_config,
@@ -35,7 +37,7 @@ def _minimal_rccl(
     *,
     num_ranks=16,
     ranks_per_node=8,
-    mpi_root="/usr",
+    env_script="/tmp/env.sh",
     profile="smoke",
     thresholds=None,
     thresholds_file=None,
@@ -46,29 +48,44 @@ def _minimal_rccl(
         validation["thresholds"] = thresholds
     if thresholds_file is not None:
         validation["thresholds_file"] = thresholds_file
-    return {
-        "rccl": {
-            "run": {
-                "rccl_tests_dir": "/opt/rccl-tests/build",
-                "mpi_root": mpi_root,
-                "rocm_path": "/opt/rocm",
-                "env_script": "/tmp/env.sh",
-                "rccl_library_path": None,
-                "num_ranks": num_ranks,
-                "ranks_per_node": ranks_per_node,
-                "collectives": collectives or ["all_reduce_perf"],
-                "datatype": "float",
-                "start_size": "1024",
-                "end_size": "16g",
-                "step_factor": "2",
-                "warmups": "10",
-                "iterations": "20",
-                "cycles": "1",
-            },
-            "validation": validation,
-            "artifacts": {"output_dir": "/tmp/rccl_cvs_out", "export_raw": False},
-        }
+    run = {
+        "env_script": env_script,
+        "num_ranks": num_ranks,
+        "ranks_per_node": ranks_per_node,
+        "collectives": collectives or ["all_reduce_perf"],
+        "datatype": "float",
+        "start_size": "1024",
+        "end_size": "16g",
+        "step_factor": "2",
+        "warmups": "10",
+        "iterations": "20",
+        "cycles": "1",
     }
+    return {"rccl": {"run": run, "validation": validation, "artifacts": {"output_dir": "/tmp/rccl_cvs_out", "export_raw": False}}}
+
+
+def _rccl_cfg(**kwargs):
+    base = {
+        "required_nodes": 1,
+        "collectives": ["all_reduce_perf"],
+        "datatype": "float",
+        "num_ranks": 8,
+        "ranks_per_node": 8,
+        "env_script": "/tmp/env.sh",
+        "artifacts_output_dir": "/tmp/out",
+        "artifacts_export_raw": False,
+        "config_echo": {},
+        "start_size": "1024",
+        "end_size": "16g",
+        "step_factor": "2",
+        "warmups": "10",
+        "iterations": "20",
+        "cycles": "1",
+        "validation_profile": "smoke",
+        "thresholds": {},
+    }
+    base.update(kwargs)
+    return RcclConfig(**base)
 
 
 class TestRcclCvs(unittest.TestCase):
@@ -87,10 +104,9 @@ class TestRcclCvs(unittest.TestCase):
         self.assertIn("run", loaded.config_echo)
         self.assertEqual(loaded.config_echo["artifacts"]["output_dir"], "/tmp/rccl_cvs_out")
 
-    def test_load_rccl_config_single_node_allows_missing_mpi(self):
+    def test_load_rccl_config_single_node(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
-        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, mpi_root=None, profile="smoke")
-        body["rccl"]["run"].pop("mpi_root", None)
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
@@ -98,28 +114,28 @@ class TestRcclCvs(unittest.TestCase):
 
         self.assertEqual(loaded.required_nodes, 1)
         self.assertTrue(loaded.is_single_node)
-        self.assertIsNone(loaded.mpirun_path)
+        self.assertEqual(loaded.env_script, "/tmp/env.sh")
 
-    def test_load_rccl_config_multi_node_requires_mpi(self):
-        cluster_dict = {"username": "tester", "node_dict": {"node0": {}, "node1": {}}}
-        body = _minimal_rccl(mpi_root=None, profile="smoke")
-        body["rccl"]["run"].pop("mpi_root", None)
+    def test_load_rccl_config_rejects_missing_env_script(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
+        body["rccl"]["run"].pop("env_script", None)
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
             with self.assertRaises(ValueError) as ctx:
                 load_rccl_config(str(config_path), cluster_dict)
-        self.assertIn("mpi_root", str(ctx.exception).lower())
+        self.assertIn("env_script", str(ctx.exception).lower())
 
-    def test_load_rccl_config_mpirun_path_wins_over_mpi_root(self):
+    def test_load_rccl_config_multi_node_requires_env_script_path(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}, "node1": {}}}
-        body = _minimal_rccl()
-        body["rccl"]["run"]["mpirun_path"] = "/custom/bin/mpirun"
+        body = _minimal_rccl(env_script="/site/env.sh", profile="smoke")
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
             loaded = load_rccl_config(str(config_path), cluster_dict)
-        self.assertEqual(loaded.mpirun_path, "/custom/bin/mpirun")
+        self.assertFalse(loaded.is_single_node)
+        self.assertEqual(loaded.env_script, "/site/env.sh")
 
     def test_load_rccl_config_rejects_flat_legacy_shape(self):
         config = {
@@ -142,11 +158,9 @@ class TestRcclCvs(unittest.TestCase):
         body = _minimal_rccl(
             num_ranks=8,
             ranks_per_node=8,
-            mpi_root=None,
             profile="thresholds",
             thresholds={"all_reduce_perf": {"bus_bw": {"1024": 1.0}}},
         )
-        body["rccl"]["run"].pop("mpi_root", None)
         body["rccl"]["validation"]["thresholds_file"] = "/tmp/x.json"
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
@@ -161,11 +175,9 @@ class TestRcclCvs(unittest.TestCase):
         body = _minimal_rccl(
             num_ranks=8,
             ranks_per_node=8,
-            mpi_root=None,
             profile="strict",
             thresholds={},
         )
-        body["rccl"]["run"].pop("mpi_root", None)
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
@@ -178,11 +190,9 @@ class TestRcclCvs(unittest.TestCase):
         body = _minimal_rccl(
             num_ranks=8,
             ranks_per_node=8,
-            mpi_root=None,
             profile="thresholds",
             thresholds={"all_reduce_perf": {"not_bus_bw": {"1024": 1.0}}},
         )
-        body["rccl"]["run"].pop("mpi_root", None)
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
@@ -195,11 +205,9 @@ class TestRcclCvs(unittest.TestCase):
         body = _minimal_rccl(
             num_ranks=8,
             ranks_per_node=8,
-            mpi_root=None,
             profile="thresholds",
             thresholds={"all_reduce_perf": {"bus_bw": {}}},
         )
-        body["rccl"]["run"].pop("mpi_root", None)
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
@@ -216,11 +224,9 @@ class TestRcclCvs(unittest.TestCase):
             body = _minimal_rccl(
                 num_ranks=8,
                 ranks_per_node=8,
-                mpi_root=None,
                 profile="thresholds",
                 thresholds_file=str(thresh_path),
             )
-            body["rccl"]["run"].pop("mpi_root", None)
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
             loaded = load_rccl_config(str(config_path), cluster_dict)
@@ -234,11 +240,9 @@ class TestRcclCvs(unittest.TestCase):
             body = _minimal_rccl(
                 num_ranks=8,
                 ranks_per_node=8,
-                mpi_root=None,
                 profile="thresholds",
                 thresholds_file=str(thresh_path),
             )
-            body["rccl"]["run"].pop("mpi_root", None)
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
             with self.assertRaises(ValueError) as ctx:
@@ -247,8 +251,7 @@ class TestRcclCvs(unittest.TestCase):
 
     def test_load_rccl_config_rejects_unknown_rccl_key(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
-        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, mpi_root=None, profile="smoke")
-        body["rccl"]["run"].pop("mpi_root", None)
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
         body["rccl"]["legacy_alias"] = True
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
@@ -259,8 +262,7 @@ class TestRcclCvs(unittest.TestCase):
     def test_load_rccl_config_rejects_extra_top_level_keys(self):
         """Exactly one top-level key ``rccl``."""
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
-        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, mpi_root=None, profile="smoke")
-        body["rccl"]["run"].pop("mpi_root", None)
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
         body["comment"] = "not allowed"
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
@@ -271,8 +273,7 @@ class TestRcclCvs(unittest.TestCase):
 
     def test_load_rccl_config_rejects_extra_key_in_run(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
-        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, mpi_root=None, profile="smoke")
-        body["rccl"]["run"].pop("mpi_root", None)
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
         body["rccl"]["run"]["legacy_mode"] = "single_node"
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
@@ -283,8 +284,7 @@ class TestRcclCvs(unittest.TestCase):
 
     def test_load_rccl_config_rejects_extra_key_in_validation(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
-        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, mpi_root=None, profile="smoke")
-        body["rccl"]["run"].pop("mpi_root", None)
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
         body["rccl"]["validation"]["results_file"] = "/tmp/x.json"
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
@@ -295,8 +295,7 @@ class TestRcclCvs(unittest.TestCase):
 
     def test_load_rccl_config_rejects_extra_key_in_artifacts(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
-        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, mpi_root=None, profile="smoke")
-        body["rccl"]["run"].pop("mpi_root", None)
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
         body["rccl"]["artifacts"]["summary_json"] = True
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
@@ -310,14 +309,12 @@ class TestRcclCvs(unittest.TestCase):
         body = _minimal_rccl(
             num_ranks=8,
             ranks_per_node=8,
-            mpi_root=None,
             profile="thresholds",
             thresholds={
                 "all_reduce_perf": {"bus_bw": {"1024": 1.0}},
                 "broadcast_perf": {"bus_bw": {"1024": 1.0}},
             },
         )
-        body["rccl"]["run"].pop("mpi_root", None)
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
@@ -331,11 +328,9 @@ class TestRcclCvs(unittest.TestCase):
         body = _minimal_rccl(
             num_ranks=8,
             ranks_per_node=8,
-            mpi_root=None,
             profile="smoke",
             thresholds={"all_reduce_perf": {"bus_bw": {"1024": 1.0}}},
         )
-        body["rccl"]["run"].pop("mpi_root", None)
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
@@ -345,8 +340,7 @@ class TestRcclCvs(unittest.TestCase):
 
     def test_load_rccl_config_rejects_num_ranks_not_divisible(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
-        body = _minimal_rccl(num_ranks=9, ranks_per_node=8, mpi_root=None, profile="smoke")
-        body["rccl"]["run"].pop("mpi_root", None)
+        body = _minimal_rccl(num_ranks=9, ranks_per_node=8, profile="smoke")
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
@@ -357,9 +351,8 @@ class TestRcclCvs(unittest.TestCase):
     def test_load_rccl_config_rejects_collective_with_path_separator(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
         body = _minimal_rccl(
-            num_ranks=8, ranks_per_node=8, mpi_root=None, profile="smoke", collectives=["bin/all_reduce_perf"]
+            num_ranks=8, ranks_per_node=8, profile="smoke", collectives=["bin/all_reduce_perf"]
         )
-        body["rccl"]["run"].pop("mpi_root", None)
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
@@ -369,8 +362,7 @@ class TestRcclCvs(unittest.TestCase):
 
     def test_load_rccl_config_rejects_nonempty_matrix(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
-        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, mpi_root=None, profile="smoke")
-        body["rccl"]["run"].pop("mpi_root", None)
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
         body["rccl"]["matrix"] = {"kind": "variants", "cases": [{"name": "a", "env": {}}]}
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
@@ -384,8 +376,7 @@ class TestRcclCvs(unittest.TestCase):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
 
         def assert_loads(matrix_payload):
-            body = _minimal_rccl(num_ranks=8, ranks_per_node=8, mpi_root=None, profile="smoke")
-            body["rccl"]["run"].pop("mpi_root", None)
+            body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
             if matrix_payload is not ...:
                 body["rccl"]["matrix"] = matrix_payload
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -406,11 +397,9 @@ class TestRcclCvs(unittest.TestCase):
             body = _minimal_rccl(
                 num_ranks=8,
                 ranks_per_node=8,
-                mpi_root=None,
                 profile="thresholds",
                 thresholds_file=str(thresh_path),
             )
-            body["rccl"]["run"].pop("mpi_root", None)
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
             with self.assertRaises(ValueError) as ctx:
@@ -443,29 +432,9 @@ class TestRcclCvs(unittest.TestCase):
         self.assertIn(cid2, used)
 
     def test_parse_and_validate_results_strict_profile(self):
-        config = RcclConfig(
-            required_nodes=1,
-            collectives=["all_reduce_perf"],
-            datatype="float",
-            num_ranks=8,
-            ranks_per_node=8,
-            rccl_tests_dir="/opt/rccl-tests/build",
-            rocm_path="/opt/rocm",
-            mpi_root=None,
-            mpirun_path=None,
-            env_script=None,
-            artifacts_output_dir="/tmp/out",
-            artifacts_export_raw=False,
-            config_echo={},
-            start_size="1024",
-            end_size="16g",
-            step_factor="2",
-            warmups="10",
-            iterations="20",
-            cycles="1",
+        config = _rccl_cfg(
             validation_profile="strict",
             thresholds={"all_reduce_perf": {"bus_bw": {"1024": "90.0"}}},
-            rccl_library_path=None,
         )
 
         raw_results = [
@@ -491,30 +460,7 @@ class TestRcclCvs(unittest.TestCase):
         self.assertEqual(summary["lat_dip"], "passed")
 
     def test_parse_and_validate_results_wrong_nonzero_maps_to_corruption_runtimeerror(self):
-        config = RcclConfig(
-            required_nodes=1,
-            collectives=["all_reduce_perf"],
-            datatype="float",
-            num_ranks=8,
-            ranks_per_node=8,
-            rccl_tests_dir="/opt/rccl-tests/build",
-            rocm_path="/opt/rocm",
-            mpi_root=None,
-            mpirun_path=None,
-            env_script=None,
-            artifacts_output_dir="/tmp/out",
-            artifacts_export_raw=False,
-            config_echo={},
-            start_size="1024",
-            end_size="16g",
-            step_factor="2",
-            warmups="10",
-            iterations="20",
-            cycles="1",
-            validation_profile="smoke",
-            thresholds={},
-            rccl_library_path=None,
-        )
+        config = _rccl_cfg()
         raw_results = [
             {
                 "numCycle": 1,
@@ -535,62 +481,20 @@ class TestRcclCvs(unittest.TestCase):
         self.assertIn("#wrong", str(ctx.exception))
 
     def test_parse_and_validate_results_none_profile_skips_schema(self):
-        config = RcclConfig(
-            required_nodes=1,
-            collectives=["all_reduce_perf"],
-            datatype="float",
-            num_ranks=8,
-            ranks_per_node=8,
-            rccl_tests_dir="/opt/rccl-tests/build",
-            rocm_path="/opt/rocm",
-            mpi_root=None,
-            mpirun_path=None,
-            env_script=None,
-            artifacts_output_dir="/tmp/out",
-            artifacts_export_raw=False,
-            config_echo={},
-            start_size="1024",
-            end_size="16g",
-            step_factor="2",
-            warmups="10",
-            iterations="20",
-            cycles="1",
-            validation_profile="none",
-            thresholds={},
-            rccl_library_path=None,
-        )
+        config = _rccl_cfg(validation_profile="none")
         raw = [{"size": 1024, "busBw": 1.0}]
         rows, summary = parse_and_validate_results(config, "all_reduce_perf", raw)
         self.assertEqual(rows, raw)
         self.assertEqual(summary["schema"], "skipped")
 
-    def test_build_collective_command_uses_mpirun_when_multi_node(self):
-        config = RcclConfig(
+    def test_build_collective_command_multi_node_wraps_mpirun_with_env_script(self):
+        config = _rccl_cfg(
             required_nodes=2,
-            collectives=["all_reduce_perf"],
-            datatype="float",
             num_ranks=16,
             ranks_per_node=8,
-            rccl_tests_dir="/opt/rccl-tests/build",
-            rocm_path="/opt/rocm",
-            mpi_root="/usr",
-            mpirun_path="/usr/bin/mpirun",
             env_script="/tmp/env.sh",
-            artifacts_output_dir="/tmp/out",
-            artifacts_export_raw=False,
-            config_echo={},
-            start_size="1024",
-            end_size="16g",
-            step_factor="2",
-            warmups="10",
-            iterations="20",
-            cycles="1",
-            validation_profile="smoke",
-            thresholds={},
-            rccl_library_path=None,
         )
         shdl = _DummySshHandle()
-
         command = build_collective_command(
             config,
             "all_reduce_perf",
@@ -598,36 +502,63 @@ class TestRcclCvs(unittest.TestCase):
             ["10.0.0.1", "10.0.0.2"],
             shdl,
         )
-
-        self.assertIn("/usr/bin/mpirun", command)
+        self.assertIn("bash -lc", command)
+        self.assertIn("source /tmp/env.sh", command)
+        self.assertIn('exec "${MPI_HOME}/bin/mpirun"', command)
         self.assertIn("--np 16", command)
         self.assertTrue(shdl.commands)
 
+    def test_build_shell_requires_rccl_tests_build_dir_from_env(self):
+        config = _rccl_cfg(env_script="/site/env.sh")
+        shdl = _DummySshHandle()
+        command = build_collective_command(config, "all_reduce_perf", "/tmp/x.json", ["10.0.0.1"], shdl)
+        self.assertIn("RCCL_TESTS_BUILD_DIR", command)
+        self.assertIn("all_reduce_perf", command)
+        self.assertIn(': "${RCCL_TESTS_BUILD_DIR:?', command)
+
+    def test_load_rccl_config_rejects_removed_path_field_rccl_tests_dir(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(profile="smoke")
+        body["rccl"]["run"]["rccl_tests_dir"] = "/opt/rccl-tests/build"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError) as ctx:
+                load_rccl_config(str(config_path), cluster_dict)
+        self.assertIn("extra", str(ctx.exception).lower())
+
+    def test_scan_rccl_stdout_is_a_directory_is_actionable(self):
+        out = "bash: line 1: /opt/ompi/bin: Is a directory\n"
+        with self.assertRaises(RuntimeError) as ctx:
+            _scan_rccl_stdout(out)
+        self.assertIn("RCCL launch failed", str(ctx.exception))
+        self.assertIn("directory", str(ctx.exception).lower())
+
+    def test_scan_rccl_stdout_missing_bandwidth_hint(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            _scan_rccl_stdout("some noise\n")
+        msg = str(ctx.exception)
+        self.assertIn("Avg bus bandwidth", msg)
+        self.assertIn("MPI_HOME", msg)
+        self.assertIn("RCCL_TESTS_BUILD_DIR", msg)
+
+    def test_matching_rows_uses_out_of_place_rows_for_alltoall_variants(self):
+        rows = [
+            {"inPlace": 0, "size": 1024},
+            {"inPlace": 1, "size": 1024},
+        ]
+        self.assertEqual(_matching_rows("alltoall_perf", rows), [rows[0]])
+        self.assertEqual(_matching_rows("all_to_allv_perf", rows), [rows[0]])
+
+    def test_matching_rows_uses_in_place_rows_for_other_collectives(self):
+        rows = [
+            {"inPlace": 0, "size": 1024},
+            {"inPlace": 1, "size": 1024},
+        ]
+        self.assertEqual(_matching_rows("all_reduce_perf", rows), [rows[1]])
+
     def test_build_collective_command_shell_only_when_single_node(self):
-        config = RcclConfig(
-            required_nodes=1,
-            collectives=["all_reduce_perf"],
-            datatype="float",
-            num_ranks=8,
-            ranks_per_node=8,
-            rccl_tests_dir="/opt/rccl-tests/build",
-            rocm_path="/opt/rocm",
-            mpi_root=None,
-            mpirun_path=None,
-            env_script=None,
-            artifacts_output_dir="/tmp/out",
-            artifacts_export_raw=False,
-            config_echo={},
-            start_size="1024",
-            end_size="16g",
-            step_factor="2",
-            warmups="10",
-            iterations="20",
-            cycles="1",
-            validation_profile="smoke",
-            thresholds={},
-            rccl_library_path=None,
-        )
+        config = _rccl_cfg()
         shdl = _DummySshHandle()
         command = build_collective_command(config, "all_reduce_perf", "/tmp/x.json", ["10.0.0.1"], shdl)
         self.assertNotIn("mpirun", command)
@@ -657,30 +588,7 @@ class TestRcclCvs(unittest.TestCase):
 
     def test_resolved_case_payload_includes_required_run_json_keys(self):
         """``resolved`` minimum keys; no-matrix path uses empty ``env``."""
-        cfg = RcclConfig(
-            required_nodes=1,
-            collectives=["all_reduce_perf"],
-            datatype="float",
-            num_ranks=8,
-            ranks_per_node=8,
-            rccl_tests_dir="/opt/rccl-tests/build",
-            rocm_path="/opt/rocm",
-            mpi_root=None,
-            mpirun_path=None,
-            env_script=None,
-            artifacts_output_dir="/tmp/out",
-            artifacts_export_raw=False,
-            config_echo={},
-            start_size="1024",
-            end_size="16g",
-            step_factor="2",
-            warmups="10",
-            iterations="20",
-            cycles="1",
-            validation_profile="smoke",
-            thresholds={},
-            rccl_library_path=None,
-        )
+        cfg = _rccl_cfg()
         resolved = _resolved_case_payload(cfg, "all_reduce_perf")
         self.assertEqual(
             set(resolved.keys()),
@@ -704,11 +612,9 @@ class TestRcclCvs(unittest.TestCase):
         body = _minimal_rccl(
             num_ranks=8,
             ranks_per_node=8,
-            mpi_root=None,
             profile="thresholds",
             thresholds={"all_reduce_perf": {"bus_bw": {"1024": "not-a-number"}}},
         )
-        body["rccl"]["run"].pop("mpi_root", None)
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))

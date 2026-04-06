@@ -270,12 +270,7 @@ ROCm Communication Collectives Library (RCCL)
 
      cvs copy-config rccl/rccl_config.json --output ~/my_rccl_config.json
 
-2. Edit the file and change the directory paths to your desired location in these variables:
-
-   - ``rccl_tests_dir``
-   - ``mpi_root`` or ``mpirun_path``
-   - ``rocm_path``
-   - ``env_script``
+2. Edit the file: set ``rccl.run.env_script`` to a shell script on the target nodes that exports ``RCCL_TESTS_BUILD_DIR``, ``ROCM_HOME``, ``MPI_HOME`` (for multi-node), and library paths (e.g. via ``RCCL_HOME`` / ``LD_LIBRARY_PATH``) for your site.
 
 JAX / Megatron training configuration files
 --------------------------------------------

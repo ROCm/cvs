@@ -2,6 +2,8 @@
 RCCL CVS runner used by the rccl_cvs pytest suite.
 
 nested rccl.run, rccl.validation, rccl.artifacts. Topology is inferred from num_ranks and ranks_per_node (no mode field).
+``rccl.run.env_script`` is required; install paths come from that script (``RCCL_TESTS_BUILD_DIR``, ``ROCM_HOME``,
+``MPI_HOME``, ``RCCL_HOME``, etc.) — not from JSON path fields.
 The JSON file must contain only the top-level key ``rccl``
 
 Artifacts: one run directory per invocation under artifacts.output_dir, canonical ``run.json``,
@@ -34,11 +36,39 @@ from cvs.schema.rccl_config import (
 
 log = globals.log
 
-RCCL_ERROR_PATTERNS = {
-    "orte": r"ORTE does not know how to route|ORTE was unable to reliably start",
-    "nccl": r"NCCL ERROR|Test failure",
-    "fs": r"No such file or directory",
-}
+RCCL_ERROR_SUBSTRINGS = (
+    "orte does not know how to route",
+    "orte was unable to reliably start",
+    "nccl error",
+    "test failure",
+    "no such file or directory",
+)
+
+_UFW_INACTIVE_SUBSTRINGS = (
+    "inactive",
+    "dead",
+    "stopped",
+    "disabled",
+    "not loaded",
+    "could not be found",
+)
+
+# Bash / launcher failures we surface before the generic "missing bandwidth line" check.
+_RCCL_LAUNCH_FAILURE_RES = (
+    (
+        re.compile(r"bash:\s*(?:line\s+\d+:\s*)?(.+?):\s*Is a directory"),
+        "Shell tried to run a path that is a directory (common mistake: MPI_HOME must be the install prefix "
+        "so ${{MPI_HOME}}/bin/mpirun is the executable, not a directory). Path: {0}",
+    ),
+    (
+        re.compile(r"bash:\s*(?:line\s+\d+:\s*)?(.+?):\s*command not found"),
+        "Shell reported command not found: {0}. Check PATH, env_script, MPI_HOME, and ROCm/RCCL paths.",
+    ),
+    (
+        re.compile(r"RCCL launch:\s*(.+)"),
+        "{0}",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -50,11 +80,7 @@ class RcclConfig:
     datatype: str
     num_ranks: int
     ranks_per_node: int
-    rccl_tests_dir: str
-    rocm_path: str
-    mpi_root: str | None
-    mpirun_path: str | None
-    env_script: str | None
+    env_script: str
     artifacts_output_dir: str
     artifacts_export_raw: bool
     start_size: str
@@ -65,7 +91,6 @@ class RcclConfig:
     cycles: str
     validation_profile: str
     thresholds: dict[str, Any]
-    rccl_library_path: str | None
     # Echo of validated rccl.* input (run, validation, artifacts, matrix) for run.json config section.
     config_echo: dict[str, Any] = field(default_factory=dict)
 
@@ -151,19 +176,6 @@ def load_rccl_config(config_file: str, cluster_dict: dict[str, Any]) -> RcclConf
     required_nodes = num_ranks // ranks_per_node
     collectives = list(run.collectives)
 
-    if run.rocm_path:
-        rocm_path = run.rocm_path
-    else:
-        rocm_path = "/opt/rocm"
-
-    mpi_root = run.mpi_root
-    mpirun_path = run.mpirun_path or (f"{mpi_root.rstrip('/')}/bin/mpirun" if mpi_root else None)
-
-    if required_nodes > 1 and not mpirun_path:
-        raise ValueError(
-            "Multi-node RCCL runs (num_ranks / ranks_per_node > 1) require rccl.run.mpi_root or rccl.run.mpirun_path"
-        )
-
     profile = validation.profile
     thresholds: dict[str, Any] = {}
     if profile in {"thresholds", "strict"}:
@@ -181,10 +193,6 @@ def load_rccl_config(config_file: str, cluster_dict: dict[str, Any]) -> RcclConf
         datatype=run.datatype,
         num_ranks=num_ranks,
         ranks_per_node=ranks_per_node,
-        rccl_tests_dir=run.rccl_tests_dir,
-        rocm_path=rocm_path,
-        mpi_root=mpi_root,
-        mpirun_path=mpirun_path,
         env_script=run.env_script,
         artifacts_output_dir=artifacts.output_dir,
         artifacts_export_raw=artifacts.export_raw,
@@ -197,7 +205,6 @@ def load_rccl_config(config_file: str, cluster_dict: dict[str, Any]) -> RcclConf
         cycles=run.cycles,
         validation_profile=profile,
         thresholds=thresholds,
-        rccl_library_path=run.rccl_library_path,
     )
 
 
@@ -274,27 +281,35 @@ def _build_summary(cases: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _env_setup_lines(config: RcclConfig) -> list[str]:
+    """Source the site env_script (PATH, LD_LIBRARY_PATH, RCCL_TESTS_BUILD_DIR, MPI_HOME, etc.)."""
+    return [f"source {shlex.quote(config.env_script)}"]
+
+
+def _shell_runtime_guards(config: RcclConfig, collective: str) -> list[str]:
+    """Bash checks after env_script; fails fast with RCCL launch: ... messages."""
     lines: list[str] = []
-    path_parts = []
-    if config.mpi_root:
-        path_parts.append(f"{config.mpi_root}/bin")
-    if config.rocm_path:
-        path_parts.append(f"{config.rocm_path}/bin")
-    if path_parts:
-        lines.append(f'export PATH="{":".join(path_parts)}:$PATH"')
-
-    library_parts = []
-    if config.rccl_library_path:
-        library_parts.append(config.rccl_library_path.rstrip("/"))
-    if config.mpi_root:
-        library_parts.append(f"{config.mpi_root}/lib")
-    if config.rocm_path:
-        library_parts.append(f"{config.rocm_path.rstrip('/')}/lib")
-    if library_parts:
-        lines.append(f'export LD_LIBRARY_PATH="{":".join(library_parts)}:$LD_LIBRARY_PATH"')
-
-    if config.env_script:
-        lines.append(f"source {shlex.quote(config.env_script)}")
+    lines.append(
+        ': "${RCCL_TESTS_BUILD_DIR:?export RCCL_TESTS_BUILD_DIR in env_script '
+        '(directory containing rccl-tests *_perf binaries).}"'
+    )
+    if not config.is_single_node:
+        lines.append(
+            ': "${MPI_HOME:?multi-node launch requires MPI_HOME in env_script '
+            '(install prefix — the directory that contains bin/mpirun).}"'
+        )
+        lines.append(
+            'if [[ ! -x "${MPI_HOME}/bin/mpirun" ]]; then '
+            'echo "RCCL launch: ${MPI_HOME}/bin/mpirun is missing or not executable; '
+            'MPI_HOME must be the MPI install prefix (parent of bin), not the bin directory itself."; '
+            "exit 127; fi"
+        )
+    bin_path = f"\"${{RCCL_TESTS_BUILD_DIR%/}}/{collective}\""
+    lines.append(
+        f"if [[ ! -x {bin_path} ]]; then "
+        f'echo "RCCL launch: rccl-tests binary not executable for collective {collective} '
+        '(set RCCL_TESTS_BUILD_DIR in env_script to the rccl-tests build directory)."; '
+        "exit 127; fi"
+    )
     return lines
 
 
@@ -321,10 +336,10 @@ def _select_nodes(cluster_dict: dict[str, Any], config: RcclConfig) -> tuple[lis
 
 
 def _build_shell_payload(config: RcclConfig, collective: str, remote_result_file: str) -> str:
-    binary = f"{config.rccl_tests_dir.rstrip('/')}/{collective}"
+    binary_word = f'"${{RCCL_TESTS_BUILD_DIR%/}}/{collective}"'
     gpus_per_rank = config.ranks_per_node if config.is_single_node else 1
     benchmark_cmd = (
-        f"{shlex.quote(binary)} "
+        f"{binary_word} "
         f"-b {shlex.quote(config.start_size)} "
         f"-e {shlex.quote(config.end_size)} "
         f"-f {shlex.quote(config.step_factor)} "
@@ -336,7 +351,7 @@ def _build_shell_payload(config: RcclConfig, collective: str, remote_result_file
         f"-N {shlex.quote(config.cycles)} "
         f"-Z json -x {shlex.quote(remote_result_file)}"
     )
-    return "; ".join(_env_setup_lines(config) + [benchmark_cmd])
+    return "; ".join(_env_setup_lines(config) + _shell_runtime_guards(config, collective) + [benchmark_cmd])
 
 
 def _prepare_hostfile(shdl: Any, launch_hosts: list[str], ranks_per_node: int) -> str:
@@ -357,22 +372,38 @@ def build_collective_command(
         return shell_cmd
 
     hostfile = _prepare_hostfile(shdl, launch_hosts, config.ranks_per_node)
-    return (
-        f"{shlex.quote(config.mpirun_path or 'mpirun')} "
+    mpirun_args = (
         f"--np {config.num_ranks} "
         "--allow-run-as-root "
         "--bind-to numa "
         f"--hostfile {shlex.quote(hostfile)} "
         f"{shell_cmd}"
     )
+    # MPI_HOME and RCCL_TESTS_BUILD_DIR come from env_script; source before mpirun (outer wrapper).
+    wrapped = f"source {shlex.quote(config.env_script)} && exec \"${{MPI_HOME}}/bin/mpirun\" {mpirun_args}"
+    return f"bash -lc {shlex.quote(wrapped)}"
+
+
+def _scan_rccl_launch_failures(line: str) -> None:
+    if "cannot execute binary file" in line.lower():
+        raise RuntimeError(
+            "RCCL launch failed: cannot execute binary (wrong architecture or bad interpreter): "
+            f"{line.strip()}"
+        )
+    for cre, tmpl in _RCCL_LAUNCH_FAILURE_RES:
+        match = cre.search(line)
+        if match:
+            arg = next((g for g in match.groups() if g), line.strip())
+            raise RuntimeError(f"RCCL launch failed: {tmpl.format(arg)}")
 
 
 def _scan_rccl_stdout(output: str) -> None:
     warnings = []
     for line in output.splitlines():
-        for pattern in RCCL_ERROR_PATTERNS.values():
-            if re.search(pattern, line):
-                raise RuntimeError(f"RCCL execution failed: {line}")
+        _scan_rccl_launch_failures(line)
+        lower_line = line.lower()
+        if any(needle in lower_line for needle in RCCL_ERROR_SUBSTRINGS):
+            raise RuntimeError(f"RCCL execution failed: {line}")
         if "NCCL WARN" in line:
             warnings.append(line)
 
@@ -382,8 +413,19 @@ def _scan_rccl_stdout(output: str) -> None:
             "\n".join(warnings),
         )
 
-    if not re.search(r"#\sAvg bus bandwidth", output):
-        raise RuntimeError("RCCL output did not contain '# Avg bus bandwidth'")
+    if "# Avg bus bandwidth" not in output:
+        raise RuntimeError(
+            "RCCL output did not contain '# Avg bus bandwidth' (benchmark may not have started; "
+            "check earlier lines for RCCL launch / mpirun / rccl-tests errors, env_script, MPI_HOME, "
+            "and RCCL_TESTS_BUILD_DIR)"
+        )
+
+
+def _normalize_collective_name(collective: str) -> str:
+    normalized = collective.strip().lower()
+    if normalized.endswith("_perf"):
+        normalized = normalized[:-5]
+    return normalized.replace("_", "").replace("-", "")
 
 
 def _validation_has_wrong_nonzero(err: ValidationError) -> bool:
@@ -392,7 +434,7 @@ def _validation_has_wrong_nonzero(err: ValidationError) -> bool:
 
 
 def _matching_rows(collective: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if re.search(r"alltoall|all_to_all", collective, re.I):
+    if _normalize_collective_name(collective) in {"alltoall", "alltoallv"}:
         return [row for row in rows if row["inPlace"] == 0]
     return [row for row in rows if row["inPlace"] == 1]
 
@@ -501,7 +543,8 @@ def _run_preflight(phdl: Any) -> dict[str, Any]:
 
     firewall_status = phdl.exec("sudo service ufw status 2>&1 || true")
     for node, output in firewall_status.items():
-        if not re.search(r"inactive|dead|stopped|disabled|not loaded|could not be found", output, re.I):
+        lower_output = output.lower()
+        if not any(needle in lower_output for needle in _UFW_INACTIVE_SUBSTRINGS):
             preflight["firewall_ok"] = False
             fail_test(f"Service ufw not disabled properly on node {node}")
 

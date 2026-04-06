@@ -6,7 +6,7 @@
 ROCm Communication Collectives Library (RCCL) test configuration files
 **********************************************************************
 
-RCCL in CVS uses a single suite, ``rccl_cvs``, and a strict nested configuration (this page and the ``Result artifact`` section below). The RCCL JSON describes benchmark intent only. NCCL, UCX, plugin, and site-specific tuning should live in ``rccl.run.env_script`` instead of duplicating that content in the CVS config.
+RCCL in CVS uses a single suite, ``rccl_cvs``, and a strict nested configuration (this page and the ``Result artifact`` section below). The RCCL JSON describes **benchmark intent** only (ranks, collectives, sweep parameters, validation, artifacts). **Required:** ``rccl.run.env_script`` must point to a site script that exports install locations and library paths (see ``Environment variables`` below). NCCL, UCX, plugin, and site-specific tuning belong in that script only — not in the JSON.
 
 The file must contain **only** the top-level key ``rccl`` (no sibling keys). Unsupported legacy fields—``mode``, ``results`` / ``results_file``, flat run fields, or any key not defined in this schema—are rejected at load time.
 
@@ -55,27 +55,49 @@ Single-node versus multi-node is **inferred** from ``rccl.run.num_ranks`` and ``
 
 - ``required_nodes = num_ranks / ranks_per_node`` (integer division, remainder must be zero).
 - ``required_nodes == 1``: local shell launch (no ``mpirun``).
-- ``required_nodes > 1``: MPI hostfile launch; **``rccl.run.mpi_root`` or ``rccl.run.mpirun_path`` is required** so ``mpirun`` can be resolved. If both are set, ``mpirun_path`` wins for the launcher binary.
+- ``required_nodes > 1``: MPI hostfile launch. ``rccl.run.env_script`` is **always** required; the script must export ``MPI_HOME`` (MPI install prefix) so the runner can invoke ``${MPI_HOME}/bin/mpirun``.
 
 The cluster file must list at least ``required_nodes`` nodes; the runner uses the first nodes in stable file order.
+
+Environment variables (``env_script`` only)
+============================================
+
+The runner sources ``env_script`` before each benchmark. It does **not** read ROCm, MPI, or rccl-tests paths from JSON. Configure the shell environment in that script.
+
+Normative variables the runner or benchmarks expect (export what applies on your site):
+
+.. list-table::
+   :widths: 3 5
+   :header-rows: 1
+
+   * - Variable
+     - Role
+   * - ``RCCL_TESTS_BUILD_DIR``
+     - Directory containing rccl-tests ``*_perf`` binaries (runner checks executability at launch).
+   * - ``ROCM_HOME``
+     - ROCm root; use to extend ``PATH`` / ``LD_LIBRARY_PATH`` in the script.
+   * - ``MPI_HOME``
+     - MPI install prefix (directory that contains ``bin/mpirun``). **Required for multi-node** runs.
+   * - ``RCCL_HOME``
+     - Typical site location for RCCL libraries; add to ``LD_LIBRARY_PATH`` in the script when needed.
+
+If a required variable is unset when the benchmark runs, the shell fails fast with a clear error.
 
 ``rccl_config.json``
 ====================
 
 The top-level object must contain **only** the key ``rccl`` (object) with three required sections: ``run``, ``validation``, and ``artifacts``. Optional ``matrix`` may be omitted, null, or ``{}``; **non-empty** matrix objects are rejected by this CVS build until matrix expansion is implemented.
 
-.. dropdown:: ``rccl_config.json`` (example)
+.. dropdown:: ``rccl_config.json`` (example — paths only via ``env_script``)
+
+  ``env_script`` must ``export RCCL_TESTS_BUILD_DIR``, ``ROCM_HOME``, ``MPI_HOME`` (for multi-node), and extend ``LD_LIBRARY_PATH`` using ``RCCL_HOME`` when needed. The ``run`` object contains **no** path fields.
 
   .. code:: json
 
     {
       "rccl": {
         "run": {
-          "rccl_tests_dir": "/opt/rccl-tests/build",
-          "mpi_root": "/usr",
-          "rocm_path": "/opt/rocm",
           "env_script": "/root/env_source_file.sh",
-          "rccl_library_path": null,
           "num_ranks": 16,
           "ranks_per_node": 8,
           "collectives": ["all_reduce_perf", "all_gather_perf", "broadcast_perf"],
@@ -112,24 +134,9 @@ The top-level object must contain **only** the key ``rccl`` (object) with three 
    * - Field
      - Example
      - Description
-   * - ``rccl_tests_dir``
-     - ``/opt/rccl-tests/build``
-     - Directory containing rccl-tests binaries (basenames listed in ``collectives``).
-   * - ``rocm_path``
-     - ``/opt/rocm``
-     - ROCm root for ``PATH`` / ``LD_LIBRARY_PATH``. If omitted, the implementation defaults to ``/opt/rocm``.
-   * - ``mpi_root``
-     - ``/usr``
-     - MPI install root; used to derive ``mpirun`` and MPI libs when ``mpirun_path`` is not set.
-   * - ``mpirun_path``
-     - ``/usr/bin/mpirun``
-     - Explicit ``mpirun`` path. If both ``mpi_root`` and ``mpirun_path`` are set, ``mpirun_path`` wins.
    * - ``env_script``
      - ``/root/env_source_file.sh``
-     - Optional script sourced before benchmarks; site tuning (NCCL, UCX, plugins). Omitted or ``null`` means none.
-   * - ``rccl_library_path``
-     - ``null``
-     - Optional extra ``LD_LIBRARY_PATH`` entry for RCCL.
+     - **Required.** Script sourced before benchmarks. Must export ``RCCL_TESTS_BUILD_DIR`` and ROCm/MPI paths via ``ROCM_HOME``, ``MPI_HOME`` (multi-node), ``RCCL_HOME`` / ``LD_LIBRARY_PATH`` as needed. NCCL, UCX, and plugin tuning belong here.
    * - ``num_ranks``
      - ``16`` (JSON integer)
      - Total MPI ranks; must be ≥ 1 and divisible by ``ranks_per_node`` (string numerals are coerced, but prefer integers in configs).

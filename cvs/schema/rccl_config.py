@@ -1,6 +1,9 @@
 """
 Pydantic models for the strict RCCL CVS input file (nested rccl.run / validation / artifacts).
 
+Runtime paths (rccl-tests build dir, ROCm, MPI, RCCL libs) are not configured in JSON: ``rccl.run.env_script``
+must source a site script that exports ``RCCL_TESTS_BUILD_DIR``, ``ROCM_HOME``, ``MPI_HOME``, ``RCCL_HOME``, etc.
+
 Placeholders must be resolved on the raw dict before model_validate (see load_rccl_config in rccl_cvs).
 """
 
@@ -25,16 +28,11 @@ def format_rccl_config_validation_error(err: ValidationError) -> str:
 
 
 class RcclRunInput(BaseModel):
-    """rccl.run — required fields validated by this schema."""
+    """rccl.run — benchmark intent plus required ``env_script`` (site paths via env vars only)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    rccl_tests_dir: str
-    rocm_path: Optional[str] = None
-    mpi_root: Optional[str] = None
-    mpirun_path: Optional[str] = None
-    env_script: Optional[str] = None
-    rccl_library_path: Optional[str] = None
+    env_script: str
     num_ranks: int = Field(gt=0)
     ranks_per_node: int = Field(gt=0)
     collectives: list[str] = Field(min_length=1)
@@ -46,8 +44,17 @@ class RcclRunInput(BaseModel):
     iterations: str
     cycles: str
 
+    @field_validator("env_script", mode="before")
+    @classmethod
+    def _env_script_required_non_empty(cls, v: Any) -> str:
+        if v is None:
+            raise ValueError("must not be null")
+        s = str(v).strip()
+        if not s or s.lower() == "none":
+            raise ValueError("must be a non-empty string")
+        return s
+
     @field_validator(
-        "rccl_tests_dir",
         "datatype",
         "start_size",
         "end_size",
@@ -72,26 +79,6 @@ class RcclRunInput(BaseModel):
         if isinstance(v, str):
             return v.strip()
         return v
-
-    @field_validator("rocm_path", "mpi_root", "mpirun_path", mode="before")
-    @classmethod
-    def _optional_path_str(cls, v: Any) -> Any:
-        if v is None or v == "":
-            return None
-        if isinstance(v, str):
-            s = v.strip()
-            return s if s else None
-        return v
-
-    @field_validator("env_script", "rccl_library_path", mode="before")
-    @classmethod
-    def _optional_env_str(cls, v: Any) -> Any:
-        if v is None:
-            return None
-        s = str(v).strip()
-        if not s or s.lower() == "none":
-            return None
-        return s
 
     @field_validator("collectives", mode="before")
     @classmethod
