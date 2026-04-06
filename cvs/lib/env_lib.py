@@ -46,21 +46,15 @@ def build_env_prefix(env_vars):
         # Case 1: Prepend to existing variable (e.g., PATH=/x:$PATH)
         if value.endswith(":" + marker):
             prefix = value[: -(len(marker) + 1)]
-            exports.append(
-                f"export {key}={shlex.quote(prefix)}:${key}"
-            )
+            exports.append(f"export {key}={shlex.quote(prefix)}:${key}")
 
         # Case 2: Append to existing variable (e.g., PATH=$PATH:/x)
         elif value.startswith(marker + ":"):
             suffix = value[len(marker) + 1 :]
-            exports.append(
-                f"export {key}=${key}:{shlex.quote(suffix)}"
-            )
+            exports.append(f"export {key}=${key}:{shlex.quote(suffix)}")
 
         # Case 3: Treat as a literal value (fully quoted)
         else:
-            exports.append(
-                f"export {key}={shlex.quote(str(value))}"
-            )
+            exports.append(f"export {key}={shlex.quote(str(value))}")
 
     return " ; ".join(exports)

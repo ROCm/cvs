@@ -9,7 +9,6 @@ from env_lib import build_env_prefix
 
 
 class TestBuildEnvPrefix(unittest.TestCase):
-
     def test_empty_env_vars(self):
         self.assertEqual(build_env_prefix({}), "")
 
@@ -36,10 +35,7 @@ class TestBuildEnvPrefix(unittest.TestCase):
     def test_ld_library_path_prepend(self):
         env = {"LD_LIBRARY_PATH": "/opt/lib:$LD_LIBRARY_PATH"}
         result = build_env_prefix(env)
-        self.assertEqual(
-            result,
-            "export LD_LIBRARY_PATH=/opt/lib:$LD_LIBRARY_PATH"
-        )
+        self.assertEqual(result, "export LD_LIBRARY_PATH=/opt/lib:$LD_LIBRARY_PATH")
 
     def test_multiple_env_vars_mixed(self):
         env = {
@@ -49,12 +45,7 @@ class TestBuildEnvPrefix(unittest.TestCase):
         }
         result = build_env_prefix(env)
 
-        self.assertEqual(
-            result,
-            "export PATH=/usr/bin:$PATH ; "
-            "export FOO=bar ; "
-            "export BAZ='hello world'"
-        )
+        self.assertEqual(result, "export PATH=/usr/bin:$PATH ; export FOO=bar ; export BAZ='hello world'")
 
     def test_cross_variable_expansion_is_not_allowed(self):
         env = {"FOO": "$PATH"}
