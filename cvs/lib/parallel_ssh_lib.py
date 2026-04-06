@@ -48,11 +48,7 @@ class Pssh:
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
         self.env_prefix = (
-        " ".join(
-        f"export {key}={shlex.quote(str(value))}"
-        for key, value in env_vars.items()
-        )
-        if env_vars else ""
+            " ".join(f"export {key}={shlex.quote(str(value))}" for key, value in env_vars.items()) if env_vars else ""
         )
 
         if self.password is None:
