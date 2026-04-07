@@ -1,6 +1,6 @@
 # RCCL Performance Tests
 
-RCCL in CVS uses one suite, `rccl_cvs`, with a strict nested config (`rccl.run`, `rccl.validation`, `rccl.artifacts`) and a canonical run-directory artifact (`run.json`). Benchmark intent stays in JSON; **all install paths** (`RCCL_TESTS_BUILD_DIR`, `ROCM_HOME`, `MPI_HOME`, `RCCL_HOME`, etc.) are set only via **required** `rccl.run.env_script`. NCCL, UCX, plugin, and site-specific tuning belong there too.
+RCCL in CVS uses one suite, `rccl_cvs`, with a strict nested config (`rccl.run`, `rccl.validation`, `rccl.artifacts`) and a canonical run-directory artifact (`run.json`). Benchmark intent stays in JSON; **all install paths** (`RCCL_TESTS_BUILD_DIR`, `ROCM_HOME`, `MPI_HOME`, `RCCL_HOME`, etc.) are set only via **required** `rccl.run.env_script`. NCCL, UCX, plugin, and site-specific tuning belong there too. Example NIC-specific starters live under `input/config_file/rccl/env/`: `cx7_env_script.sh`, `thor2_env_script.sh`, and `ainic_env_script.sh` — copy the one that matches your NIC, edit paths, and point `env_script` at it.
 
 The JSON file must have **only** the top-level key `rccl`. Legacy fields (`mode`, `results` / `results_file`, flat shapes) and unknown keys anywhere in the nested schema are rejected. Optional `matrix` is valid only as omitted, `null`, or `{}` until matrix expansion is implemented in this runner.
 
@@ -77,8 +77,8 @@ Example inline thresholds (numeric values; message sizes as decimal strings matc
 If using AINIC + ANP:
 
 1. Ensure ANP is installed on all target nodes.
-2. Edit `input/config_file/rccl/ainic_env_script.sh` with your ANP path.
-3. Point `rccl.run.env_script` at that file.
+2. Edit `input/config_file/rccl/env/ainic_env_script.sh` with your ANP path (and library layout).
+3. Point `rccl.run.env_script` at your deployed copy of that script.
 
 ## Output artifact
 

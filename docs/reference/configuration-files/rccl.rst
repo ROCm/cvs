@@ -83,6 +83,17 @@ Normative variables the runner or benchmarks expect (export what applies on your
 
 If a required variable is unset when the benchmark runs, the shell fails fast with a clear error.
 
+NIC-specific example env scripts
+================================
+
+Under ``input/config_file/rccl/env/`` the tree ships three **separate** starter scripts (no shared includes):
+
+- ``cx7_env_script.sh`` — ConnectX-7 class InfiniBand baseline.
+- ``thor2_env_script.sh`` — Thor2-class NIC baseline (same skeleton as cx7 until Thor2-specific flags are needed).
+- ``ainic_env_script.sh`` — AINIC + ANP plugin starter, including the same required baseline path exports plus plugin-specific variables.
+
+Copy the script that matches your NIC to a stable path on the target nodes, edit the values, and set ``rccl.run.env_script`` to that path.
+
 ``rccl_config.json``
 ====================
 
@@ -233,8 +244,8 @@ AINIC/ANP net plugin setup (optional)
 To run with AINIC + ANP plugin:
 
 1. Ensure AMD ANP is installed and available on all target nodes.
-2. Edit ``input/config_file/rccl/ainic_env_script.sh`` and set ``ANP_HOME_DIR`` to your ANP install path.
-3. Point ``rccl.run.env_script`` at that file.
+2. Edit ``input/config_file/rccl/env/ainic_env_script.sh`` and set ``ANP_HOME_DIR`` (and library paths) for your install layout.
+3. Point ``rccl.run.env_script`` at your copy of that script on the nodes.
 4. Run ``cvs run rccl_cvs ...``; CVS sources the script before benchmark execution.
 
 Collective meanings
