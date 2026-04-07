@@ -282,7 +282,7 @@ def test_llama_3_1_70b_singlenode_training(phdl, training_dict, model_params_dic
     """
     globals.error_list = []
     head_node = phdl.host_list[0]
-    smi_out_dict = phdl.exec('rocm-smi -a | head -30')
+    smi_out_dict = phdl.exec('rocm-smi --showproductname | grep "GFX Version"')
     smi_out = smi_out_dict[head_node]
     gpu_type = get_model_from_rocm_smi_output(smi_out)
     jx_obj = jax_training_lib.JaxTrainingJob(
