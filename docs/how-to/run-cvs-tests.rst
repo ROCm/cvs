@@ -158,17 +158,14 @@ Here's the test script:
 
 ====================
 
-Aorta test
---------------------
+Aorta benchmark
+---------------
 
-The benchmark tests run distributed training benchmarks validated by CVS. The Aorta benchmark executes an Aorta-based workload in a Docker container with RCCL, collects PyTorch profiler traces, and validates iteration time, compute ratio, overlap ratio, and rank balance against configurable thresholds.
+The Aorta benchmark runs an Aorta-based workload in a Docker container with RCCL, collects PyTorch profiler traces, and validates iteration time, compute ratio, overlap ratio, and rank balance against configurable thresholds in ``aorta_benchmark.yaml``.
 
-Note for users: where to put Aorta (aorta_path)
-Prefer a path on local or scratch storage (e.g. /scratch/...) for aorta_path when running this benchmark.
+**Where to put Aorta (``aorta_path``):** Prefer local or scratch storage (for example under ``/scratch/``). If ``aorta_path`` is on NFS (such as home directories under ``/home``), the container can hit *Permission denied* when creating ``artifacts/`` because many NFS exports use *root_squash*. Use a non-root-squashed path or adjust exports; set ``aorta_path`` accordingly in ``aorta_benchmark.yaml``.
 
-If aorta_path points to a directory on NFS (for example your home directory under /home), the container may fail with Permission denied when creating the artifacts/ output directory. Many NFS exports use root_squash, so the process running as root inside the container is treated as a non-privileged user on the NFS server and cannot create directories in your tree. Using a path on local disk or on a non–root-squashed filesystem (e.g. /scratch) avoids this. No code changes are required—use a suitable path in aorta_benchmark.yaml for aorta_path.
-
-You can list all available aorta test cases using the CLI:
+List tests in this suite:
 
 .. code:: bash
 
@@ -176,19 +173,19 @@ You can list all available aorta test cases using the CLI:
 
 .. code:: text
 
-  Available tests in host_configs_cvs:
+  Available tests in test_aorta:
     - test_validate_runner_config
     - test_run_benchmark
     - test_parse_results
     - test_validate_thresholds
     - test_generate_report
 
-Here's the test script:
+Run from the CVS package directory (the directory that contains ``input/``), for example:
 
 .. code:: bash
 
+  cd /path/to/your/cvs-checkout/cvs
   cvs run test_aorta --cluster_file input/cluster_file/cluster.json --config_file input/config_file/aorta/aorta_benchmark.yaml --html=/var/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html --log-file=/tmp/aorta.log -vvv -s
-                                                                                                            133,1         14%
 
 
 Burn-in health test scripts
