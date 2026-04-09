@@ -4,6 +4,10 @@ import math
 
 # pypdantic libs
 from pydantic import BaseModel, Field, model_validator, ConfigDict, field_validator
+from pydantic_core import PydanticCustomError
+
+# ValidationError ``errors()[*]['type']`` when rccl-tests row has wrong > 0 after normalization.
+RCCL_WRONG_NONZERO_ERROR_TYPE = "rccl_wrong_nonzero"
 
 NonNegativeInt = Annotated[int, Field(ge=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
@@ -111,9 +115,12 @@ class RcclTests(BaseModel):
         if self.wrong < 0:
             raise ValueError(f'wrong must be >= 0, got {self.wrong}')
         if self.wrong > 0:
-            raise ValueError(
-                f"SEVERE DATA CORRUPTION: rccl-tests reported non-zero '#wrong' after normalization "
-                f"(wrong={self.wrong}). Results are invalid/corrupted."
+            # Stable machine-readable type for callers (see rccl_cvs.parse_and_validate_results).
+            raise PydanticCustomError(
+                RCCL_WRONG_NONZERO_ERROR_TYPE,
+                "SEVERE DATA CORRUPTION: rccl-tests reported non-zero '#wrong' after normalization "
+                "(wrong={wrong}). Results are invalid/corrupted.",
+                {"wrong": self.wrong},
             )
         return self
 

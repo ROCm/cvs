@@ -6,12 +6,14 @@
 ROCm Communication Collectives Library (RCCL) test configuration files
 **********************************************************************
 
-RCCL tests in CVS validate distributed GPU communication performance across AMD GPU clusters. The suites run RCCL collectives, optionally validate against expected thresholds, and generate HTML artifacts (graph and heatmap reports).
+RCCL in CVS uses a single suite, ``rccl_cvs``, and a strict nested configuration (this page and the ``Result artifact`` section below). The RCCL JSON describes **benchmark intent** only (ranks, collectives, sweep parameters, validation, artifacts). **Required:** ``rccl.run.env_script`` must point to a site script that exports install locations and library paths (see ``Environment variables`` below). NCCL, UCX, plugin, and site-specific tuning belong in that script only — not in the JSON.
 
-RCCL test suites
-================
+The file must contain **only** the top-level key ``rccl`` (no sibling keys). Unsupported legacy fields—``mode``, ``results`` / ``results_file``, flat run fields, or any key not defined in this schema—are rejected at load time.
 
-CVS provides the following RCCL suites:
+RCCL test suite
+===============
+
+CVS provides one RCCL suite:
 
 .. list-table::
    :widths: 3 7
@@ -19,303 +21,232 @@ CVS provides the following RCCL suites:
 
    * - Test suite
      - What it does
-   * - ``rccl_multinode_cvs``
-     - Runs multinode RCCL with a parameter sweep over collective, algorithm, protocol, queue-pair scale, and PXN setting.
-   * - ``rccl_multinode_default_cvs``
-     - Runs multinode RCCL collectives using RCCL default algorithm/protocol behavior.
-   * - ``rccl_singlenode_cvs``
-     - Runs single-node RCCL collectives and validates output against configured expectations.
-   * - ``rccl_heatmap_cvs``
-     - Runs a sweep over collective, GPU count, data type, and channel configuration; then generates a heatmap against a golden reference JSON.
-
-All suites also collect host/network information and check firewall state before performance runs.
+   * - ``rccl_cvs``
+     - Runs an RCCL benchmark flow inferred from rank layout, performs lightweight preflight, validates rccl-tests JSON output according to ``rccl.validation.profile``, and writes run output under ``rccl.artifacts.output_dir`` (see Result artifact below).
 
 How to run
 ==========
 
-From the CVS repo root (directory containing ``cvs`` and ``input``):
+From the CVS repo root:
 
 .. code-block:: bash
 
-  cvs list rccl_multinode_cvs
-  cvs list rccl_multinode_default_cvs
-  cvs list rccl_singlenode_cvs
-  cvs list rccl_heatmap_cvs
+  cvs list rccl_cvs
 
-Run the multinode sweep:
+Run RCCL with the nested ``rccl`` config:
 
 .. code-block:: bash
 
-  cvs run rccl_multinode_cvs \
+  cvs run rccl_cvs \
       --cluster_file input/cluster_file/cluster.json \
       --config_file input/config_file/rccl/rccl_config.json \
-      --html=/var/www/html/cvs/rccl_multinode.html --capture=tee-sys --self-contained-html \
-      --log-file=/tmp/rccl_multinode.log -vvv -s
-
-Run multinode with RCCL defaults:
-
-.. code-block:: bash
-
-  cvs run rccl_multinode_default_cvs \
-      --cluster_file input/cluster_file/cluster.json \
-      --config_file input/config_file/rccl/rccl_config.json \
-      --html=/var/www/html/cvs/rccl_multinode_default.html --capture=tee-sys --self-contained-html \
-      --log-file=/tmp/rccl_multinode_default.log -vvv -s
-
-Run the single-node suite:
-
-.. code-block:: bash
-
-  cvs run rccl_singlenode_cvs \
-      --cluster_file input/cluster_file/cluster.json \
-      --config_file input/config_file/rccl/single_node_mi355_rccl.json \
-      --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html \
-      --log-file=/tmp/rccl_singlenode.log -vvv -s
-
-Run the heatmap suite:
-
-.. code-block:: bash
-
-  cvs run rccl_heatmap_cvs \
-      --cluster_file input/cluster_file/cluster.json \
-      --config_file input/config_file/rccl/rccl_config.json \
-      --html=/var/www/html/cvs/rccl_heatmap.html --capture=tee-sys --self-contained-html \
-      --log-file=/tmp/rccl_heatmap.log -vvv -s
+      --html=/var/www/html/cvs/rccl.html --capture=tee-sys --self-contained-html \
+      --log-file=/tmp/rccl.log -vvv -s
 
 .. note::
 
-  Update expected thresholds in ``results`` for your platform and cluster size before relying on pass/fail status.
+  Update ``rccl.validation.thresholds`` (or the file referenced by ``thresholds_file``) for your platform before relying on pass/fail for ``thresholds`` or ``strict`` profiles.
   Placeholders such as ``{user-id}`` in config paths are resolved by CVS at runtime.
+
+Topology (no ``mode`` field)
+=============================
+
+Single-node versus multi-node is **inferred** from ``rccl.run.num_ranks`` and ``rccl.run.ranks_per_node``:
+
+- ``required_nodes = num_ranks / ranks_per_node`` (integer division, remainder must be zero).
+- ``required_nodes == 1``: local shell launch (no ``mpirun``).
+- ``required_nodes > 1``: MPI hostfile launch. ``rccl.run.env_script`` is **always** required; the script must export ``MPI_HOME`` (MPI install prefix) so the runner can invoke ``${MPI_HOME}/bin/mpirun``.
+
+The cluster file must list at least ``required_nodes`` nodes; the runner uses the first nodes in stable file order.
+
+Environment variables (``env_script`` only)
+============================================
+
+The runner sources ``env_script`` before each benchmark. It does **not** read ROCm, MPI, or rccl-tests paths from JSON. Configure the shell environment in that script.
+
+Normative variables the runner or benchmarks expect (export what applies on your site):
+
+.. list-table::
+   :widths: 3 5
+   :header-rows: 1
+
+   * - Variable
+     - Role
+   * - ``RCCL_TESTS_BUILD_DIR``
+     - Directory containing rccl-tests ``*_perf`` binaries (runner checks executability at launch).
+   * - ``ROCM_HOME``
+     - ROCm root; use to extend ``PATH`` / ``LD_LIBRARY_PATH`` in the script.
+   * - ``MPI_HOME``
+     - MPI install prefix (directory that contains ``bin/mpirun``). **Required for multi-node** runs.
+   * - ``RCCL_HOME``
+     - Typical site location for RCCL libraries; add to ``LD_LIBRARY_PATH`` in the script when needed.
+
+If a required variable is unset when the benchmark runs, the shell fails fast with a clear error.
+
+NIC-specific example env scripts
+================================
+
+Under ``input/config_file/rccl/env/`` the tree ships three **separate** starter scripts (no shared includes):
+
+- ``cx7_env_script.sh`` — ConnectX-7 class InfiniBand baseline.
+- ``thor2_env_script.sh`` — Thor2-class NIC baseline (same skeleton as cx7 until Thor2-specific flags are needed).
+- ``ainic_env_script.sh`` — AINIC + ANP plugin starter, including the same required baseline path exports plus plugin-specific variables.
+
+Copy the script that matches your NIC to a stable path on the target nodes, edit the values, and set ``rccl.run.env_script`` to that path.
 
 ``rccl_config.json``
 ====================
 
-Main config file used by ``rccl_multinode_cvs``, ``rccl_multinode_default_cvs``, and ``rccl_heatmap_cvs``:
+The top-level object must contain **only** the key ``rccl`` (object) with three required sections: ``run``, ``validation``, and ``artifacts``. Optional ``matrix`` may be omitted, null, or ``{}``; **non-empty** matrix objects are rejected by this CVS build until matrix expansion is implemented.
 
-.. dropdown:: ``rccl_config.json`` (example)
+.. dropdown:: ``rccl_config.json`` (example — paths only via ``env_script``)
+
+  ``env_script`` must ``export RCCL_TESTS_BUILD_DIR``, ``ROCM_HOME``, ``MPI_HOME`` (for multi-node), and extend ``LD_LIBRARY_PATH`` using ``RCCL_HOME`` when needed. The ``run`` object contains **no** path fields.
 
   .. code:: json
 
     {
       "rccl": {
-        "no_of_nodes": "2",
-        "no_of_global_ranks": "16",
-        "no_of_local_ranks": "8",
-        "rccl_dir": "/opt/rccl-tests/",
-        "rccl_tests_dir": "/opt/rccl-tests/build",
-        "mpi_dir": "/usr/bin",
-        "mpi_path_var": "/usr",
-        "rocm_path_var": "/opt/rocm/",
-        "rccl_collective": ["all_reduce_perf", "all_gather_perf", "broadcast_perf"],
-        "rccl_algo": ["ring", "tree"],
-        "rccl_protocol": ["simple"],
-        "qp_scale": ["1", "2"],
-        "gpu_count_list": ["8", "16", "32"],
-        "data_type_list": ["float", "bfloat16"],
-        "channel_config_list": ["default"],
-        "golden_reference_json_file": "/home/{user-id}/JSONS/mi300_reference.json",
-        "start_msg_size": "1024",
-        "end_msg_size": "16g",
-        "step_function": "2",
-        "warmup_iterations": "10",
-        "no_of_iterations": "20",
-        "verify_bus_bw": "False",
-        "verify_bw_dip": "True",
-        "verify_lat_dip": "True",
-        "env_source_script": "/root/env_source_file.sh",
-        "results": {}
+        "run": {
+          "env_script": "/root/env_source_file.sh",
+          "num_ranks": 16,
+          "ranks_per_node": 8,
+          "collectives": ["all_reduce_perf", "all_gather_perf", "broadcast_perf"],
+          "datatype": "float",
+          "start_size": "1024",
+          "end_size": "16g",
+          "step_factor": "2",
+          "warmups": "10",
+          "iterations": "20",
+          "cycles": "1"
+        },
+        "validation": {
+          "profile": "strict",
+          "thresholds": {
+            "all_reduce_perf": { "bus_bw": { "8589934592": 330.0, "17179869184": 350.0 } },
+            "all_gather_perf": { "bus_bw": { "8589934592": 330.0, "17179869184": 350.0 } },
+            "broadcast_perf": { "bus_bw": { "8589934592": 310.0, "17179869184": 312.0 } }
+          }
+        },
+        "artifacts": {
+          "output_dir": "/tmp/rccl_cvs_out",
+          "export_raw": false
+        }
       }
     }
 
-Parameters
-----------
-
-Exhaustive parameter list for ``rccl_config.json``:
+``rccl.run``
+------------
 
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1
 
-   * - Configuration parameter
-     - Example/default
+   * - Field
+     - Example
      - Description
-   * - ``no_of_nodes``
-     - ``2``
-     - Number of nodes participating in multinode runs.
-   * - ``no_of_global_ranks``
-     - ``16``
-     - Total MPI ranks across all nodes.
-   * - ``no_of_local_ranks``
-     - ``8``
-     - MPI ranks per node.
-   * - ``ranks_per_node``
-     - ``8``
-     - GPU/rank density per node (topology reference).
-   * - ``rccl_dir``
-     - ``/opt/rccl-tests/``
-     - RCCL test install root.
-   * - ``rccl_tests_dir``
-     - ``/opt/rccl-tests/build``
-     - Directory containing RCCL test binaries.
-   * - ``mpi_dir``
-     - ``/usr/bin``
-     - MPI executable directory.
-   * - ``mpi_path_var``
-     - ``/usr``
-     - MPI root path used when constructing runtime environment.
-   * - ``mpi_pml``
-     - ``auto``
-     - MPI point-to-point messaging layer (`auto`, `ucx`, `ob1`).
-   * - ``rocm_path_var``
-     - ``/opt/rocm/``
-     - ROCm installation path.
-   * - ``rccl_path_var``
-     - ``/opt/rccl-tests/``
-     - RCCL path exported to runtime environment.
-   * - ``gpu_count_list``
-     - ``["8", "16", "32"]``
-     - GPU-count sweep list for ``rccl_heatmap_cvs``.
-   * - ``data_type_list``
-     - ``["float", "bfloat16"]``
-     - Data-type sweep list for ``rccl_heatmap_cvs``.
-   * - ``nic_model``
-     - ``thor``
-     - NIC model tag used in validation logic/reporting.
-   * - ``heatmap_title``
-     - ``RCCL heatmap comparison between MI300s``
-     - Title rendered in heatmap HTML.
-   * - ``golden_reference_json_file``
-     - ``/home/{user-id}/JSONS/mi300_reference.json``
-     - Baseline reference JSON for heatmap comparison.
-   * - ``cluster_snapshot_debug``
-     - ``False``
-     - Enables before/after cluster metric snapshots around tests.
-   * - ``env_source_script``
+   * - ``env_script``
      - ``/root/env_source_file.sh``
-     - Optional script sourced before test execution.
-   * - ``rccl_collective``
-     - ``["all_reduce_perf", ..., "broadcast_perf"]``
-     - RCCL collectives to execute.
-   * - ``rccl_algo``
-     - ``["ring", "tree"]``
-     - RCCL algorithm sweep values.
-   * - ``rccl_protocol``
-     - ``["simple"]``
-     - RCCL protocol sweep values.
-   * - ``qp_scale``
-     - ``["1", "2"]``
-     - Queue-pair scaling sweep values.
-   * - ``ib_hca_list``
-     - ``bnxt_re0,...,bnxt_re7``
-     - RDMA HCA device list used by launch/runtime setup.
-   * - ``net_dev_list``
-     - ``ens28np0,...,ens22np0``
-     - Network interface list aligned with IB devices.
-   * - ``oob_port``
-     - ``eth0``
-     - Out-of-band control interface.
-   * - ``nccl_socket_ifname``
-     - ``""``
-     - Optional NCCL bootstrap/socket fallback interface.
-   * - ``gid_index``
-     - ``1``
-     - GID index for RDMA/IB communication.
-   * - ``start_msg_size``
-     - ``1024``
-     - Start message size for sweep.
-   * - ``end_msg_size``
-     - ``16g``
-     - End message size for sweep.
-   * - ``step_function``
+     - **Required.** Script sourced before benchmarks. Must export ``RCCL_TESTS_BUILD_DIR`` and ROCm/MPI paths via ``ROCM_HOME``, ``MPI_HOME`` (multi-node), ``RCCL_HOME`` / ``LD_LIBRARY_PATH`` as needed. NCCL, UCX, and plugin tuning belong here.
+   * - ``num_ranks``
+     - ``16`` (JSON integer)
+     - Total MPI ranks; must be ≥ 1 and divisible by ``ranks_per_node`` (string numerals are coerced, but prefer integers in configs).
+   * - ``ranks_per_node``
+     - ``8`` (JSON integer)
+     - Ranks per node; must be ≥ 1.
+   * - ``collectives``
+     - ``["all_reduce_perf"]``
+     - Non-empty array of binary basenames (no path separators).
+   * - ``datatype``
+     - ``float``
+     - Single rccl-tests datatype.
+   * - ``start_size`` / ``end_size``
+     - ``1024`` / ``16g``
+     - Message size sweep bounds (rccl-tests ``-b`` / ``-e``).
+   * - ``step_factor``
      - ``2``
-     - Message-size progression rule.
-   * - ``threads_per_gpu``
-     - ``1``
-     - Worker threads per GPU for RCCL test binaries.
-   * - ``warmup_iterations``
-     - ``10``
-     - Warmup iteration count before measured iterations.
-   * - ``no_of_iterations``
-     - ``20``
-     - Number of measured iterations.
-   * - ``no_of_cycles``
-     - ``1``
-     - Number of full run cycles.
-   * - ``check_iteration_count``
-     - ``1``
-     - Validation/check iteration count used by parsers.
-   * - ``nccl_ib_timeout``
-     - ``30``
-     - NCCL/RCCL IB timeout.
-   * - ``ib_rx_queue_len``
-     - ``8192``
-     - IB receive queue length.
-   * - ``ucx_tls``
-     - ``tcp``
-     - UCX transport selection.
-   * - ``hcoll_enable_mcast_all``
-     - ``0``
-     - HCOLL multicast setting.
-   * - ``nccl_cumem_enable``
-     - ``0``
-     - NCCL memory behavior control.
-   * - ``nccl_ib_sl``
-     - ``0``
-     - IB service level.
-   * - ``nccl_ib_tc``
-     - ``0``
-     - IB traffic class.
-   * - ``nccl_ib_split_data_on_qps``
-     - ``0``
-     - Split-data policy across queue pairs.
-   * - ``nccl_pxn_disable``
-     - ``["0", "1"]``
-     - PXN enable/disable sweep values.
-   * - ``nccl_net_plugin``
-     - ``none``
-     - NCCL/RCCL network plugin selection.
-   * - ``channel_config_list``
-     - ``["default"]``
-     - Channel sweep list (for example ``"16-16"``, ``"64-64"``, ``"default"``).
-   * - ``verify_bus_bw``
-     - ``False``
-     - Enable bus-bandwidth threshold validation.
-   * - ``verify_bw_dip``
-     - ``True``
-     - Enable bandwidth-dip validation.
-   * - ``verify_lat_dip``
-     - ``True``
-     - Enable latency-dip validation.
-   * - ``debug_level``
-     - ``ERROR``
-     - RCCL/NCCL test debug verbosity.
-   * - ``rccl_result_file``
-     - ``/tmp/rccl_result_file.json``
-     - Base output file path for RCCL parsed results.
-   * - ``_comments_results``
-     - informational text
-     - Notes that expected results vary by cluster size and hardware.
-   * - ``results``
-     - per-collective threshold map
-     - Expected threshold values used for pass/fail validation.
+     - Size multiplier (rccl-tests ``-f``).
+   * - ``warmups`` / ``iterations`` / ``cycles``
+     - ``10`` / ``20`` / ``1``
+     - Warmups, measured iterations, cycles (``-w`` / ``-n`` / ``-N``).
 
-Expected results format
------------------------
+``rccl.validation``
+-------------------
 
-The ``results`` section is used for threshold validation. Values are keyed by collective and message size (bytes), with expected bus bandwidth values.
+.. list-table::
+   :widths: 3 3 5
+   :header-rows: 1
 
-.. dropdown:: ``results`` snippet
+   * - Field
+     - Example
+     - Description
+   * - ``profile``
+     - ``smoke``
+     - One of ``none``, ``smoke``, ``thresholds``, ``strict``. See profile semantics below.
+   * - ``thresholds``
+     - object
+     - Optional inline per-collective map (only with ``profile`` ``thresholds`` or ``strict``). At most one of ``thresholds`` and ``thresholds_file``.
+   * - ``thresholds_file``
+     - ``/path/to/baseline.json``
+     - Optional path to JSON with the same shape as ``thresholds``.
 
-  .. code:: json
+**Profile semantics** (after successful command execution):
 
-    "results": {
-      "all_reduce_perf": {
-        "bus_bw": {
-          "8589934592": "330.00",
-          "17179869184": "350.00"
-        }
+- ``none``: JSON array must parse; no row schema validation; no threshold or dip checks.
+- ``smoke``: parse plus Pydantic/schema validation on rows.
+- ``thresholds``: smoke plus minimum ``busBw`` vs thresholds for sizes present in the map.
+- ``strict``: thresholds plus bandwidth-dip and latency-dip checks (for sizes present in the threshold map), matching the previous strict behavior.
+
+For ``thresholds`` or ``strict``, exactly one of ``thresholds`` or ``thresholds_file`` must be present and non-empty after load. Threshold keys must correspond to entries in ``rccl.run.collectives`` (no extra collectives, and no legacy ``results`` / ``results_file`` keys). For ``none`` or ``smoke``, do not supply ``thresholds`` or ``thresholds_file``.
+
+**Threshold JSON shape:**
+
+.. code:: json
+
+  {
+    "all_reduce_perf": {
+      "bus_bw": {
+        "8589934592": 330.0
       }
     }
+  }
+
+``rccl.artifacts``
+------------------
+
+.. list-table::
+   :widths: 3 3 5
+   :header-rows: 1
+
+   * - Field
+     - Example
+     - Description
+   * - ``output_dir``
+     - ``/tmp/rccl_cvs_out``
+     - Base directory for this invocation’s run folder (see Result artifact).
+   * - ``export_raw``
+     - ``false``
+     - If ``true``, optional per-case raw rccl-tests JSON is written under ``{output_dir}/{run_id}/raw/<case_id>.json``. ``run.json`` remains authoritative; raw files are for debugging only.
+
+Result artifact
+===============
+
+Each ``cvs run rccl_cvs`` invocation creates one UTC-named run directory and a single canonical ``run.json`` inside it:
+
+- **Directory:** ``{rccl.artifacts.output_dir}/{run_id}/`` where ``run_id`` is like ``2026-04-03T10-15-00Z`` (filesystem-safe ISO time).
+- **Canonical file:** ``run.json`` with ``schema_version`` ``rccl_cvs.run.v1``, topology, cluster selection, echoed config, filtered environment variables (after ``env_script``), per-collective ``cases[]`` (including ``case_id``, ``resolved``, ``metrics.rows``, and validation sub-results), and a ``summary`` roll-up.
+
+There is **no** separate ``summary.json``; roll-up lives in ``run.json`` under ``summary``. Optional raw rccl-tests JSON is written only when ``export_raw`` is ``true``, under ``raw/<case_id>.json`` in the same run directory. Downstream tools must not depend on raw files for pass/fail or metrics; do not treat legacy per-suite ``output_json`` paths as authoritative.
+
+AINIC/ANP net plugin setup (optional)
+=====================================
+
+To run with AINIC + ANP plugin:
+
+1. Ensure AMD ANP is installed and available on all target nodes.
+2. Edit ``input/config_file/rccl/env/ainic_env_script.sh`` and set ``ANP_HOME_DIR`` (and library paths) for your install layout.
+3. Point ``rccl.run.env_script`` at your copy of that script on the nodes.
+4. Run ``cvs run rccl_cvs ...``; CVS sources the script before benchmark execution.
 
 Collective meanings
 -------------------
@@ -329,111 +260,3 @@ Collective meanings
 - ``alltoall_perf``: equal-sized all-to-all exchange.
 - ``alltoallv_perf``: variable-sized all-to-all exchange.
 - ``broadcast_perf``: one-to-all data broadcast.
-
-``single_node_mi355_rccl.json``
-===============================
-
-This file is tuned for ``rccl_singlenode_cvs`` and keeps only single-node relevant fields (collective list, message sweep, iteration controls, and expected thresholds).
-
-Parameters
-----------
-
-Exhaustive parameter list for ``single_node_mi355_rccl.json``:
-
-.. list-table::
-   :widths: 3 3 5
-   :header-rows: 1
-
-   * - Configuration parameter
-     - Example/default
-     - Description
-   * - ``no_of_local_ranks``
-     - ``8``
-     - Local ranks (GPU processes) used for single-node tests.
-   * - ``rccl_dir``
-     - ``/opt/rccl-tests/``
-     - RCCL test install root.
-   * - ``rccl_tests_dir``
-     - ``/opt/rccl-tests/build``
-     - Directory containing RCCL test binaries.
-   * - ``rocm_path_var``
-     - ``/opt/rocm/``
-     - ROCm installation path.
-   * - ``rccl_path_var``
-     - ``/opt/rccl-tests/``
-     - RCCL runtime path.
-   * - ``env_source_script``
-     - ``/root/env_source_file.sh``
-     - Optional script sourced before test execution.
-   * - ``rccl_collective``
-     - ``["all_reduce_perf", ..., "broadcast_perf"]``
-     - Collectives executed in single-node sweep.
-   * - ``start_msg_size``
-     - ``1024``
-     - Start message size for sweep.
-   * - ``end_msg_size``
-     - ``16g``
-     - End message size for sweep.
-   * - ``step_function``
-     - ``2``
-     - Message-size progression rule.
-   * - ``warmup_iterations``
-     - ``10``
-     - Warmup iteration count before measured iterations.
-   * - ``no_of_iterations``
-     - ``1``
-     - Number of measured iterations.
-   * - ``check_iteration_count``
-     - ``1``
-     - Validation/check iteration count used by parsers.
-   * - ``verify_bus_bw``
-     - ``False``
-     - Enable bus-bandwidth threshold validation.
-   * - ``verify_bw_dip``
-     - ``True``
-     - Enable bandwidth-dip validation.
-   * - ``verify_lat_dip``
-     - ``True``
-     - Enable latency-dip validation.
-   * - ``debug_level``
-     - ``ERROR``
-     - RCCL/NCCL test debug verbosity.
-   * - ``rccl_result_file``
-     - ``/tmp/rccl_result_file.json``
-     - Output file path for parsed results.
-   * - ``_comments_results``
-     - informational text
-     - Notes that expected results vary by system and test profile.
-   * - ``results``
-     - per-collective threshold map
-     - Expected threshold values used for pass/fail validation.
-
-Use this command:
-
-.. code-block:: bash
-
-  cvs run rccl_singlenode_cvs \
-      --cluster_file input/cluster_file/cluster.json \
-      --config_file input/config_file/rccl/single_node_mi355_rccl.json \
-      --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html \
-      --log-file=/tmp/rccl_singlenode.log -vvv -s
-
-AINIC/ANP net plugin setup (optional)
-=====================================
-
-To run with AINIC + ANP plugin:
-
-1. Ensure AMD ANP is installed and available on all target nodes.
-2. Edit ``input/config_file/rccl/ainic_env_script.sh`` and set ``ANP_HOME_DIR`` to your ANP install path.
-3. Set ``env_source_script`` in RCCL JSON config to that script path.
-4. Run RCCL using ``cvs run ...`` commands; CVS sources the script automatically.
-
-If AINIC/ANP is not used, set ``env_source_script`` to your standard environment script or ``"None"`` to skip script sourcing.
-
-Validation and artifacts
-========================
-
-- Test-level pass/fail is based on command execution plus enabled validations (``results``, bandwidth checks, dip checks).
-- Graph reports are generated under ``/tmp/rccl_perf_report_*.html`` (or ``/tmp/rccl_singlenode_perf_report_*.html``).
-- Heatmap runs produce ``/tmp/rccl_heatmap_*.html`` and JSON result artifacts, and may copy them to ``output_dir`` when configured.
-- Artifacts generated under ``/tmp`` can be copied to a web server path (for example ``/var/www/html/cvs``) for browser access.

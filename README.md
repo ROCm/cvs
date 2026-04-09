@@ -144,7 +144,7 @@ cvs copy-config cluster.json --output /tmp/cvs/input/cluster_file/cluster.json
 # Alternatively, generate cluster configuration for multiple hosts (see 'Generate Cluster Configuration File' section below)
 
 # Copy test-specific configurations
-cvs copy-config rccl/rccl_config.json --output /tmp/cvs/input/config_file/rccl_config.json
+cvs copy-config rccl/rccl_config.json --output /tmp/cvs/input/config_file/rccl/rccl_config.json
 cvs copy-config health/mi300_health_config.json --output /tmp/cvs/input/config_file/health_config.json
 ```
 
@@ -236,7 +236,7 @@ vi /tmp/cvs/input/config_file/rccl/rccl_config.json
 
 **Important**: Update the following in your configuration files:
 - **Cluster file**: IP addresses, hostnames, SSH credentials for your cluster nodes
-- **Config files**: Test-specific parameters like network interfaces, GPU settings, etc.
+- **Config files**: Test-specific parameters like install paths, rank layout, collectives, thresholds, and `env_script`
 
 ### Example Configuration File Locations
 
@@ -254,19 +254,19 @@ Once your configuration files are set up, you can run CVS tests using the conven
 cvs list
 
 # List sub-tests within a specific test suite
-cvs list rccl_multinode_cvs
+cvs list rccl_cvs
 
 # Run all tests from a specific test suite
-cvs run rccl_multinode_cvs --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_test_report.html --self-contained-html --capture=tee-sys
+cvs run rccl_cvs --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_test_report.html --self-contained-html --capture=tee-sys
 
 # Run a specific test from a test suite
-cvs run rccl_multinode_cvs test_collect_hostinfo --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_test_report.html --self-contained-html --capture=tee-sys
+cvs run rccl_cvs test_rccl_cvs --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_test_report.html --self-contained-html --capture=tee-sys
 
 # Run multiple specific tests from a test suite
-cvs run rccl_multinode_cvs test_collect_hostinfo test_basic_ring --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_test_report.html --self-contained-html --capture=tee-sys
+cvs run rccl_cvs test_rccl_cvs --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_test_report.html --self-contained-html --capture=tee-sys
 
 # Run without HTML reporting
-cvs run rccl_multinode_cvs --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json
+cvs run rccl_cvs --cluster_file /tmp/cvs/input/cluster_file/cluster.json --config_file /tmp/cvs/input/config_file/rccl/rccl_config.json
 ```
 
 ## Executing Commands on Cluster Nodes
@@ -365,9 +365,9 @@ All other pytest arguments are supported and passed transparently to pytest. For
 ## Complete CVS Run Example
 
 ```bash
-cvs run rccl_multinode_cvs \
+cvs run rccl_cvs \
   --cluster_file ./input/cluster_file/cluster.json \
-  --config_file ./input/config_file/rccl_config.json \
+  --config_file ./input/config_file/rccl/rccl_config.json \
   --html=/var/www/html/cvs/rccl_test_report.html \
   --self-contained-html \
   --log-file=/tmp/rccl_test.log \
