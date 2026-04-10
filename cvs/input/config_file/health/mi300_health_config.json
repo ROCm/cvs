@@ -42,7 +42,7 @@
     "rvs": {
         "path": "<changeme>/bin",
         "git_install_path": "/home/{user-id}/INSTALL/rvs",
-        "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
+        "git_url": "https://github.com/ROCm/ROCmValidationSuite.git -b release/rocm-rel-7.2",
         "nfs_install": "True",
         "_comment_rocm_path": "ROCm installation path.Set to placeholder changeme auto-detect from /opt/rocm or /opt/rocm/core-*",
         "rocm_path": "<changeme>",
