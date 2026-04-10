@@ -6,7 +6,7 @@
 # Path to Aorta on the host. test_aorta resolves placeholders like other CVS test configs
 # ({user-id}, {user}, {home}, {home-mount-dir}, {node-dir-name}) using the validated cluster username.
 # If the directory does not exist, set aorta_auto_clone: true and aorta_clone_url.
-aorta_path: /scratch/users/{user-id}/aorta
+aorta_path: /scratch/users/{user-id}/aorta # change to your own path
 # aorta_auto_clone: false
 # aorta_clone_url: "https://github.com/your-org/aorta.git"  # set when using auto-clone
 
