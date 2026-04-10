@@ -193,7 +193,7 @@ def get_model_from_rocm_smi_output(smi_output):
         model = 'mi325'
     elif re.search('MI350', smi_output, re.I):
         model = 'mi350'
-    elif re.search('gfx950', smi_output, re.I):
+    elif re.search('MI355', smi_output, re.I):
         model = 'mi355'
     else:
         model = 'mi300x'
