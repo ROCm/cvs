@@ -56,6 +56,11 @@ if not DEBUG_MODE:
     logging.getLogger("pssh").setLevel(logging.WARNING)
     logging.getLogger("pssh.host_logger").setLevel(logging.WARNING)
     logging.getLogger("pssh.clients.base.parallel").setLevel(logging.WARNING)
+    # Suppress paramiko's ERROR-level "Secsh channel N open FAILED: Connection refused"
+    # messages. These fire when rcclras (port 28028) is not listening (i.e. no active
+    # RCCL job), which is normal/expected. The ChannelException is caught upstream and
+    # results in a NO_JOB state transition — not an error worth logging.
+    logging.getLogger("paramiko.transport").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 logger.info(f"Logging initialized - DEBUG_MODE: {DEBUG_MODE}, LOG_LEVEL: {logging.getLevelName(LOG_LEVEL)}")

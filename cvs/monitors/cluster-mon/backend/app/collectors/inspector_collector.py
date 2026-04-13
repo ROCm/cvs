@@ -42,7 +42,7 @@ class InspectorCollector(BaseCollector):
 
     name = "inspector"
     poll_interval: int = 30
-    collect_timeout: float = 20.0
+    collect_timeout: float = 25.0   # overridden at module level from settings
     critical = False
 
     def __init__(self):
@@ -175,8 +175,11 @@ class InspectorCollector(BaseCollector):
             )
             logger.debug("Inspector SSH: no active PIDs known, reading all log files")
 
+        # Pass collect_timeout as read_timeout so pssh doesn't block waiting for
+        # channel close if a node is slow. Subtract 2s for asyncio/thread overhead.
+        ssh_timeout = max(5.0, InspectorCollector.collect_timeout - 2.0)
         try:
-            outputs = await ssh_manager.exec_async(cmd)
+            outputs = await ssh_manager.exec_async(cmd, timeout=ssh_timeout)
         except Exception as e:
             logger.warning(f"Inspector SSH exec failed: {e}")
             return []
@@ -196,6 +199,12 @@ class InspectorCollector(BaseCollector):
         return records
 
 
-# Set poll_interval from config at import time (consistent with other collectors)
+# Set poll_interval and collect_timeout from config at import time.
+# collect_timeout = max(15s, poll_interval * 0.8): allows most of the poll window
+# for SSH exec to complete. Minimum 15s — SSH tail across 2+ nodes needs headroom.
+# NOTE: poll_interval < 20s is not recommended for SSH mode; file mode can go lower.
 from app.core.config import settings as _settings
 InspectorCollector.poll_interval = _settings.rccl.inspector.poll_interval
+InspectorCollector.collect_timeout = max(
+    15.0, _settings.rccl.inspector.poll_interval * 0.8
+)
