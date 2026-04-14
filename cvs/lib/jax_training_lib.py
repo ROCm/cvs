@@ -97,7 +97,7 @@ class JaxTrainingJob:
         self.job_cmd = ''
         self.job_cmd_list = []
         self.training_result_dict = {}
-        print(self.gpu_type)
+        log.info("%s", self.gpu_type)
 
         # Intialize cluster stats dicts ..
         self.rdma_stats_dict_before = {}
@@ -246,7 +246,7 @@ class JaxTrainingJob:
                 )
                 for node in out_dict.keys():
                     if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
-                        print(out_dict[node])
+                        log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
     def build_training_job_cmd(
@@ -409,7 +409,7 @@ class JaxTrainingJob:
                       export NVTE_CK_V3_BF16_CVT={self.tc_dict['nvte_ck_v3_bf16_cvt']}' >> /workspace/maxtext/maxtext_env.sh"'''
                 formatted_cmd = textwrap_for_yml(cmd)
                 cmd_list.append(formatted_cmd)
-        print(cmd_list)
+        log.info("%s", cmd_list)
         self.phdl.exec_cmd_list(cmd_list)
 
         cmd_list = []
@@ -455,7 +455,7 @@ class JaxTrainingJob:
 
         """
 
-        print('Start Training on all Nodes')
+        log.info('Start Training on all Nodes')
         cmd_list = []
 
         # Build a docker exec command per node/rank
@@ -501,14 +501,14 @@ class JaxTrainingJob:
 
         # Compute the central tendency of the metric across the stable range of steps
         median_value = statistics.median(list_of_values)
-        print(f'%%%% median_value = {median_value}')
+        log.info(f'%%%% median_value = {median_value}')
 
         # Define acceptable bounds around the median based on the allowed percentage deviation
         upper_bound = median_value * (1 + percentage_off)
         lower_bound = median_value * (1 - percentage_off)
         for i in range(2, self.training_steps):
             if lower_bound <= float(training_results_dict[i][metric_name]) <= upper_bound:
-                print(f'Training step {i} training metric {metric_name} is in expected range')
+                log.info(f'Training step {i} training metric {metric_name} is in expected range')
             else:
                 fail_test(
                     f'FAIL Training step {i} training metric {metric_name} is over {percentage_off}% from median value {median_value} - actual value {training_results_dict[i][metric_name]}'
@@ -582,7 +582,7 @@ class JaxTrainingJob:
         self.check_deviation_from_median(training_results_dict, 'tokens_per_sec_per_gpu', percentage_off)
         # self.check_deviation_from_median( training_results_dict, 'loss', percentage_off )
 
-        print(training_results_dict)
+        log.info("%s", training_results_dict)
         return training_results_dict
 
     def scan_for_training_errors(
@@ -614,7 +614,7 @@ class JaxTrainingJob:
 
         """
 
-        print('Scan for training errors')
+        log.info('Scan for training errors')
         training_pass = True
 
         # Identify which node's output will be used (currently "last" node only)
@@ -677,7 +677,7 @@ class JaxTrainingJob:
         - If require_all_nodes=True and at least one node lags behind, we continue polling (unless timeout).
         """
 
-        print('Poll for training completion')
+        log.info('Poll for training completion')
 
         # Initial wait to give training time to start logging
         time.sleep(60)
@@ -695,7 +695,7 @@ class JaxTrainingJob:
 
         # Poll up to a maximum iteration count (safety cap) as well as wall-clock (if provided)
         for itr in range(1, int(self.training_poll_iterations) + 1):
-            print(f'Starting iteration {itr}')
+            log.info(f'Starting iteration {itr}')
 
             # Early abort on training errors
             if not self.scan_for_training_errors():
@@ -726,9 +726,9 @@ class JaxTrainingJob:
             if not all_complete:
                 if timed_out():
                     msg = f"Timeout while waiting for training completion after ~{int(time.time() - start_time)}s"
-                    print(msg)
+                    log.warning("%s", msg)
                     return {"status": "timeout", "reason": msg}
-                print('Training still in progress')
+                log.info('Training still in progress')
                 # Short progress wait before the longer inter-iteration sleep
                 time.sleep(30)
                 time.sleep(int(waittime_between_iters))
@@ -747,7 +747,7 @@ class JaxTrainingJob:
 
             # Parse/store final results and report success
             self.training_result_dict = self.get_training_results_dict()
-            print('Completed Training, returning !!!')
+            log.info('Completed Training, returning !!!')
             return {"status": "success", "results": self.training_result_dict}
 
             # If we reached here, it means poll for training completion failed
@@ -755,42 +755,48 @@ class JaxTrainingJob:
         # If we exhaust the iteration cap without completing, treat as timeout (or in_progress if no wall-clock limit)
         if timed_out():
             msg = f"Timeout after maximum iterations ({self.training_poll_iterations}) and ~{int(time.time() - start_time)}s"
-            print(msg)
+            log.warning("%s", msg)
             return {"status": "timeout", "reason": msg}
         else:
             # If no wall-clock timeout was set and we hit the iteration cap, report in-progress
             msg = f"Reached iteration cap ({self.training_poll_iterations}) without completion; still in progress"
-            print(msg)
+            log.warning("%s", msg)
             return {"status": "stuck_in_progress", "reason": msg}
 
     def verify_training_results(
         self,
     ):
-        print('Verify Training Completion Msg')
+        log.info('Verify Training Completion Msg')
         last_node = self.host_list[len(self.host_list) - 1]
         last_node_num = len(self.host_list) - 1
         out_dict = self.phdl.exec(f'cat {self.log_dir}/jax-logs/out-node{last_node_num}/training.log')
 
         # Check for proper shutdown first
         if re.search('Distributed task shutdown result: OK', out_dict[last_node], re.I):
-            print("Clean shutdown detected")
+            log.info("Clean shutdown detected")
         else:
             # Fallback: check if all training steps completed successfully
             # This handles the known race condition where PJRT cleanup runs after coordination service exits
             final_step = self.training_steps - 1
             if re.search(f'completed step:\s+{final_step},', out_dict[last_node], re.I):
-                print(
+                log.info(
                     f"Training completed all {self.training_steps} steps successfully. Shutdown message missing but acceptable due to coordination service cleanup race condition."
                 )
             else:
                 fail_test('JAX training did not complete all steps properly')
 
-        print(self.training_result_dict.keys())
+        log.info("%s", list(self.training_result_dict.keys()))
         for i in self.training_result_dict.keys():
-            print("Actual", end="")
-            print(f"Step {i} TFLOPS/s/device = {self.training_result_dict[i]['tflops_per_sec_per_gpu']} ")
-            print("Expected", end="")
-            print(f"Step {i} TFLOPS/s/device = {self.expected_result_dict['tflops_per_sec_per_gpu']} ")
+            log.info(
+                'Actual Step %s TFLOPS/s/device = %s',
+                i,
+                self.training_result_dict[i]['tflops_per_sec_per_gpu'],
+            )
+            log.info(
+                'Expected Step %s TFLOPS/s/device = %s',
+                i,
+                self.expected_result_dict['tflops_per_sec_per_gpu'],
+            )
             if int(i) > 5:
                 if float(self.training_result_dict[i]['tflops_per_sec_per_gpu']) < float(
                     self.expected_result_dict['tflops_per_sec_per_gpu']
@@ -801,7 +807,7 @@ class JaxTrainingJob:
                             Actual = {self.training_result_dict[i]['tflops_per_sec_per_gpu']}"
                     )
                 else:
-                    print(
+                    log.info(
                         f"Step {i} TFLOPS/s/device = {self.training_result_dict[i]['tflops_per_sec_per_gpu']} is above expected threshold {self.expected_result_dict['tflops_per_sec_per_gpu']}"
                     )
                 if float(self.training_result_dict[i]['tokens_per_sec_per_gpu']) < float(
@@ -813,7 +819,7 @@ class JaxTrainingJob:
                             Actual = {self.training_result_dict[i]['tokens_per_sec_per_gpu']}"
                     )
                 else:
-                    print(
+                    log.info(
                         f"Step {i} Tokens/s/device = {self.training_result_dict[i]['tokens_per_sec_per_gpu']} is above expected threshold {self.expected_result_dict['tokens_per_sec_per_gpu']}"
                     )
 
@@ -821,4 +827,4 @@ class JaxTrainingJob:
         self.training_end_time = self.phdl.exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
         verify_dmesg_for_errors(self.phdl, self.training_start_time, self.training_end_time)
-        print(self.training_result_dict)
+        log.info("%s", self.training_result_dict)

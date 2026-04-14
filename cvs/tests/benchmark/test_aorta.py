@@ -323,7 +323,7 @@ class TestAortaBenchmark:
 
         # Log warnings (for all statuses)
         for warning in parse_result.warnings:
-            log.warning(warning)
+            log.warning("%s", warning)
 
         log.info(f"Parsed {len(parse_result.results)} rank metrics")
 

@@ -85,7 +85,7 @@ def cluster_dict(cluster_file):
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -109,7 +109,7 @@ def benchmark_params_dict(training_config_file, cluster_dict):
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     benchmark_params_dict = resolve_test_config_placeholders(benchmark_params_dict, cluster_dict)
 
-    log.info(benchmark_params_dict)
+    log.info("%s", benchmark_params_dict)
     return benchmark_params_dict
 
 
@@ -133,7 +133,7 @@ def pytest_generate_tests(metafunc):
     """
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.exists(config_file):
-        print(f'Warning: Missing or invalid config file {config_file}')
+        log.warning(f'Warning: Missing or invalid config file {config_file}')
         return
 
     with open(config_file) as fp:
@@ -144,7 +144,7 @@ def pytest_generate_tests(metafunc):
     model_config = benchmark_params.get(MODEL_NAME, {})
 
     if not model_config:
-        print(f'Warning: Model {MODEL_NAME} not found in config')
+        log.warning(f'Warning: Model {MODEL_NAME} not found in config')
         return
 
     # Build test parameters: list of (seq_combo_dict, concurrency, test_id)
@@ -213,10 +213,10 @@ def hf_token(inference_dict):
         with open(hf_token_file, 'r') as fp:
             hf_token = fp.read().rstrip("\n")
     except FileNotFoundError:
-        print(f"Error: The file '{hf_token_file}' was not found.")
+        log.error(f"Error: The file '{hf_token_file}' was not found.")
         raise
     except Exception as e:
-        print(f"An error occurred: {e}")
+        log.error(f"An error occurred: {e}")
         raise
     return hf_token
 
@@ -242,7 +242,7 @@ def s_phdl(cluster_dict):
     Notes:
       - This fixture has module scope, so a single connection handle is reused for all tests in the module.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     s_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -270,7 +270,7 @@ def c_phdl(cluster_dict):
     Notes:
       - This fixture has module scope, so a single connection handle is reused for all tests in the module.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     c_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -330,7 +330,7 @@ def test_launch_inference_containers(s_phdl, inference_dict, benchmark_params_di
     )
     # ADD verifications ..
     time.sleep(30)
-    print('Verify if the containers have been launched properly')
+    log.info('Verify if the containers have been launched properly')
     out_dict = s_phdl.exec('docker ps')
     for node in out_dict.keys():
         if not re.search(f'{container_name}', out_dict[node], re.I):
@@ -447,5 +447,5 @@ def test_print_results_table():
                 ]
             )
 
-    print(tabulate(rows, headers=headers, tablefmt="github"))
+    log.info(tabulate(rows, headers=headers, tablefmt="github"))
     update_test_result()

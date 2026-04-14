@@ -77,7 +77,7 @@ def cluster_dict(cluster_file):
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -101,7 +101,7 @@ def benchmark_params_dict(training_config_file, cluster_dict):
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     benchmark_params_dict = resolve_test_config_placeholders(benchmark_params_dict, cluster_dict)
 
-    log.info(benchmark_params_dict)
+    log.info("%s", benchmark_params_dict)
     return benchmark_params_dict
 
 
@@ -126,9 +126,9 @@ def hf_token(inference_dict):
         with open(hf_token_file, 'r') as fp:
             hf_token = fp.read().rstrip("\n")
     except FileNotFoundError:
-        print(f"Error: The file '{hf_token_file}' was not found.")
+        log.error(f"Error: The file '{hf_token_file}' was not found.")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        log.error(f"An error occurred: {e}")
     return hf_token
 
 
@@ -153,7 +153,7 @@ def s_phdl(cluster_dict):
     Notes:
       - This fixture has module scope, so a single connection handle is reused for all tests in the module.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     s_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -181,7 +181,7 @@ def c_phdl(cluster_dict):
     Notes:
       - This fixture has module scope, so a single connection handle is reused for all tests in the module.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     c_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -204,8 +204,8 @@ def gpu_type(s_phdl, cluster_dict):
       - Consider validating this value against an expected set of GPU types to catch typos early.
     """
 
-    print(s_phdl)
-    print(dir(s_phdl))
+    log.info("%s", s_phdl)
+    log.info("%s", list(dir(s_phdl)))
     head_node = s_phdl.host_list[0]
     smi_out_dict = s_phdl.exec('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
@@ -266,7 +266,7 @@ def test_launch_inference_containers(s_phdl, inference_dict, benchmark_params_di
     )
     # ADD verifications ..
     time.sleep(30)
-    print('Verify if the containers have been launched properly')
+    log.info('Verify if the containers have been launched properly')
     out_dict = s_phdl.exec('docker ps')
     for node in out_dict.keys():
         if not re.search(f'{container_name}', out_dict[node], re.I):

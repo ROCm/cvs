@@ -14,7 +14,6 @@ from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
 
-
 log = globals.log
 
 inference_err_dict = {
@@ -67,7 +66,7 @@ class InferenceBaseJob:
 
         self.job_cmd = ''
         self.job_cmd_list = []
-        print(self.gpu_type)
+        log.info("%s", self.gpu_type)
 
         # Needed only in the case of distributed inference - placeholder for future
         # Intialize cluster stats dicts ..
@@ -93,9 +92,9 @@ class InferenceBaseJob:
         self.if_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
         self.if_dict.setdefault('benchmark_script_repo', 'https://github.com/kimbochen/bench_serving.git')
 
-        print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-        print(f'inference_dict = {self.if_dict}')
-        print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        log.info(f'inference_dict = {self.if_dict}')
+        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 
         # Get model-specific config - check if nested under single_node/multi_node or flat
         if self.distributed_inference:
@@ -170,9 +169,9 @@ class InferenceBaseJob:
         self.server_script = self.bp_dict['server_script']
         self.bench_serv_script = self.bp_dict['bench_serv_script']
 
-        print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-        print(f'benchmark_params_dict = {self.bp_dict}')
-        print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        log.info(f'benchmark_params_dict = {self.bp_dict}')
+        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 
     # Framework-specific methods to be implemented by derived classes
     def get_server_script_directory(self):
@@ -242,7 +241,7 @@ class InferenceBaseJob:
                 )
                 for node in out_dict.keys():
                     if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
-                        print(out_dict[node])
+                        log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
     def build_server_inference_job_cmd(
@@ -289,7 +288,7 @@ class InferenceBaseJob:
                     '''
                 formatted_cmd = textwrap_for_yml(cmd)
                 cmd_list.append(formatted_cmd)
-            print(cmd_list)
+            log.info("%s", cmd_list)
             self.s_phdl.exec_cmd_list(cmd_list)
 
         cmd_list = []
@@ -359,7 +358,7 @@ class InferenceBaseJob:
         readiness_pattern = self.readiness_pattern
 
         # Do an early check for fast failures before the long wait
-        print(f'Waiting {self.default_server_precheck_wait_time} secs for server to start writing logs...')
+        log.info(f'Waiting {self.default_server_precheck_wait_time} secs for server to start writing logs...')
         time.sleep(self.default_server_precheck_wait_time)
 
         # Early failure detection
@@ -375,13 +374,13 @@ class InferenceBaseJob:
                 fail_test(error_msg)
                 raise Exception(error_msg)
 
-        print(
+        log.info(
             f'No immediate errors detected. Waiting {self.default_server_wait_time} more secs for server to fully launch...'
         )
         time.sleep(self.default_server_wait_time)
 
         for j in range(0, self.default_server_poll_count):
-            print(f'Polling for application startup complete on all nodes, iteration {j}')
+            log.info(f'Polling for application startup complete on all nodes, iteration {j}')
             cmd_list = []
             for i in range(0, int(self.nnodes)):
                 cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'
@@ -395,10 +394,10 @@ class InferenceBaseJob:
                     raise Exception(error_msg)
 
             if self.is_server_ready(out_dict, readiness_pattern):
-                print('Server startup confirmed on all nodes')
+                log.info('Server startup confirmed on all nodes')
                 return
 
-            print(f'Waiting {self.default_server_poll_wait_time} secs for next poll')
+            log.info(f'Waiting {self.default_server_poll_wait_time} secs for next poll')
             time.sleep(self.default_server_poll_wait_time)
 
         error_msg = 'Server did not report readiness before timeout; aborting startup'
@@ -442,10 +441,10 @@ class InferenceBaseJob:
 
     def poll_client_completion(self):
         """Poll for client benchmark completion."""
-        print(f'Waiting for {self.default_client_wait_time} secs for benchmark scripts to start')
+        log.info(f'Waiting for {self.default_client_wait_time} secs for benchmark scripts to start')
         time.sleep(self.default_client_wait_time)
         for j in range(0, self.default_client_poll_count):
-            print(f'Polling for Benchmark script to complete on all nodes, iteration {j}')
+            log.info(f'Polling for Benchmark script to complete on all nodes, iteration {j}')
             cmd_list = []
             for i in range(0, int(self.nnodes)):
                 cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/bench_serv_script.log'
@@ -456,27 +455,27 @@ class InferenceBaseJob:
                     fail_test(f'Failed to run benchmark script on node {node}')
                     return
                 if not re.search('End-to-end Latency', out_dict[node], re.I):
-                    print(f'Waiting {self.default_client_poll_wait_time} secs for next poll')
+                    log.info(f'Waiting {self.default_client_poll_wait_time} secs for next poll')
                     time.sleep(self.default_client_poll_wait_time)
 
     def start_inference_server_job(
         self,
     ):
         """Start inference server - launch and poll for startup."""
-        print('Start Server side Inference on all Nodes')
+        log.info('Start Server side Inference on all Nodes')
         self.launch_server()
         self.poll_server_startup()
 
     def start_inference_client_job(
         self,
     ):
-        print('Start Client side benchmark script on all Nodes')
+        log.info('Start Client side benchmark script on all Nodes')
 
         # Clone bench_serving repo to /app
         self.clone_bench_serving_repo('/app')
 
         if self.distributed_inference:
-            print('Distributed inference - TBD')
+            log.info('Distributed inference - TBD')
             return
 
         # Launch client and poll for completion
@@ -484,7 +483,7 @@ class InferenceBaseJob:
         self.poll_client_completion()
 
     def get_inference_results_dict(self, out_dict):
-        print('Get the inference results dict using get_inference_results_dict')
+        log.info('Get the inference results dict using get_inference_results_dict')
         self.inference_results_dict = {}
         for node in out_dict.keys():
             self.inference_results_dict[node] = {}
@@ -546,13 +545,13 @@ class InferenceBaseJob:
                 match = re.search('P99 E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_e2el_ms'] = match.group(1)
 
-        print(self.inference_results_dict)
+        log.info("%s", self.inference_results_dict)
         return self.inference_results_dict
 
     def scan_for_inference_errors(
         self,
     ):
-        print('Scan for inference errors')
+        log.info('Scan for inference errors')
         inference_pass = True
 
         # Build the list of commands to read each node's inference log file
@@ -592,7 +591,7 @@ class InferenceBaseJob:
             return total_timeout is not None and (time.time() - start_time) >= float(total_timeout)
 
         for itr in range(1, iterations + 1):
-            print(f'Starting iteration {itr}')
+            log.info(f'Starting iteration {itr}')
 
             # Early abort on inference errors
             if not self.scan_for_inference_errors():
@@ -622,9 +621,9 @@ class InferenceBaseJob:
             if not all_complete:
                 if timed_out():
                     msg = f"Timeout while waiting for inference completion after ~{int(time.time() - start_time)}s"
-                    print(msg)
+                    log.warning("%s", msg)
                     return {"status": "timeout", "reason": msg}
-                print('Inference Benchmark is still in progress')
+                log.info('Inference Benchmark is still in progress')
                 # Short progress wait before the longer inter-iteration sleep
                 time.sleep(30)
                 time.sleep(int(waittime_between_iters))
@@ -632,7 +631,7 @@ class InferenceBaseJob:
 
             # Parse/store final results and report success
             res_dict = self.get_inference_results_dict(out_dict)
-            print('Completed Inference, returning !!!')
+            log.info('Completed Inference, returning !!!')
             return {"status": "success", "results": res_dict}
 
             # If we reached here, it means poll for inference completion failed
@@ -640,12 +639,12 @@ class InferenceBaseJob:
         # If we exhaust the iteration cap without completing, treat as timeout (or in_progress if no wall-clock limit)
         if timed_out():
             msg = f"Timeout after maximum iterations ({self.inference_poll_iterations}) and ~{int(time.time() - start_time)}s"
-            print(msg)
+            log.warning("%s", msg)
             return {"status": "timeout", "reason": msg}
         else:
             # If no wall-clock timeout was set and we hit the iteration cap, report in-progress
             msg = f"Reached iteration cap ({self.inference_poll_iterations}) without completion; still in progress"
-            print(msg)
+            log.warning("%s", msg)
             return {"status": "stuck_in_progress", "reason": msg}
 
     def verify_inference_results(
@@ -657,7 +656,7 @@ class InferenceBaseJob:
         The expected results are keyed by: "ISL=X,OSL=Y,TP=Z,CONC=W"
         This method builds that key from current test parameters and compares.
         """
-        print('Verify Inference Completion Msg')
+        log.info('Verify Inference Completion Msg')
 
         # Build the expected result key from current test parameters
         isl = self.bp_dict.get('input_sequence_length', '1024')
@@ -666,22 +665,22 @@ class InferenceBaseJob:
         conc = self.bp_dict.get('max_concurrency', '64')
 
         expected_key = f"ISL={isl},OSL={osl},TP={tp},CONC={conc}"
-        print(f'Looking for expected results with key: {expected_key}')
+        log.info(f'Looking for expected results with key: {expected_key}')
 
         # Get expected results from result_dict
         result_dict = self.bp_dict.get('result_dict', {})
         expected_result_dict = result_dict.get(expected_key, {})
 
         if not expected_result_dict:
-            print(f'Warning: No expected results found for {expected_key}, skipping validation')
+            log.warning(f'Warning: No expected results found for {expected_key}, skipping validation')
             # Scan Dmesg for errors ..
             self.inference_end_time = self.s_phdl.exec('date +"%a %b %e %H:%M"')
             time.sleep(2)
             verify_dmesg_for_errors(self.s_phdl, self.inference_start_time, self.inference_end_time)
-            print(self.inference_results_dict)
+            log.info("%s", self.inference_results_dict)
             return
 
-        print(f'Expected results: {expected_result_dict}')
+        log.info(f'Expected results: {expected_result_dict}')
 
         # Compare actual vs expected for each node
         for node in self.inference_results_dict.keys():
@@ -709,4 +708,4 @@ class InferenceBaseJob:
         self.inference_end_time = self.s_phdl.exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
         verify_dmesg_for_errors(self.s_phdl, self.inference_start_time, self.inference_end_time)
-        print(self.inference_results_dict)
+        log.info("%s", self.inference_results_dict)

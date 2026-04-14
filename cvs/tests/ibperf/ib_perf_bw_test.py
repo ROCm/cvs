@@ -86,7 +86,7 @@ def cluster_dict(cluster_file):
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -108,7 +108,7 @@ def config_dict(config_file, cluster_dict):
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    log.info(config_dict)
+    log.info("%s", config_dict)
     return config_dict
 
 
@@ -132,7 +132,7 @@ def phdl(cluster_dict):
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
       - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
 
@@ -217,7 +217,7 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
 
-    print(gpu_nic_dict)
+    log.info("%s", gpu_nic_dict)
     bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(phdl)
     rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(phdl)
 
@@ -225,7 +225,7 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
     for node in rdma_nic_dict.keys():
         bck_nic_dict[node] = {}
         for rdma_dev in rdma_nic_dict[node].keys():
-            print(bck_nic_dict_lshw[node])
+            log.info("%s", bck_nic_dict_lshw[node])
             if rdma_nic_dict[node][rdma_dev]['eth_device'] in bck_nic_dict_lshw[node]:
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
@@ -261,8 +261,8 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
                     config_dict['expected_results'],
                 )
 
-    print('%%%%%%%%% ib_bw_dict %%%%%%%%%%')
-    print(ib_bw_dict)
+    log.info('%%%%%%%%% ib_bw_dict %%%%%%%%%%')
+    log.info("%s", ib_bw_dict)
     update_test_result()
 
 
@@ -281,13 +281,13 @@ def test_ib_lat_perf(phdl, lat_test, config_dict):
     for node in rdma_nic_dict.keys():
         bck_nic_dict[node] = {}
         for rdma_dev in rdma_nic_dict[node].keys():
-            print(bck_nic_dict_lshw[node])
+            log.info("%s", bck_nic_dict_lshw[node])
             if rdma_nic_dict[node][rdma_dev]['eth_device'] in bck_nic_dict_lshw[node]:
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
-    print(f'%%%%%% bck_nic_dict %%%%% {bck_nic_dict}')
-    print(f'%%%%%% gpu_nic_dict %%%%% {gpu_nic_dict}')
-    print(f'%%%%%% gpu_numa_dict %%%%% {gpu_numa_dict}')
+    log.info(f'%%%%%% bck_nic_dict %%%%% {bck_nic_dict}')
+    log.info(f'%%%%%% gpu_nic_dict %%%%% {gpu_nic_dict}')
+    log.info(f'%%%%%% gpu_numa_dict %%%%% {gpu_numa_dict}')
 
     rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
     for msg_size in config_dict['msg_size_list']:
@@ -314,8 +314,8 @@ def test_ib_lat_perf(phdl, lat_test, config_dict):
                 lat_test, msg_size, ib_lat_dict[lat_test][msg_size], config_dict['expected_results']
             )
 
-    print('%%%%%%%%%%% ib_lat_dict %%%%%%%%%')
-    print(ib_lat_dict)
+    log.info('%%%%%%%%%%% ib_lat_dict %%%%%%%%%')
+    log.info("%s", ib_lat_dict)
     update_test_result()
 
 

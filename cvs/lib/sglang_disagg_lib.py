@@ -133,7 +133,7 @@ class SglangDisaggPD:
         self.job_cmd = ''
         self.job_cmd_list = []
         self.inference_results_dict = {}
-        print(self.gpu_type)
+        log.info("%s", self.gpu_type)
 
         # ------------------------------------------------------------------
         # Extract commonly used inference parameters for convenience
@@ -167,9 +167,9 @@ class SglangDisaggPD:
         self.inf_dict.setdefault('queue_timeout_secs', '60')
         self.inf_dict.setdefault('max_retries', '5')
 
-        print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-        print(f'inference_dict = {self.inf_dict}')
-        print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        log.info(f'inference_dict = {self.inf_dict}')
+        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
         self.container_image = self.inf_dict['container_image']
         self.container_name = self.inf_dict['container_name']
 
@@ -205,9 +205,9 @@ class SglangDisaggPD:
 
         self.inference_poll_iterations = self.bp_dict['inference_poll_iterations']
 
-        print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-        print(f'benchmark_params_dict = {self.bp_dict}')
-        print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        log.info(f'benchmark_params_dict = {self.bp_dict}')
+        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 
     def install_container_packages(
         self,
@@ -231,7 +231,7 @@ class SglangDisaggPD:
         - Proxy/router nodes
         """
 
-        print('Run pre inference tasks')
+        log.info('Run pre inference tasks')
         # Install ip tools
         cmd = f'docker exec {self.container_name} /bin/bash -c " \
             sudo apt -y update; \
@@ -271,12 +271,12 @@ class SglangDisaggPD:
             pout_dict = self.p_phdl.exec(cmd)
             dout_dict = self.d_phdl.exec(cmd)
             for node in pout_dict.keys():
-                if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
-                    print(pout_dict[node])
+                if not re.search('hca_id:\s+bnxt_', pout_dict[node], re.I):
+                    log.info("%s", pout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
             for node in dout_dict.keys():
-                if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
-                    print(dout_dict[node])
+                if not re.search('hca_id:\s+bnxt_', dout_dict[node], re.I):
+                    log.info("%s", dout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
     def check_ibv_devices(
@@ -443,9 +443,9 @@ class SglangDisaggPD:
         max_jobs (int): Maximum number of concurrent jobs to launch within
                         the RMSNorm test to stress the kernel.
         """
-        print('#================ * * * =========================#')
-        print('Run rmsnorm2d')
-        print('#================ * * * =========================#')
+        log.info('#================ * * * =========================#')
+        log.info('Run rmsnorm2d')
+        log.info('#================ * * * =========================#')
         # ------------------------------------------------------------------
         # Construct command to run RMSNorm test inside the container
         #
@@ -458,14 +458,14 @@ class SglangDisaggPD:
                 python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py > /tmp/rsmnorm_test.log 2>&1 &" '''
         for hdl in [self.p_phdl, self.d_phdl, self.r_phdl]:
             out_dict = hdl.exec(cmd)
-        print('Wait 180 secs for tests to complete')
+        log.info('Wait 180 secs for tests to complete')
         time.sleep(180)
         for hdl in [self.p_phdl, self.d_phdl, self.r_phdl]:
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "cat /tmp/rsmnorm_test.log" '''
             out_dict = hdl.exec(cmd)
             for node in out_dict.keys():
                 if re.search('fail', out_dict[node], re.I):
-                    print(f'Some failures observed in test rmsnorm on node {node}')
+                    log.warning(f'Some failures observed in test rmsnorm on node {node}')
                     fail_test(f'Some failures observed in test rmsnorm on node {node}')
 
     # supported --dtype {auto,half,float16,bfloat16,float,float32}
@@ -493,13 +493,13 @@ class SglangDisaggPD:
         dtype (str): Model compute datatype (e.g., fp16, bf16, auto)
         kv_cache_dtype (str): KV cache datatype (e.g., fp16, bf16, auto)
         """
-        print('#================ * * * =========================#')
-        print('Create Prefill launch script on Prefill nodes')
-        print('#================ * * * =========================#')
+        log.info('#================ * * * =========================#')
+        log.info('Create Prefill launch script on Prefill nodes')
+        log.info('#================ * * * =========================#')
 
         cmd_list = []
         prefill_node_list = self.inf_dict['prefill_node_list']
-        print('%%%% self.prefill_nnodes {}'.format(self.prefill_nnodes))
+        log.info('%%%% self.prefill_nnodes {}'.format(self.prefill_nnodes))
         for i in range(0, int(self.prefill_nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.prefill_nnodes}
@@ -520,13 +520,13 @@ class SglangDisaggPD:
                               --log-level {self.inf_dict['log_level']}' > /tmp/prefill_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
-        print('%%%%%%%%%%%%%%%%%%%')
-        print(cmd_list)
-        print('%%%%%%%%%%%%%%%%%%%')
+        log.info('%%%%%%%%%%%%%%%%%%%')
+        log.info("%s", cmd_list)
+        log.info('%%%%%%%%%%%%%%%%%%%')
         self.p_phdl.exec_cmd_list(cmd_list)
-        print('#================ * * * =========================#')
-        print('Launching Prefill servers on Prefill nodes')
-        print('#================ * * * =========================#')
+        log.info('#================ * * * =========================#')
+        log.info('Launching Prefill servers on Prefill nodes')
+        log.info('#================ * * * =========================#')
         cmd_list = []
         for i in range(0, int(self.prefill_nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c " \
@@ -562,12 +562,12 @@ class SglangDisaggPD:
         dtype (str): Model compute datatype (e.g., fp16, bf16, auto)
         kv_cache_dtype (str): KV cache datatype (e.g., fp16, bf16, auto)
         """
-        print('#================ * * * =========================#')
-        print('Create Decode launch script on Decode nodes')
-        print('#================ * * * =========================#')
+        log.info('#================ * * * =========================#')
+        log.info('Create Decode launch script on Decode nodes')
+        log.info('#================ * * * =========================#')
         cmd_list = []
         decode_node_list = self.inf_dict['decode_node_list']
-        print('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
+        log.info('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
         for i in range(0, int(self.decode_nnodes)):
             # ------------------------------------------------------------------
             # Construct a command that writes a Decode server launch script
@@ -606,13 +606,13 @@ class SglangDisaggPD:
                               --log-level {self.inf_dict['log_level']}' > /tmp/decode_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
-        print('%%%%%%%%%%%%%%%%%%%')
-        print(cmd_list)
-        print('%%%%%%%%%%%%%%%%%%%')
+        log.info('%%%%%%%%%%%%%%%%%%%')
+        log.info("%s", cmd_list)
+        log.info('%%%%%%%%%%%%%%%%%%%')
         self.d_phdl.exec_cmd_list(cmd_list)
-        print('#================ * * * =========================#')
-        print('Launching Decode servers on Decode nodes')
-        print('#================ * * * =========================#')
+        log.info('#================ * * * =========================#')
+        log.info('Launching Decode servers on Decode nodes')
+        log.info('#================ * * * =========================#')
         cmd_list = []
         for i in range(0, int(self.decode_nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c " \
@@ -645,7 +645,7 @@ class SglangDisaggPD:
         This method enforces a startup delay and then actively polls each server
         to confirm readiness before inference traffic is sent.
         """
-        print('Waiting 120 secs after launching decode script')
+        log.info('Waiting 120 secs after launching decode script')
         time.sleep(120)
         for node_no in range(0, self.prefill_nnodes):
             self.poll_for_server_ready(node_no, 'prefill')
@@ -694,9 +694,9 @@ class SglangDisaggPD:
         decode_str = ''
         for decode_node in self.decode_node_list:
             decode_str = decode_str + f"--decode http://{decode_node}:{self.inf_dict['decode_serv_port']} "
-        print('#================ * * * =========================#')
-        print('Create Proxy Router launch script on Proxy Router nodes')
-        print('#================ * * * =========================#')
+        log.info('#================ * * * =========================#')
+        log.info('Create Proxy Router launch script on Proxy Router nodes')
+        log.info('#================ * * * =========================#')
 
         # ------------------------------------------------------------------
         # Create the Proxy Router launch script
@@ -723,9 +723,9 @@ class SglangDisaggPD:
                     '''
         formatted_cmd = textwrap_for_yml(cmd)
         self.r_phdl.exec(formatted_cmd)
-        print('#================ * * * =========================#')
-        print('Launch Proxy Router script on Proxy Router nodes')
-        print('#================ * * * =========================#')
+        log.info('#================ * * * =========================#')
+        log.info('Launch Proxy Router script on Proxy Router nodes')
+        log.info('#================ * * * =========================#')
         cmd = f'''docker exec {self.container_name} /bin/bash -c " \
                    chmod 755 /tmp/proxy_router_launch_script.sh; \
                    mkdir -p {self.log_dir}/proxy_router_node; \
@@ -734,7 +734,7 @@ class SglangDisaggPD:
                    {self.log_dir}/proxy_router_node/proxy_router.log 2>&1 &" '''
         formatted_cmd = textwrap_for_yml(cmd)
         self.r_phdl.exec(formatted_cmd)
-        print('Waiting 120 secs after launching proxy router script')
+        log.info('Waiting 120 secs after launching proxy router script')
         time.sleep(120)
 
     def run_gsm8k_benchmark_test(self, d_type='auto'):
@@ -754,9 +754,9 @@ class SglangDisaggPD:
         - Routes requests to Prefill servers
         - Coordinates Decode servers for token generation
         """
-        print('#================ * * * =========================#')
-        print('Create Benchmark script')
-        print('#================ * * * =========================#')
+        log.info('#================ * * * =========================#')
+        log.info('Create Benchmark script')
+        log.info('#================ * * * =========================#')
 
         i_dict = self.bp_dict['inference_tests']['gsm8k']
         # ------------------------------------------------------------------
@@ -817,9 +817,9 @@ class SglangDisaggPD:
         d_type (str): Data type identifier used to select expected
                       performance thresholds (e.g., fp16, bf16, auto).
         """
-        print('#================ * * * =========================#')
-        print('Benchmark Random Dataset')
-        print('#================ * * * =========================#')
+        log.info('#================ * * * =========================#')
+        log.info('Benchmark Random Dataset')
+        log.info('#================ * * * =========================#')
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         # ------------------------------------------------------------------
         # Construct command to run sglang.bench_serving with random dataset
@@ -883,21 +883,21 @@ class SglangDisaggPD:
         if re.search('prefill', sglang_function):
             head_node = self.prefill_node_list[0]
             for j in range(1, no_of_iterations):
-                print(f'Starting poll iteration {j}')
+                log.info(f'Starting poll iteration {j}')
                 out_dict = self.p_phdl.exec(
                     f'grep -B 20 -A 20 "200 OK" {self.log_dir}/prefill_node{node_no}/prefill_server.log'
                 )
                 if re.search('GET|POST', out_dict[head_node], re.I):
-                    print('Wait 60 secs to start serving traffic')
+                    log.info('Wait 60 secs to start serving traffic')
                     time.sleep(60)
                     # if re.search('fired up and ready to roll', out_dict[head_node], re.I ):
                     #    print('Prefill server {node_no} ready to serve')
                     return
                 else:
-                    print('Wait for 120 secs and continue polling')
+                    log.info('Wait for 120 secs and continue polling')
                     time.sleep(120)
             head_node = self.prefill_node_list[0]
-            print(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
+            log.warning(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
             fail_test(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
         # ------------------------------------------------------------------
         # Decode server readiness check
@@ -905,20 +905,20 @@ class SglangDisaggPD:
         elif re.search('decode', sglang_function):
             head_node = self.decode_node_list[0]
             for j in range(1, no_of_iterations):
-                print(f'Starting poll iteration {j}')
+                log.info(f'Starting poll iteration {j}')
                 out_dict = self.d_phdl.exec(
                     f'grep -B 20 -A 20 "200 OK" {self.log_dir}/decode_node{node_no}/decode_server.log'
                 )
                 if re.search('GET|POST', out_dict[head_node]):
-                    print('Wait 60 secs to start serving traffic')
+                    log.info('Wait 60 secs to start serving traffic')
                     time.sleep(60)
                     # if re.search('fired up and ready to roll', out_dict[head_node], re.I ):
                     #    print('Decode server {node_no} ready to serve')
                     return
                 else:
-                    print('Wait for 120 secs and continue polling')
+                    log.info('Wait for 120 secs and continue polling')
                     time.sleep(120)
-            print(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
+            log.warning(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
             fail_test(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
 
     def get_inference_results_dict(self, out_dict):
@@ -944,8 +944,8 @@ class SglangDisaggPD:
             raw stdout/stderr text produced by the benchmark on that node.
         """
         self.inference_results_dict = {}
-        print('Inside get_inference_results_dict')
-        print(out_dict)
+        log.info('Inside get_inference_results_dict')
+        log.info("%s", out_dict)
         for node in out_dict.keys():
             self.inference_results_dict[node] = {}
             if re.search('Successful requests:', out_dict[node], re.I):
@@ -1003,7 +1003,7 @@ class SglangDisaggPD:
                 match = re.search('P99 E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_e2el_ms'] = match.group(1)
 
-        print(self.inference_results_dict)
+        log.info("%s", self.inference_results_dict)
         return self.inference_results_dict
 
     def scan_for_inference_errors(
@@ -1026,7 +1026,7 @@ class SglangDisaggPD:
         The method ensures that even if benchmarks complete, silent or
         non-fatal errors do not go unnoticed.
         """
-        print('Scan for inference errors')
+        log.info('Scan for inference errors')
         inference_pass = True
 
         # Build the list of commands to read each node's inference log file
@@ -1109,7 +1109,7 @@ class SglangDisaggPD:
         # Poll loop: periodically inspect benchmark logs for completion
         # ------------------------------------------------------------------
         for itr in range(1, iterations + 1):
-            print(f'Starting iteration {itr}')
+            log.info(f'Starting iteration {itr}')
 
             # --------------------------------------------------------------
             # Early exit if any inference errors are detected
@@ -1154,9 +1154,9 @@ class SglangDisaggPD:
             if not all_complete:
                 if timed_out():
                     msg = f"Timeout while waiting for inference completion after ~{int(time.time() - start_time)}s"
-                    print(msg)
+                    log.warning("%s", msg)
                     return {"status": "timeout", "reason": msg}
-                print('Inference still in progress')
+                log.info('Inference still in progress')
                 # Short progress wait before the longer inter-iteration sleep
                 time.sleep(30)
                 time.sleep(int(waittime_between_iters))
@@ -1168,7 +1168,7 @@ class SglangDisaggPD:
             # Parse benchmark results and return structured output.
             # --------------------------------------------------------------
             self.get_inference_results_dict(out_dict)
-            print('Completed Inference, returning !!!')
+            log.info('Completed Inference, returning !!!')
             return {"status": "success", "results": self.inference_results_dict}
 
             # If we reached here, it means poll for inference completion failed
@@ -1176,12 +1176,12 @@ class SglangDisaggPD:
         # If we exhaust the iteration cap without completing, treat as timeout (or in_progress if no wall-clock limit)
         if timed_out():
             msg = f"Timeout after maximum iterations ({self.inference_poll_iterations}) and ~{int(time.time() - start_time)}s"
-            print(msg)
+            log.warning("%s", msg)
             return {"status": "timeout", "reason": msg}
         else:
             # If no wall-clock timeout was set and we hit the iteration cap, report in-progress
             msg = f"Reached iteration cap ({self.inference_poll_iterations}) without completion; still in progress"
-            print(msg)
+            log.warning("%s", msg)
             return {"status": "stuck_in_progress", "reason": msg}
 
     def verify_inference_results(self, test_name, expected_result_dict):
@@ -1199,20 +1199,20 @@ class SglangDisaggPD:
 
         It acts as the final gate for inference validation.
         """
-        print('Verify Inference Completion Msg')
-        print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-        print(self.inference_results_dict)
-        print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        log.info('Verify Inference Completion Msg')
+        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        log.info("%s", self.inference_results_dict)
+        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
         # ------------------------------------------------------------------
         # Validate metrics on a per-node basis
         # ------------------------------------------------------------------
         for node in self.inference_results_dict.keys():
-            print('%%%% node {}'.format(node))
+            log.info('%%%% node {}'.format(node))
             for metric_name in expected_result_dict.keys():
-                print('%%% metric_name {}'.format(metric_name))
+                log.info('%%% metric_name {}'.format(metric_name))
                 if metric_name in self.inference_results_dict[node].keys():
                     # latency metric, so actual should be lower than expected ..
-                    print('%% metric found in inference results ^^^')
+                    log.info('%% metric found in inference results ^^^')
                     # ------------------------------------------------------
                     # Latency metrics (e.g., TTFT, TPOT)
                     #
@@ -1220,8 +1220,8 @@ class SglangDisaggPD:
                     # Fail if actual latency exceeds expected threshold.
                     # ------------------------------------------------------
                     if re.search('ms', metric_name, re.I):
-                        print(self.inference_results_dict[node][metric_name])
-                        print(expected_result_dict[metric_name])
+                        log.info("%s", self.inference_results_dict[node][metric_name])
+                        log.info("%s", expected_result_dict[metric_name])
                         if float(self.inference_results_dict[node][metric_name]) > float(
                             expected_result_dict[metric_name]
                         ):
@@ -1258,4 +1258,4 @@ class SglangDisaggPD:
         verify_dmesg_for_errors(self.d_phdl, self.inference_start_time, self.inference_end_time)
         verify_dmesg_for_errors(self.r_phdl, self.inference_start_time, self.inference_end_time)
         verify_dmesg_for_errors(self.b_phdl, self.inference_start_time, self.inference_end_time)
-        print(self.inference_results_dict)
+        log.info("%s", self.inference_results_dict)

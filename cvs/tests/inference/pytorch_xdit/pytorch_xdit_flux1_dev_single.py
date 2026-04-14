@@ -131,8 +131,8 @@ class LocalPssh:
         )
         out = (completed.stdout or "") + (completed.stderr or "")
         if print_console:
-            print(f"cmd = {_redact_secrets(cmd)}")
-            print(out)
+            log.info(f"cmd = {_redact_secrets(cmd)}")
+            log.info("%s", out)
         return {self.host_list[0]: out}
 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
@@ -148,8 +148,8 @@ class LocalPssh:
             )
             out_str = (completed.stdout or "") + (completed.stderr or "")
             if print_console:
-                print(f"cmd = {_redact_secrets(cmd)}")
-                print(out_str)
+                log.info(f"cmd = {_redact_secrets(cmd)}")
+                log.info("%s", out_str)
             out[host] = out_str
         return out
 
@@ -192,7 +192,7 @@ def cluster_dict(cluster_file):
         log.error(f"Cluster config validation failed: {e}")
         pytest.fail(f"Invalid cluster configuration: {e}")
 
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 

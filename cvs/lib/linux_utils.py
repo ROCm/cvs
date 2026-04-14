@@ -339,18 +339,18 @@ def get_backend_nic_dict(phdl):
         bck_net_dict[node] = []
 
         # Debug output
-        print(f"Node: {node}")
-        print(f"RDMA-capable devices: {rdma_cap_devs.get(node, [])}")
-        print(f"lshw network interfaces: {list(lshw_dict[node].keys())}")
+        log.info(f"Node: {node}")
+        log.info(f"RDMA-capable devices: {rdma_cap_devs.get(node, [])}")
+        log.info(f"lshw network interfaces: {list(lshw_dict[node].keys())}")
 
         # Filter lshw_dict to only RDMA-capable devices
         filtered_lshw = {intf: lshw_dict[node][intf] for intf in rdma_cap_devs.get(node, []) if intf in lshw_dict[node]}
 
-        print(f"Filtered lshw (RDMA-capable only): {list(filtered_lshw.keys())}")
+        log.info(f"Filtered lshw (RDMA-capable only): {list(filtered_lshw.keys())}")
 
         # Now apply the heuristic on the filtered dict: group by description, pick the largest group
         if not filtered_lshw:
-            print(f"WARNING: No RDMA-capable NICs found in lshw for node {node}")
+            log.warning(f"WARNING: No RDMA-capable NICs found in lshw for node {node}")
             continue  # No RDMA-capable NICs
         list_a = []
         list_b = []
@@ -528,8 +528,8 @@ def get_nic_ethtool_stats_dict(phdl, vendor=None):
     # We build a list of interface names per node and then create batches by NIC index.
     cmd_dict = {}
     eth_dev_dict = {}
-    print(node_list)
-    print(bck_nic_dict)
+    log.info("%s", node_list)
+    log.info("%s", bck_nic_dict)
 
     # Build map of nodes to ordered lists of backend interface names
     for node in node_list:
@@ -560,7 +560,7 @@ def get_nic_ethtool_stats_dict(phdl, vendor=None):
             for counter in stats_dict[node][intf].keys():
                 if re.search('err|discard|drop|crc|fcs|reset', counter, re.I):
                     if int(stats_dict[node][intf][counter]) > 0:
-                        print(f'WARN !! {node} {intf} {counter} {stats_dict[node][intf][counter]}')
+                        log.warning(f'WARN !! {node} {intf} {counter} {stats_dict[node][intf][counter]}')
 
     return stats_dict
 
@@ -600,7 +600,7 @@ def get_lldp_dict(phdl):
         if not re.search('lldpcli', out_dict[node]):
             lldp_installed = False
     if lldp_installed is not True:
-        print('Cannot get LLDP Dict as lldpcli is missing')
+        log.warning('Cannot get LLDP Dict as lldpcli is missing')
         return {}
         # try:
         #    phdl.exec('sudo apt update -y')
@@ -609,7 +609,7 @@ def get_lldp_dict(phdl):
         #    print('Error installing LLDP with apt install - {}'.format(e))
         #    return lldp_dict
 
-    print('Get LLDP dict')
+    log.info('Get LLDP dict')
 
     # Execute lldpcli across nodes; expected shape: { node_name: "<json string>", ... }
     out_dict = phdl.exec('sudo lldpcli show neighbors -f json')
@@ -627,15 +627,15 @@ def get_dns_dict(phdl):
         dns_dict[node] = {}
         for line in out_dict[node].split("\n"):
             if re.search('Protocols', line, re.I):
-                print('')
+                log.info('')
             elif re.search('Protocols', line, re.I):
-                print('')
+                log.info('')
             elif re.search('Current DNS Server', line, re.I):
-                print('')
+                log.info('')
             elif re.search('DNS Servers', line, re.I):
-                print('')
+                log.info('')
             elif re.search('DNS Domain', line, re.I):
-                print('')
+                log.info('')
     return dns_dict
 
 
@@ -688,7 +688,7 @@ def get_rdma_stats_dict(phdl):
     # Process each node's output
     for node in out_dict.keys():
         bck_nic_list = bck_nic_dict[node]
-        print(bck_nic_list)
+        log.info("%s", bck_nic_list)
         rdma_stats_dict[node] = {}
 
         # Convert the node's JSON output into Python objects (expected to be a list of dicts)
@@ -802,13 +802,13 @@ def get_gpu_nic_mapping_dict(
 
             # find nearest nic bus no.
             nic_bus_list = nic_bus_dict[node]
-            print(f'nic_bus_list = {nic_bus_list}')
-            print(f'bus_no = {bus_no}')
+            log.info(f'nic_bus_list = {nic_bus_list}')
+            log.info(f'bus_no = {bus_no}')
 
             nearest_nic_bus_no = get_nearest_bus_no(bus_no, nic_bus_list)
 
-            print(f'nic_bus_list = {nic_bus_list}')
-            print(f'nearest_nic_bus_no = {nearest_nic_bus_no}')
+            log.info(f'nic_bus_list = {nic_bus_list}')
+            log.info(f'nearest_nic_bus_no = {nearest_nic_bus_no}')
             for eth_dev in lshw_dict[node].keys():
                 match = re.search(
                     '[0-9a-f]+\:([0-9a-f]+)\:[0-9a-f]+\.[0-9a-f]', lshw_dict[node][eth_dev]['pci_bus'], re.I
@@ -819,7 +819,7 @@ def get_gpu_nic_mapping_dict(
                     gpu_nic_dict[node][card]['rdma_dev'] = lshw_dict[node][eth_dev]['rdma_dev']
                     gpu_nic_dict[node][card]['nic_bdf'] = lshw_dict[node][eth_dev]['pci_bus']
                     continue
-    print(gpu_nic_dict)
+    log.info("%s", gpu_nic_dict)
     return gpu_nic_dict
 
 
@@ -856,5 +856,5 @@ def get_gpu_numa_dict(phdl):
         for node in out_dict.keys():
             gpu_numa_dict[node][card]['numa_node'] = str(out_dict[node]).rstrip('\n').rstrip('\r')
 
-    print(gpu_numa_dict)
+    log.info("%s", gpu_numa_dict)
     return gpu_numa_dict
