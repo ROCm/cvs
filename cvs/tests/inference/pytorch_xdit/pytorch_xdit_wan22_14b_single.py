@@ -97,8 +97,8 @@ class LocalPssh:
         )
         out = (completed.stdout or "") + (completed.stderr or "")
         if print_console:
-            print(f"cmd = {_redact_secrets(cmd)}")
-            print(out)
+            log.info(f"cmd = {_redact_secrets(cmd)}")
+            log.info("%s", out)
         return {self.host_list[0]: out}
 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
@@ -114,8 +114,8 @@ class LocalPssh:
             )
             out_str = (completed.stdout or "") + (completed.stderr or "")
             if print_console:
-                print(f"cmd = {_redact_secrets(cmd)}")
-                print(out_str)
+                log.info(f"cmd = {_redact_secrets(cmd)}")
+                log.info("%s", out_str)
             out[host] = out_str
         return out
 
@@ -171,7 +171,7 @@ def cluster_dict(cluster_file):
         log.error(f"Cluster config validation failed: {e}")
         pytest.fail(f"Invalid cluster configuration: {e}")
 
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -634,7 +634,7 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
         overall_result = type("Tmp", (), {"avg_total_time_s": agg.overall_avg_total_time_s})()
         parser = WanOutputParser(output_dir, expected_artifact="video.mp4")  # only used for threshold selection
         passed, message = parser.validate_threshold(overall_result, expected_results, gpu_type)
-        log.info(message)
+        log.info("%s", message)
         if not passed:
             fail_test(message)
         update_test_result()
@@ -664,7 +664,7 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
     log.info(f"  Step times: {[f'{t:.2f}' for t in result.step_times]}")
 
     passed, message = parser.validate_threshold(result, expected_results, gpu_type)
-    log.info(message)
+    log.info("%s", message)
     if not passed:
         fail_test(message)
     update_test_result()

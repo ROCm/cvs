@@ -68,7 +68,7 @@ def cluster_dict(cluster_file):
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
 
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -87,7 +87,7 @@ def config_dict(config_file, cluster_dict):
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
 
-    log.info(config_dict)
+    log.info("%s", config_dict)
     return config_dict
 
 
@@ -122,7 +122,7 @@ def phdl(cluster_dict):
     Returns:
     Pssh: A handle to execute commands across all nodes.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -158,10 +158,10 @@ def test_install_agfhc(
     # Check if install directory exists, otherwise create.
     out_dict = phdl.exec(f'ls -ld {install_dir}')
     for node in out_dict.keys():
-        print(f'node ip {node}')
-        print(out_dict[node])
+        log.info(f'node ip {node}')
+        log.info("%s", out_dict[node])
         if re.search('No such file or directory', out_dict[node], re.I):
-            print(f'Install directory {install_dir} does not exist, creating')
+            log.info(f'Install directory {install_dir} does not exist, creating')
             hdl.exec(f'mkdir -p {install_dir}')
 
     # Copy the package to the install directory and untar
@@ -175,16 +175,16 @@ def test_install_agfhc(
     try:
         out_dict = hdl.exec(f'cd {install_dir};sudo ./install', timeout=90)
         for node in out_dict.keys():
-            print(out_dict[node])
+            log.info("%s", out_dict[node])
             if re.search('Error|No such file', out_dict[node], re.I):
                 fail_test(f'Installation of AGFHC failed on node {node}')
     except Exception as e:
-        print(f'Install of AGFHC failed, hit exception {e}')
+        log.error(f'Install of AGFHC failed, hit exception {e}')
 
     # verify agfhc path exists after installation ..
     out_dict = phdl.exec(f'ls -l {config_dict["path"]}/agfhc')
     for node in out_dict.keys():
-        print(out_dict[node])
+        log.info("%s", out_dict[node])
         if re.search('No such file', out_dict[node], re.I):
             fail_test(f'Installation of AGFHC failed on node {node}')
     update_test_result()

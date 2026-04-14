@@ -36,11 +36,11 @@ def get_amd_smi_fw_dict(phdl):
 def get_amd_smi_ras_metrics_dict(phdl):
     ras_dict = {}
     ras_dict_t = convert_phdl_json_to_dict(phdl.exec('sudo amd-smi metric --ecc --json'))
-    print(ras_dict_t)
+    log.info("%s", ras_dict_t)
     for node in ras_dict_t.keys():
         ras_dict[node] = {}
-        print('^^^^^')
-        print(ras_dict_t[node])
+        log.info('^^^^^')
+        log.info("%s", ras_dict_t[node])
         if isinstance(ras_dict_t[node], dict):
             if 'gpu_data' in ras_dict_t[node].keys():
                 for gpu_dict in list(ras_dict_t[node]['gpu_data']):

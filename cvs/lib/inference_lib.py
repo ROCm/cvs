@@ -5,7 +5,10 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+from cvs.lib import globals
 from cvs.lib.inference_max_lib import InferenceMaxJob, VllmJob
+
+log = globals.log
 
 
 class InferenceJobFactory:
@@ -99,7 +102,7 @@ class InferenceJobFactory:
         # Auto-detect framework if not specified
         if framework is None:
             framework = cls._detect_framework(inference_config_dict)
-            print(f'Auto-detected framework: {framework}')
+            log.info(f'Auto-detected framework: {framework}')
 
         framework_lower = framework.lower()
 

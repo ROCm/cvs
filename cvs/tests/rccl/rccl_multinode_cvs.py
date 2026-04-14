@@ -85,7 +85,7 @@ def cluster_dict(cluster_file):
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -111,7 +111,7 @@ def config_dict(config_file, cluster_dict):
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    log.info(config_dict)
+    log.info("%s", config_dict)
     return config_dict
 
 
@@ -135,7 +135,7 @@ def phdl(cluster_dict):
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
       - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -206,7 +206,7 @@ def pytest_generate_tests(metafunc):
     """
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.exists(config_file):
-        print(f'Warning: Missing or invalid config file {config_file}')
+        log.warning(f'Warning: Missing or invalid config file {config_file}')
         return
 
     with open(config_file) as fp:
@@ -417,7 +417,7 @@ def test_rccl_perf(
         env_source_script=config_dict['env_source_script'],
     )
 
-    print(result_dict)
+    log.info("%s", result_dict)
     key_name = f'{rccl_collective}-{rccl_algo}-{rccl_protocol}-{qp_scale}-{nccl_pxn_disable}'
     rccl_res_dict[key_name] = result_dict
 
@@ -438,10 +438,10 @@ def test_rccl_perf(
 
 
 def test_gen_graph(request):
-    print('Final Global result dict')
-    print(rccl_res_dict)
+    log.info('Final Global result dict')
+    log.info("%s", rccl_res_dict)
     rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
-    print(rccl_graph_dict)
+    log.info("%s", rccl_graph_dict)
 
     proc_id = os.getpid()
 
@@ -460,8 +460,8 @@ def test_gen_graph(request):
     )
 
     if copied_path:
-        print(f'Perf report saved and added to report bundle: {copied_path}')
+        log.info(f'Perf report saved and added to report bundle: {copied_path}')
     else:
-        print(
+        log.info(
             f'Perf report is saved under {html_file}, pls copy it to your web server under /var/www/html folder to view'
         )

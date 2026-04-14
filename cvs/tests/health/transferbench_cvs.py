@@ -39,7 +39,7 @@ def cluster_dict(cluster_file):
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
 
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -52,7 +52,7 @@ def config_dict(config_file, cluster_dict):
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
 
-    log.info(config_dict)
+    log.info("%s", config_dict)
     return config_dict
 
 
@@ -111,7 +111,7 @@ def detect_rocm_path(phdl, config_rocm_path):
 
 def parse_tb_a2a_bw(out_dict, exp_dict):
     for node in out_dict.keys():
-        print(exp_dict)
+        log.info("%s", exp_dict)
         rtotal_list = re.findall(
             r'(?:│\s+)?RTotal\s+(?:│\s+)?([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s*',
             out_dict[node],
@@ -148,7 +148,7 @@ def parse_tb_p2p_bw(out_dict, exp_dict):
 
 def parse_tb_scaling_bw(out_dict, exp_dict):
     for node in out_dict.keys():
-        print(f"^^^^^ {out_dict[node]} ^^^^^^")
+        log.info(f"^^^^^ {out_dict[node]} ^^^^^^")
         match = re.search('Best\s+[0-9\.]+\(\s[0-9]+\)\s+[0-9\.]+\(\s[0-9]+\)\s+([0-9\.]+)', out_dict[node])
         gpu0_bw = float(match.group(1))
         if float(gpu0_bw) < float(exp_dict['best_gpu0_bw']):
@@ -303,7 +303,7 @@ def parse_tb_example_test_results(out_dict, exp_dict):
 
 @pytest.fixture(scope="module")
 def phdl(cluster_dict):
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -315,7 +315,7 @@ def test_transfer_bench_example_tests_1_6_t(phdl, config_dict):
     log.info('Testcase Run TransferBench example tests 1-6')
     path = config_dict['path']
     rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    print(config_dict)
+    log.info("%s", config_dict)
     example_path = config_dict['example_tests_path']
     out_dict = phdl.exec(
         f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench {example_path}/example.cfg'",

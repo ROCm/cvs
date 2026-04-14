@@ -379,7 +379,7 @@ class JumpHostPssh:
         Handle connection failures during command execution.
         Re-probes all hosts via jump host.
         """
-        logger.info("Handling connection failure - re-probing hosts via jump host...")
+        logger.warning("Handling connection failure - re-probing hosts via jump host...")
         changed = self.refresh_host_reachability()
 
         if changed:
