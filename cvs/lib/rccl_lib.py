@@ -161,10 +161,10 @@ def scan_rccl_logs(output):
         if re.search('NCCL WARN', line):
             warn_list.append(line)
     if len(warn_list) > 0:
-        print('Following warnings were observed in the RCCL test')
-        print('#============#')
-        print(warn_list)
-        print('#============#')
+        log.warning('Following warnings were observed in the RCCL test')
+        log.warning('#============#')
+        log.warning('%s', warn_list)
+        log.warning('#============#')
     if not re.search('#\sAvg bus bandwidth', output):
         fail_test('RCCL test did not complete successfully, no bandwidth numbers printed - pls check')
 
@@ -210,14 +210,14 @@ def check_bus_bw(test_name, output, exp_res_dict):
       - 5% tolerance is applied: test only fails if actual < expected * 0.95
     """
 
-    print(f'exp_res_dict = {exp_res_dict}')
+    log.info(f'exp_res_dict = {exp_res_dict}')
 
     tolerance = 0.95  # 5% tolerance
 
     # New hierarchical structure: {msg_size: {'bus_bw': bw_value}}
     msg_size_list = list(exp_res_dict.keys())
 
-    print(test_name)
+    log.info("%s", test_name)
     # act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
     act_res_dict = output
     if re.search('alltoall|all_to_all', test_name, re.I):
@@ -228,7 +228,7 @@ def check_bus_bw(test_name, output, exp_res_dict):
                         expected_bw = float(exp_res_dict[msg_size]['bus_bw'])
                         actual_bw = float(act_dict['busBw'])
                         threshold = expected_bw * tolerance
-                        print(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
+                        log.info(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
                         if actual_bw < threshold:
                             fail_test(
                                 f"The actual out-of-place bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})"
@@ -241,7 +241,7 @@ def check_bus_bw(test_name, output, exp_res_dict):
                         expected_bw = float(exp_res_dict[msg_size]['bus_bw'])
                         actual_bw = float(act_dict['busBw'])
                         threshold = expected_bw * tolerance
-                        print(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
+                        log.info(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
                         if actual_bw < threshold:
                             fail_test(
                                 f"The actual in-place bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})"
@@ -261,7 +261,7 @@ def check_bw_dip(test_name, output, exp_res_dict=None):
     # Get reference message sizes if provided
     # If no reference data, skip validation entirely
     if not exp_res_dict:
-        log.info(f"No reference data provided for BW dip check, skipping validation for {test_name}")
+        log.warning(f"No reference data provided for BW dip check, skipping validation for {test_name}")
         return
 
     ref_msg_sizes = set(str(size) for size in exp_res_dict.keys())
@@ -316,7 +316,7 @@ def check_lat_dip(test_name, output, exp_res_dict=None):
     # Get reference message sizes if provided
     # If no reference data, skip validation entirely
     if not exp_res_dict:
-        log.info(f"No reference data provided for latency dip check, skipping validation for {test_name}")
+        log.warning(f"No reference data provided for latency dip check, skipping validation for {test_name}")
         return
 
     ref_msg_sizes = set(str(size) for size in exp_res_dict.keys())
@@ -361,10 +361,10 @@ def check_lat_dip(test_name, output, exp_res_dict=None):
 def convert_to_graph_dict(result_dict):
     graph_dict = {}
     for graph_series_name in result_dict.keys():
-        print(graph_series_name)
+        log.info("%s", graph_series_name)
         graph_dict[graph_series_name] = {}
         dict_list = result_dict[graph_series_name]
-        print(dict_list)
+        log.info("%s", dict_list)
         for dict_item in dict_list:
             msg_size = dict_item['size']
             graph_dict[graph_series_name][msg_size] = {}
@@ -376,7 +376,7 @@ def convert_to_graph_dict(result_dict):
                 graph_dict[graph_series_name][msg_size]['bus_bw'] = dict_item['busBw']
                 graph_dict[graph_series_name][msg_size]['alg_bw'] = dict_item['algBw']
                 graph_dict[graph_series_name][msg_size]['time'] = dict_item['time']
-    print(graph_dict)
+    log.info("%s", graph_dict)
     return graph_dict
 
 
@@ -447,7 +447,7 @@ def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[Rccl
             agg_results.append(RcclTestsAggregated.model_validate(row_dict))
         except ValidationError as e:
             error_msg = f"Validation failed for row {row_dict}: {e}"
-            log.error(error_msg)
+            log.error("%s", error_msg)
             errors.append(error_msg)
 
     # Report any validation failures
@@ -545,7 +545,7 @@ def rccl_cluster_test(
       result_out: The raw JSON string read from rccl_result_file on the head node.
     """
 
-    print(f'Starting RCCL Test ..........................................{test_name}')
+    log.info(f'Starting RCCL Test ..........................................{test_name}')
     # Base ROCm path as provided by caller
     ROCM_PATH = rocm_path_var
 
@@ -562,7 +562,7 @@ def rccl_cluster_test(
         f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
     )
 
-    print(f'%% VPC Node IPs {vpc_node_list}')
+    log.info(f'%% VPC Node IPs {vpc_node_list}')
 
     # Use the first cluster node as the head node (source for collected outputs)
     # The -H {host_params} is obsolete in ompi5.0 and greater, so changing to
@@ -641,9 +641,9 @@ def rccl_cluster_test(
         {test_cmd}
         '''
 
-    print('%%%%%%%%%%%%%%%%')
-    print(cmd)
-    print('%%%%%%%%%%%%%%%%')
+    log.info('%%%%%%%%%%%%%%%%')
+    log.info("%s", cmd)
+    log.info('%%%%%%%%%%%%%%%%')
     try:
         out_dict = shdl.exec(cmd, timeout=500)
         output = out_dict[head_node]
@@ -769,7 +769,7 @@ def rccl_cluster_test_default(
       all_raw_results: List of dictionaries containing all test results from all data types.
     """
 
-    print(f'Starting RCCL Test ..........................................{test_name}')
+    log.info(f'Starting RCCL Test ..........................................{test_name}')
     if min_channels is not None and max_channels is not None:
         log.info(f'Using NCCL channels: min={min_channels}, max={max_channels}')
     else:
@@ -790,7 +790,7 @@ def rccl_cluster_test_default(
         f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
     )
 
-    print(f'%% VPC Node IPs {vpc_node_list}')
+    log.info(f'%% VPC Node IPs {vpc_node_list}')
 
     # Use the first cluster node as the head node (source for collected outputs)
     # The -H {host_params} is obsolete in ompi5.0 and greater, so changing to
@@ -869,9 +869,9 @@ def rccl_cluster_test_default(
         {test_cmd}
         '''
 
-        print('%%%%%%%%%%%%%%%%')
-        print(cmd)
-        print('%%%%%%%%%%%%%%%%')
+        log.info('%%%%%%%%%%%%%%%%')
+        log.info("%s", cmd)
+        log.info('%%%%%%%%%%%%%%%%')
         try:
             out_dict = shdl.exec(cmd, timeout=500)
             output = out_dict[head_node]
@@ -905,8 +905,7 @@ def rccl_cluster_test_default(
                     "Please inspect the rccl-tests stdout/stderr and re-run.\n"
                     "================================================================\n"
                 )
-                print(msg)
-                log.error(msg)
+                log.error("%s", msg)
                 fail_test(msg)
             else:
                 log.error(f'Validation Failed: {e}')
@@ -932,7 +931,7 @@ def rccl_cluster_test_default(
                 json.dump([result.model_dump() for result in aggregated_rccl_tests], f, indent=2)
             log.info(f'Saved aggregated results to {aggregated_path}')
         else:
-            log.info('Aggregation skipped: only one run found')
+            log.warning('Aggregation skipped: only one run found')
     except ValidationError as e:
         log.error(f'Validation Failed: {e}')
         fail_test(f'RCCL Test schema validation failed: {e}')
@@ -1051,7 +1050,7 @@ def rccl_single_node_test(
       result_out: The raw JSON string read from rccl_result_file on all nodes
     """
 
-    print(f'Starting RCCL Test ..........................................{test_name}')
+    log.info(f'Starting RCCL Test ..........................................{test_name}')
     # Base ROCm path as provided by caller
     ROCM_PATH = rocm_path_var
 
@@ -1081,9 +1080,9 @@ def rccl_single_node_test(
            export LD_LIBRARY_PATH={LD_LIBRARY_PATH}; \
            {test_cmd}'''
 
-    print('%%%%%%%%%%%%%%%%')
-    print(cmd)
-    print('%%%%%%%%%%%%%%%%')
+    log.info('%%%%%%%%%%%%%%%%')
+    log.info("%s", cmd)
+    log.info('%%%%%%%%%%%%%%%%')
     try:
         out_dict = phdl.exec(cmd, timeout=500)
         for node in out_dict.keys():

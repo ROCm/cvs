@@ -78,7 +78,7 @@ def cluster_dict(cluster_file):
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
 
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -126,7 +126,7 @@ def model_params_dict(training_config_file, cluster_dict):
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     model_params_dict = resolve_test_config_placeholders(model_params_dict, cluster_dict)
 
-    log.info(model_params_dict)
+    log.info("%s", model_params_dict)
     return model_params_dict
 
 
@@ -151,9 +151,9 @@ def hf_token(training_dict):
         with open(hf_token_file, 'r') as fp:
             hf_token = fp.read().rstrip("\n")
     except FileNotFoundError:
-        print(f"Error: The file '{hf_token_file}' was not found.")
+        log.error(f"Error: The file '{hf_token_file}' was not found.")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        log.error(f"An error occurred: {e}")
     return hf_token
 
 
@@ -178,7 +178,7 @@ def phdl(cluster_dict):
     Notes:
       - This fixture has module scope, so a single connection handle is reused for all tests in the module.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)

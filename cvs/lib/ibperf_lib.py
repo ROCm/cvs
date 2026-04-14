@@ -81,7 +81,7 @@ def get_ib_bw_pps(phdl, msg_size, cmd):
 
     # Collect the BW, PPS numbers
     for i in range(1, 10):
-        print(f'starting iteration {i} to collect numbers')
+        log.info(f'starting iteration {i} to collect numbers')
         out_dict = phdl.exec(cmd)
         for node in out_dict.keys():
             res_dict[node] = {}
@@ -90,10 +90,10 @@ def get_ib_bw_pps(phdl, msg_size, cmd):
                 match = re.search(pattern, out_dict[node])
                 res_dict[node]['bw'] = match.group(1)
                 res_dict[node]['pps'] = match.group(2)
-                print(f"Node {node} BW - {res_dict[node]['bw']}, MPPS - {res_dict[node]['pps']}")
+                log.info(f"Node {node} BW - {res_dict[node]['bw']}, MPPS - {res_dict[node]['pps']}")
                 continue
             else:
-                print('Sleeping 10 secs for test to complete')
+                log.info('Sleeping 10 secs for test to complete')
                 time.sleep(10)
             fail_test(
                 f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}'
@@ -120,7 +120,7 @@ def get_ib_lat_numb(phdl, msg_size, cmd):
 
     # Collect the BW, PPS numbers
     for i in range(1, 4):
-        print(f'starting iteration {i} to collect numbers')
+        log.info(f'starting iteration {i} to collect numbers')
         out_dict = phdl.exec(cmd)
         for node in out_dict.keys():
             pattern = "{}[\t\s]+[0-9]+[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)".format(
@@ -135,10 +135,10 @@ def get_ib_lat_numb(phdl, msg_size, cmd):
                 res_dict[node]['t_stdev'] = match.group(5)
                 res_dict[node]['t_99_pct'] = match.group(6)
                 res_dict[node]['t_99_9_pct'] = match.group(7)
-                print(f'Node {node} Avg Lat - {res_dict[node]["t_avg"]}')
+                log.info(f'Node {node} Avg Lat - {res_dict[node]["t_avg"]}')
                 continue
             else:
-                print('Sleeping 10 secs for test to complete')
+                log.info('Sleeping 10 secs for test to complete')
                 time.sleep(10)
             fail_test(
                 f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}'
@@ -148,11 +148,11 @@ def get_ib_lat_numb(phdl, msg_size, cmd):
 
 
 def verify_expected_bw(bw_test, msg_size, qp_count, res_dict, expected_res):
-    print(f'Verifying expected BW for test {bw_test} msg_size {msg_size} QP count {qp_count}')
-    print(expected_res.keys())
-    print(res_dict)
+    log.info(f'Verifying expected BW for test {bw_test} msg_size {msg_size} QP count {qp_count}')
+    log.info("%s", list(expected_res.keys()))
+    log.info("%s", res_dict)
     if bw_test in expected_res.keys():
-        print(expected_res[bw_test].keys())
+        log.info("%s", list(expected_res[bw_test].keys()))
         if msg_size in expected_res[bw_test].keys():
             if qp_count in expected_res[bw_test][msg_size].keys():
                 for node in res_dict.keys():
@@ -163,11 +163,11 @@ def verify_expected_bw(bw_test, msg_size, qp_count, res_dict, expected_res):
 
 
 def verify_expected_lat(lat_test, msg_size, res_dict, expected_res):
-    print(f'Verifying expected BW for test {lat_test} msg_size {msg_size}')
-    print(expected_res.keys())
-    print(res_dict)
+    log.info(f'Verifying expected BW for test {lat_test} msg_size {msg_size}')
+    log.info("%s", list(expected_res.keys()))
+    log.info("%s", res_dict)
     if lat_test in expected_res.keys():
-        print(expected_res[lat_test].keys())
+        log.info("%s", list(expected_res[lat_test].keys()))
         if msg_size in expected_res[lat_test].keys():
             for node in res_dict.keys():
                 if float(res_dict[node]['lat']) >= float(expected_res[lat_test][msg_size]):
@@ -253,7 +253,7 @@ def run_ib_perf_bw_test(
     time.sleep(20)
 
     for instance_no in range(0, inst_count):
-        print('instance_no - {}'.format(instance_no))
+        log.info('instance_no - {}'.format(instance_no))
         try:
             bw_pps_dict = get_ib_bw_pps(phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs')
             for node in bw_pps_dict.keys():
@@ -261,10 +261,10 @@ def run_ib_perf_bw_test(
                 result_dict[node][instance_no]['pps'] = bw_pps_dict[node]['pps']
                 result_dict[node][instance_no]['bw'] = bw_pps_dict[node]['bw']
         except Exception:
-            print('FAILED to get BW, PPS numbers for size - {} qp_count {}'.format(msg_size, qp_count))
+            log.error('FAILED to get BW, PPS numbers for size - {} qp_count {}'.format(msg_size, qp_count))
 
-    print('%%%%%%%%%% BW result_dict %%%%%%%%%%')
-    print(result_dict)
+    log.info('%%%%%%%%%% BW result_dict %%%%%%%%%%')
+    log.info("%s", result_dict)
     return result_dict
 
 
@@ -335,10 +335,10 @@ def run_ib_perf_lat_test(
     time.sleep(20)
 
     for instance_no in range(0, inst_count):
-        print('instance_no - {}'.format(instance_no))
+        log.info('instance_no - {}'.format(instance_no))
         try:
             lat_dict = get_ib_lat_numb(phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs')
-            print(f'%%%%% lat_dict = {lat_dict}')
+            log.info(f'%%%%% lat_dict = {lat_dict}')
             for node in bck_nic_dict.keys():
                 result_dict[node][instance_no] = {}
                 result_dict[node][instance_no]['t_min'] = lat_dict[node]['t_min']
@@ -348,16 +348,16 @@ def run_ib_perf_lat_test(
                 result_dict[node][instance_no]['t_stdev'] = lat_dict[node]['t_stdev']
                 result_dict[node][instance_no]['t_99_pct'] = lat_dict[node]['t_99_pct']
                 result_dict[node][instance_no]['t_99_9_pct'] = lat_dict[node]['t_99_9_pct']
-                print('***** result_dict for lat = {result_dict[node][instance_no]')
+                log.info('***** result_dict for lat = {result_dict[node][instance_no]')
         except Exception:
-            print(
+            log.error(
                 'FAILED to get latency numbers for size - {}'.format(
                     msg_size,
                 )
             )
 
-    print('%%%%%%%%%% LAT result_dict %%%%%%%%%%')
-    print(result_dict)
+    log.info('%%%%%%%%%% LAT result_dict %%%%%%%%%%')
+    log.info("%s", result_dict)
     return result_dict
 
 
@@ -567,8 +567,8 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
 
             avg_bw_data = average_of_lists(split_bw_list)
             avg_pps_data = average_of_lists(split_pps_list)
-            print(split_bw_list)
-            print(split_bw_gpu0_list)
+            log.info("%s", split_bw_list)
+            log.info("%s", split_bw_gpu0_list)
             avg_bw_gpu0_data = average_of_lists(split_bw_gpu0_list)
             avg_bw_gpu1_data = average_of_lists(split_bw_gpu1_list)
             avg_bw_gpu2_data = average_of_lists(split_bw_gpu2_list)
@@ -587,7 +587,7 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
             avg_pps_gpu6_data = average_of_lists(split_pps_gpu6_list)
             avg_pps_gpu7_data = average_of_lists(split_pps_gpu7_list)
 
-            print(f'avg is {avg_bw_data}')
+            log.info(f'avg is {avg_bw_data}')
             # Merge cols for Node IP
             worksheet.merge_range("A2:A3", "Node IP", bold)
             worksheet.merge_range("B2:B3", "Msg Size", bold)
@@ -666,7 +666,7 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
 
             row_end = 4 + len(d_msg_size_list)
 
-            print(f'row_end {row_end}')
+            log.info(f'row_end {row_end}')
             chart.add_series(
                 {
                     "name": "={}!$B$2".format(sheet_name),
@@ -852,11 +852,11 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
                 d_avg_tstdev_list.append(tot_tstdev / 8)
                 d_avg_t99pct_list.append(tot_t99pct / 8)
 
-        print(f'%%%%% d_avg_tmin_list = {d_avg_tmin_list}')
-        print(f'%%%%% d_avg_tmax_list = {d_avg_tmax_list}')
-        print(f'%%%%% d_avg_tavg_list = {d_avg_tavg_list}')
-        print(f'%%%%% d_avg_tstdev_list = {d_avg_tstdev_list}')
-        print(f'%%%%% d_avg_t99pct_list = {d_avg_t99pct_list}')
+        log.info(f'%%%%% d_avg_tmin_list = {d_avg_tmin_list}')
+        log.info(f'%%%%% d_avg_tmax_list = {d_avg_tmax_list}')
+        log.info(f'%%%%% d_avg_tavg_list = {d_avg_tavg_list}')
+        log.info(f'%%%%% d_avg_tstdev_list = {d_avg_tstdev_list}')
+        log.info(f'%%%%% d_avg_t99pct_list = {d_avg_t99pct_list}')
         split_tmin_list = split_list_into_n_chunks(d_avg_tmin_list, len(node_list))
         split_tmax_list = split_list_into_n_chunks(d_avg_tmax_list, len(node_list))
         split_tavg_list = split_list_into_n_chunks(d_avg_tavg_list, len(node_list))
@@ -908,9 +908,9 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
         split_t99pct_gpu6_list = split_list_into_n_chunks(d_t99pct_gpu_6_list, len(node_list))
         split_t99pct_gpu7_list = split_list_into_n_chunks(d_t99pct_gpu_7_list, len(node_list))
 
-        print(split_tmin_list)
-        print(split_tmax_list)
-        print(split_tavg_list)
+        log.info("%s", split_tmin_list)
+        log.info("%s", split_tmax_list)
+        log.info("%s", split_tavg_list)
         avg_tmin_data = average_of_lists(split_tmin_list)
         avg_tmax_data = average_of_lists(split_tmax_list)
         avg_tavg_data = average_of_lists(split_tavg_list)
@@ -1108,7 +1108,7 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
 
         row_end = 4 + len(d_msg_size_list)
 
-        print(f'row_end {row_end}')
+        log.info(f'row_end {row_end}')
         chart.add_series(
             {
                 "name": "={}!$B$2".format(sheet_name),

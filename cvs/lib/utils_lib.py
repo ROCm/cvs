@@ -55,12 +55,12 @@ def update_test_result():
 
 
 def print_test_output(log, out_dict):
-    print('#========================================================#')
-    print('\t\t ** Test Output **')
-    print('#========================================================#')
+    log.info('#========================================================#')
+    log.info('\t\t ** Test Output **')
+    log.info('#========================================================#')
     for node in out_dict.keys():
-        print(f'==== {node} ====')
-        print(out_dict[node])
+        log.info(f'==== {node} ====')
+        log.info("%s", out_dict[node])
 
 
 def scan_test_results(out_dict):
@@ -114,17 +114,17 @@ def scan_test_results(out_dict):
                 before_words = words[max(0, target_word_index - word_count) : target_word_index]
                 # Get the words after the match
                 after_words = words[target_word_index + 1 : min(len(words), target_word_index + word_count + 1)]
-                print(f"Words before: {before_words}")
-                print(f"Words after: {after_words}")
-                print(f'Test failed in scan_result on node {host} due to pattern ')
+                log.error(f"Words before: {before_words}")
+                log.error(f"Words after: {after_words}")
+                log.error(f'Test failed in scan_result on node {host} due to pattern ')
             fail_test(
                 f'Test failed in scan_result on node {host} due to pattern {before_words} {actual_word} {after_words}'
             )
 
 
 def json_to_dict(json_string):
-    print('^^^^^^^^^')
-    print(json_string)
+    log.info('^^^^^^^^^')
+    log.info("%s", json_string)
     return json.loads(json_string)
 
 
@@ -160,7 +160,7 @@ def convert_phdl_json_to_dict(dict_json):
             # Parse the JSON content for this node
             out_dict[node] = json_to_dict(dict_json[node])
         except Exception:
-            print(f'ERROR converting Json output to dict for node {node}')
+            log.error(f'ERROR converting Json output to dict for node {node}')
             fail_test(f'ERROR converting Json output to dict for node {node}')
             out_dict[node] = {}
     return out_dict
@@ -235,10 +235,10 @@ def convert_hms_to_secs(time_string):
             total_seconds = (hours * 3600) + (minutes * 60) + seconds
             return total_seconds
         else:
-            print("Invalid time format. Please use 'hr:min:sec'.")
+            log.warning("Invalid time format. Please use 'hr:min:sec'.")
             return None
     except ValueError:
-        print("Invalid time format. Please ensure hours, minutes, and seconds are numeric.")
+        log.warning("Invalid time format. Please ensure hours, minutes, and seconds are numeric.")
         return None
 
 
@@ -284,7 +284,7 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
             error_msg += "with an appropriate value before running the tests.\n"
             error_msg += f"{'=' * 70}\n"
 
-            log.error(error_msg)
+            log.error("%s", error_msg)
             # print(error_msg, file=sys.stderr)
             sys.exit(1)
 

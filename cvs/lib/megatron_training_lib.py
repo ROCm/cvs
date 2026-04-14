@@ -144,7 +144,7 @@ class MegatronLlamaTrainingJob:
         self.job_cmd = ''
         self.job_cmd_list = []
         self.training_results_dict = {}
-        print(self.gpu_type)
+        log.info("%s", self.gpu_type)
 
         # Intialize cluster stats dicts ..
         self.rdma_stats_dict_before = {}
@@ -193,11 +193,11 @@ class MegatronLlamaTrainingJob:
         self.rocm_path = detect_rocm_path(self.phdl, tdict['rocm_dir'])
 
         # Get the model parameters dict
-        print('^^^^')
-        print(self.model_params_dict)
-        print(self.model_name)
-        print(self.gpu_type)
-        print('^^^^')
+        log.info('^^^^')
+        log.info("%s", self.model_params_dict)
+        log.info("%s", self.model_name)
+        log.info("%s", self.gpu_type)
+        log.info('^^^^')
         if not self.distributed_training:
             pdict = self.model_params_dict['single_node'][self.model_name][self.gpu_type]
             self.expected_result_dict = self.model_params_dict['single_node'][self.model_name][self.gpu_type][
@@ -300,7 +300,7 @@ class MegatronLlamaTrainingJob:
                 )
                 for node in out_dict.keys():
                     if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
-                        print(out_dict[node])
+                        log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
     def build_training_job_cmd(
@@ -407,9 +407,9 @@ class MegatronLlamaTrainingJob:
           - self.job_cmd_list (distributed) or self.job_cmd (single-node) has been populated
            by build_training_job_cmd() prior to invocation.
         """
-        print('start training job')
-        print(self.job_cmd_list)
-        print(self.job_cmd)
+        log.info('start training job')
+        log.info("%s", self.job_cmd_list)
+        log.info("%s", self.job_cmd)
         cmd_list = []
         for i in range(0, int(self.nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {self.log_dir}/megatron-logs/out-node{i}"'''
@@ -487,10 +487,10 @@ class MegatronLlamaTrainingJob:
         # Select the log content from the last node
         output = out_dict[last_node]
 
-        print('Extracting results from logs')
-        print('#===========================#')
-        print(output)
-        print('#===========================#')
+        log.info('Extracting results from logs')
+        log.info('#===========================#')
+        log.info("%s", output)
+        log.info('#===========================#')
 
         # Extract throughput per GPU as a list of numbers (strings), if multiple occurrences exist
         # pattern = f'throughput per GPU \(TFLOP/s/GPU\):\s+([0-9\.]+)'
@@ -509,7 +509,7 @@ class MegatronLlamaTrainingJob:
         pattern = 'elapsed time per iteration \(ms\):\s+([0-9\.]+)'
         training_results_dict['elapsed_time_per_iteration'] = re.findall(pattern, output, re.I)
 
-        print(training_results_dict)
+        log.info("%s", training_results_dict)
         return training_results_dict
 
     def scan_for_training_errors(
@@ -545,7 +545,7 @@ class MegatronLlamaTrainingJob:
         - Consider logging or returning which specific patterns matched for better diagnostics.
         """
 
-        print('Scan for training errors')
+        log.info('Scan for training errors')
         training_pass = True  # Default to pass; flip to False if any error pattern is detected
 
         # Identify the node whose log we treat as authoritative (last in the host list)
@@ -599,7 +599,7 @@ class MegatronLlamaTrainingJob:
         - The progress regex for tokens/GPU/s lacks a colon; consider 'tokens\\/GPU\\/s:\\s+[0-9]+'.
         """
 
-        print('Poll for training completion ..')
+        log.info('Poll for training completion ..')
         time.sleep(80)
         last_node = self.host_list[len(self.host_list) - 1]
 
@@ -608,7 +608,7 @@ class MegatronLlamaTrainingJob:
 
         # 10 additional iterations in case time per iteration is longer ..
         for i in range(1, int(self.iterations) + 10):
-            print(f'Starting Iteration {i}')
+            log.info(f'Starting Iteration {i}')
             if not self.scan_for_training_errors():
                 fail_test('Failures seen in training logs, Aborting!!!')
                 return
@@ -616,7 +616,7 @@ class MegatronLlamaTrainingJob:
             output = out_dict[last_node]
 
             if not re.search('throughput per GPU:|tokens\/GPU\/s\s+[0-9]+', output, re.I):
-                print('Training still in progress')
+                log.info('Training still in progress')
             else:
                 if (
                     re.search('throughput per GPU:\s+[NaN|Inf]', output, re.I)
@@ -628,7 +628,7 @@ class MegatronLlamaTrainingJob:
                 else:
                     time.sleep(5)
                     self.training_results_dict = self.get_training_results_dict()
-                    print('Completed Training, returning !!!')
+                    log.info('Completed Training, returning !!!')
                     return
             # Wait secs between every iteration
             time.sleep(int(time_between_iters))
@@ -677,10 +677,10 @@ class MegatronLlamaTrainingJob:
         # Record the training end time; used later for dmesg time-bounded scanning
         self.training_end_time = self.phdl.exec('date')
 
-        print('#==================================================#')
-        print('\t\tTraining Results')
-        print(self.training_results_dict)
-        print('#==================================================#')
+        log.info('#==================================================#')
+        log.info('\t\tTraining Results')
+        log.info("%s", self.training_results_dict)
+        log.info('#==================================================#')
         # Check the parsed training results for invalid numeric values (NaN/Inf)
         if not self.training_results_dict:
             fail_test(
@@ -731,14 +731,14 @@ class MegatronLlamaTrainingJob:
         # Scan Dmesg for errors ..
         verify_dmesg_for_errors(self.phdl, self.training_start_time, self.training_end_time)
 
-        print('^^^^^^^^^^^^^^^^^^^^')
-        print('training_results_dict')
-        print('^^^^^^^^^^^^^^^^^^^^')
-        print(self.training_results_dict)
+        log.info('^^^^^^^^^^^^^^^^^^^^')
+        log.info('training_results_dict')
+        log.info('^^^^^^^^^^^^^^^^^^^^')
+        log.info("%s", self.training_results_dict)
         # Compare perf expected numbers from input JSON file ..
         for result_key in self.training_results_dict.keys():
             if result_key in self.expected_result_dict:
-                print(self.training_results_dict[result_key])
+                log.info("%s", self.training_results_dict[result_key])
                 # check if all nodes have met the expected perf numbers
                 for actual_perf in self.training_results_dict[result_key]:
                     if float(actual_perf) < float(self.expected_result_dict[result_key]):
@@ -748,4 +748,4 @@ class MegatronLlamaTrainingJob:
                            actual = {actual_perf}'
                         )
             else:
-                log.warn(f'Perf result key {result_key} not provided in input JSON file, so will not be checked')
+                log.warning(f'Perf result key {result_key} not provided in input JSON file, so will not be checked')
