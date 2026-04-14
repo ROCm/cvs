@@ -68,7 +68,7 @@ def cluster_dict(cluster_file):
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -83,7 +83,7 @@ def mori_dict(mori_config_file, cluster_dict):
 
 @pytest.fixture(scope="module")
 def phdl(cluster_dict):
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -97,7 +97,7 @@ def gpu_type(phdl, cluster_dict):
       str: The GPU type (e.g., 'mi300', 'mi300x') used to select model parameters and logic.
     """
 
-    print(phdl)
+    log.info("%s", phdl)
     head_node = phdl.host_list[0]
     smi_out_dict = phdl.exec('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
@@ -178,7 +178,7 @@ def test_launch_mori_container(phdl, mori_dict):
     )
     # ADD verifications ..
     time.sleep(30)
-    print('Verify if the containers have been launched properly')
+    log.info('Verify if the containers have been launched properly')
     out_dict = phdl.exec('docker ps')
     for node in out_dict.keys():
         if not re.search(f'{container_name}', out_dict[node], re.I):

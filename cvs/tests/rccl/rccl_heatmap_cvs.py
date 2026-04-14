@@ -90,7 +90,7 @@ def cluster_dict(cluster_file):
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -116,7 +116,7 @@ def config_dict(config_file, cluster_dict):
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    log.info(config_dict)
+    log.info("%s", config_dict)
     return config_dict
 
 
@@ -140,7 +140,7 @@ def phdl(cluster_dict):
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
       - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -259,7 +259,7 @@ data_type_full_list = [
 def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.exists(config_file):
-        print(f'Warning: Missing or invalid config file {config_file}')
+        log.warning(f'Warning: Missing or invalid config file {config_file}')
         return
 
     with open(config_file) as fp:
@@ -427,7 +427,7 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
         env_source_script=config_dict['env_source_script'],
     )
 
-    print(result_dict)
+    log.info("%s", result_dict)
     key_name = f'{rccl_collective}-{data_type}-{gpu_count}-ch{channel_config}'
     rccl_res_dict[key_name] = result_dict
 
@@ -448,10 +448,10 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
 
 
 def test_gen_graph(request):
-    print('Final Global result dict')
-    print(rccl_res_dict)
+    log.info('Final Global result dict')
+    log.info("%s", rccl_res_dict)
     rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
-    print(rccl_graph_dict)
+    log.info("%s", rccl_graph_dict)
 
     current_datetime = datetime.now()
     time_stamp = current_datetime.strftime("%Y-%m-%d-%H-%M-%S")
@@ -471,15 +471,15 @@ def test_gen_graph(request):
     )
 
     if copied_path:
-        print(f'Perf report saved and added to report bundle: {copied_path}')
+        log.info(f'Perf report saved and added to report bundle: {copied_path}')
     else:
-        print(
+        log.info(
             f'Perf report is saved under {html_file}, pls copy it to your web server under /var/www/html folder to view'
         )
 
 
 def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
-    print('Generate Heatmap')
+    log.info('Generate Heatmap')
     current_datetime = datetime.now()
     time_stamp = current_datetime.strftime("%Y-%m-%d-%H-%M-%S")
     heatmap_file = f'/tmp/rccl_heatmap_{time_stamp}.html'
@@ -490,7 +490,7 @@ def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
     heatmap_title = config_dict.get('heatmap_title', 'RCCL Performance Heatmap')
 
     # Collect system metadata from compute nodes
-    print('Collecting system metadata...')
+    log.info('Collecting system metadata...')
     # Environment variables are now automatically extracted from config_dict
     # You can optionally pass env_vars=['PATH', 'LD_LIBRARY_PATH'] to capture shell vars
     metadata = collect_system_metadata(phdl, cluster_dict, config_dict)
@@ -502,14 +502,14 @@ def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
     structured_json_file = f'/tmp/rccl_result_with_metadata_{time_stamp}.json'
     with open(structured_json_file, "w") as fp:
         json.dump(structured_output, fp, indent=4)
-    print(f'Saved structured results with metadata to {structured_json_file}')
+    log.info(f'Saved structured results with metadata to {structured_json_file}')
 
     # Save original format for backward compatibility (used by HTML generation)
     with open(rccl_res_json_file, "w") as fp:
         json.dump(rccl_graph_dict, fp, indent=4)
 
     # Collect and save aggregated data from individual test runs
-    print('Collecting aggregated data from individual test runs...')
+    log.info('Collecting aggregated data from individual test runs...')
     aggregated_data = {}
     for key_name in rccl_res_dict.keys():
         # Parse the key to get test parameters
@@ -526,11 +526,11 @@ def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
                     with open(aggregated_file, 'r') as fp:
                         agg_data = json.load(fp)
                         aggregated_data[key_name] = agg_data
-                        print(f'Loaded aggregated data from {aggregated_file}')
+                        log.info(f'Loaded aggregated data from {aggregated_file}')
                 else:
-                    print(f'Warning: Aggregated file not found: {aggregated_file}')
+                    log.warning(f'Warning: Aggregated file not found: {aggregated_file}')
             except Exception as e:
-                print(f'Warning: Failed to load aggregated data from {aggregated_file}: {e}')
+                log.warning(f'Warning: Failed to load aggregated data from {aggregated_file}: {e}')
 
     # Save aggregated data with metadata
     if aggregated_data:
@@ -538,7 +538,7 @@ def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
         aggregated_json_file = f'/tmp/rccl_result_final_aggregated_{time_stamp}.json'
         with open(aggregated_json_file, "w") as fp:
             json.dump(aggregated_output, fp, indent=4)
-        print(f'Saved final aggregated results to {aggregated_json_file}')
+        log.info(f'Saved final aggregated results to {aggregated_json_file}')
 
     # Generate HTML heatmap and reports
     html_lib.add_html_begin(heatmap_file)
@@ -553,7 +553,7 @@ def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
     )
 
     if copied_path:
-        print(f'Heatmap report saved and added to report bundle: {copied_path}')
+        log.info(f'Heatmap report saved and added to report bundle: {copied_path}')
 
     # Get management/login node IP from cluster config
     mgmt_node = cluster_dict.get('head_node_dict', {}).get('mgmt_ip', None)
@@ -586,8 +586,8 @@ def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
 
     # If on compute node, copy files to management node
     if on_compute_node and mgmt_node:
-        print(f'Running on compute node: {current_host}')
-        print(f'Copying results to management node: {mgmt_node}:{output_dir}/')
+        log.info(f'Running on compute node: {current_host}')
+        log.info(f'Copying results to management node: {mgmt_node}:{output_dir}/')
         is_remote_copy = True
 
         # Get SSH key and username from cluster config
@@ -607,18 +607,18 @@ def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
                     result = os.system(scp_cmd)
                     if result == 0:
                         copied_files[os.path.basename(src_file)] = dst_path
-                        print(f'Copied {os.path.basename(src_file)} to {mgmt_node}:{dst_path}')
+                        log.info(f'Copied {os.path.basename(src_file)} to {mgmt_node}:{dst_path}')
                     else:
-                        print(f'Failed to copy {os.path.basename(src_file)} (exit code: {result})')
+                        log.warning(f'Failed to copy {os.path.basename(src_file)} (exit code: {result})')
                 except Exception as e:
-                    print(f'Error copying {src_file}: {e}')
+                    log.error(f'Error copying {src_file}: {e}')
     else:
         # On management node or no mgmt_node configured - copy locally
-        print(f'Running on management node: {current_host}')
+        log.info(f'Running on management node: {current_host}')
         try:
             os.makedirs(output_dir, exist_ok=True)
         except Exception as e:
-            print(f'Warning: Could not create {output_dir}: {e}')
+            log.warning(f'Warning: Could not create {output_dir}: {e}')
             output_dir = '/tmp'
 
         for src_file in files_to_copy:
@@ -627,27 +627,27 @@ def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
                 try:
                     shutil.copy2(src_file, dst_file)
                     copied_files[os.path.basename(src_file)] = dst_file
-                    print(f'Copied {os.path.basename(src_file)} to {dst_file}')
+                    log.info(f'Copied {os.path.basename(src_file)} to {dst_file}')
                 except Exception as e:
-                    print(f'Failed to copy {src_file}: {e}')
+                    log.warning(f'Failed to copy {src_file}: {e}')
 
-    print('\n=== RCCL Test Results ===')
-    print('Generated files:')
-    print(f'  - Heatmap: {heatmap_file}')
-    print(f'  - Structured results: {structured_json_file}')
-    print(f'  - Aggregated results: {aggregated_json_file if aggregated_data else "N/A"}')
+    log.info('\n=== RCCL Test Results ===')
+    log.info('Generated files:')
+    log.info(f'  - Heatmap: {heatmap_file}')
+    log.info(f'  - Structured results: {structured_json_file}')
+    log.info(f'  - Aggregated results: {aggregated_json_file if aggregated_data else "N/A"}')
 
     if copied_files:
         if is_remote_copy:
-            print(f'\n Results copied to management node ({mgmt_node}):')
-            print(f'  Location: {output_dir}/')
-            print('  Files:')
+            log.info(f'\n Results copied to management node ({mgmt_node}):')
+            log.info(f'  Location: {output_dir}/')
+            log.info('  Files:')
             for filename in copied_files.keys():
-                print(f'    - {filename}')
-            print(f'\nAccess results on {mgmt_node} with:')
-            print(f'  ls {output_dir}/rccl_*{time_stamp}*')
+                log.info(f'    - {filename}')
+            log.info(f'\nAccess results on {mgmt_node} with:')
+            log.info(f'  ls {output_dir}/rccl_*{time_stamp}*')
         else:
-            print(f'\n Files available in: {output_dir}/')
+            log.info(f'\n Files available in: {output_dir}/')
             for filename in copied_files.keys():
-                print(f'    - {filename}')
-    print('=========================\n')
+                log.info(f'    - {filename}')
+    log.info('=========================\n')

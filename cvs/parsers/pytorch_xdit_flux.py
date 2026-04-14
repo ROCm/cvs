@@ -242,12 +242,12 @@ class FluxOutputParser:
                 f"PASS: Average pipe_time {result.avg_pipe_time_s:.2f}s <= "
                 f"threshold {max_avg_time:.2f}s (GPU: {gpu_type})"
             )
-            log.info(message)
+            log.info("%s", message)
             return True, message
         else:
             message = (
                 f"FAIL: Average pipe_time {result.avg_pipe_time_s:.2f}s > "
                 f"threshold {max_avg_time:.2f}s (GPU: {gpu_type})"
             )
-            log.error(message)
+            log.error("%s", message)
             return False, message

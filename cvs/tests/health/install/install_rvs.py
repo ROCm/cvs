@@ -141,7 +141,7 @@ def cluster_dict(cluster_file):
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
 
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -163,7 +163,7 @@ def config_dict(config_file, cluster_dict):
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
 
-    log.info(config_dict)
+    log.info("%s", config_dict)
     return config_dict
 
 
@@ -204,7 +204,7 @@ def phdl(cluster_dict):
     Returns:
       Pssh: Handle that executes commands on all nodes and returns dict[node] -> output.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -293,7 +293,7 @@ def test_install_rvs(phdl, shdl, config_dict):
 
     # If RVS is not found or configs are missing, install it
     if not rvs_found or not config_found:
-        log.info('RVS not found, attempting to install from artifactory repo first')
+        log.warning('RVS not found, attempting to install from artifactory repo first')
 
         # First try to install from artifactory repo
         package_installed = False
@@ -311,7 +311,7 @@ def test_install_rvs(phdl, shdl, config_dict):
                 out_dict[node],
                 re.I,
             ):
-                log.info(f'RVS package installation failed on node {node}, will try building from source')
+                log.warning(f'RVS package installation failed on node {node}, will try building from source')
             else:
                 log.info(f'RVS package installation successful on node {node}')
                 package_installed = True
@@ -341,7 +341,7 @@ def test_install_rvs(phdl, shdl, config_dict):
                         rocm_path = actual_rocm
                     break
             if not rvs_bin_found:
-                log.info('RVS binary not found after package install, falling back to source build')
+                log.warning('RVS binary not found after package install, falling back to source build')
                 package_installed = False
 
         # If package installation failed, build from source

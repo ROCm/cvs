@@ -77,7 +77,7 @@ def cluster_dict(cluster_file):
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -101,7 +101,7 @@ def benchmark_params_dict(inference_config_file, cluster_dict):
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     benchmark_params_dict = resolve_test_config_placeholders(benchmark_params_dict, cluster_dict)
 
-    log.info(benchmark_params_dict)
+    log.info("%s", benchmark_params_dict)
     return benchmark_params_dict
 
 
@@ -126,15 +126,15 @@ def hf_token(inference_dict):
         with open(hf_token_file, 'r') as fp:
             hf_token = fp.read().rstrip("\n")
     except FileNotFoundError:
-        print(f"Error: The file '{hf_token_file}' was not found.")
+        log.error(f"Error: The file '{hf_token_file}' was not found.")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        log.error(f"An error occurred: {e}")
     return hf_token
 
 
 @pytest.fixture(scope="module")
 def p_phdl(cluster_dict, inference_dict):
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     p_phdl = Pssh(
         log,
@@ -193,7 +193,7 @@ def gpu_type(p_phdl, cluster_dict):
       - Consider validating this value against an expected set of GPU types to catch typos early.
     """
 
-    print(p_phdl)
+    log.info("%s", p_phdl)
     head_node = p_phdl.host_list[0]
     smi_out_dict = p_phdl.exec('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
@@ -217,7 +217,7 @@ def test_cleanup_stale_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict
         docker_lib.delete_all_containers_and_volumes(a_phdl)
 
     # Cleanup log directory from one of the nodes
-    print('Cleaning up log directory')
+    log.info('Cleaning up log directory')
     r_phdl.exec(f"sudo rm -rf {inference_dict['log_dir']}")
     time.sleep(5)
 
@@ -234,20 +234,20 @@ def test_launch_inference_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_d
         if (inference_dict['proxy_router_node'] in inference_dict['prefill_node_list']) or (
             inference_dict['proxy_router_node'] in inference_dict['decode_node_list']
         ):
-            print('Already part of the handle list, no need to add')
+            log.info('Already part of the handle list, no need to add')
         else:
             hdl_list.extend(r_phdl)
     else:
         if (inference_dict['proxy_router_node'] in inference_dict['prefill_node_list']) or (
             inference_dict['proxy_router_node'] in inference_dict['decode_node_list']
         ):
-            print('Already part of the handle list, no need to add')
+            log.info('Already part of the handle list, no need to add')
         else:
             hdl_list.extend(r_phdl)
         if (inference_dict['benchmark_serv_node'] in inference_dict['prefill_node_list']) or (
             inference_dict['benchmark_serv_node'] in inference_dict['decode_node_list']
         ):
-            print('Already part of the handle list, no need to add')
+            log.info('Already part of the handle list, no need to add')
         else:
             hdl_list.extend(b_phdl)
 
@@ -264,7 +264,7 @@ def test_launch_inference_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_d
         )
     # ADD verifications ..
     time.sleep(30)
-    print('Verify if the containers have been launched properly')
+    log.info('Verify if the containers have been launched properly')
     for a_phdl in [p_phdl, d_phdl, r_phdl, b_phdl]:
         out_dict = a_phdl.exec('docker ps')
         for node in out_dict.keys():

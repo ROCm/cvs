@@ -3,9 +3,13 @@ Simplified configuration loader - reads directly from YAML.
 Avoids Pydantic BaseSettings nested model issues.
 """
 
-import yaml
+import logging
 from pathlib import Path
 from typing import List, Optional
+
+import yaml
+
+logger = logging.getLogger(__name__)
 
 
 class SimpleConfig:
@@ -33,7 +37,7 @@ class SimpleConfig:
                 data = yaml.safe_load(f)
                 self.config_data = data.get("cluster", {})
         else:
-            print(f"Warning: Config file not found at {self.yaml_path}")
+            logger.warning(f"Warning: Config file not found at {self.yaml_path}")
             self.config_data = {}
 
     def get_nodes_file(self) -> str:

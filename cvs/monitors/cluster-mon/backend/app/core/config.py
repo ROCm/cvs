@@ -2,11 +2,15 @@
 Configuration management for GPU cluster monitor.
 """
 
-from pydantic_settings import BaseSettings
-from pydantic import Field
-from typing import Optional, List
-import yaml
+import logging
 from pathlib import Path
+from typing import List, Optional
+
+import yaml
+from pydantic import Field
+from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class JumpHostConfig(BaseSettings):
@@ -160,15 +164,15 @@ try:
     yaml_path = Path("../config/cluster.yaml").resolve()
 
     if yaml_path.exists():
-        print(f"Loading configuration from: {yaml_path}")
+        logger.info(f"Loading configuration from: {yaml_path}")
         settings = Settings.load_from_yaml(str(yaml_path))
-        print(f"Jump host enabled: {settings.ssh.jump_host.enabled}")
-        print(f"Jump host: {settings.ssh.jump_host.host}")
+        logger.info(f"Jump host enabled: {settings.ssh.jump_host.enabled}")
+        logger.info(f"Jump host: {settings.ssh.jump_host.host}")
     else:
-        print(f"YAML file not found at: {yaml_path}, using defaults")
+        logger.warning(f"YAML file not found at: {yaml_path}, using defaults")
         settings = Settings()
 except Exception as e:
-    print(f"Error loading YAML config: {e}")
+    logger.error(f"Error loading YAML config: {e}")
     import traceback
 
     traceback.print_exc()

@@ -68,7 +68,7 @@ def cluster_dict(cluster_file):
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
 
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -87,7 +87,7 @@ def config_dict(config_file, cluster_dict):
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
 
-    log.info(config_dict)
+    log.info("%s", config_dict)
     return config_dict
 
 
@@ -127,7 +127,7 @@ def get_log_results(phdl, out_dict):
         pattern = '"total_failed":\s+0,'
         if not re.search(pattern, res_dict[node], re.I):
             fail_test(f'Total failed tests in results.json is not zero on node {node}')
-            print('Dumping journal log from all nodes for reference')
+            log.info('Dumping journal log from all nodes for reference')
             phdl.exec_cmd_list(jrl_cmd_list)
             phdl.exec_cmd_list(err_cmd_list)
 
@@ -141,7 +141,7 @@ def phdl(cluster_dict):
     Returns:
     Pssh: A handle to execute commands across all nodes.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -164,7 +164,7 @@ def test_version_check(phdl, config_dict):
         time.sleep(2)
         phdl.exec(f'sudo mkdir {log_dir}')
     except Exception:
-        print(f'Error creating log directory {log_dir}')
+        log.error(f'Error creating log directory {log_dir}')
     out_dict = phdl.exec(f'sudo ls -ld {log_dir}')
     for node in out_dict.keys():
         if re.search('no such', out_dict[node], re.I):

@@ -1,9 +1,8 @@
+import logging
 import unittest
 import tempfile
 import os
 import json
-from io import StringIO
-from unittest.mock import patch
 
 # Import the module under test
 import cvs.lib.html_lib as html_lib
@@ -360,8 +359,7 @@ class TestBuildRcclHeatmapTable(unittest.TestCase):
             self.assertIn("245.5", content)
             self.assertIn("250.0", content)
 
-    @patch('sys.stdout', new_callable=StringIO)
-    def test_missing_keys_summary_not_spam(self, mock_stdout):
+    def test_missing_keys_summary_not_spam(self):
         """Test that missing keys show summary, not individual warnings."""
         actual_data = {
             "all_reduce_perf-float-8": {"1048576": {"bus_bw": "245.5", "alg_bw": "122.75", "time": "42.3"}},
@@ -376,19 +374,19 @@ class TestBuildRcclHeatmapTable(unittest.TestCase):
         self._create_json_file(self.actual_json_filename, actual_data)
         self._create_json_file(self.ref_json_filename, ref_data)
 
-        html_lib.build_rccl_heatmap_table(
-            self.html_filename, "Missing Keys Test", self.actual_json_filename, self.ref_json_filename
-        )
+        with self.assertLogs(html_lib.log, level=logging.WARNING) as log_cm:
+            html_lib.build_rccl_heatmap_table(
+                self.html_filename, "Missing Keys Test", self.actual_json_filename, self.ref_json_filename
+            )
 
-        output = mock_stdout.getvalue()
+        output = "\n".join(log_cm.output)
         # Should have summary message
         self.assertIn("2 test keys not found in reference data", output)
         self.assertIn("skipped from table", output)
         # Should show sample keys
         self.assertTrue("broadcast_perf-bfloat16-16" in output or "reduce_scatter_perf-float-4" in output)
 
-    @patch('sys.stdout', new_callable=StringIO)
-    def test_missing_message_sizes_summary(self, mock_stdout):
+    def test_missing_message_sizes_summary(self):
         """Test that missing message sizes are counted and summarized."""
         actual_data = {
             "all_reduce_perf-float-8": {
@@ -407,16 +405,16 @@ class TestBuildRcclHeatmapTable(unittest.TestCase):
         self._create_json_file(self.actual_json_filename, actual_data)
         self._create_json_file(self.ref_json_filename, ref_data)
 
-        html_lib.build_rccl_heatmap_table(
-            self.html_filename, "Missing Msg Sizes", self.actual_json_filename, self.ref_json_filename
-        )
+        with self.assertLogs(html_lib.log, level=logging.WARNING) as log_cm:
+            html_lib.build_rccl_heatmap_table(
+                self.html_filename, "Missing Msg Sizes", self.actual_json_filename, self.ref_json_filename
+            )
 
-        output = mock_stdout.getvalue()
+        output = "\n".join(log_cm.output)
         # Should show count of missing message sizes
         self.assertIn("2 msg_size entries not found in reference data", output)
 
-    @patch('sys.stdout', new_callable=StringIO)
-    def test_invalid_key_format_skipped(self, mock_stdout):
+    def test_invalid_key_format_skipped(self):
         """Test that keys with invalid format are skipped with warning."""
         actual_data = {
             "invalid-key": {  # Only 2 parts
@@ -431,11 +429,12 @@ class TestBuildRcclHeatmapTable(unittest.TestCase):
         self._create_json_file(self.actual_json_filename, actual_data)
         self._create_json_file(self.ref_json_filename, ref_data)
 
-        html_lib.build_rccl_heatmap_table(
-            self.html_filename, "Invalid Key Test", self.actual_json_filename, self.ref_json_filename
-        )
+        with self.assertLogs(html_lib.log, level=logging.WARNING) as log_cm:
+            html_lib.build_rccl_heatmap_table(
+                self.html_filename, "Invalid Key Test", self.actual_json_filename, self.ref_json_filename
+            )
 
-        output = mock_stdout.getvalue()
+        output = "\n".join(log_cm.output)
         # Should warn about invalid format
         self.assertIn("Invalid key format", output)
         self.assertIn("invalid-key", output)

@@ -69,7 +69,7 @@ class HtmlReportManager:
                 shutil.rmtree(log_dir)
                 log.info("Removed stale log directory: %s", log_dir)
             except Exception as e:
-                log.info(f"Failed to remove stale log directory: {log_dir} - {e}")
+                log.warning(f"Failed to remove stale log directory: {log_dir} - {e}")
         log_dir.mkdir(parents=True, exist_ok=True)
 
     def write_test_log(self, report, test_name=None):
@@ -380,7 +380,7 @@ class HtmlReportManager:
         # Resolve path after session completes; report file is expected to exist by now.
         htmlpath = Path(self._htmlpath).resolve()
         if not htmlpath.is_file():
-            log.info("Skipping zip bundle creation because HTML report was not found: %s", htmlpath)
+            log.warning("Skipping zip bundle creation because HTML report was not found: %s", htmlpath)
             return
 
         # Inject Reports section into main HTML report
@@ -425,7 +425,7 @@ class HtmlReportManager:
                         zf.write(filepath, Path(self._test_html_dir) / filepath.name)
                         files_added += 1
             else:
-                log.info("Log directory not found while zipping (continuing): %s", log_dir)
+                log.warning("Log directory not found while zipping (continuing): %s", log_dir)
 
         size_mb = zip_path.stat().st_size / (1024 * 1024)
         log.info("Report archive created: %s (%.1f MB, files=%d)", zip_path, size_mb, files_added)

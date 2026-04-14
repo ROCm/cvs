@@ -78,9 +78,9 @@ class Pssh:
 
         # Add authentication
         if self.password is None:
-            print(self.reachable_hosts)
-            print(self.user)
-            print(self.pkey)
+            logger.info(self.reachable_hosts)
+            logger.info(self.user)
+            logger.info(self.pkey)
             client_params['pkey'] = self.pkey
         else:
             client_params['password'] = self.password
@@ -234,7 +234,7 @@ class Pssh:
         Handle connection failures during command execution.
         Re-probes all hosts and recreates client if reachability changed.
         """
-        logger.info("Handling connection failure - re-probing hosts...")
+        logger.warning("Handling connection failure - re-probing hosts...")
         changed = self.refresh_host_reachability()
 
         if changed:
@@ -258,7 +258,7 @@ class Pssh:
         ]
         unreachable = self.check_connectivity(failed_hosts)
         for host in unreachable:
-            print(f"Host {host} is unreachable, pruning from reachable hosts list.")
+            logger.info(f"Host {host} is unreachable, pruning from reachable hosts list.")
             self.unreachable_hosts.append(host)
             self.reachable_hosts.remove(host)
         if len(self.unreachable_hosts) > initial_unreachable_len:
@@ -296,22 +296,22 @@ class Pssh:
         cmd_output = {}
         i = 0
         for item in output:
-            print('#----------------------------------------------------------#')
-            print(f'Host == {item.host} ==')
-            print('#----------------------------------------------------------#')
+            logger.info('#----------------------------------------------------------#')
+            logger.info(f'Host == {item.host} ==')
+            logger.info('#----------------------------------------------------------#')
             cmd_out_str = ''
             if cmd_list:
-                print(cmd_list[i])
+                logger.debug(cmd_list[i])
             else:
-                print(cmd)
+                logger.debug(cmd)
             try:
                 for line in item.stdout or []:
                     if print_console:
-                        print(line)
+                        logger.info(line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
                 for line in item.stderr or []:
                     if print_console:
-                        print(line)
+                        logger.info(line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
             except Timeout as e:
                 if not self.stop_on_errors:
@@ -323,7 +323,7 @@ class Pssh:
                 exc_str = exc_str.replace('\t', '   ')
                 if isinstance(item.exception, Timeout):
                     exc_str += "\nABORT: Timeout Error in Host: " + item.host
-                print(exc_str)
+                logger.info(exc_str)
                 cmd_out_str += exc_str + '\n'
             if cmd_list:
                 i += 1
@@ -380,7 +380,7 @@ class Pssh:
             logger.info(f"  Timeout: {timeout if timeout else 'default'}")
             logger.info(f"  Stop on errors: {self.stop_on_errors}")
 
-            print(f'cmd = {cmd}')
+            logger.info(f'cmd = {cmd}')
 
             try:
                 if timeout is None:
@@ -409,7 +409,7 @@ class Pssh:
         which runs the same command on all hosts.
         Returns a dictionary of host as key and command output as values
         """
-        print(cmd_list)
+        logger.info(cmd_list)
         if timeout is None:
             output = self.client.run_command('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
         else:
@@ -420,7 +420,7 @@ class Pssh:
         return cmd_output
 
     def scp_file(self, local_file, remote_file, recurse=False):
-        print('About to copy local file {} to remote {} on all Hosts'.format(local_file, remote_file))
+        logger.info('About to copy local file {} to remote {} on all Hosts'.format(local_file, remote_file))
         cmds = self.client.copy_file(local_file, remote_file, recurse=recurse)
         self.client.pool.join()
         for cmd in cmds:
@@ -439,11 +439,11 @@ class Pssh:
         return self.unreachable_hosts.copy()
 
     def reboot_connections(self):
-        print('Rebooting Connections')
+        logger.info('Rebooting Connections')
         self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
 
     def destroy_clients(self):
-        print('Destroying Current phdl connections ..')
+        logger.info('Destroying Current phdl connections ..')
         if self.client:
             del self.client
 
