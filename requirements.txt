@@ -1,4 +1,4 @@
-parallel-ssh
+parallel-ssh==2.12.0
 paramiko
 scp
 pytest
