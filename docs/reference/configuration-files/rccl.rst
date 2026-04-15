@@ -130,6 +130,7 @@ The top-level object must contain **only** the key ``rccl`` (object) with three 
         },
         "artifacts": {
           "output_dir": "/tmp/rccl_cvs_out",
+          "remote_work_dir": "/tmp/rccl_cvs_remote",
           "export_raw": false
         }
       }
@@ -223,7 +224,10 @@ For ``thresholds`` or ``strict``, exactly one of ``thresholds`` or ``thresholds_
      - Description
    * - ``output_dir``
      - ``/tmp/rccl_cvs_out``
-     - Base directory for this invocation’s run folder (see Result artifact).
+     - Base directory on the CVS side for this invocation’s run folder (``{output_dir}/{run_id}/`` holds ``run.json`` and optional ``raw/``, ``logs/``).
+   * - ``remote_work_dir``
+     - ``/tmp/rccl_cvs_remote``
+     - **Required.** Directory on the **head** cluster node for transient remote files: per-case rccl-tests JSON output (``-x`` path) and, when ``mpirun`` is used, the MPI hostfile. The runner does not use an implicit ``/tmp`` for these paths; set this to a writable location on the head node (and ensure layout is consistent for multi-node launches).
    * - ``export_raw``
      - ``false``
      - If ``true``, optional per-case raw rccl-tests JSON is written under ``{output_dir}/{run_id}/raw/<case_id>.json``. ``run.json`` remains authoritative; raw files are for debugging only.
@@ -234,9 +238,11 @@ Result artifact
 Each ``cvs run rccl_cvs`` invocation creates one UTC-named run directory and a single canonical ``run.json`` inside it:
 
 - **Directory:** ``{rccl.artifacts.output_dir}/{run_id}/`` where ``run_id`` is like ``2026-04-03T10-15-00Z`` (filesystem-safe ISO time).
-- **Canonical file:** ``run.json`` with ``schema_version`` ``rccl_cvs.run.v1``, topology, cluster selection, echoed config, filtered environment variables (after ``env_script``), per-collective ``cases[]`` (including ``case_id``, ``resolved``, ``metrics.rows``, and validation sub-results), and a ``summary`` roll-up.
+- **Canonical file:** ``run.json`` with ``schema_version`` ``rccl_cvs.run.v1``, topology, cluster selection, echoed config, filtered environment variables (after ``env_script``), per-collective ``cases[]``, and a ``summary`` roll-up.
 
-There is **no** separate ``summary.json``; roll-up lives in ``run.json`` under ``summary``. Optional raw rccl-tests JSON is written only when ``export_raw`` is ``true``, under ``raw/<case_id>.json`` in the same run directory. Downstream tools must not depend on raw files for pass/fail or metrics; do not treat legacy per-suite ``output_json`` paths as authoritative.
+After the run directory is created, **failures still write or refresh ``run.json`` before the suite raises:** preflight problems produce one synthetic case (``case_id`` ``preflight``, ``status`` ``failed``, ``error`` message); a failing collective appends a ``failed`` case with ``error`` and updates ``run.json`` with all cases finished so far, then raises. Passed cases include ``validation`` and ``metrics``; failed cases use ``error`` instead.
+
+There is **no** separate ``summary.json``; roll-up lives in ``run.json`` under ``summary``. Optional raw rccl-tests JSON is written only when ``export_raw`` is ``true``, under ``raw/<case_id>.json`` in the same run directory. RCCL may also write optional text logs under ``logs/`` (for example preflight output, per-case command output, or dmesg slices) to keep console output concise during a run. Downstream tools must not depend on ``raw/`` or ``logs/`` for pass/fail or metrics; do not treat legacy per-suite ``output_json`` paths as authoritative.
 
 AINIC/ANP net plugin setup (optional)
 =====================================

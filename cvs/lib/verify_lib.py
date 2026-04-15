@@ -171,7 +171,15 @@ def verify_gpu_pcie_errors(phdl):
     return err_dict
 
 
-def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=True):
+def verify_dmesg_for_errors(
+    phdl,
+    start_time_dict,
+    end_time_dict,
+    till_end_flag=True,
+    print_console=True,
+    output_consumer=None,
+    raise_on_error=False,
+):
     """
     Scan kernel logs (dmesg) between given start and end timestamps across nodes
     and fail if any known error patterns are detected.
@@ -200,7 +208,8 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
       - Consider handling cases where regex extraction fails (no match) to avoid attribute errors.
     """
 
-    print('scan dmesg')
+    if print_console:
+        print('scan dmesg')
 
     err_dict = {}
 
@@ -209,27 +218,38 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     start_time = start_time_dict[node0].rstrip("\n")
     end_time = end_time_dict[node0].rstrip("\n")
 
-    # Extract the "Mon Jan  2 03:04:05" style prefix from the provided timestamps
-    pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)"
-    match = re.search(pattern, start_time)
-    start_pattern = match.group(1)
-
-    # Extract end timestamp prefix similarly
-    pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)"
-    match = re.search(pattern, end_time)
-    end_pattern = match.group(1)
+    # Extract the "Mon Jan  2 03:04" or "Mon Jan  2 03:04:05" prefix from `date` for sed/awk windows.
+    ts_re = r"([a-zA-Z]+\s+[a-zA-Z]+\s+\d{1,2}\s+\d{1,2}:\d{2}(?::\d{2})?)"
+    start_match = re.search(ts_re, start_time)
+    end_match = re.search(ts_re, end_time)
+    start_pattern = start_match.group(1) if start_match else None
+    end_pattern = end_match.group(1) if end_match else None
 
     # Pull human-readable dmesg and slice the lines between start and end timestamps.
     # Filter out allowed/denied lines to reduce noise. Return is a dict keyed by node.
-    if till_end_flag:
-        output_dict = phdl.exec(
-            f"sudo dmesg -T | sed -n '/{start_pattern}/,$p' | egrep -v 'ALLOWED|DENIED' --color=never"
-        )
+    if start_pattern and (till_end_flag or end_pattern):
+        if till_end_flag:
+            output_dict = phdl.exec(
+                f"sudo dmesg -T | sed -n '/{start_pattern}/,$p' | egrep -v 'ALLOWED|DENIED' --color=never",
+                print_console=print_console,
+            )
+        else:
+            output_dict = phdl.exec(
+                f"sudo dmesg -T | awk '/{start_pattern}.*/,/{end_pattern}.*/' | egrep -v 'ALLOWED|DENIED' --color=never",
+                print_console=print_console,
+            )
     else:
-        output_dict = phdl.exec(
-            f"sudo dmesg -T | awk '/{start_pattern}.*/,/{end_pattern}.*/' | egrep -v 'ALLOWED|DENIED' --color=never"
+        log.warning(
+            "dmesg time window not derived from date output; using tail of dmesg -T (start=%r end=%r)",
+            start_time[:80],
+            end_time[:80],
         )
-    # print(output_dict)
+        output_dict = phdl.exec(
+            "sudo dmesg -T | tail -n 2500 | egrep -v 'ALLOWED|DENIED' --color=never",
+            print_console=print_console,
+        )
+    if output_consumer is not None:
+        output_consumer(output_dict)
     for node in output_dict.keys():
         err_dict[node] = []
 
@@ -238,7 +258,10 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
         for line in output_dict[node].split("\n"):
             for err_key in err_patterns_dict.keys():
                 if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
-                    fail_test(f'ERROR - Failue pattern ** {line} ** seen in Dmesg')
+                    msg = f'ERROR - Failure pattern ** {line} ** seen in Dmesg'
+                    if raise_on_error:
+                        raise RuntimeError(msg)
+                    fail_test(msg)
                     err_dict[node].append(line)
 
     return err_dict

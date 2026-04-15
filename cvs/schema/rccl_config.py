@@ -203,16 +203,17 @@ class RcclValidationInput(BaseModel):
 
 
 class RcclArtifactsInput(BaseModel):
-    """rccl.artifacts — output location and raw export flag."""
+    """rccl.artifacts — local output dir, remote work dir, and raw export flag."""
 
     model_config = ConfigDict(extra="forbid")
 
     output_dir: str
+    remote_work_dir: str
     export_raw: bool
 
-    @field_validator("output_dir", mode="before")
+    @field_validator("output_dir", "remote_work_dir", mode="before")
     @classmethod
-    def _output_dir_non_empty(cls, v: Any) -> str:
+    def _non_empty_str(cls, v: Any) -> str:
         if v is None:
             raise ValueError("must not be null")
         s = str(v).strip()

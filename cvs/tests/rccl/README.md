@@ -55,7 +55,7 @@ Edit `input/config_file/rccl/rccl_config.json` before running:
 
 - `rccl.run`: **required** `env_script`; ranks (`num_ranks`, `ranks_per_node` as integers); benchmark args (`collectives`, `datatype`, size sweep fields, `warmups`, `iterations`, `cycles`). No JSON path fields.
 - `rccl.validation`: `profile` (`none` | `smoke` | `thresholds` | `strict`), optional `thresholds` or `thresholds_file`
-- `rccl.artifacts`: `output_dir`, `export_raw`
+- `rccl.artifacts`: `output_dir`, **`remote_work_dir`** (required; head-node staging for per-case rccl-tests JSON output and MPI hostfiles — no implicit `/tmp`), `export_raw`
 
 Placeholder handling still works in RCCL config paths, including `{user-id}`.
 
@@ -82,4 +82,4 @@ If using AINIC + ANP:
 
 ## Output artifact
 
-`rccl_cvs` writes `{output_dir}/{run_id}/run.json`. **`run.json` is the only normative machine-readable result** (`schema_version` `rccl_cvs.run.v1`); there is no separate `summary.json`. The layout is described in `docs/reference/configuration-files/rccl.rst` (Result artifact section). Contents include topology, cluster nodes, echoed config, filtered env vars after `env_script`, one `cases[]` entry per collective (no-matrix path uses `case_id` values `c0_<collective>`, `c1_<collective>`, …), `metrics.rows`, and `summary`. If `export_raw` is true, optional raw rccl-tests JSON is stored per case under `{output_dir}/{run_id}/raw/<case_id>.json` for debugging only.
+`rccl_cvs` writes `{output_dir}/{run_id}/run.json`. **`run.json` is the only normative machine-readable result** (`schema_version` `rccl_cvs.run.v1`); there is no separate `summary.json`. The layout is described in `docs/reference/configuration-files/rccl.rst` (Result artifact section). Contents include topology, cluster nodes, echoed config, filtered env vars after `env_script`, one `cases[]` entry per collective (no-matrix path uses `case_id` values `c0_<collective>`, `c1_<collective>`, …), and `summary`. Passed cases include `validation` and `metrics.rows`. After the run directory exists, **failed runs still write or refresh `run.json`** (preflight: synthetic `preflight` case with `error`; collective failure: `failed` case with `error`). If `export_raw` is true, optional raw rccl-tests JSON is stored per case under `{output_dir}/{run_id}/raw/<case_id>.json` for debugging only.

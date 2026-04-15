@@ -321,7 +321,7 @@ Use these scripts to start the test:
 ROCm Communication Collectives Library (RCCL) test script
 ---------------------------------------------------------
 
-RCCL now uses one suite, ``rccl_cvs``. The suite uses a nested ``rccl.run`` / ``rccl.validation`` / ``rccl.artifacts`` config; single-node versus multi-node is inferred from ``num_ranks`` and ``ranks_per_node`` (no ``mode`` field). Each run writes ``run.json`` under ``{rccl.artifacts.output_dir}/{run_id}/`` (see the **Result artifact** section in :doc:`../reference/configuration-files/rccl`).
+RCCL now uses one suite, ``rccl_cvs``. The suite uses a nested ``rccl.run`` / ``rccl.validation`` / ``rccl.artifacts`` config; single-node versus multi-node is inferred from ``num_ranks`` and ``ranks_per_node`` (no ``mode`` field). Set **``rccl.artifacts.remote_work_dir``** to a head-node directory for transient rccl-tests JSON paths and MPI hostfiles (the runner does not infer ``/tmp`` for those). Each run writes ``run.json`` under ``{rccl.artifacts.output_dir}/{run_id}/``; if the run fails after that directory exists, ``run.json`` is still updated with ``failed`` cases and an ``error`` string where applicable (see **Result artifact** in :doc:`../reference/configuration-files/rccl`).
 
 You can list the available RCCL test case using the CLI:
 

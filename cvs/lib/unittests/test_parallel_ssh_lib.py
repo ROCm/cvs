@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import call
 from unittest.mock import patch, MagicMock
 from cvs.lib.parallel_ssh_lib import Pssh
 
@@ -319,7 +320,7 @@ class TestPsshExec(unittest.TestCase):
 
     @patch("builtins.print")
     def test_exec_print_console_false(self, mock_print):
-        # Test: Execute command with print_console=False, verify output lines are not printed
+        # Test: Execute command with print_console=False, verify nothing is printed to stdout
         mock_output1 = MagicMock()
         mock_output1.host = "host1"
         mock_output1.stdout = ["output1 line1", "output1 line2"]
@@ -344,14 +345,30 @@ class TestPsshExec(unittest.TestCase):
         self.assertIn("error line1", result["host1"])
         self.assertIn("output2 line1", result["host2"])
 
-        # Verify stdout/stderr lines are NOT printed (only headers and command are printed)
-        printed_calls = [str(call) for call in mock_print.call_args_list]
-        for call in printed_calls:
-            # These output lines should NOT be printed
-            self.assertNotIn("output1 line1", call)
-            self.assertNotIn("output1 line2", call)
-            self.assertNotIn("error line1", call)
-            self.assertNotIn("output2 line1", call)
+        mock_print.assert_not_called()
+
+    @patch("builtins.print")
+    def test_exec_print_console_true_without_prefix(self, mock_print):
+        # Test: Stream raw command output without command/host framing.
+        mock_output = MagicMock()
+        mock_output.host = "host1"
+        mock_output.stdout = ["output1 line1", "output1 line2"]
+        mock_output.stderr = ["error line1"]
+        mock_output.exception = None
+
+        self.mock_client.run_command.return_value = [mock_output]
+
+        result = self.pssh.exec("echo hello", print_console=True, print_console_prefix=False)
+
+        self.assertIn("host1", result)
+        self.assertEqual(
+            mock_print.call_args_list,
+            [
+                call("output1 line1", flush=True),
+                call("output1 line2", flush=True),
+                call("error line1", flush=True),
+            ],
+        )
 
 
 class TestPsshExecCmdList(unittest.TestCase):
@@ -682,7 +699,7 @@ class TestPsshExecCmdList(unittest.TestCase):
 
     @patch("builtins.print")
     def test_exec_cmd_list_print_console_false(self, mock_print):
-        # Test: Execute command list with print_console=False, verify output lines are not printed
+        # Test: Execute command list with print_console=False, verify nothing is printed to stdout
         cmd_list = ["echo host1", "echo host2"]
         mock_output1 = MagicMock()
         mock_output1.host = "host1"
@@ -708,14 +725,34 @@ class TestPsshExecCmdList(unittest.TestCase):
         self.assertIn("host1 error line1", result["host1"])
         self.assertIn("host2 output line1", result["host2"])
 
-        # Verify stdout/stderr lines are NOT printed (only headers and commands are printed)
-        printed_calls = [str(call) for call in mock_print.call_args_list]
-        for call in printed_calls:
-            # These output lines should NOT be printed
-            self.assertNotIn("host1 output line1", call)
-            self.assertNotIn("host1 output line2", call)
-            self.assertNotIn("host1 error line1", call)
-            self.assertNotIn("host2 output line1", call)
+        mock_print.assert_not_called()
+
+    @patch("builtins.print")
+    def test_exec_cmd_list_print_console_true_without_prefix(self, mock_print):
+        # Test: Stream raw command-list output without command/host framing.
+        cmd_list = ["echo host1", "echo host2"]
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["host1 output line1"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = []
+        mock_output2.stderr = ["host2 error line1"]
+        mock_output2.exception = None
+
+        self.mock_client.run_command.return_value = [mock_output1, mock_output2]
+
+        result = self.pssh.exec_cmd_list(cmd_list, print_console=True, print_console_prefix=False)
+
+        self.assertIn("host1", result)
+        self.assertIn("host2", result)
+        self.assertEqual(
+            mock_print.call_args_list,
+            [call("host1 output line1", flush=True), call("host2 error line1", flush=True)],
+        )
 
 
 if __name__ == "__main__":

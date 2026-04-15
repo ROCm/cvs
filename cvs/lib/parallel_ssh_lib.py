@@ -40,9 +40,8 @@ class Pssh:
         self.unreachable_hosts = []
 
         if self.password is None:
-            print(self.reachable_hosts)
-            print(self.user)
-            print(self.pkey)
+            if self.log:
+                self.log.debug("Initializing Pssh hosts=%s user=%s pkey=%s", self.reachable_hosts, self.user, self.pkey)
             self.client = ParallelSSHClient(self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30)
         else:
             self.client = ParallelSSHClient(
@@ -107,7 +106,7 @@ class Pssh:
         for host in self.unreachable_hosts:
             cmd_output[host] = cmd_output.get(host, "") + "\nABORT: Host Unreachable Error"
 
-    def _process_output(self, output, cmd=None, cmd_list=None, print_console=True):
+    def _process_output(self, output, cmd=None, cmd_list=None, print_console=True, print_console_prefix=True):
         """
         Helper method to process output from run_command, collect results, and handle pruning.
         Returns cmd_output dictionary.
@@ -115,22 +114,25 @@ class Pssh:
         cmd_output = {}
         i = 0
         for item in output:
-            print('#----------------------------------------------------------#')
-            print(f'Host == {item.host} ==')
-            print('#----------------------------------------------------------#')
+            if print_console and print_console_prefix:
+                print('#----------------------------------------------------------#', flush=True)
+                print(f'Host == {item.host} ==', flush=True)
+                print('#----------------------------------------------------------#', flush=True)
             cmd_out_str = ''
             if cmd_list:
-                print(cmd_list[i])
+                if print_console and print_console_prefix:
+                    print(cmd_list[i], flush=True)
             else:
-                print(cmd)
+                if print_console and print_console_prefix:
+                    print(cmd, flush=True)
             try:
                 for line in item.stdout or []:
                     if print_console:
-                        print(line)
+                        print(line, flush=True)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
                 for line in item.stderr or []:
                     if print_console:
-                        print(line)
+                        print(line, flush=True)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
             except Timeout as e:
                 if not self.stop_on_errors:
@@ -142,7 +144,10 @@ class Pssh:
                 exc_str = exc_str.replace('\t', '   ')
                 if isinstance(item.exception, Timeout):
                     exc_str += "\nABORT: Timeout Error in Host: " + item.host
-                print(exc_str)
+                if print_console:
+                    print(exc_str, flush=True)
+                elif self.log:
+                    self.log.error(exc_str)
                 cmd_out_str += exc_str + '\n'
             if cmd_list:
                 i += 1
@@ -164,11 +169,12 @@ class Pssh:
                 if item.exception is None:
                     item.exception = e
 
-    def exec(self, cmd, timeout=None, print_console=True):
+    def exec(self, cmd, timeout=None, print_console=True, print_console_prefix=True):
         """
         Returns a dictionary of host as key and command output as values
         """
-        print(f'cmd = {cmd}')
+        if print_console and print_console_prefix:
+            print(f'cmd = {cmd}', flush=True)
 
         # Log command execution
         if self.log:
@@ -181,7 +187,12 @@ class Pssh:
             output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors)
         else:
             output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
-        cmd_output = self._process_output(output, cmd=cmd, print_console=print_console)
+        cmd_output = self._process_output(
+            output,
+            cmd=cmd,
+            print_console=print_console,
+            print_console_prefix=print_console_prefix,
+        )
 
         # Log per-host execution completion
         if self.log:
@@ -190,13 +201,14 @@ class Pssh:
 
         return cmd_output
 
-    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, print_console_prefix=True):
         """
         Run different commands on different hosts compared to to exec
         which runs the same command on all hosts.
         Returns a dictionary of host as key and command output as values
         """
-        print(cmd_list)
+        if print_console and print_console_prefix:
+            print(cmd_list, flush=True)
 
         # Log command list execution
         if self.log:
@@ -211,7 +223,12 @@ class Pssh:
             output = self.client.run_command(
                 '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors
             )
-        cmd_output = self._process_output(output, cmd_list=cmd_list, print_console=print_console)
+        cmd_output = self._process_output(
+            output,
+            cmd_list=cmd_list,
+            print_console=print_console,
+            print_console_prefix=print_console_prefix,
+        )
 
         # Log per-host command execution
         if self.log:

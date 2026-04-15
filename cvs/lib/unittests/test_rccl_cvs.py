@@ -9,6 +9,7 @@ sys.modules.setdefault(
     "pytest", types.SimpleNamespace(fail=lambda message: (_ for _ in ()).throw(AssertionError(message)))
 )
 
+from cvs.lib.rccl.runner import _load_remote_result, _run_preflight, run_rccl  # noqa: E402
 from cvs.lib.rccl_cvs import (  # noqa: E402
     RcclConfig,
     _build_summary,
@@ -22,13 +23,14 @@ from cvs.lib.rccl_cvs import (  # noqa: E402
     load_rccl_config,
     parse_and_validate_results,
 )
+from cvs.lib.verify_lib import verify_dmesg_for_errors  # noqa: E402
 
 
 class _DummySshHandle:
     def __init__(self):
         self.commands = []
 
-    def exec(self, command, timeout=None):  # noqa: ARG002
+    def exec(self, command, timeout=None, print_console=True):  # noqa: ARG002
         self.commands.append(command)
         return {"node0": ""}
 
@@ -61,7 +63,17 @@ def _minimal_rccl(
         "iterations": "20",
         "cycles": "1",
     }
-    return {"rccl": {"run": run, "validation": validation, "artifacts": {"output_dir": "/tmp/rccl_cvs_out", "export_raw": False}}}
+    return {
+        "rccl": {
+            "run": run,
+            "validation": validation,
+            "artifacts": {
+                "output_dir": "/tmp/rccl_cvs_out",
+                "remote_work_dir": "/tmp/rccl_cvs_remote",
+                "export_raw": False,
+            },
+        }
+    }
 
 
 def _rccl_cfg(**kwargs):
@@ -73,6 +85,7 @@ def _rccl_cfg(**kwargs):
         "ranks_per_node": 8,
         "env_script": "/tmp/env.sh",
         "artifacts_output_dir": "/tmp/out",
+        "artifacts_remote_work_dir": "/tmp/remote_work",
         "artifacts_export_raw": False,
         "config_echo": {},
         "start_size": "1024",
@@ -103,6 +116,8 @@ class TestRcclCvs(unittest.TestCase):
         self.assertEqual(loaded.collectives, ["all_reduce_perf"])
         self.assertIn("run", loaded.config_echo)
         self.assertEqual(loaded.config_echo["artifacts"]["output_dir"], "/tmp/rccl_cvs_out")
+        self.assertEqual(loaded.config_echo["artifacts"]["remote_work_dir"], "/tmp/rccl_cvs_remote")
+        self.assertEqual(loaded.artifacts_remote_work_dir, "/tmp/rccl_cvs_remote")
 
     def test_load_rccl_config_single_node(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
@@ -304,6 +319,17 @@ class TestRcclCvs(unittest.TestCase):
                 load_rccl_config(str(config_path), cluster_dict)
         self.assertIn("extra", str(ctx.exception).lower())
 
+    def test_load_rccl_config_rejects_empty_remote_work_dir(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
+        body["rccl"]["artifacts"]["remote_work_dir"] = "   "
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError) as ctx:
+                load_rccl_config(str(config_path), cluster_dict)
+        self.assertIn("remote_work_dir", str(ctx.exception).lower())
+
     def test_load_rccl_config_rejects_threshold_key_not_in_collectives(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
         body = _minimal_rccl(
@@ -406,10 +432,139 @@ class TestRcclCvs(unittest.TestCase):
                 load_rccl_config(str(config_path), cluster_dict)
         self.assertIn("object", str(ctx.exception).lower())
 
+    def test_verify_dmesg_unparseable_date_uses_tail_without_crash(self):
+        class _Phdl:
+            def exec(self, command, print_console=True):  # noqa: ARG002
+                return {"n0": "no errors here\n"}
+
+        verify_dmesg_for_errors(
+            _Phdl(),
+            {"n0": "not a valid date prefix"},
+            {"n0": "also invalid"},
+            till_end_flag=True,
+            print_console=False,
+        )
+
+    def test_verify_dmesg_raise_on_error_raises(self):
+        class _Phdl:
+            def exec(self, command, print_console=True):  # noqa: ARG002
+                return {"n0": "[mock] kernel: Traceback in amdgpu\n"}
+
+        with self.assertRaises(RuntimeError) as ctx:
+            verify_dmesg_for_errors(
+                _Phdl(),
+                {"n0": "Wed Apr 15 12:00:00 UTC 2026\n"},
+                {"n0": "Wed Apr 15 12:01:00 UTC 2026\n"},
+                till_end_flag=True,
+                print_console=False,
+                raise_on_error=True,
+            )
+        self.assertIn("Traceback", str(ctx.exception))
+
+    def test_verify_dmesg_till_end_false_uses_awk_range_not_sed_to_eof(self):
+        cmds: list[str] = []
+
+        class _Phdl:
+            def exec(self, command, print_console=True):  # noqa: ARG002
+                cmds.append(command)
+                return {"n0": "no matching errors\n"}
+
+        verify_dmesg_for_errors(
+            _Phdl(),
+            {"n0": "Wed Apr 15 12:00:01 UTC 2026\n"},
+            {"n0": "Wed Apr 15 12:00:02 UTC 2026\n"},
+            till_end_flag=False,
+            print_console=False,
+        )
+        self.assertTrue(any("awk" in c for c in cmds), cmds)
+        self.assertFalse(any("sed -n" in c for c in cmds))
+
+    def test_run_preflight_collects_firewall_errors_without_fail_test(self):
+        class _Phdl:
+            def exec(self, command, print_console=False):  # noqa: ARG002
+                if "ufw" in command:
+                    return {"n0": "Status: active (running)\n"}
+                return {"n0": ""}
+
+        out = _run_preflight(_Phdl())
+        self.assertFalse(out["summary"]["firewall_ok"])
+        self.assertEqual(len(out["errors"]), 1)
+        self.assertIn("n0", out["errors"][0])
+
+    def test_run_rccl_preflight_failure_writes_run_json_and_raises(self):
+        class _FakePssh:
+            def __init__(self, _log, nodes, user=None, pkey=None):  # noqa: ARG002
+                self._nodes = list(nodes)
+
+            def exec(self, command, timeout=None, print_console=True, print_console_prefix=None):  # noqa: ARG002
+                if "ufw" in command:
+                    return {n: "Status: active (running)\n" for n in self._nodes}
+                return {n: "\n" for n in self._nodes}
+
+        cluster_dict = {
+            "username": "u",
+            "priv_key_file": "/fake/key",
+            "node_dict": {"node0": {}},
+        }
+        mod_name = "cvs.lib.parallel_ssh_lib"
+        saved = sys.modules.get(mod_name)
+        stub = types.ModuleType(mod_name)
+        stub.Pssh = _FakePssh
+        sys.modules[mod_name] = stub
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                cfg = _rccl_cfg(artifacts_output_dir=tmpdir)
+                with self.assertRaises(RuntimeError) as ctx:
+                    run_rccl(cluster_dict, cfg)
+                self.assertIn("ufw", str(ctx.exception).lower())
+                run_dirs = [p for p in Path(tmpdir).iterdir() if p.is_dir()]
+                self.assertEqual(len(run_dirs), 1)
+                run_json = run_dirs[0] / "run.json"
+                self.assertTrue(run_json.is_file())
+                data = json.loads(run_json.read_text())
+                self.assertEqual(data["summary"]["overall_status"], "failed")
+                self.assertEqual(len(data["cases"]), 1)
+                self.assertEqual(data["cases"][0]["case_id"], "preflight")
+                self.assertEqual(data["cases"][0]["status"], "failed")
+                self.assertIn("error", data["cases"][0])
+                self.assertTrue(str(data["cases"][0]["error"]).strip())
+        finally:
+            if saved is not None:
+                sys.modules[mod_name] = saved
+            else:
+                sys.modules.pop(mod_name, None)
+
+    def test_load_remote_result_pretty_json_array(self):
+        class _Shdl:
+            def __init__(self, text: str) -> None:
+                self._text = text
+
+            def exec(self, command, print_console=False):  # noqa: ARG002
+                return {"head": self._text}
+
+        raw = "[\n  {\"size\": 1, \"busBw\": 2.0}\n]\n"
+        rows = _load_remote_result(_Shdl(raw), "head", "/remote/x.json")
+        self.assertEqual(rows, [{"size": 1, "busBw": 2.0}])
+
+    def test_load_remote_result_finds_array_after_leading_noise(self):
+        payload = 'warning: noise\n[\n{"a": 1}\n]\n'
+
+        class _Shdl:
+            def exec(self, command, print_console=False):  # noqa: ARG002
+                return {"h": payload}
+
+        rows = _load_remote_result(_Shdl(), "h", "/f.json")
+        self.assertEqual(rows, [{"a": 1}])
+
     def test_load_rccl_config_raises_valueerror_for_schema_errors(self):
         """Pydantic validation failures are wrapped as ValueError for a stable caller contract."""
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
-        body = {"rccl": {"run": {}, "artifacts": {"output_dir": "/tmp/x", "export_raw": False}}}
+        body = {
+            "rccl": {
+                "run": {},
+                "artifacts": {"output_dir": "/tmp/x", "remote_work_dir": "/tmp/r", "export_raw": False},
+            }
+        }
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
@@ -493,12 +648,13 @@ class TestRcclCvs(unittest.TestCase):
             num_ranks=16,
             ranks_per_node=8,
             env_script="/tmp/env.sh",
+            artifacts_remote_work_dir="/data/rccl_remote",
         )
         shdl = _DummySshHandle()
         command = build_collective_command(
             config,
             "all_reduce_perf",
-            "/tmp/all_reduce.json",
+            "/data/rccl_remote/run1/c0.json",
             ["10.0.0.1", "10.0.0.2"],
             shdl,
         )
@@ -507,6 +663,10 @@ class TestRcclCvs(unittest.TestCase):
         self.assertIn('exec "${MPI_HOME}/bin/mpirun"', command)
         self.assertIn("--np 16", command)
         self.assertTrue(shdl.commands)
+        joined_cmds = "\n".join(shdl.commands)
+        self.assertIn("/data/rccl_remote", joined_cmds)
+        self.assertIn("mkdir -p", joined_cmds)
+        self.assertTrue(any("printf '%s" in c for c in shdl.commands))
 
     def test_build_shell_requires_rccl_tests_build_dir_from_env(self):
         config = _rccl_cfg(env_script="/site/env.sh")

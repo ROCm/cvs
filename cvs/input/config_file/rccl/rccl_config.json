@@ -42,6 +42,7 @@
     },
     "artifacts": {
       "output_dir": "/tmp/rccl_cvs_out",
+      "remote_work_dir": "/tmp/rccl_cvs_remote",
       "export_raw": false
     },
     "_comment_env_script": "Required. Pick the NIC script under input/config_file/rccl/env/ (cx7_env_script.sh, thor2_env_script.sh, or ainic_env_script.sh), copy to your nodes, edit paths, and set env_script to that absolute path. NCCL/UCX/plugin tuning belongs here only — not in JSON."

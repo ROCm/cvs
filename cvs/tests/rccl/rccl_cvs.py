@@ -36,5 +36,11 @@ def rccl_config(config_file, cluster_dict):
 def test_rccl_cvs(cluster_dict, rccl_config):
     globals.error_list = []
     artifact = run_rccl(cluster_dict, rccl_config)
-    print(json.dumps(artifact, indent=2))
+    globals.log.info(
+        "RCCL result: run_id=%s cases=%s passed=%s failed=%s",
+        artifact["run_id"],
+        artifact["summary"]["cases_total"],
+        artifact["summary"]["cases_passed"],
+        artifact["summary"]["cases_failed"],
+    )
     update_test_result()
