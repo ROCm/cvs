@@ -135,8 +135,16 @@ def phdl(cluster_dict):
     node_list = list(cluster_dict['node_dict'].keys())
     log.info(f"Creating parallel SSH handle for {len(node_list)} nodes")
 
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], stop_on_errors=False,
-                timeout=15, num_retries=1, retry_delay=2)
+    phdl = Pssh(
+        log,
+        node_list,
+        user=cluster_dict['username'],
+        pkey=cluster_dict['priv_key_file'],
+        stop_on_errors=False,
+        timeout=15,
+        num_retries=1,
+        retry_delay=2,
+    )
     return phdl
 
 

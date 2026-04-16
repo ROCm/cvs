@@ -20,7 +20,7 @@ link rdma1/1 state ACTIVE physical_state LINK_UP netdev tw-eth1"""
         result = linux_utils.get_rdma_nic_dict(mock_phdl)
 
         # Verify the function was called with correct command
-        mock_phdl.exec.assert_called_once_with('sudo rdma link')
+        mock_phdl.exec.assert_called_once_with('rdma link')
 
         # Verify all RDMA devices are parsed
         self.assertIn('node1', result)
