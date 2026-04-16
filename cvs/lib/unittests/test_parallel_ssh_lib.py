@@ -4,7 +4,7 @@ from cvs.lib.parallel_ssh_lib import Pssh
 
 
 class TestPsshExec(unittest.TestCase):
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     def setUp(self, mock_pssh_client):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
@@ -83,7 +83,7 @@ class TestPsshExec(unittest.TestCase):
         self.assertIn("success output", result["host1"])
         self.assertIn("Connection failed", result["host2"])
 
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     @patch.object(Pssh, "check_connectivity")
     def test_exec_with_pruning_unreachable_host(self, mock_check_connectivity, mock_pssh_client):
         # Test: With stop_on_errors=False,  on host2, and check_connectivity fails for host2, prune it
@@ -122,7 +122,7 @@ class TestPsshExec(unittest.TestCase):
         # Client should be recreated once (init + prune)
         self.assertEqual(mock_pssh_client.call_count, 2)
 
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     @patch.object(Pssh, "check_connectivity")
     def test_exec_no_pruning_when_reachable(self, mock_check_connectivity, mock_pssh_client):
         # Test: With stop_on_errors=False, timeout on host2, but check_connectivity succeeds, no pruning
@@ -161,7 +161,7 @@ class TestPsshExec(unittest.TestCase):
         # Client not recreated
         self.assertEqual(mock_pssh_client.call_count, 1)
 
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     @patch.object(Pssh, "check_connectivity")
     def test_exec_pruning_with_multiple_unreachable_hosts(self, mock_check_connectivity, mock_pssh_client):
         # Test: With stop_on_errors=False, multiple hosts (host2, host3) timeout and are unreachable, prune all
@@ -209,7 +209,7 @@ class TestPsshExec(unittest.TestCase):
         self.assertEqual(mock_pssh_client.call_count, 2)
 
     @patch.object(Pssh, "check_connectivity")
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     def test_exec_no_pruning_on_timeout_exception_reachable(self, mock_pssh_client, mock_check_connectivity):
         # Test: exec with timeout exception, no pruning if host is reachable
         self.mock_client = MagicMock()
@@ -247,7 +247,7 @@ class TestPsshExec(unittest.TestCase):
         self.assertEqual(mock_pssh_client.call_count, 1)
 
     @patch.object(Pssh, "check_connectivity")
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     def test_exec_pruning_on_timeout_exception_unreachable(self, mock_pssh_client, mock_check_connectivity):
         # Test: exec with timeout exception, pruning occurs if host unreachable
         self.mock_client = MagicMock()
@@ -355,7 +355,7 @@ class TestPsshExec(unittest.TestCase):
 
 
 class TestPsshExecCmdList(unittest.TestCase):
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     def setUp(self, mock_pssh_client):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
@@ -437,7 +437,7 @@ class TestPsshExecCmdList(unittest.TestCase):
         self.assertIn("Connection failed", str(cm.exception))
         self.assertNotIn("result", locals())
 
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     @patch.object(Pssh, "check_connectivity")
     def test_exec_cmd_list_no_pruning_when_reachable(self, mock_check_connectivity, mock_pssh_client):
         # Test: exec_cmd_list with stop_on_errors=False, timeout on host2, but check_connectivity succeeds, no pruning
@@ -477,7 +477,7 @@ class TestPsshExecCmdList(unittest.TestCase):
         # Client not recreated
         self.assertEqual(mock_pssh_client.call_count, 1)
 
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     @patch.object(Pssh, "check_connectivity")
     def test_exec_cmd_list_pruning_on_timeout_exception_unreachable(self, mock_check_connectivity, mock_pssh_client):
         # Test: exec_cmd_list with timeout exception, pruning occurs if host unreachable
@@ -518,7 +518,7 @@ class TestPsshExecCmdList(unittest.TestCase):
         )
         self.assertEqual(mock_pssh_client.call_count, 2)
 
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     @patch.object(Pssh, "check_connectivity")
     def test_exec_cmd_list_with_pruning(self, mock_check_connectivity, mock_pssh_client):
         # Test: exec_cmd_list with pruning
@@ -557,7 +557,7 @@ class TestPsshExecCmdList(unittest.TestCase):
         self.assertEqual(result["host2"], "Connection failed\n\nABORT: Host Unreachable Error")
         self.assertEqual(mock_pssh_client.call_count, 2)
 
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     @patch.object(Pssh, "check_connectivity")
     def test_exec_cmd_list_pruning_with_multiple_unreachable_hosts(self, mock_check_connectivity, mock_pssh_client):
         # Test: exec_cmd_list with pruning for multiple unreachable hosts
@@ -604,7 +604,7 @@ class TestPsshExecCmdList(unittest.TestCase):
         self.assertEqual(result["host3"], "Connection failed\n\nABORT: Host Unreachable Error")
         self.assertEqual(mock_pssh_client.call_count, 2)
 
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.base.ParallelSSHClient")
     @patch.object(Pssh, "check_connectivity")
     def test_exec_cmd_list_no_pruning_on_connection_error_when_reachable(
         self, mock_check_connectivity, mock_pssh_client
