@@ -93,9 +93,7 @@ def validated_cluster_config(cluster_file) -> ClusterConfigFile:
 
 
 @pytest.fixture(scope="module")
-def validated_aorta_config(
-    config_file, validated_cluster_config: ClusterConfigFile
-) -> AortaBenchmarkConfigFile:
+def validated_aorta_config(config_file, validated_cluster_config: ClusterConfigFile) -> AortaBenchmarkConfigFile:
     """
     Load and validate Aorta benchmark configuration.
 
