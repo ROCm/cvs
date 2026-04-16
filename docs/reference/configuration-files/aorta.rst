@@ -28,7 +28,7 @@ You may instead use fully absolute paths with no placeholders. Other entry point
 
   .. code:: yaml
 
-    aorta_path: /scratch/users/{user-id}/aorta
+    aorta_path: /home/{user-id}/aorta
     aorta_auto_clone: false
     aorta_clone_url: null
 
