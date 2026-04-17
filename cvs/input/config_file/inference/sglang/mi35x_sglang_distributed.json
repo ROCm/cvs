@@ -122,6 +122,68 @@
 
 		  }
              },
+        "kimi-k2":
+             {
+		 "backend": "sglang",
+		 "max_concurrency": "64",
+		 "model": "moonshotai/Kimi-K2-Instruct",
+		 "prefill_policy": "cache_aware",
+		 "decode_policy": "cache_aware",
+		 "tensor_parallelism": "8",
+		 "memory_fraction": "0.7",
+		 "tokenizer_mode": "auto",
+		 "inference_poll_iterations": "16",
+		 "inference_tests":
+		  {
+		      "gsm8k":
+	              {
+			  "backend": "sglang",
+			  "num_questions": "1000",
+			  "max_concurrency": "100",
+                          "expected_results":
+		          {
+			       "auto":
+			           {
+			               "tokens_per_sec": "2300"
+				   }
+			  }
+	              },
+		      "bench_serv_random":
+		      {
+			  "backend": "sglang",
+			  "data_set_name": "random",
+			  "num_prompts": "3000",
+			  "input_length": "1024",
+			  "output_length": "1024",
+			  "random_range_ratio": "0.5",
+                          "expected_results":
+		          {
+			       "auto":
+			           {
+                   		       "output_throughput_per_sec": "21000",
+                                       "mean_ttft_ms": "34500",
+                                       "mean_tpot_ms": "50"
+				   }
+			  }
+		      },
+		      "bench_serv_generated_shared_prefix":
+		      {
+			  "backend": "sglang",
+			  "gsp_num_groups": "1",
+			  "gsp_prompts_per_group": "16",
+			  "gsp_system_prompt_len": "0",
+			  "gsp_question_len": "1024",
+			  "gsp_output_len": "1024",
+                          "expected_results":
+		          {
+			       "auto":
+			           {
+				   }
+			  }
+		      }
+
+		  }
+             },
         "deepseek-r1":
              {
 		 "backend": "sglang",
