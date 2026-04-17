@@ -138,9 +138,12 @@ def get_ip_addr_dict(phdl):
 
     # Execute the command on one or more nodes; expect dict[node] -> output string
     out_dict = phdl.exec('sudo ip addr show | grep -A 5 mtu --color=never')
-    int_nam = None
     for node in out_dict.keys():
         ip_dict[node] = {}
+        # Reset int_nam per node so that a previous node's last interface
+        # never leaks into this node's parsing when a property line
+        # (mtu/state/mac/inet/inet6) appears before an interface header.
+        int_nam = None
         for line in out_dict[node].split("\n"):
             # Match interface header line:
             #   <idx>: <ifname>: <FLAGS>
@@ -155,6 +158,13 @@ def get_ip_addr_dict(phdl):
                 ip_dict[node][int_nam]['ipv4_addr_list'] = []
                 ip_dict[node][int_nam]['ipv6_addr_list'] = []
                 ip_dict[node][int_nam]['flags'] = match.group(2)
+
+            # Skip property-line handlers until we have seen an interface
+            # header for this node. Header lines themselves contain `mtu N`
+            # and `state UP` inline, so the fall-through below still applies
+            # to them (int_nam was just set by the header block above).
+            if int_nam is None:
+                continue
 
             # Capture MTU value, e.g., "mtu 1500"
             if re.search('mtu ([0-9]+)', line):
@@ -234,6 +244,12 @@ def get_rdma_nic_dict(phdl):
             if re.search('^link', line):
                 pattern = r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z_]+)\s+netdev\s+([a-zA-Z0-9.-]+)"
                 match = re.search(pattern, line)
+                # Skip lines that start with 'link' but do not conform to the
+                # full expected format (e.g. DOWN links that omit the netdev
+                # field, or any future upstream format variation). Mirrors
+                # the existing guard in get_active_rdma_nic_dict.
+                if not match:
+                    continue
                 dev = match.group(1)
                 rdma_dict[node][dev] = {}
                 rdma_dict[node][dev]['port'] = match.group(2)  # Port number (string)
@@ -621,21 +637,53 @@ def get_lldp_dict(phdl):
 
 
 def get_dns_dict(phdl):
+    """
+    Parse `resolvectl status` output per node into a dictionary of DNS settings.
+
+    Args:
+        phdl: Execution handle with an `exec(cmd)` method returning
+              {node: stdout} mappings.
+
+    Returns:
+        dict: Nested mapping of the form:
+          {
+            "<node>": {
+              "protocols": [<per-scope protocols line>, ...],
+              "current_dns_server": "<addr>",        # optional
+              "dns_servers": ["<addr>", ...],        # optional
+              "dns_domain": "<domain>",              # optional
+            },
+            ...
+          }
+
+    Notes:
+      - `Protocols:` appears once globally and once per Link, so values are
+        collected into a list.
+      - Only the first 7 lines of `resolvectl status` are consulted (to
+        match prior behavior); callers that need more should use a
+        different helper.
+    """
     dns_dict = {}
     out_dict = phdl.exec('sudo resolvectl status | head -7')
     for node in out_dict.keys():
         dns_dict[node] = {}
         for line in out_dict[node].split("\n"):
-            if re.search('Protocols', line, re.I):
-                print('')
-            elif re.search('Protocols', line, re.I):
-                print('')
-            elif re.search('Current DNS Server', line, re.I):
-                print('')
-            elif re.search('DNS Servers', line, re.I):
-                print('')
-            elif re.search('DNS Domain', line, re.I):
-                print('')
+            m = re.search(r'Protocols:\s*(.+)', line, re.I)
+            if m:
+                dns_dict[node].setdefault('protocols', []).append(m.group(1).strip())
+                continue
+            m = re.search(r'Current DNS Server:\s*(\S+)', line, re.I)
+            if m:
+                dns_dict[node]['current_dns_server'] = m.group(1)
+                continue
+            m = re.search(r'DNS Servers:\s*(.+)', line, re.I)
+            if m:
+                dns_dict[node]['dns_servers'] = m.group(1).strip().split()
+                continue
+            m = re.search(r'DNS Domain:\s*(\S+)', line, re.I)
+            if m:
+                dns_dict[node]['dns_domain'] = m.group(1)
+                continue
     return dns_dict
 
 
@@ -723,11 +771,12 @@ def get_linux_perf_tuning_dict(phdl):
         configured in your execution environment.
       - Outputs are kept as raw strings (unparsed) to preserve original behavior; consumers
         may parse them further to derive structured values (e.g., booleans/ints).
-      - Note: This function currently lacks an explicit `return out_dict`. If the intention
-        is to return the collected data, add `return out_dict` at the end.
 
     Returns:
-      None (as written; see note above if a dictionary return is intended).
+      dict: Mapping of setting name -> raw per-node output from phdl.exec, with keys:
+            'bios_version', 'numa_balancing', 'nmi_watchdog', 'huge_pages',
+            'cpu_power_profile'. Each value is whatever phdl.exec returned for that
+            command (typically a {node: stdout} dict).
     """
 
     out_dict = {}
@@ -746,6 +795,8 @@ def get_linux_perf_tuning_dict(phdl):
 
     # CPU driver/governor/boost information (cpupower info dump)
     out_dict['cpu_power_profile'] = phdl.exec('sudo cpupower info')
+
+    return out_dict
 
 
 def get_lshw_backend_nic_dict(phdl):
