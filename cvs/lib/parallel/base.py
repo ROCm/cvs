@@ -300,57 +300,104 @@ class PsshShard:
         print('Destroying Current phdl connections ..')
         del self.client
 
-    def copy_script_list(self, node_script_map, remote_path="/tmp/script.sh"):
+    def copy_file_list(self, node_path_map):
         """
-        Copy different script files to different nodes in parallel using SCP.
+        Copy a distinct local file to a distinct remote path on each host.
+
+        Uses ``pssh.clients.native.parallel.ParallelSSHClient.scp_send`` with
+        per-host ``copy_args`` (libssh2), not Paramiko.
 
         Args:
-            node_script_map: {node: local_script_path} dictionary
-            remote_path: Target path on remote nodes
+            node_path_map: ``{host: (local_path, remote_path)}``
 
         Returns:
-            List of results: ["node: SUCCESS/FAILED - details"]
+            dict: ``{host: "host: SUCCESS" | "host: FAILED - ..."}``
         """
-        from concurrent.futures import ThreadPoolExecutor
-        import paramiko
-        from paramiko import SSHClient
-        from scp import SCPClient
+        import os
 
-        def copy_to_node(node, local_script):
+        from gevent import joinall
+        from pssh.clients.native.parallel import ParallelSSHClient as NativeParallelSSHClient
+
+        if not node_path_map:
+            return {}
+
+        results = {}
+        valid_entries = []
+        for host in node_path_map:
+            local_path, remote_path = node_path_map[host]
+            if not os.path.isfile(local_path):
+                results[host] = f"{host}: FAILED - Local file not found: {local_path}"
+                continue
+            valid_entries.append((host, local_path, remote_path))
+
+        if not valid_entries:
+            return results
+
+        hosts = [e[0] for e in valid_entries]
+        copy_args = [{'local_file': e[1], 'remote_file': e[2]} for e in valid_entries]
+        pool_size = min(100, max(len(hosts), 1))
+        kwargs = dict(self.ssh_client_kwargs)
+
+        if self.password is None:
+            client = NativeParallelSSHClient(
+                hosts,
+                user=self.user,
+                pkey=self.pkey,
+                keepalive_seconds=30,
+                pool_size=pool_size,
+                **kwargs,
+            )
+        else:
+            client = NativeParallelSSHClient(
+                hosts,
+                user=self.user,
+                password=self.password,
+                keepalive_seconds=30,
+                pool_size=pool_size,
+                **kwargs,
+            )
+
+        try:
+            greenlets = client.scp_send("%(local_file)s", "%(remote_file)s", copy_args=copy_args)
+            joinall(greenlets, raise_error=False)
+            for (host, _, _), g in zip(valid_entries, greenlets):
+                try:
+                    g.get()
+                    results[host] = f"{host}: SUCCESS"
+                except Exception as e:
+                    results[host] = f"{host}: FAILED - {e}"
+        finally:
             try:
-                ssh_client = SSHClient()
-                ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                client.pool.join()
+            except Exception:
+                pass
+            del client
 
-                if self.password is None:
-                    ssh_client.connect(node, username=self.user, key_filename=self.pkey)
-                else:
-                    ssh_client.connect(node, username=self.user, password=self.password)
-
-                with SCPClient(ssh_client.get_transport()) as scp:
-                    scp.put(local_script, remote_path)
-
-                ssh_client.close()
-                return f"{node}: SUCCESS"
-            except Exception as e:
-                return f"{node}: FAILED - {e}"
-
-        # Copy to all nodes in parallel (50 concurrent transfers)
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            futures = [
-                executor.submit(copy_to_node, node, script_path) for node, script_path in node_script_map.items()
-            ]
-            results = [future.result() for future in futures]
-
-        # Log results
         if self.log:
-            successful = [r for r in results if "SUCCESS" in r]
-            failed = [r for r in results if "FAILED" in r]
+            successful = [r for r in results.values() if "SUCCESS" in r]
+            failed = [r for r in results.values() if "FAILED" in r]
             self.log.info(f"Script copy completed: {len(successful)} successful, {len(failed)} failed")
             if failed:
-                for failure in failed:
+                for failure in failed[: min(3, len(failed))]:
                     self.log.warning(f"Copy failed: {failure}")
 
         return results
+
+    def copy_script_list(self, node_script_map, remote_path="/tmp/script.sh"):
+        """
+        Copy different local script files to different nodes; same remote basename pattern per node.
+
+        Implemented via :meth:`copy_file_list`.
+
+        Args:
+            node_script_map: ``{node: local_script_path}``
+            remote_path: Remote path applied to every node (each upload is independent).
+
+        Returns:
+            dict: ``{host: "host: SUCCESS" | "host: FAILED - ..."}``
+        """
+        node_path_map = {n: (local, remote_path) for n, local in node_script_map.items()}
+        return self.copy_file_list(node_path_map)
 
 
 def _shard_dispatch_exec(shard, payload):
@@ -366,6 +413,10 @@ def _shard_dispatch_scp(shard, payload):
     return None
 
 
+def _shard_dispatch_copy_file_list(shard, payload):
+    return shard.copy_file_list(payload['node_path_map'])
+
+
 def _shard_dispatch_reboot(shard, payload):
     shard.reboot_connections()
     return None
@@ -375,6 +426,7 @@ _SHARD_MODE_HANDLERS = {
     'exec': _shard_dispatch_exec,
     'cmd_list': _shard_dispatch_cmd_list,
     'scp': _shard_dispatch_scp,
+    'copy_file_list': _shard_dispatch_copy_file_list,
     'reboot': _shard_dispatch_reboot,
 }
 

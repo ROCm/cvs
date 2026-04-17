@@ -8,7 +8,14 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 import json
 
-from cvs.lib import preflight_lib
+# Import new modular preflight classes
+from cvs.lib.preflight.gid_consistency import GidConsistencyCheck
+from cvs.lib.preflight.version_check import RocmVersionCheck
+from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
+
+# RdmaConnectivityCheck not used - using legacy function temporarily
+from cvs.lib.preflight.ssh_connectivity import SshConnectivityCheck
+from cvs.lib.preflight.report import PreflightReportGenerator
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
@@ -20,6 +27,28 @@ log = globals.log
 
 # Global results storage for HTML report generation
 preflight_results = {}
+
+
+def _prune_nodes_from_phdl(phdl, failed_nodes, reason):
+    """
+    Remove ``failed_nodes`` from ``phdl.reachable_hosts`` and recreate the parallel client.
+
+    Later preflight steps then only target hosts that passed the previous check.
+    """
+    if not failed_nodes:
+        return
+    remove = {n for n in failed_nodes if n}
+    on_host = [h for h in phdl.reachable_hosts if h in remove]
+    if not on_host:
+        return
+    phdl.reachable_hosts = [h for h in phdl.reachable_hosts if h not in remove]
+    phdl.host_list = list(phdl.reachable_hosts)
+    if hasattr(phdl, 'unreachable_hosts'):
+        for h in on_host:
+            if h not in phdl.unreachable_hosts:
+                phdl.unreachable_hosts.append(h)
+    phdl.prune_unreachable_hosts(output=None)
+    log.info(f"{reason} Pruned {len(on_host)} node(s) from further preflight tests: {', '.join(sorted(on_host))}")
 
 
 # Override update_test_result for preflight tests to be reporting-only
@@ -141,9 +170,10 @@ def phdl(cluster_dict):
         user=cluster_dict['username'],
         pkey=cluster_dict['priv_key_file'],
         stop_on_errors=False,
-        timeout=15,
+        timeout=30,  # Increased SSH connection timeout for multiprocessing
         num_retries=1,
         retry_delay=2,
+        hosts_per_shard=16,  # Optimal balance for 164 nodes: 10-11 processes
     )
     return phdl
 
@@ -182,7 +212,7 @@ def test_node_reachability(phdl):
 
     # Simple connectivity test
     cmd = "echo 'SSH_OK'"
-    out_dict = phdl.exec(cmd)
+    out_dict = phdl.exec(cmd, timeout=60)  # Generous timeout for multiprocessing coordination
 
     failed_nodes = []
     reachable_nodes = []
@@ -212,50 +242,9 @@ def test_node_reachability(phdl):
         'status': 'PASS' if len(failed_nodes) == 0 else 'WARNING',
     }
 
-    # Prune unreachable nodes from phdl so subsequent tests only run on reachable nodes
-    phdl.prune_unreachable_hosts()
+    # Drop all nodes that did not return SSH_OK from phdl (explicit prune; not only SSH client exceptions)
+    _prune_nodes_from_phdl(phdl, failed_nodes, "Reachability:")
 
-    preflight_update_test_result()
-
-
-def test_gid_consistency(phdl, config_dict):
-    """
-    Test GID consistency across specified RDMA interfaces in the cluster.
-
-    Verifies that the specified GID index exists and is valid on the
-    specified RDMA interfaces across all cluster nodes.
-    """
-    global preflight_results
-
-    gid_index = config_dict.get('gid_index', '3')
-    expected_interfaces = config_dict.get('rdma_interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"])
-    log.info(f"Testing GID consistency for index {gid_index} on interfaces: {expected_interfaces}")
-
-    results = preflight_lib.check_gid_consistency(phdl, gid_index, expected_interfaces)
-    preflight_results['gid_consistency'] = results
-
-    # Analyze results and report failures
-    failed_nodes = []
-    total_interfaces = 0
-    ok_interfaces = 0
-
-    for node, result in results.items():
-        if result['status'] == 'FAIL':
-            failed_nodes.append(node)
-            for error in result['errors']:
-                log.error(f"Node {node}: {error}")
-
-        for interface, interface_result in result['interfaces'].items():
-            total_interfaces += 1
-            if interface_result.get('status') == 'OK':
-                ok_interfaces += 1
-
-    if failed_nodes:
-        log.warning(f"GID consistency issues on {len(failed_nodes)} nodes: {', '.join(failed_nodes)}")
-    else:
-        log.info("GID consistency check: All nodes passed")
-
-    log.info(f"GID consistency results: {ok_interfaces}/{total_interfaces} interfaces have valid GID index {gid_index}")
     preflight_update_test_result()
 
 
@@ -265,13 +254,17 @@ def test_rocm_version_consistency(phdl, config_dict):
 
     Verifies that all nodes are running the expected ROCm version
     as specified in the configuration.
+
+    Nodes that fail this check are **not** removed from ``phdl`` so the next test
+    (RDMA interface consistency) still runs on the full reachability-passed set.
     """
     global preflight_results
 
     expected_version = config_dict.get('expected_rocm_version', '6.2.0')
     log.info(f"Testing ROCm version consistency (expected: {expected_version})")
 
-    results = preflight_lib.check_rocm_versions(phdl, expected_version)
+    version_checker = RocmVersionCheck(phdl, expected_version, config_dict)
+    results = version_checker.run()
     preflight_results['rocm_versions'] = results
 
     # Analyze results and report failures
@@ -298,6 +291,7 @@ def test_rocm_version_consistency(phdl, config_dict):
     log.info(
         f"ROCm version results: {len(results) - len(failed_nodes)}/{len(results)} nodes have expected version {expected_version}"
     )
+    # Intentionally do not prune ROCm failures from phdl (see docstring).
     preflight_update_test_result()
 
 
@@ -307,13 +301,16 @@ def test_interface_name_consistency(phdl, config_dict):
 
     Verifies that the expected RDMA interfaces are present on all nodes
     as specified in the configuration.
+
+    Nodes that fail are removed from ``phdl`` before the GID consistency check.
     """
     global preflight_results
 
     expected_interfaces = config_dict.get('rdma_interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"])
     log.info(f"Testing interface presence (expected: {expected_interfaces})")
 
-    results = preflight_lib.check_interface_names(phdl, expected_interfaces)
+    interface_checker = InterfaceConsistencyCheck(phdl, expected_interfaces, config_dict)
+    results = interface_checker.run()
     preflight_results['interface_names'] = results
 
     # Analyze results and report failures
@@ -340,6 +337,54 @@ def test_interface_name_consistency(phdl, config_dict):
     log.info(
         f"Interface presence results: {compliant_interfaces}/{total_interfaces} interfaces are expected interfaces"
     )
+
+    _prune_nodes_from_phdl(phdl, failed_nodes, "Interface consistency:")
+    preflight_update_test_result()
+
+
+def test_gid_consistency(phdl, config_dict):
+    """
+    Test GID consistency across specified RDMA interfaces in the cluster.
+
+    Verifies that the specified GID index exists and is valid on the
+    specified RDMA interfaces across all cluster nodes.
+
+    Nodes that fail are removed from ``phdl`` before RDMA connectivity testing.
+    """
+    global preflight_results
+
+    gid_index = config_dict.get('gid_index', '3')
+    expected_interfaces = config_dict.get('rdma_interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"])
+    log.info(f"Testing GID consistency for index {gid_index} on interfaces: {expected_interfaces}")
+
+    gid_checker = GidConsistencyCheck(phdl, gid_index, expected_interfaces, config_dict)
+    results = gid_checker.run()
+    preflight_results['gid_consistency'] = results
+
+    # Analyze results and report failures
+    failed_nodes = []
+    total_interfaces = 0
+    ok_interfaces = 0
+
+    for node, result in results.items():
+        if result['status'] == 'FAIL':
+            failed_nodes.append(node)
+            for error in result['errors']:
+                log.error(f"Node {node}: {error}")
+
+        for interface, interface_result in result['interfaces'].items():
+            total_interfaces += 1
+            if interface_result.get('status') == 'OK':
+                ok_interfaces += 1
+
+    if failed_nodes:
+        log.warning(f"GID consistency issues on {len(failed_nodes)} nodes: {', '.join(failed_nodes)}")
+    else:
+        log.info("GID consistency check: All nodes passed")
+
+    log.info(f"GID consistency results: {ok_interfaces}/{total_interfaces} interfaces have valid GID index {gid_index}")
+
+    _prune_nodes_from_phdl(phdl, failed_nodes, "GID consistency:")
     preflight_update_test_result()
 
 
@@ -352,10 +397,28 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
 
     Tests connectivity based on the specified mode (basic, full_mesh, or sample)
     and reports any connection failures.
+
+    ``phdl`` excludes nodes that failed reachability, interface consistency, or GID
+    consistency; those steps prune before the next. ROCm version mismatches are reported
+    but **not** pruned. Results may include ``excluded_nodes_interface_check`` and
+    ``excluded_nodes_gid`` for the report (hosts already removed from ``phdl``).
     """
     global preflight_results
 
-    node_list = list(cluster_dict['node_dict'].keys())
+    # Host list matches prior-step pruning (reachability, interface, GID); not full cluster_dict.
+    node_list = list(phdl.reachable_hosts)
+
+    iface_results = preflight_results.get('interface_names') or {}
+    excluded_nodes_interface_check = sorted(n for n, r in iface_results.items() if r.get('status') == 'FAIL')
+
+    gid_results = preflight_results.get('gid_consistency') or {}
+    excluded_nodes_gid = sorted(n for n, r in gid_results.items() if r.get('status') == 'FAIL')
+
+    log.info(
+        f"RDMA connectivity: {len(node_list)} host(s) on phdl after reachability / interface / GID pruning "
+        f"(ROCm mismatches are not pruned)."
+    )
+
     mode = config_dict.get('rdma_connectivity_check', 'basic')
     port_range = config_dict.get('rping_port_range', '9000-9999')
     timeout = int(config_dict.get('rping_timeout', '10'))
@@ -367,15 +430,43 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
         f"Testing RDMA connectivity using parallel algorithm (mode: {mode}, group_size: {parallel_group_size}, timeout: {timeout}s, interfaces: {expected_interfaces}, GID: {gid_index})"
     )
 
-    results = preflight_lib.check_rdma_connectivity(
+    if mode != 'skip' and len(phdl.reachable_hosts) < 2:
+        log.warning(
+            'RDMA connectivity skipped: fewer than 2 hosts remain after reachability / interface / GID pruning.'
+        )
+        skip_results = {
+            'mode': mode,
+            'skipped': True,
+            'message': 'Too few nodes for RDMA after reachability, interface, and GID pruning',
+            'total_pairs': 0,
+            'successful_pairs': 0,
+            'failed_pairs': 0,
+            'pair_results': {},
+            'node_status': {},
+            'excluded_nodes_interface_check': excluded_nodes_interface_check,
+            'excluded_nodes_gid': excluded_nodes_gid,
+        }
+        preflight_results['rdma_connectivity'] = skip_results
+        preflight_update_test_result()
+        return
+
+    # Use the new modular RDMA connectivity check (supports all modes)
+    from cvs.lib.preflight.rdma_connectivity import RdmaConnectivityCheck
+
+    rdma_checker = RdmaConnectivityCheck(
         phdl, node_list, mode, port_range, timeout, expected_interfaces, gid_index, parallel_group_size, config_dict
     )
+    results = rdma_checker.run()
+    if excluded_nodes_interface_check:
+        results['excluded_nodes_interface_check'] = excluded_nodes_interface_check
+    if excluded_nodes_gid:
+        results['excluded_nodes_gid'] = excluded_nodes_gid
     preflight_results['rdma_connectivity'] = results
 
     # Handle skipped test
     if results.get('skipped', False):
         log.info("RDMA connectivity test skipped by configuration")
-        update_test_result()
+        preflight_update_test_result()
         return
 
     # Analyze results and report failures
@@ -433,9 +524,8 @@ def test_ssh_full_mesh_connectivity(phdl, cluster_dict, config_dict):
     log.info(f"Testing SSH connectivity across {len(node_list)} nodes")
 
     # Run SSH full mesh connectivity test
-    results = preflight_lib.test_ssh_full_mesh_connectivity(
-        phdl, node_list, timeout=ssh_timeout, config_dict=config_dict
-    )
+    ssh_checker = SshConnectivityCheck(phdl, node_list, ssh_timeout, config_dict)
+    results = ssh_checker.run()
 
     # Store results for report generation
     preflight_results['ssh_connectivity'] = results
@@ -561,15 +651,10 @@ def test_generate_preflight_report(config_dict, request):
         for check in missing_checks:
             preflight_results[check] = {'status': 'SKIPPED', 'message': 'Check was skipped due to earlier failures'}
 
-    # Generate comprehensive summary
-    summary = preflight_lib.generate_preflight_summary(
-        preflight_results['gid_consistency'],
-        preflight_results['rdma_connectivity'],
-        preflight_results['rocm_versions'],
-        preflight_results['interface_names'],
-        preflight_results.get('node_reachability'),
-        preflight_results.get('ssh_connectivity'),
-    )
+    # Generate comprehensive summary using new report generator
+    report_generator = PreflightReportGenerator(phdl, preflight_results, config_dict)
+    report_results = report_generator.run()
+    summary = report_results['summary']
 
     preflight_results['summary'] = summary
 
@@ -592,8 +677,12 @@ def test_generate_preflight_report(config_dict, request):
     html_report_path = None
     try:
         if config_dict.get('generate_html_report', 'true').lower() == 'true':
-            html_report_path = preflight_lib.generate_html_report(preflight_results, config_dict)
+            # HTML report is generated as part of the report generator run() above
+            html_report_path = report_results.get('html_report')
             log.info(f"HTML report generated: {html_report_path}")
+            rdma_csv = report_results.get('rdma_pairs_csv')
+            if rdma_csv:
+                log.info(f"RDMA pairs CSV generated: {rdma_csv}")
         else:
             log.info("HTML report generation disabled in configuration")
     except Exception as e:
@@ -605,6 +694,17 @@ def test_generate_preflight_report(config_dict, request):
             copied_path = request.config._html_report_manager.add_html_to_report(
                 html_report_path, link_name="Preflight Checks Report", request=request
             )
+
+            rdma_csv = report_results.get('rdma_pairs_csv')
+            if rdma_csv:
+                try:
+                    csv_copied = request.config._html_report_manager.add_html_to_report(
+                        rdma_csv, link_name="RDMA failed pairs (CSV)", request=request
+                    )
+                    if csv_copied:
+                        log.info(f'RDMA failed pairs CSV added to report bundle: {csv_copied}')
+                except Exception as e:
+                    log.warning(f"Failed to add RDMA CSV to report bundle: {e}")
 
             if copied_path:
                 log.info(f'Preflight report saved and added to report bundle: {copied_path}')

@@ -20,7 +20,7 @@ class Pssh(PsshShard):
     Parallel SSH with optional process sharding for large host lists.
 
     Same constructor and public API as PsshShard; when ``len(host_list) > hosts_per_shard`` (default 32),
-    ``exec`` / ``exec_cmd_list`` / ``scp_file`` / ``reboot_connections`` run in child processes (spawn),
+    ``exec`` / ``exec_cmd_list`` / ``scp_file`` / ``copy_file_list`` / ``reboot_connections`` run in child processes (spawn),
     each running a ``PsshShard`` over a slice of hosts.
 
     Pass ``hosts_per_shard=0`` to disable process sharding (always one ``PsshShard`` in the parent process).
@@ -278,9 +278,32 @@ class Pssh(PsshShard):
             return
         PsshShard.destroy_clients(self)
 
-    def copy_script_list(self, node_script_map, remote_path="/tmp/script.sh"):
+    def copy_file_list(self, node_path_map):
+        """Shard per ``hosts_per_shard`` like ``exec_cmd_list``; each worker runs native ``scp_send``."""
         if not getattr(self, '_use_process_sharding', False):
-            return PsshShard.copy_script_list(self, node_script_map, remote_path)
+            return PsshShard.copy_file_list(self, node_path_map)
+        if not node_path_map:
+            return {}
+        payloads = []
+        for shard_hosts in _chunk_hosts(self.host_list, self.hosts_per_shard):
+            sub = {h: node_path_map[h] for h in shard_hosts if h in node_path_map}
+            if not sub:
+                continue
+            payloads.append(
+                {
+                    'mode': 'copy_file_list',
+                    'init': self._shard_init_kwargs(shard_hosts),
+                    'node_path_map': sub,
+                }
+            )
+        if not payloads:
+            return {}
+        shard_returns = self._run_sharded_pool(payloads)
+        merged = {}
+        for r in shard_returns:
+            merged.update(r['result'])
+        return merged
 
-        # For sharded mode, delegate to base class as it already handles concurrent operations well
-        return PsshShard.copy_script_list(self, node_script_map, remote_path)
+    def copy_script_list(self, node_script_map, remote_path="/tmp/script.sh"):
+        node_path_map = {n: (local, remote_path) for n, local in node_script_map.items()}
+        return self.copy_file_list(node_path_map)

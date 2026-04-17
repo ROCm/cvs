@@ -780,17 +780,65 @@ class PreflightConfigFile(BaseModel):
         default="9000-9999", description="Port range for RDMA connectivity tests (format: start-end)"
     )
     generate_html_report: str = Field(default="true", description="Whether to generate HTML report")
-    report_output_dir: str = Field(default="/tmp/preflight_reports", description="Directory for report output")
+    report_output_dir: str = Field(
+        default="/tmp/preflight_reports",
+        description=(
+            "Directory for HTML report output. RDMA full_mesh ScriptLet logs also use "
+            "<report_output_dir>/rdma_connectivity_workspace/<session>/<round>/ on each node (NFS-friendly)."
+        ),
+    )
+    generate_rdma_pairs_csv: str = Field(
+        default="true",
+        description="If true, write preflight_report_*_rdma_pairs.csv beside the HTML report (failed pairs only)",
+    )
+    rdma_prune_peer_failure_threshold: float = Field(
+        default=0.5,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Round 1 (intra) prune before inter-group: prune nodes whose fraction of peers with ≥1 FAIL "
+            "intra test is ≥ this value (default 0.5). Peers counted per distinct other node in the same partition group."
+        ),
+    )
     parallel_group_size: int = Field(
         default=128,
         ge=2,
         le=512,
         description="Group size for parallel RDMA connectivity testing (2-512 nodes per group). Smaller groups use fewer resources per node but require more rounds.",
     )
+    rdma_port_listen_retry_max: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description=(
+            "After each ScriptLet wave (intra/inter), rerun only pairs whose logs show PORT_LISTEN_FAILED, "
+            "up to this many extra batches with new TCP ports (default 3)."
+        ),
+    )
+    rdma_port_listen_retry_port_gap: int = Field(
+        default=1000,
+        ge=1,
+        le=65535,
+        description=(
+            "When remapping ports for PORT_LISTEN_FAILED retries, start at (max port in batch) + this gap "
+            "to reduce overlap with ephemeral ports."
+        ),
+    )
+    rdma_exclude_nodes_with_interface_check_fail: str = Field(
+        default="true",
+        description=(
+            "Legacy hint for reporting: preflight now prunes interface- and GID-failed nodes from the SSH "
+            "host list before RDMA; interface failures are not run in the mesh regardless of this flag."
+        ),
+    )
 
     scriptlet_debug: bool = Field(
         default=False,
-        description="Enable debug mode for ScriptLet operations. When enabled, scripts and logs are preserved for debugging.",
+        description=(
+            "Enable ScriptLet debug: preserve generated scripts/logs on remote nodes. "
+            "For RDMA connectivity, also wraps each ibv_rc_pingpong server in strace with "
+            "per-test traces under /tmp/preflight/strace_server_<iface>_<port>.log (expensive at scale)."
+        ),
     )
 
     ssh_full_mesh_check: bool = Field(

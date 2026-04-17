@@ -9,10 +9,6 @@ execution.
 import os
 import tempfile
 import logging
-from concurrent.futures import ThreadPoolExecutor
-import paramiko
-from paramiko import SSHClient
-from scp import SCPClient
 
 log = logging.getLogger(__name__)
 
@@ -36,21 +32,32 @@ class ScriptLet:
     5. Support debugging through script preservation
     """
 
-    def __init__(self, phdl, debug=False, cleanup_on_exit=True, temp_dir="/tmp/preflight", cleanup_on_init=False):
+    def __init__(
+        self,
+        phdl,
+        debug=False,
+        cleanup_on_exit=True,
+        temp_dir="/tmp/preflight",
+        cleanup_on_init=False,
+        preserve_temp_dir_on_exit=False,
+    ):
         """
         Initialize ScriptLet with a parallel SSH handle.
 
         Args:
-            phdl: Parallel SSH handle with copy_script_list and exec_cmd_list methods
+            phdl: Parallel SSH handle with copy_file_list (or copy_script_list) and exec_cmd_list methods
             debug: If True, preserve scripts for debugging (don't auto-cleanup)
             cleanup_on_exit: Whether to cleanup temp files on destruction
             temp_dir: Remote directory for storing scripts and logs
             cleanup_on_init: Whether to cleanup temp directory on initialization
+            preserve_temp_dir_on_exit: If True, exit cleanup removes only ScriptLet ``.sh`` files, not
+                ``rm -rf`` of ``temp_dir`` (keeps co-located logs and other artifacts in that directory).
         """
         self.phdl = phdl
         self.debug = debug
         self.cleanup_on_exit = cleanup_on_exit and not debug
         self.temp_dir = temp_dir
+        self.preserve_temp_dir_on_exit = bool(preserve_temp_dir_on_exit)
         self.local_scripts = {}  # {script_id: local_path}
         self.remote_scripts = {}  # {script_id: remote_path}
 
@@ -119,11 +126,10 @@ class ScriptLet:
         if target_nodes is None:
             target_nodes = self.phdl.reachable_hosts
 
-        # Build node-script mapping for copy_script_list
-        node_script_map = {node: local_path for node in target_nodes}
+        node_path_map = {node: (local_path, remote_path) for node in target_nodes}
 
         log.info(f"Copying script '{script_id}' to {len(target_nodes)} nodes")
-        results = self.phdl.copy_script_list(node_script_map, remote_path)
+        results = self.phdl.copy_file_list(node_path_map)
 
         # Log copy results
         successful = [r for r in results.values() if "SUCCESS" in r]
@@ -138,84 +144,40 @@ class ScriptLet:
 
     def copy_script_list(self, script_mapping):
         """
-        Copy different scripts to different nodes using direct SCP operations.
-
-        This is a self-contained implementation that doesn't rely on phdl delegation,
-        based on the proven working implementation from parallel_ssh_lib.py.
+        Copy different scripts to different nodes using phdl native parallel SCP (libssh2).
 
         Args:
             script_mapping: {node: script_id} mapping
 
         Returns:
-            Dict: {node: "SUCCESS/FAILED - details"}
+            Dict: {node: "node: SUCCESS/FAILED - details"}
 
         Raises:
             ValueError: If any script_id doesn't exist
         """
-        # Validate all script IDs exist
         missing_scripts = [sid for sid in script_mapping.values() if sid not in self.local_scripts]
         if missing_scripts:
             raise ValueError(f"Scripts not found: {missing_scripts}")
 
-        # Build node-to-local-path mapping and node-to-remote-path mapping
-        node_local_map = {}
-        node_remote_map = {}
+        node_path_map = {
+            node: (self.local_scripts[sid], self.remote_scripts[sid]) for node, sid in script_mapping.items()
+        }
 
-        for node, script_id in script_mapping.items():
-            local_path = self.local_scripts[script_id]
-            remote_path = self.remote_scripts[script_id]
-            node_local_map[node] = local_path
-            node_remote_map[node] = remote_path
-
-        def copy_to_node(node, local_script_path):
-            """Copy a single script to a single node using SCP."""
-            try:
-                # Get the correct remote path for this specific node
-                remote_path = node_remote_map[node]
-
-                ssh_client = SSHClient()
-                ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-                # Use the same connection parameters as phdl
-                if hasattr(self.phdl, 'password') and self.phdl.password is not None:
-                    ssh_client.connect(node, username=self.phdl.user, password=self.phdl.password)
-                else:
-                    ssh_client.connect(node, username=self.phdl.user, key_filename=self.phdl.pkey)
-
-                with SCPClient(ssh_client.get_transport()) as scp:
-                    scp.put(local_script_path, remote_path)
-
-                ssh_client.close()
-                return f"{node}: SUCCESS"
-            except Exception as e:
-                return f"{node}: FAILED - {e}"
-
-        # Copy to all nodes in parallel using ThreadPoolExecutor (for SCP only)
-        # Ensure temp directory exists on all target nodes
         self._ensure_temp_directory(list(script_mapping.keys()))
 
         log.info(f"Copying {len(set(script_mapping.values()))} different scripts to {len(script_mapping)} nodes")
 
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            futures = [executor.submit(copy_to_node, node, local_path) for node, local_path in node_local_map.items()]
-            results_list = [future.result() for future in futures]
+        results = self.phdl.copy_file_list(node_path_map)
 
-        # Convert results list to dict format
-        results_dict = {}
-        for result in results_list:
-            node, status = result.split(": ", 1)
-            results_dict[node] = status
-
-        # Log results
-        successful = [r for r in results_list if "SUCCESS" in r]
-        failed = [r for r in results_list if "FAILED" in r]
+        successful = [r for r in results.values() if "SUCCESS" in r]
+        failed = [r for r in results.values() if "FAILED" in r]
         log.info(f"Script copy completed: {len(successful)} successful, {len(failed)} failed")
 
         if failed:
-            for failure in failed[:3]:  # Log first 3 failures
+            for failure in list(failed)[:3]:
                 log.warning(f"Copy failed: {failure}")
 
-        return results_dict
+        return results
 
     def run_parallel_group(self, script_mapping, timeout=30, cleanup_after_run=None):
         """
@@ -351,11 +313,12 @@ class ScriptLet:
             # Cleanup specific script
             self._cleanup_single_script(script_id)
         else:
-            # Cleanup all scripts and the entire temp directory
+            # Cleanup all scripts and optionally the entire temp directory
             script_ids = list(self.local_scripts.keys())
             for sid in script_ids:
                 self._cleanup_single_script(sid)
-            self._cleanup_temp_directory()
+            if not self.preserve_temp_dir_on_exit:
+                self._cleanup_temp_directory()
 
         log.debug(f"Cleanup completed for {'all scripts' if script_id is None else f'script {script_id}'}")
 
