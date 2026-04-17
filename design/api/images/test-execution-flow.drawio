@@ -1,0 +1,89 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.6.6 Chrome/144.0.7559.236 Electron/40.8.4 Safari/537.36" version="29.6.6">
+  <diagram name="Test Execution Flow" id="test-execution-flow">
+    <mxGraphModel dx="2066" dy="1202" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=1;fontSize=16;" value="Test Execution Flow" vertex="1">
+          <mxGeometry height="30" width="300" x="350" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="user" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" value="User" vertex="1">
+          <mxGeometry height="500" width="80" x="80" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ui-frontend" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" value="UI Frontend" vertex="1">
+          <mxGeometry height="500" width="100" x="200" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ui-backend" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" value="UI Backend" vertex="1">
+          <mxGeometry height="500" width="100" x="350" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="cvs-api" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" value="CVS API Server" vertex="1">
+          <mxGeometry height="500" width="100" x="500" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="cvs-cli" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" value="Python CVS CLI" vertex="1">
+          <mxGeometry height="500" width="100" x="650" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="step1" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" value="1. Submit test configuration">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <mxPoint x="125" y="150" as="sourcePoint" />
+            <mxPoint x="245" y="150" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step2" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" value="2. POST /api/cvs/v1/tests/execute">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <mxPoint x="255" y="180" as="sourcePoint" />
+            <mxPoint x="395" y="180" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step3" edge="1" parent="1" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;fontSize=10;" value="3. Add JWT &amp; proxy request">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="430" y="210" />
+              <mxPoint x="430" y="225" />
+              <mxPoint x="400" y="225" />
+            </Array>
+            <mxPoint x="400" y="210" as="sourcePoint" />
+            <mxPoint x="400" y="210" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step4" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" value="4. POST /api/v1/tests/execute (JWT)">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <mxPoint x="410" y="250" as="sourcePoint" />
+            <mxPoint x="550" y="250" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step5" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" value="5. Execute test suite">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <mxPoint x="555" y="270" as="sourcePoint" />
+            <mxPoint x="695" y="270" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step6" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontSize=10;" value="6. HTTP 202 + execution_id">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <mxPoint x="545" y="300" as="sourcePoint" />
+            <mxPoint x="405" y="300" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step7" edge="1" parent="1" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;fontSize=10;" value="7. Store execution record">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="430" y="330" />
+            </Array>
+            <mxPoint x="400" y="330" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step8" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontSize=10;" value="8. Execution started response">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <mxPoint x="395" y="360" as="sourcePoint" />
+            <mxPoint x="255" y="360" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step9" edge="1" parent="1" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontSize=10;" value="9. Show &#39;Test started&#39; + monitoring UI">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <mxPoint x="245" y="390" as="sourcePoint" />
+            <mxPoint x="125" y="390" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

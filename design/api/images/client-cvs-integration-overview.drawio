@@ -1,0 +1,145 @@
+<mxfile host="app.diagrams.net" modified="2026-04-16T15:40:00.000Z" agent="5.0" version="24.2.5" etag="ACC-CVS-INTEGRATION" type="device">
+  <diagram name="ACC-CVS Integration Overview" id="acc-cvs-integration">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="800" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- Title -->
+        <mxCell id="title" value="Client-CVS Integration Architecture" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=1;fontSize=18;" vertex="1" parent="1">
+          <mxGeometry x="400" y="20" width="400" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- Internet Zone -->
+        <mxCell id="internet-zone" value="INTERNET" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;fontStyle=1;verticalAlign=top;spacingTop=10;" vertex="1" parent="1">
+          <mxGeometry x="50" y="80" width="200" height="200" as="geometry" />
+        </mxCell>
+        
+        <!-- Datacenter Zone -->
+        <mxCell id="datacenter-zone" value="DATACENTER" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;verticalAlign=top;spacingTop=10;" vertex="1" parent="1">
+          <mxGeometry x="350" y="80" width="800" height="600" as="geometry" />
+        </mxCell>
+        
+        <!-- User -->
+        <mxCell id="user" value="User" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="135" y="120" width="30" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- UI Frontend -->
+        <mxCell id="ui-frontend" value="UI Frontend&#xa;(React/Vue)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="220" width="100" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- UI Backend -->
+        <mxCell id="ui-backend" value="UI Backend&#xa;(API Gateway)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="220" width="120" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Client Database -->
+        <mxCell id="client-db" value="Client Database&#xa;(PostgreSQL)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="320" width="120" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- CVS API Server -->
+        <mxCell id="cvs-api" value="CVS API Server&#xa;(Go)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="650" y="220" width="120" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Python CVS CLI -->
+        <mxCell id="cvs-cli" value="Python CVS CLI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="900" y="220" width="120" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Schema Registry -->
+        <mxCell id="schema-registry" value="Schema Registry" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="650" y="320" width="120" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Config Files -->
+        <mxCell id="config-files" value="Config Files" style="shape=folder;fontStyle=1;spacingTop=10;tabWidth=40;tabHeight=14;tabPosition=left;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="900" y="320" width="80" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Redis Cache -->
+        <mxCell id="redis" value="Redis Cache" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="450" width="120" height="50" as="geometry" />
+        </mxCell>
+        
+        <!-- Docker Container Groups -->
+        <mxCell id="client-container" value="Client Container" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#d6b656;fontSize=12;fontStyle=1;verticalAlign=top;spacingTop=10;" vertex="1" parent="1">
+          <mxGeometry x="370" y="180" width="180" height="350" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="cvs-container" value="CVS Container" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#9673a6;fontSize=12;fontStyle=1;verticalAlign=top;spacingTop=10;" vertex="1" parent="1">
+          <mxGeometry x="620" y="180" width="180" height="200" as="geometry" />
+        </mxCell>
+        
+        <!-- Main Flow Connections -->
+        <mxCell id="edge1" value="HTTPS/WSS&#xa;(Session Auth)" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;fontColor=#000000;" edge="1" parent="1" source="user" target="ui-frontend">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="edge2" value="HTTPS/WSS&#xa;(Session Token)" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;fontColor=#000000;" edge="1" parent="1" source="ui-frontend" target="ui-backend">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="edge3" value="HTTPS/WSS&#xa;(JWT Token)" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;fontColor=#000000;" edge="1" parent="1" source="ui-backend" target="cvs-api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="edge4" value="Local Process&#xa;Execution" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;fontColor=#000000;" edge="1" parent="1" source="cvs-api" target="cvs-cli">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Data Connections -->
+        <mxCell id="edge5" value="User Data&#xa;Execution History" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;" edge="1" parent="1" source="ui-backend" target="client-db">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="edge6" value="Schema Caching&#xa;Session Data" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;" edge="1" parent="1" source="ui-backend" target="redis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="edge7" value="Schema Discovery" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;" edge="1" parent="1" source="cvs-api" target="schema-registry">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="edge8" value="Configuration&#xa;Generation" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;" edge="1" parent="1" source="schema-registry" target="config-files">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Data Flow Labels -->
+        <mxCell id="flow1" value="1. Schema Discovery" style="text;html=1;strokeColor=none;fillColor=#fff2cc;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="250" y="160" width="100" height="25" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="flow2" value="2. Form Generation" style="text;html=1;strokeColor=none;fillColor=#dae8fc;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="160" width="100" height="25" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="flow3" value="3. Test Execution" style="text;html=1;strokeColor=none;fillColor=#e1d5e7;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="525" y="160" width="100" height="25" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="flow4" value="4. Real-time Monitoring" style="text;html=1;strokeColor=none;fillColor=#ffe6cc;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="775" y="160" width="120" height="25" as="geometry" />
+        </mxCell>
+        
+        <!-- Security Boundaries -->
+        <mxCell id="security1" value="Public Internet" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=2;fontColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="50" y="50" width="200" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="security2" value="Private Datacenter Network" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=2;fontColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="350" y="50" width="800" height="20" as="geometry" />
+        </mxCell>
+        
+        <!-- WebSocket Flow Indicator -->
+        <mxCell id="ws-indicator" value="WebSocket Proxy&#xa;Real-time Updates" style="shape=process;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="550" y="280" width="100" height="50" as="geometry" />
+        </mxCell>
+        
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

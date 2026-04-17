@@ -1,0 +1,106 @@
+<mxfile host="app.diagrams.net" modified="2026-04-16T15:25:00.000Z" agent="5.0" version="24.2.5" etag="CVS-JWT-FLOW" type="device">
+  <diagram name="JWT Token Flow" id="jwt-token-flow">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- Title -->
+        <mxCell id="title" value="JWT Authentication Flow" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=1;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="350" y="20" width="200" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- ACC Service -->
+        <mxCell id="acc-service" value="ACC Service" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="150" y="70" width="100" height="450" as="geometry" />
+        </mxCell>
+        
+        <!-- CVS API -->
+        <mxCell id="cvs-api" value="CVS API" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="70" width="100" height="450" as="geometry" />
+        </mxCell>
+        
+        <!-- Python CVS CLI -->
+        <mxCell id="python-cli" value="Python CVS CLI" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="650" y="70" width="100" height="450" as="geometry" />
+        </mxCell>
+        
+        <!-- Lifelines -->
+        <mxCell id="acc-lifeline" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;outlineConnect=0;targetShapes=umlLifeline;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};" vertex="1" parent="1">
+          <mxGeometry x="195" y="130" width="10" height="320" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="cvs-lifeline" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;outlineConnect=0;targetShapes=umlLifeline;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};" vertex="1" parent="1">
+          <mxGeometry x="445" y="180" width="10" height="270" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="cli-lifeline" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;outlineConnect=0;targetShapes=umlLifeline;portConstraint=eastwest;newEdgeStyle={&quot;edgeStyle&quot;:&quot;elbowEdgeStyle&quot;,&quot;elbow&quot;:&quot;vertical&quot;,&quot;curved&quot;:0,&quot;rounded&quot;:0};" vertex="1" parent="1">
+          <mxGeometry x="695" y="320" width="10" height="80" as="geometry" />
+        </mxCell>
+        
+        <!-- Self message: Generate JWT -->
+        <mxCell id="generate-jwt" value="Generate JWT token" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;" edge="1" parent="1" target="acc-lifeline">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="200" y="150" as="sourcePoint" />
+            <Array as="points">
+              <mxPoint x="230" y="150" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- API Request -->
+        <mxCell id="api-request" value="POST /api/v1/tests/execute&lt;br&gt;Authorization: Bearer {jwt}" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;" edge="1" parent="1" source="acc-lifeline" target="cvs-lifeline">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="205" y="190" as="sourcePoint" />
+            <mxPoint x="445" y="190" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Self message: Validate JWT -->
+        <mxCell id="validate-jwt" value="Validate JWT signature" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;" edge="1" parent="1" target="cvs-lifeline">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="450" y="220" as="sourcePoint" />
+            <Array as="points">
+              <mxPoint x="480" y="220" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Self message: Generate config -->
+        <mxCell id="generate-config" value="Generate config files" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;rounded=0;" edge="1" parent="1" target="cvs-lifeline">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="450" y="260" as="sourcePoint" />
+            <Array as="points">
+              <mxPoint x="480" y="260" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Execute CVS -->
+        <mxCell id="execute-cvs" value="Execute: cvs run rccl --cluster_file --config_file" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;" edge="1" parent="1" source="cvs-lifeline" target="cli-lifeline">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="455" y="330" as="sourcePoint" />
+            <mxPoint x="695" y="330" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Return Results -->
+        <mxCell id="return-results" value="Return results" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;" edge="1" parent="1" source="cli-lifeline" target="cvs-lifeline">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="695" y="370" as="sourcePoint" />
+            <mxPoint x="455" y="370" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- JSON Response -->
+        <mxCell id="json-response" value="JSON response" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;" edge="1" parent="1" source="cvs-lifeline" target="acc-lifeline">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="445" y="410" as="sourcePoint" />
+            <mxPoint x="205" y="410" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
