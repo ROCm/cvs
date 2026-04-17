@@ -14,12 +14,17 @@ import os
 import time
 from pathlib import Path
 
-from app.core.simple_config import config as settings
+from app.core.config import settings
 from app.core.cvs_parallel_ssh_reliable import Pssh
 from app.core.jump_host_pssh import JumpHostPssh
 from app.collectors.gpu_collector import GPUMetricsCollector
 from app.collectors.nic_collector import NICMetricsCollector
+from app.collectors.rccl_collector import RCCLCollector
+from app.collectors.inspector_collector import InspectorCollector
+from app.collectors.base import BaseCollector, CollectorResult, CollectorState
 from app.api import router as api_router
+
+import redis.asyncio as aioredis
 
 # Configure logging based on DEBUG environment variable
 # Using RotatingFileHandler for circular log files with 1MB max size
@@ -61,86 +66,164 @@ class AppState:
     """Global application state."""
 
     def __init__(self):
+        # SSH manager
         self.ssh_manager: Optional[Union[Pssh, JumpHostPssh]] = None
+
+        # Unified collector registry (BaseCollector pattern)
+        self.collectors: dict[str, BaseCollector] = {}
+        self.collector_tasks: dict[str, asyncio.Task] = {}
+        self.collector_results: dict[str, CollectorResult] = {}
+
+        # Legacy fields kept for backward compat during transition
         self.gpu_collector: GPUMetricsCollector = None
         self.nic_collector: NICMetricsCollector = None
+        self.collection_task: asyncio.Task = None  # deprecated
+
         self.latest_metrics: dict = {}
         self.websocket_clients: List[WebSocket] = []
-        self.collection_task: asyncio.Task = None
         self.is_collecting: bool = False
-        # Node health tracking (for stability - require 5 consecutive failures)
-        self.node_failure_count: dict = {}  # {node: consecutive_failure_count}
-        self.node_health_status: dict = {}  # {node: 'healthy'|'unhealthy'|'unreachable'}
-        # Software info cache (updated every 180 seconds since it rarely changes)
+
+        # Node health tracking
+        self.node_failure_count: dict = {}
+        self.node_health_status: dict = {}
+
+        # Software info cache
         self.cached_gpu_software: dict = {}
         self.cached_nic_software: dict = {}
         self.cached_nic_advanced: dict = {}
         self.gpu_software_cache_time: float = 0
         self.nic_software_cache_time: float = 0
         self.nic_advanced_cache_time: float = 0
-        self.software_cache_ttl: int = 180  # 3 minutes
-        # SECURITY: Passwords stored in memory only (never persisted to disk)
-        self.ssh_password: str = None  # Direct SSH password
-        self.jump_host_password: str = None  # Jump host password
-        # Periodic host probe task
+        self.software_cache_ttl: int = 180
+
+        # SECURITY: Passwords stored in memory only
+        self.ssh_password: str = None
+        self.jump_host_password: str = None
+
+        # Periodic host probe
         self.probe_task: Optional[asyncio.Task] = None
         self.last_probe_time: Optional[float] = None
-        self.probe_count: int = 0  # Track number of probes for periodic client recreation
+        self.probe_count: int = 0
+        self.probe_requested: asyncio.Event = None  # set by collectors on ConnectionError
+
+        # Redis client
+        self.redis: Optional[object] = None
+
+        # RCCL state
+        self.rccl_data_store = None   # RCCLDataStore, set in lifespan
+        self.latest_rccl_snapshot: Optional[dict] = None
+        self.rccl_websocket_clients: List[WebSocket] = []
 
 
 app_state = AppState()
+
+_reload_lock = asyncio.Lock()
+
+
+# SSH Transport Scaling Note:
+# The SSH-based collection transport has a practical limit of ~500-800 nodes at
+# 60-second poll intervals. Known constraints at 600 nodes: 3-5GB RSS, pool_size
+# reduced to 50, global threading lock serializes SSH batches. For clusters
+# significantly larger, consider deploying lightweight push agents (Telegraf
+# amd_rocm_smi plugin or rocm-smi-exporter) on compute nodes.
+
+REGISTERED_COLLECTORS: list[type[BaseCollector]] = [
+    GPUMetricsCollector,
+    NICMetricsCollector,
+    RCCLCollector,
+    InspectorCollector,
+]
+
+
+def _start_collector_task(c: BaseCollector) -> asyncio.Task:
+    """Create a supervised collector task that restarts on crash with exponential backoff."""
+    _backoff = [1.0]  # mutable cell for closure
+
+    def _on_done(task: asyncio.Task) -> None:
+        if task.cancelled() or not app_state.is_collecting:
+            return
+        exc = task.exception()
+        if exc is None:
+            logger.warning(f"Collector {c.name} task exited unexpectedly — restarting")
+        else:
+            delay = _backoff[0]
+            logger.error(
+                f"Collector {c.name} crashed: {exc!r} — restarting in {delay:.0f}s",
+                exc_info=exc,
+            )
+
+        async def _restart():
+            await asyncio.sleep(_backoff[0])
+            _backoff[0] = min(_backoff[0] * 2, 120)
+            new_task = _start_collector_task(c)
+            app_state.collector_tasks[c.name] = new_task
+
+        def _schedule_restart():
+            restart_task = asyncio.create_task(_restart(), name=f"restart-{c.name}")
+            app_state.collector_tasks[f"_restart_{c.name}"] = restart_task
+
+        asyncio.get_running_loop().call_soon(_schedule_restart)
+
+    task = asyncio.create_task(
+        c.run(app_state.ssh_manager, app_state),
+        name=f"collector-{c.name}",
+    )
+    task.add_done_callback(_on_done)
+    return task
 
 
 async def reload_configuration():
     """
     Reload configuration without restarting the entire process.
-    Stops metrics collection, closes SSH connections, reloads config, reinitializes, and restarts.
+    Uses topology-diff to restart only collectors whose config actually changed.
 
     Returns:
         dict: Status of reload operation with success/error details
     """
+    async with _reload_lock:
+        return await _reload_configuration_inner()
+
+
+async def _reload_configuration_inner():
     try:
-        logger.info("Starting configuration reload...")
+        logger.info("Starting configuration reload (topology-diff)...")
 
-        # 1. Stop metrics collection and periodic probe
-        if app_state.is_collecting:
-            logger.info("Stopping metrics collection and periodic probe...")
-            app_state.is_collecting = False
-            if app_state.collection_task:
-                app_state.collection_task.cancel()
-                try:
-                    await app_state.collection_task
-                except asyncio.CancelledError:
-                    pass
-            if app_state.probe_task:
-                app_state.probe_task.cancel()
-                try:
-                    await app_state.probe_task
-                except asyncio.CancelledError:
-                    pass
+        # 1. Snapshot old settings and load new settings
+        from app.core.config import Settings
+        import app.core.config as config_module
 
-        # 2. Close existing SSH connections
-        if app_state.ssh_manager:
-            logger.info("Closing existing SSH connections...")
-            app_state.ssh_manager.destroy_clients()
-            app_state.ssh_manager = None
+        old_settings = config_module.settings
+        new_config = Settings()  # re-reads YAML and env vars
 
-        # 3. Clear cached data
-        app_state.latest_metrics = {}
-        app_state.node_failure_count = {}
-        app_state.node_health_status = {}
-        app_state.cached_gpu_software = {}
-        app_state.cached_nic_software = {}
-        app_state.cached_nic_advanced = {}
-        app_state.gpu_software_cache_time = 0
-        app_state.nic_software_cache_time = 0
-        app_state.nic_advanced_cache_time = 0
+        # 2. Determine which config sections changed
+        ssh_changed = (
+            old_settings.ssh.model_dump() != new_config.ssh.model_dump()
+        )
+        rccl_changed = (
+            old_settings.rccl.model_dump() != new_config.rccl.model_dump()
+        )
+        polling_changed = (
+            old_settings.polling.model_dump() != new_config.polling.model_dump()
+        )
 
-        # 4. Reload configuration from files
-        logger.info("Reloading configuration from cluster.yaml and nodes.txt...")
-        from app.core.simple_config import SimpleConfig
+        logger.info(
+            f"Config diff: ssh_changed={ssh_changed}, rccl_changed={rccl_changed}, "
+            f"polling_changed={polling_changed}"
+        )
 
-        new_config = SimpleConfig()
+        # 3. Update the global settings reference
+        config_module.settings = new_config
+
+        # 4. Determine which collectors need restart
+        collectors_to_restart: set[str] = set()
+        if polling_changed:
+            # Interval changed — restart all polling collectors
+            collectors_to_restart = {cls.name for cls in REGISTERED_COLLECTORS}
+        else:
+            if ssh_changed:
+                collectors_to_restart.update({"gpu", "nic"})  # SSH-dependent
+            if rccl_changed:
+                collectors_to_restart.add("rccl")
 
         # 5. Load new nodes
         nodes = new_config.load_nodes_from_file()
@@ -165,7 +248,7 @@ async def reload_configuration():
 
             logger.info(f"Checking for SSH key (key-based auth): {key_file_expanded}")
             if not os.path.exists(key_file_expanded):
-                logger.warning(f"❌ SSH key file not found: {key_file_expanded}")
+                logger.warning(f"SSH key file not found: {key_file_expanded}")
                 logger.warning("Please upload SSH keys via Configuration UI or run refresh-ssh-keys.sh")
                 return {
                     "success": False,
@@ -174,7 +257,7 @@ async def reload_configuration():
                     "requires_key_upload": True,
                 }
             else:
-                logger.info(f"✅ SSH key file found: {key_file_expanded}")
+                logger.info(f"SSH key file found: {key_file_expanded}")
                 # List the key file to verify
                 import subprocess
 
@@ -184,58 +267,128 @@ async def reload_configuration():
                 except:
                     pass
         else:
-            logger.info("✅ Using password authentication - no key file check needed")
+            logger.info("Using password authentication - no key file check needed")
 
-        # 7. Reinitialize SSH manager with new configuration
-        try:
-            if new_config.ssh.jump_host.enabled and new_config.ssh.jump_host.host:
-                num_nodes = len(nodes)
-                min(num_nodes, 5)
+        # 7. Cancel only affected collector tasks
+        for name in collectors_to_restart:
+            task = app_state.collector_tasks.get(name)
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            # Also cancel any pending restart tasks
+            restart_key = f"_restart_{name}"
+            restart_task = app_state.collector_tasks.get(restart_key)
+            if restart_task:
+                restart_task.cancel()
+                try:
+                    await restart_task
+                except asyncio.CancelledError:
+                    pass
 
-                logger.info(f"Reinitializing with jump host: {new_config.ssh.jump_host.host}")
-                logger.info(f"Jump Host Username: {new_config.ssh.jump_host.username}")
-                logger.info(f"Cluster Nodes: {len(nodes)} nodes")
-                logger.info(f"Cluster Username: {new_config.node_username_via_jumphost}")
+        # If nothing changed, we can skip SSH and collector restart
+        if not collectors_to_restart and not ssh_changed:
+            logger.info("No config sections changed — nothing to restart")
+            return {
+                "success": True,
+                "message": "Configuration reloaded (no changes detected)",
+                "nodes_count": len(nodes),
+                "jump_host_enabled": new_config.ssh.jump_host.enabled,
+            }
 
-                # Use JumpHostPssh - working approach from test_auth_script.py
-                app_state.ssh_manager = JumpHostPssh(
-                    jump_host=new_config.ssh.jump_host.host,
-                    jump_user=new_config.ssh.jump_host.username,
-                    jump_password=new_config.ssh.jump_host.password,
-                    jump_pkey=new_config.ssh.jump_host.key_file if not new_config.ssh.jump_host.password else None,
-                    target_hosts=nodes,
-                    target_user=new_config.node_username_via_jumphost,
-                    target_pkey=new_config.node_key_file_on_jumphost,
-                    max_parallel=min(len(nodes), 5),  # Limit to 5 to avoid exhausting paramiko channels (conservative)
-                    timeout=new_config.ssh.timeout,
-                )
-                logger.info("JumpHostPssh initialized successfully")
-            else:
-                logger.info("Reinitializing with direct SSH (no jump host)")
-                logger.info(f"Username: {new_config.ssh.username}")
-                logger.info(f"Nodes: {len(nodes)} nodes")
+        # 8. Recreate SSH manager only if SSH config changed
+        if ssh_changed:
+            # Stop probe task — it depends on the SSH manager
+            if app_state.probe_task:
+                app_state.probe_task.cancel()
+                try:
+                    await app_state.probe_task
+                except asyncio.CancelledError:
+                    pass
 
-                app_state.ssh_manager = Pssh(
-                    log=logger,
-                    host_list=nodes,
-                    user=new_config.ssh.username,
-                    password=app_state.ssh_password,  # Use in-memory password
-                    pkey=new_config.ssh.key_file,
-                    timeout=new_config.ssh.timeout,
-                    stop_on_errors=False,
-                )
-                logger.info("Direct SSH manager reinitialized")
-        except Exception as e:
-            logger.error(f"Failed to reinitialize SSH manager: {e}")
-            return {"success": False, "error": f"Failed to initialize SSH manager: {str(e)}", "nodes_count": len(nodes)}
+            if app_state.ssh_manager:
+                logger.info("Closing existing SSH connections (ssh config changed)...")
+                app_state.ssh_manager.destroy_clients()
+                app_state.ssh_manager = None
 
-        # 7. Restart metrics collection and periodic probe
-        if app_state.ssh_manager and nodes:
-            logger.info("Restarting metrics collection and periodic probe...")
-            app_state.is_collecting = True
-            app_state.collection_task = asyncio.create_task(collect_metrics_loop())
+            # Clear cached data (node topology may have changed)
+            app_state.latest_metrics = {}
+            app_state.node_failure_count = {}
+            app_state.node_health_status = {}
+            app_state.cached_gpu_software = {}
+            app_state.cached_nic_software = {}
+            app_state.cached_nic_advanced = {}
+            app_state.gpu_software_cache_time = 0
+            app_state.nic_software_cache_time = 0
+            app_state.nic_advanced_cache_time = 0
+
+            try:
+                if new_config.ssh.jump_host.enabled and new_config.ssh.jump_host.host:
+                    num_nodes = len(nodes)
+                    min(num_nodes, 5)
+
+                    logger.info(f"Reinitializing with jump host: {new_config.ssh.jump_host.host}")
+                    logger.info(f"Jump Host Username: {new_config.ssh.jump_host.username}")
+                    logger.info(f"Cluster Nodes: {len(nodes)} nodes")
+                    logger.info(f"Cluster Username: {new_config.ssh.jump_host.node_username}")
+
+                    # Use JumpHostPssh - working approach from test_auth_script.py
+                    app_state.ssh_manager = JumpHostPssh(
+                        jump_host=new_config.ssh.jump_host.host,
+                        jump_user=new_config.ssh.jump_host.username,
+                        jump_password=new_config.ssh.jump_host.password,
+                        jump_pkey=new_config.ssh.jump_host.key_file if not new_config.ssh.jump_host.password else None,
+                        target_hosts=nodes,
+                        target_user=new_config.ssh.jump_host.node_username,
+                        target_pkey=new_config.ssh.jump_host.node_key_file,
+                        max_parallel=min(len(nodes), 5),  # Limit to 5 to avoid exhausting paramiko channels (conservative)
+                        timeout=new_config.ssh.timeout,
+                    )
+                    logger.info("JumpHostPssh initialized successfully")
+                else:
+                    logger.info("Reinitializing with direct SSH (no jump host)")
+                    logger.info(f"Username: {new_config.ssh.username}")
+                    logger.info(f"Nodes: {len(nodes)} nodes")
+
+                    app_state.ssh_manager = Pssh(
+                        log=logger,
+                        host_list=nodes,
+                        user=new_config.ssh.username,
+                        password=app_state.ssh_password,  # Use in-memory password
+                        pkey=new_config.ssh.key_file,
+                        timeout=new_config.ssh.timeout,
+                        stop_on_errors=False,
+                    )
+                    logger.info("Direct SSH manager reinitialized")
+            except Exception as e:
+                logger.error(f"Failed to reinitialize SSH manager: {e}")
+                return {"success": False, "error": f"Failed to initialize SSH manager: {str(e)}", "nodes_count": len(nodes)}
+
+            # Restart probe task with new SSH manager
+            app_state.probe_requested = asyncio.Event()
             app_state.probe_task = asyncio.create_task(periodic_host_probe())
-            logger.info("Metrics collection and periodic probe restarted")
+
+        # 9. Restart only the affected collectors
+        if app_state.ssh_manager and nodes:
+            app_state.is_collecting = True
+            for cls in REGISTERED_COLLECTORS:
+                if cls.name in collectors_to_restart:
+                    old_collector = app_state.collectors.get(cls.name)
+                    c = cls()
+                    # Transfer stateful fields so a config reload doesn't emit a
+                    # spurious job_start event (new instance initialises to NO_JOB).
+                    if old_collector is not None:
+                        if hasattr(old_collector, 'job_state') and hasattr(c, 'job_state'):
+                            c.job_state = old_collector.job_state
+                        if hasattr(c, '_bootstrapped'):
+                            c._bootstrapped = True  # skip bootstrap — state already known
+                    app_state.collectors[c.name] = c
+                    app_state.collector_tasks[c.name] = _start_collector_task(c)
+                    logger.info(f"Restarted collector: {c.name}")
+                else:
+                    logger.info(f"Collector unchanged, kept running: {cls.name}")
 
         logger.info("Configuration reload completed successfully!")
         return {
@@ -243,6 +396,7 @@ async def reload_configuration():
             "message": "Configuration reloaded successfully",
             "nodes_count": len(nodes),
             "jump_host_enabled": new_config.ssh.jump_host.enabled,
+            "collectors_restarted": list(collectors_to_restart),
         }
 
     except Exception as e:
@@ -287,94 +441,88 @@ def update_node_status(node: str, is_error: bool, error_type: str = 'unreachable
     return app_state.node_health_status[node]
 
 
-async def collect_metrics_loop():
-    """Background task to collect metrics periodically."""
-    logger.info("Starting metrics collection loop")
+class ConnectionManager:
+    """
+    WebSocket connection manager with per-client bounded queues.
+    Slow clients are disconnected instead of blocking the broadcast loop.
+    """
+    def __init__(self, max_queue_size: int = 64):
+        self._clients: dict[int, WebSocket] = {}
+        self._queues: dict[int, asyncio.Queue] = {}
+        self._send_tasks: dict[int, asyncio.Task] = {}
+        self._max_queue_size = max_queue_size
+        self._closing: set[int] = set()  # guard against concurrent double-close
 
-    while app_state.is_collecting:
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        client_id = id(websocket)
+        self._clients[client_id] = websocket
+        q: asyncio.Queue = asyncio.Queue(maxsize=self._max_queue_size)
+        self._queues[client_id] = q
+        self._send_tasks[client_id] = asyncio.create_task(
+            self._sender(client_id, websocket, q)
+        )
+
+    async def _sender(self, client_id: int, ws: WebSocket, queue: asyncio.Queue):
         try:
-            logger.info("Collecting metrics...")
-
-            # Collect GPU and NIC metrics with connection error handling
-            try:
-                gpu_metrics = await app_state.gpu_collector.collect_all_metrics(app_state.ssh_manager)
-                nic_metrics = await app_state.nic_collector.collect_all_metrics(app_state.ssh_manager)
-            except ConnectionError as e:
-                # Connection error during metrics collection - trigger immediate re-probe
-                logger.error(f"ConnectionError during metrics collection: {e}")
-                logger.info("Triggering immediate host re-probe...")
-
-                # Trigger immediate re-probe
-                if app_state.ssh_manager:
-                    changed = await asyncio.to_thread(app_state.ssh_manager.refresh_host_reachability)
-                    if changed:
-                        await asyncio.to_thread(app_state.ssh_manager.recreate_client)
-                        logger.info("SSH client recreated with updated reachable hosts")
-
-                # Continue to next iteration (skip this round)
-                logger.info("Skipping this metrics collection round, will retry next interval")
-                await asyncio.sleep(settings.polling.interval)
-                continue
-
-            # Package metrics
-            metrics_payload = {
-                "timestamp": gpu_metrics.get("timestamp") if isinstance(gpu_metrics, dict) else None,
-                "gpu": gpu_metrics if not isinstance(gpu_metrics, Exception) else {"error": str(gpu_metrics)},
-                "nic": nic_metrics if not isinstance(nic_metrics, Exception) else {"error": str(nic_metrics)},
-            }
-
-            # Update node status based on metrics collection success/failure
-            # Check each node and update failure counters
-            if isinstance(gpu_metrics, dict):
-                util_data = gpu_metrics.get("utilization", {})
-                for node in app_state.ssh_manager.host_list:
-                    has_error = False
-
-                    if node in util_data:
-                        node_data = util_data[node]
-                        if isinstance(node_data, dict) and 'error' in node_data:
-                            has_error = True
-
-                    # Update status with stability check (5 consecutive failures required)
-                    update_node_status(node, has_error, 'unreachable')
-
-            # Store in app state
-            app_state.latest_metrics = metrics_payload
-
-            # Broadcast to WebSocket clients
-            await broadcast_metrics(metrics_payload)
-
-            logger.info(f"Metrics collected successfully. {len(app_state.websocket_clients)} clients notified")
-
-        except asyncio.CancelledError:
-            logger.info("Metrics collection task cancelled")
-            raise
+            while True:
+                message = await queue.get()
+                await ws.send_json(message)
         except Exception as e:
-            logger.error(f"Error in metrics collection loop: {e}", exc_info=True)
+            logger.debug(f"WebSocket sender error for client {client_id}: {e}")
+        finally:
+            await self._remove(client_id)
 
-        # Wait for next interval
-        await asyncio.sleep(settings.polling.interval)
+    async def disconnect(self, websocket: WebSocket):
+        await self._remove(id(websocket))
 
-    logger.info("Metrics collection loop stopped")
+    async def _remove(self, client_id: int):
+        if client_id in self._closing:
+            return
+        self._closing.add(client_id)
+        try:
+            task = self._send_tasks.pop(client_id, None)
+            if task and not task.done():
+                task.cancel()
+            self._queues.pop(client_id, None)
+            ws = self._clients.pop(client_id, None)
+            if ws:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+        finally:
+            self._closing.discard(client_id)
+
+    def broadcast(self, message: dict):
+        """Non-blocking broadcast: enqueues to each client's queue."""
+        to_remove = []
+        for client_id, q in self._queues.items():
+            try:
+                q.put_nowait(message)
+            except asyncio.QueueFull:
+                logger.warning(f"WebSocket client {client_id} queue full — disconnecting")
+                to_remove.append(client_id)
+        for client_id in to_remove:
+            asyncio.create_task(self._remove(client_id))
+
+    @property
+    def client_count(self) -> int:
+        return len(self._clients)
+
+
+metrics_ws_manager = ConnectionManager()
+rccl_ws_manager = ConnectionManager()
 
 
 async def broadcast_metrics(metrics: dict):
-    """Broadcast metrics to all connected WebSocket clients."""
-    if not app_state.websocket_clients:
-        return
+    """Broadcast metrics to all connected WebSocket clients (non-blocking)."""
+    metrics_ws_manager.broadcast({"type": "metrics", "data": metrics})
 
-    disconnected_clients = []
 
-    for client in app_state.websocket_clients:
-        try:
-            await client.send_json({"type": "metrics", "data": metrics})
-        except Exception as e:
-            logger.warning(f"Failed to send metrics to client: {e}")
-            disconnected_clients.append(client)
-
-    # Remove disconnected clients
-    for client in disconnected_clients:
-        app_state.websocket_clients.remove(client)
+async def broadcast_rccl(snapshot: dict):
+    """Broadcast RCCL snapshot to /ws/rccl WebSocket clients (non-blocking)."""
+    rccl_ws_manager.broadcast({"type": "rccl_snapshot", "data": snapshot})
 
 
 async def periodic_host_probe():
@@ -391,7 +539,11 @@ async def periodic_host_probe():
 
     while app_state.is_collecting:
         try:
-            await asyncio.sleep(PROBE_INTERVAL)
+            try:
+                await asyncio.wait_for(app_state.probe_requested.wait(), timeout=300)
+                app_state.probe_requested.clear()
+            except asyncio.TimeoutError:
+                pass  # normal 5-minute periodic probe
 
             if not app_state.ssh_manager:
                 logger.debug("Skipping periodic probe - no SSH manager")
@@ -458,10 +610,13 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     logger.info("Starting CVS Cluster Monitor")
 
+    # Initialize probe_requested event (before collectors start)
+    app_state.probe_requested = asyncio.Event()
+
     # Load nodes from file
     nodes = settings.load_nodes_from_file()
 
-    # Initialize collectors (lightweight, no SSH needed)
+    # Also set legacy fields for backward-compat with existing API endpoints
     app_state.gpu_collector = GPUMetricsCollector()
     app_state.nic_collector = NICMetricsCollector()
     logger.info("Collectors initialized")
@@ -479,7 +634,7 @@ async def lifespan(app: FastAPI):
                 logger.info(f"Initializing with jump host: {settings.ssh.jump_host.host}")
                 logger.info(f"Jump Host Username: {settings.ssh.jump_host.username}")
                 logger.info(f"Cluster Nodes: {len(nodes)} nodes")
-                logger.info(f"Cluster Username: {settings.node_username_via_jumphost}")
+                logger.info(f"Cluster Username: {settings.ssh.jump_host.node_username}")
 
                 app_state.ssh_manager = JumpHostPssh(
                     jump_host=settings.ssh.jump_host.host,
@@ -487,8 +642,8 @@ async def lifespan(app: FastAPI):
                     jump_password=settings.ssh.jump_host.password,
                     jump_pkey=settings.ssh.jump_host.key_file if not settings.ssh.jump_host.password else None,
                     target_hosts=nodes,
-                    target_user=settings.node_username_via_jumphost,
-                    target_pkey=settings.node_key_file_on_jumphost,
+                    target_user=settings.ssh.jump_host.node_username,
+                    target_pkey=settings.ssh.jump_host.node_key_file,
                     max_parallel=min(len(nodes), 5),
                     timeout=settings.ssh.timeout,
                 )
@@ -509,31 +664,79 @@ async def lifespan(app: FastAPI):
                 )
                 logger.info("✅ Direct SSH manager initialized")
 
-            # Start metrics collection automatically if SSH manager initialized
-            if app_state.ssh_manager:
-                logger.info("Starting metrics collection and periodic probe...")
-                app_state.is_collecting = True
-                app_state.collection_task = asyncio.create_task(collect_metrics_loop())
-                app_state.probe_task = asyncio.create_task(periodic_host_probe())
-                logger.info("✅ Metrics collection started automatically")
-
         except Exception as e:
             logger.error(f"Failed to auto-initialize SSH manager: {e}", exc_info=True)
             logger.warning("Will wait for manual configuration via web UI")
+
+    # Initialize Redis (optional — app continues without it)
+    try:
+        redis_kwargs = {
+            "db": settings.storage.redis.db,
+            "decode_responses": True,
+        }
+        if settings.storage.redis.password:
+            redis_kwargs["password"] = settings.storage.redis.password
+        app_state.redis = aioredis.from_url(
+            settings.storage.redis.url,
+            **redis_kwargs,
+        )
+        await app_state.redis.ping()
+        logger.info(f"Redis connected: {settings.storage.redis.url}")
+    except Exception as e:
+        logger.warning(f"Redis unavailable: {e}. History features disabled.")
+        app_state.redis = None
+
+    # Initialize RCCL data store (uses app_state.redis, degrades if None)
+    from app.collectors.rccl_data_store import RCCLDataStore
+    app_state.rccl_data_store = RCCLDataStore(
+        app_state.redis,
+        snapshot_max=settings.storage.redis.snapshot_max_entries,
+        event_max=settings.storage.redis.event_max_entries,
+    )
+
+    # Start metrics collection using unified collector registry
+    if app_state.ssh_manager:
+        logger.info("Starting metrics collection (BaseCollector pattern)...")
+
+        # Pre-seed node_health_status so RCCL collector can pick a leader on its
+        # first poll cycle, before any GPU/NIC poll has completed.
+        startup_nodes = settings.load_nodes_from_file()
+        for node in startup_nodes:
+            if node not in app_state.node_health_status:
+                app_state.node_health_status[node] = "healthy"
+                app_state.node_failure_count[node] = 0
+
+        app_state.is_collecting = True
+
+        for cls in REGISTERED_COLLECTORS:
+            c = cls()
+            app_state.collectors[c.name] = c
+            app_state.collector_tasks[c.name] = _start_collector_task(c)
+
+        app_state.probe_task = asyncio.create_task(periodic_host_probe())
+        logger.info("✅ Metrics collection started")
 
     yield
 
     # Shutdown
     logger.info("Shutting down CVS Cluster Monitor")
 
-    # Stop metrics collection and periodic probe
+    # 1. Signal all background loops to stop accepting new work
     app_state.is_collecting = False
-    if app_state.collection_task:
-        app_state.collection_task.cancel()
-        try:
-            await app_state.collection_task
-        except asyncio.CancelledError:
-            pass
+
+    # 2. Cancel collector tasks.  Collectors call SSH inside asyncio.to_thread()
+    #    which cannot be interrupted once the thread has started.  Set client to
+    #    None first so any in-flight thread that finishes and tries to issue the
+    #    next SSH command gets the "no client" early-return rather than an
+    #    AttributeError after destroy_clients() deletes the attribute.
+    if app_state.ssh_manager:
+        app_state.ssh_manager.client = None  # type: ignore[assignment]
+
+    for task in app_state.collector_tasks.values():
+        task.cancel()
+    if app_state.collector_tasks:
+        await asyncio.gather(*app_state.collector_tasks.values(), return_exceptions=True)
+
     if app_state.probe_task:
         app_state.probe_task.cancel()
         try:
@@ -541,7 +744,11 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
-    # Close SSH connections
+    # 3. Close Redis
+    if app_state.redis:
+        await app_state.redis.aclose()
+
+    # 4. Destroy SSH connections (client already None, this cleans up port-forward state)
     if app_state.ssh_manager:
         app_state.ssh_manager.destroy_clients()
 
@@ -568,31 +775,23 @@ app.add_middleware(
 
 # WebSocket endpoint
 @app.websocket("/ws/metrics")
-async def websocket_metrics(websocket: WebSocket):
-    """WebSocket endpoint for real-time metrics streaming."""
-    await websocket.accept()
-    app_state.websocket_clients.append(websocket)
-    logger.info(f"WebSocket client connected. Total clients: {len(app_state.websocket_clients)}")
-
+async def websocket_endpoint(websocket: WebSocket):
+    await metrics_ws_manager.connect(websocket)
     try:
-        # Send initial metrics
-        if app_state.latest_metrics:
-            await websocket.send_json({"type": "metrics", "data": app_state.latest_metrics})
-
-        # Keep connection alive
         while True:
-            # Wait for client messages (ping/pong)
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_text("pong")
-
+            await websocket.receive_text()
     except WebSocketDisconnect:
-        logger.info("WebSocket client disconnected")
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-    finally:
-        if websocket in app_state.websocket_clients:
-            app_state.websocket_clients.remove(websocket)
+        await metrics_ws_manager.disconnect(websocket)
+
+
+@app.websocket("/ws/rccl")
+async def websocket_rccl(websocket: WebSocket):
+    await rccl_ws_manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        await rccl_ws_manager.disconnect(websocket)
 
 
 # Include API router FIRST (highest priority)
@@ -607,7 +806,7 @@ async def health():
         "status": "healthy",
         "ssh_manager": app_state.ssh_manager is not None,
         "collecting": app_state.is_collecting,
-        "clients": len(app_state.websocket_clients),
+        "clients": metrics_ws_manager.client_count,
     }
 
 
@@ -628,7 +827,7 @@ else:
             "name": settings.app_name,
             "version": "0.1.0",
             "status": "running",
-            "nodes": len(settings.nodes) if settings.nodes else 0,
+            "nodes": len(settings.load_nodes_from_file()),
             "collecting": app_state.is_collecting,
             "note": "Frontend not built. Run 'cd frontend && npm run build' to build the UI.",
         }

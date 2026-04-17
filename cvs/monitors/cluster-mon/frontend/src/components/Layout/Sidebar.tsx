@@ -1,8 +1,8 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Settings, Cpu, Network, Activity, Package, HardDrive, Share2, FileText } from 'lucide-react'
+import { LayoutDashboard, Settings, Cpu, Network, Activity, Package, HardDrive, Share2, FileText, Clock, GitFork, Zap } from 'lucide-react'
 import { cn } from '@/utils/cn'
 
-const navigation = [
+const mainNav = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Configuration', href: '/config', icon: Settings },
   { name: 'GPU Metrics', href: '/gpu-metrics', icon: Cpu },
@@ -12,6 +12,32 @@ const navigation = [
   { name: 'NIC SW', href: '/nic-software', icon: HardDrive },
   { name: 'Logs', href: '/logs', icon: FileText },
 ]
+
+const rcclNav = [
+  { name: 'RCCL Health', href: '/rccl-health', icon: Activity },
+  { name: 'RAS Topology', href: '/rccl-topology', icon: GitFork },
+  { name: 'Timeline', href: '/rccl-timeline', icon: Clock },
+  { name: 'Performance', href: '/rccl-performance', icon: Zap },
+]
+
+function NavItem({ name, href, icon: Icon }: { name: string; href: string; icon: React.ElementType }) {
+  return (
+    <NavLink
+      to={href}
+      className={({ isActive }) =>
+        cn(
+          'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
+          isActive
+            ? 'bg-blue-600 text-white'
+            : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+        )
+      }
+    >
+      <Icon className="h-5 w-5 shrink-0" />
+      <span className="font-medium">{name}</span>
+    </NavLink>
+  )
+}
 
 export function Sidebar() {
   return (
@@ -26,27 +52,13 @@ export function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-4 py-6 space-y-2">
-        {navigation.map((item) => {
-          const Icon = item.icon
-          return (
-            <NavLink
-              key={item.name}
-              to={item.href}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
-                  isActive
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                )
-              }
-            >
-              <Icon className="h-5 w-5" />
-              <span className="font-medium">{item.name}</span>
-            </NavLink>
-          )
-        })}
+      <nav className="flex-1 px-4 py-4 overflow-y-auto space-y-1">
+        {mainNav.map((item) => <NavItem key={item.href} {...item} />)}
+
+        <div className="pt-4 pb-1 px-4">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">RCCL</p>
+        </div>
+        {rcclNav.map((item) => <NavItem key={item.href} {...item} />)}
       </nav>
 
       {/* Footer */}

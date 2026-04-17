@@ -6,6 +6,18 @@ version: '3.8'
 # Option 2: Use network_mode: "host" (uncomment below)
 
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --appendfsync everysec --requirepass ${REDIS_PASSWORD:-cvs_cluster_mon}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-cvs_cluster_mon}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   cvs-cluster-monitor:
     build:
       context: .
@@ -14,7 +26,13 @@ services:
 
     # Network mode: Use "host" to avoid iptables issues (recommended for production)
     # Uncomment the line below and comment out the ports section
+    # NOTE: If using network_mode: "host", remove depends_on and set
+    #   STORAGE__REDIS__URL=redis://localhost:6379 instead.
     # network_mode: "host"
+
+    depends_on:
+      redis:
+        condition: service_healthy
 
     # Port mapping (used with bridge network, default)
     # Comment out if using network_mode: "host"
@@ -32,6 +50,9 @@ services:
       - DEBUG=${DEBUG:-false}
       # Cluster monitor home
       - CLUSTER_MONITOR_HOME=/app
+      # Redis connection (uses Docker service name as hostname)
+      - STORAGE__REDIS__URL=redis://redis:6379
+      - STORAGE__REDIS__PASSWORD=${REDIS_PASSWORD:-cvs_cluster_mon}
     restart: unless-stopped
     # Health check disabled - uncomment if needed
     # healthcheck:
@@ -40,3 +61,6 @@ services:
     #   timeout: 10s
     #   retries: 3
     #   start_period: 40s
+
+volumes:
+  redis_data:

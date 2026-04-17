@@ -9,6 +9,10 @@ from __future__ import print_function
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError
 
+import asyncio
+import socket
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 import time
 import logging
 import threading
@@ -20,6 +24,7 @@ from scp import SCPClient
 
 # TCP probe for fast reachability detection
 from app.core.host_probe import discover_reachable_hosts
+from app.core.ssh_port_forward import _run_bridge
 
 # Module-level logger
 logger = logging.getLogger(__name__)
@@ -78,9 +83,9 @@ class Pssh:
 
         # Add authentication
         if self.password is None:
-            print(self.reachable_hosts)
-            print(self.user)
-            print(self.pkey)
+            logger.debug(f"Reachable hosts: {self.reachable_hosts}")
+            logger.debug(f"SSH user: {self.user}")
+            logger.debug(f"SSH key: {self.pkey}")
             client_params['pkey'] = self.pkey
         else:
             client_params['password'] = self.password
@@ -112,6 +117,9 @@ class Pssh:
             f"Probe completed in {probe_duration:.2f}s: "
             f"{len(self.reachable_hosts)} reachable, {len(self.unreachable_hosts)} unreachable"
         )
+
+        self._pf_clients: dict[str, paramiko.SSHClient] = {}
+        self._pf_lock = threading.Lock()  # protects _pf_clients dict
 
         # Only create ParallelSSHClient with reachable hosts
         if not self.reachable_hosts:
@@ -258,7 +266,7 @@ class Pssh:
         ]
         unreachable = self.check_connectivity(failed_hosts)
         for host in unreachable:
-            print(f"Host {host} is unreachable, pruning from reachable hosts list.")
+            logger.info(f"Host {host} is unreachable, pruning from reachable hosts list.")
             self.unreachable_hosts.append(host)
             self.reachable_hosts.remove(host)
         if len(self.unreachable_hosts) > initial_unreachable_len:
@@ -296,22 +304,22 @@ class Pssh:
         cmd_output = {}
         i = 0
         for item in output:
-            print('#----------------------------------------------------------#')
-            print(f'Host == {item.host} ==')
-            print('#----------------------------------------------------------#')
+            logger.debug('#----------------------------------------------------------#')
+            logger.debug(f'Host == {item.host} ==')
+            logger.debug('#----------------------------------------------------------#')
             cmd_out_str = ''
             if cmd_list:
-                print(cmd_list[i])
+                logger.debug(cmd_list[i])
             else:
-                print(cmd)
+                logger.debug(cmd)
             try:
                 for line in item.stdout or []:
                     if print_console:
-                        print(line)
+                        logger.debug(line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
                 for line in item.stderr or []:
                     if print_console:
-                        print(line)
+                        logger.debug(line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
             except Timeout as e:
                 if not self.stop_on_errors:
@@ -323,7 +331,7 @@ class Pssh:
                 exc_str = exc_str.replace('\t', '   ')
                 if isinstance(item.exception, Timeout):
                     exc_str += "\nABORT: Timeout Error in Host: " + item.host
-                print(exc_str)
+                logger.debug(exc_str)
                 cmd_out_str += exc_str + '\n'
             if cmd_list:
                 i += 1
@@ -375,12 +383,18 @@ class Pssh:
         # CRITICAL: Acquire lock to prevent concurrent SSH operations
         # parallel-ssh/paramiko/libssh2 are NOT thread-safe
         with _ssh_lock:
+            # Re-check after acquiring the lock: destroy_clients() may have run
+            # while we were waiting, setting self.client = None.
+            if not self.client:
+                logger.info("SSH client destroyed before command could run (shutdown race) — skipping")
+                return {host: "ABORT: Host Unreachable Error" for host in self.host_list}
+
             logger.info(f"CVS Pssh executing: {cmd[:100]}...")
             logger.info(f"Calling ParallelSSHClient.run_command() on {len(self.reachable_hosts)} reachable nodes...")
             logger.info(f"  Timeout: {timeout if timeout else 'default'}")
             logger.info(f"  Stop on errors: {self.stop_on_errors}")
 
-            print(f'cmd = {cmd}')
+            logger.debug(f'cmd = {cmd}')
 
             try:
                 if timeout is None:
@@ -409,7 +423,7 @@ class Pssh:
         which runs the same command on all hosts.
         Returns a dictionary of host as key and command output as values
         """
-        print(cmd_list)
+        logger.debug(cmd_list)
         if timeout is None:
             output = self.client.run_command('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
         else:
@@ -420,7 +434,7 @@ class Pssh:
         return cmd_output
 
     def scp_file(self, local_file, remote_file, recurse=False):
-        print('About to copy local file {} to remote {} on all Hosts'.format(local_file, remote_file))
+        logger.info('About to copy local file {} to remote {} on all Hosts'.format(local_file, remote_file))
         cmds = self.client.copy_file(local_file, remote_file, recurse=recurse)
         self.client.pool.join()
         for cmd in cmds:
@@ -439,13 +453,98 @@ class Pssh:
         return self.unreachable_hosts.copy()
 
     def reboot_connections(self):
-        print('Rebooting Connections')
+        logger.info('Rebooting Connections')
         self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
 
+    def _get_pf_transport(self, node: str) -> paramiko.Transport:
+        """
+        Get or create a dedicated paramiko SSH client for port-forwarding to node.
+        Thread-safe. Separate from the pssh connection pool (which does not expose transports).
+
+        Security note: Uses AutoAddPolicy() (TOFU). See plan for hardening options.
+        """
+        with self._pf_lock:
+            client = self._pf_clients.get(node)
+            transport = client.get_transport() if client else None
+            if transport is None or not transport.is_active():
+                new_client = paramiko.SSHClient()
+                new_client.set_missing_host_key_policy(
+                    paramiko.AutoAddPolicy()
+                    # Security note: AutoAddPolicy() accepts any host key without
+                    # verification (TOFU). Production hardening: pre-distribute known
+                    # host keys via Ansible/Puppet and use RejectPolicy() + a
+                    # pre-populated known_hosts file, or use OpenSSH certificate auth.
+                )
+                new_client.connect(
+                    node,
+                    username=self.user,
+                    key_filename=self.pkey,
+                    password=self.password,
+                    timeout=self.timeout,
+                )
+                if client:
+                    try:
+                        client.close()  # close the stale connection before replacing
+                    except Exception:
+                        pass
+                self._pf_clients[node] = new_client
+            return self._pf_clients[node].get_transport()
+
+    @asynccontextmanager
+    async def open_port_forward(
+        self, node: str, remote_port: int
+    ) -> AsyncIterator[tuple]:
+        """
+        Open a single-hop SSH tunnel: monitoring_host -> node:remote_port.
+
+        Yields (asyncio.StreamReader, asyncio.StreamWriter) ready for asyncio use.
+        Uses a Unix socketpair() -- no ephemeral TCP port allocation, no TOCTOU race.
+        """
+        asyncio_end, thread_end = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            transport = await asyncio.to_thread(self._get_pf_transport, node)
+            channel = await asyncio.to_thread(
+                transport.open_channel,
+                "direct-tcpip",
+                ("::1", remote_port),
+                ("127.0.0.1", 0),
+            )
+        except Exception:
+            asyncio_end.close()
+            thread_end.close()
+            raise
+
+        _run_bridge(channel, thread_end)
+
+        try:
+            reader, writer = await asyncio.open_connection(sock=asyncio_end)
+        except Exception:
+            asyncio_end.close()
+            channel.close()
+            raise
+
+        try:
+            yield reader, writer
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            channel.close()
+            thread_end.close()
+
     def destroy_clients(self):
-        print('Destroying Current phdl connections ..')
-        if self.client:
-            del self.client
+        logger.info('Destroying Current phdl connections ..')
+        with _ssh_lock:
+            self.client = None  # set to None (not del) so exec() guard stays valid
+        with self._pf_lock:
+            for c in self._pf_clients.values():
+                try:
+                    c.close()
+                except Exception:
+                    pass
+            self._pf_clients.clear()
 
     async def exec_async(self, cmd, timeout=None, print_console=True):
         """

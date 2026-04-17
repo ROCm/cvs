@@ -7,13 +7,21 @@ import re
 import json
 import logging
 from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
+
+from app.collectors.base import BaseCollector, CollectorResult, CollectorState
+from app.core.config import settings as _settings
 
 logger = logging.getLogger(__name__)
 
 
-class NICMetricsCollector:
+class NICMetricsCollector(BaseCollector):
     """Collects NIC metrics via rdma, ethtool, and ip commands."""
+
+    name = "nic"
+    poll_interval: int = 60
+    collect_timeout: float = 48.0
+    critical = True
 
     async def collect_rdma_links(self, ssh_manager) -> Dict[str, Any]:
         """
@@ -33,7 +41,7 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting RDMA link info")
-        output = ssh_manager.exec("rdma link", timeout=60)
+        output = await ssh_manager.exec_async("rdma link", timeout=60)
 
         rdma_dict = {}
         for node, out_str in output.items():
@@ -82,7 +90,7 @@ class NICMetricsCollector:
         """
         logger.info("Collecting RDMA statistics (includes congestion control metrics)")
         # Use bash -c to properly handle shell redirection and || operator
-        output = ssh_manager.exec("bash -c 'rdma statistic show --json 2>/dev/null || echo \"{}\"'", timeout=60)
+        output = await ssh_manager.exec_async("bash -c 'rdma statistic show --json 2>/dev/null || echo \"{}\"'", timeout=60)
 
         logger.info(f"RDMA stats output received from {len(output)} nodes")
 
@@ -165,7 +173,7 @@ class NICMetricsCollector:
 
         # Run 'ip -s link' once per node to get all interface stats
         cmd = "ip -s link show"
-        output = ssh_manager.exec(cmd, timeout=60)
+        output = await ssh_manager.exec_async(cmd, timeout=60)
 
         eth_stats = {}
 
@@ -263,7 +271,7 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting IP address info")
-        output = ssh_manager.exec("bash -c 'ip addr show | grep -A 5 mtu --color=never'", timeout=60)
+        output = await ssh_manager.exec_async("bash -c 'ip addr show | grep -A 5 mtu --color=never'", timeout=60)
 
         ip_dict = {}
 
@@ -339,7 +347,7 @@ class NICMetricsCollector:
         """
         logger.info("Collecting LLDP info")
         # Use bash -c to properly handle shell redirection and || operator
-        output = ssh_manager.exec("bash -c 'sudo lldpctl -f json 2>/dev/null || echo \"{}\"'", timeout=60)
+        output = await ssh_manager.exec_async("bash -c 'sudo lldpctl -f json 2>/dev/null || echo \"{}\"'", timeout=60)
 
         lldp_dict = {}
         for node, out_str in output.items():
@@ -420,6 +428,26 @@ class NICMetricsCollector:
 
         return filtered_lldp
 
+    async def collect(self, ssh_manager) -> CollectorResult:
+        """BaseCollector interface. Calls collect_all_metrics() and wraps result."""
+        try:
+            metrics = await self.collect_all_metrics(ssh_manager)
+        except Exception as e:
+            return CollectorResult(
+                collector_name=self.name,
+                timestamp=CollectorResult.now_iso(),
+                state=CollectorState.ERROR,
+                data={},
+                error=str(e),
+            )
+
+        return CollectorResult(
+            collector_name=self.name,
+            timestamp=CollectorResult.now_iso(),
+            state=CollectorState.OK,
+            data=metrics if isinstance(metrics, dict) else {},
+        )
+
     async def collect_all_metrics(self, ssh_manager) -> Dict[str, Any]:
         """
         Collect all NIC metrics in parallel.
@@ -465,7 +493,7 @@ class NICMetricsCollector:
         filtered_lldp = self._filter_lldp_by_rdma(lldp_data, rdma_links_data)
 
         metrics = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
             "rdma_links": rdma_links_data,
             "rdma_stats": results[1] if not isinstance(results[1], Exception) else {},
             "rdma_resources": rdma_res,
@@ -490,7 +518,7 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting RDMA resources")
-        output = ssh_manager.exec("rdma res", timeout=60)
+        output = await ssh_manager.exec_async("rdma res", timeout=60)
 
         rdma_res = {}
         for node, out_str in output.items():
@@ -520,3 +548,7 @@ class NICMetricsCollector:
                     rdma_res[node][device] = resources
 
         return rdma_res
+
+
+NICMetricsCollector.poll_interval = _settings.polling.interval
+NICMetricsCollector.collect_timeout = _settings.polling.interval * 0.8
