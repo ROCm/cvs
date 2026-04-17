@@ -1,0 +1,147 @@
+<mxfile host="app.diagrams.net" modified="2026-04-16T15:50:00.000Z" agent="5.0" version="24.2.5" etag="REAL-TIME-MONITORING-FLOW" type="device">
+  <diagram name="Real-time Monitoring Flow" id="real-time-monitoring-flow">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- Title -->
+        <mxCell id="title" value="Real-time Monitoring Flow" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=1;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="350" y="30" width="300" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- Participants -->
+        <mxCell id="ui-frontend" value="UI Frontend" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="150" y="80" width="100" height="500" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="ui-backend" value="UI Backend" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="350" y="80" width="100" height="500" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="cvs-api" value="CVS API Server" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="550" y="80" width="100" height="500" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="cvs-cli" value="Python CVS CLI" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="750" y="80" width="100" height="500" as="geometry" />
+        </mxCell>
+        
+        <!-- Step 1: WebSocket connect frontend -->
+        <mxCell id="step1" value="1. WebSocket connect (session auth)" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="205" y="150" as="sourcePoint" />
+            <mxPoint x="395" y="150" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 2: WebSocket connect backend -->
+        <mxCell id="step2" value="2. WebSocket connect (JWT auth)" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="405" y="180" as="sourcePoint" />
+            <mxPoint x="595" y="180" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Real-time Updates Loop -->
+        <mxCell id="loop-start" value="Real-time Updates Loop" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#fff2cc;strokeColor=#d6b656;size=20;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="220" width="140" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Step 3: Log output -->
+        <mxCell id="step3" value="3. Log output" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="795" y="280" as="sourcePoint" />
+            <mxPoint x="605" y="280" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 4: WS log message -->
+        <mxCell id="step4" value="4. WS: log message" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="595" y="310" as="sourcePoint" />
+            <mxPoint x="405" y="310" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 5: Store important events -->
+        <mxCell id="step5" value="5. Store important events" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="400" y="340" as="sourcePoint" />
+            <Array as="points">
+              <mxPoint x="430" y="340" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 6: WS formatted message -->
+        <mxCell id="step6" value="6. WS: formatted message" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="395" y="370" as="sourcePoint" />
+            <mxPoint x="205" y="370" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 7: Update UI -->
+        <mxCell id="step7" value="7. Update UI" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="200" y="400" as="sourcePoint" />
+            <Array as="points">
+              <mxPoint x="230" y="400" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Test Completion Section -->
+        <mxCell id="completion-note" value="Test Completion" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#d5e8d4;strokeColor=#82b366;size=20;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="440" width="120" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Step 8: Test completion -->
+        <mxCell id="step8" value="8. Test completion" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="795" y="480" as="sourcePoint" />
+            <mxPoint x="605" y="480" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 9: WS completion status -->
+        <mxCell id="step9" value="9. WS: completion status" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="595" y="510" as="sourcePoint" />
+            <mxPoint x="405" y="510" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 10: Store final results -->
+        <mxCell id="step10" value="10. Store final results" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="400" y="540" as="sourcePoint" />
+            <Array as="points">
+              <mxPoint x="430" y="540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 11: WS test completed -->
+        <mxCell id="step11" value="11. WS: test completed" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="395" y="570" as="sourcePoint" />
+            <mxPoint x="205" y="570" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 12: Show final results -->
+        <mxCell id="step12" value="12. Show final results" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="200" y="600" as="sourcePoint" />
+            <Array as="points">
+              <mxPoint x="230" y="600" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
