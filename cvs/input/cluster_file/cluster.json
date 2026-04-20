@@ -12,6 +12,12 @@
     {
         "mgmt_ip": "{xx.xx.xx.xx|hostname}"
     },
+    "_env_vars_comment": "Custom env variables to be exported before executing each command",
+    "_env_vars_example":
+    {
+        "PATH": "/shared/apps/ubuntu/opt/rocm-7.11.0/bin:$PATH"
+    },
+    "env_vars": {},
     "node_dict":
     {
         "{xx.xx.xx.xx|hostname}":

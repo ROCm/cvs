@@ -119,8 +119,9 @@ def phdl(cluster_dict):
     Pssh: A handle to execute commands across all nodes.
     """
     print(cluster_dict)
+    env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], stop_on_errors=False)
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], stop_on_errors=False, env_vars=env_vars)
     return phdl
 
 

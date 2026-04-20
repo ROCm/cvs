@@ -15,6 +15,7 @@ import time
 import paramiko
 from paramiko import SSHClient
 from scp import SCPClient
+from cvs.lib.env_lib import build_env_prefix
 
 
 class Pssh:
@@ -27,7 +28,7 @@ class Pssh:
     """
 
     def __init__(
-        self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True
+        self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True, env_vars=None
     ):
         self.log = log
         self.host_list = host_list
@@ -38,6 +39,8 @@ class Pssh:
         self.host_key_check = host_key_check
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
+        self.env_prefix = build_env_prefix(env_vars)
+        self.log.debug(f"Environ vars: {self.env_prefix}")
 
         if self.password is None:
             print(self.reachable_hosts)
@@ -168,20 +171,25 @@ class Pssh:
         """
         Returns a dictionary of host as key and command output as values
         """
-        print(f'cmd = {cmd}')
+        if self.env_prefix:
+            full_cmd = f"{self.env_prefix} ; {cmd}"
+        else:
+            full_cmd = cmd
+
+        print(f'cmd = {full_cmd}')
 
         # Log command execution
         if self.log:
             if timeout is not None:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {cmd}")
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}")
             else:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {cmd}")
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
 
         if timeout is None:
-            output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors)
+            output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
         else:
-            output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
-        cmd_output = self._process_output(output, cmd=cmd, print_console=print_console)
+            output = self.client.run_command(full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
+        cmd_output = self._process_output(output, cmd=full_cmd, print_console=print_console)
 
         # Log per-host execution completion
         if self.log:
@@ -196,6 +204,11 @@ class Pssh:
         which runs the same command on all hosts.
         Returns a dictionary of host as key and command output as values
         """
+        if self.env_prefix:
+            cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
+        else:
+            cmd_list = cmd_list
+
         print(cmd_list)
 
         # Log command list execution

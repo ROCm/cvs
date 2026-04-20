@@ -177,8 +177,9 @@ def phdl(cluster_dict):
     """
 
     print(cluster_dict)
+    env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
     return phdl
 
 

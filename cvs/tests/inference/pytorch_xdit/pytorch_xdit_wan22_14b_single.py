@@ -251,6 +251,7 @@ def hf_token(inference_dict):
 def s_phdl(cluster_dict):
     """Create and return a command execution handle for all cluster nodes."""
     node_list = list(cluster_dict['node_dict'].keys())
+    env_vars = cluster_dict.get("env_vars")
 
     # Single-node mode: execute locally ONLY when the target actually refers to this machine.
     #
@@ -269,6 +270,7 @@ def s_phdl(cluster_dict):
             user=cluster_dict.get("username"),
             password=cluster_dict.get("password"),
             pkey=cluster_dict.get("priv_key_file"),
+            env_vars=env_vars,
         )
 
     log.info(f"Using parallel-ssh execution mode for {len(node_list)} node(s)")
@@ -278,6 +280,7 @@ def s_phdl(cluster_dict):
         user=cluster_dict.get('username'),
         password=cluster_dict.get('password'),
         pkey=cluster_dict.get('priv_key_file'),
+        env_vars=env_vars,
     )
 
 
