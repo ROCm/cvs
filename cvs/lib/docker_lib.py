@@ -5,8 +5,10 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import re
 import json
+import os
+import re
+import shlex
 import time
 
 from cvs.lib import globals
@@ -36,6 +38,22 @@ def check_if_docker_client_running(phdl):
     return True
 
 
+def nodes_missing_docker_image(phdl, image_ref):
+    """
+    Return host keys where `image_ref` is not present in the local Docker image store.
+
+    Uses `docker image inspect` so failures are fail-fast before an expensive `docker run`.
+    """
+    quoted = shlex.quote(image_ref)
+    cmd = f"docker image inspect {quoted} >/dev/null 2>&1 && echo IMG_OK || echo IMG_MISSING"
+    out = phdl.exec(cmd, print_console=False)
+    missing = []
+    for node, output in (out or {}).items():
+        if "IMG_OK" not in (output or ""):
+            missing.append(node)
+    return missing
+
+
 def killall_docker_containers(phdl):
     phdl.exec('docker kill $(docker ps -q)')
 
@@ -45,6 +63,22 @@ def kill_docker_container(phdl, container_name):
 
 
 def delete_all_containers_and_volumes(phdl):
+    """
+    Prune unused Docker objects on all target hosts.
+
+    This runs ``docker system prune --force`` (not ``-a``), but it can still remove
+    stopped containers and unused networks on shared nodes. Set environment variable
+    ``CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE`` to ``1``/``true``/``yes`` to skip this
+    step after the named benchmark container has been killed.
+    """
+    flag = (os.environ.get("CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE") or "").strip().lower()
+    if flag in ("1", "true", "yes", "on"):
+        log.info(
+            "Skipping docker system prune (CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=%s). "
+            "Named benchmark container was already stopped.",
+            os.environ.get("CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE"),
+        )
+        return
     # out_dict = phdl.exec('docker rm -vf $(docker ps -aq)')
     print('Deleting all containers and volumes')
     # out_dict = phdl.exec('docker system prune -a --volumes --force', timeout=60*10)

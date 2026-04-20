@@ -49,6 +49,30 @@ class Pssh:
                 self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
             )
 
+    def _recreate_parallel_client(self):
+        if self.password is None:
+            self.client = ParallelSSHClient(
+                self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30
+            )
+        else:
+            self.client = ParallelSSHClient(
+                self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+            )
+
+    def _run_command_with_session_retry(self, *args, **kwargs):
+        try:
+            return self.client.run_command(*args, **kwargs)
+        except SessionError as e:
+            if self.log:
+                # INFO: visible default operational evidence that the recovery path ran (GAP observability).
+                self.log.info(
+                    "ParallelSSH: SessionError on first attempt; recreating client and retrying once (%s).",
+                    e,
+                )
+                self.log.debug("ParallelSSH session retry detail", exc_info=True)
+            self._recreate_parallel_client()
+            return self.client.run_command(*args, **kwargs)
+
     def check_connectivity(self, hosts):
         """
         Check connectivity for a list of hosts using one ParallelSSHClient.
@@ -178,9 +202,11 @@ class Pssh:
                 self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {cmd}")
 
         if timeout is None:
-            output = self.client.run_command(cmd, stop_on_errors=self.stop_on_errors)
+            output = self._run_command_with_session_retry(cmd, stop_on_errors=self.stop_on_errors)
         else:
-            output = self.client.run_command(cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
+            output = self._run_command_with_session_retry(
+                cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors
+            )
         cmd_output = self._process_output(output, cmd=cmd, print_console=print_console)
 
         # Log per-host execution completion
@@ -206,9 +232,11 @@ class Pssh:
                 self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s)")
 
         if timeout is None:
-            output = self.client.run_command('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
+            output = self._run_command_with_session_retry(
+                '%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors
+            )
         else:
-            output = self.client.run_command(
+            output = self._run_command_with_session_retry(
                 '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors
             )
         cmd_output = self._process_output(output, cmd_list=cmd_list, print_console=print_console)

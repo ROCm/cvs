@@ -9,6 +9,7 @@ import re
 import os
 import sys
 import json
+import shlex
 
 import pytest
 from cvs.lib import globals
@@ -412,6 +413,63 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")
 
     return resolved_config
+
+
+def cluster_target_output_label(cluster_node_key: str) -> str:
+    """
+    Stable label for per-node benchmark output directories.
+
+    Uses the cluster ``node_dict`` key (the SSH target string) instead of the remote
+    ``hostname`` command, so the same node does not produce multiple output trees when
+    FQDN/short-name resolution drifts (for example ``.adc.amd.com`` vs ``.amd.com``).
+    """
+    if not cluster_node_key:
+        return "unknown_node"
+    return str(cluster_node_key).strip().replace("/", "_")
+
+
+def wan_hf_snapshot_offline_check_commands(snapshot_dir_host: str) -> dict:
+    """
+    Remote-shell checks for a Wan2.2 I2V-A14B-style Hugging Face snapshot (host path).
+
+    Each command prints OK on success and MISSING on failure. This catches the common
+    false positive where the snapshot directory exists while `hf download` is still
+    running or LFS pointer files were not fully materialized.
+
+    Intended for snapshots of `Wan-AI/Wan2.2-I2V-A14B` (and forks with the same tree).
+    Callers should only run these when `model_repo` is known to use this layout.
+    """
+    root = snapshot_dir_host.rstrip('/')
+    checks = {}
+
+    def ok_file(rel: str) -> str:
+        return f"test -f {shlex.quote(os.path.join(root, *rel.split('/')))} && echo OK || echo MISSING"
+
+    checks['configuration.json'] = ok_file('configuration.json')
+    checks['low_noise_model/config.json'] = ok_file('low_noise_model/config.json')
+    checks['high_noise_model/config.json'] = ok_file('high_noise_model/config.json')
+
+    low_dir = shlex.quote(os.path.join(root, 'low_noise_model'))
+    high_dir = shlex.quote(os.path.join(root, 'high_noise_model'))
+    checks['low_noise diffusion shards (6 x >500MiB)'] = (
+        f's=$(find {low_dir} -maxdepth 1 -type f -name "diffusion_pytorch_model-*.safetensors" '
+        f'-size +500M 2>/dev/null | wc -l); test "$s" -eq 6 && echo OK || echo MISSING'
+    )
+    checks['high_noise diffusion shards (6 x >500MiB)'] = (
+        f's=$(find {high_dir} -maxdepth 1 -type f -name "diffusion_pytorch_model-*.safetensors" '
+        f'-size +500M 2>/dev/null | wc -l); test "$s" -eq 6 && echo OK || echo MISSING'
+    )
+
+    vae = shlex.quote(os.path.join(root, 'Wan2.1_VAE.pth'))
+    t5 = shlex.quote(os.path.join(root, 'models_t5_umt5-xxl-enc-bf16.pth'))
+    checks['Wan2.1_VAE.pth (>100MiB, not pointer-only)'] = (
+        f"test -f {vae} && test -n \"$(find {vae} -size +100M 2>/dev/null)\" && echo OK || echo MISSING"
+    )
+    checks['models_t5_umt5-xxl-enc-bf16.pth (>1GiB, not pointer-only)'] = (
+        f"test -f {t5} && test -n \"$(find {t5} -size +1G 2>/dev/null)\" && echo OK || echo MISSING"
+    )
+
+    return checks
 
 
 def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, env_vars=None):

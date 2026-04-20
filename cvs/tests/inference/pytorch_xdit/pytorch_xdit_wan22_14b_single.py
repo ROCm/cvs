@@ -17,11 +17,13 @@ import subprocess
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
+    cluster_target_output_label,
     fail_test,
     update_test_result,
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
     resolve_test_config_placeholders,
+    wan_hf_snapshot_offline_check_commands,
 )
 from cvs.lib import docker_lib
 from cvs.lib import globals
@@ -130,7 +132,7 @@ def _redact_secrets(s: str) -> str:
     if not s:
         return s
     # Replace HF_TOKEN=<anything until space> with HF_TOKEN=<redacted>
-    return re.sub(r"(HF_TOKEN=)\\S+", r"\\1<redacted>", s)
+    return re.sub(r"(HF_TOKEN=)\S+", r"\1<redacted>", s)
 
 
 # =============================================================================
@@ -255,8 +257,8 @@ def s_phdl(cluster_dict):
     # Single-node mode: execute locally ONLY when the target actually refers to this machine.
     #
     # Rationale: users often specify a remote node IP/hostname in cluster.json even for a
-    # single-node run. Always forcing local execution will run benchmarks on the login node
-    # (no GPUs/ROCm) and silently "pass" until parsing fails.
+    # single-node run. Forcing local execution when the target is not this machine would run
+    # benchmarks without the remote node’s GPUs/ROCm and fail in confusing ways.
     if len(node_list) == 1:
         target = node_list[0]
         if _is_local_target(target):
@@ -357,6 +359,20 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
             update_test_result()
             return
 
+        # Align with HF snapshot checks for Wan2.2 I2V-A14B when staging via absolute path.
+        if "Wan2.2-I2V-A14B" in model_repo or "Wan2.2-I2V-A14B" in host_model_path:
+            for label, cmd in wan_hf_snapshot_offline_check_commands(host_model_path).items():
+                res = s_phdl.exec(cmd, print_console=False)
+                bad = [n for n, out in (res or {}).items() if "OK" not in (out or "")]
+                if bad:
+                    fail_test(
+                        "WAN local model directory looks incomplete (Wan2.2-I2V-A14B layout). "
+                        f"Check '{label}' failed on {len(bad)} node(s): {', '.join(bad)}. "
+                        f"Model path: {host_model_path}."
+                    )
+                    update_test_result()
+                    return
+
         inference_dict["_resolved_model_mount_host"] = host_model_path
         inference_dict["_resolved_ckpt_dir_container"] = "/model"
         log.info(f"Using local model path: {host_model_path} (mounted to /model in container) on all nodes")
@@ -389,6 +405,20 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
     inference_dict["_resolved_ckpt_dir_container"] = f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
     log.info(f"Using pre-cached snapshot: {inference_dict['_resolved_ckpt_dir_container']} on all nodes")
 
+    # Stronger offline checks for Wan2.2 I2V-A14B HF layout (avoids passing while download is partial).
+    if "Wan2.2-I2V-A14B" in model_repo:
+        for label, cmd in wan_hf_snapshot_offline_check_commands(snapshot_dir_host).items():
+            res = s_phdl.exec(cmd, print_console=False)
+            bad = [n for n, out in (res or {}).items() if "OK" not in (out or "")]
+            if bad:
+                fail_test(
+                    "WAN Hugging Face snapshot looks incomplete (or not a Wan2.2-I2V-A14B-style tree). "
+                    f"Check '{label}' failed on {len(bad)} node(s): {', '.join(bad)}. "
+                    f"Snapshot path: {snapshot_dir_host}. Wait for downloads to finish or fix hf_home / model_rev."
+                )
+                update_test_result()
+                return
+
     update_test_result()
 
 
@@ -396,13 +426,45 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     """
     Run WAN 2.2 I2V-A14B benchmark inside pytorch-xdit container on all nodes in parallel.
 
+    On success, verifies non-empty ``rank0_step*.json`` and ``video.mp4`` exist under each
+    node's output tree so a pass here is meaningful before the parse step (threshold checks).
+
     Executes torchrun with configured parameters and mounts:
     - HF cache to /hf_home
     - Output directory to /outputs
     """
     globals.error_list = []
 
+    # Preflight: same ROCm device check as FLUX — avoids messy container failures on non-GPU nodes.
+    log.info(f"Checking /dev/kfd on {len(s_phdl.host_list)} node(s)")
+    kfd_check = s_phdl.exec("test -e /dev/kfd && echo KFD_OK || echo KFD_MISSING", print_console=False)
+    missing_kfd_nodes = []
+    for node, output in kfd_check.items():
+        if "KFD_OK" not in (output or ""):
+            missing_kfd_nodes.append(node)
+            log.error(f"ROCm device node /dev/kfd not found on {node}")
+        else:
+            log.info(f"/dev/kfd found on {node}")
+
+    if missing_kfd_nodes:
+        fail_test(
+            f"ROCm device node /dev/kfd not found on {len(missing_kfd_nodes)} node(s): {', '.join(missing_kfd_nodes)}. "
+            f"This test requires ROCm GPU nodes with /dev/kfd on each target."
+        )
+        update_test_result()
+        return
+
     container_image = inference_dict['container_image']
+    missing_img_nodes = docker_lib.nodes_missing_docker_image(s_phdl, container_image)
+    if missing_img_nodes:
+        fail_test(
+            f"Container image not found locally on {len(missing_img_nodes)} node(s): {', '.join(missing_img_nodes)}. "
+            f"Configured image: {container_image}. Pull it on each target node before running this benchmark "
+            f"(for example: docker pull {container_image})."
+        )
+        update_test_result()
+        return
+
     container_name = inference_dict['container_name']
     hf_home = inference_dict['hf_home']
     output_base_dir = inference_dict['output_base_dir']
@@ -418,10 +480,13 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     compile_flag = "--compile" if wan_params['compile'] else ""
     torchrun_nproc = wan_params['torchrun_nproc']
 
-    # Get hostnames from all nodes
-    log.info(f"Getting hostnames from {len(s_phdl.host_list)} node(s)")
-    hostname_result = s_phdl.exec('hostname')
-    node_to_hostname = {node: hostname_result[node].strip() for node in s_phdl.host_list}
+    # Output dirs use cluster SSH targets (node_dict keys), not `hostname`, to avoid FQDN drift.
+    log.info(f"Resolving output directory labels for {len(s_phdl.host_list)} node(s)")
+    hostname_result = s_phdl.exec('hostname', print_console=False)
+    node_to_hostname = {node: (hostname_result.get(node, "") or "").strip() or node for node in s_phdl.host_list}
+    node_to_out_label = {node: cluster_target_output_label(node) for node in s_phdl.host_list}
+    for node in s_phdl.host_list:
+        log.info(f"Node {node}: output label '{node_to_out_label[node]}' (hostname: {node_to_hostname[node]})")
 
     # Prefer the resolved checkpoint dir computed in test_verify_hf_cache_or_download.
     ckpt_dir = inference_dict.get("_resolved_ckpt_dir_container")
@@ -472,8 +537,8 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     docker_cmds = []
 
     for node in s_phdl.host_list:
-        hostname = node_to_hostname[node]
-        output_dir = f"{output_base_dir}/wan_22_{hostname}_outputs"
+        out_label = node_to_out_label[node]
+        output_dir = f"{output_base_dir}/wan_22_{out_label}_outputs"
         outputs_dir = f"{output_dir}/outputs"
 
         # Create output directory command
@@ -508,7 +573,7 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
             f"{torchrun_cmd}"
         )
         docker_cmds.append(docker_cmd)
-        log.info(f"Node {node} ({hostname}) will write to: {output_dir}")
+        log.info(f"Node {node} will write to: {output_dir}")
 
     # Create output directories on all nodes in parallel
     log.info(f"Creating output directories on {len(s_phdl.host_list)} node(s)")
@@ -543,12 +608,37 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
 
         if failed_nodes:
             fail_test(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
+        else:
+            art_verify_cmds = []
+            for node in s_phdl.host_list:
+                outd = f"{output_base_dir}/wan_22_{node_to_out_label[node]}_outputs"
+                outq = shlex.quote(outd)
+                art_verify_cmds.append(
+                    f'jf=$(find {outq} -type f -name \'rank0_step*.json\' 2>/dev/null | head -1); '
+                    f'vf=$(find {outq} -type f -name \'video.mp4\' 2>/dev/null | head -1); '
+                    f'test -n "$jf" && test -s "$jf" && test -n "$vf" && test -s "$vf" '
+                    f"&& echo ART_OK || echo ART_MISSING"
+                )
+            art_res = s_phdl.exec_cmd_list(art_verify_cmds, print_console=False)
+            missing_art = [n for n, out in art_res.items() if "ART_OK" not in (out or "")]
+            if missing_art:
+                fail_test(
+                    f"Benchmark logs looked clean but expected artifacts were missing on {len(missing_art)} node(s): "
+                    f"{', '.join(missing_art)}. Expected at least one non-empty rank0_step*.json and non-empty "
+                    f"video.mp4 under each node's wan_22_<cluster_target>_outputs directory."
+                )
+            log.info(
+                "Run step verified: non-empty rank0_step*.json and video.mp4 present on all %s node(s).",
+                len(s_phdl.host_list),
+            )
 
     except Exception as e:
         fail_test(f"Benchmark execution failed with exception: {e}")
 
-    # Note: _test_output_dir is no longer set since we run on multiple nodes.
-    # The parsing test will use output_base_dir to find all wan_22_*_outputs directories.
+    # Single-node: pin the run output dir so parse does not depend on probing hostnames later.
+    if len(getattr(s_phdl, "host_list", []) or []) == 1:
+        only_node = s_phdl.host_list[0]
+        inference_dict["_test_output_dir"] = f"{output_base_dir}/wan_22_{node_to_out_label[only_node]}_outputs"
 
     update_test_result()
 
@@ -568,15 +658,13 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
 
     output_dir = inference_dict.get('_test_output_dir')
     if not output_dir:
-        # Allow running this test standalone by deriving the output directory
-        # from the configured output_base_dir and current hostname.
+        # Standalone parse: derive from cluster target keys (same as run step).
         try:
             head_node = s_phdl.host_list[0]
-            hostname_out = s_phdl.exec('hostname', print_console=False)
-            hostname = hostname_out.get(head_node, '').strip() or head_node
+            out_label = cluster_target_output_label(head_node)
             output_base_dir = inference_dict.get('output_base_dir')
             if output_base_dir:
-                output_dir = f"{output_base_dir}/wan_22_{hostname}_outputs"
+                output_dir = f"{output_base_dir}/wan_22_{out_label}_outputs"
                 log.info(f"Derived output directory: {output_dir}")
         except Exception:
             output_dir = None
@@ -598,15 +686,7 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
     agg, agg_errors = None, []
     if base_dir and node_count > 1:
         # Filter aggregation to the current nodes only (avoid mixing with stale dirs).
-        try:
-            hostnames = s_phdl.exec("hostname", print_console=False)
-            expected_dirnames = []
-            for _, hn in (hostnames or {}).items():
-                h = (hn or "").strip()
-                if h:
-                    expected_dirnames.append(f"wan_22_{h}_outputs")
-        except Exception:
-            expected_dirnames = []
+        expected_dirnames = [f"wan_22_{cluster_target_output_label(n)}_outputs" for n in s_phdl.host_list]
 
         agg, agg_errors = WanOutputParser.parse_runs_under_base_dir(
             base_dir=base_dir,

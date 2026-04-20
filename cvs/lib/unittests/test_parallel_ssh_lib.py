@@ -4,11 +4,12 @@ from cvs.lib.parallel_ssh_lib import Pssh
 
 
 class TestPsshExec(unittest.TestCase):
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
-    def setUp(self, mock_pssh_client):
+    def setUp(self):
+        self.patcher = patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+        self.mock_pssh_client = self.patcher.start()
+        self.addCleanup(self.patcher.stop)
         self.mock_client = MagicMock()
-        mock_pssh_client.return_value = self.mock_client
-        self.mock_pssh_client = mock_pssh_client
+        self.mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
         self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
@@ -36,6 +37,77 @@ class TestPsshExec(unittest.TestCase):
         self.assertIn("host2", result)
         self.assertIn("output1 line1", result["host1"])
         self.assertIn("output2 line1", result["host2"])
+
+    def test_exec_retries_once_on_session_error(self):
+        from pssh.exceptions import SessionError
+
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["ok1"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = ["ok2"]
+        mock_output2.stderr = []
+        mock_output2.exception = None
+
+        stale = SessionError("stale session")
+        self.mock_client.run_command.side_effect = [stale, [mock_output1, mock_output2]]
+
+        result = self.pssh.exec("echo hello")
+
+        self.assertEqual(self.mock_client.run_command.call_count, 2)
+        self.assertEqual(self.mock_pssh_client.call_count, 2)
+        self.assertIn("ok1", result["host1"])
+        self.assertIn("ok2", result["host2"])
+        self.mock_log.info.assert_any_call(
+            "ParallelSSH: SessionError on first attempt; recreating client and retrying once (%s).",
+            stale,
+        )
+        self.mock_log.debug.assert_any_call("ParallelSSH session retry detail", exc_info=True)
+
+    def test_exec_retries_once_on_session_error_with_timeout(self):
+        from pssh.exceptions import SessionError
+
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["ok"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = ["ok"]
+        mock_output2.stderr = []
+        mock_output2.exception = None
+
+        self.mock_client.run_command.side_effect = [
+            SessionError("stale session"),
+            [mock_output1, mock_output2],
+        ]
+
+        self.pssh.exec("slow_cmd", timeout=120)
+
+        self.assertEqual(self.mock_client.run_command.call_count, 2)
+        self.mock_client.run_command.assert_called_with(
+            "slow_cmd", read_timeout=120, stop_on_errors=True
+        )
+
+    def test_exec_propagates_session_error_after_failed_retry(self):
+        from pssh.exceptions import SessionError
+
+        self.mock_client.run_command.side_effect = [
+            SessionError("first"),
+            SessionError("second"),
+        ]
+
+        with self.assertRaises(SessionError) as cm:
+            self.pssh.exec("echo hello")
+
+        self.assertIn("second", str(cm.exception))
+        self.assertEqual(self.mock_client.run_command.call_count, 2)
 
     def test_exec_with_connection_error_stop_on_errors_true(self):
         # Test: Handle exceptions with stop_on_errors=True (default)
@@ -355,11 +427,12 @@ class TestPsshExec(unittest.TestCase):
 
 
 class TestPsshExecCmdList(unittest.TestCase):
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
-    def setUp(self, mock_pssh_client):
+    def setUp(self):
+        self.patcher = patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+        self.mock_pssh_client = self.patcher.start()
+        self.addCleanup(self.patcher.stop)
         self.mock_client = MagicMock()
-        mock_pssh_client.return_value = self.mock_client
-        self.mock_pssh_client = mock_pssh_client
+        self.mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
         self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
@@ -388,6 +461,49 @@ class TestPsshExecCmdList(unittest.TestCase):
         self.assertIn("host2", result)
         self.assertIn("host1", result["host1"])
         self.assertIn("host2", result["host2"])
+
+    def test_exec_cmd_list_retries_once_on_session_error(self):
+        from pssh.exceptions import SessionError
+
+        cmd_list = ["echo host1", "echo host2"]
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["h1"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = ["h2"]
+        mock_output2.stderr = []
+        mock_output2.exception = None
+
+        self.mock_client.run_command.side_effect = [
+            SessionError("stale session"),
+            [mock_output1, mock_output2],
+        ]
+
+        result = self.pssh.exec_cmd_list(cmd_list)
+
+        self.assertEqual(self.mock_client.run_command.call_count, 2)
+        self.assertEqual(self.mock_pssh_client.call_count, 2)
+        self.assertIn("h1", result["host1"])
+        self.assertIn("h2", result["host2"])
+
+    def test_exec_cmd_list_propagates_session_error_after_failed_retry(self):
+        from pssh.exceptions import SessionError
+
+        cmd_list = ["echo a", "echo b"]
+        self.mock_client.run_command.side_effect = [
+            SessionError("first"),
+            SessionError("second"),
+        ]
+
+        with self.assertRaises(SessionError) as cm:
+            self.pssh.exec_cmd_list(cmd_list)
+
+        self.assertIn("second", str(cm.exception))
+        self.assertEqual(self.mock_client.run_command.call_count, 2)
 
     @patch.object(Pssh, "check_connectivity")
     def test_exec_cmd_list_with_connection_error_stop_on_errors_false(self, mock_check_connectivity):
