@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from cvs.lib import host_sanitize
 from cvs.lib.parallel_ssh_lib import NoOpWrapper, Pssh
 from cvs.lib.runtime_config import parse_runtime
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
@@ -104,6 +105,15 @@ def test_cleanup_runtime(cluster_dict, runtime_cfg, phdl_host):
     for node in nodes:
         still_there = runtime_cfg.container_name in after.get(node, "")
         artifact["per_node"][node]["removed"] = not still_there
+
+    # P11: restore host sanitize state if it was applied.
+    if runtime_cfg.sanitize_host:
+        try:
+            restored = host_sanitize.restore_host(phdl_host)
+            artifact["sanitize_restored"] = restored
+        except Exception as exc:  # pragma: no cover - best-effort
+            log.warning("[P11] restore_host failed: %s", exc)
+            artifact["sanitize_restored"] = {"error": str(exc)}
 
     artifact["phase"] = "done"
     artifact["finished_at"] = _now_iso()
