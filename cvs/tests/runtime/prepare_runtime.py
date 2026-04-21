@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 import pytest
 
 from cvs.lib.arch_detect import detect_cluster_gfx_arch
+from cvs.lib.driver_recovery import verify_or_recover_driver
 from cvs.lib.parallel_ssh_lib import NoOpWrapper, Pssh, wrapper_for_cluster
 from cvs.lib.runtime_config import parse_runtime
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
@@ -189,15 +190,27 @@ def test_prepare_runtime(cluster_dict, runtime_cfg, phdl_host, phdl_container,
 
     # ---------- 1. preflight ----------
     log.info("[P6] preflight on %d node(s)", len(nodes))
-    out = phdl_host.exec(
-        "test -e /dev/kfd && cat /sys/module/amdgpu/initstate 2>&1", timeout=30
-    )
+    # P8: self-heal once via verify_or_recover_driver before failing. Picks up
+    # the common case where Conductor reservation refresh dropped amdgpu since
+    # the last session.
+    try:
+        recovery = verify_or_recover_driver(phdl_host)
+        for node in nodes:
+            if recovery.get(node, {}).get("attempted"):
+                log.info("[P6] self-healed amdgpu on %s via modprobe", node)
+        amdgpu_live_per_node = {n: r["after"] for n, r in recovery.items()}
+    except RuntimeError as e:
+        # All nodes attempted; some still dead -- record and continue to the
+        # explicit per-node check below so the artifact captures everything.
+        log.error("[P6] driver recovery failed: %s", e)
+        amdgpu_live_per_node = {n: False for n in nodes}
+
     for node in nodes:
-        ok = "live" in out.get(node, "")
+        ok = amdgpu_live_per_node.get(node, False)
         artifacts[node]["checks"]["amdgpu_live"] = ok
         if not ok:
             artifacts[node]["errors"].append(
-                "amdgpu kernel module not live or /dev/kfd missing -- run `sudo modprobe amdgpu`"
+                "amdgpu kernel module not live or /dev/kfd missing even after `sudo modprobe amdgpu`"
             )
 
     out = phdl_host.exec("ls /dev/dri/renderD* 2>/dev/null | wc -l", timeout=30)
