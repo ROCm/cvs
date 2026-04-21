@@ -189,7 +189,7 @@ def shdl(cluster_dict):
     node_list = list(cluster_dict['node_dict'].keys())
     env_vars = cluster_dict.get("env_vars")
     head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
+    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars, wrapper=wrapper_for_cluster(cluster_dict))
     return shdl
 
 
@@ -212,7 +212,7 @@ def phdl(cluster_dict):
     log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars, wrapper=wrapper_for_cluster(cluster_dict))
     return phdl
 
 
