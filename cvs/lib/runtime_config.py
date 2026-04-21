@@ -79,6 +79,7 @@ class RuntimeConfig:
     exclusivity: str = "warn"  # "warn" (default) or "strict"
     allowed_containers: List[str] = field(default_factory=list)
     sanitize_host: bool = False  # P11: opt-in host tuning (governor, drop_caches, perflevel)
+    noise_floor: Optional[Dict[str, object]] = None  # P12: see lib/noise_floor.py
 
     # ------------------------------------------------------------------
     # Convenience predicates
@@ -225,6 +226,28 @@ def parse_runtime(cluster_dict: Dict[str, Any]) -> RuntimeConfig:
             "cluster.json `runtime.sanitize_host` must be a boolean"
         )
 
+    noise_floor = raw.get("noise_floor")
+    if noise_floor is not None:
+        if not isinstance(noise_floor, dict):
+            raise RuntimeConfigError(
+                "cluster.json `runtime.noise_floor` must be an object"
+            )
+        nf_mode = noise_floor.get("mode", "warn")
+        if nf_mode not in ("warn", "strict"):
+            raise RuntimeConfigError(
+                f"cluster.json `runtime.noise_floor.mode` must be 'warn' or 'strict', got {nf_mode!r}"
+            )
+        if "iterations" in noise_floor and not isinstance(noise_floor["iterations"], int):
+            raise RuntimeConfigError(
+                "cluster.json `runtime.noise_floor.iterations` must be an int"
+            )
+        if "threshold_cv" in noise_floor and not isinstance(
+            noise_floor["threshold_cv"], (int, float)
+        ):
+            raise RuntimeConfigError(
+                "cluster.json `runtime.noise_floor.threshold_cv` must be a number"
+            )
+
     return RuntimeConfig(
         mode="docker",
         image=image,
@@ -237,4 +260,5 @@ def parse_runtime(cluster_dict: Dict[str, Any]) -> RuntimeConfig:
         exclusivity=exclusivity,
         allowed_containers=list(allowed_containers),
         sanitize_host=sanitize_host,
+        noise_floor=dict(noise_floor) if noise_floor is not None else None,
     )
