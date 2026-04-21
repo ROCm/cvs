@@ -35,7 +35,7 @@ import pytest
 
 from cvs.lib.arch_detect import detect_cluster_gfx_arch
 from cvs.lib.driver_recovery import verify_or_recover_driver
-from cvs.lib import host_sanitize
+from cvs.lib import host_sanitize, noise_floor
 from cvs.lib.exclusivity import (
     check_exclusivity,
     render_violations,
@@ -455,6 +455,45 @@ def test_prepare_runtime(cluster_dict, runtime_cfg, phdl_host, phdl_container,
     _per_install_smoke("install_transferbench",
                        "ls /opt/INSTALL/TransferBench/TransferBench 2>&1 | head -1",
                        "transferbench_path")
+
+    # ---------- 6. noise_floor probe (P12, opt-in) ----------
+    nf_cfg = runtime_cfg.noise_floor
+    if nf_cfg and "install_transferbench" in installs:
+        iters = int(nf_cfg.get("iterations", 5))
+        threshold_cv = float(nf_cfg.get("threshold_cv", 0.01))
+        nf_mode = str(nf_cfg.get("mode", "warn"))
+        log.info(
+            "[P12] noise_floor: iterations=%d threshold_cv=%.4f mode=%s",
+            iters, threshold_cv, nf_mode,
+        )
+        try:
+            nf_summary = noise_floor.measure_noise_floor(phdl_container, iterations=iters)
+            verdicts = noise_floor.evaluate_cv(nf_summary, threshold_cv)
+            for node in nodes:
+                artifacts[node]["noise_floor"] = {
+                    "iterations": iters,
+                    "threshold_cv": threshold_cv,
+                    "mode": nf_mode,
+                    "verdict": verdicts.get(node, "inconclusive"),
+                    **nf_summary.get(node, {}),
+                }
+            failed = [n for n, v in verdicts.items() if v == "fail"]
+            if failed:
+                msg = "; ".join(
+                    f"{n}: cv={nf_summary[n].get('cv'):.4f} > {threshold_cv:.4f}"
+                    for n in failed
+                )
+                if nf_mode == "strict":
+                    log.error("[P12] STRICT noise_floor failures: %s", msg)
+                    _abort(f"noise_floor (strict): {msg}")
+                else:
+                    log.warning("[P12] WARN noise_floor failures: %s", msg)
+            else:
+                log.info("[P12] noise_floor verdicts: %s", verdicts)
+        except Exception as exc:
+            log.warning("[P12] noise_floor probe failed (continuing): %s", exc)
+            for node in nodes:
+                artifacts[node].setdefault("noise_floor", {})["error"] = str(exc)
 
     # ---------- finalize ----------
     for node in nodes:
