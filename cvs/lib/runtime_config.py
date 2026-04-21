@@ -52,6 +52,7 @@ DEFAULT_INSTALLS_WITH_AGFHC: Sequence[str] = (
 )
 
 VALID_MODES = ("host", "docker")
+VALID_EXCLUSIVITY = ("warn", "strict")
 
 
 class RuntimeConfigError(ValueError):
@@ -75,6 +76,8 @@ class RuntimeConfig:
     agfhc_tarball: Optional[str] = None
     expected_gfx_arch: Optional[str] = None
     installs: Optional[List[str]] = None  # None => resolve via resolved_installs()
+    exclusivity: str = "warn"  # "warn" (default) or "strict"
+    allowed_containers: List[str] = field(default_factory=list)
 
     # ------------------------------------------------------------------
     # Convenience predicates
@@ -201,6 +204,20 @@ def parse_runtime(cluster_dict: Dict[str, Any]) -> RuntimeConfig:
                     "cluster.json `runtime.installs` entries must be strings starting with 'install_'"
                 )
 
+    exclusivity = raw.get("exclusivity", "warn")
+    if exclusivity not in VALID_EXCLUSIVITY:
+        raise RuntimeConfigError(
+            f"cluster.json `runtime.exclusivity` must be one of {VALID_EXCLUSIVITY}, got {exclusivity!r}"
+        )
+
+    allowed_containers = raw.get("allowed_containers", [])
+    if not isinstance(allowed_containers, list) or not all(
+        isinstance(x, str) for x in allowed_containers
+    ):
+        raise RuntimeConfigError(
+            "cluster.json `runtime.allowed_containers` must be a list of strings"
+        )
+
     return RuntimeConfig(
         mode="docker",
         image=image,
@@ -210,4 +227,6 @@ def parse_runtime(cluster_dict: Dict[str, Any]) -> RuntimeConfig:
         agfhc_tarball=agfhc_tarball,
         expected_gfx_arch=expected_gfx_arch,
         installs=list(installs) if installs is not None else None,
+        exclusivity=exclusivity,
+        allowed_containers=list(allowed_containers),
     )
