@@ -1,0 +1,50 @@
+# Spike substrate image -- validates the P5 production-image model.
+#
+# Goal: prove the install-via-CVS pattern works.
+# This image deliberately ships ONLY the substrate (ROCm + build prereqs +
+# python deps + ibverbs runtime + numactl + sudo). It does NOT bundle
+# TransferBench, RVS, AGFHC, or ibperf-tools -- those are installed at
+# prepare_runtime time via `cvs run install_*` in docker mode.
+#
+# Built on the public rocm/dev-ubuntu base (same as the original spike).
+# Production P5 image will swap this for a TheRock dist tarball.
+
+ARG ROCM_BASE_TAG=latest
+FROM rocm/dev-ubuntu-22.04:${ROCM_BASE_TAG}
+
+# Substrate apt deps for every install_* CVS script:
+#   install_rvs:           cmake, build-essential, git, libpci3, libpci-dev,
+#                          doxygen, libyaml-cpp-dev, rocblas, rocm-smi-lib,
+#                          rocrand (CVS install_rvs misses rocrand -- bake it)
+#   install_transferbench: git, build-essential (uses TheRock's hipcc)
+#   install_ibperf_tools:  git, autoconf, automake, libtool, pkg-config,
+#                          libibverbs-dev, librdmacm-dev, ibverbs-providers,
+#                          rdma-core, libibumad-dev
+#   install_agfhc:         python3, pyyaml, psutil, libnuma1, numactl
+#                          (also needs --rocm-tar workaround at install time)
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates \
+        sudo openssh-client \
+        cmake build-essential pkg-config \
+        git \
+        pciutils kmod \
+        libnuma1 numactl \
+        python3 python3-pip \
+        libpci3 libpci-dev doxygen libyaml-cpp-dev \
+        libibverbs1 librdmacm1 libibumad3 \
+        libibverbs-dev librdmacm-dev libibumad-dev ibverbs-providers rdma-core \
+        autoconf automake libtool \
+        rocrand \
+ && pip3 install --no-cache-dir --break-system-packages pyyaml psutil 2>/dev/null \
+ || pip3 install --no-cache-dir pyyaml psutil \
+ && rm -rf /var/lib/apt/lists/*
+
+# AGFHC compatibility shim: AGFHC reads /opt/rocm/.info/version-utils via cat;
+# TheRock and rocm/dev base ship .info/version but not version-utils.
+RUN cp /opt/rocm/.info/version /opt/rocm/.info/version-utils
+
+# AGFHC will install into /opt/amd/agfhc/ at runtime via install_agfhc.
+RUN mkdir -p /opt/amd/agfhc
+
+CMD ["sleep", "infinity"]
