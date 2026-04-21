@@ -34,13 +34,82 @@ from cvs.lib.env_lib import build_env_prefix
 #   * Strip a leading `sudo ` -- the spike container runs as root.
 #   * Wrap exec AND exec_cmd_list (symmetry); do NOT wrap scp_file,
 #     reboot_connections, destroy_clients (not shell commands).
-def _maybe_docker_wrap(cmd):
-    """Return cmd unchanged unless CVS_DOCKER_CONTAINER is set; then wrap."""
-    container = os.environ.get("CVS_DOCKER_CONTAINER", "").strip()
-    if not container:
+class CommandWrapper:
+    """Abstract base: transforms a shell command string before it is sent.
+
+    P4 indirection that lets host mode (NoOpWrapper) preserve byte-exact
+    behavior while docker mode (DockerExecWrapper) transparently re-routes
+    every command into a remote container.
+    """
+
+    def wrap(self, cmd):
+        raise NotImplementedError
+
+
+class NoOpWrapper(CommandWrapper):
+    """Identity wrapper. Default for host mode."""
+
+    def wrap(self, cmd):
         return cmd
-    cmd = re.sub(r'^\s*sudo\s+', '', cmd)
-    return f"docker exec {container} bash -lc {shlex.quote(cmd)}"
+
+
+class DockerExecWrapper(CommandWrapper):
+    """Wrap commands as `docker exec [-e K=V ...] <container_name> bash -lc <cmd>`.
+
+    `container_envs` is a mapping of env vars to forward via `-e`. A leading
+    `sudo ` is stripped because the container is expected to run as root.
+    """
+
+    def __init__(self, container_name, container_envs=None):
+        if not container_name or not isinstance(container_name, str):
+            raise ValueError("DockerExecWrapper requires a non-empty container_name")
+        self.container_name = container_name
+        self.container_envs = dict(container_envs or {})
+
+    def wrap(self, cmd):
+        cmd = re.sub(r'^\s*sudo\s+', '', cmd)
+        env_args = " ".join(
+            f"-e {shlex.quote(k)}={shlex.quote(v)}"
+            for k, v in self.container_envs.items()
+        )
+        prefix = "docker exec"
+        if env_args:
+            prefix = f"{prefix} {env_args}"
+        return f"{prefix} {self.container_name} bash -lc {shlex.quote(cmd)}"
+
+
+def wrapper_for_cluster(cluster_dict):
+    """Build a CommandWrapper from a parsed cluster.json dict.
+
+    Reads the optional `runtime` block via cvs.lib.runtime_config.parse_runtime
+    and returns the matching wrapper. Cluster files without a `runtime` block
+    return a NoOpWrapper, preserving host-mode behavior.
+    """
+    # Local import keeps parallel_ssh_lib import-order tolerant: runtime_config
+    # depends on nothing in this module.
+    from cvs.lib.runtime_config import parse_runtime
+
+    cfg = parse_runtime(cluster_dict)
+    if cfg.is_docker():
+        return DockerExecWrapper(cfg.container_name, cfg.container_envs)
+    return NoOpWrapper()
+
+
+def _resolve_default_wrapper():
+    """Pssh.__init__ fallback when no explicit wrapper is given.
+
+    Honors the CVS_DOCKER_CONTAINER env var (P1 spike behavior, preserved for
+    backward compatibility) before defaulting to NoOpWrapper.
+    """
+    container = os.environ.get("CVS_DOCKER_CONTAINER", "").strip()
+    if container:
+        return DockerExecWrapper(container)
+    return NoOpWrapper()
+
+
+def _maybe_docker_wrap(cmd):
+    """Deprecated P1 shim. New code should use CommandWrapper."""
+    return _resolve_default_wrapper().wrap(cmd)
 
 
 class Pssh:
@@ -62,6 +131,7 @@ class Pssh:
         host_key_check=False,
         stop_on_errors=True,
         env_vars=None,
+        wrapper=None,
     ):
         self.log = log
         self.host_list = host_list
@@ -73,6 +143,10 @@ class Pssh:
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
         self.env_prefix = build_env_prefix(env_vars)
+        # P4: command-wrapping indirection. Default (None) resolves to NoOp
+        # unless CVS_DOCKER_CONTAINER is set (P1 spike fallback). Fixtures
+        # that load cluster.json should pass `wrapper=wrapper_for_cluster(d)`.
+        self.wrapper = wrapper if wrapper is not None else _resolve_default_wrapper()
         self.log.debug(f"Environ vars: {self.env_prefix}")
 
         if self.password is None:
@@ -209,10 +283,11 @@ class Pssh:
         else:
             full_cmd = cmd
 
-        # P1: optional docker exec wrap (no-op when CVS_DOCKER_CONTAINER unset).
-        # Composition: env_prefix is applied INSIDE the wrap so the container's
-        # shell sees it as part of the bash -lc payload.
-        full_cmd = _maybe_docker_wrap(full_cmd)
+        # P4: route through the configured CommandWrapper. Default is NoOp
+        # (host mode, byte-identical to today). Composition: env_prefix is
+        # applied INSIDE the wrap so the container shell sees it as part of
+        # the bash -lc payload.
+        full_cmd = self.wrapper.wrap(full_cmd)
 
         self.log.info(f'cmd = {full_cmd}')
 
@@ -249,8 +324,8 @@ class Pssh:
         else:
             cmd_list = cmd_list
 
-        # P1: same docker exec wrap as exec(), applied per command.
-        cmd_list = [_maybe_docker_wrap(c) for c in cmd_list]
+        # P4: same wrap as exec(), applied per command.
+        cmd_list = [self.wrapper.wrap(c) for c in cmd_list]
 
         self.log.info("%s", cmd_list)
 
