@@ -120,6 +120,36 @@ COPY cvs/ /opt/cvs/
 # --- AGFHC install dir (empty until install_agfhc populates it) -------
 RUN mkdir -p /opt/amd/agfhc
 
+# --- P13: sshd-in-image (multi-node MPI bootstrap) --------------------
+# rccl-tests / multi-node MPI launchers need SSH access INTO the
+# CVS-runner container on every rank's node. Hosts already run sshd on :22,
+# so we expose an in-container sshd on :2222 (host-network mode means this
+# is reachable via <hostname>:2222 from any peer). Ephemeral keys are
+# pushed at prepare_runtime time -- the image ships only sshd config.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        openssh-server \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /var/run/sshd /root/.ssh \
+ && chmod 700 /root/.ssh \
+ && sed -i 's/^#\?Port .*/Port 2222/'                                /etc/ssh/sshd_config \
+ && sed -i 's/^#\?PermitRootLogin .*/PermitRootLogin yes/'           /etc/ssh/sshd_config \
+ && sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config \
+ && sed -i 's@^#\?AuthorizedKeysFile .*@AuthorizedKeysFile /root/.ssh/authorized_keys@' /etc/ssh/sshd_config \
+ && ssh-keygen -A
+EXPOSE 2222
+
+# --- P13: container entrypoint ----------------------------------------
+# Start sshd in foreground; sleep keeps the container alive if sshd exits
+# cleanly. Backwards compatible: docker exec still works for non-MPI tests.
+RUN printf '%s\n' \
+        '#!/bin/sh' \
+        'set -e' \
+        '/usr/sbin/sshd' \
+        'exec sleep infinity' \
+        > /usr/local/bin/cvs-runner-entrypoint.sh \
+ && chmod +x /usr/local/bin/cvs-runner-entrypoint.sh
+
 # --- Manifest ----------------------------------------------------------
 # P6 reads this for arch validation and threads OFFLOAD_ARCHES into
 # install_transferbench/install_rvs as their GPU_TARGETS.
@@ -128,4 +158,4 @@ RUN ROCM_VER="$(cat /opt/rocm/.info/version 2>/dev/null || echo unknown)" \
         "${OFFLOAD_ARCHES}" "${ROCM_VER}" "$(date -u +%FT%TZ)" \
         > /etc/cvs-runner-manifest.json
 
-CMD ["sleep", "infinity"]
+CMD ["/usr/local/bin/cvs-runner-entrypoint.sh"]
