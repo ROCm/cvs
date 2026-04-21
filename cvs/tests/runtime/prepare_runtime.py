@@ -35,6 +35,11 @@ import pytest
 
 from cvs.lib.arch_detect import detect_cluster_gfx_arch
 from cvs.lib.driver_recovery import verify_or_recover_driver
+from cvs.lib.exclusivity import (
+    check_exclusivity,
+    render_violations,
+    violation_count,
+)
 from cvs.lib.parallel_ssh_lib import NoOpWrapper, Pssh, wrapper_for_cluster
 from cvs.lib.runtime_config import parse_runtime
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
@@ -233,6 +238,27 @@ def test_prepare_runtime(cluster_dict, runtime_cfg, phdl_host, phdl_container,
     failed_nodes = [n for n in nodes if artifacts[n]["errors"]]
     if failed_nodes:
         _abort(f"preflight failed on: {failed_nodes}; see /tmp/cvs/prepare_runtime/<host>.json")
+
+    # ---------- 1b. exclusivity check (P10) ----------
+    log.info("[P10] exclusivity check (mode=%s)", runtime_cfg.exclusivity)
+    excl_summary = check_exclusivity(phdl_host, runtime_cfg)
+    n_violations = violation_count(excl_summary)
+    for node in nodes:
+        artifacts[node]["exclusivity"] = {
+            "mode": runtime_cfg.exclusivity,
+            "stray_containers": excl_summary["stray_containers"].get(node, []),
+            "kfd_holders": excl_summary["kfd_holders"].get(node, []),
+            "reserved_ports": excl_summary["reserved_ports"].get(node, []),
+        }
+    if n_violations:
+        msg = render_violations(excl_summary)
+        if runtime_cfg.exclusivity == "strict":
+            log.error("[P10] STRICT exclusivity violations: %s", msg)
+            _abort(f"exclusivity (strict): {msg}")
+        else:
+            log.warning("[P10] WARN exclusivity violations: %s", msg)
+    else:
+        log.info("[P10] exclusivity: clean (no violations)")
 
     # ---------- 2. image_stage ----------
     log.info("[P6] image_stage runtime.image=%s ensure=%s",
