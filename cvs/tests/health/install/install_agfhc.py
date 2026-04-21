@@ -173,7 +173,13 @@ def test_install_agfhc(
 
     # install the untarred file
     try:
-        out_dict = hdl.exec(f'cd {install_dir};sudo ./install', timeout=90)
+        # P7: use --rocm-tar so AGFHC's installer uses dpkg-deb -x (direct
+        # extraction) instead of apt-based dependency resolution. This works
+        # whether or not ROCm is apt-managed -- so it's a strict improvement
+        # for both bare-metal TheRock users (who otherwise hit unmet-deps
+        # errors per cvs-config-gen skill) and docker-mode users (whose
+        # container's apt sources don't have rocblas/rocm-smi/etc.).
+        out_dict = hdl.exec(f'cd {install_dir};sudo ./install --rocm-tar', timeout=90)
         for node in out_dict.keys():
             log.info("%s", out_dict[node])
             if re.search('Error|No such file', out_dict[node], re.I):
