@@ -135,16 +135,26 @@ def hf_token(inference_dict):
 @pytest.fixture(scope="module")
 def p_phdl(cluster_dict, inference_dict):
     print(cluster_dict)
+    env_vars = cluster_dict.get("env_vars")
     p_phdl = Pssh(
-        log, inference_dict['prefill_node_list'], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file']
+        log,
+        inference_dict['prefill_node_list'],
+        user=cluster_dict['username'],
+        pkey=cluster_dict['priv_key_file'],
+        env_vars=env_vars,
     )
     return p_phdl
 
 
 @pytest.fixture(scope="module")
 def d_phdl(cluster_dict, inference_dict):
+    env_vars = cluster_dict.get("env_vars")
     d_phdl = Pssh(
-        log, inference_dict['decode_node_list'], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file']
+        log,
+        inference_dict['decode_node_list'],
+        user=cluster_dict['username'],
+        pkey=cluster_dict['priv_key_file'],
+        env_vars=env_vars,
     )
     return d_phdl
 
@@ -152,16 +162,18 @@ def d_phdl(cluster_dict, inference_dict):
 @pytest.fixture(scope="module")
 def r_phdl(cluster_dict, inference_dict):
     node_list = []
+    env_vars = cluster_dict.get("env_vars")
     node_list.append(inference_dict['proxy_router_node'])
-    r_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    r_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
     return r_phdl
 
 
 @pytest.fixture(scope="module")
 def b_phdl(cluster_dict, inference_dict):
     node_list = []
+    env_vars = cluster_dict.get("env_vars")
     node_list.append(inference_dict['benchmark_serv_node'])
-    b_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
+    b_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
     return b_phdl
 
 
