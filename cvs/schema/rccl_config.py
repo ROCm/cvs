@@ -9,9 +9,12 @@ Placeholders must be resolved on the raw dict before model_validate (see load_rc
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import re
+from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
+
+_VARIANT_NAME_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
 
 
 def format_rccl_config_validation_error(err: ValidationError) -> str:
@@ -100,6 +103,137 @@ class RcclRunInput(BaseModel):
         if self.num_ranks % self.ranks_per_node != 0:
             raise ValueError("rccl.run.num_ranks must be divisible by rccl.run.ranks_per_node")
         return self
+
+
+def collective_basename(value: str) -> str:
+    """Normalize and validate a single rccl-tests collective name (basename only)."""
+    s = str(value).strip()
+    if not s:
+        raise ValueError("must be a non-empty string")
+    if "/" in s or "\\" in s:
+        raise ValueError(f"must be a basename only (no path separators): {s!r}")
+    return s
+
+
+class RcclMatrixVariantCase(BaseModel):
+    """One entry in ``matrix.cases`` when ``kind`` is ``variants``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    env: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name_required(cls, v: Any) -> str:
+        if v is None:
+            raise ValueError("must not be null")
+        s = str(v).strip()
+        if not s:
+            raise ValueError("must be a non-empty string")
+        return s
+
+    @field_validator("name")
+    @classmethod
+    def _name_pattern(cls, v: str) -> str:
+        if not _VARIANT_NAME_RE.fullmatch(v):
+            raise ValueError(rf"name must match {_VARIANT_NAME_RE.pattern}")
+        return v
+
+    @field_validator("env", mode="before")
+    @classmethod
+    def _env_string_map(cls, v: Any) -> dict[str, str]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError("env must be an object with string keys and string values")
+        out: dict[str, str] = {}
+        for raw_k, raw_val in v.items():
+            sk = str(raw_k).strip()
+            if not sk:
+                raise ValueError("env keys must be non-empty strings")
+            if "=" in sk:
+                raise ValueError(f"env variable name must not contain '=': {sk!r}")
+            if raw_val is None:
+                raise ValueError(f"env[{sk!r}] must be a string")
+            sv = str(raw_val).strip()
+            if not sv:
+                raise ValueError(f"env[{sk!r}] must be a non-empty string")
+            out[sk] = sv
+        return out
+
+
+class RcclMatrixVariants(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["variants"]
+    cases: list[RcclMatrixVariantCase] = Field(min_length=1)
+
+
+class RcclMatrixCartesian(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["cartesian"]
+    dimensions: dict[str, list[str]]
+
+    @field_validator("dimensions", mode="before")
+    @classmethod
+    def _dimensions_is_nonempty_object(cls, v: Any) -> Any:
+        if not isinstance(v, dict):
+            raise ValueError("dimensions must be an object")
+        if len(v) == 0:
+            raise ValueError("dimensions must be non-empty")
+        return v
+
+    @field_validator("dimensions", mode="after")
+    @classmethod
+    def _validate_dimensions(cls, dims: dict[str, list[str]]) -> dict[str, list[str]]:
+        new_dims: dict[str, list[str]] = {}
+        for key, vals in dims.items():
+            if key == "collective":
+                pass
+            elif key == "datatype":
+                pass
+            elif key.startswith("env."):
+                var = key[4:].strip()
+                if not var:
+                    raise ValueError("matrix.dimensions: env.<VAR> requires a non-empty variable name")
+                if "=" in var:
+                    raise ValueError(
+                        f"matrix.dimensions: invalid env dimension key {key!r} (variable name must not contain '=')"
+                    )
+            else:
+                raise ValueError(
+                    f"matrix.dimensions: invalid key {key!r}; allowed: 'collective', 'datatype', or 'env.<VAR>'"
+                )
+
+            if len(vals) == 0:
+                raise ValueError(f"matrix.dimensions[{key!r}] must be a non-empty array")
+            normalized: list[str] = []
+            for item in vals:
+                s = str(item).strip()
+                if not s:
+                    raise ValueError(f"matrix.dimensions[{key!r}] entries must be non-empty strings")
+                if key == "collective":
+                    normalized.append(collective_basename(s))
+                else:
+                    normalized.append(s)
+            new_dims[key] = normalized
+
+        return new_dims
+
+
+RcclMatrixInput = Annotated[Union[RcclMatrixVariants, RcclMatrixCartesian], Field(discriminator="kind")]
+
+
+def threshold_collective_names(run: RcclRunInput, matrix: RcclMatrixInput | None) -> set[str]:
+    """Collective names that may appear after matrix expansion, for threshold key validation."""
+    if matrix is None or isinstance(matrix, RcclMatrixVariants):
+        return set(run.collectives)
+    assert isinstance(matrix, RcclMatrixCartesian)
+    if "collective" in matrix.dimensions:
+        return set(matrix.dimensions["collective"])
+    return set(run.collectives)
 
 
 class RcclInlineCollectiveThresholds(BaseModel):
@@ -230,24 +364,21 @@ class RcclNestedConfig(BaseModel):
     run: RcclRunInput
     validation: RcclValidationInput
     artifacts: RcclArtifactsInput
-    matrix: Optional[dict[str, Any]] = None
+    matrix: Optional[RcclMatrixInput] = None
 
     @model_validator(mode="after")
     def _inline_threshold_keys_match_collectives(self) -> RcclNestedConfig:
         if not self.validation.thresholds:
             return self
-        collective_set = set(self.run.collectives)
+        collective_set = threshold_collective_names(self.run, self.matrix)
         for key in self.validation.thresholds:
             if not key or not str(key).strip():
                 raise ValueError("rccl.validation.thresholds: collective keys must be non-empty strings")
             if key not in collective_set:
-                raise ValueError(f"rccl.validation: threshold key {key!r} is not listed in rccl.run.collectives")
-        return self
-
-    @model_validator(mode="after")
-    def _matrix_not_implemented(self) -> RcclNestedConfig:
-        if self.matrix is not None and self.matrix != {}:
-            raise ValueError("rccl.matrix is not implemented yet; remove it for this CVS build")
+                raise ValueError(
+                    f"rccl.validation: threshold key {key!r} is not among collectives for this run "
+                    "(rccl.run.collectives and matrix expansion)"
+                )
         return self
 
 

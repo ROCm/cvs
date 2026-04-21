@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shlex
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from cvs.lib import globals
@@ -42,6 +43,16 @@ def _env_setup_lines(config: RcclConfig) -> list[str]:
     return [f"source {shlex.quote(config.env_script)}"]
 
 
+def _env_overlay_lines(env: Mapping[str, str]) -> list[str]:
+    """Per-case exports after env_script, before runtime guards (runs on every MPI rank)."""
+    if not env:
+        return []
+    lines: list[str] = []
+    for key in sorted(env):
+        lines.append(f"export {key}={shlex.quote(env[key])}")
+    return lines
+
+
 def _shell_runtime_guards(config: RcclConfig, collective: str) -> list[str]:
     """Bash checks after env_script; fails fast with RCCL launch: ... messages."""
     lines: list[str] = []
@@ -70,7 +81,13 @@ def _shell_runtime_guards(config: RcclConfig, collective: str) -> list[str]:
     return lines
 
 
-def _build_shell_payload(config: RcclConfig, collective: str, remote_result_file: str) -> str:
+def _build_shell_payload(
+    config: RcclConfig,
+    collective: str,
+    datatype: str,
+    env_overlay: Mapping[str, str],
+    remote_result_file: str,
+) -> str:
     binary_word = f'"${{RCCL_TESTS_BUILD_DIR%/}}/{collective}"'
     gpus_per_rank = config.ranks_per_node if config.is_single_node else 1
     benchmark_cmd = (
@@ -81,12 +98,17 @@ def _build_shell_payload(config: RcclConfig, collective: str, remote_result_file
         f"-g {gpus_per_rank} "
         f"-c 1 "
         f"-w {shlex.quote(config.warmups)} "
-        f"-d {shlex.quote(config.datatype)} "
+        f"-d {shlex.quote(datatype)} "
         f"-n {shlex.quote(config.iterations)} "
         f"-N {shlex.quote(config.cycles)} "
         f"-Z json -x {shlex.quote(remote_result_file)}"
     )
-    return "; ".join(_env_setup_lines(config) + _shell_runtime_guards(config, collective) + [benchmark_cmd])
+    return "; ".join(
+        _env_setup_lines(config)
+        + _env_overlay_lines(env_overlay)
+        + _shell_runtime_guards(config, collective)
+        + [benchmark_cmd]
+    )
 
 
 def _prepare_hostfile(shdl: Any, launch_hosts: list[str], ranks_per_node: int, remote_work_dir: str) -> str:
@@ -100,9 +122,18 @@ def _prepare_hostfile(shdl: Any, launch_hosts: list[str], ranks_per_node: int, r
 
 
 def build_collective_command(
-    config: RcclConfig, collective: str, remote_result_file: str, launch_hosts: list[str], shdl: Any
+    config: RcclConfig,
+    collective: str,
+    remote_result_file: str,
+    launch_hosts: list[str],
+    shdl: Any,
+    *,
+    datatype: str | None = None,
+    env_overlay: Mapping[str, str] | None = None,
 ) -> str:
-    shell_payload = _build_shell_payload(config, collective, remote_result_file)
+    dt = config.datatype if datatype is None else datatype
+    overlay = dict(env_overlay) if env_overlay else {}
+    shell_payload = _build_shell_payload(config, collective, dt, overlay, remote_result_file)
     shell_cmd = f"bash -lc {shlex.quote(shell_payload)}"
 
     if config.is_single_node:

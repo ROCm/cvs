@@ -9,6 +9,7 @@ import time
 from posixpath import dirname as _posix_dirname
 from contextlib import contextmanager
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 from cvs.lib import globals
@@ -17,16 +18,14 @@ from cvs.lib.verify_lib import verify_dmesg_for_errors
 from .artifacts import (
     _build_summary,
     _ensure_parent_dir,
-    _ensure_unique_case_id,
     _format_run_id_utc,
-    _no_matrix_case_id,
-    _resolved_case_payload,
     _write_host_outputs,
     _write_optional_raw,
     _write_text_artifact,
 )
 from .config import RcclConfig
 from .launcher import _env_setup_lines, _scan_rccl_stdout, build_collective_command
+from .matrix_expand import expand_rccl_matrix_cases, expansion_input_from_rccl_config
 from .validator import parse_and_validate_results
 
 log = globals.log
@@ -291,20 +290,37 @@ def run_rccl(cluster_dict: dict[str, Any], config: RcclConfig) -> dict[str, Any]
         captured_vars = _capture_filtered_environment(shdl, head_node, config)
 
         cases: list[dict[str, Any]] = []
-        used_case_ids: set[str] = set()
-        total_collectives = len(config.collectives)
+        resolved_specs = expand_rccl_matrix_cases(expansion_input_from_rccl_config(config))
+        total_cases = len(resolved_specs)
 
-        for i, collective in enumerate(config.collectives):
-            resolved = _resolved_case_payload(config, collective)
-            case_id = _ensure_unique_case_id(_no_matrix_case_id(i, collective), used_case_ids, resolved)
+        for i, spec in enumerate(resolved_specs):
+            resolved = spec.resolved
+            collective = str(resolved["collective"])
+            datatype = str(resolved.get("datatype", config.datatype))
+            raw_env = resolved.get("env", {})
+            env_overlay: dict[str, str]
+            if isinstance(raw_env, Mapping):
+                env_overlay = {str(k): str(v) for k, v in raw_env.items()}
+            else:
+                env_overlay = {}
+            case_id = spec.case_id
+            name = spec.name
             remote_result_file = _remote_case_result_json(config.artifacts_remote_work_dir, run_id, case_id)
             remote_parent = _posix_dirname(remote_result_file)
             shdl.exec(f"mkdir -p {shlex.quote(remote_parent)}", print_console=False)
-            command = build_collective_command(config, collective, remote_result_file, launch_hosts, shdl)
+            command = build_collective_command(
+                config,
+                collective,
+                remote_result_file,
+                launch_hosts,
+                shdl,
+                datatype=datatype,
+                env_overlay=env_overlay,
+            )
 
             phdl.exec(f'sudo echo "Starting RCCL {collective}" | sudo tee /dev/kmsg', print_console=False)
             start_time = phdl.exec('date +"%a %b %e %H:%M:%S"', print_console=False)
-            log.info("RCCL stage: running %s (%d/%d)", collective, i + 1, total_collectives)
+            log.info("RCCL stage: running %s (%d/%d)", name, i + 1, total_cases)
             log.info("RCCL command [%s]: %s", case_id, command)
             case_started_at = time.monotonic()
 
@@ -347,7 +363,7 @@ def run_rccl(cluster_dict: dict[str, Any], config: RcclConfig) -> dict[str, Any]
                 cases.append(
                     {
                         "case_id": case_id,
-                        "name": f"{collective} ({config.datatype})",
+                        "name": name,
                         "resolved": resolved,
                         "command": command,
                         "status": "failed",
@@ -362,16 +378,16 @@ def run_rccl(cluster_dict: dict[str, Any], config: RcclConfig) -> dict[str, Any]
 
             log.info(
                 "RCCL stage: completed %s (%d/%d) elapsed=%.1fs",
-                collective,
+                name,
                 i + 1,
-                total_collectives,
+                total_cases,
                 time.monotonic() - case_started_at,
             )
 
             cases.append(
                 {
                     "case_id": case_id,
-                    "name": f"{collective} ({config.datatype})",
+                    "name": name,
                     "resolved": resolved,
                     "command": command,
                     "status": "passed",

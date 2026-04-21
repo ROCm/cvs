@@ -11,12 +11,13 @@ from cvs.schema.rccl_config import (
     RcclConfigFileRoot,
     format_rccl_config_validation_error,
     parse_rccl_thresholds_payload,
+    threshold_collective_names,
 )
 
 
 @dataclass(frozen=True)
 class RcclConfig:
-    """Resolved RCCL CVS config (single logical run, no matrix expansion)."""
+    """Resolved RCCL CVS config: base run fields plus ``config_echo`` (includes optional ``matrix`` for expansion)."""
 
     required_nodes: int
     collectives: list[str]
@@ -64,7 +65,7 @@ def _normalize_threshold_map(collective_thresholds: dict[str, Any] | None) -> di
 
 def _resolve_threshold_payload_from_file(
     path: str,
-    collectives: list[str],
+    allowed_collectives: set[str],
 ) -> dict[str, Any]:
     with open(path) as handle:
         loaded = json.load(handle)
@@ -79,12 +80,14 @@ def _resolve_threshold_payload_from_file(
         parsed = parse_rccl_thresholds_payload(loaded)
     except ValidationError as exc:
         raise ValueError(format_rccl_config_validation_error(exc)) from exc
-    collective_set = set(collectives)
     for key in parsed:
         if not key or not str(key).strip():
             raise ValueError("rccl.validation: thresholds_file collective keys must be non-empty strings")
-        if key not in collective_set:
-            raise ValueError(f"rccl.validation: threshold key {key!r} is not listed in rccl.run.collectives")
+        if key not in allowed_collectives:
+            raise ValueError(
+                f"rccl.validation: threshold key {key!r} is not among collectives for this run "
+                "(rccl.run.collectives and matrix expansion)"
+            )
     return {k: v.model_dump(mode="json") for k, v in parsed.items()}
 
 
@@ -119,6 +122,7 @@ def load_rccl_config(config_file: str, cluster_dict: dict[str, Any]) -> RcclConf
     ranks_per_node = run.ranks_per_node
     required_nodes = num_ranks // ranks_per_node
     collectives = list(run.collectives)
+    threshold_collectives = threshold_collective_names(run, nested.matrix)
 
     profile = validation.profile
     thresholds: dict[str, Any] = {}
@@ -127,7 +131,7 @@ def load_rccl_config(config_file: str, cluster_dict: dict[str, Any]) -> RcclConf
         if validation.thresholds:
             thresholds = {k: v.model_dump(mode="json") for k, v in validation.thresholds.items()}
         else:
-            thresholds = _resolve_threshold_payload_from_file(validation.thresholds_file, collectives)
+            thresholds = _resolve_threshold_payload_from_file(validation.thresholds_file, threshold_collectives)
 
     config_echo = nested.model_dump(mode="json")
 

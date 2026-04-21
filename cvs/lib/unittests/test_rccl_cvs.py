@@ -386,19 +386,235 @@ class TestRcclCvs(unittest.TestCase):
                 load_rccl_config(str(config_path), cluster_dict)
         self.assertIn("basename", str(ctx.exception).lower())
 
-    def test_load_rccl_config_rejects_nonempty_matrix(self):
+    def test_load_rccl_config_accepts_variants_matrix(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
         body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
-        body["rccl"]["matrix"] = {"kind": "variants", "cases": [{"name": "a", "env": {}}]}
+        body["rccl"]["matrix"] = {
+            "kind": "variants",
+            "cases": [
+                {"name": "default", "env": {}},
+                {"name": "p2p-chunksize-8m", "env": {"NCCL_P2P_NET_CHUNKSIZE": "8388608"}},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            loaded = load_rccl_config(str(config_path), cluster_dict)
+        self.assertEqual(loaded.required_nodes, 1)
+        self.assertEqual(loaded.config_echo["matrix"]["kind"], "variants")
+        self.assertEqual(len(loaded.config_echo["matrix"]["cases"]), 2)
+
+    def test_load_rccl_config_accepts_cartesian_matrix(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
+        body["rccl"]["matrix"] = {
+            "kind": "cartesian",
+            "dimensions": {
+                "datatype": ["float", "bfloat16"],
+                "env.NCCL_ALGO": ["Ring", "Tree"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            loaded = load_rccl_config(str(config_path), cluster_dict)
+        self.assertEqual(loaded.config_echo["matrix"]["kind"], "cartesian")
+        self.assertEqual(loaded.config_echo["matrix"]["dimensions"]["datatype"], ["float", "bfloat16"])
+
+    def test_load_rccl_config_thresholds_allow_collective_from_cartesian_dimension(self):
+        """Threshold keys may name collectives introduced only via ``matrix.dimensions.collective``."""
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="thresholds")
+        body["rccl"]["matrix"] = {
+            "kind": "cartesian",
+            "dimensions": {"collective": ["broadcast_perf", "all_gather_perf"]},
+        }
+        body["rccl"]["validation"]["thresholds"] = {
+            "broadcast_perf": {"bus_bw": {"1024": 1.0}},
+            "all_gather_perf": {"bus_bw": {"1024": 2.0}},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            loaded = load_rccl_config(str(config_path), cluster_dict)
+        self.assertIn("broadcast_perf", loaded.thresholds)
+        self.assertEqual(loaded.collectives, ["all_reduce_perf"])
+
+    def test_load_rccl_config_thresholds_file_allow_collective_from_cartesian_dimension(self):
+        """Same collective union as inline thresholds: file-loaded keys must match expanded collectives."""
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thresh_path = Path(tmpdir) / "t.json"
+            thresh_path.write_text(
+                json.dumps(
+                    {
+                        "broadcast_perf": {"bus_bw": {"1024": 1.0}},
+                        "all_gather_perf": {"bus_bw": {"2048": 2.0}},
+                    }
+                )
+            )
+            body = _minimal_rccl(
+                num_ranks=8,
+                ranks_per_node=8,
+                profile="thresholds",
+                thresholds_file=str(thresh_path),
+            )
+            body["rccl"]["matrix"] = {
+                "kind": "cartesian",
+                "dimensions": {"collective": ["broadcast_perf", "all_gather_perf"]},
+            }
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            loaded = load_rccl_config(str(config_path), cluster_dict)
+        self.assertEqual(loaded.thresholds["broadcast_perf"]["bus_bw"]["1024"], 1.0)
+        self.assertEqual(loaded.thresholds["all_gather_perf"]["bus_bw"]["2048"], 2.0)
+
+    def test_load_rccl_config_thresholds_file_rejects_key_not_in_matrix_collectives(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thresh_path = Path(tmpdir) / "t.json"
+            thresh_path.write_text(
+                json.dumps(
+                    {
+                        "broadcast_perf": {"bus_bw": {"1024": 1.0}},
+                        "all_reduce_perf": {"bus_bw": {"1024": 1.0}},
+                    }
+                )
+            )
+            body = _minimal_rccl(
+                num_ranks=8,
+                ranks_per_node=8,
+                profile="thresholds",
+                thresholds_file=str(thresh_path),
+            )
+            body["rccl"]["matrix"] = {
+                "kind": "cartesian",
+                "dimensions": {"collective": ["broadcast_perf"]},
+            }
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError) as ctx:
+                load_rccl_config(str(config_path), cluster_dict)
+        self.assertIn("all_reduce_perf", str(ctx.exception))
+
+    def test_load_rccl_config_matrix_rejects_variant_env_key_with_equals(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
+        body["rccl"]["matrix"] = {
+            "kind": "variants",
+            "cases": [{"name": "a", "env": {"BAD=KEY": "1"}}],
+        }
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "rccl.json"
             config_path.write_text(json.dumps(body))
             with self.assertRaises(ValueError) as ctx:
                 load_rccl_config(str(config_path), cluster_dict)
-        self.assertIn("matrix", str(ctx.exception).lower())
+        self.assertIn("=", str(ctx.exception))
 
-    def test_load_rccl_config_allows_omitted_or_empty_matrix(self):
-        """Schema permits omitted matrix, ``null``, or ``{}`` until expansion is implemented."""
+    def test_load_rccl_config_matrix_rejects_env_dimension_varname_with_equals(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
+        body["rccl"]["matrix"] = {
+            "kind": "cartesian",
+            "dimensions": {"env.FOO=BAR": ["x"]},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError) as ctx:
+                load_rccl_config(str(config_path), cluster_dict)
+        self.assertIn("=", str(ctx.exception))
+
+    def test_load_rccl_config_rejects_threshold_key_missing_from_matrix_collectives(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="thresholds")
+        body["rccl"]["matrix"] = {
+            "kind": "cartesian",
+            "dimensions": {"collective": ["broadcast_perf"]},
+        }
+        body["rccl"]["validation"]["thresholds"] = {
+            "broadcast_perf": {"bus_bw": {"1024": 1.0}},
+            "all_reduce_perf": {"bus_bw": {"1024": 1.0}},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError) as ctx:
+                load_rccl_config(str(config_path), cluster_dict)
+        self.assertIn("all_reduce_perf", str(ctx.exception))
+
+    def test_load_rccl_config_matrix_rejects_empty_object(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
+        body["rccl"]["matrix"] = {}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError):
+                load_rccl_config(str(config_path), cluster_dict)
+
+    def test_load_rccl_config_matrix_rejects_empty_variant_cases(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
+        body["rccl"]["matrix"] = {"kind": "variants", "cases": []}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError):
+                load_rccl_config(str(config_path), cluster_dict)
+
+    def test_load_rccl_config_matrix_rejects_bad_dimension_key(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
+        body["rccl"]["matrix"] = {
+            "kind": "cartesian",
+            "dimensions": {"bad_dim": ["a"]},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError) as ctx:
+                load_rccl_config(str(config_path), cluster_dict)
+        self.assertIn("bad_dim", str(ctx.exception))
+
+    def test_load_rccl_config_matrix_rejects_env_dot_without_varname(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
+        body["rccl"]["matrix"] = {"kind": "cartesian", "dimensions": {"env.": ["x"]}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError) as ctx:
+                load_rccl_config(str(config_path), cluster_dict)
+        self.assertIn("env", str(ctx.exception).lower())
+
+    def test_load_rccl_config_matrix_rejects_extra_field_on_variants(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
+        body["rccl"]["matrix"] = {
+            "kind": "variants",
+            "cases": [{"name": "a"}],
+            "dimensions": {"x": ["y"]},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError) as ctx:
+                load_rccl_config(str(config_path), cluster_dict)
+        self.assertIn("extra", str(ctx.exception).lower())
+
+    def test_load_rccl_config_matrix_rejects_invalid_variant_name(self):
+        cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
+        body = _minimal_rccl(num_ranks=8, ranks_per_node=8, profile="smoke")
+        body["rccl"]["matrix"] = {"kind": "variants", "cases": [{"name": "bad name"}]}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "rccl.json"
+            config_path.write_text(json.dumps(body))
+            with self.assertRaises(ValueError) as ctx:
+                load_rccl_config(str(config_path), cluster_dict)
+        self.assertIn("name", str(ctx.exception).lower())
+
+    def test_load_rccl_config_allows_omitted_or_null_matrix(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}
 
         def assert_loads(matrix_payload):
@@ -410,9 +626,9 @@ class TestRcclCvs(unittest.TestCase):
                 config_path.write_text(json.dumps(body))
                 loaded = load_rccl_config(str(config_path), cluster_dict)
             self.assertEqual(loaded.required_nodes, 1)
+            self.assertIsNone(loaded.config_echo.get("matrix"))
 
         assert_loads(...)  # key omitted
-        assert_loads({})
         assert_loads(None)
 
     def test_load_rccl_config_rejects_thresholds_file_not_json_object(self):
@@ -675,6 +891,59 @@ class TestRcclCvs(unittest.TestCase):
         self.assertIn("RCCL_TESTS_BUILD_DIR", command)
         self.assertIn("all_reduce_perf", command)
         self.assertIn(': "${RCCL_TESTS_BUILD_DIR:?', command)
+
+    def test_build_collective_command_env_overlay_after_source_before_guards(self):
+        config = _rccl_cfg(env_script="/site/env.sh")
+        shdl = _DummySshHandle()
+        command = build_collective_command(
+            config,
+            "all_reduce_perf",
+            "/tmp/x.json",
+            ["10.0.0.1"],
+            shdl,
+            env_overlay={"NCCL_DEBUG": "INFO"},
+        )
+        idx_src = command.index("source /site/env.sh")
+        idx_exp = command.index("export NCCL_DEBUG=")
+        idx_guard = command.index("RCCL_TESTS_BUILD_DIR")
+        self.assertLess(idx_src, idx_exp)
+        self.assertLess(idx_exp, idx_guard)
+
+    def test_build_collective_command_per_case_datatype(self):
+        config = _rccl_cfg()
+        shdl = _DummySshHandle()
+        command = build_collective_command(
+            config,
+            "all_reduce_perf",
+            "/tmp/x.json",
+            ["10.0.0.1"],
+            shdl,
+            datatype="bfloat16",
+        )
+        self.assertIn("-d bfloat16", command)
+
+    def test_build_collective_command_multinode_env_overlay_in_rank_shell(self):
+        config = _rccl_cfg(
+            required_nodes=2,
+            num_ranks=16,
+            ranks_per_node=8,
+            env_script="/tmp/env.sh",
+            artifacts_remote_work_dir="/data/rccl_remote",
+        )
+        shdl = _DummySshHandle()
+        command = build_collective_command(
+            config,
+            "all_reduce_perf",
+            "/data/rccl_remote/run1/c0.json",
+            ["10.0.0.1", "10.0.0.2"],
+            shdl,
+            env_overlay={"FOO": "bar"},
+        )
+        self.assertIn("mpirun", command)
+        idx_mpirun = command.index("mpirun")
+        idx_exp = command.index("export FOO=")
+        self.assertGreater(idx_exp, idx_mpirun)
+        self.assertIn("source /tmp/env.sh; export FOO=", command)
 
     def test_load_rccl_config_rejects_removed_path_field_rccl_tests_dir(self):
         cluster_dict = {"username": "tester", "node_dict": {"node0": {}}}

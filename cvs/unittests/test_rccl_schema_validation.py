@@ -3,7 +3,14 @@ import unittest
 from pydantic import ValidationError
 
 from cvs.schema.rccl import RCCL_WRONG_NONZERO_ERROR_TYPE, RcclTests
-from cvs.schema.rccl_config import parse_rccl_thresholds_payload
+from cvs.schema.rccl_config import (
+    RcclConfigFileRoot,
+    RcclMatrixCartesian,
+    RcclMatrixVariants,
+    RcclRunInput,
+    parse_rccl_thresholds_payload,
+    threshold_collective_names,
+)
 
 
 class TestRcclSchemaValidation(unittest.TestCase):
@@ -57,6 +64,70 @@ class TestRcclSchemaValidation(unittest.TestCase):
         with self.assertRaises(ValidationError) as ctx:
             parse_rccl_thresholds_payload({"all_reduce_perf": {"bus_bw": {"": 1.0}}})
         self.assertIn("bus_bw", str(ctx.exception).lower())
+
+    def test_threshold_collective_names_matches_expansion_union(self):
+        """Keys allowed in ``validation.thresholds`` must match post-matrix collective names (spec §4.2)."""
+        run = RcclRunInput(
+            env_script="/e.sh",
+            num_ranks=8,
+            ranks_per_node=8,
+            collectives=["all_reduce_perf", "broadcast_perf"],
+            datatype="float",
+            start_size="1",
+            end_size="2",
+            step_factor="2",
+            warmups="1",
+            iterations="1",
+            cycles="1",
+        )
+        self.assertEqual(threshold_collective_names(run, None), {"all_reduce_perf", "broadcast_perf"})
+        variants = RcclMatrixVariants(kind="variants", cases=[{"name": "v1"}])
+        self.assertEqual(threshold_collective_names(run, variants), {"all_reduce_perf", "broadcast_perf"})
+        cart_no_c = RcclMatrixCartesian(
+            kind="cartesian",
+            dimensions={"datatype": ["float"]},
+        )
+        self.assertEqual(threshold_collective_names(run, cart_no_c), {"all_reduce_perf", "broadcast_perf"})
+        cart_c = RcclMatrixCartesian(
+            kind="cartesian",
+            dimensions={"collective": ["all_gather_perf"]},
+        )
+        self.assertEqual(threshold_collective_names(run, cart_c), {"all_gather_perf"})
+
+    def test_nested_config_rejects_threshold_key_for_base_collective_when_matrix_replaces_them(self):
+        root = {
+            "rccl": {
+                "run": {
+                    "env_script": "/e.sh",
+                    "num_ranks": 8,
+                    "ranks_per_node": 8,
+                    "collectives": ["all_reduce_perf"],
+                    "datatype": "float",
+                    "start_size": "1",
+                    "end_size": "2",
+                    "step_factor": "2",
+                    "warmups": "1",
+                    "iterations": "1",
+                    "cycles": "1",
+                },
+                "validation": {
+                    "profile": "thresholds",
+                    "thresholds": {
+                        "all_reduce_perf": {"bus_bw": {"1024": 1.0}},
+                        "broadcast_perf": {"bus_bw": {"1024": 1.0}},
+                    },
+                },
+                "artifacts": {
+                    "output_dir": "/out",
+                    "remote_work_dir": "/rw",
+                    "export_raw": False,
+                },
+                "matrix": {"kind": "cartesian", "dimensions": {"collective": ["broadcast_perf"]}},
+            }
+        }
+        with self.assertRaises(ValidationError) as ctx:
+            RcclConfigFileRoot.model_validate(root)
+        self.assertIn("all_reduce_perf", str(ctx.exception))
 
 
 if __name__ == "__main__":
