@@ -80,6 +80,7 @@ class RuntimeConfig:
     allowed_containers: List[str] = field(default_factory=list)
     sanitize_host: bool = False  # P11: opt-in host tuning (governor, drop_caches, perflevel)
     noise_floor: Optional[Dict[str, object]] = None  # P12: see lib/noise_floor.py
+    multinode_ssh: bool = False  # P13: ephemeral key + sshd:2222 bootstrap
 
     # ------------------------------------------------------------------
     # Convenience predicates
@@ -226,6 +227,12 @@ def parse_runtime(cluster_dict: Dict[str, Any]) -> RuntimeConfig:
             "cluster.json `runtime.sanitize_host` must be a boolean"
         )
 
+    multinode_ssh = raw.get("multinode_ssh", False)
+    if not isinstance(multinode_ssh, bool):
+        raise RuntimeConfigError(
+            "cluster.json `runtime.multinode_ssh` must be a boolean"
+        )
+
     noise_floor = raw.get("noise_floor")
     if noise_floor is not None:
         if not isinstance(noise_floor, dict):
@@ -261,4 +268,5 @@ def parse_runtime(cluster_dict: Dict[str, Any]) -> RuntimeConfig:
         allowed_containers=list(allowed_containers),
         sanitize_host=sanitize_host,
         noise_floor=dict(noise_floor) if noise_floor is not None else None,
+        multinode_ssh=multinode_ssh,
     )
