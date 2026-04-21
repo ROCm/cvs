@@ -35,7 +35,7 @@ import pytest
 
 from cvs.lib.arch_detect import detect_cluster_gfx_arch
 from cvs.lib.driver_recovery import verify_or_recover_driver
-from cvs.lib import host_sanitize, noise_floor
+from cvs.lib import host_sanitize, multinode, noise_floor
 from cvs.lib.exclusivity import (
     check_exclusivity,
     render_violations,
@@ -321,6 +321,16 @@ def test_prepare_runtime(cluster_dict, runtime_cfg, phdl_host, phdl_container,
     log.info("[P6] container_start name=%s", runtime_cfg.container_name)
     _docker(phdl_host, f"rm -f {runtime_cfg.container_name}", timeout=60)
 
+    # In multinode mode we need sshd inside the container, so use the image's
+    # entrypoint (which runs `/usr/sbin/sshd && exec sleep infinity`) instead
+    # of overriding CMD with `sleep infinity`. The image still works for
+    # single-node mode either way, but skipping sshd avoids opening port 2222
+    # on the host when it's not needed.
+    container_cmd = (
+        "/usr/local/bin/cvs-runner-entrypoint.sh"
+        if runtime_cfg.multinode_ssh
+        else "sleep infinity"
+    )
     docker_run = (
         f"run -d --name {runtime_cfg.container_name} --privileged "
         f"--network=host --ipc=host "
@@ -329,7 +339,7 @@ def test_prepare_runtime(cluster_dict, runtime_cfg, phdl_host, phdl_container,
         f"--cap-add=SYS_PTRACE --cap-add=IPC_LOCK "
         f"--ulimit memlock=-1 --shm-size=16g "
         f"-v /sys:/sys:ro -v /tmp/cvs:/tmp/cvs "
-        f"{runtime_cfg.image} sleep infinity"
+        f"{runtime_cfg.image} {container_cmd}"
     )
     _docker(phdl_host, docker_run, timeout=120)
 
@@ -401,6 +411,31 @@ def test_prepare_runtime(cluster_dict, runtime_cfg, phdl_host, phdl_container,
         for node in nodes:
             artifacts[node]["agfhc_staged"] = False
             artifacts[node]["agfhc_skip_reason"] = "no agfhc_tarball configured"
+
+    # ---------- 5b. multinode_ssh bootstrap (P13, opt-in) ----------
+    if runtime_cfg.multinode_ssh:
+        log.info("[P13] multinode_ssh=true; bootstrapping ephemeral SSH on :2222 in containers")
+        try:
+            mn_summary = multinode.setup_multinode_ssh(phdl_host, runtime_cfg, nodes)
+            for node in nodes:
+                artifacts[node]["multinode_ssh"] = {
+                    "container": mn_summary["container"],
+                    "sshd_listening": mn_summary["sshd_listening"].get(node, False),
+                    "self_loopback_ssh_ok": mn_summary["self_loopback_ssh_ok"].get(node, False),
+                }
+            unhealthy = [
+                n for n in nodes
+                if not artifacts[n]["multinode_ssh"]["sshd_listening"]
+                or not artifacts[n]["multinode_ssh"]["self_loopback_ssh_ok"]
+            ]
+            if unhealthy:
+                _abort(f"multinode_ssh: sshd/self-loopback failed on: {unhealthy}")
+            log.info("[P13] multinode_ssh: all nodes have sshd:2222 + self-loopback OK")
+        except Exception as exc:
+            log.error("[P13] multinode_ssh bootstrap failed: %s", exc)
+            for node in nodes:
+                artifacts[node].setdefault("multinode_ssh", {})["error"] = str(exc)
+            _abort(f"multinode_ssh: {exc}")
 
     # ---------- 6. component_installs ----------
     installs = runtime_cfg.resolved_installs()
