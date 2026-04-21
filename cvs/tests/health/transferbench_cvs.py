@@ -306,7 +306,17 @@ def phdl(cluster_dict):
     log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
+    # P4: opt in to docker mode via cluster.json -> runtime block. wrapper_for_cluster
+    # returns NoOpWrapper when mode is host (today's default), so this is a no-op
+    # for cluster.json files without a runtime block.
+    phdl = Pssh(
+        log,
+        node_list,
+        user=cluster_dict['username'],
+        pkey=cluster_dict['priv_key_file'],
+        env_vars=env_vars,
+        wrapper=wrapper_for_cluster(cluster_dict),
+    )
     return phdl
 
 
