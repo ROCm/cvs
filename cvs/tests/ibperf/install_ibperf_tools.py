@@ -140,7 +140,7 @@ def phdl(cluster_dict):
             f'Odd number of nodes ({len(node_list)}) detected; popping last node from the cluster to make the count even'
         )
         node_list.pop()
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars, wrapper=wrapper_for_cluster(cluster_dict))
     return phdl
 
 
@@ -163,7 +163,7 @@ def shdl(cluster_dict):
     node_list = list(cluster_dict['node_dict'].keys())
     env_vars = cluster_dict.get("env_vars")
     head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
+    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars, wrapper=wrapper_for_cluster(cluster_dict))
     return shdl
 
 
