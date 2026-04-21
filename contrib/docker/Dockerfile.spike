@@ -1,0 +1,47 @@
+# Spike image for CVS docker-mode P0.
+#
+# Goal: prove a container can see the host GPUs and run a ROCm binary
+# (rocminfo + TransferBench). NOT production-quality. P5 replaces this
+# with a TheRock-based multi-stage build that also carries AGFHC + RVS.
+#
+# Base: public ROCm dev image. Tag intentionally pinned to a known-good
+# minor; bump only when a host kernel forces it.
+ARG ROCM_BASE_TAG=latest
+FROM rocm/dev-ubuntu-22.04:${ROCM_BASE_TAG}
+
+# Build-time prereqs for TransferBench + a few diagnostic tools.
+# libnuma1 + numactl are *runtime* deps for TransferBench: without them
+# `TransferBench p2p` errors with "Unable to collect page table information
+# for allocated memory. Ensure NUMA library is installed properly".
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        git \
+        cmake \
+        build-essential \
+        ca-certificates \
+        pciutils \
+        kmod \
+        libnuma1 \
+        numactl \
+ && rm -rf /var/lib/apt/lists/*
+
+# Build TransferBench from source. The repo is small; a fresh clone +
+# `make` finishes in well under a minute on this base image. The binary
+# lands at /opt/TransferBench/TransferBench (the test reads
+# `transferbench.path` from the CVS config; we leave that pointing at
+# /opt/TransferBench in the spike cluster.json).
+#
+# OFFLOAD_ARCH must be pinned at build time. The upstream Makefile reads
+# the GPU_TARGETS env var (default `native`) which calls offload-arch
+# at build time, requiring a GPU. Force gfx942 (MI300X) explicitly;
+# override with --build-arg for other targets.
+ARG TRANSFERBENCH_REF=develop
+ARG OFFLOAD_ARCH=gfx942
+RUN git clone --depth=1 --branch ${TRANSFERBENCH_REF} \
+        https://github.com/ROCm/TransferBench.git /opt/TransferBench \
+ && cd /opt/TransferBench \
+ && make GPU_TARGETS=${OFFLOAD_ARCH} -j"$(nproc)"
+
+# Default to a long-lived idle process so the container survives between
+# `docker exec` invocations during the spike.
+CMD ["sleep", "infinity"]
