@@ -28,7 +28,15 @@ class Pssh:
     """
 
     def __init__(
-        self, log, host_list, user=None, password=None, pkey='id_rsa', host_key_check=False, stop_on_errors=True, env_vars=None
+        self,
+        log,
+        host_list,
+        user=None,
+        password=None,
+        pkey='id_rsa',
+        host_key_check=False,
+        stop_on_errors=True,
+        env_vars=None,
     ):
         self.log = log
         self.host_list = host_list
@@ -181,7 +189,9 @@ class Pssh:
         # Log command execution
         if self.log:
             if timeout is not None:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}")
+                self.log.debug(
+                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
+                )
             else:
                 self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
 
