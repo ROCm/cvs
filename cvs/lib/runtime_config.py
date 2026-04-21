@@ -78,6 +78,7 @@ class RuntimeConfig:
     installs: Optional[List[str]] = None  # None => resolve via resolved_installs()
     exclusivity: str = "warn"  # "warn" (default) or "strict"
     allowed_containers: List[str] = field(default_factory=list)
+    sanitize_host: bool = False  # P11: opt-in host tuning (governor, drop_caches, perflevel)
 
     # ------------------------------------------------------------------
     # Convenience predicates
@@ -218,6 +219,12 @@ def parse_runtime(cluster_dict: Dict[str, Any]) -> RuntimeConfig:
             "cluster.json `runtime.allowed_containers` must be a list of strings"
         )
 
+    sanitize_host = raw.get("sanitize_host", False)
+    if not isinstance(sanitize_host, bool):
+        raise RuntimeConfigError(
+            "cluster.json `runtime.sanitize_host` must be a boolean"
+        )
+
     return RuntimeConfig(
         mode="docker",
         image=image,
@@ -229,4 +236,5 @@ def parse_runtime(cluster_dict: Dict[str, Any]) -> RuntimeConfig:
         installs=list(installs) if installs is not None else None,
         exclusivity=exclusivity,
         allowed_containers=list(allowed_containers),
+        sanitize_host=sanitize_host,
     )
