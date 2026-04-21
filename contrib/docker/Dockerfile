@@ -26,21 +26,23 @@ RUN test -n "${THEROCK_TARBALL_NAME}" || \
     (echo "ERROR: --build-arg THEROCK_TARBALL_NAME is required" >&2; exit 2)
 
 # --- system prereqs ----------------------------------------------------
-# These cover install_rvs (cmake/build-essential/libpci/libyaml-cpp/doxygen),
+# Stage 1: bootstrap (no cmake yet -- we add Kitware PPA next for newer cmake).
+# These cover install_rvs (libpci/libpciaccess/libyaml-cpp/doxygen),
 # install_transferbench (git, build tools -- HIP comes from TheRock),
 # install_ibperf_tools (autotools, libibumad-dev), install_agfhc (python3,
 # pyyaml, psutil, libnuma1, numactl), and the docker exec wrapper from P4
-# (sudo, bash). One layer for size.
+# (sudo, bash).
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates \
+        gnupg wget \
         sudo openssh-client \
-        cmake build-essential pkg-config \
+        build-essential pkg-config \
         git \
         pciutils kmod \
         libnuma1 numactl \
         python3 python3-pip \
-        libpci3 libpci-dev doxygen libyaml-cpp-dev \
+        libpci3 libpci-dev libpciaccess-dev doxygen libyaml-cpp-dev \
         libibverbs1 librdmacm1 libibumad3 \
         libibverbs-dev librdmacm-dev libibumad-dev ibverbs-providers rdma-core \
         autoconf automake libtool \
@@ -48,6 +50,29 @@ RUN apt-get update \
         bzip2 \
  && pip3 install --no-cache-dir pyyaml psutil \
  && rm -rf /var/lib/apt/lists/*
+
+# Stage 2: Kitware PPA cmake. Ubuntu's apt cmake is 3.22 which is too old for
+# TheRock 7.13.0's `hipblaslt-config.cmake` (uses cmake `block()` introduced in
+# 3.25). cvs-config-gen Phase 1 installs cmake from this same PPA on bare metal;
+# we mirror that here so install_rvs source builds succeed inside the container.
+RUN wget -qO - https://apt.kitware.com/keys/kitware-archive-latest.asc \
+        | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg \
+ && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main" \
+        > /etc/apt/sources.list.d/kitware.list \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cmake \
+ && rm -rf /var/lib/apt/lists/* \
+ && cmake --version
+
+# Stage 3: cmake 4.x compatibility shim. install_rvs's source build clones
+# RVS release/rocm-rel-7.2 which generates an ExternalProject CMakeLists.txt
+# for googletest with `cmake_minimum_required(VERSION 2.8.2)`. cmake 4.0
+# removed compatibility with `< 3.5`. Setting CMAKE_POLICY_VERSION_MINIMUM=3.5
+# in the environment makes cmake honor old policies and lets the nested
+# downloader CMakeLists.txt parse. Confirmed (April 2026): with this env var
+# in place, install_rvs builds RVS 1.3.0 cleanly inside the container against
+# TheRock 7.13.0, matching cvs-config-gen bare-metal results on banff.
+ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
 
 # --- TheRock extraction -----------------------------------------------
 # TheRock dist tarball already has bin/ lib/ include/ share/ .info/ at its
