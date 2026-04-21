@@ -121,6 +121,7 @@ def phdl(cluster_dict):
     log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
+    # P7: route through cluster.json runtime block when in docker mode.
     phdl = Pssh(
         log,
         node_list,
@@ -128,8 +129,52 @@ def phdl(cluster_dict):
         pkey=cluster_dict['priv_key_file'],
         stop_on_errors=False,
         env_vars=env_vars,
+        wrapper=wrapper_for_cluster(cluster_dict),
     )
     return phdl
+
+
+# P7: module-scope skip fixture. When a docker-mode cluster.json was used
+# but `prepare_runtime` recorded `agfhc_staged: false` for any node (typically
+# because runtime.agfhc_tarball is null, or install_agfhc failed inside the
+# container), skip the entire agfhc_cvs module with a clear reason. This
+# turns "no AGFHC tarball" into a clean SKIP instead of a confusing AGFHC
+# binary failure later. In host mode (no runtime block) this fixture is a
+# no-op -- agfhc_cvs runs as it always has.
+@pytest.fixture(autouse=True, scope="module")
+def _skip_if_agfhc_not_staged(cluster_dict):
+    import json
+    import os
+
+    from cvs.lib.runtime_config import parse_runtime
+
+    runtime = parse_runtime(cluster_dict)
+    if not runtime.is_docker():
+        return  # host mode: no skip; existing behavior
+
+    artifact_dir = "/tmp/cvs/prepare_runtime"
+    nodes = list(cluster_dict["node_dict"].keys())
+    not_staged = []
+    for node in nodes:
+        path = os.path.join(artifact_dir, f"{node}.json")
+        if not os.path.exists(path):
+            not_staged.append(f"{node}: prepare_runtime artifact missing at {path}")
+            continue
+        try:
+            with open(path) as f:
+                a = json.load(f)
+        except (OSError, ValueError) as e:
+            not_staged.append(f"{node}: failed to read {path}: {e}")
+            continue
+        if not a.get("agfhc_staged"):
+            reason = a.get("agfhc_skip_reason", "agfhc_staged is false")
+            not_staged.append(f"{node}: {reason}")
+
+    if not_staged:
+        pytest.skip(
+            "AGFHC not staged on this cluster; downstream tests skipped. Details: "
+            + "; ".join(not_staged)
+        )
 
 
 def test_agfhc_hbm(
