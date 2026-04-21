@@ -62,6 +62,7 @@ def phdl(cluster_dict):
     log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
+    # P9: route through cluster.json runtime block when in docker mode.
     phdl = Pssh(
         log,
         node_list,
@@ -69,6 +70,7 @@ def phdl(cluster_dict):
         pkey=cluster_dict['priv_key_file'],
         stop_on_errors=False,
         env_vars=env_vars,
+        wrapper=wrapper_for_cluster(cluster_dict),
     )
     return phdl
 
