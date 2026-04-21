@@ -1,0 +1,55 @@
+{
+    "_user_comment": " user-id will be resolved to current username at runtime. You can also change to your user-id here.",
+    "username": "{user-id}",
+
+    "_key_comment": " Change <priv_key_file> to your private key if it is different.",
+    "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+
+    "_node_comment": " Change to your node IPs/hostnames. The Public IPs of the nodes will be the keys of the node_dict",
+    "_vpc_comment": " If your cluster has a dedicated VPC IP that is reachable from other nodes in the cluster, set it to that (or) else set the same as the main host IP/Name",
+
+    "head_node_dict":
+    {
+        "mgmt_ip": "{xx.xx.xx.xx|hostname}"
+    },
+
+    "_env_vars_comment": " Custom env variables to be exported before executing each command",
+    "env_vars": {},
+
+    "node_dict":
+    {
+        "{xx.xx.xx.xx|hostname}":
+        {
+            "bmc_ip": "NA",
+            "vpc_ip": "{xx.xx.xx.xx|hostname}"
+        }
+    },
+
+    "_runtime_comment": " Optional docker-mode runtime block. If absent, CVS runs in the historical host mode (every command runs directly via SSH on the target node). If present with mode='docker', commands are wrapped in `docker exec <container_name>` so they run inside a CVS-runner container instead.",
+    "_runtime_v1_assumption_comment": " v1 assumes a single GPU architecture per cluster. For mixed-arch fleets, use one cluster.json per arch.",
+    "runtime": {
+        "_mode_comment": " 'host' (default) or 'docker'.",
+        "mode": "docker",
+
+        "_image_comment": " Required when mode='docker'. The container image tag to run on each node.",
+        "image": "ghcr.io/your-org/cvs-runner:7.13.0a-gfx942",
+
+        "_container_name_comment": " Container name; default 'cvs-runner'. The Pssh wrapper does `docker exec <container_name> ...`.",
+        "container_name": "cvs-runner",
+
+        "_container_envs_comment": " Env vars passed to docker exec. Useful for HIP_VISIBLE_DEVICES, NCCL_DEBUG, NCCL_IB_HCA, etc.",
+        "container_envs": {},
+
+        "_ensure_image_comment": " 'pull' (default) downloads from the registry, or 'load:<path-to-tarball-on-orchestrator>' for air-gapped sites.",
+        "ensure_image": "pull",
+
+        "_agfhc_tarball_comment": " Optional path on the orchestrator to the AGFHC .tar.bz2. Set to null to skip AGFHC fleet-wide; downstream agfhc_cvs tests skip cleanly with a clear message.",
+        "agfhc_tarball": null,
+
+        "_expected_gfx_arch_comment": " Optional declared cluster arch (e.g. 'gfx942'). prepare_runtime fails fast if any node mismatches. If null, prepare_runtime detects on the head node and asserts the others agree.",
+        "expected_gfx_arch": null,
+
+        "_installs_comment": " Optional ordered list of CVS install scripts to run after container start. null resolves to a default of ['install_rvs', 'install_transferbench'] plus 'install_agfhc' if agfhc_tarball is set. Empty list [] disables runtime installs (e.g. for users with a pre-baked custom image).",
+        "installs": null
+    }
+}
