@@ -9,6 +9,9 @@ from __future__ import print_function
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError, SessionError
 
+import os
+import re
+import shlex
 import time
 
 # Following used only for scp of file
@@ -16,6 +19,28 @@ import paramiko
 from paramiko import SSHClient
 from scp import SCPClient
 from cvs.lib.env_lib import build_env_prefix
+
+
+# P1 spike: env-var-driven docker exec wrap. When CVS_DOCKER_CONTAINER is
+# set, every command sent through Pssh.exec / Pssh.exec_cmd_list is wrapped
+# as `docker exec <container> bash -lc "<cmd>"` so the command actually runs
+# inside the container on the remote host. Default (env unset) is identity:
+# host-mode behavior is byte-identical to before this change. P4 replaces
+# this with a CommandWrapper class driven by cluster.json.
+#
+# Rules (per plan P1 backward-compat checks):
+#   * Read env var inside the call, NOT at import time -- so unit tests
+#     that invoke Pssh.exec without the var see no wrapping.
+#   * Strip a leading `sudo ` -- the spike container runs as root.
+#   * Wrap exec AND exec_cmd_list (symmetry); do NOT wrap scp_file,
+#     reboot_connections, destroy_clients (not shell commands).
+def _maybe_docker_wrap(cmd):
+    """Return cmd unchanged unless CVS_DOCKER_CONTAINER is set; then wrap."""
+    container = os.environ.get("CVS_DOCKER_CONTAINER", "").strip()
+    if not container:
+        return cmd
+    cmd = re.sub(r'^\s*sudo\s+', '', cmd)
+    return f"docker exec {container} bash -lc {shlex.quote(cmd)}"
 
 
 class Pssh:
@@ -184,6 +209,11 @@ class Pssh:
         else:
             full_cmd = cmd
 
+        # P1: optional docker exec wrap (no-op when CVS_DOCKER_CONTAINER unset).
+        # Composition: env_prefix is applied INSIDE the wrap so the container's
+        # shell sees it as part of the bash -lc payload.
+        full_cmd = _maybe_docker_wrap(full_cmd)
+
         self.log.info(f'cmd = {full_cmd}')
 
         # Log command execution
@@ -218,6 +248,9 @@ class Pssh:
             cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
         else:
             cmd_list = cmd_list
+
+        # P1: same docker exec wrap as exec(), applied per command.
+        cmd_list = [_maybe_docker_wrap(c) for c in cmd_list]
 
         self.log.info("%s", cmd_list)
 
