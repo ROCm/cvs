@@ -82,11 +82,20 @@ RUN mkdir -p /opt/rocm \
  && tar -xf /tmp/therock.tar.gz -C /opt/rocm \
  && rm /tmp/therock.tar.gz
 
-# --- AGFHC compatibility shim -----------------------------------------
-# AGFHC reads /opt/rocm/.info/version-utils via cat. TheRock ships
+# --- AGFHC compatibility shims ----------------------------------------
+# Shim 1: AGFHC reads /opt/rocm/.info/version-utils via cat. TheRock ships
 # .info/version but not version-utils. Without this shim AGFHC bails out
 # with PROG_TOOL_VERSION_CHECK [97]. (Documented in cvs-config-gen skill.)
 RUN cp /opt/rocm/.info/version /opt/rocm/.info/version-utils
+
+# Shim 2: AGFHC's environment-detection step calls `systemd-detect-virt` to
+# distinguish bare-metal from VM. Minimal containers don't ship systemd, so
+# the call fails and AGFHC bails with PROG_ENV_DETECTION_FAIL [45]. Provide a
+# tiny stub that reports "none" (i.e. bare-metal-equivalent) -- accurate
+# semantically since the CVS-runner container is --privileged with direct
+# /dev/kfd + /dev/dri device pass-through.
+RUN printf '#!/bin/sh\necho none\n' > /usr/local/bin/systemd-detect-virt \
+ && chmod +x /usr/local/bin/systemd-detect-virt
 
 # --- RCCL env source script -------------------------------------------
 # rccl_singlenode_cvs reads `env_source_script` from its config and bash-
