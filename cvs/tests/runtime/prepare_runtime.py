@@ -306,6 +306,16 @@ def test_prepare_runtime(cluster_dict, runtime_cfg, phdl_host, phdl_container,
                     f"tarball not found on orchestrator: {runtime_cfg.agfhc_tarball}"
                 )
         else:
+            # P7: prior container runs may have left /tmp/cvs/ root-owned (bind
+            # mount is created as root by docker). Re-chown to the SSH user
+            # before scp so the tarball drop succeeds without sudo.
+            log.info("[P6] chown /tmp/cvs to %s on each node (pre-scp)",
+                     cluster_dict["username"])
+            phdl_host.exec(
+                f"sudo chown -R {cluster_dict['username']}:{cluster_dict['username']} /tmp/cvs 2>/dev/null; "
+                f"sudo chmod 0755 /tmp/cvs 2>/dev/null; true",
+                timeout=30,
+            )
             log.info("[P6] agfhc_stage scp %s to %d node(s)",
                      runtime_cfg.agfhc_tarball, len(nodes))
             staged_ok = True
