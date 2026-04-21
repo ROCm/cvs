@@ -35,6 +35,7 @@ import pytest
 
 from cvs.lib.arch_detect import detect_cluster_gfx_arch
 from cvs.lib.driver_recovery import verify_or_recover_driver
+from cvs.lib import host_sanitize
 from cvs.lib.exclusivity import (
     check_exclusivity,
     render_violations,
@@ -259,6 +260,27 @@ def test_prepare_runtime(cluster_dict, runtime_cfg, phdl_host, phdl_container,
             log.warning("[P10] WARN exclusivity violations: %s", msg)
     else:
         log.info("[P10] exclusivity: clean (no violations)")
+
+    # ---------- 1c. sanitize host (P11, opt-in) ----------
+    if runtime_cfg.sanitize_host:
+        log.info("[P11] sanitize_host=true; capturing pre-state and applying tuning")
+        try:
+            snap = host_sanitize.capture_pre_state(phdl_host)
+            host_sanitize.write_snapshot(phdl_host, snap)
+            host_sanitize.apply_sanitize(phdl_host)
+            after = host_sanitize.capture_pre_state(phdl_host)
+            diff = host_sanitize.diff_state(snap, after)
+            for node in nodes:
+                artifacts[node]["sanitize"] = {
+                    "before": snap.get(node, {}),
+                    "after": after.get(node, {}),
+                    "changed": diff.get(node, {}),
+                }
+            log.info("[P11] sanitize diff: %s", diff)
+        except Exception as exc:
+            log.warning("[P11] sanitize failed (continuing): %s", exc)
+            for node in nodes:
+                artifacts[node]["sanitize"] = {"error": str(exc)}
 
     # ---------- 2. image_stage ----------
     log.info("[P6] image_stage runtime.image=%s ensure=%s",
