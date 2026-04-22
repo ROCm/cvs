@@ -6,10 +6,12 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 # Standard libraries
-import re
 import json
-from typing import List
+import re
+import shlex
+from dataclasses import dataclass
 from pathlib import Path
+from typing import List
 
 # Third party libraries
 import pandas as pd
@@ -165,14 +167,14 @@ def scan_rccl_logs(output):
         log.warning('#============#')
         log.warning('%s', warn_list)
         log.warning('#============#')
-    if not re.search('#\sAvg bus bandwidth', output):
+    if not re.search(r'#\sAvg bus bandwidth', output):
         fail_test('RCCL test did not complete successfully, no bandwidth numbers printed - pls check')
 
 
 # Not using the avg bus bandwidth verification currently ..
 def check_avg_bus_bw(output, exp_res_dict):
-    if re.search('#\sAvg bus bandwidth\s+:\s+[0-9\.]+', output, re.I):
-        match = re.search('#\sAvg bus bandwidth\s+:\s+([0-9\.]+)', output, re.I)
+    if re.search(r'#\sAvg bus bandwidth\s+:\s+[0-9\.]+', output, re.I):
+        match = re.search(r'#\sAvg bus bandwidth\s+:\s+([0-9\.]+)', output, re.I)
         actual_bw = float(match.group(1))
         if actual_bw < float(exp_res_dict['avg_bus_bw']):
             fail_test(f"Actual Avg Bus BW {actual_bw} is less than the expected Avg BW {exp_res_dict['avg_bus_bw']}")
@@ -459,479 +461,212 @@ def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[Rccl
     return agg_results
 
 
-# Main RCCL Test library which gets invoked from cvs/test/rccl tests and accepts most of the
-# standard NCCL environment variables ..
-#
-def rccl_cluster_test(
-    phdl,
-    shdl,
-    test_name,
-    cluster_node_list,
-    vpc_node_list,
-    user_name,
-    ib_hca_list,
-    net_dev_list,
-    oob_port,
-    no_of_global_ranks,
-    rocm_path_var,
-    mpi_dir,
-    mpi_path_var,
-    rccl_dir,
-    rccl_path_var,
+def _is_enabled(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return bool(value) and re.search('true', str(value), re.I) is not None
+
+
+def _has_env_source_script(env_source_script) -> bool:
+    return bool(env_source_script) and not re.search('none', str(env_source_script), re.I)
+
+
+def _build_rccl_test_cmd(
     rccl_tests_dir,
-    nccl_socket_ifname="",
-    nccl_algo='ring',
-    nccl_proto='simple',
-    gid_index=1,
-    qp_count=1,
-    start_msg_size=1024,
-    end_msg_size='16g',
-    step_function=2,
-    threads_per_gpu=1,
-    warmup_iterations=10,
-    no_of_iterations=20,
-    no_of_cycles=1,
-    check_iteration_count=1,
-    debug_level='INFO',
-    rccl_result_file='/tmp/rccl_result_output.json',
-    no_of_local_ranks=8,
-    ib_rx_queue_len=8192,
-    ucx_tls='tcp',
-    hcoll_enable_mcast_all=0,
-    nccl_cumem_enable=0,
-    nccl_ib_timeout=30,
-    nccl_ib_sl=0,
-    nccl_ib_tc=41,
-    nccl_ib_split_data_on_qps=0,
-    nccl_pxn_disable=1,
-    nccl_net_plugin=None,
-    user_password=None,
-    min_channels=None,
-    max_channels=None,
-    data_type="float",
-    mpi_pml="auto",
-    user_key_file=None,
-    verify_bus_bw=False,
-    verify_bw_dip=True,
-    verify_lat_dip=True,
-    exp_results_dict=None,
-    env_source_script=None,
+    test_name,
+    result_file,
+    *,
+    start_msg_size,
+    end_msg_size,
+    step_function,
+    gpu_count,
+    check_iteration_count,
+    warmup_iterations,
+    no_of_iterations,
+    no_of_cycles,
+    env_source_script,
+    data_type=None,
 ):
-    """
-    Run an RCCL collective test across a cluster via MPI and verify results.
-
-    Arguments:
-      phdl: Parallel ssh handle to run commands on all nodes.
-      shdl: ssh handle to the first node in the cluster.
-      test_name: RCCL test binary name (e.g., all_reduce_perf).
-      cluster_node_list: List of cluster node hostnames/IPs (first is treated as head node).
-      vpc_node_list: List of hostnames/IPs to pass to mpirun -H as hosts - \
-         Make sure passwordless ssh works between them
-      user_name: Username for remote ops (unused here).
-      ib_hca_list: Comma-separated IB HCA devices for NCCL (NCCL_IB_HCA).
-      net_dev_list: UCX network device(s) to use (UCX_NET_DEVICES).
-      oob_port: Interface for MPI TCP OOB (btl_tcp_if_include).
-      no_of_global_ranks: Total MPI ranks to launch across the cluster.
-      rocm_path_var, mpi_dir, mpi_path_var, rccl_dir, rccl_path_var, rccl_tests_dir: Installation paths.
-      nccl_algo, nccl_proto, gid_index, qp_count, ...: NCCL/UCX/MPI tuning parameters.
-      start_msg_size, end_msg_size, step_function: Message size sweep setup.
-      threads_per_gpu, warmup_iterations, check_iteration_count: Test execution tuning.
-      debug_level: NCCL_DEBUG level.
-      rccl_result_file: Path where the RCCL test writes JSON results (-Z json -x file).
-      verify_bus_bw: If 'True' (string), compare bus BW vs expected thresholds.
-      exp_results_dict: Dict of expected results per test for verification.
-
-    Returns:
-      result_out: The raw JSON string read from rccl_result_file on the head node.
-    """
-
-    log.info(f'Starting RCCL Test ..........................................{test_name}')
-    # Base ROCm path as provided by caller
-    ROCM_PATH = rocm_path_var
-
-    # Resolve tool/library install locations
-    # MPI_PATH=f'{mpi_path}/install/bin'
-    MPI_PATH = f'{mpi_path_var}'
-    MPI_INSTALL_DIR = f'{mpi_dir}'
-    RCCL_PATH = f'{rccl_path_var}'
-    RCCL_TESTS_INSTALL_DIR = f'{rccl_tests_dir}'
-
-    # Environment variables exported into the mpirun context
-    PATH = f'{MPI_PATH}/bin:{ROCM_PATH}/bin:$PATH'
-    LD_LIBRARY_PATH = (
-        f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
+    cmd_parts = [
+        f'{rccl_tests_dir}/{test_name}',
+        f'-b {start_msg_size}',
+        f'-e {end_msg_size}',
+        f'-f {step_function}',
+        f'-g {gpu_count}',
+        f'-c {check_iteration_count}',
+        f'-w {warmup_iterations}',
+    ]
+    if data_type is not None:
+        cmd_parts.append(f'-d {data_type}')
+    cmd_parts.extend(
+        [
+            f'-n {no_of_iterations}',
+            f'-N {no_of_cycles}',
+            '-Z json',
+            f'-X {result_file}',
+        ]
     )
 
-    log.info(f'%% VPC Node IPs {vpc_node_list}')
+    command = f"env && {' '.join(cmd_parts)}"
+    if _has_env_source_script(env_source_script):
+        command = f'source {shlex.quote(env_source_script)} && {command}'
+    return f'bash -lc {shlex.quote(command)}'
 
-    # Use the first cluster node as the head node (source for collected outputs)
-    # The -H {host_params} is obsolete in ompi5.0 and greater, so changing to
-    # --hostfile option
-    head_node = cluster_node_list[0]
-    # host_params=''
-    # proc_per_node = int(int(no_of_global_ranks)/len(cluster_node_list))
-    # for node in vpc_node_list:
-    #    host_params = f'{host_params}{node}:{proc_per_node},'
-    # Compute processes per node and build the -H host mapping string: host:N,host:N,...
-    # host_params = host_params.rstrip(',')
-    # print(f'RCCL Hosts -H value {host_params}')
 
-    host_file_params = ''
+def _write_rccl_hostfile(shdl, vpc_node_list, cluster_node_list, no_of_global_ranks):
+    host_file = '/tmp/rccl_hosts_file.txt'
     proc_per_node = int(int(no_of_global_ranks) / len(cluster_node_list))
-    for node in vpc_node_list:
-        host_file_params = f'{host_file_params}' + f'{node} slots={proc_per_node}\n'
+    host_entries = ''.join(f'{node} slots={proc_per_node}\n' for node in vpc_node_list)
 
-    cmd = 'sudo rm -f /tmp/rccl_hosts_file.txt'
-    shdl.exec(cmd)
-
-    cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
-    shdl.exec(cmd)
-
-    # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, shdl, MPI_PATH, head_node, net_dev_list, ucx_tls)
-
-    # Wrap test binary in shell to source env script if provided
-    test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-        -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-        -d {data_type} -n {no_of_iterations} -N {no_of_cycles} \
-        -Z json -X {rccl_result_file}'
-
-    if env_source_script and env_source_script.lower() != 'none':
-        test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
-    else:
-        # Always wrap in bash to interpret && shell operator
-        test_cmd = f'bash -c "{test_cmd}"'
-
-    # Build optional NCCL_SOCKET_IFNAME parameter
-    nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
-
-    # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
-    nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
-    nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
-
-    cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
-        --allow-run-as-root \
-        --hostfile /tmp/rccl_hosts_file.txt \
-        -x NCCL_DEBUG={debug_level} \
-        --bind-to numa \
-        -x NCCL_IB_GID_INDEX={gid_index} \
-        {ucx_params} \
-        -x NCCL_IB_PCI_RELAXED_ORDERING=1 \
-        -x PATH={PATH} \
-        -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
-        -x NCCL_IB_HCA={ib_hca_list} \
-        {nccl_socket_param} \
-        --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {oob_port} \
-        --mca oob_tcp_if_include {oob_port} \
-        {pml_param} \
-        -x NCCL_ALGO={nccl_algo} \
-        {nccl_min_channels_param} \
-        {nccl_max_channels_param} \
-        -x NCCL_IB_QPS_PER_CONNECTION={qp_count} \
-        -x IB_RX_QUEUE_LEN={ib_rx_queue_len} \
-        -x HCOLL_ENABLE_MCAST_ALL={hcoll_enable_mcast_all} \
-        -x NCCL_CUMEM_ENABLE={nccl_cumem_enable} \
-        -x NCCL_IB_TIMEOUT={nccl_ib_timeout} \
-        -x NCCL_IB_SL={nccl_ib_sl} \
-        -x NCCL_IB_TC={nccl_ib_tc} \
-        -x NCCL_IB_SPLIT_DATA_ON_QPS={nccl_ib_split_data_on_qps} \
-        -x NCCL_PXN_DISABLE={nccl_pxn_disable} \
-        -x NCCL_NET_PLUGIN={nccl_net_plugin} \
-        {test_cmd}
-        '''
-
-    log.info('%%%%%%%%%%%%%%%%')
-    log.info("%s", cmd)
-    log.info('%%%%%%%%%%%%%%%%')
-    try:
-        out_dict = shdl.exec(cmd, timeout=500)
-        output = out_dict[head_node]
-        # print(output)
-        scan_rccl_logs(output)
-    except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-
-    # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = shdl.exec(f'cat {rccl_result_file}')
-    result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
-
-    # Collect basic GPU information via rocm-smi
-    smi_out_dict = shdl.exec('rocm-smi -a | head -30')
-    smi_out = smi_out_dict[head_node]
-    get_model_from_rocm_smi_output(smi_out)
-
-    # If requested, verify measured bus bandwidths against provided expected Bandwidth
-    test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None
-
-    if re.search('True', verify_bus_bw, re.I):
-        if test_exp_dict:
-            check_bus_bw(test_name, result_out, test_exp_dict)
-
-    if re.search('True', verify_bw_dip, re.I):
-        check_bw_dip(test_name, result_out, test_exp_dict)
-
-    if re.search('True', verify_lat_dip, re.I):
-        check_lat_dip(test_name, result_out, test_exp_dict)
-
-    return result_out
+    shdl.exec(f'sudo rm -f {host_file}')
+    shdl.exec(f'printf %s {shlex.quote(host_entries)} > {host_file}')
+    return host_file
 
 
-# Main RCCL Test library which gets invoked from cvs/test/rccl tests and accepts most of the
-# standard NCCL environment variables ..
-#
-def rccl_cluster_test_default(
-    phdl,
-    shdl,
-    test_name,
-    cluster_node_list,
-    vpc_node_list,
-    user_name,
-    ib_hca_list,
-    net_dev_list,
-    oob_port,
-    no_of_global_ranks,
-    rocm_path_var,
+def _build_cluster_cmd(
+    *,
     mpi_dir,
-    mpi_path_var,
-    rccl_dir,
-    rccl_path_var,
-    rccl_tests_dir,
-    nccl_socket_ifname="",
-    nccl_algo='ring',
-    nccl_proto='simple',
-    gid_index=1,
-    qp_count=1,
-    start_msg_size=1024,
-    end_msg_size='16g',
-    step_function=2,
-    threads_per_gpu=1,
-    warmup_iterations=10,
-    no_of_iterations=20,
-    data_types=['float'],
-    no_of_cycles=1,
-    check_iteration_count=1,
-    debug_level='INFO',
-    rccl_result_file='/tmp/rccl_result_output.json',
-    no_of_local_ranks=8,
-    ib_rx_queue_len=8192,
-    ucx_tls='tcp',
-    hcoll_enable_mcast_all=0,
-    nccl_cumem_enable=0,
-    nccl_ib_timeout=30,
-    nccl_ib_sl=0,
-    nccl_ib_tc=41,
-    nccl_ib_split_data_on_qps=0,
-    nccl_pxn_disable=1,
-    nccl_net_plugin=None,
-    user_password=None,
-    min_channels=None,
-    max_channels=None,
-    mpi_pml="auto",
-    user_key_file=None,
-    verify_bus_bw=False,
-    verify_bw_dip=True,
-    verify_lat_dip=True,
-    nic_model='ainic',
-    exp_results_dict=None,
-    env_source_script=None,
+    no_of_global_ranks,
+    host_file,
+    debug_level,
+    gid_index,
+    ucx_params,
+    path_env,
+    ld_library_path,
+    ib_hca_list,
+    nccl_socket_ifname,
+    oob_port,
+    pml_param,
+    nccl_net_plugin,
+    min_channels,
+    max_channels,
+    test_cmd,
+    use_explicit_tuning,
+    nccl_algo,
+    qp_count,
+    ib_rx_queue_len,
+    hcoll_enable_mcast_all,
+    nccl_cumem_enable,
+    nccl_ib_timeout,
+    nccl_ib_sl,
+    nccl_ib_tc,
+    nccl_ib_split_data_on_qps,
+    nccl_pxn_disable,
 ):
-    """
-    Run an RCCL collective test across a cluster via MPI and verify results.
+    cmd_parts = [
+        f'{mpi_dir}/mpirun',
+        f'--np {no_of_global_ranks}',
+        '--allow-run-as-root',
+        f'--hostfile {host_file}',
+        f'-x NCCL_DEBUG={debug_level}',
+        '--bind-to numa',
+        f'-x NCCL_IB_GID_INDEX={gid_index}',
+        ucx_params,
+        '-x NCCL_IB_PCI_RELAXED_ORDERING=1',
+        f'-x PATH={path_env}',
+        f'-x LD_LIBRARY_PATH={ld_library_path}',
+        f'-x NCCL_IB_HCA={ib_hca_list}',
+        f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if str(nccl_socket_ifname).strip() else '',
+        '--mca btl ^vader,openib',
+        f'--mca btl_tcp_if_include {oob_port}',
+        f'--mca oob_tcp_if_include {oob_port}',
+        pml_param,
+        f'-x NCCL_NET_PLUGIN={nccl_net_plugin}',
+        f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else '',
+        f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else '',
+    ]
 
-    Arguments:
-      phdl: Parallel ssh handle to run commands on all nodes.
-      shdl: ssh handle to the first node in the cluster.
-      test_name: RCCL test binary name (e.g., all_reduce_perf).
-      cluster_node_list: List of cluster node hostnames/IPs (first is treated as head node).
-      vpc_node_list: List of hostnames/IPs to pass to mpirun -H as hosts - \
-         Make sure passwordless ssh works between them
-      user_name: Username for remote ops (unused here).
-      ib_hca_list: Comma-separated IB HCA devices for NCCL (NCCL_IB_HCA).
-      net_dev_list: UCX network device(s) to use (UCX_NET_DEVICES).
-      oob_port: Interface for MPI TCP OOB (btl_tcp_if_include).
-      no_of_global_ranks: Total MPI ranks to launch across the cluster.
-      rocm_path_var, mpi_dir, mpi_path_var, rccl_dir, rccl_path_var, rccl_tests_dir: Installation paths.
-      nccl_algo, nccl_proto, gid_index, qp_count, ...: NCCL/UCX/MPI tuning parameters.
-      start_msg_size, end_msg_size, step_function: Message size sweep setup.
-      threads_per_gpu, warmup_iterations, check_iteration_count: Test execution tuning.
-      data_types: List of data types to test (e.g., ['float', 'half']).
-      no_of_cycles: Number of cycles to run for each data type.
-      min_channels: Minimum NCCL channels (NCCL_MIN_NCHANNELS).
-      max_channels: Maximum NCCL channels (NCCL_MAX_NCHANNELS).
-      debug_level: NCCL_DEBUG level.
-      rccl_result_file: Path where the RCCL test writes JSON results (-Z json -x file).
-      verify_bus_bw: If 'True' (string), compare bus BW vs expected thresholds.
-      exp_results_dict: Dict of expected results per test for verification.
-
-    Returns:
-      all_raw_results: List of dictionaries containing all test results from all data types.
-    """
-
-    log.info(f'Starting RCCL Test ..........................................{test_name}')
-    if min_channels is not None and max_channels is not None:
-        log.info(f'Using NCCL channels: min={min_channels}, max={max_channels}')
-    else:
-        log.info('Using RCCL default NCCL channel configuration')
-    # Base ROCm path as provided by caller
-    ROCM_PATH = rocm_path_var
-
-    # Resolve tool/library install locations
-    # MPI_PATH=f'{mpi_path}/install/bin'
-    MPI_PATH = f'{mpi_path_var}'
-    MPI_INSTALL_DIR = f'{mpi_dir}'
-    RCCL_PATH = f'{rccl_path_var}'
-    RCCL_TESTS_INSTALL_DIR = f'{rccl_tests_dir}'
-
-    # Environment variables exported into the mpirun context
-    PATH = f'{MPI_PATH}/bin:{ROCM_PATH}/bin:$PATH'
-    LD_LIBRARY_PATH = (
-        f'{RCCL_PATH}:{MPI_PATH}/lib:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
-    )
-
-    log.info(f'%% VPC Node IPs {vpc_node_list}')
-
-    # Use the first cluster node as the head node (source for collected outputs)
-    # The -H {host_params} is obsolete in ompi5.0 and greater, so changing to
-    # --hostfile option
-    head_node = cluster_node_list[0]
-    # host_params=''
-    # proc_per_node = int(int(no_of_global_ranks)/len(cluster_node_list))
-    # for node in vpc_node_list:
-    #    host_params = f'{host_params}{node}:{proc_per_node},'
-    # Compute processes per node and build the -H host mapping string: host:N,host:N,...
-    # host_params = host_params.rstrip(',')
-    # print(f'RCCL Hosts -H value {host_params}')
-
-    host_file_params = ''
-    proc_per_node = int(int(no_of_global_ranks) / len(cluster_node_list))
-    for node in vpc_node_list:
-        host_file_params = f'{host_file_params}' + f'{node} slots={proc_per_node}\n'
-
-    cmd = 'sudo rm -f /tmp/rccl_hosts_file.txt'
-    shdl.exec(cmd)
-
-    cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
-    shdl.exec(cmd)
-
-    # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, shdl, MPI_PATH, head_node, net_dev_list, ucx_tls)
-
-    all_raw_results = []
-    all_validated_results = []
-    base_path = Path(rccl_result_file)
-
-    for dtype in data_types:
-        # Create a unique result file for each data type
-        dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
-        log.info(f'Running {test_name} with dtype={dtype}')
-
-        # Wrap test binary in shell to source env script if provided
-        test_cmd = (
-            f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-            -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-            -d {dtype} -n {no_of_iterations} -N {no_of_cycles} -Z json -X {dtype_result_file}'
+    if use_explicit_tuning:
+        cmd_parts.extend(
+            [
+                f'-x NCCL_ALGO={nccl_algo}',
+                f'-x NCCL_IB_QPS_PER_CONNECTION={qp_count}',
+                f'-x IB_RX_QUEUE_LEN={ib_rx_queue_len}',
+                f'-x HCOLL_ENABLE_MCAST_ALL={hcoll_enable_mcast_all}',
+                f'-x NCCL_CUMEM_ENABLE={nccl_cumem_enable}',
+                f'-x NCCL_IB_TIMEOUT={nccl_ib_timeout}',
+                f'-x NCCL_IB_SL={nccl_ib_sl}',
+                f'-x NCCL_IB_TC={nccl_ib_tc}',
+                f'-x NCCL_IB_SPLIT_DATA_ON_QPS={nccl_ib_split_data_on_qps}',
+                f'-x NCCL_PXN_DISABLE={nccl_pxn_disable}',
+            ]
         )
 
-        if env_source_script and env_source_script.lower() != 'none':
-            test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
+    cmd_parts.append(test_cmd)
+    return ' '.join(part for part in cmd_parts if part)
+
+
+def _scan_outputs(out_dict, *, head_node=None):
+    if head_node:
+        scan_rccl_logs(out_dict[head_node])
+        return
+
+    for output in out_dict.values():
+        scan_rccl_logs(output)
+
+
+def _load_result_map(exec_handle, result_file):
+    result_dict_out = exec_handle.exec(f'cat {result_file}')
+    return {node: json.loads(output.strip()) for node, output in result_dict_out.items()}
+
+
+def _validate_multinode_results(raw_results, dtype, result_file):
+    try:
+        validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in raw_results]
+        log.info(f'Validation passed: {len(validated)} RcclTests schema validation passed')
+        return validated
+    except ValidationError as e:
+        if _is_severe_wrong_corruption_error(e):
+            msg = (
+                "\n"
+                "==================== SEVERE DATA CORRUPTION ====================\n"
+                "RCCL rccl-tests JSON schema validation failed due to '#wrong' > 0.\n"
+                "This indicates invalid/corrupted rccl-tests results.\n"
+                "\n"
+                f"data_type: {dtype}\n"
+                f"result_file: {result_file}\n"
+                "\n"
+                "Action: aborting further RCCL iterations/data types.\n"
+                "Please inspect the rccl-tests stdout/stderr and re-run.\n"
+                "================================================================\n"
+            )
+            log.error("%s", msg)
+            fail_test(msg)
         else:
-            # Always wrap in bash to interpret && shell operator
-            test_cmd = f'bash -c "{test_cmd}"'
+            log.error(f'Validation Failed: {e}')
+            fail_test(f'RCCL Test {dtype} schema validation failed: {e}')
 
-        # Build optional NCCL_SOCKET_IFNAME parameter
-        nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
+        raise RuntimeError(f'RCCL Test {dtype} schema validation failed') from e
 
-        # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
-        nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
-        nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
 
-        cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
-        --allow-run-as-root \
-        --hostfile /tmp/rccl_hosts_file.txt \
-        -x NCCL_DEBUG={debug_level} \
-        --bind-to numa \
-        -x NCCL_IB_GID_INDEX={gid_index} \
-        {ucx_params} \
-        -x NCCL_IB_PCI_RELAXED_ORDERING=1 \
-        -x PATH={PATH} \
-        -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
-        -x NCCL_IB_HCA={ib_hca_list} \
-        {nccl_socket_param} \
-        --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {oob_port} \
-        --mca oob_tcp_if_include {oob_port} \
-        {pml_param} \
-        -x NCCL_NET_PLUGIN={nccl_net_plugin} \
-        {nccl_min_channels_param} \
-        {nccl_max_channels_param} \
-        {test_cmd}
-        '''
+def _resolve_nic_type(nic_model):
+    if re.search('ainic|pensando|amd', nic_model, re.I):
+        return 'ainic'
+    if re.search('broadcom|thor|bnxt', nic_model, re.I):
+        return 'thor'
+    if re.search('mellanox|cx|nvidia', nic_model, re.I):
+        return 'connectx'
+    return 'ainic'
 
-        log.info('%%%%%%%%%%%%%%%%')
-        log.info("%s", cmd)
-        log.info('%%%%%%%%%%%%%%%%')
-        try:
-            out_dict = shdl.exec(cmd, timeout=500)
-            output = out_dict[head_node]
-            # print(output)
-            scan_rccl_logs(output)
-        except Exception as e:
-            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
-        # Read the JSON results emitted by the RCCL test binary
-        result_dict_out = shdl.exec(f'cat {dtype_result_file}')
-        dtype_result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
-        # Validate the results against the schema fail if results are not valid
-        try:
-            validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
-            log.info(f'Validation passed: {len(validated)} RcclTests schema validation passed')
-            all_validated_results.extend(validated)
-            all_raw_results.extend(dtype_result_out)
-        except ValidationError as e:
-            if _is_severe_wrong_corruption_error(e):
-                msg = (
-                    "\n"
-                    "==================== SEVERE DATA CORRUPTION ====================\n"
-                    "RCCL rccl-tests JSON schema validation failed due to '#wrong' > 0.\n"
-                    "This indicates invalid/corrupted rccl-tests results.\n"
-                    "\n"
-                    f"data_type: {dtype}\n"
-                    f"result_file: {dtype_result_file}\n"
-                    "\n"
-                    "Action: aborting further RCCL iterations/data types.\n"
-                    "Please inspect the rccl-tests stdout/stderr and re-run.\n"
-                    "================================================================\n"
-                )
-                log.error("%s", msg)
-                fail_test(msg)
-            else:
-                log.error(f'Validation Failed: {e}')
-                fail_test(f'RCCL Test {dtype} schema validation failed: {e}')
-
-            # IMPORTANT: schema validation failures should stop further iterations/data types
-            raise RuntimeError(f'RCCL Test {dtype} schema validation failed') from e
-
-    # Save the results to a main result file
-    with open(rccl_result_file, 'w') as f:
-        json.dump(all_raw_results, f, indent=2)
+def _aggregate_results(all_raw_results, all_validated_results, rccl_result_file):
+    base_path = Path(rccl_result_file)
+    with open(rccl_result_file, 'w') as result_file:
+        json.dump(all_raw_results, result_file, indent=2)
     log.info(f'Saved combined results from all data types to {rccl_result_file}')
 
-    # Validate the results against the schema and aggregate if multiple results are found, fail if results are not valid
-    aggregated_rccl_tests = None
+    if not all_validated_results:
+        log.warning('Aggregation skipped: no validated results found')
+        return None
+
     try:
-        if len(all_validated_results) >= 1:
-            aggregated_rccl_tests = aggregate_rccl_test_results(all_validated_results)
-            log.info(f'Aggregation passed: {len(aggregated_rccl_tests)} RcclTestsAggregated schema validation passed')
-            # Note: currently we are saving the aggregated results, but we could instead use this for final report generation
-            aggregated_path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
-            with open(aggregated_path, 'w') as f:
-                json.dump([result.model_dump() for result in aggregated_rccl_tests], f, indent=2)
-            log.info(f'Saved aggregated results to {aggregated_path}')
-        else:
-            log.warning('Aggregation skipped: only one run found')
+        aggregated_rccl_tests = aggregate_rccl_test_results(all_validated_results)
+        log.info(f'Aggregation passed: {len(aggregated_rccl_tests)} RcclTestsAggregated schema validation passed')
+        aggregated_path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
+        with open(aggregated_path, 'w') as aggregated_file:
+            json.dump([result.model_dump() for result in aggregated_rccl_tests], aggregated_file, indent=2)
+        log.info(f'Saved aggregated results to {aggregated_path}')
+        return aggregated_rccl_tests
     except ValidationError as e:
         log.error(f'Validation Failed: {e}')
         fail_test(f'RCCL Test schema validation failed: {e}')
@@ -939,182 +674,318 @@ def rccl_cluster_test_default(
         log.error(f'Aggregation failed: {e}')
         fail_test(f'RCCL Test aggregation failed: {e}')
 
-    # Collect basic GPU information via rocm-smi
-    smi_out_dict = shdl.exec('rocm-smi -a | head -30')
-    smi_out = smi_out_dict[head_node]
-    get_model_from_rocm_smi_output(smi_out)
+    return None
 
-    # Determine NIC type from nic_model parameter
-    if re.search('ainic|pensando|amd', nic_model, re.I):
-        nic_type = 'ainic'
-    elif re.search('broadcom|thor|bnxt', nic_model, re.I):
-        nic_type = 'thor'
-    elif re.search('mellanox|cx|nvidia', nic_model, re.I):
-        nic_type = 'connectx'
-    else:
-        nic_type = 'ainic'
-    log.info(f'Detected NIC type: {nic_type} from nic_model: {nic_model}')
 
-    # Convert aggregated results to format compatible with verification functions (using mean values)
-    results_for_verification = []
-    if aggregated_rccl_tests:
-        for agg_result in aggregated_rccl_tests:
-            results_for_verification.append(
-                {
-                    'name': agg_result.name,
-                    'size': agg_result.size,
-                    'type': agg_result.type,
-                    'inPlace': agg_result.inPlace,
-                    'busBw': agg_result.busBw_mean,
-                    'algBw': agg_result.algBw_mean,
-                    'time': agg_result.time_mean,
-                }
-            )
+def _verify_flat_results(test_name, results, exp_results_dict, *, verify_bus_bw, verify_bw_dip, verify_lat_dip):
+    test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None
+
+    if _is_enabled(verify_bus_bw) and test_exp_dict:
+        check_bus_bw(test_name, results, test_exp_dict)
+
+    if _is_enabled(verify_bw_dip):
+        check_bw_dip(test_name, results, test_exp_dict)
+
+    if _is_enabled(verify_lat_dip):
+        check_lat_dip(test_name, results, test_exp_dict)
+
+
+def _verify_aggregated_results(
+    test_name,
+    aggregated_results,
+    raw_results,
+    exp_results_dict,
+    *,
+    data_types,
+    no_of_global_ranks,
+    nic_model,
+    verify_bus_bw,
+    verify_bw_dip,
+    verify_lat_dip,
+):
+    if aggregated_results:
+        results_for_verification = [
+            {
+                'name': result.name,
+                'size': result.size,
+                'type': result.type,
+                'inPlace': result.inPlace,
+                'busBw': result.busBw_mean,
+                'algBw': result.algBw_mean,
+                'time': result.time_mean,
+            }
+            for result in aggregated_results
+        ]
         log.info(f'Converted {len(results_for_verification)} aggregated results for verification')
     else:
-        # Fallback to raw results if aggregation wasn't performed
-        results_for_verification = all_raw_results
+        results_for_verification = raw_results
         log.info('Using raw results for verification (no aggregation performed)')
 
-    # Build result key in format: test_name-data_types-global_ranks
-    # Join all data types with underscores for the key
-    dtypes_str = '_'.join(data_types)
-    result_key = f'{test_name}-{dtypes_str}-{no_of_global_ranks}'
+    nic_type = _resolve_nic_type(nic_model)
+    log.info(f'Detected NIC type: {nic_type} from nic_model: {nic_model}')
+
+    result_key = f"{test_name}-{'_'.join(data_types)}-{no_of_global_ranks}"
     log.info(f'Looking up results with key: {result_key} in nic_type: {nic_type}')
 
-    # Get test-specific expected results from hierarchical structure
     test_exp_dict = None
-    if exp_results_dict and isinstance(exp_results_dict, dict) and nic_type in exp_results_dict:
-        if result_key in exp_results_dict[nic_type]:
-            test_exp_dict = exp_results_dict[nic_type][result_key]
+    if exp_results_dict and isinstance(exp_results_dict, dict):
+        test_exp_dict = exp_results_dict.get(nic_type, {}).get(result_key)
+        if test_exp_dict:
             log.info(f'Found expected results: {nic_type}/{result_key}')
 
-    # If requested, verify measured bus bandwidths against provided expected Bandwidth
-    if re.search('True', verify_bus_bw, re.I):
+    if _is_enabled(verify_bus_bw):
         if test_exp_dict:
             check_bus_bw(test_name, results_for_verification, test_exp_dict)
         else:
             log.warning(f'verify_bus_bw enabled but no expected results found for {result_key}')
 
-    if re.search('True', verify_bw_dip, re.I):
+    if _is_enabled(verify_bw_dip):
         check_bw_dip(test_name, results_for_verification, test_exp_dict)
 
-    if re.search('True', verify_lat_dip, re.I):
+    if _is_enabled(verify_lat_dip):
         check_lat_dip(test_name, results_for_verification, test_exp_dict)
 
-    return all_raw_results
+
+@dataclass(frozen=True)
+class MpiRuntime:
+    path_env: str
+    ld_library_path: str
+    host_file: str
+    pml_param: str
+    ucx_params: str
 
 
-# Single node RCCL
-#
-def rccl_single_node_test(
-    phdl,
-    test_name,
-    cluster_node_list,
-    rocm_path_var,
-    rccl_dir,
-    rccl_path_var,
-    rccl_tests_dir,
-    start_msg_size=1024,
-    end_msg_size='16g',
-    step_function=2,
-    warmup_iterations=10,
-    no_of_iterations=20,
-    no_of_cycles=1,
-    check_iteration_count=1,
-    debug_level='INFO',
-    rccl_result_file='/tmp/rccl_result_output.json',
-    no_of_local_ranks=8,
-    verify_bus_bw=False,
-    verify_bw_dip=True,
-    verify_lat_dip=True,
-    exp_results_dict=None,
-    env_source_script=None,
-):
+@dataclass(frozen=True)
+class RcclMpiRunSpec:
+    data_types: tuple[str, ...] | None = None
+    result_file: str | None = None
+    aggregate: bool = False
+    min_channels: int | None = None
+    max_channels: int | None = None
+    nccl_algo: str | None = None
+    qp_count: int | None = None
+    nccl_pxn_disable: int | None = None
+    nic_model: str | None = None
+
+
+class RcclTestRunner:
     """
-    Run an Single Node RCCL collective test
-
-    Arguments:
-      phdl: Parallel ssh handle to run commands on all nodes.
-      test_name: RCCL test binary name (e.g., all_reduce_perf).
-      cluster_node_list: List of cluster node hostnames/IPs
-      rocm_path_var, rccl_dir, rccl_path_var, rccl_tests_dir: Installation paths.
-      start_msg_size, end_msg_size, step_function: Message size sweep setup.
-      threads_per_gpu, warmup_iterations, check_iteration_count: Test execution tuning.
-      debug_level: NCCL_DEBUG level.
-      rccl_result_file: Path where the RCCL test writes JSON results (-Z json -x file).
-      verify_bus_bw: If 'True' (string), compare bus BW vs expected thresholds.
-      exp_results_dict: Dict of expected results per test for verification.
-
-    Returns:
-      result_out: The raw JSON string read from rccl_result_file on all nodes
+    Small RCCL MPI runner used by the RCCL pytest modules.
     """
 
-    log.info(f'Starting RCCL Test ..........................................{test_name}')
-    # Base ROCm path as provided by caller
-    ROCM_PATH = rocm_path_var
+    def __init__(
+        self,
+        *,
+        config,
+        cluster_node_list,
+        shdl=None,
+        vpc_node_list=None,
+        no_of_global_ranks=None,
+    ):
+        self.shdl = shdl
+        self.config = config
+        self.cluster_node_list = cluster_node_list
+        self.vpc_node_list = list(vpc_node_list or [])
+        self.no_of_global_ranks = no_of_global_ranks if no_of_global_ranks is not None else config.get('no_of_global_ranks')
+        self.head_node = cluster_node_list[0]
 
-    RCCL_PATH = f'{rccl_path_var}'
-    RCCL_TESTS_INSTALL_DIR = f'{rccl_tests_dir}'
+    def run(self, test_name, spec: RcclMpiRunSpec | None = None):
+        spec = spec or RcclMpiRunSpec()
+        log.info(f'Starting RCCL Test ..........................................{test_name}')
+        if spec.min_channels is not None and spec.max_channels is not None:
+            log.info(f'Using NCCL channels: min={spec.min_channels}, max={spec.max_channels}')
+        elif spec.aggregate:
+            log.info('Using RCCL default NCCL channel configuration')
 
-    head_node = cluster_node_list[0]
+        runtime = self._prepare_mpi_runtime()
+        result_file = self._result_file(spec.result_file)
+        active_data_types = self._data_types(spec)
 
-    # Environment variables exported into the mpirun context
-    PATH = f'{ROCM_PATH}/bin:$PATH'
-    LD_LIBRARY_PATH = f'{RCCL_PATH}:{ROCM_PATH}/lib:{ROCM_PATH}/lib64:{ROCM_PATH}/hip/lib:$LD_LIBRARY_PATH'
+        all_raw_results = []
+        all_validated_results = []
+        for data_type in active_data_types:
+            dtype_result_file = self._dtype_result_file(result_file, active_data_types, data_type)
+            raw_results = self._run_mpi_case(
+                runtime,
+                test_name,
+                result_file=dtype_result_file,
+                data_type=data_type,
+                spec=spec,
+            )
+            all_raw_results.extend(raw_results)
+            all_validated_results.extend(_validate_multinode_results(raw_results, data_type, dtype_result_file))
 
-    # Build the test command
-    # Wrap test binary in shell to source env script if provided
-    test_cmd = f'env && {RCCL_TESTS_INSTALL_DIR}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-        -g {no_of_local_ranks} -c {check_iteration_count} -w {warmup_iterations} -n {no_of_iterations} -N {no_of_cycles} \
-        -Z json -X {rccl_result_file}'
+        self._collect_gpu_info()
+        if spec.aggregate:
+            aggregated_results = _aggregate_results(all_raw_results, all_validated_results, result_file)
+            _verify_aggregated_results(
+                test_name,
+                aggregated_results,
+                all_raw_results,
+                self.config.get('results'),
+                data_types=active_data_types,
+                no_of_global_ranks=self.no_of_global_ranks,
+                nic_model=spec.nic_model or self.config.get('nic_model', 'ainic'),
+                verify_bus_bw=self.config.get('verify_bus_bw', False),
+                verify_bw_dip=self.config.get('verify_bw_dip', True),
+                verify_lat_dip=self.config.get('verify_lat_dip', True),
+            )
+            return all_raw_results
 
-    if env_source_script and env_source_script.lower() != 'none':
-        test_cmd = f'bash -c "source {env_source_script} && {test_cmd}"'
-    else:
-        # Always wrap in bash to interpret && shell operator
-        test_cmd = f'bash -c "{test_cmd}"'
+        self._verify_flat(test_name, all_raw_results)
+        return all_raw_results
 
-    cmd = f'''export NCCL_DEBUG={debug_level};  \
-           export PATH={PATH}; \
-           export LD_LIBRARY_PATH={LD_LIBRARY_PATH}; \
-           {test_cmd}'''
+    def _result_file(self, override=None):
+        return override or self.config.get('rccl_result_file', '/tmp/rccl_result_output.json')
 
-    log.info('%%%%%%%%%%%%%%%%')
-    log.info("%s", cmd)
-    log.info('%%%%%%%%%%%%%%%%')
-    try:
-        out_dict = phdl.exec(cmd, timeout=500)
-        for node in out_dict.keys():
-            scan_rccl_logs(out_dict[node])
-    except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+    def _configured_data_types(self):
+        for key in ('data_types', 'data_type_list'):
+            data_types = self.config.get(key)
+            if data_types:
+                return list(data_types)
+        if self.config.get('data_type'):
+            return [self.config['data_type']]
+        return ['float']
 
-    # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = phdl.exec(f'cat {rccl_result_file}')
-    result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
+    def _data_types(self, spec: RcclMpiRunSpec):
+        if spec.data_types:
+            return list(spec.data_types)
+        configured_data_types = self._configured_data_types()
+        return configured_data_types if spec.aggregate else [configured_data_types[0]]
 
-    # Collect basic GPU information via rocm-smi
-    phdl.exec('rocm-smi -a | head -30')
+    def _dtype_result_file(self, result_file, data_types, data_type):
+        if len(data_types) == 1:
+            return result_file
+        base_path = Path(result_file)
+        return f'{base_path.parent}/{base_path.stem}_{data_type}.json'
 
-    # If requested, verify measured bus bandwidths against provided expected Bandwidth
-    test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None
+    def _uses_explicit_tuning(self, spec: RcclMpiRunSpec):
+        return any(value is not None for value in (spec.nccl_algo, spec.qp_count, spec.nccl_pxn_disable))
 
-    if re.search('True', verify_bus_bw, re.I):
-        for node in result_dict_out.keys():
-            result_out = json.loads(result_dict_out[node].replace('\n', '').replace('\r', ''))
-            if test_exp_dict:
-                check_bus_bw(test_name, result_out, test_exp_dict)
+    def _base_env(self):
+        rocm_path = self.config['rocm_path_var']
+        rccl_path = self.config['rccl_path_var']
+        mpi_path = self.config['mpi_path_var']
+        path_env = f'{mpi_path}/bin:{rocm_path}/bin:$PATH'
+        ld_library_path = f'{rccl_path}:{mpi_path}/lib:{rocm_path}/lib:{rocm_path}/lib64:{rocm_path}/hip/lib:$LD_LIBRARY_PATH'
+        return path_env, ld_library_path
 
-    if re.search('True', verify_bw_dip, re.I):
-        for node in result_dict_out.keys():
-            result_out = json.loads(result_dict_out[node].replace('\n', '').replace('\r', ''))
-            check_bw_dip(test_name, result_out, test_exp_dict)
+    def _prepare_mpi_runtime(self):
+        if self.shdl is None:
+            raise ValueError('MPI RCCL tests require shdl')
+        if not self.vpc_node_list:
+            raise ValueError('MPI RCCL tests require vpc_node_list')
+        if self.no_of_global_ranks is None:
+            raise ValueError('MPI RCCL tests require no_of_global_ranks')
 
-    if re.search('True', verify_lat_dip, re.I):
-        for node in result_dict_out.keys():
-            result_out = json.loads(result_dict_out[node].replace('\n', '').replace('\r', ''))
-            check_lat_dip(test_name, result_out, test_exp_dict)
+        log.info(f'%% VPC Node IPs {self.vpc_node_list}')
+        path_env, ld_library_path = self._base_env()
+        host_file = _write_rccl_hostfile(self.shdl, self.vpc_node_list, self.cluster_node_list, self.no_of_global_ranks)
+        pml_param, ucx_params = determine_mpi_pml_config(
+            self.config.get('mpi_pml', 'auto'),
+            self.shdl,
+            self.config['mpi_path_var'],
+            self.head_node,
+            self.config['net_dev_list'],
+            self.config.get('ucx_tls', 'tcp'),
+        )
+        return MpiRuntime(
+            path_env=path_env,
+            ld_library_path=ld_library_path,
+            host_file=host_file,
+            pml_param=pml_param,
+            ucx_params=ucx_params,
+        )
 
-    return result_out
+    def _test_command(self, test_name, result_file, *, gpu_count, data_type=None):
+        return _build_rccl_test_cmd(
+            self.config['rccl_tests_dir'],
+            test_name,
+            result_file,
+            start_msg_size=self.config.get('start_msg_size', 1024),
+            end_msg_size=self.config.get('end_msg_size', '16g'),
+            step_function=self.config.get('step_function', 2),
+            gpu_count=gpu_count,
+            check_iteration_count=self.config.get('check_iteration_count', 1),
+            warmup_iterations=self.config.get('warmup_iterations', 10),
+            no_of_iterations=self.config.get('no_of_iterations', 20),
+            no_of_cycles=self.config.get('no_of_cycles', 1),
+            env_source_script=self.config.get('env_source_script'),
+            data_type=data_type,
+        )
+
+    def _execute(self, exec_handle, cmd, *, head_node_only):
+        log.info('%%%%%%%%%%%%%%%%')
+        log.info("%s", cmd)
+        log.info('%%%%%%%%%%%%%%%%')
+        try:
+            out_dict = exec_handle.exec(cmd, timeout=500)
+            _scan_outputs(out_dict, head_node=self.head_node if head_node_only else None)
+        except Exception as e:
+            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+
+    def _run_mpi_case(
+        self,
+        runtime,
+        test_name,
+        *,
+        result_file,
+        data_type,
+        spec: RcclMpiRunSpec,
+    ):
+        test_cmd = self._test_command(
+            test_name,
+            result_file,
+            gpu_count=self.config.get('threads_per_gpu', 1),
+            data_type=data_type,
+        )
+        cmd = _build_cluster_cmd(
+            mpi_dir=self.config['mpi_dir'],
+            no_of_global_ranks=self.no_of_global_ranks,
+            host_file=runtime.host_file,
+            debug_level=self.config.get('debug_level', 'INFO'),
+            gid_index=self.config.get('gid_index', 1),
+            ucx_params=runtime.ucx_params,
+            path_env=runtime.path_env,
+            ld_library_path=runtime.ld_library_path,
+            ib_hca_list=self.config['ib_hca_list'],
+            nccl_socket_ifname=self.config.get('nccl_socket_ifname', ''),
+            oob_port=self.config['oob_port'],
+            pml_param=runtime.pml_param,
+            nccl_net_plugin=self.config.get('nccl_net_plugin'),
+            min_channels=spec.min_channels,
+            max_channels=spec.max_channels,
+            test_cmd=test_cmd,
+            use_explicit_tuning=self._uses_explicit_tuning(spec),
+            nccl_algo=spec.nccl_algo or 'ring',
+            qp_count=spec.qp_count or 1,
+            ib_rx_queue_len=self.config.get('ib_rx_queue_len', 8192),
+            hcoll_enable_mcast_all=self.config.get('hcoll_enable_mcast_all', 0),
+            nccl_cumem_enable=self.config.get('nccl_cumem_enable', 0),
+            nccl_ib_timeout=self.config.get('nccl_ib_timeout', 30),
+            nccl_ib_sl=self.config.get('nccl_ib_sl', 0),
+            nccl_ib_tc=self.config.get('nccl_ib_tc', 41),
+            nccl_ib_split_data_on_qps=self.config.get('nccl_ib_split_data_on_qps', 0),
+            nccl_pxn_disable=(
+                self.config.get('nccl_pxn_disable', 1)
+                if spec.nccl_pxn_disable is None
+                else spec.nccl_pxn_disable
+            ),
+        )
+        self._execute(self.shdl, cmd, head_node_only=True)
+        return _load_result_map(self.shdl, result_file)[self.head_node]
+
+    def _collect_gpu_info(self):
+        smi_out_dict = self.shdl.exec('rocm-smi -a | head -30')
+        get_model_from_rocm_smi_output(smi_out_dict[self.head_node])
+
+    def _verify_flat(self, test_name, results):
+        _verify_flat_results(
+            test_name,
+            results,
+            self.config.get('results'),
+            verify_bus_bw=self.config.get('verify_bus_bw', False),
+            verify_bw_dip=self.config.get('verify_bw_dip', True),
+            verify_lat_dip=self.config.get('verify_lat_dip', True),
+        )
