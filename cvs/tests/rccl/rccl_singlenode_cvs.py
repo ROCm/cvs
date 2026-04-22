@@ -229,12 +229,11 @@ def test_disable_firewall(phdl):
         "broadcast_perf",
     ],
 )
-def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
+def test_singlenode_perf(cluster_dict, config_dict, rccl_collective):
     """
     Execute RCCL performance test across the cluster with given parameters.
 
     Parameters (from fixtures and config):
-      - phdl: parallel execution handle for nodes (expects exec/exec_cmd_list).
       - cluster_dict: cluster topology and credentials (expects node_dict, username, etc.).
       - config_dict: test configuration with RCCL/MPI paths, env, and thresholds.
       - rccl_collective: which RCCL collective test to run (e.g., "all_reduce_perf").
@@ -243,7 +242,7 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
       1) Capture start time to bound dmesg checks later.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
       3) Optionally source environment script if provided in config.
-      4) Invoke rccl_lib.rccl_cluster_test with parameters built from config and fixtures.
+      4) Build one-node SSH handles and call the shared MPI `run()` path with local ranks.
       5) Capture end time and verify dmesg for errors between start/end.
       6) Optionally snapshot metrics again and compare before/after.
       7) Call update_test_result() to finalize test status.
@@ -252,47 +251,30 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
       - cluster_snapshot_debug controls whether before/after snapshots are taken.
     """
 
+    node_name = list(cluster_dict['node_dict'].keys())[0]
+    node_list = [node_name]
+    vpc_node_list = [cluster_dict['node_dict'][node_name]['vpc_ip']]
+    env_vars = cluster_dict.get("env_vars")
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
+    shdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
+
     # Log a message to Dmesg to create a timestamp record
     phdl.exec(f'sudo echo "Starting Test singlenode {rccl_collective}" | sudo tee /dev/kmsg')
-
-    # start_time = phdl.exec('date')
     start_time = phdl.exec('date +"%a %b %e %H:%M"')
     globals.error_list = []
-    node_list = list(cluster_dict['node_dict'].keys())
 
     # Get cluster snapshot ..
     if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
-    # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
-    if not re.search('None', config_dict['env_source_script'], re.I):
-        phdl.exec(f"bash {config_dict['env_source_script']}")
-
-    # Execute the RCCL cluster test with parameters sourced from config_dict
-    result_dict = rccl_lib.rccl_single_node_test(
-        phdl,
-        test_name=rccl_collective,
+    runner = rccl_lib.RcclTestRunner(
+        shdl=shdl,
+        config=config_dict,
         cluster_node_list=node_list,
-        rocm_path_var=config_dict['rocm_path_var'],
-        rccl_dir=config_dict['rccl_dir'],
-        rccl_path_var=config_dict['rccl_path_var'],
-        rccl_tests_dir=config_dict['rccl_tests_dir'],
-        start_msg_size=config_dict['start_msg_size'],
-        end_msg_size=config_dict['end_msg_size'],
-        step_function=config_dict['step_function'],
-        warmup_iterations=config_dict['warmup_iterations'],
-        no_of_iterations=config_dict['no_of_iterations'],
-        no_of_cycles=config_dict['no_of_cycles'],
-        check_iteration_count=config_dict['check_iteration_count'],
-        debug_level=config_dict['debug_level'],
-        rccl_result_file=config_dict['rccl_result_file'],
-        no_of_local_ranks=config_dict['no_of_local_ranks'],
-        verify_bus_bw=config_dict['verify_bus_bw'],
-        verify_bw_dip=config_dict['verify_bw_dip'],
-        verify_lat_dip=config_dict['verify_lat_dip'],
-        exp_results_dict=config_dict['results'],
-        env_source_script=config_dict['env_source_script'],
+        vpc_node_list=vpc_node_list,
+        no_of_global_ranks=config_dict['no_of_local_ranks'],
     )
+    result_dict = runner.run(rccl_collective, rccl_lib.RcclMpiRunSpec())
 
     log.info("%s", result_dict)
     key_name = f'{rccl_collective}'

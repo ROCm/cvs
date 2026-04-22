@@ -182,9 +182,7 @@ def vpc_node_list(cluster_dict):
       - Iteration order depends on the insertion order of node_dict.
       - Consider validating that each node entry contains a 'vpc_ip' key.
     """
-    vpc_node_list = []
-    for node in list(cluster_dict['node_dict'].keys()):
-        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
+    vpc_node_list = [cluster_dict['node_dict'][node]['vpc_ip'] for node in cluster_dict['node_dict']]
     return vpc_node_list
 
 
@@ -266,7 +264,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
       1) Capture start time to bound dmesg checks later.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
       3) Optionally source environment script if provided in config.
-      4) Invoke rccl_lib.rccl_cluster_test with parameters built from config and fixtures.
+      4) Construct `rccl_lib.RcclTestRunner` and call the shared MPI `run()` path.
       5) Capture end time and verify dmesg for errors between start/end.
       6) Optionally snapshot metrics again and compare before/after.
       7) Call update_test_result() to finalize test status.
@@ -294,51 +292,16 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
-    # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
-    if not re.search('None', config_dict['env_source_script'], re.I):
-        phdl.exec(f"bash {config_dict['env_source_script']}")
-        shdl.exec(f"bash {config_dict['env_source_script']}")
-
-    # Execute the RCCL cluster test with parameters sourced from config_dict
-    result_dict = rccl_lib.rccl_cluster_test_default(
-        phdl,
-        shdl,
-        test_name=rccl_collective,
+    runner = rccl_lib.RcclTestRunner(
+        shdl=shdl,
+        config=config_dict,
         cluster_node_list=node_list,
         vpc_node_list=vpc_node_list,
-        user_name=cluster_dict['username'],
-        ib_hca_list=config_dict['ib_hca_list'],
-        net_dev_list=config_dict['net_dev_list'],
-        oob_port=config_dict['oob_port'],
         no_of_global_ranks=config_dict['no_of_global_ranks'],
-        rocm_path_var=config_dict['rocm_path_var'],
-        mpi_dir=config_dict['mpi_dir'],
-        mpi_path_var=config_dict['mpi_path_var'],
-        rccl_dir=config_dict['rccl_dir'],
-        rccl_path_var=config_dict['rccl_path_var'],
-        rccl_tests_dir=config_dict['rccl_tests_dir'],
-        nccl_socket_ifname=config_dict.get('nccl_socket_ifname', ''),
-        gid_index=config_dict['gid_index'],
-        start_msg_size=config_dict['start_msg_size'],
-        end_msg_size=config_dict['end_msg_size'],
-        step_function=config_dict['step_function'],
-        threads_per_gpu=config_dict['threads_per_gpu'],
-        warmup_iterations=config_dict['warmup_iterations'],
-        no_of_iterations=config_dict['no_of_iterations'],
-        no_of_cycles=config_dict['no_of_cycles'],
-        check_iteration_count=config_dict['check_iteration_count'],
-        debug_level=config_dict['debug_level'],
-        rccl_result_file=config_dict['rccl_result_file'],
-        no_of_local_ranks=config_dict['no_of_local_ranks'],
-        ucx_tls=config_dict['ucx_tls'],
-        nccl_net_plugin=config_dict['nccl_net_plugin'],
-        mpi_pml=config_dict.get('mpi_pml', 'auto'),
-        user_key_file=cluster_dict['priv_key_file'],
-        verify_bus_bw=config_dict['verify_bus_bw'],
-        verify_bw_dip=config_dict['verify_bw_dip'],
-        verify_lat_dip=config_dict['verify_lat_dip'],
-        exp_results_dict=config_dict['results'],
-        env_source_script=config_dict['env_source_script'],
+    )
+    result_dict = runner.run(
+        rccl_collective,
+        rccl_lib.RcclMpiRunSpec(aggregate=True),
     )
 
     log.info("%s", result_dict)
