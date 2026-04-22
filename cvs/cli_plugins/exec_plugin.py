@@ -1,4 +1,5 @@
 import json
+import logging
 import sys
 import os
 
@@ -59,9 +60,10 @@ Exec Commands:
             print("Error: No hosts found in cluster file.")
             sys.exit(1)
 
-        # Create Pssh instance
+        # Create Pssh instance (Pssh requires a logger; it calls log.debug/info/warning)
+        log = logging.getLogger(__name__)
         try:
-            pssh = Pssh(log=None, host_list=hosts, user=username, pkey=pkey, stop_on_errors=False)
+            pssh = Pssh(log=log, host_list=hosts, user=username, pkey=pkey, stop_on_errors=False)
         except Exception as e:
             print(f"Error initializing Pssh: {e}")
             sys.exit(1)
