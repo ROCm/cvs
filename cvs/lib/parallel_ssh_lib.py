@@ -188,6 +188,16 @@ class Pssh:
             existing['exit_code'] = -1  # Ensure unreachable hosts have error exit code
             cmd_output[host] = existing
 
+    def _handle_timeout_exception(self, output, e):
+        """
+        Helper method to handle Timeout exceptions by setting exceptions for all hosts in output.
+        Since Timeout is raised once for the operation, assume all hosts are affected.
+        """
+        if output is not None and isinstance(e, Timeout):
+            for item in output:
+                if item.exception is None:
+                    item.exception = e
+
     def exec(self, cmd, timeout=None, print_console=True, detailed=False):
         """
         Returns a dictionary of host as key and command output as values.

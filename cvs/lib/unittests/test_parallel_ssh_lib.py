@@ -317,6 +317,51 @@ class TestPsshExec(unittest.TestCase):
         mock_prune.assert_not_called()
         mock_inform.assert_not_called()
 
+    @patch.object(Pssh, "prune_unreachable_hosts")
+    @patch.object(Pssh, "inform_unreachability")
+    def test_exec_stdout_timeout_during_iteration_stop_on_errors_false(
+        self, mock_inform, mock_prune
+    ):
+        # Regression: when Timeout is raised mid-stdout-iteration AND stop_on_errors=False,
+        # _process_output must call _handle_timeout_exception (which got accidentally removed
+        # in an earlier refactor). Without the helper restored, this raises AttributeError.
+        from pssh.exceptions import Timeout
+
+        self.pssh.stop_on_errors = False
+
+        timeout_error = Timeout("Read timed out")
+
+        # host1: stdout iteration raises Timeout mid-stream
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        # Iterating stdout raises Timeout
+        mock_output1.stdout = MagicMock()
+        mock_output1.stdout.__iter__ = MagicMock(side_effect=timeout_error)
+        mock_output1.stderr = []
+        mock_output1.exception = None
+
+        # host2: clean run, no exception yet
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = ["ok"]
+        mock_output2.stderr = []
+        mock_output2.exception = None
+
+        self.mock_client.run_command.return_value = [mock_output1, mock_output2]
+
+        # Must NOT raise AttributeError (the bug we are guarding against).
+        # The Pssh code catches Timeout when stop_on_errors=False and routes through
+        # _handle_timeout_exception, which propagates the timeout to all items so the
+        # subsequent item.exception handling block formats and records it.
+        result = self.pssh.exec("echo hello", timeout=10)
+
+        # _handle_timeout_exception must populate item.exception on items that had None
+        # so the subsequent formatting block records the timeout for both hosts.
+        self.assertIs(mock_output1.exception, timeout_error)
+        self.assertIs(mock_output2.exception, timeout_error)
+        self.assertIn("host1", result)
+        self.assertIn("host2", result)
+
     @patch("builtins.print")
     def test_exec_print_console_false(self, mock_print):
         # Test: Execute command with print_console=False, verify output lines are not printed
