@@ -14,6 +14,7 @@ import json
 import itertools
 import shutil
 import socket
+import tempfile
 
 from datetime import datetime
 
@@ -29,6 +30,29 @@ log = globals.log
 
 
 rccl_res_dict = {}
+rccl_artifact_paths = {}
+rccl_artifact_dir = None
+
+
+def _get_local_artifact_dir():
+    global rccl_artifact_dir
+
+    if rccl_artifact_dir is None:
+        # Use a per-run temp directory so shared-node /tmp permissions do not
+        # collide with stale artifacts created by other users or earlier runs.
+        rccl_artifact_dir = tempfile.mkdtemp(prefix='rccl_heatmap_')
+        print(f'Using local RCCL artifact directory: {rccl_artifact_dir}')
+
+    return rccl_artifact_dir
+
+
+def _get_result_artifact_paths(rccl_collective, data_type, gpu_count, channel_config):
+    artifact_dir = _get_local_artifact_dir()
+    channel_suffix = str(channel_config).replace(os.sep, '_')
+    base_name = f'rccl_{rccl_collective}_{data_type}_{gpu_count}_ch{channel_suffix}'
+    result_file = os.path.join(artifact_dir, f'{base_name}.json')
+    aggregated_file = os.path.join(artifact_dir, f'{base_name}_aggregated.json')
+    return result_file, aggregated_file
 
 
 # Importing additional cmd line args to script ..
@@ -369,7 +393,7 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
 
     # Log a message to Dmesg to create a timestamp record
     phdl.exec(f'sudo echo "Starting Test {rccl_collective}" | sudo tee /dev/kmsg')
-    start_time = phdl.exec('date +"%a %b %e %H:%M"')
+    start_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
 
     # Get cluster snapshot ..
     if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
@@ -378,6 +402,17 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
     # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
     if not re.search('None', config_dict['env_source_script'], re.I):
         phdl.exec(f'bash {config_dict["env_source_script"]}')
+
+    command_timeout = int(os.environ.get('CVS_RCCL_COMMAND_TIMEOUT_SEC', config_dict.get('command_timeout_sec', 5400)))
+    retry_attempts = os.environ.get('CVS_RCCL_RETRY_ATTEMPTS', config_dict.get('retry_attempts', 1))
+    retry_backoff_sec = os.environ.get('CVS_RCCL_RETRY_BACKOFF_SEC', config_dict.get('retry_backoff_sec', 0))
+    ignore_dmesg_patterns = config_dict.get('ignore_dmesg_patterns', [])
+    if isinstance(ignore_dmesg_patterns, str):
+        ignore_dmesg_patterns = [ignore_dmesg_patterns]
+
+    rccl_result_file, aggregated_result_file = _get_result_artifact_paths(
+        rccl_collective, data_type, gpu_count, channel_config
+    )
 
     # Execute the RCCL cluster test with parameters sourced from config_dict
     result_dict = rccl_lib.rccl_cluster_test_default(
@@ -409,7 +444,7 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
         no_of_iterations=config_dict['no_of_iterations'],
         check_iteration_count=config_dict['check_iteration_count'],
         debug_level=config_dict['debug_level'],
-        rccl_result_file=f"/tmp/rccl_{rccl_collective}_{data_type}_{gpu_count}_ch{channel_config}.json",
+        rccl_result_file=rccl_result_file,
         no_of_local_ranks=config_dict['no_of_local_ranks'],
         ucx_tls=config_dict['ucx_tls'],
         nccl_net_plugin=config_dict['nccl_net_plugin'],
@@ -418,23 +453,37 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
         verify_bus_bw=config_dict['verify_bus_bw'],
         verify_bw_dip=config_dict['verify_bw_dip'],
         verify_lat_dip=config_dict['verify_lat_dip'],
+        cleanup_gpu_pids=config_dict.get('cleanup_gpu_pids', 'False'),
         nic_model=config_dict['nic_model'],
         exp_results_dict=config_dict['results'],
         min_channels=min_channels,
         max_channels=max_channels,
         env_source_script=config_dict['env_source_script'],
+        command_timeout=command_timeout,
+        retry_attempts=retry_attempts,
+        retry_backoff_sec=retry_backoff_sec,
     )
 
     print(result_dict)
     key_name = f'{rccl_collective}-{data_type}-{gpu_count}-ch{channel_config}'
     rccl_res_dict[key_name] = result_dict
+    rccl_artifact_paths[key_name] = {
+        'result_file': rccl_result_file,
+        'aggregated_file': aggregated_result_file,
+    }
 
     # Scan dmesg between start and end times cluster wide ..
     # end_time = phdl.exec('date')
     phdl.exec(f'sudo echo "End of Test {rccl_collective}" | sudo tee /dev/kmsg')
 
-    end_time = phdl.exec('date +"%a %b %e %H:%M"')
-    verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
+    end_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
+    verify_dmesg_for_errors(
+        phdl,
+        start_time,
+        end_time,
+        till_end_flag=False,
+        ignore_patterns=ignore_dmesg_patterns,
+    )
 
     # Get new cluster snapshot and compare ..
     if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
@@ -448,13 +497,18 @@ def test_rccl_perf(cluster_dict, config_dict, rccl_collective, gpu_count, data_t
 def test_gen_graph(request):
     print('Final Global result dict')
     print(rccl_res_dict)
+
+    if not rccl_res_dict:
+        pytest.fail('No RCCL results were collected. Check earlier test_rccl_perf failures.')
+
     rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
     print(rccl_graph_dict)
 
     current_datetime = datetime.now()
     time_stamp = current_datetime.strftime("%Y-%m-%d-%H-%M-%S")
 
-    html_file = f'/tmp/rccl_perf_report_{time_stamp}.html'
+    artifact_dir = _get_local_artifact_dir()
+    html_file = os.path.join(artifact_dir, f'rccl_perf_report_{time_stamp}.html')
 
     html_lib.add_html_begin(html_file)
     html_lib.build_rccl_amcharts_graph(html_file, 'rccl', rccl_graph_dict)
@@ -478,12 +532,17 @@ def test_gen_graph(request):
 
 def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
     print('Generate Heatmap')
+
+    if not rccl_res_dict:
+        pytest.fail('No RCCL results were collected. Check earlier test_rccl_perf failures.')
+
     current_datetime = datetime.now()
     time_stamp = current_datetime.strftime("%Y-%m-%d-%H-%M-%S")
-    heatmap_file = f'/tmp/rccl_heatmap_{time_stamp}.html'
+    artifact_dir = _get_local_artifact_dir()
+    heatmap_file = os.path.join(artifact_dir, f'rccl_heatmap_{time_stamp}.html')
     # Convert raw results to graph format for HTML reports
     rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
-    rccl_res_json_file = f'/tmp/rccl_result_{time_stamp}.json'
+    rccl_res_json_file = os.path.join(artifact_dir, f'rccl_result_{time_stamp}.json')
     rccl_ref_json_file = config_dict['golden_reference_json_file']
     heatmap_title = config_dict.get('heatmap_title', 'RCCL Performance Heatmap')
 
@@ -497,7 +556,7 @@ def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
     structured_output = {'metadata': metadata, 'result': rccl_graph_dict}
 
     # Save structured output with metadata
-    structured_json_file = f'/tmp/rccl_result_with_metadata_{time_stamp}.json'
+    structured_json_file = os.path.join(artifact_dir, f'rccl_result_with_metadata_{time_stamp}.json')
     with open(structured_json_file, "w") as fp:
         json.dump(structured_output, fp, indent=4)
     print(f'Saved structured results with metadata to {structured_json_file}')
@@ -510,30 +569,26 @@ def test_gen_heatmap(request, phdl, cluster_dict, config_dict):
     print('Collecting aggregated data from individual test runs...')
     aggregated_data = {}
     for key_name in rccl_res_dict.keys():
-        # Parse the key to get test parameters
-        parts = key_name.split('-')
-        if len(parts) >= 3:
-            collective = parts[0]
-            data_type = parts[1]
-            gpu_count = parts[2]
+        aggregated_file = rccl_artifact_paths.get(key_name, {}).get('aggregated_file')
+        if not aggregated_file:
+            print(f'Warning: No aggregated artifact path recorded for {key_name}')
+            continue
 
-            # Look for aggregated file
-            aggregated_file = f'/tmp/rccl_{collective}_{data_type}_{gpu_count}_aggregated.json'
-            try:
-                if os.path.exists(aggregated_file):
-                    with open(aggregated_file, 'r') as fp:
-                        agg_data = json.load(fp)
-                        aggregated_data[key_name] = agg_data
-                        print(f'Loaded aggregated data from {aggregated_file}')
-                else:
-                    print(f'Warning: Aggregated file not found: {aggregated_file}')
-            except Exception as e:
-                print(f'Warning: Failed to load aggregated data from {aggregated_file}: {e}')
+        try:
+            if os.path.exists(aggregated_file):
+                with open(aggregated_file, 'r') as fp:
+                    agg_data = json.load(fp)
+                    aggregated_data[key_name] = agg_data
+                    print(f'Loaded aggregated data from {aggregated_file}')
+            else:
+                print(f'Warning: Aggregated file not found: {aggregated_file}')
+        except Exception as e:
+            print(f'Warning: Failed to load aggregated data from {aggregated_file}: {e}')
 
     # Save aggregated data with metadata
+    aggregated_json_file = os.path.join(artifact_dir, f'rccl_result_final_aggregated_{time_stamp}.json')
     if aggregated_data:
         aggregated_output = {'metadata': metadata, 'aggregated_results': aggregated_data}
-        aggregated_json_file = f'/tmp/rccl_result_final_aggregated_{time_stamp}.json'
         with open(aggregated_json_file, "w") as fp:
             json.dump(aggregated_output, fp, indent=4)
         print(f'Saved final aggregated results to {aggregated_json_file}')

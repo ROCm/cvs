@@ -171,7 +171,7 @@ def verify_gpu_pcie_errors(phdl):
     return err_dict
 
 
-def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=True):
+def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=True, ignore_patterns=None):
     """
     Scan kernel logs (dmesg) between given start and end timestamps across nodes
     and fail if any known error patterns are detected.
@@ -203,19 +203,20 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     print('scan dmesg')
 
     err_dict = {}
+    ignore_patterns = ignore_patterns or []
 
     # Use the first node key to derive the time window to search .. assume cluster has NTP
     node0 = list(start_time_dict.keys())[0]
     start_time = start_time_dict[node0].rstrip("\n")
     end_time = end_time_dict[node0].rstrip("\n")
 
-    # Extract the "Mon Jan  2 03:04:05" style prefix from the provided timestamps
-    pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)"
+    # Extract the "Mon Jan  2 03:04[:05]" style prefix from the provided timestamps
+    pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+(?:\:[0-9]+)?)"
     match = re.search(pattern, start_time)
     start_pattern = match.group(1)
 
     # Extract end timestamp prefix similarly
-    pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+)"
+    pattern = r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+\:[0-9]+(?:\:[0-9]+)?)"
     match = re.search(pattern, end_time)
     end_pattern = match.group(1)
 
@@ -236,6 +237,9 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     # Iterate through each node's sliced dmesg and scan for known error patterns
     for node in output_dict.keys():
         for line in output_dict[node].split("\n"):
+            if any(re.search(pattern, line, re.I) for pattern in ignore_patterns):
+                log.info(f'Ignoring dmesg line on {node} based on configured pattern: {line}')
+                continue
             for err_key in err_patterns_dict.keys():
                 if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
                     fail_test(f'ERROR - Failue pattern ** {line} ** seen in Dmesg')

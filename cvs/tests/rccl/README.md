@@ -105,12 +105,12 @@ Edit `input/config_file/rccl/rccl_config.json` (and `single_node_mi355_rccl.json
   - `gpu_count_list`, `data_type_list`, `channel_config_list` (used by `rccl_heatmap_cvs`)
 - **Message sweep**: `start_msg_size`, `end_msg_size`, `step_function`, `warmup_iterations`, `no_of_iterations`, `no_of_cycles`.
 - **Network and transport**: `ib_hca_list`, `net_dev_list`, `oob_port`, `gid_index`, `nccl_socket_ifname`, `ucx_tls`, `mpi_pml`.
-- **Validation controls**: `verify_bus_bw`, `verify_bw_dip`, `verify_lat_dip`, `results`.
+- **Validation controls**: `verify_bus_bw`, `verify_bw_dip`, `verify_lat_dip`, `cleanup_gpu_pids`, `results`.
 - **Artifacts/reference**: `rccl_result_file`, `golden_reference_json_file`, `output_dir`, `heatmap_title`.
 
 Additional tuning parameters used in multinode runs:
 
-- **Runtime and verbosity**: `threads_per_gpu`, `debug_level`, `cluster_snapshot_debug`.
+- **Runtime and verbosity**: `threads_per_gpu`, `debug_level`, `cluster_snapshot_debug`, `cleanup_gpu_pids`.
 - **IB/UCX tuning**: `nccl_ib_timeout`, `ib_rx_queue_len`, `ucx_tls`, `hcoll_enable_mcast_all`.
 - **RCCL/NCCL behavior**: `nccl_cumem_enable`, `nccl_ib_sl`, `nccl_ib_tc`, `nccl_ib_split_data_on_qps`, `nccl_net_plugin`.
 - **Heatmap-specific validation**: `nic_model` and `golden_reference_json_file`.

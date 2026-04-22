@@ -254,7 +254,7 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
     phdl.exec(f'sudo echo "Starting Test singlenode {rccl_collective}" | sudo tee /dev/kmsg')
 
     # start_time = phdl.exec('date')
-    start_time = phdl.exec('date +"%a %b %e %H:%M"')
+    start_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
     globals.error_list = []
     node_list = list(cluster_dict['node_dict'].keys())
 
@@ -288,6 +288,7 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
         verify_bus_bw=config_dict['verify_bus_bw'],
         verify_bw_dip=config_dict['verify_bw_dip'],
         verify_lat_dip=config_dict['verify_lat_dip'],
+        cleanup_gpu_pids=config_dict.get('cleanup_gpu_pids', 'False'),
         exp_results_dict=config_dict['results'],
         env_source_script=config_dict['env_source_script'],
     )
@@ -300,7 +301,7 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
     # end_time = phdl.exec('date')
     phdl.exec(f'sudo echo "End of Test singlenode {rccl_collective}" | sudo tee /dev/kmsg')
 
-    end_time = phdl.exec('date +"%a %b %e %H:%M"')
+    end_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
     verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
 
     # Get new cluster snapshot and compare ..

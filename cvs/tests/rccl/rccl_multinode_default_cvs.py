@@ -277,7 +277,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     phdl.exec(f'sudo echo "Starting Test {rccl_collective}" | sudo tee /dev/kmsg')
 
     # start_time = phdl.exec('date')
-    start_time = phdl.exec('date +"%a %b %e %H:%M"')
+    start_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
     globals.error_list = []
     node_list = list(cluster_dict['node_dict'].keys())
 
@@ -296,6 +296,13 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     if not re.search('None', config_dict['env_source_script'], re.I):
         phdl.exec(f"bash {config_dict['env_source_script']}")
         shdl.exec(f"bash {config_dict['env_source_script']}")
+
+    command_timeout = int(os.environ.get('CVS_RCCL_COMMAND_TIMEOUT_SEC', config_dict.get('command_timeout_sec', 5400)))
+    retry_attempts = os.environ.get('CVS_RCCL_RETRY_ATTEMPTS', config_dict.get('retry_attempts', 1))
+    retry_backoff_sec = os.environ.get('CVS_RCCL_RETRY_BACKOFF_SEC', config_dict.get('retry_backoff_sec', 0))
+    ignore_dmesg_patterns = config_dict.get('ignore_dmesg_patterns', [])
+    if isinstance(ignore_dmesg_patterns, str):
+        ignore_dmesg_patterns = [ignore_dmesg_patterns]
 
     # Execute the RCCL cluster test with parameters sourced from config_dict
     result_dict = rccl_lib.rccl_cluster_test_default(
@@ -335,8 +342,12 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         verify_bus_bw=config_dict['verify_bus_bw'],
         verify_bw_dip=config_dict['verify_bw_dip'],
         verify_lat_dip=config_dict['verify_lat_dip'],
+        cleanup_gpu_pids=config_dict.get('cleanup_gpu_pids', 'False'),
         exp_results_dict=config_dict['results'],
         env_source_script=config_dict['env_source_script'],
+        command_timeout=command_timeout,
+        retry_attempts=retry_attempts,
+        retry_backoff_sec=retry_backoff_sec,
     )
 
     print(result_dict)
@@ -347,8 +358,14 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     # end_time = phdl.exec('date')
     phdl.exec(f'sudo echo "End of Test {rccl_collective}" | sudo tee /dev/kmsg')
 
-    end_time = phdl.exec('date +"%a %b %e %H:%M"')
-    verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
+    end_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
+    verify_dmesg_for_errors(
+        phdl,
+        start_time,
+        end_time,
+        till_end_flag=False,
+        ignore_patterns=ignore_dmesg_patterns,
+    )
 
     # Get new cluster snapshot and compare ..
     if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):

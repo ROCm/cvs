@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 # Standard libraries
 import re
+import time
 import json
 from typing import List
 from pathlib import Path
@@ -29,6 +30,234 @@ rccl_err_dict = {
     'fs_err': 'No such file or directory',
 }
 
+_RCCL_ATTEMPT_SIGNAL_PATTERNS = (
+    ('segmentation fault', r'Segmentation fault|signal\s+11'),
+    (
+        'prte daemon disconnect',
+        r'PRTE has lost communication with a remote daemon|prterun noticed .* exited on',
+    ),
+    ('missing rccl bandwidth output', r'RCCL test did not complete successfully, no bandwidth numbers printed'),
+    ('empty rccl result file', r'__CVS_EMPTY__|RCCL result file is missing, empty, or invalid'),
+    (
+        'stdout fallback parse failed',
+        r'unable to load RCCL results from JSON or stdout fallback|Unable to parse RCCL stdout table',
+    ),
+    ('schema validation failed', r'schema validation failed|Validation Failed'),
+    ('severe data corruption', r'SEVERE DATA CORRUPTION|#wrong'),
+    ('launch timeout', r'timed out|timeout expired|TimeoutExpired'),
+    ('gpu pid cleanup failed', r'GPU PID cleanup failed|__CVS_GPU_PID_CLEANUP_ERROR__'),
+)
+
+
+def _cleanup_gpu_pids_enabled(cleanup_gpu_pids):
+    """Interpret config values like True/"True" for GPU PID cleanup."""
+    return re.search('True', str(cleanup_gpu_pids), re.I) is not None
+
+
+def _cleanup_gpu_pids(phdl, context, cleanup_timeout=90):
+    """
+    Kill any processes currently holding a GPU on the target nodes.
+    This is intended for dedicated benchmark nodes where stale GPU contexts
+    should never be allowed to leak between RCCL test cases.
+    """
+    cleanup_cmd = r"""bash -lc '
+if ! command -v amd-smi >/dev/null 2>&1; then
+  echo "__CVS_GPU_PID_CLEANUP_ERROR__: amd-smi not found"
+  exit 2
+fi
+first_pass=$(amd-smi process 2>&1)
+first_rc=$?
+if [ $first_rc -ne 0 ]; then
+  echo "__CVS_GPU_PID_CLEANUP_ERROR__: amd-smi process failed: $first_pass"
+  exit 3
+fi
+pids=$(printf "%s\n" "$first_pass" | awk -F: '"'"'/PID/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^[0-9]+$/) print $2}'"'"' | sort -u)
+if [ -z "$pids" ]; then
+  echo "__CVS_GPU_PID_CLEANUP__: none"
+  exit 0
+fi
+echo "__CVS_GPU_PID_CLEANUP__: killing $pids"
+for pid in $pids; do
+  sudo kill -9 "$pid" 2>/dev/null || true
+done
+sleep 2
+second_pass=$(amd-smi process 2>&1)
+second_rc=$?
+if [ $second_rc -ne 0 ]; then
+  echo "__CVS_GPU_PID_CLEANUP_ERROR__: amd-smi process recheck failed: $second_pass"
+  exit 4
+fi
+remaining=$(printf "%s\n" "$second_pass" | awk -F: '"'"'/PID/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^[0-9]+$/) print $2}'"'"' | sort -u)
+if [ -n "$remaining" ]; then
+  echo "__CVS_GPU_PID_CLEANUP_ERROR__: remaining GPU PIDs $remaining"
+  exit 5
+fi
+echo "__CVS_GPU_PID_CLEANUP__: cleared"
+'"""
+    out_dict = phdl.exec(cleanup_cmd, timeout=cleanup_timeout, print_console=False)
+    cleanup_errors = []
+    for node, output in out_dict.items():
+        output = output.strip()
+        if output:
+            log.info(f'GPU PID cleanup [{context}] on {node}: {output}')
+        if '__CVS_GPU_PID_CLEANUP_ERROR__:' in output:
+            cleanup_errors.append(f'{node}: {output}')
+
+    if cleanup_errors:
+        msg = f'GPU PID cleanup failed for {context}: {"; ".join(cleanup_errors)}'
+        log.error(msg)
+        fail_test(msg)
+        raise RuntimeError(msg)
+
+
+def _run_with_optional_gpu_pid_cleanup(phdl, cleanup_gpu_pids, context, action):
+    """Run an RCCL launch with optional pre/post GPU PID cleanup."""
+    if not _cleanup_gpu_pids_enabled(cleanup_gpu_pids):
+        return action()
+
+    _cleanup_gpu_pids(phdl, f'{context} before launch')
+
+    action_error = None
+    result = None
+    try:
+        result = action()
+    except Exception as e:
+        action_error = e
+
+    cleanup_error = None
+    try:
+        _cleanup_gpu_pids(phdl, f'{context} after launch')
+    except Exception as e:
+        cleanup_error = e
+
+    if cleanup_error and action_error:
+        msg = f'{context} failed and post-run GPU PID cleanup also failed: {action_error}; {cleanup_error}'
+        log.error(msg)
+        raise RuntimeError(msg) from cleanup_error
+    if cleanup_error:
+        raise cleanup_error
+    if action_error:
+        raise action_error
+    return result
+
+
+def _normalize_retry_attempts(retry_attempts):
+    """Coerce retry config to a sensible minimum of one total attempt."""
+    try:
+        return max(1, int(retry_attempts))
+    except (TypeError, ValueError):
+        log.warning(f'Invalid retry_attempts={retry_attempts!r}; defaulting to 1')
+        return 1
+
+
+def _normalize_retry_backoff_sec(retry_backoff_sec):
+    """Coerce retry backoff to a non-negative integer number of seconds."""
+    try:
+        return max(0, int(retry_backoff_sec))
+    except (TypeError, ValueError):
+        log.warning(f'Invalid retry_backoff_sec={retry_backoff_sec!r}; defaulting to 0')
+        return 0
+
+
+def _clear_error_list_since(start_index):
+    """Drop fail_test entries recorded by the current attempt before retrying."""
+    del globals.error_list[start_index:]
+
+
+def _collect_rccl_attempt_signals(output=None, exc=None, attempt_errors=None):
+    """Extract coarse failure categories from attempt output, exception text, and fail_test entries."""
+    candidate_text = []
+
+    if output:
+        candidate_text.append(str(output))
+    if exc:
+        candidate_text.append(str(exc))
+    if attempt_errors:
+        candidate_text.extend(str(item) for item in attempt_errors)
+
+    signals = []
+    for label, pattern in _RCCL_ATTEMPT_SIGNAL_PATTERNS:
+        if any(re.search(pattern, text, re.I | re.S) for text in candidate_text):
+            signals.append(label)
+    return signals
+
+
+def _collect_rccl_attempt_highlights(output=None, exc=None, attempt_errors=None, max_lines=6):
+    """Collect a few high-signal lines that explain why an attempt failed."""
+    highlights = []
+    seen = set()
+    highlight_pattern = '|'.join(pattern for _, pattern in _RCCL_ATTEMPT_SIGNAL_PATTERNS)
+
+    def _add(line):
+        line = str(line).strip()
+        if not line or line in seen:
+            return
+        seen.add(line)
+        highlights.append(line)
+
+    if attempt_errors:
+        for item in attempt_errors:
+            _add(item)
+
+    if exc:
+        _add(exc)
+
+    if output:
+        for line in str(output).splitlines():
+            if re.search(highlight_pattern, line, re.I):
+                _add(line)
+                if len(highlights) >= max_lines:
+                    break
+
+    return highlights[:max_lines]
+
+
+def _build_rccl_attempt_summary(context, attempt, max_attempts, output=None, exc=None, attempt_errors=None):
+    """Build a concise summary plus highlight lines for one RCCL attempt."""
+    signals = _collect_rccl_attempt_signals(output=output, exc=exc, attempt_errors=attempt_errors)
+    highlights = _collect_rccl_attempt_highlights(output=output, exc=exc, attempt_errors=attempt_errors)
+    summary = f'RCCL attempt summary [{context} attempt {attempt}/{max_attempts}]'
+    if signals:
+        summary = f'{summary}: {", ".join(signals)}'
+    elif exc:
+        summary = f'{summary}: {type(exc).__name__}'
+    else:
+        summary = f'{summary}: no classified failure signal'
+    return summary, highlights, signals
+
+
+def _log_rccl_attempt_summary(context, attempt, max_attempts, level, output=None, exc=None, attempt_errors=None):
+    """Log a compact attempt summary and a few high-signal lines."""
+    summary, highlights, signals = _build_rccl_attempt_summary(
+        context,
+        attempt,
+        max_attempts,
+        output=output,
+        exc=exc,
+        attempt_errors=attempt_errors,
+    )
+    log_fn = getattr(log, level)
+    log_fn(summary)
+    for highlight in highlights:
+        log_fn(f'RCCL attempt highlight [{context} attempt {attempt}/{max_attempts}]: {highlight}')
+    return summary, signals
+
+
+def _get_retryable_rccl_failure_reason(output=None, exc=None, attempt_errors=None):
+    """
+    Identify cluster-flake launch failures that are worth retrying in CI.
+    """
+    retryable_reasons = {
+        'segmentation fault',
+        'prte daemon disconnect',
+        'missing rccl bandwidth output',
+        'launch timeout',
+    }
+    for signal in _collect_rccl_attempt_signals(output=output, exc=exc, attempt_errors=attempt_errors):
+        if signal in retryable_reasons:
+            return signal
+    return None
+
 
 def _is_severe_wrong_corruption_error(err: ValidationError) -> bool:
     """
@@ -47,6 +276,180 @@ def _is_severe_wrong_corruption_error(err: ValidationError) -> bool:
     # Fallback to string search
     s = str(err)
     return 'SEVERE DATA CORRUPTION' in s or "'#wrong'" in s
+
+
+def _load_rccl_json_result(shdl, head_node, result_file, failure_context):
+    """
+    Read and parse an rccl-tests JSON result file from the head node.
+    Fail with a clear message if the file is missing, empty, or malformed.
+    """
+    check_cmd = f'if [ -s "{result_file}" ]; then echo __CVS_OK__; else echo __CVS_EMPTY__; fi'
+    file_state = shdl.exec(check_cmd)[head_node].strip()
+
+    if file_state != '__CVS_OK__':
+        msg = f'{failure_context}: RCCL result file is missing or empty: {result_file}'
+        log.error(msg)
+        fail_test(msg)
+        raise RuntimeError(msg)
+
+    result_dict_out = shdl.exec(f'cat "{result_file}"')
+    raw_result = result_dict_out[head_node].strip()
+
+    if not raw_result:
+        msg = f'{failure_context}: RCCL result file is empty: {result_file}'
+        log.error(msg)
+        fail_test(msg)
+        raise RuntimeError(msg)
+
+    try:
+        return json.loads(raw_result)
+    except json.JSONDecodeError as e:
+        msg = f'{failure_context}: RCCL result file contains invalid JSON: {result_file} - exception {repr(e)}'
+        log.error(msg)
+        fail_test(msg)
+        raise RuntimeError(msg) from e
+
+
+def _try_load_rccl_json_result(shdl, head_node, result_file):
+    """
+    Best-effort read of the rccl-tests JSON result file.
+    Returns parsed JSON on success, otherwise None.
+    """
+    check_cmd = f'if [ -s "{result_file}" ]; then echo __CVS_OK__; else echo __CVS_EMPTY__; fi'
+    file_state = shdl.exec(check_cmd)[head_node].strip()
+    if file_state != '__CVS_OK__':
+        return None
+
+    result_dict_out = shdl.exec(f'cat "{result_file}"')
+    raw_result = result_dict_out[head_node].strip()
+    if not raw_result:
+        return None
+
+    try:
+        return json.loads(raw_result)
+    except json.JSONDecodeError:
+        return None
+
+
+def _normalize_collective_name(test_name):
+    """Map rccl-tests binary names to schema collective names."""
+    normalized_name = str(test_name).lower().replace('_perf', '')
+    collective_map = {
+        'all_reduce': 'AllReduce',
+        'all_gather': 'AllGather',
+        'reduce_scatter': 'ReduceScatter',
+        'alltoallv': 'AllToAllV',
+        'alltoall': 'AllToAll',
+        'sendrecv': 'SendRecv',
+        'broadcast': 'Broadcast',
+        'scatter': 'Scatter',
+        'gather': 'Gather',
+    }
+    return collective_map.get(normalized_name, test_name)
+
+
+def _parse_rccl_stdout_results(output, test_name, no_of_global_ranks):
+    """
+    Parse the human-readable rccl-tests table as a fallback when -Z json output is missing.
+    """
+    collective_name = _normalize_collective_name(test_name)
+    rank_count = int(no_of_global_ranks)
+    table_pattern = re.compile(
+        r'^\s*(\d+)\s+\d+\s+(\S+)\s+(\S+)\s+\S+\s+'
+        r'([0-9eE+\-.]+)\s+([0-9eE+\-.]+)\s+([0-9eE+\-.]+)\s+(\S+)\s+'
+        r'([0-9eE+\-.]+)\s+([0-9eE+\-.]+)\s+([0-9eE+\-.]+)\s+(\S+)\s*$'
+    )
+    parsed_results = []
+
+    for line in output.splitlines():
+        match = table_pattern.match(line)
+        if not match:
+            continue
+
+        (
+            size,
+            dtype,
+            redop,
+            oop_time,
+            oop_algbw,
+            oop_busbw,
+            oop_wrong,
+            ip_time,
+            ip_algbw,
+            ip_busbw,
+            ip_wrong,
+        ) = match.groups()
+
+        common_fields = {
+            'numCycle': 0,
+            'name': collective_name,
+            'nodes': 1,
+            'ranks': rank_count,
+            'ranksPerNode': rank_count,
+            'gpusPerRank': 1,
+            'size': int(size),
+            'type': dtype,
+            'redop': redop,
+        }
+
+        parsed_results.append(
+            {
+                **common_fields,
+                'inPlace': 0,
+                'time': float(oop_time),
+                'algBw': float(oop_algbw),
+                'busBw': float(oop_busbw),
+                'wrong': oop_wrong,
+            }
+        )
+        parsed_results.append(
+            {
+                **common_fields,
+                'inPlace': 1,
+                'time': float(ip_time),
+                'algBw': float(ip_algbw),
+                'busBw': float(ip_busbw),
+                'wrong': ip_wrong,
+            }
+        )
+
+    if not parsed_results:
+        raise RuntimeError(f'Unable to parse RCCL stdout table for {test_name}')
+
+    log.warning(
+        f'Falling back to parsing rccl-tests stdout table for {test_name}; JSON sidecar was not available'
+    )
+    return parsed_results
+
+
+def _load_rccl_results_with_stdout_fallback(
+    shdl,
+    head_node,
+    result_file,
+    failure_context,
+    output,
+    test_name,
+    no_of_global_ranks,
+):
+    """
+    Prefer the rccl-tests JSON sidecar, but fall back to the stdout table if the file is missing.
+    """
+    result_out = _try_load_rccl_json_result(shdl, head_node, result_file)
+    if result_out is not None:
+        return result_out
+
+    log.warning(
+        f'{failure_context}: RCCL result file is missing, empty, or invalid; attempting stdout fallback parser: '
+        f'{result_file}'
+    )
+
+    try:
+        return _parse_rccl_stdout_results(output, test_name, no_of_global_ranks)
+    except RuntimeError as e:
+        msg = f'{failure_context}: unable to load RCCL results from JSON or stdout fallback - exception {repr(e)}'
+        log.error(msg)
+        fail_test(msg)
+        raise RuntimeError(msg) from e
 
 
 def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
@@ -516,6 +919,8 @@ def rccl_cluster_test(
     verify_lat_dip=True,
     exp_results_dict=None,
     env_source_script=None,
+    command_timeout=5400,
+    cleanup_gpu_pids=False,
 ):
     """
     Run an RCCL collective test across a cluster via MPI and verify results.
@@ -603,6 +1008,10 @@ def rccl_cluster_test(
     # Build optional NCCL_SOCKET_IFNAME parameter
     nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
 
+    # Build optional NCCL transport/channel parameters (only if specified)
+    nccl_ib_hca_param = f'-x NCCL_IB_HCA={ib_hca_list}' if str(ib_hca_list).strip() else ''
+    nccl_net_plugin_param = f'-x NCCL_NET_PLUGIN={nccl_net_plugin}' if str(nccl_net_plugin).strip() else ''
+
     # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
     nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
     nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
@@ -617,7 +1026,7 @@ def rccl_cluster_test(
         -x NCCL_IB_PCI_RELAXED_ORDERING=1 \
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
-        -x NCCL_IB_HCA={ib_hca_list} \
+        {nccl_ib_hca_param} \
         {nccl_socket_param} \
         --mca btl ^vader,openib \
         --mca btl_tcp_if_include {oob_port} \
@@ -635,25 +1044,38 @@ def rccl_cluster_test(
         -x NCCL_IB_TC={nccl_ib_tc} \
         -x NCCL_IB_SPLIT_DATA_ON_QPS={nccl_ib_split_data_on_qps} \
         -x NCCL_PXN_DISABLE={nccl_pxn_disable} \
-        -x NCCL_NET_PLUGIN={nccl_net_plugin} \
+        {nccl_net_plugin_param} \
         {test_cmd}
         '''
 
     print('%%%%%%%%%%%%%%%%')
     print(cmd)
     print('%%%%%%%%%%%%%%%%')
-    try:
-        out_dict = shdl.exec(cmd, timeout=500)
-        output = out_dict[head_node]
-        # print(output)
-        scan_rccl_logs(output)
-    except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+    def _run_rccl_command():
+        try:
+            out_dict = shdl.exec(cmd, timeout=int(command_timeout))
+            output = out_dict[head_node]
+            # print(output)
+            scan_rccl_logs(output)
+            return output
+        except Exception as e:
+            msg = (
+                f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)} '
+                f'(timeout={command_timeout}s)'
+            )
+            log.error(msg)
+            fail_test(msg)
+            raise RuntimeError(msg) from e
+
+    _run_with_optional_gpu_pid_cleanup(phdl, cleanup_gpu_pids, test_name, _run_rccl_command)
 
     # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = shdl.exec(f'cat {rccl_result_file}')
-    result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
+    result_out = _load_rccl_json_result(
+        shdl,
+        head_node,
+        rccl_result_file,
+        f'RCCL Test {test_name}',
+    )
 
     # Collect basic GPU information via rocm-smi
     smi_out_dict = shdl.exec('rocm-smi -a | head -30')
@@ -734,6 +1156,10 @@ def rccl_cluster_test_default(
     nic_model='ainic',
     exp_results_dict=None,
     env_source_script=None,
+    command_timeout=5400,
+    cleanup_gpu_pids=False,
+    retry_attempts=1,
+    retry_backoff_sec=0,
 ):
     """
     Run an RCCL collective test across a cluster via MPI and verify results.
@@ -817,10 +1243,14 @@ def rccl_cluster_test_default(
     all_raw_results = []
     all_validated_results = []
     base_path = Path(rccl_result_file)
+    max_attempts = _normalize_retry_attempts(retry_attempts)
+    retry_sleep_sec = _normalize_retry_backoff_sec(retry_backoff_sec)
 
     for dtype in data_types:
         # Create a unique result file for each data type
         dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
+        attempt_context = f'{test_name} dtype={dtype}'
+        attempt_history = []
         log.info(f'Running {test_name} with dtype={dtype}')
 
         # Wrap test binary in shell to source env script if provided
@@ -839,6 +1269,10 @@ def rccl_cluster_test_default(
         # Build optional NCCL_SOCKET_IFNAME parameter
         nccl_socket_param = f'-x NCCL_SOCKET_IFNAME={nccl_socket_ifname}' if nccl_socket_ifname.strip() else ''
 
+        # Build optional NCCL transport/channel parameters (only if specified)
+        nccl_ib_hca_param = f'-x NCCL_IB_HCA={ib_hca_list}' if str(ib_hca_list).strip() else ''
+        nccl_net_plugin_param = f'-x NCCL_NET_PLUGIN={nccl_net_plugin}' if str(nccl_net_plugin).strip() else ''
+
         # Build optional NCCL channel parameters (only if specified, otherwise let RCCL use defaults)
         nccl_min_channels_param = f'-x NCCL_MIN_NCHANNELS={min_channels}' if min_channels is not None else ''
         nccl_max_channels_param = f'-x NCCL_MAX_NCHANNELS={max_channels}' if max_channels is not None else ''
@@ -846,6 +1280,7 @@ def rccl_cluster_test_default(
         cmd = f'''{MPI_INSTALL_DIR}/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
+        --map-by slot \
         -x NCCL_DEBUG={debug_level} \
         --bind-to numa \
         -x NCCL_IB_GID_INDEX={gid_index} \
@@ -853,63 +1288,164 @@ def rccl_cluster_test_default(
         -x NCCL_IB_PCI_RELAXED_ORDERING=1 \
         -x PATH={PATH} \
         -x LD_LIBRARY_PATH={LD_LIBRARY_PATH} \
-        -x NCCL_IB_HCA={ib_hca_list} \
+        {nccl_ib_hca_param} \
         {nccl_socket_param} \
         --mca btl ^vader,openib \
         --mca btl_tcp_if_include {oob_port} \
         --mca oob_tcp_if_include {oob_port} \
         {pml_param} \
-        -x NCCL_NET_PLUGIN={nccl_net_plugin} \
+        {nccl_net_plugin_param} \
         {nccl_min_channels_param} \
         {nccl_max_channels_param} \
+        -x NCCL_IB_QPS_PER_CONNECTION={qp_count} \
         {test_cmd}
         '''
 
         print('%%%%%%%%%%%%%%%%')
         print(cmd)
         print('%%%%%%%%%%%%%%%%')
-        try:
-            out_dict = shdl.exec(cmd, timeout=500)
-            output = out_dict[head_node]
-            # print(output)
-            scan_rccl_logs(output)
-        except Exception as e:
-            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
-        # Read the JSON results emitted by the RCCL test binary
-        result_dict_out = shdl.exec(f'cat {dtype_result_file}')
-        dtype_result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
-        # Validate the results against the schema fail if results are not valid
-        try:
-            validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
-            log.info(f'Validation passed: {len(validated)} RcclTests schema validation passed')
-            all_validated_results.extend(validated)
-            all_raw_results.extend(dtype_result_out)
-        except ValidationError as e:
-            if _is_severe_wrong_corruption_error(e):
+        def _run_rccl_command():
+            try:
+                out_dict = shdl.exec(cmd, timeout=int(command_timeout))
+                output = out_dict[head_node]
+                # print(output)
+                scan_rccl_logs(output)
+                return output
+            except Exception as e:
                 msg = (
-                    "\n"
-                    "==================== SEVERE DATA CORRUPTION ====================\n"
-                    "RCCL rccl-tests JSON schema validation failed due to '#wrong' > 0.\n"
-                    "This indicates invalid/corrupted rccl-tests results.\n"
-                    "\n"
-                    f"data_type: {dtype}\n"
-                    f"result_file: {dtype_result_file}\n"
-                    "\n"
-                    "Action: aborting further RCCL iterations/data types.\n"
-                    "Please inspect the rccl-tests stdout/stderr and re-run.\n"
-                    "================================================================\n"
+                    f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)} '
+                    f'(timeout={command_timeout}s, dtype={dtype})'
                 )
-                print(msg)
                 log.error(msg)
                 fail_test(msg)
-            else:
-                log.error(f'Validation Failed: {e}')
-                fail_test(f'RCCL Test {dtype} schema validation failed: {e}')
+                raise RuntimeError(msg) from e
 
-            # IMPORTANT: schema validation failures should stop further iterations/data types
-            raise RuntimeError(f'RCCL Test {dtype} schema validation failed') from e
+        for attempt in range(1, max_attempts + 1):
+            shdl.exec(f'rm -f "{dtype_result_file}"')
+            error_start_idx = len(globals.error_list)
+            output = None
+
+            try:
+                if max_attempts > 1:
+                    log.info(f'RCCL launch attempt {attempt}/{max_attempts} for {test_name} dtype={dtype}')
+
+                output = _run_with_optional_gpu_pid_cleanup(
+                    phdl,
+                    cleanup_gpu_pids,
+                    attempt_context,
+                    _run_rccl_command,
+                )
+
+                attempt_errors = globals.error_list[error_start_idx:]
+                retry_reason = None
+                if attempt < max_attempts:
+                    retry_reason = _get_retryable_rccl_failure_reason(
+                        output=output,
+                        attempt_errors=attempt_errors,
+                    )
+
+                if retry_reason:
+                    summary, _ = _log_rccl_attempt_summary(
+                        attempt_context,
+                        attempt,
+                        max_attempts,
+                        'warning',
+                        output=output,
+                        attempt_errors=attempt_errors,
+                    )
+                    attempt_history.append(summary)
+                    log.warning(
+                        f'Retrying {test_name} dtype={dtype} after attempt {attempt}/{max_attempts} '
+                        f'due to retryable launch failure: {retry_reason}'
+                    )
+                    _clear_error_list_since(error_start_idx)
+                    if retry_sleep_sec > 0:
+                        time.sleep(retry_sleep_sec)
+                    continue
+
+                # Read the JSON results emitted by the RCCL test binary
+                dtype_result_out = _load_rccl_results_with_stdout_fallback(
+                    shdl,
+                    head_node,
+                    dtype_result_file,
+                    f'RCCL Test {test_name} dtype={dtype}',
+                    output,
+                    test_name,
+                    no_of_global_ranks,
+                )
+                # Validate the results against the schema fail if results are not valid
+                try:
+                    validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
+                    log.info(f'Validation passed: {len(validated)} RcclTests schema validation passed')
+                    all_validated_results.extend(validated)
+                    all_raw_results.extend(dtype_result_out)
+                except ValidationError as e:
+                    if _is_severe_wrong_corruption_error(e):
+                        msg = (
+                            "\n"
+                            "==================== SEVERE DATA CORRUPTION ====================\n"
+                            "RCCL rccl-tests JSON schema validation failed due to '#wrong' > 0.\n"
+                            "This indicates invalid/corrupted rccl-tests results.\n"
+                            "\n"
+                            f"data_type: {dtype}\n"
+                            f"result_file: {dtype_result_file}\n"
+                            "\n"
+                            "Action: aborting further RCCL iterations/data types.\n"
+                            "Please inspect the rccl-tests stdout/stderr and re-run.\n"
+                            "================================================================\n"
+                        )
+                        print(msg)
+                        log.error(msg)
+                        fail_test(msg)
+                    else:
+                        log.error(f'Validation Failed: {e}')
+                        fail_test(f'RCCL Test {dtype} schema validation failed: {e}')
+
+                    # IMPORTANT: schema validation failures should stop further iterations/data types
+                    raise RuntimeError(f'RCCL Test {dtype} schema validation failed') from e
+
+                if attempt_history:
+                    log.info(
+                        f'RCCL recovered for {attempt_context} on attempt {attempt}/{max_attempts}. '
+                        f'Previous failures: {"; ".join(attempt_history)}'
+                    )
+                break
+            except Exception as e:
+                attempt_errors = globals.error_list[error_start_idx:]
+                level = 'warning' if attempt < max_attempts else 'error'
+                summary, signals = _log_rccl_attempt_summary(
+                    attempt_context,
+                    attempt,
+                    max_attempts,
+                    level,
+                    output=output,
+                    exc=e,
+                    attempt_errors=attempt_errors,
+                )
+                attempt_history.append(summary)
+
+                if attempt >= max_attempts:
+                    log.error(
+                        f'RCCL final attempt history [{attempt_context}]: {"; ".join(attempt_history)}'
+                    )
+                    raise
+
+                retry_reason = next(
+                    (signal for signal in signals if signal in {'segmentation fault', 'prte daemon disconnect',
+                                                                'missing rccl bandwidth output', 'launch timeout'}),
+                    None,
+                )
+                if retry_reason is None:
+                    raise
+
+                log.warning(
+                    f'Retrying {test_name} dtype={dtype} after attempt {attempt}/{max_attempts} '
+                    f'due to retryable exception: {retry_reason}'
+                )
+                _clear_error_list_since(error_start_idx)
+                if retry_sleep_sec > 0:
+                    time.sleep(retry_sleep_sec)
 
     # Save the results to a main result file
     with open(rccl_result_file, 'w') as f:
@@ -1027,6 +1563,7 @@ def rccl_single_node_test(
     verify_lat_dip=True,
     exp_results_dict=None,
     env_source_script=None,
+    cleanup_gpu_pids=False,
 ):
     """
     Run an Single Node RCCL collective test
@@ -1080,13 +1617,19 @@ def rccl_single_node_test(
     print('%%%%%%%%%%%%%%%%')
     print(cmd)
     print('%%%%%%%%%%%%%%%%')
-    try:
-        out_dict = phdl.exec(cmd, timeout=500)
-        for node in out_dict.keys():
-            scan_rccl_logs(out_dict[node])
-    except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+    def _run_rccl_command():
+        try:
+            out_dict = phdl.exec(cmd, timeout=500)
+            for node in out_dict.keys():
+                scan_rccl_logs(out_dict[node])
+            return out_dict
+        except Exception as e:
+            msg = f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}'
+            log.error(msg)
+            fail_test(msg)
+            raise RuntimeError(msg) from e
+
+    _run_with_optional_gpu_pid_cleanup(phdl, cleanup_gpu_pids, test_name, _run_rccl_command)
 
     # Read the JSON results emitted by the RCCL test binary
     result_dict_out = phdl.exec(f'cat {rccl_result_file}')
