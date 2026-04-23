@@ -23,7 +23,7 @@ def build_launchers(launchers_cfg: dict) -> dict[str, "WorkloadLauncher"]:
 
     Unknown launcher names raise OrchestratorConfigError.
     """
-    from cvs.core.config import OrchestratorConfigError
+    from cvs.core.errors import OrchestratorConfigError
 
     launchers: dict[str, "WorkloadLauncher"] = {}
     for name, config in (launchers_cfg or {}).items():

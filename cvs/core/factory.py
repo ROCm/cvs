@@ -27,7 +27,7 @@ def build_transport(transport_cfg: dict, log: logging.Logger) -> "Transport":
     add a class + a branch here. Unknown transport names raise
     OrchestratorConfigError.
     """
-    from cvs.core.config import OrchestratorConfigError
+    from cvs.core.errors import OrchestratorConfigError
 
     name = (transport_cfg or {}).get("name", "pssh").lower()
     if name == "pssh":

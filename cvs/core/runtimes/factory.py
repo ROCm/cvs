@@ -51,7 +51,7 @@ def build_runtime(runtime_cfg: dict) -> "Runtime":
     runtimes that pretend to work; future runtimes (enroot, apptainer, podman)
     add a real class and a branch here.
     """
-    from cvs.core.config import OrchestratorConfigError
+    from cvs.core.errors import OrchestratorConfigError
 
     name = (runtime_cfg or {}).get("name", "hostshell").lower()
     config = (runtime_cfg or {}).get("config", {})
@@ -59,14 +59,5 @@ def build_runtime(runtime_cfg: dict) -> "Runtime":
     if name == "hostshell":
         return HostShellRuntime.parse_config(config)
     if name == "docker":
-        # Imported lazily so commit 3 (which does not yet port DockerRuntime to
-        # the new Protocol) does not break -- the import resolves to the
-        # rewritten DockerRuntime class once commit 6 lands.
-        from .docker import DockerRuntime as _DockerRuntime
-        if hasattr(_DockerRuntime, "parse_config"):
-            return _DockerRuntime.parse_config(config)
-        raise OrchestratorConfigError(
-            "runtime 'docker' is not yet ported to the new Protocol; "
-            "the new DockerRuntime lands in a follow-up commit"
-        )
+        return DockerRuntime.parse_config(config)
     raise OrchestratorConfigError(f"runtime '{name}' is not implemented")
