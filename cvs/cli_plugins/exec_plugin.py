@@ -1,9 +1,15 @@
-import json
-import sys
+import logging
 import os
+import sys
 
 from .base import SubcommandPlugin
-from cvs.lib.parallel_ssh_lib import Pssh
+from cvs.core import (
+    ExecScope,
+    ExecTarget,
+    OrchestratorConfigError,
+    create_orchestrator,
+    load_config,
+)
 
 
 class ExecPlugin(SubcommandPlugin):
@@ -32,49 +38,37 @@ Exec Commands:
             print("Error: No cluster file specified. Set CLUSTER_FILE environment variable or use --cluster_file.")
             sys.exit(1)
 
-        # Load cluster file
+        # Single canonical loader. Reads JSON, applies the additive overlay
+        # rules, dispatches per-axis validation, aggregates errors. The
+        # bespoke key-by-key sys.exit(1) chain that this method used to do
+        # is now one OrchestratorConfigError catch.
         try:
-            with open(cluster_file, 'r') as f:
-                cluster = json.load(f)
-        except FileNotFoundError:
-            print(f"Error: Cluster file '{cluster_file}' not found.")
-            sys.exit(1)
-        except json.JSONDecodeError as e:
-            print(f"Error: Invalid JSON in cluster file: {e}")
+            cfg = load_config(cluster_file)
+        except OrchestratorConfigError as e:
+            print(f"Error: {e}")
             sys.exit(1)
 
-        username = cluster.get('username')
-        if not username:
-            print("Error: 'username' not found in cluster file.")
-            sys.exit(1)
-
-        pkey = cluster.get('priv_key_file')
-        if not pkey:
-            print("Error: 'priv_key_file' not found in cluster file.")
-            sys.exit(1)
-
-        node_dict = cluster.get('node_dict', {})
-        hosts = list(node_dict.keys())
-        if not hosts:
-            print("Error: No hosts found in cluster file.")
-            sys.exit(1)
-
-        # Create Pssh instance
+        log = logging.getLogger(__name__)
         try:
-            pssh = Pssh(log=None, host_list=hosts, user=username, pkey=pkey, stop_on_errors=False)
+            orch = create_orchestrator(cfg, log=log)
+        except OrchestratorConfigError as e:
+            print(f"Error initializing orchestrator: {e}")
+            sys.exit(1)
         except Exception as e:
-            print(f"Error initializing Pssh: {e}")
+            print(f"Error initializing orchestrator: {e}")
             sys.exit(1)
 
-        # Execute command
+        # `cvs exec --cmd` runs on the bare host shell. We do not bring the
+        # runtime up (no orch.setup) because this is meant to be a quick
+        # ad hoc command across nodes; if you want commands inside the
+        # runtime, use a pytest fixture that calls orch.setup().
         try:
-            output = pssh.exec(args.cmd)
+            results = orch.exec(args.cmd, scope=ExecScope.ALL, target=ExecTarget.HOST)
         except Exception as e:
             print(f"Error executing command: {e}")
             sys.exit(1)
 
-        # Print output
-        for host, out in output.items():
+        for host, result in results.items():
             print(f"Host: {host}")
-            print(out)
+            print(result.output)
             print("---")
