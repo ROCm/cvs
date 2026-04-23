@@ -54,12 +54,25 @@ class Orchestrator:
         self.log = log or logging.getLogger("cvs")
         self.hosts = transport.hosts
         self.head_node = transport.head_node
+        # Per-pipeline artifact storage (in-memory only this PR; persistence
+        # to /tmp/cvs/<pipeline>/<host>.json is the host-prep PR's concern).
+        self.artifacts: dict[str, dict[str, dict]] = {}
 
     def setup(self) -> None:
+        # Lazy import so this module doesn't pull in lifecycle on import (which
+        # in turn imports the Orchestrator type for its Phase Protocol hint).
+        from cvs.core.lifecycle import PREPARE_PIPELINE
+
         self.runtime.setup(self.transport)
+        self.artifacts["prepare"] = PREPARE_PIPELINE.run(self)
 
     def cleanup(self) -> None:
-        self.runtime.teardown(self.transport)
+        from cvs.core.lifecycle import PREPARE_PIPELINE
+
+        try:
+            PREPARE_PIPELINE.rollback(self, self.artifacts.get("prepare", {}))
+        finally:
+            self.runtime.teardown(self.transport)
 
     def exec(
         self,
