@@ -5,22 +5,31 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 """
 
-# Legacy Orchestrator entry points -- removed once the legacy orchestrators
-# (cvs/core/orchestrators/) are deleted.
-from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
+# Legacy entry points -- removed once cvs/core/orchestrators/ is deleted.
+# Imported under aliases so the new OrchestratorConfig dataclass wins
+# `from cvs.core import OrchestratorConfig` for new code.
+from cvs.core.orchestrators.factory import (
+    OrchestratorConfig as _LegacyOrchestratorConfig,
+    OrchestratorFactory,
+)
 
-# New Orchestrator entry points.
+# New canonical entry points.
+from cvs.core.config import OrchestratorConfig, load_config
+from cvs.core.errors import OrchestratorConfigError
 from cvs.core.factory import create_orchestrator
 from cvs.core.orchestrator import Orchestrator
 from cvs.core.scope import ExecResult, ExecScope, ExecTarget
 
 __all__ = [
-    # Legacy
+    # Legacy (kept temporarily so the four un-migrated RCCL test files still
+    # import OrchestratorFactory until Phase E rewrites them).
     "OrchestratorFactory",
-    "OrchestratorConfig",
-    # New
+    # New canonical
     "Orchestrator",
+    "OrchestratorConfig",
+    "OrchestratorConfigError",
     "create_orchestrator",
+    "load_config",
     "ExecScope",
     "ExecTarget",
     "ExecResult",
