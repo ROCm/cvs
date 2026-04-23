@@ -10,10 +10,9 @@ import pytest
 import re
 import os
 import time
-import json
 import itertools
 
-from cvs.core import OrchestratorFactory, OrchestratorConfig
+from cvs.core.scope import ExecScope, ExecTarget
 from cvs.lib import rccl_lib
 from cvs.lib import html_lib
 from cvs.lib.utils_lib import *
@@ -26,117 +25,17 @@ log = globals.log
 rccl_res_dict = {}
 
 
-# Importing additional cmd line args to script ..
-@pytest.fixture(scope="module")
-def cluster_file(pytestconfig):
-    """
-    Return the path to the cluster configuration JSON file passed via pytest CLI.
-
-    Expects:
-      - pytest to be invoked with: --cluster_file <path>
-
-    Args:
-      pytestconfig: Built-in pytest config object used to access CLI options.
-
-    Returns:
-      str: Filesystem path to the cluster configuration file.
-    """
-    return pytestconfig.getoption("cluster_file")
+# cluster_file / config_file / cluster_dict / orch_config / orch fixtures
+# come from cvs/tests/rccl/conftest.py.
 
 
 @pytest.fixture(scope="module")
-def config_file(pytestconfig):
-    """
-    Return the path to the test configuration JSON file passed via pytest CLI.
-
-    Expects:
-      - pytest to be invoked with: --config_file <path>
-
-    Args:
-      pytestconfig: Built-in pytest config object used to access CLI options.
-
-    Returns:
-      str: Filesystem path to the test configuration file.
-    """
-    return pytestconfig.getoption("config_file")
-
-
-@pytest.fixture(scope="module")
-def cluster_dict(cluster_file):
-    """
-    Load and expose full cluster configuration for the test module.
-
-    Behavior:
-      - Opens the JSON at cluster_file and parses it into a Python dict.
-      - Logs the parsed dictionary for visibility and debugging.
-      - Returns the entire cluster configuration (node list, credentials, etc.).
-
-    Args:
-      cluster_file (str): Path to the cluster configuration JSON.
-
-    Returns:
-      dict: Parsed cluster configuration. Expected keys include:
-            - 'node_dict': Map of node name -> node metadata
-            - 'username': SSH username
-            - 'priv_key_file': Path to SSH private key
-    """
-    with open(cluster_file) as json_file:
-        cluster_dict = json.load(json_file)
-
-    # Resolve path placeholders like {user-id} in cluster config
-    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info("%s", cluster_dict)
-    return cluster_dict
-
-
-@pytest.fixture(scope="module")
-def config_dict(config_file, cluster_dict):
-    """
-    Load and return the RCCL-specific configuration dictionary for the test module.
-
-    Args:
-      config_file (str): Path to a JSON config file provided by another fixture.
-
-    Returns:
-      dict: The value of the "rccl" key from the loaded JSON, logged for visibility.
-
-    Notes:
-      - Expects the JSON file to contain a top-level key "rccl".
-      - Uses module scope so the config is parsed once per test module.
-      - Consider adding validation (e.g., assert "rccl" in config) to fail fast on bad configs.
-    """
-    with open(config_file) as json_file:
-        config_dict_t = json.load(json_file)
-    config_dict = config_dict_t['rccl']
-
-    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
+def config_dict(orch_config, cluster_dict):
+    """RCCL-specific config block, with path placeholders resolved."""
+    config_dict = orch_config.testsuite["rccl"]
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
     log.info("%s", config_dict)
     return config_dict
-
-
-@pytest.fixture(scope="module")
-def orch(cluster_file, config_file):
-    """
-    Create and return orchestrator instance for test execution.
-
-    Args:
-      cluster_file (str): Path to cluster configuration JSON
-      config_file (str): Path to test configuration JSON
-
-    Returns:
-      Orchestrator: Orchestrator instance for running tests
-
-    Notes:
-      - Creates orchestrator using OrchestratorConfig.from_configs()
-      - Container setup is handled by test_launch_container
-      - Handles cleanup and container teardown automatically on teardown
-    """
-    log.info("Creating orchestrator from config files")
-    config = OrchestratorConfig.from_configs(cluster_file, config_file)
-    orch = OrchestratorFactory.create_orchestrator(log, config)
-    yield orch
-    orch.cleanup(orch.hosts)
 
 
 @pytest.fixture(scope="module")
@@ -239,28 +138,9 @@ def pytest_generate_tests(metafunc):
 
 # Start of test cases.
 
-
-def test_launch_container(orch):
-    """
-    Launch containers and validate setup - runs first due to definition order.
-
-    This test must run before any other tests that require containers.
-    If this test fails, subsequent container-dependent tests will also fail.
-
-    In baremetal mode (no containers configured), this test passes without action.
-    """
-    # Check orchestrator type
-    if orch.orchestrator_type == "baremetal":
-        log.info("Baremetal orchestrator detected - skipping container launch")
-        pytest.skip("Baremetal mode: no containers to launch")
-
-    log.info("Launching containers on cluster nodes")
-    success = orch.setup_containers()
-    assert success, "Container launch failed on one or more nodes"
-
-    log.info("Setting up SSH daemon in containers")
-    success = orch.setup_sshd()
-    assert success, "SSH daemon setup failed on one or more nodes"
+# (test_launch_container removed: orch.setup() now runs runtime.setup()
+# AND PREPARE_PIPELINE -- which executes MultinodeSshPhase whenever the
+# runtime declares "in_namespace_sshd" -- before the orch fixture yields.)
 
 
 def test_collect_hostinfo(orch):
@@ -292,20 +172,23 @@ def test_collect_networkinfo(orch):
     """
     globals.error_list = []
 
-    orch.all.exec('rdma link')
-    orch.all.exec('ibv_devinfo')
+    # RDMA / verbs queries must run on the host, not inside the runtime.
+    orch.exec('rdma link', scope=ExecScope.ALL, target=ExecTarget.HOST)
+    orch.exec('ibv_devinfo', scope=ExecScope.ALL, target=ExecTarget.HOST)
 
     update_test_result()
 
 
 def test_disable_firewall(orch):
     globals.error_list = []
-    # Firewall operations must run on host, not in container
-    orch.all.exec('sudo service ufw stop')
+    # Firewall operations must run on host, not inside the runtime.
+    orch.exec('sudo service ufw stop', scope=ExecScope.ALL, target=ExecTarget.HOST)
     time.sleep(2)
-    out_dict = orch.all.exec('sudo service ufw status')
-    for node in out_dict.keys():
-        if not re.search('inactive|dead|stopped|disabled', out_dict[node], re.I):
+    out_dict = orch.exec(
+        'sudo service ufw status', scope=ExecScope.ALL, target=ExecTarget.HOST
+    )
+    for node, result in out_dict.items():
+        if not re.search('inactive|dead|stopped|disabled', result.output, re.I):
             fail_test(f'Service ufw not disabled properly on node {node}')
     update_test_result()
 
@@ -355,11 +238,11 @@ def test_rccl_perf(
 
     # Get cluster snapshot ..
     if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
-        cluster_dict_before = create_cluster_metrics_snapshot(orch.all)
+        cluster_dict_before = create_cluster_metrics_snapshot(orch)
 
     # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
     if not re.search('None', config_dict['env_source_script'], re.I):
-        orch.setup_env(orch.hosts, config_dict['env_source_script'])
+        orch.exec(f"bash {config_dict['env_source_script']}")
 
     # Execute the RCCL cluster test with parameters sourced from config_dict
     result_dict = rccl_lib.rccl_cluster_test(
@@ -426,7 +309,7 @@ def test_rccl_perf(
 
     # Get new cluster snapshot and compare ..
     if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
-        cluster_dict_after = create_cluster_metrics_snapshot(orch.all)
+        cluster_dict_after = create_cluster_metrics_snapshot(orch)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 
     # Update test results based on any failures ..

@@ -14,6 +14,7 @@ from pathlib import Path
 import pandas as pd
 from pydantic import ValidationError
 
+from cvs.core.scope import ExecScope, ExecTarget
 from cvs.lib import globals
 from cvs.schema.rccl import RcclTestsAggregated, RcclTestsMultinodeRaw
 from cvs.lib.utils_lib import *
@@ -63,8 +64,8 @@ def is_ucx_available_in_mpi(orch, mpi_path, head_node):
     # First, try ompi_info
     check_ucx_cmd = f'{mpi_path}/bin/ompi_info | grep "pml: ucx" | wc -l'
     try:
-        ucx_check_out = orch.exec_on_head(check_ucx_cmd)
-        ucx_available = int(ucx_check_out[head_node].strip()) > 0
+        ucx_check_out = orch.exec(check_ucx_cmd, scope=ExecScope.HEAD, target=ExecTarget.RUNTIME)
+        ucx_available = int(ucx_check_out[head_node].output.strip()) > 0
         log.info("UCX available in OpenMPI build" if ucx_available else "UCX not available in OpenMPI build")
         return ucx_available
     except Exception as e:
@@ -74,8 +75,8 @@ def is_ucx_available_in_mpi(orch, mpi_path, head_node):
     libmpi_path = f'{mpi_path}/lib/libmpi.so'
     check_ldd_cmd = f'ldd {libmpi_path} | grep ucx | wc -l'
     try:
-        ldd_out = orch.exec_on_head(check_ldd_cmd)
-        ucx_available = int(ldd_out[head_node].strip()) > 0
+        ldd_out = orch.exec(check_ldd_cmd, scope=ExecScope.HEAD, target=ExecTarget.RUNTIME)
+        ucx_available = int(ldd_out[head_node].output.strip()) > 0
         log.info("UCX linked in libmpi.so" if ucx_available else "UCX not linked in libmpi.so")
         return ucx_available
     except Exception as e:
@@ -660,10 +661,13 @@ def rccl_cluster_test(
     log.info('MPI Install Dir: %s', mpi_install_dir)
     log.info('%%%%%%%%%%%%%%%%')
     try:
-        out_dict = orch.distribute_using_mpi(
-            rank_cmd, vpc_node_list, proc_per_node, env_vars, mpi_install_dir, mpi_extra_args
+        # MPI launch via the MpiLauncher: the launcher writes the hostfile
+        # inside the runtime, builds the mpirun string with the runtime's
+        # workload_ssh_port + workload_hostfile_path, and runs it on the head.
+        out_dict = orch.launchers["mpi"].launch(
+            orch, rank_cmd, vpc_node_list, env_vars, proc_per_node, mpi_extra_args
         )
-        output = out_dict[head_node]
+        output = out_dict[head_node].output
         # print(output)
         scan_rccl_logs(output)
     except Exception as e:
@@ -673,14 +677,16 @@ def rccl_cluster_test(
     # Read the JSON results emitted by the RCCL test binary
     cat_cmd = f'cat {rccl_result_file}'
 
-    result_dict_out = orch.exec(cat_cmd, hosts=[head_node])
-    result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
+    result_dict_out = orch.exec(cat_cmd, scope=ExecScope.HEAD, target=ExecTarget.RUNTIME)
+    result_out = json.loads(
+        result_dict_out[head_node].output.replace('\n', '').replace('\r', '')
+    )
 
     # Collect basic GPU information via rocm-smi
     smi_cmd = 'rocm-smi -a | head -30'
 
-    smi_out_dict = orch.exec(smi_cmd, hosts=[head_node])
-    smi_out = smi_out_dict[head_node]
+    smi_out_dict = orch.exec(smi_cmd, scope=ExecScope.HEAD, target=ExecTarget.RUNTIME)
+    smi_out = smi_out_dict[head_node].output
 
     get_model_from_rocm_smi_output(smi_out)
 
@@ -920,10 +926,10 @@ def rccl_cluster_test_default(
         log.info('MPI Install Dir: %s', mpi_install_dir)
         log.info('%%%%%%%%%%%%%%%%')
         try:
-            out_dict = orch.distribute_using_mpi(
-                rank_cmd, vpc_node_list, proc_per_node, env_vars, mpi_install_dir, mpi_extra_args
+            out_dict = orch.launchers["mpi"].launch(
+                orch, rank_cmd, vpc_node_list, env_vars, proc_per_node, mpi_extra_args
             )
-            output = out_dict[head_node]
+            output = out_dict[head_node].output
             # print(output)
             scan_rccl_logs(output)
         except Exception as e:
@@ -931,8 +937,12 @@ def rccl_cluster_test_default(
             fail_test(f'Hit Exceptions with rccl cmd - exception {repr(e)}')
 
         # Read the JSON results emitted by the RCCL test binary
-        result_dict_out = orch.exec(f'cat {dtype_result_file}')
-        dtype_result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
+        result_dict_out = orch.exec(
+            f'cat {dtype_result_file}', scope=ExecScope.HEAD, target=ExecTarget.RUNTIME
+        )
+        dtype_result_out = json.loads(
+            result_dict_out[head_node].output.replace('\n', '').replace('\r', '')
+        )
         # Validate the results against the schema fail if results are not valid
         try:
             validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
@@ -989,8 +999,10 @@ def rccl_cluster_test_default(
         fail_test(f'RCCL Test aggregation failed: {e}')
 
     # Collect basic GPU information via rocm-smi
-    smi_out_dict = orch.exec_on_head('rocm-smi -a | head -30')
-    smi_out = smi_out_dict[head_node]
+    smi_out_dict = orch.exec(
+        'rocm-smi -a | head -30', scope=ExecScope.HEAD, target=ExecTarget.RUNTIME
+    )
+    smi_out = smi_out_dict[head_node].output
     get_model_from_rocm_smi_output(smi_out)
 
     # Determine NIC type from nic_model parameter
@@ -1133,19 +1145,27 @@ def rccl_single_node_test(
     log.info("%s", cmd)
     log.info('%%%%%%%%%%%%%%%%')
     try:
-        out_dict = orch.exec(cmd, hosts=[head_node], timeout=500)
-        for node in out_dict.keys():
-            scan_rccl_logs(out_dict[node])
+        # Singlenode: cmd runs directly on the head node inside the runtime
+        # (no MPI fan-out across nodes). MpiLauncher is overkill here.
+        out_dict = orch.exec(
+            cmd, scope=ExecScope.HEAD, target=ExecTarget.RUNTIME, timeout=500
+        )
+        for node, result in out_dict.items():
+            scan_rccl_logs(result.output)
     except Exception as e:
         log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
         fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
     # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = orch.exec(f'cat {rccl_result_file}', hosts=[head_node])
-    result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
+    result_dict_out = orch.exec(
+        f'cat {rccl_result_file}', scope=ExecScope.HEAD, target=ExecTarget.RUNTIME
+    )
+    result_out = json.loads(
+        result_dict_out[head_node].output.replace('\n', '').replace('\r', '')
+    )
 
     # Collect basic GPU information via rocm-smi
-    orch.exec('rocm-smi -a | head -30', hosts=[head_node])
+    orch.exec('rocm-smi -a | head -30', scope=ExecScope.HEAD, target=ExecTarget.RUNTIME)
 
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
     test_exp_dict = exp_results_dict.get(test_name) if exp_results_dict else None
