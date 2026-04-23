@@ -19,6 +19,7 @@ class TestCopyConfigPlugin(unittest.TestCase):
         cls.expected_roots = [
             os.path.join(cvs_dir, "input", "config_file"),
             os.path.join(cvs_dir, "input", "cluster_file"),
+            os.path.join(cvs_dir, "input", "env_file"),
         ]
 
     def setUp(self):
