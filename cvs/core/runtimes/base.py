@@ -42,32 +42,3 @@ class Runtime(Protocol):
     def wrap_cmd(self, cmd: str) -> str: ...
     def workload_ssh_port(self) -> int: ...
     def workload_hostfile_path(self) -> str: ...
-
-
-# -----------------------------------------------------------------------------
-# Legacy ContainerRuntime protocol -- kept temporarily so the existing
-# ContainerOrchestrator + DockerRuntime / EnrootRuntime files still type-check
-# during the transition. Deleted once the old orchestrators go away.
-# -----------------------------------------------------------------------------
-class ContainerRuntime(Protocol):
-    """Protocol for container runtime implementations."""
-
-    def setup_containers(self, container_config, container_name):
-        """Set up containers on all nodes."""
-        ...
-
-    def teardown_containers(self, container_name):
-        """Tear down containers on all nodes."""
-        ...
-
-    def exec(self, container_name, cmd, hosts=None, timeout=None):
-        """Execute command in running containers."""
-        ...
-
-    def exec_on_head(self, container_name, cmd, timeout=None):
-        """Execute command directly on head node (baremetal)."""
-        ...
-
-    def load_image(self, tar_path, timeout=None):
-        """Load container image from tar file on all hosts."""
-        ...

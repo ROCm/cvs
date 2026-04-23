@@ -10,36 +10,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .docker import DockerRuntime
-from .enroot import EnrootRuntime
 from .hostshell import HostShellRuntime
 
 if TYPE_CHECKING:
     from .base import Runtime
 
 
-class RuntimeFactory:
-    """Legacy factory kept for the existing ContainerOrchestrator path.
-
-    The new dispatch is build_runtime(cfg) below; this class is removed when
-    the legacy orchestrators get deleted.
-    """
-
-    @staticmethod
-    def create(runtime_name, log, orchestrator):
-        """Create a container runtime instance."""
-        runtime_name = runtime_name.lower()
-
-        if runtime_name == 'docker':
-            return DockerRuntime(log, orchestrator)
-        elif runtime_name == 'enroot':
-            return EnrootRuntime(log, orchestrator)
-        else:
-            raise ValueError(f"Unsupported container runtime: {runtime_name}")
-
-
-# -----------------------------------------------------------------------------
-# New Runtime factory used by the single Orchestrator class.
-# -----------------------------------------------------------------------------
 def build_runtime(runtime_cfg: dict) -> "Runtime":
     """Build a Runtime instance from a parsed cluster.json runtime block.
 
