@@ -167,6 +167,27 @@ def shdl(cluster_dict):
     return shdl
 
 
+@pytest.fixture(scope="module")
+def vpc_node_list(cluster_dict):
+    """
+    Collect and return a list of VPC IPs for all nodes in the cluster.
+
+    Args:
+      cluster_dict (dict): Cluster metadata fixture containing node_dict with vpc_ip per node.
+
+    Returns:
+      list[str]: List of VPC IP addresses in the cluster, ordered by node_dict iteration.
+
+    Notes:
+      - Iteration order depends on the insertion order of node_dict.
+      - Consider validating that each node entry contains a 'vpc_ip' key.
+    """
+    vpc_node_list = []
+    for node in list(cluster_dict['node_dict'].keys()):
+        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
+    return vpc_node_list
+
+
 # Start of test cases.
 
 
@@ -215,6 +236,18 @@ def test_disable_firewall(phdl):
     update_test_result()
 
 
+def test_print_env_once(phdl, shdl, config_dict):
+    """Single test to print environment script - don't dump env in every test."""
+    globals.error_list = []
+    env_script = config_dict.get('env_source_script', '/dev/null')
+    if env_script and str(env_script).lower() != 'none':
+        # Cat the env script file to show its contents
+        cmd = f'echo === Environment Script: {env_script} === && cat {env_script}'
+        shdl.exec(cmd)
+    update_test_result()
+
+
+# Change this to choose what collectives to run ..
 @pytest.mark.parametrize(
     "rccl_collective",
     [
@@ -229,12 +262,13 @@ def test_disable_firewall(phdl):
         "broadcast_perf",
     ],
 )
-def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
+def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     """
     Execute RCCL performance test across the cluster with given parameters.
 
     Parameters (from fixtures and config):
       - phdl: parallel execution handle for nodes (expects exec/exec_cmd_list).
+      - shdl: switch or auxiliary handle used by rccl_lib (implementation-specific).
       - cluster_dict: cluster topology and credentials (expects node_dict, username, etc.).
       - config_dict: test configuration with RCCL/MPI paths, env, and thresholds.
       - rccl_collective: which RCCL collective test to run (e.g., "all_reduce_perf").
@@ -253,45 +287,36 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
     """
 
     # Log a message to Dmesg to create a timestamp record
-    phdl.exec(f'sudo echo "Starting Test singlenode {rccl_collective}" | sudo tee /dev/kmsg')
+    phdl.exec(f'sudo echo "Starting Test {rccl_collective}" | sudo tee /dev/kmsg')
 
     # start_time = phdl.exec('date')
     start_time = phdl.exec('date +"%a %b %e %H:%M"')
     globals.error_list = []
+
+    # Build list of nodes and their VPC IPs (used by the RCCL test)
+    # make sure the VPC IPs are reachable from all nodes for passwordless ssh
+    # otherwise use the regular mgmt-ip if that is reachable.
     node_list = list(cluster_dict['node_dict'].keys())
+    vpc_node_list = []
+    for node in node_list:
+        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
 
     # Get cluster snapshot ..
-    if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
+    if re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
-    # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
-    if not re.search('None', config_dict['env_source_script'], re.I):
-        phdl.exec(f"bash {config_dict['env_source_script']}")
-
-    # Execute the RCCL cluster test with parameters sourced from config_dict
-    result_dict = rccl_lib.rccl_single_node_test(
+    # Use the new grouped parameter function
+    env_script = config_dict.get('env_source_script', '/dev/null')
+    result_dict = rccl_lib.rccl_perf(
         phdl,
-        test_name=rccl_collective,
-        cluster_node_list=node_list,
-        rocm_path_var=config_dict['rocm_path_var'],
-        rccl_dir=config_dict['rccl_dir'],
-        rccl_path_var=config_dict['rccl_path_var'],
-        rccl_tests_dir=config_dict['rccl_tests_dir'],
-        start_msg_size=config_dict['start_msg_size'],
-        end_msg_size=config_dict['end_msg_size'],
-        step_function=config_dict['step_function'],
-        warmup_iterations=config_dict['warmup_iterations'],
-        no_of_iterations=config_dict['no_of_iterations'],
-        no_of_cycles=config_dict['no_of_cycles'],
-        check_iteration_count=config_dict['check_iteration_count'],
-        debug_level=config_dict['debug_level'],
-        rccl_result_file=config_dict['rccl_result_file'],
-        no_of_local_ranks=config_dict['no_of_local_ranks'],
-        verify_bus_bw=config_dict['verify_bus_bw'],
-        verify_bw_dip=config_dict['verify_bw_dip'],
-        verify_lat_dip=config_dict['verify_lat_dip'],
-        exp_results_dict=config_dict['results'],
-        env_source_script=config_dict['env_source_script'],
+        shdl,
+        rccl_collective,
+        env_script,
+        config_dict['mpi_params'],
+        config_dict['rccl_test_params'],
+        config_dict['cvs_params'],
+        node_list,
+        vpc_node_list,
     )
 
     log.info("%s", result_dict)
@@ -300,13 +325,13 @@ def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
 
     # Scan dmesg between start and end times cluster wide ..
     # end_time = phdl.exec('date')
-    phdl.exec(f'sudo echo "End of Test singlenode {rccl_collective}" | sudo tee /dev/kmsg')
+    phdl.exec(f'sudo echo "End of Test {rccl_collective}" | sudo tee /dev/kmsg')
 
     end_time = phdl.exec('date +"%a %b %e %H:%M"')
     verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
 
     # Get new cluster snapshot and compare ..
-    if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
+    if re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_after = create_cluster_metrics_snapshot(phdl)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 
@@ -322,7 +347,7 @@ def test_gen_graph(request):
 
     proc_id = os.getpid()
 
-    html_file = f'/tmp/rccl_singlenode_perf_report_{proc_id}.html'
+    html_file = f'/tmp/rccl_perf_report_{proc_id}.html'
 
     html_lib.add_html_begin(html_file)
     html_lib.build_rccl_amcharts_graph(html_file, 'rccl', rccl_graph_dict)
@@ -333,7 +358,7 @@ def test_gen_graph(request):
 
     # Add the HTML file to the report bundle with clickable link
     copied_path = request.config._html_report_manager.add_html_to_report(
-        html_file, link_name="RCCL Single Node Performance Report", request=request
+        html_file, link_name="RCCL Performance Report", request=request
     )
 
     if copied_path:
