@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import re
 
+from cvs.core.legacy_adapter import as_pssh_handle, as_string_dict
 from cvs.lib.utils_lib import *
 from cvs.lib.rocm_plib import *
 from cvs.lib import linux_utils
@@ -61,6 +62,7 @@ def verify_gpu_pcie_bus_width(phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pci
       - The host has lspci installed and sudo permission to run it without password prompts.
       - fail_test is available in scope and raises/aborts on failure.
     """
+    phdl = as_pssh_handle(phdl)
 
     err_dict = {}
     # Query per-node GPU PCIe bus mapping (node -> card -> PCI attributes)
@@ -133,6 +135,7 @@ def verify_gpu_pcie_errors(phdl):
       - fail_test is available in scope and will raise/abort the test.
       - Threshold is hardcoded at 100; adjust as needed for environment.
     """
+    phdl = as_pssh_handle(phdl)
 
     err_dict = {}
     # Query a nested dict of GPU metrics per node:
@@ -199,6 +202,10 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
       - If start/end times are not aligned with dmesg -T formatting, the awk range may be empty.
       - Consider handling cases where regex extraction fails (no match) to avoid attribute errors.
     """
+
+    phdl = as_pssh_handle(phdl)
+    start_time_dict = as_string_dict(start_time_dict)
+    end_time_dict = as_string_dict(end_time_dict)
 
     log.info('scan dmesg')
 
@@ -275,6 +282,8 @@ def verify_nic_link_flap(phdl):
       - sudo dmesg is allowed without prompting.
     """
 
+    phdl = as_pssh_handle(phdl)
+
     err_dict = {}
 
     # Gather NIC stats per node and per interface using ethtool
@@ -335,6 +344,7 @@ def verify_host_lspci(phdl, pcie_speed=32, pcie_width=16):
         are found, while the message states there ARE error indications. Adjust logic
         if needed.
     """
+    phdl = as_pssh_handle(phdl)
 
     err_dict = {}
     # Gather BDFs (Bus:Device.Function) for AMD GPUs on each node
@@ -422,6 +432,7 @@ def full_journalctl_scan(phdl):
       - The initial egrep reduces volume; ensure it doesn?t hide relevant lines
         not containing those keywords if broader scanning is desired.
     """
+    phdl = as_pssh_handle(phdl)
 
     err_dict = {}
     # Fetch kernel logs filtered for likely error indicators across nodes
@@ -474,6 +485,7 @@ def full_dmesg_scan(
       - Current filters are simple grep/egrep; adjust if they exclude useful diagnostics.
       - Consider adding case-insensitive filtering (e.g., grep -i) where appropriate.
     """
+    phdl = as_pssh_handle(phdl)
 
     log.info('scan dmesg')
 
@@ -528,6 +540,7 @@ def verify_driver_errors(phdl):
       - The function fails fast (first detection); if you want a comprehensive report across nodes,
         aggregate matches and report them collectively before failing.
     """
+    phdl = as_pssh_handle(phdl)
 
     log.info('Scan for AMD GPU driver errors')
 
@@ -566,6 +579,7 @@ def create_cluster_metrics_snapshot(
         - 'gpu_pcie_stats': Per-node AMD SMI PCIe-related metrics
         # - 'gpu_stats': (optional) Per-node general GPU metrics (currently commented out)
     """
+    phdl = as_pssh_handle(phdl)
 
     s_dict = {}
 
