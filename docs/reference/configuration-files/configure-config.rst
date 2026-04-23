@@ -14,6 +14,14 @@ The test configuration files are in the ``cvs/input/config_file`` directory of t
 
   Ensure `ROCm <https://rocm.docs.amd.com/projects/install-on-linux/en/latest/>`_ is installed correctly, and the GPU drivers are loaded.
 
+Cluster file
+============
+
+In addition to a per-test ``--config_file``, every ``cvs run`` invocation needs a ``--cluster_file`` that declares the SSH credentials, the node list, and the **execution backend** (baremetal or container). See :doc:`/reference/configuration-files/cluster-file` for the full schema, the container block reference, and which suites consume the orchestrator today.
+
+Test configuration files
+========================
+
 The following list provides a link to code snippets and the parameters for each configuration file:
 
 - :doc:`Platform </reference/configuration-files/platform>`

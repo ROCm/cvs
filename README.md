@@ -138,8 +138,12 @@ cvs copy-config --list
 Then copy specific files as needed:
 
 ```bash
-# Copy cluster configuration
+# Copy cluster configuration (baremetal backend, default)
 cvs copy-config cluster.json --output /tmp/cvs/input/cluster_file/cluster.json
+
+# Or copy the container-backend cluster template (today consumed by rvs_cvs only;
+# other suites and `cvs exec` ignore the orchestrator key and run on the host)
+cvs copy-config cluster_container.json --output /tmp/cvs/input/cluster_file/cluster_container.json
 
 # Alternatively, generate cluster configuration for multiple hosts (see 'Generate Cluster Configuration File' section below)
 
@@ -147,6 +151,8 @@ cvs copy-config cluster.json --output /tmp/cvs/input/cluster_file/cluster.json
 cvs copy-config rccl/rccl_config.json --output /tmp/cvs/input/config_file/rccl_config.json
 cvs copy-config health/mi300_health_config.json --output /tmp/cvs/input/config_file/health_config.json
 ```
+
+For the container backend, see the published [container-mode how-to](https://rocm.docs.amd.com/projects/cvs/en/latest/how-to/run-with-containers.html) and the in-tree reference next to the templates: [`cvs/input/cluster_file/README.md`](cvs/input/cluster_file/README.md).
 
 Or copy all configuration files at once:
 

@@ -23,6 +23,11 @@ class EnrootRuntime:
         self.log.warning("Enroot runtime not yet implemented")
         return True
 
+    def is_running(self, container_name):
+        """Check Enroot container status - not yet implemented."""
+        self.log.error("Enroot runtime not yet implemented")
+        return {}
+
     def exec(self, container_name, cmd, hosts=None, timeout=None):
         """Execute in Enroot containers - not yet implemented."""
         self.log.error("Enroot runtime not yet implemented")

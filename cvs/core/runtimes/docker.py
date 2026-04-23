@@ -35,8 +35,15 @@ class DockerRuntime:
     ):
         """Set up long-running Docker containers on all nodes.
 
+        AMD GPU passthrough is provided by the device flags auto-injected from
+        ``DEFAULT_CONTAINER_ARGS`` (``/dev/kfd``, ``/dev/dri``,
+        ``/dev/infiniband``). CVS is AMD-only, so no NVIDIA-style ``--gpus all``
+        flag is emitted.
+
         Args:
-            container_config: Container configuration dictionary
+            container_config: Container configuration dictionary. Recognized
+                top-level keys include ``image``, ``launch``, ``runtime`` (with
+                nested ``args``), and ``env``.
             container_name: Name to assign to the containers
             volumes: Optional list of volume mounts (overrides config)
             devices: Optional list of device passthroughs (overrides config)
@@ -60,7 +67,6 @@ class DockerRuntime:
 
         # Use provided parameters or fall back to config
         volumes = volumes if volumes is not None else container_config.get('volumes', [])
-        gpu_passthrough = container_config.get('gpu_passthrough', True)
         container_env = environment if environment is not None else container_config.get('env', {})
 
         # Build docker run command with additional args
@@ -84,16 +90,24 @@ class DockerRuntime:
             runtime_args_config = dict(runtime_args_config)
             runtime_args_config['ulimit'] = ulimits
 
+        # The positional 'volumes' arg is the single source of truth for -v flags
+        # (it already merges auto-injected mounts with runtime.args.volumes via
+        # ContainerOrchestrator.get_volumes()). Strip from runtime_args_config so
+        # _build_runtime_args does not re-emit them, otherwise user-supplied
+        # volumes would appear twice in the final docker run command.
+        if 'volumes' in runtime_args_config:
+            runtime_args_config = dict(runtime_args_config)
+            runtime_args_config.pop('volumes', None)
+
         additional_args = self._build_runtime_args(runtime_args_config)
 
         # Basic args
         vol_args = ' '.join([f'-v {v}' for v in volumes])
         env_args = ' '.join([f'-e {k}={v}' for k, v in container_env.items()])
-        gpu_args = '--gpus all' if gpu_passthrough else ''
         network_args = '--network host' if not runtime_args_config.get('network') else ''
 
         # Combine all arguments
-        all_args = [gpu_args, network_args, vol_args, env_args] + additional_args
+        all_args = [network_args, vol_args, env_args] + additional_args
         if device_expansion:
             all_args.append(device_expansion)
         all_args_str = ' '.join(arg for arg in all_args if arg)
@@ -133,6 +147,30 @@ class DockerRuntime:
 
         self.log.info(f"Containers started successfully: {container_name}")
         return True
+
+    def is_running(self, container_name):
+        """Check whether a container with the given name is running on each host.
+
+        Args:
+            container_name: Name of the container to check.
+
+        Returns:
+            dict: per-host result with keys 'running' (bool), 'name' (str, the
+            actually-running container name found on that host, or empty), and
+            'exit_code' (int, exit code of the underlying ``docker ps`` probe).
+        """
+        cmd = f"sudo docker ps --filter name=^{container_name}$ --filter status=running --format '{{{{.Names}}}}'"
+        raw = self.orchestrator.all.exec(cmd, timeout=30, detailed=True)
+        out = {}
+        for host, res in raw.items():
+            exit_code = res.get('exit_code')
+            running_name = (res.get('output') or '').strip()
+            out[host] = {
+                'exit_code': exit_code,
+                'running': exit_code == 0 and running_name == container_name,
+                'name': running_name,
+            }
+        return out
 
     def teardown_containers(self, container_name):
         """Stop and remove Docker containers on all nodes."""

@@ -39,8 +39,8 @@ class Pssh:
         env_vars=None,
     ):
         self.log = log
-        self.host_list = host_list
-        self.reachable_hosts = host_list
+        self.host_list = list(host_list)
+        self.reachable_hosts = list(host_list)
         self.user = user
         self.pkey = pkey
         self.password = password
@@ -165,8 +165,17 @@ class Pssh:
                 i += 1
 
             if include_exit_codes:
-                # Use -1 for exit code when command couldn't execute due to exceptions
-                exit_code = getattr(item, 'exit_code', -1) if item.exception is None else -1
+                # -1 means "unknown / aborted": either the command raised before
+                # an exit code was available, or the SSH channel hasn't reached
+                # EOF yet (parallel-ssh's HostOutput.exit_code property returns
+                # None in that case, which would silently break consumers that
+                # compare against 0).
+                if item.exception is not None:
+                    exit_code = -1
+                else:
+                    exit_code = item.exit_code
+                    if exit_code is None:
+                        exit_code = -1
                 cmd_output[item.host] = {'output': cmd_out_str, 'exit_code': exit_code}
             else:
                 cmd_output[item.host] = cmd_out_str
@@ -177,16 +186,15 @@ class Pssh:
 
         return cmd_output
 
-    def inform_unreachability_structured(self, cmd_output):
+    def _handle_timeout_exception(self, output, e):
         """
-        Update cmd_output with "Host Unreachable" for all hosts in self.unreachable_hosts.
-        Handles structured output format.
+        Helper method to handle Timeout exceptions by setting exceptions for all hosts in output.
+        Since Timeout is raised once for the operation, assume all hosts are affected.
         """
-        for host in self.unreachable_hosts:
-            existing = cmd_output.get(host, {'output': '', 'exit_code': -1})
-            existing['output'] += "\nABORT: Host Unreachable Error"
-            existing['exit_code'] = -1  # Ensure unreachable hosts have error exit code
-            cmd_output[host] = existing
+        if output is not None and isinstance(e, Timeout):
+            for item in output:
+                if item.exception is None:
+                    item.exception = e
 
     def exec(self, cmd, timeout=None, print_console=True, detailed=False):
         """
@@ -267,8 +275,8 @@ class Pssh:
         for cmd in cmds:
             try:
                 cmd.get()
-            except IOError:
-                raise Exception("Expected IOError exception, got none")
+            except IOError as e:
+                raise IOError(f"scp '{local_file}' -> '{remote_file}' failed: {e}") from e
         return
 
     def reboot_connections(self):

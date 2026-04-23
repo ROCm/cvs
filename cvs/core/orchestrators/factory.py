@@ -56,7 +56,16 @@ class OrchestratorConfig:
 
         Args:
             **kwargs: Required orchestrator configuration keys
+
+        Raises:
+            ValueError: If any required key (orchestrator, node_dict, username,
+                priv_key_file) is missing.
         """
+        required = ('orchestrator', 'node_dict', 'username', 'priv_key_file')
+        missing = [k for k in required if k not in kwargs]
+        if missing:
+            raise ValueError(f"OrchestratorConfig missing required keys: {missing}")
+
         self.orchestrator = kwargs['orchestrator']
         self.node_dict = kwargs['node_dict']
         self.username = kwargs['username']

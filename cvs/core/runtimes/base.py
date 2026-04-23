@@ -19,6 +19,16 @@ class ContainerRuntime(Protocol):
         """Tear down containers on all nodes."""
         ...
 
+    def is_running(self, container_name):
+        """Check whether a container with the given name is running on each host.
+
+        Returns:
+            dict: per-host result with keys 'running' (bool), 'name' (str, the
+            actually-running container name found on that host, or empty), and
+            'exit_code' (int, the underlying probe command's exit code).
+        """
+        ...
+
     def exec(self, container_name, cmd, hosts=None, timeout=None):
         """Execute command in running containers."""
         ...

@@ -413,19 +413,18 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         Returns:
             bool: True if container is running on all hosts, False otherwise
         """
-        # Check if container is running on all hosts
-        cmd = f"sudo docker ps --filter name=^{container_name}$ --filter status=running --format '{{{{.Names}}}}'"
         self.log.debug(f"Checking if container '{container_name}' is running on all hosts")
-        result = self.all.exec(cmd, timeout=30)
+        result = self.runtime.is_running(container_name)
 
         # Verify container is running on all hosts
         failed_hosts = []
-        for host, output in result.items():
-            if output.get('exit_code') != 0:
-                failed_hosts.append(f"{host} (exit code {output.get('exit_code')})")
+        for host, info in result.items():
+            exit_code = info.get('exit_code')
+            if exit_code != 0:
+                failed_hosts.append(f"{host} (exit code {exit_code})")
                 continue
-            running_name = output.get('stdout', '').strip()
-            if running_name != container_name:
+            if not info.get('running'):
+                running_name = info.get('name', '')
                 failed_hosts.append(f"{host} (container not running, found: '{running_name}')")
 
         if failed_hosts:
@@ -442,7 +441,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         This method should be called explicitly by tests for cleanup.
         It respects the 'enabled' flag and handles container lifecycle appropriately.
-        If 'launch' is true, assumes containers should not be stopped (externally managed).
+        If 'launch' is False, assumes containers should not be stopped (externally managed).
 
         Returns:
             bool: True if containers were torn down successfully or no teardown needed
@@ -451,8 +450,8 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             self.log.debug("Container mode not enabled, skipping teardown")
             return True
 
-        if self.container_config.get('launch', False):
-            self.log.debug("launch is true, not stopping externally managed containers")
+        if not self.container_config.get('launch', False):
+            self.log.debug("launch is False, not stopping externally managed containers")
             return True
 
         if not self.container_id:

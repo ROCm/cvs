@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # Standard libraries
 import re
 import json
+from typing import List
 from pathlib import Path
 
 # Third party libraries
@@ -15,7 +16,7 @@ import pandas as pd
 from pydantic import ValidationError
 
 from cvs.lib import globals
-from cvs.schema.rccl import RcclTestsAggregated, RcclTestsMultinodeRaw
+from cvs.schema.rccl import RcclTests, RcclTestsAggregated, RcclTestsMultinodeRaw
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -48,12 +49,12 @@ def _is_severe_wrong_corruption_error(err: ValidationError) -> bool:
     return 'SEVERE DATA CORRUPTION' in s or "'#wrong'" in s
 
 
-def is_ucx_available_in_mpi(orch, mpi_path, head_node):
+def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
     """
     Check if UCX is available in the OpenMPI build.
 
     Parameters:
-      orch: Orchestrator instance for executing commands.
+      shdl: SSH handle to execute commands on the remote node.
       mpi_path: Path to the MPI installation directory.
       head_node: The head node hostname for retrieving command output.
 
@@ -63,7 +64,7 @@ def is_ucx_available_in_mpi(orch, mpi_path, head_node):
     # First, try ompi_info
     check_ucx_cmd = f'{mpi_path}/bin/ompi_info | grep "pml: ucx" | wc -l'
     try:
-        ucx_check_out = orch.exec_on_head(check_ucx_cmd)
+        ucx_check_out = shdl.exec(check_ucx_cmd)
         ucx_available = int(ucx_check_out[head_node].strip()) > 0
         log.info("UCX available in OpenMPI build" if ucx_available else "UCX not available in OpenMPI build")
         return ucx_available
@@ -74,7 +75,7 @@ def is_ucx_available_in_mpi(orch, mpi_path, head_node):
     libmpi_path = f'{mpi_path}/lib/libmpi.so'
     check_ldd_cmd = f'ldd {libmpi_path} | grep ucx | wc -l'
     try:
-        ldd_out = orch.exec_on_head(check_ldd_cmd)
+        ldd_out = shdl.exec(check_ldd_cmd)
         ucx_available = int(ldd_out[head_node].strip()) > 0
         log.info("UCX linked in libmpi.so" if ucx_available else "UCX not linked in libmpi.so")
         return ucx_available
@@ -120,8 +121,8 @@ def determine_mpi_pml_config(mpi_pml, shdl, mpi_path, head_node, net_dev_list, u
     Determine MPI PML (Point-to-Point Messaging Layer) configuration based on user config or auto-detection.
 
     Parameters:
-      orch: Orchestrator instance for executing commands.
       mpi_pml: User-specified PML mode ('auto', 'ucx', or 'ob1').
+      shdl: SSH handle to execute commands on the remote node.
       mpi_path: Path to the MPI installation directory.
       head_node: The head node hostname for retrieving command output.
       net_dev_list: UCX network device(s) to use (UCX_NET_DEVICES).
@@ -134,7 +135,7 @@ def determine_mpi_pml_config(mpi_pml, shdl, mpi_path, head_node, net_dev_list, u
     """
     if mpi_pml.lower() == "auto":
         # Auto-detect UCX availability
-        ucx_available = is_ucx_available_in_mpi(orch, mpi_path, head_node)
+        ucx_available = is_ucx_available_in_mpi(shdl, mpi_path, head_node)
         pml_param = "--mca pml ob1" if not ucx_available else ""
     elif mpi_pml.lower() == "ucx":
         # User explicitly requested UCX
@@ -148,7 +149,7 @@ def determine_mpi_pml_config(mpi_pml, shdl, mpi_path, head_node, net_dev_list, u
         log.info("Using pml ob1 (user-specified)")
     else:
         log.warning(f"Unknown mpi_pml value '{mpi_pml}', defaulting to auto-detection")
-        ucx_available = is_ucx_available_in_mpi(orch, mpi_path, head_node)
+        ucx_available = is_ucx_available_in_mpi(shdl, mpi_path, head_node)
         pml_param = "--mca pml ob1" if not ucx_available else ""
 
     ucx_params = (
@@ -411,7 +412,7 @@ def convert_to_graph_dict(result_dict):
     return graph_dict
 
 
-def aggregate_rccl_test_results(validated_results):
+def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[RcclTestsAggregated]:
     """
     Aggregate multiple rccl-test results into mean/std per (name, size, type, inPlace)
     Args: validated_results: List[RcclTests] - list of validated rccl-test results
@@ -606,35 +607,24 @@ def rccl_regression(
         {test_cmd}'''
 
     log.info('%%%%%%%%%%%%%%%%')
-    log.info('MPI Hosts: %s', vpc_node_list)
-    log.info('Ranks per host: %s', proc_per_node)
-    log.info('Env Vars: %s', env_vars)
-    log.info('Rank Cmd: %s', rank_cmd)
-    log.info('MPI Install Dir: %s', mpi_install_dir)
+    log.info("%s", cmd)
     log.info('%%%%%%%%%%%%%%%%')
 
     try:
-        out_dict = orch.distribute_using_mpi(
-            rank_cmd, vpc_node_list, proc_per_node, env_vars, mpi_install_dir, mpi_extra_args
-        )
+        out_dict = shdl.exec(cmd, timeout=500)
         output = out_dict[head_node]
         scan_rccl_logs(output)
     except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd - exception {repr(e)}')
-        fail_test(f'Hit Exceptions with rccl cmd - exception {repr(e)}')
+        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
     # Read the JSON results emitted by the RCCL test binary
-    cat_cmd = f'cat {rccl_result_file}'
-
-    result_dict_out = orch.exec(cat_cmd, hosts=[head_node])
+    result_dict_out = shdl.exec(f'cat {rccl_result_file}')
     result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
 
     # Collect basic GPU information via rocm-smi
-    smi_cmd = 'rocm-smi -a | head -30'
-
-    smi_out_dict = orch.exec(smi_cmd, hosts=[head_node])
+    smi_out_dict = shdl.exec('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
-
     get_model_from_rocm_smi_output(smi_out)
 
     # If requested, verify measured bus bandwidths against provided expected Bandwidth
@@ -676,7 +666,8 @@ def rccl_perf(
     Run an RCCL collective test across a cluster via MPI and verify results.
 
     Arguments:
-      orch: Orchestrator instance for test execution.
+      phdl: Parallel ssh handle to run commands on all nodes.
+      shdl: ssh handle to the first node in the cluster.
       test_name: RCCL test binary name (e.g., all_reduce_perf).
       cluster_node_list: List of cluster node hostnames/IPs (first is treated as head node).
       vpc_node_list: List of hostnames/IPs to pass to mpirun -H as hosts - \
@@ -794,25 +785,19 @@ def rccl_perf(
         '''
 
         log.info('%%%%%%%%%%%%%%%%')
-        log.info('MPI Hosts: %s', vpc_node_list)
-        log.info('Ranks per host: %s', proc_per_node)
-        log.info('Env Vars: %s', env_vars)
-        log.info('Rank Cmd: %s', rank_cmd)
-        log.info('MPI Install Dir: %s', mpi_install_dir)
+        log.info("%s", cmd)
         log.info('%%%%%%%%%%%%%%%%')
         try:
-            out_dict = orch.distribute_using_mpi(
-                rank_cmd, vpc_node_list, proc_per_node, env_vars, mpi_install_dir, mpi_extra_args
-            )
+            out_dict = shdl.exec(cmd, timeout=500)
             output = out_dict[head_node]
             # print(output)
             scan_rccl_logs(output)
         except Exception as e:
-            log.error(f'Hit Exceptions with rccl cmd - exception {repr(e)}')
-            fail_test(f'Hit Exceptions with rccl cmd - exception {repr(e)}')
+            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
         # Read the JSON results emitted by the RCCL test binary
-        result_dict_out = orch.exec(f'cat {dtype_result_file}')
+        result_dict_out = shdl.exec(f'cat {dtype_result_file}')
         dtype_result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
         # Validate the results against the schema fail if results are not valid
         try:
@@ -872,7 +857,7 @@ def rccl_perf(
         fail_test(f'RCCL Test aggregation failed: {e}')
 
     # Collect basic GPU information via rocm-smi
-    smi_out_dict = orch.exec_on_head('rocm-smi -a | head -30')
+    smi_out_dict = shdl.exec('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
     get_model_from_rocm_smi_output(smi_out)
 
