@@ -1,3 +1,27 @@
-from cvs.core.orchestrators.factory import OrchestratorFactory, OrchestratorConfig
+"""
+Copyright 2025 Advanced Micro Devices, Inc.
+All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
+The year included in the foregoing notice is the year of creation of the work.
+All code contained here is Property of Advanced Micro Devices, Inc.
+"""
 
-__all__ = ['OrchestratorFactory', 'OrchestratorConfig']
+# Legacy Orchestrator entry points -- removed once the legacy orchestrators
+# (cvs/core/orchestrators/) are deleted.
+from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
+
+# New Orchestrator entry points.
+from cvs.core.factory import create_orchestrator
+from cvs.core.orchestrator import Orchestrator
+from cvs.core.scope import ExecResult, ExecScope, ExecTarget
+
+__all__ = [
+    # Legacy
+    "OrchestratorFactory",
+    "OrchestratorConfig",
+    # New
+    "Orchestrator",
+    "create_orchestrator",
+    "ExecScope",
+    "ExecTarget",
+    "ExecResult",
+]
