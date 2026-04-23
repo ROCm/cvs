@@ -15,7 +15,8 @@ import json
 
 from cvs.lib import rccl_lib
 from cvs.lib import html_lib
-from cvs.core import OrchestratorFactory, OrchestratorConfig
+
+from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -117,32 +118,59 @@ def config_dict(config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def orch(cluster_file, config_file):
+def phdl(cluster_dict):
     """
-    Create and return an orchestrator instance for test execution.
+    Build and return a parallel SSH handle (Pssh) for all cluster nodes.
 
     Args:
-      cluster_file (str): Path to the cluster configuration JSON
-      config_file (str): Path to the test configuration JSON
+      cluster_dict (dict): Cluster metadata fixture containing:
+        - node_dict: dict of node_name -> node_details
+        - username: SSH username
+        - priv_key_file: path to SSH private key
 
     Returns:
-      Orchestrator: Orchestrator instance for running tests
+      Pssh: Handle configured for all nodes (for broadcast/parallel operations).
 
     Notes:
-      - Creates orchestrator using OrchestratorConfig.from_configs()
-      - Calls cleanup after the module's tests complete
+      - Prints the cluster_dict for quick debugging; consider replacing with log.debug.
+      - Module-scoped so a single shared handle is used across all tests in the module.
+      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
+      - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
     """
-    log.info("Creating orchestrator from config files")
-    config = OrchestratorConfig.from_configs(cluster_file, config_file)
-    orch = OrchestratorFactory.create_orchestrator(log, config)
-    yield orch
-    orch.cleanup(orch.hosts)
+    log.info("%s", cluster_dict)
+    env_vars = cluster_dict.get("env_vars")
+    node_list = list(cluster_dict['node_dict'].keys())
+    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
+    return phdl
+
+
+@pytest.fixture(scope="module")
+def shdl(cluster_dict):
+    """
+    Build and return a parallel SSH handle (Pssh) for the head node only.
+
+    Args:
+      cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
+
+    Returns:
+      Pssh: Handle configured for the first node (head node) in node_dict.
+
+    Notes:
+      - Useful when commands should be executed only from a designated head node.
+      - Module scope ensures a single connection context for the duration of the module.
+      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
+    """
+    node_list = list(cluster_dict['node_dict'].keys())
+    env_vars = cluster_dict.get("env_vars")
+    head_node = node_list[0]
+    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
+    return shdl
 
 
 # Start of test cases.
 
 
-def test_collect_hostinfo(orch):
+def test_collect_hostinfo(phdl):
     """
     Collect basic ROCm/host info from all nodes.
 
@@ -155,34 +183,32 @@ def test_collect_hostinfo(orch):
     """
 
     globals.error_list = []
-    orch.exec('cat /opt/rocm/.info/version')
-    orch.exec('hipconfig')
-    orch.exec('rocm_agent_enumerator')
+    phdl.exec('cat /opt/rocm/.info/version')
+    phdl.exec('hipconfig')
+    phdl.exec('rocm_agent_enumerator')
     update_test_result()
 
 
-def test_collect_networkinfo(orch):
+def test_collect_networkinfo(phdl):
     """
     Collect basic RDMA/verbs info from all nodes.
 
     Behavior:
       - Executes 'rdma link' and 'ibv_devinfo' to snapshot network capabilities.
-      - Always executes on baremetal host regardless of orchestrator type.
       - Does not parse output; relies on update_test_result to finalize status.
     """
 
     globals.error_list = []
-    orch.all.exec('rdma link')
-    orch.all.exec('ibv_devinfo')
+    phdl.exec('rdma link')
+    phdl.exec('ibv_devinfo')
     update_test_result()
 
 
-def test_disable_firewall(orch):
+def test_disable_firewall(phdl):
     globals.error_list = []
-    # Firewall operations must run on host, not in container
-    orch.all.exec('sudo service ufw stop')
+    phdl.exec('sudo service ufw stop')
     time.sleep(2)
-    out_dict = orch.all.exec('sudo service ufw status')
+    out_dict = phdl.exec('sudo service ufw status')
     for node in out_dict.keys():
         if not re.search('inactive|dead|stopped|disabled', out_dict[node], re.I):
             fail_test(f'Service ufw not disabled properly on node {node}')
@@ -203,12 +229,12 @@ def test_disable_firewall(orch):
         "broadcast_perf",
     ],
 )
-def test_singlenode_perf(orch, cluster_dict, config_dict, rccl_collective):
+def test_singlenode_perf(phdl, cluster_dict, config_dict, rccl_collective):
     """
     Execute RCCL performance test across the cluster with given parameters.
 
     Parameters (from fixtures and config):
-      - orchestrator: orchestrator instance for test execution
+      - phdl: parallel execution handle for nodes (expects exec/exec_cmd_list).
       - cluster_dict: cluster topology and credentials (expects node_dict, username, etc.).
       - config_dict: test configuration with RCCL/MPI paths, env, and thresholds.
       - rccl_collective: which RCCL collective test to run (e.g., "all_reduce_perf").
@@ -227,24 +253,24 @@ def test_singlenode_perf(orch, cluster_dict, config_dict, rccl_collective):
     """
 
     # Log a message to Dmesg to create a timestamp record
-    orch.exec(f'sudo echo "Starting Test singlenode {rccl_collective}" | sudo tee /dev/kmsg')
+    phdl.exec(f'sudo echo "Starting Test singlenode {rccl_collective}" | sudo tee /dev/kmsg')
 
-    # start_time = orch.exec('date')
-    start_time = orch.exec('date +"%a %b %e %H:%M"')
+    # start_time = phdl.exec('date')
+    start_time = phdl.exec('date +"%a %b %e %H:%M"')
     globals.error_list = []
     node_list = list(cluster_dict['node_dict'].keys())
 
     # Get cluster snapshot ..
     if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
-        cluster_dict_before = create_cluster_metrics_snapshot(orch.all)
+        cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
     # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
     if not re.search('None', config_dict['env_source_script'], re.I):
-        orch.exec(f"bash {config_dict['env_source_script']}")
+        phdl.exec(f"bash {config_dict['env_source_script']}")
 
     # Execute the RCCL cluster test with parameters sourced from config_dict
     result_dict = rccl_lib.rccl_single_node_test(
-        orch,
+        phdl,
         test_name=rccl_collective,
         cluster_node_list=node_list,
         rocm_path_var=config_dict['rocm_path_var'],
@@ -273,15 +299,15 @@ def test_singlenode_perf(orch, cluster_dict, config_dict, rccl_collective):
     rccl_res_dict[key_name] = result_dict
 
     # Scan dmesg between start and end times cluster wide ..
-    # end_time = orch.exec('date')
-    orch.exec(f'sudo echo "End of Test singlenode {rccl_collective}" | sudo tee /dev/kmsg')
+    # end_time = phdl.exec('date')
+    phdl.exec(f'sudo echo "End of Test singlenode {rccl_collective}" | sudo tee /dev/kmsg')
 
-    end_time = orch.exec('date +"%a %b %e %H:%M"')
-    verify_dmesg_for_errors(orch, start_time, end_time, till_end_flag=True)
+    end_time = phdl.exec('date +"%a %b %e %H:%M"')
+    verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
 
     # Get new cluster snapshot and compare ..
     if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
-        cluster_dict_after = create_cluster_metrics_snapshot(orch.all)
+        cluster_dict_after = create_cluster_metrics_snapshot(phdl)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 
     # Update test results based on any failures ..
