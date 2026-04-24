@@ -42,7 +42,8 @@
             "NCCL_PROTO": [ "Simple" ],
             "NCCL_IB_QPS_PER_CONNECTION": [ "1", "2" ],
             "NCCL_PXN_DISABLE": [ "0", "1" ],
-            "nccl_channel_config": [ "default" ]
+            "NCCL_MIN_NCHANNELS": [ "8", "16" ],
+            "NCCL_MAX_NCHANNELS": [ "8", "16" ]
         },
 
         "_comments_results": "expected results below are for 2 node cluster, will vary based on cluster size",
