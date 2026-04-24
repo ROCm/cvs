@@ -1,4 +1,7 @@
 {
+    "_orchestrator_comment": "Execution backend. 'baremetal' (default if omitted) runs commands directly on hosts via SSH. Use 'container' to route workload commands through a container runtime; see cvs/input/cluster_file/cluster_container.json for a worked example, and docs/reference/configuration-files/cluster-file.rst for the full reference.",
+    "orchestrator": "baremetal",
+
     "_user_comment": " user-id will be resolved to current username in runtime. You can also change to your user-id here.",
     "username": "{user-id}",
 
@@ -36,7 +39,7 @@
             "vpc_ip": "{xx.xx.xx.xx|hostname}"
         }
 
-    }
+    },
 
-
+    "_container_comment": "To run inside a container, change orchestrator above to 'container' and add a 'container' block here. Example: {\"enabled\": true, \"launch\": true, \"image\": \"rocm/cvs:latest\", \"name\": \"cvs_container\", \"runtime\": {\"name\": \"docker\", \"args\": {\"network\": \"host\", \"ipc\": \"host\", \"privileged\": true}}}. See cvs/input/cluster_file/cluster_container.json for the fully annotated version."
 }

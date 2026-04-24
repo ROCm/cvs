@@ -1,0 +1,56 @@
+{
+    "_orchestrator_comment": "Execution backend. 'container' routes workload commands through the container runtime (docker by default). Host-namespace commands still reach the physical host via orch.host_all. See docs/reference/configuration-files/cluster-file.rst.",
+    "orchestrator": "container",
+
+    "_user_comment": "{user-id} resolves to the current login user at runtime.",
+    "username": "{user-id}",
+
+    "_key_comment": "Absolute path to the SSH private key. Same key is used for all nodes.",
+    "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+
+    "_head_comment": "Head node. mgmt_ip MUST match one of the keys in node_dict.",
+    "head_node_dict": {
+        "mgmt_ip": "{xx.xx.xx.xx|hostname-1}"
+    },
+
+    "env_vars": {},
+
+    "_node_comment": "Cluster member nodes keyed by public IP or hostname. Each key MUST be unique (JSON parsers silently dedupe duplicates); replace -1 / -2 suffixes with your real IPs or hostnames.",
+    "node_dict": {
+        "{xx.xx.xx.xx|hostname-1}": {
+            "bmc_ip": "NA",
+            "vpc_ip": "{xx.xx.xx.xx|hostname-1}"
+        },
+        "{xx.xx.xx.xx|hostname-2}": {
+            "bmc_ip": "NA",
+            "vpc_ip": "{xx.xx.xx.xx|hostname-2}"
+        }
+    },
+
+    "_container_block_comment": "Container backend configuration. See docs/reference/configuration-files/cluster-file.rst for the full schema and the 'docker' runtime args reference.",
+    "container": {
+        "_enabled_comment": "Master switch. Must be true for the container backend to do anything.",
+        "enabled": true,
+
+        "_launch_comment": "true = CVS owns lifecycle (starts on prepare(), stops on dispose()). false = containers are externally managed and CVS only verifies they are running. Recommend true for most users.",
+        "launch": true,
+
+        "_image_comment": "Replace with an image that has the test dependencies installed (rvs, rccl, transferbench, etc.) and an sshd you can start on port 2224. Must be present locally on each node OR pullable from a reachable registry.",
+        "image": "rocm/cvs:latest",
+
+        "_name_comment": "Container name on each host. Per-iteration uniqueness (e.g. cvs_iter_<run_id>) is the responsibility of the test driver script when running parallel cells.",
+        "name": "cvs_container",
+
+        "runtime": {
+            "_name_comment": "Supported: 'docker' (concrete), 'enroot' (stub).",
+            "name": "docker",
+
+            "_args_comment": "Backend-specific runtime arguments. Defaults from cvs/core/orchestrators/container.py:DEFAULT_CONTAINER_ARGS apply for any key omitted here.",
+            "args": {
+                "network": "host",
+                "ipc": "host",
+                "privileged": true
+            }
+        }
+    }
+}
