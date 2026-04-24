@@ -465,6 +465,76 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         self.container_id = None
         return success
 
+    def privileged_prefix(self):
+        """In container mode the SSH session into the container's sshd:2224
+        runs as root, so no sudo prefix is needed."""
+        return ""
+
+    def prepare(self):
+        """Bring up containers + sshd inside them. On any partial failure,
+        roll back any containers we managed to start so the suite's
+        addfinalizer(dispose) is not responsible for half-state cleanup.
+
+        Returns:
+            bool: True only when both setup_containers and setup_sshd succeeded.
+        """
+        try:
+            if not self.setup_containers():
+                self.log.error("ContainerOrchestrator.prepare(): setup_containers failed")
+                self._rollback_partial_prepare()
+                return False
+            if not self.setup_sshd():
+                self.log.error("ContainerOrchestrator.prepare(): setup_sshd failed")
+                self._rollback_partial_prepare()
+                return False
+            return True
+        except Exception as e:  # noqa: BLE001
+            self.log.error(f"ContainerOrchestrator.prepare() raised: {e}")
+            self._rollback_partial_prepare()
+            return False
+
+    def _rollback_partial_prepare(self):
+        """Best-effort container teardown after a failed prepare().
+
+        Bypasses teardown_containers() because that method short-circuits when
+        launch:true (which the iteration matrix mandates). We MUST stop
+        containers we just launched even if launch:true; otherwise prepare()
+        leaks state on every failure.
+        """
+        if not self.container_id:
+            return
+        try:
+            self.log.info(f"Rolling back partial prepare(); stopping {self.container_id}")
+            self.runtime.teardown_containers(self.container_id)
+        except Exception as e:  # noqa: BLE001
+            self.log.error(f"Rollback failed: {e}")
+        finally:
+            self.container_id = None
+
+    def dispose(self):
+        """Tear down containers and run host cleanup. Counterpart to prepare().
+
+        Note: bypasses the existing teardown_containers() launch:true short-
+        circuit because the iteration matrix mandates launch:true and we own
+        the container lifecycle for the cell duration.
+        """
+        ok = True
+        if self.container_id:
+            try:
+                self.log.info(f"Disposing containers: {self.container_id}")
+                ok = bool(self.runtime.teardown_containers(self.container_id)) and ok
+            except Exception as e:  # noqa: BLE001
+                self.log.error(f"teardown_containers raised: {e}")
+                ok = False
+            finally:
+                self.container_id = None
+        try:
+            ok = bool(self.cleanup(self.hosts)) and ok
+        except Exception as e:  # noqa: BLE001
+            self.log.error(f"cleanup raised: {e}")
+            ok = False
+        return ok
+
     @staticmethod
     def sanitize_container_name(image_name):
         """
