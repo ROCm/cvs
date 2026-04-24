@@ -102,6 +102,19 @@ def pytest_runtest_makereport(item, call):  # noqa: ARG001
     outcome = yield
     report = outcome.get_result()
     report.extras = item.config._html_report_manager.write_test_log(report, item.originalname)
+    # Additive enrichment for the multi-orch validation harness: surface the
+    # captured stdout into the junit XML as a <property> tag so the harness
+    # can correlate per-test output without needing to parse pytest-html.
+    # Only attach on the call phase (otherwise we'd duplicate setup/teardown
+    # capstdout into the same junit entry). Wrapped in try so any HtmlReport-
+    # Manager change to report.extras semantics doesn't cascade-fail tests.
+    try:
+        if getattr(report, "when", None) == "call":
+            stdout = getattr(report, "capstdout", "") or ""
+            if stdout:
+                item.user_properties.append(("stdout", stdout))
+    except Exception:
+        pass
 
 
 # Replace inline pytest-html log content with a short externalized-log message.
