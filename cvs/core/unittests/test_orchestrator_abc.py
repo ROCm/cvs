@@ -26,6 +26,7 @@ from cvs.core.orchestrators.factory import OrchestratorConfig
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_orch_config(orchestrator="baremetal", with_container=False):
     """Build a minimal OrchestratorConfig that satisfies BaremetalOrchestrator
     and (optionally) ContainerOrchestrator __init__."""
@@ -52,6 +53,7 @@ def _make_orch_config(orchestrator="baremetal", with_container=False):
 # ---------------------------------------------------------------------------
 # ABC default behavior
 # ---------------------------------------------------------------------------
+
 
 class TestOrchestratorABCDefaults(unittest.TestCase):
     """Verify the ABC's default implementations are what the plan promises:
@@ -121,8 +123,8 @@ class TestOrchestratorABCDefaults(unittest.TestCase):
 # BaremetalOrchestrator overrides
 # ---------------------------------------------------------------------------
 
-class TestBaremetalOrchestratorABC(unittest.TestCase):
 
+class TestBaremetalOrchestratorABC(unittest.TestCase):
     @patch("cvs.core.orchestrators.baremetal.Pssh")
     def test_host_all_aliases_self_all(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
@@ -158,8 +160,8 @@ class TestBaremetalOrchestratorABC(unittest.TestCase):
 # ContainerOrchestrator overrides
 # ---------------------------------------------------------------------------
 
-class TestContainerOrchestratorABC(unittest.TestCase):
 
+class TestContainerOrchestratorABC(unittest.TestCase):
     def _make(self, _mock_pssh, _mock_runtime_factory):
         cfg = _make_orch_config(orchestrator="container", with_container=True)
         runtime = MagicMock(name="docker_runtime")

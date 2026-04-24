@@ -61,6 +61,7 @@ RVS_INDIVIDUAL_TESTS = [
 # Module-scope config fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def config_dict(pytestconfig):
     """Load the RVS section of the test config and resolve placeholders.
@@ -110,6 +111,7 @@ def rvs_test_level(config_dict):
 # Helpers (module-private; thin wrappers around orch.exec for readability)
 # ---------------------------------------------------------------------------
 
+
 def _parse_rvs_test_results(test_config, out_dict):
     """Generic regex-based pass/fail parser. Mirrors the legacy semantics
     (failure = regex match in stdout). Per plan §11 D1 default we keep this
@@ -132,10 +134,7 @@ def _parse_rvs_level_results(test_config, out_dict, level):
     for node, raw in out_dict.items():
         hits = [p for p in fail_patterns if re.search(p, raw or "", re.I)]
         if hits:
-            fail_test(
-                f"RVS LEVEL-{level} test failed on node {node}. "
-                f"Failure patterns matched: {', '.join(hits)}"
-            )
+            fail_test(f"RVS LEVEL-{level} test failed on node {node}. Failure patterns matched: {', '.join(hits)}")
         else:
             log.info(f"RVS LEVEL-{level} test passed on node {node}")
 
@@ -196,9 +195,7 @@ def _execute_rvs_test(orch, config_dict, rvs_config_paths, test_name):
     Mirrors legacy execute_rvs_test semantics but routes through orch and
     uses sealed_tmp for any scratch writes.
     """
-    test_config = next(
-        (t for t in config_dict["tests"] if t["name"] == test_name), None
-    )
+    test_config = next((t for t in config_dict["tests"] if t["name"] == test_name), None)
     if not test_config:
         fail_test(f"Test configuration for {test_name} not found")
         update_test_result()
@@ -214,9 +211,7 @@ def _execute_rvs_test(orch, config_dict, rvs_config_paths, test_name):
         config_path = _prepare_gst_single_temp_fix(orch, config_path)
 
     if config_path is None:
-        fail_test(
-            f"Configuration file for {test_name} not found on any/some node."
-        )
+        fail_test(f"Configuration file for {test_name} not found on any/some node.")
         update_test_result()
         return
 
@@ -237,6 +232,7 @@ def _execute_rvs_test(orch, config_dict, rvs_config_paths, test_name):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_rvs_gpu_enumeration(orch, config_dict):
     """Sanity: rvs -g must enumerate at least one supported GPU on every node.
@@ -264,18 +260,12 @@ def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level):
       - rvs_test_level == 0 (user opted into individual tests instead)
     """
     if rvs_test_level == 0:
-        pytest.skip(
-            "[POLICY_SKIP] rvs_test_level=0: Running individual tests instead"
-        )
+        pytest.skip("[POLICY_SKIP] rvs_test_level=0: Running individual tests instead")
 
     log.info(f"Testcase Run RVS LEVEL-{rvs_test_level} (RVS {rvs_version})")
-    test_config = next(
-        (t for t in config_dict["tests"] if t["name"] == "level_config"), None
-    )
+    test_config = next((t for t in config_dict["tests"] if t["name"] == "level_config"), None)
     if not test_config:
-        log.warning(
-            "level_config not in config_dict['tests']; using default settings"
-        )
+        log.warning("level_config not in config_dict['tests']; using default settings")
         test_config = {
             "name": "level_config",
             "description": f"RVS LEVEL-{rvs_test_level} Comprehensive Test",
@@ -297,9 +287,7 @@ def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level):
 
 
 @pytest.mark.parametrize("test_name", RVS_INDIVIDUAL_TESTS)
-def test_rvs_individual(
-    orch, config_dict, rvs_config_paths, rvs_version, rvs_test_level, test_name
-):
+def test_rvs_individual(orch, config_dict, rvs_config_paths, rvs_version, rvs_test_level, test_name):
     """Per-module RVS test (mem, gst, iet, pebb, pbqt, babel).
 
     Collapses the 6 legacy test functions into one parametrize. Skip policy
@@ -317,9 +305,6 @@ def test_rvs_individual(
         )
 
     if not any(t.get("name") == test_name for t in config_dict.get("tests", [])):
-        pytest.skip(
-            f"[POLICY_SKIP] {test_name} not declared in config['tests'] "
-            "(iter config subset)"
-        )
+        pytest.skip(f"[POLICY_SKIP] {test_name} not declared in config['tests'] (iter config subset)")
 
     _execute_rvs_test(orch, config_dict, rvs_config_paths, test_name)

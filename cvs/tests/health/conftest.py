@@ -53,6 +53,7 @@ log = globals.log
 # pytest_configure: marker registration + xdist guard
 # ---------------------------------------------------------------------------
 
+
 def pytest_configure(config):
     """Register custom markers and guard against unsafe pytest-xdist usage.
 
@@ -91,6 +92,7 @@ def pytest_configure(config):
 # cluster_orch: session-scoped Orchestrator, built ONCE per pytest session
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session")
 def cluster_orch(request, pytestconfig):
     """Session-scoped Orchestrator for the multi-orch suite.
@@ -117,7 +119,9 @@ def cluster_orch(request, pytestconfig):
     config_file = pytestconfig.getoption("config_file")
     log.info(
         "cluster_orch building from cluster_file=%s, config_file=%s, run_id=%s",
-        cluster_file, config_file, get_run_id(),
+        cluster_file,
+        config_file,
+        get_run_id(),
     )
 
     cfg = OrchestratorConfig.from_configs(cluster_file, config_file)
@@ -153,6 +157,7 @@ def orch(cluster_orch):
 # ---------------------------------------------------------------------------
 # _per_test_setup: autouse; gated on `orch` fixture usage
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _per_test_setup(request):
@@ -212,6 +217,7 @@ def _per_test_setup(request):
             pytest.skip("requires_rvs: rvs_version fixture unavailable")
         else:
             from packaging import version as _v
+
             min_v = marker.kwargs.get("min_version")
             max_v = marker.kwargs.get("max_version")
             cur_v = _v.parse(current)
@@ -224,9 +230,7 @@ def _per_test_setup(request):
     if request.node.get_closest_marker("requires_multinode") is not None:
         orch_obj = request.getfixturevalue("orch")
         if len(orch_obj.hosts) < 2:
-            pytest.skip(
-                f"[POLICY_SKIP] requires_multinode (have {len(orch_obj.hosts)} node)"
-            )
+            pytest.skip(f"[POLICY_SKIP] requires_multinode (have {len(orch_obj.hosts)} node)")
 
     # Stamp the sentinel for harness correlation. Best-effort; do not fail the
     # test if the orch is dead at this point (the test itself will fail loudly).
@@ -243,11 +247,13 @@ def _per_test_setup(request):
 # Session-scoped derived fixtures: rvs_version, gpu_device_map, rvs_config_paths
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session")
 def rvs_path(cluster_orch, pytestconfig):
     """Resolved RVS binary path. Reads from the test config (cvs.input
     config_file) under config_dict['rvs']['path']."""
     import json
+
     cfg_path = pytestconfig.getoption("config_file")
     with open(cfg_path) as f:
         cfg = json.load(f)
@@ -272,8 +278,7 @@ def rvs_version(cluster_orch, rvs_path):
         m = re.search(r"(\d+\.\d+\.\d+)", raw or "")
         if not m:
             pytest.exit(
-                f"READINESS_FAIL: could not parse RVS version on node {node}: "
-                f"raw output={raw!r}",
+                f"READINESS_FAIL: could not parse RVS version on node {node}: raw output={raw!r}",
                 returncode=2,
             )
         versions[node] = m.group(1)
@@ -289,6 +294,7 @@ def gpu_device_map(cluster_orch):
     where amd-smi parsing fails.
     """
     import json
+
     out = cluster_orch.exec("sudo amd-smi static -a -g 0 --json", timeout=30)
     device_map = {}
     for node, raw in out.items():
@@ -362,6 +368,7 @@ def rvs_config_paths(cluster_orch, gpu_device_map, pytestconfig):
 # _stale_fixture_check: re-validate one session-scoped value at teardown
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session", autouse=True)
 def _stale_fixture_check(request):
     """At end of session, re-derive rvs_version from the live cluster and
@@ -386,6 +393,7 @@ def _stale_fixture_check(request):
             return
         # Re-derive directly (do NOT reuse cached fixture)
         import re
+
         rvs_path = "/opt/rocm/bin"  # match rvs_path default
         out = current_orch.exec(f"{rvs_path}/rvs --version", timeout=30)
         fresh = {}
@@ -393,12 +401,14 @@ def _stale_fixture_check(request):
             m = re.search(r"(\d+\.\d+\.\d+)", raw or "")
             fresh[node] = m.group(1) if m else None
         from packaging import version as _v
+
         fresh_min = min((v for v in fresh.values() if v), key=_v.parse, default=None)
         if fresh_min != current_rvs:
             log.error(
                 "_stale_fixture_check FAILED: session_start rvs_version=%s, "
                 "session_end rvs_version=%s. Cluster mutated mid-session.",
-                current_rvs, fresh_min,
+                current_rvs,
+                fresh_min,
             )
             # Surface as a session-finish error in junit via pytest.fail in a
             # final dummy test would be clean, but at session-finish time we
