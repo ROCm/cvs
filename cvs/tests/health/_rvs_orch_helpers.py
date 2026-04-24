@@ -5,27 +5,26 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-"""Helpers for the multi-orch RVS suite (cvs/tests/health/rvs_cvs.py).
-
-Backend-blind by construction: this module never reads orch.orchestrator_type
-and never branches on backend identity. All routing decisions are intent-based
-and resolved through polymorphic methods on the orchestrator (privileged_prefix,
-host_all, host_head, exec).
-
-Public surface:
-  - host_only(orch)      -> Pssh handle for host-namespace commands
-  - sudo(orch, cmd)      -> command string with the orch's privileged prefix
-  - sealed_tmp(name)     -> per-MULTIORCH_RUN_ID scratch path
-  - stamp_run_id(orch, test_id)
-                          -> echoes a sentinel into the orch log so the
-                             validation harness can correlate cells
-  - exec_detailed(orch, cmd, ...)
-                          -> Dict[host, {output, exit_code}] variant; routes
-                             through host_all so it works on both backends
-                             without requiring the core ABC to grow a
-                             `detailed` kwarg on exec()
-  - require_run_id()     -> raise pytest.UsageError if MULTIORCH_RUN_ID unset
-"""
+# Helpers for the multi-orch RVS suite (cvs/tests/health/rvs_cvs.py).
+#
+# Backend-blind by construction: this module never reads orch.orchestrator_type
+# and never branches on backend identity. All routing decisions are intent-based
+# and resolved through polymorphic methods on the orchestrator (privileged_prefix,
+# host_all, host_head, exec).
+#
+# Public surface:
+#   - host_only(orch)      -> Pssh handle for host-namespace commands
+#   - sudo(orch, cmd)      -> command string with the orch's privileged prefix
+#   - sealed_tmp(name)     -> per-MULTIORCH_RUN_ID scratch path
+#   - stamp_run_id(orch, test_id)
+#                           -> echoes a sentinel into the orch log so the
+#                              validation harness can correlate cells
+#   - exec_detailed(orch, cmd, ...)
+#                           -> Dict[host, {output, exit_code}] variant; routes
+#                              through host_all so it works on both backends
+#                              without requiring the core ABC to grow a
+#                              `detailed` kwarg on exec()
+#   - require_run_id()     -> raise pytest.UsageError if MULTIORCH_RUN_ID unset
 
 import os
 

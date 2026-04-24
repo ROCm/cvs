@@ -6,21 +6,20 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-"""ROCm Validation Suite (RVS) tests, multi-orch backend.
-
-Backend-blind by construction: this module never reads orch.orchestrator_type
-and never branches on backend identity. Routing is intent-based:
-  - RVS workload (rvs --version, rvs -g, rvs -c <conf>, rvs -r <level>) and
-    workload-adjacent commands (amd-smi, rocm_agent_enumerator, ls of RVS
-    config dirs, copying/sedding RVS config files into sealed scratch) all
-    go through orch.exec, which routes wherever the orchestrator runs.
-  - Host-namespace commands (lsmod, dmesg, etc.) would go through
-    host_only(orch).exec; this suite currently has none.
-
-All sudo prefixes come from orch.privileged_prefix() via the sudo() helper.
-All temporary files live under sealed_tmp(...) which is per-MULTIORCH_RUN_ID
-to keep parallel cells in the matrix isolated.
-"""
+# ROCm Validation Suite (RVS) tests, multi-orch backend.
+#
+# Backend-blind by construction: this module never reads orch.orchestrator_type
+# and never branches on backend identity. Routing is intent-based:
+#   - RVS workload (rvs --version, rvs -g, rvs -c <conf>, rvs -r <level>) and
+#     workload-adjacent commands (amd-smi, rocm_agent_enumerator, ls of RVS
+#     config dirs, copying/sedding RVS config files into sealed scratch) all
+#     go through orch.exec, which routes wherever the orchestrator runs.
+#   - Host-namespace commands (lsmod, dmesg, etc.) would go through
+#     host_only(orch).exec; this suite currently has none.
+#
+# All sudo prefixes come from orch.privileged_prefix() via the sudo() helper.
+# All temporary files live under sealed_tmp(...) which is per-MULTIORCH_RUN_ID
+# to keep parallel cells in the matrix isolated.
 
 import json
 import re

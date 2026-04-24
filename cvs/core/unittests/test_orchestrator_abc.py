@@ -5,13 +5,12 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-"""Unit tests for the additive Orchestrator ABC surface introduced for the
-multi-orch RVS suite migration: privileged_prefix(), prepare(), dispose(),
-and the abstract host_all/host_head properties.
-
-Scope: behavioral contract verification only. Cluster-level integration is
-covered separately under cvs/tests/health/.
-"""
+# Unit tests for the additive Orchestrator ABC surface introduced for the
+# multi-orch RVS suite migration: privileged_prefix(), prepare(), dispose(),
+# and the abstract host_all/host_head properties.
+#
+# Scope: behavioral contract verification only. Cluster-level integration is
+# covered separately under cvs/tests/health/.
 
 import unittest
 from unittest.mock import MagicMock, patch

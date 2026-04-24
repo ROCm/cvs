@@ -5,32 +5,30 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-"""Pytest plumbing for the multi-orch health suite.
-
-Scope and blast radius
-----------------------
-This conftest lives at cvs/tests/health/ and therefore loads for ALL tests in
-that directory, including the legacy sibling suites (transferbench_cvs.py,
-agfhc_cvs.py, csp_qual_agfhc.py) that have NOT been migrated to multi-orch.
-
-To keep the migration safe and reviewable in isolation, the new fixtures and
-hooks defined here are written to be inert for tests that do not opt in:
-
-  - cluster_orch / orch fixtures: only triggered when a test takes them as
-    parameters. Legacy suites take `phdl` (their own fixture) and are
-    unaffected.
-  - _per_test_setup autouse fixture: a no-op on tests that do not use the
-    `orch` fixture (gated on request.fixturenames).
-  - requires_rvs marker enforcement: gated on the same request.fixturenames
-    check; legacy sibling suites are not version-skipped by this hook.
-  - xdist guard (pytest_configure): applies to the whole pytest invocation;
-    rvs_cvs.py sessions are session-scoped and would race under xdist
-    regardless of opt-in.
-
-A follow-up issue tracks migrating the sibling suites; once they are on the
-new fixtures, the per-test-setup gate can be relaxed.
-"""
-
+# Pytest plumbing for the multi-orch health suite.
+#
+# Scope and blast radius
+# ----------------------
+# This conftest lives at cvs/tests/health/ and therefore loads for ALL tests in
+# that directory, including the legacy sibling suites (transferbench_cvs.py,
+# agfhc_cvs.py, csp_qual_agfhc.py) that have NOT been migrated to multi-orch.
+#
+# To keep the migration safe and reviewable in isolation, the new fixtures and
+# hooks defined here are written to be inert for tests that do not opt in:
+#
+#   - cluster_orch / orch fixtures: only triggered when a test takes them as
+#     parameters. Legacy suites take `phdl` (their own fixture) and are
+#     unaffected.
+#   - _per_test_setup autouse fixture: a no-op on tests that do not use the
+#     `orch` fixture (gated on request.fixturenames).
+#   - requires_rvs marker enforcement: gated on the same request.fixturenames
+#     check; legacy sibling suites are not version-skipped by this hook.
+#   - xdist guard (pytest_configure): applies to the whole pytest invocation;
+#     rvs_cvs.py sessions are session-scoped and would race under xdist
+#     regardless of opt-in.
+#
+# A follow-up issue tracks migrating the sibling suites; once they are on the
+# new fixtures, the per-test-setup gate can be relaxed.
 
 import pytest
 
