@@ -31,18 +31,14 @@ A follow-up issue tracks migrating the sibling suites; once they are on the
 new fixtures, the per-test-setup gate can be relaxed.
 """
 
-import os
 
 import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
 from cvs.tests.health._rvs_orch_helpers import (
-    exec_detailed,
     get_run_id,
     require_run_id,
-    sealed_tmp,
-    sealed_tmp_dir,
     stamp_run_id,
 )
 
