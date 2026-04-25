@@ -244,40 +244,32 @@ def pytest_generate_tests(metafunc):
         # Always parametrize collectives
         rccl_collective_list = rccl.get("rccl_collective", ["all_reduce_perf"])
 
-        # If test function has env fixtures, build the env product
+        # Build environment variable combinations as dicts for **regression_params
         env_fixture_names = [name for name, _ in env_axes]
-        active_env = [name for name in env_fixture_names if name in metafunc.fixturenames]
+        env_domains = [dict(env_axes)[name] for name in env_fixture_names]
+        env_params, env_ids = [], []
 
-        if active_env:
-            # Build environment variable combinations
-            env_domains = [dict(env_axes)[name] for name in active_env]
-            env_params, env_ids = [], []
+        # Determine if we need to add channel pairs to the product
+        channel_fixture_names = []
+        if paired_channels is not None:
+            channel_fixture_names = ["NCCL_MIN_NCHANNELS", "NCCL_MAX_NCHANNELS"]
+            env_domains.append(paired_channels)
 
-            # Determine if we need to add channel pairs to the product
-            channel_fixture_names = []
+        for env_combo in itertools.product(*env_domains):
+            env_dict = dict(zip(env_fixture_names + channel_fixture_names, env_combo))
+
+            # Unpack paired channels if present
             if paired_channels is not None:
-                channel_fixture_names = ["NCCL_MIN_NCHANNELS", "NCCL_MAX_NCHANNELS"]
-                env_domains.append(paired_channels)
+                min_ch, max_ch = env_dict.pop("NCCL_MIN_NCHANNELS")
+                env_dict["NCCL_MIN_NCHANNELS"] = min_ch
+                env_dict["NCCL_MAX_NCHANNELS"] = max_ch
 
-            for env_combo in itertools.product(*env_domains):
-                env_dict = dict(zip(active_env + channel_fixture_names, env_combo))
+            env_params.append(env_dict)
+            env_ids.append("|".join(f"{k}={v}" for k, v in env_dict.items()))
 
-                # Unpack paired channels if present
-                if paired_channels is not None:
-                    min_ch, max_ch = env_dict.pop("NCCL_MIN_NCHANNELS")
-                    env_dict["NCCL_MIN_NCHANNELS"] = min_ch
-                    env_dict["NCCL_MAX_NCHANNELS"] = max_ch
-
-                env_params.append(env_combo)
-                env_ids.append("|".join(f"{k}={v}" for k, v in env_dict.items()))
-
-            # Parametrize both collectives and env combinations
-            metafunc.parametrize("rccl_collective", rccl_collective_list)
-            all_fixture_names = active_env + channel_fixture_names
-            metafunc.parametrize(",".join(all_fixture_names), env_params, ids=env_ids)
-        else:
-            # Only parametrize collectives
-            metafunc.parametrize("rccl_collective", rccl_collective_list)
+        # Parametrize collectives and regression_params dict
+        metafunc.parametrize("rccl_collective", rccl_collective_list)
+        metafunc.parametrize("regression_params", env_params, ids=env_ids)
 
 
 # Start of test cases.
@@ -329,16 +321,17 @@ def test_disable_firewall(phdl):
 
 
 def test_print_env_once(phdl, shdl, config_dict):
-    """Single test to print environment - don't dump env in every test."""
+    """Single test to print environment script - don't dump env in every test."""
     globals.error_list = []
     env_script = config_dict.get('env_source_script', '/dev/null')
     if env_script and str(env_script).lower() != 'none':
-        remote_env_file = rccl_lib._stage_env_file(phdl, env_script, env_label="regression_env")
-        shdl.exec(rccl_lib._wrap_shell_command("env | sort", remote_env_file))
+        # Cat the env script file to show its contents
+        cmd = f'echo === Environment Script: {env_script} === && cat {env_script}'
+        shdl.exec(cmd)
     update_test_result()
 
 
-def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, **regression_params):
+def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regression_params):
     """
     Execute RCCL regression test across the cluster with parametrized environment overrides.
 
@@ -348,7 +341,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, **reg
       - cluster_dict: cluster topology and credentials (expects node_dict, username, etc.).
       - config_dict: test configuration with RCCL/MPI paths, env, and thresholds.
       - rccl_collective: which RCCL collective test to run (e.g., "all_reduce_perf").
-      - regression_params: all regression parametrized values (NCCL_ALGO, NCCL_PROTO, NCCL_*_NCHANNELS, etc.)
+      - regression_params: dict of all regression parametrized values (NCCL_ALGO, NCCL_PROTO, NCCL_*_NCHANNELS, etc.)
 
     Flow:
       1) Capture start time to bound dmesg checks later.
@@ -364,7 +357,8 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, **reg
     """
 
     # Log a message to Dmesg to create a timestamp record
-    phdl.exec(f'sudo echo "Starting Test {rccl_collective} {rccl_algo} {rccl_protocol}" | sudo tee /dev/kmsg')
+    params_str = ' '.join(f'{k}={v}' for k, v in regression_params.items())
+    phdl.exec(f'sudo echo "Starting Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
 
     # start_time = phdl.exec('date')
     start_time = phdl.exec('date +"%a %b %e %H:%M"')
