@@ -578,7 +578,7 @@ def rccl_regression(
 
     test_cmd = f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -t {threads_per_gpu} -w {warmup_iterations} -n {no_of_iterations} \
-        -c {no_of_cycles} -z {check_iteration_count} -Z json {output_flag} {rccl_result_file}'
+        -N {no_of_cycles} -c {check_iteration_count} -Z json {output_flag} {rccl_result_file}'
 
     # Wrap with env file sourcing
     if env_file and str(env_file).lower() != 'none':
