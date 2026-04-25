@@ -12,7 +12,7 @@ import re
 import json
 from packaging import version
 
-from cvs.lib.parallel_ssh_lib import *
+from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib.utils_lib import *
 
 from cvs.lib import globals
@@ -58,19 +58,20 @@ def config_dict(config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(
-        log,
-        node_list,
-        user=cluster_dict['username'],
-        pkey=cluster_dict['priv_key_file'],
-        stop_on_errors=False,
-        env_vars=env_vars,
-    )
-    return phdl
+def orch(pytestconfig, request):
+    cluster_file = pytestconfig.getoption("cluster_file")
+    config_file = pytestconfig.getoption("config_file")
+    cfg = OrchestratorConfig.from_configs(cluster_file, config_file)
+    orch = OrchestratorFactory.create_orchestrator(log, cfg)
+
+    if cfg.orchestrator == "container":
+        if not orch.setup_containers():
+            pytest.fail("ContainerOrchestrator.setup_containers() failed")
+        if not orch.setup_sshd():
+            pytest.fail("ContainerOrchestrator.setup_sshd() failed")
+        request.addfinalizer(orch.teardown_containers)
+
+    return orch
 
 
 @pytest.fixture(scope="module")
@@ -94,20 +95,20 @@ def rvs_test_level(config_dict):
 
 
 @pytest.fixture(scope="module")
-def rvs_version(phdl, config_dict):
+def rvs_version(orch, config_dict):
     """
     Detect RVS version from all nodes.
     Returns the minimum version across all nodes.
     """
-    return get_rvs_version(phdl, config_dict['path'])
+    return get_rvs_version(orch, config_dict['path'])
 
 
-def get_rvs_version(phdl, rvs_path):
+def get_rvs_version(orch, rvs_path):
     """
     Get RVS version from all nodes.
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       rvs_path: Path to RVS binary
 
     Returns:
@@ -115,7 +116,7 @@ def get_rvs_version(phdl, rvs_path):
     """
     version_dict = {}
 
-    out_dict = phdl.exec(f'{rvs_path}/rvs --version', timeout=30)
+    out_dict = orch.exec(f'{rvs_path}/rvs --version', timeout=30)
 
     for node in out_dict.keys():
         output = out_dict[node].strip()
@@ -201,12 +202,12 @@ def should_skip_individual_test(rvs_version_str, rvs_test_level):
     return (True, f"RVS version {rvs_version_str} >= 1.3.0: Running LEVEL-{rvs_test_level} test instead")
 
 
-def get_gpu_device_name(phdl):
+def get_gpu_device_name(orch):
     """
     Detect GPU device name from amd-smi JSON output to match with RVS config folders.
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
 
     Returns:
       dict: Dictionary of node -> device name (e.g., 'MI300X', 'MI308X', 'MI300XHF', etc.)
@@ -214,7 +215,7 @@ def get_gpu_device_name(phdl):
     device_map = {}
 
     # Execute amd-smi command to get GPU information in JSON format
-    out_dict = phdl.exec('sudo amd-smi static -a -g 0 --json', timeout=30)
+    out_dict = orch.exec('sudo amd-smi static -a -g 0 --json', timeout=30)
 
     for node in out_dict.keys():
         output = out_dict[node]
@@ -254,13 +255,13 @@ def get_gpu_device_name(phdl):
     return device_map
 
 
-def get_available_device_folders(phdl, base_config_path):
+def get_available_device_folders(orch, base_config_path):
     """
     Get list of available MI300 variant device-specific folders in RVS config directory.
     Only returns folders starting with 'MI3' (MI300 variants).
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       base_config_path: Base path for RVS configurations
 
     Returns:
@@ -268,7 +269,7 @@ def get_available_device_folders(phdl, base_config_path):
     """
     available_folders = {}
 
-    out_dict = phdl.exec(f'ls -d {base_config_path}/*/ 2>/dev/null', timeout=30)
+    out_dict = orch.exec(f'ls -d {base_config_path}/*/ 2>/dev/null', timeout=30)
 
     for node in out_dict.keys():
         output = out_dict[node]
@@ -291,13 +292,13 @@ def get_available_device_folders(phdl, base_config_path):
     return available_folders
 
 
-def determine_rvs_config_path(phdl, config_dict, config_file):
+def determine_rvs_config_path(orch, config_dict, config_file):
     """
     Determine the correct configuration file path for RVS tests.
     Dynamically detects GPU device and checks for device-specific config folders.
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       config_dict: RVS configuration dictionary
       config_file: Name of the configuration file to look for
 
@@ -309,10 +310,10 @@ def determine_rvs_config_path(phdl, config_dict, config_file):
     default_path = f"{base_path}/{config_file}"
 
     # Step 1: Detect GPU device name on each node
-    device_map = get_gpu_device_name(phdl)
+    device_map = get_gpu_device_name(orch)
 
     # Step 2: Get available device-specific folders
-    available_folders = get_available_device_folders(phdl, base_path)
+    available_folders = get_available_device_folders(orch, base_path)
 
     # Step 3: Check for device-specific config on each node
     device_specific_exists = False
@@ -327,7 +328,7 @@ def determine_rvs_config_path(phdl, config_dict, config_file):
             # Device-specific folder exists, check if config file is present
             device_specific_path = f"{base_path}/{device_name}/{config_file}"
 
-            out_dict = phdl.exec(f'ls -l {device_specific_path}', timeout=30)
+            out_dict = orch.exec(f'ls -l {device_specific_path}', timeout=30)
             if not re.search('No such file', out_dict[node], re.I):
                 log.info(f'Node {node}: Device-specific config found: {device_specific_path}')
                 device_specific_exists = True
@@ -346,7 +347,7 @@ def determine_rvs_config_path(phdl, config_dict, config_file):
 
     # Step 4: Fall back to default config (no device subfolder)
     log.info('Falling back to default config path')
-    out_dict = phdl.exec(f'ls -l {default_path}', timeout=30)
+    out_dict = orch.exec(f'ls -l {default_path}', timeout=30)
 
     for node in out_dict.keys():
         if not re.search('No such file', out_dict[node], re.I):
@@ -385,12 +386,12 @@ def parse_rvs_test_results(test_config, out_dict):
             log.info(f'RVS {test_name} test passed on node {node}')
 
 
-def execute_rvs_test(phdl, config_dict, test_name):
+def execute_rvs_test(orch, config_dict, test_name):
     """
     Generic function to execute any RVS test.
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       config_dict: RVS configuration dictionary
       test_name: Name of the test to execute
     """
@@ -411,7 +412,7 @@ def execute_rvs_test(phdl, config_dict, test_name):
     timeout = test_config.get('timeout', 9000)
 
     # Determine config path
-    config_path = determine_rvs_config_path(phdl, config_dict, config_file)
+    config_path = determine_rvs_config_path(orch, config_dict, config_file)
 
     # TEMP-FIX start
     if test_name == 'gst_single':
@@ -422,7 +423,7 @@ def execute_rvs_test(phdl, config_dict, test_name):
             temp_config = "/tmp/gst_single.conf"
 
             # Step 1 & 2: Copy config file to /tmp (overwrite if exists)
-            copy_result = phdl.exec(f'cp {source_config} {temp_config}', timeout=30)
+            copy_result = orch.exec(f'cp {source_config} {temp_config}', timeout=30)
 
             # Verify copy was successful
             for node in copy_result.keys():
@@ -436,7 +437,7 @@ def execute_rvs_test(phdl, config_dict, test_name):
             ]
 
             for sed_cmd in sed_commands:
-                sed_result = phdl.exec(sed_cmd, timeout=30)
+                sed_result = orch.exec(sed_cmd, timeout=30)
                 for node in sed_result.keys():
                     if sed_result[node].strip():
                         log.warning(f'Node {node}: sed command output: {sed_result[node]}')
@@ -455,7 +456,7 @@ def execute_rvs_test(phdl, config_dict, test_name):
         else:
             rvs_cmd = f'{rvs_path}/rvs -c {config_path}'
 
-        out_dict = phdl.exec(f'{rvs_cmd}', timeout=timeout)
+        out_dict = orch.exec(f'{rvs_cmd}', timeout=timeout)
         print_test_output(log, out_dict)
         scan_test_results(out_dict)
 
@@ -509,7 +510,7 @@ def parse_rvs_level_results(test_config, out_dict, level):
 ################################################################################
 
 
-def test_rvs_level_config(phdl, config_dict, rvs_version, rvs_test_level):
+def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS LEVEL-based configuration test.
     This test runs all RVS modules collectively using the -r (run level) option.
@@ -522,7 +523,7 @@ def test_rvs_level_config(phdl, config_dict, rvs_version, rvs_test_level):
     Level 5: Maximum stress testing
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       config_dict: RVS configuration dictionary
       rvs_test_level: Test level (0-5)
       rvs_version: RVS version string
@@ -558,7 +559,7 @@ def test_rvs_level_config(phdl, config_dict, rvs_version, rvs_test_level):
     rvs_cmd = f'sudo {rvs_path}/rvs -r {rvs_test_level}'
 
     log.info(f'Executing: {rvs_cmd}')
-    out_dict = phdl.exec(rvs_cmd, timeout=timeout)
+    out_dict = orch.exec(rvs_cmd, timeout=timeout)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
 
@@ -568,13 +569,13 @@ def test_rvs_level_config(phdl, config_dict, rvs_version, rvs_test_level):
     update_test_result()
 
 
-def test_rvs_gpu_enumeration(phdl, config_dict):
+def test_rvs_gpu_enumeration(orch, config_dict):
     """
     Run RVS GPU enumeration test to detect and validate GPU presence.
     This is a basic connectivity and detection test.
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       config_dict: RVS configuration dictionary
     """
     globals.error_list = []
@@ -583,7 +584,7 @@ def test_rvs_gpu_enumeration(phdl, config_dict):
     rvs_path = config_dict['path']
 
     # Run GPU enumeration (using gpup module)
-    out_dict = phdl.exec(f'{rvs_path}/rvs -g', timeout=60)
+    out_dict = orch.exec(f'{rvs_path}/rvs -g', timeout=60)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
 
@@ -595,13 +596,13 @@ def test_rvs_gpu_enumeration(phdl, config_dict):
     update_test_result()
 
 
-def test_rvs_mem_test(phdl, config_dict, rvs_version, rvs_test_level):
+def test_rvs_mem_test(orch, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS Memory Test.
     This test validates GPU memory functionality and integrity.
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       config_dict: RVS configuration dictionary
       rvs_version: RVS version string
       rvs_test_level: Test level (0-5)
@@ -612,17 +613,17 @@ def test_rvs_mem_test(phdl, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_mem_test: {skip_reason}")
 
     test_name = 'mem_test'
-    execute_rvs_test(phdl, config_dict, test_name)
+    execute_rvs_test(orch, config_dict, test_name)
 
 
-def test_rvs_gst_single(phdl, config_dict, rvs_version, rvs_test_level):
+def test_rvs_gst_single(orch, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS GST (GPU Stress Test) - Single GPU validation test.
     This test runs the GPU stress test configuration to validate GPU functionality
     and performance under load.
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       config_dict: RVS configuration dictionary
       rvs_version: RVS version string
       rvs_test_level: Test level (0-5)
@@ -633,16 +634,16 @@ def test_rvs_gst_single(phdl, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_gst_single: {skip_reason}")
 
     test_name = 'gst_single'
-    execute_rvs_test(phdl, config_dict, test_name)
+    execute_rvs_test(orch, config_dict, test_name)
 
 
-def test_rvs_iet_stress(phdl, config_dict, rvs_version, rvs_test_level):
+def test_rvs_iet_stress(orch, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS IET (Peak Power Test) - Single GPU validation test.
     This test validates power consumption and thermal behavior under load.
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       config_dict: RVS configuration dictionary
       rvs_version: RVS version string
       rvs_test_level: Test level (0-5)
@@ -653,16 +654,16 @@ def test_rvs_iet_stress(phdl, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_iet_stress: {skip_reason}")
 
     test_name = 'iet_stress'
-    execute_rvs_test(phdl, config_dict, test_name)
+    execute_rvs_test(orch, config_dict, test_name)
 
 
-def test_rvs_pebb_single(phdl, config_dict, rvs_version, rvs_test_level):
+def test_rvs_pebb_single(orch, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS PEBB (PCI Express Bandwidth Benchmark).
     This test measures and validates PCI Express bandwidth performance.
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       config_dict: RVS configuration dictionary
       rvs_version: RVS version string
       rvs_test_level: Test level (0-5)
@@ -673,16 +674,16 @@ def test_rvs_pebb_single(phdl, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_pebb_single: {skip_reason}")
 
     test_name = 'pebb_single'
-    execute_rvs_test(phdl, config_dict, test_name)
+    execute_rvs_test(orch, config_dict, test_name)
 
 
-def test_rvs_pbqt_single(phdl, config_dict, rvs_version, rvs_test_level):
+def test_rvs_pbqt_single(orch, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS PBQT (P2P Benchmark and Qualification Tool).
     This test validates peer-to-peer communication between GPUs.
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       config_dict: RVS configuration dictionary
       rvs_version: RVS version string
       rvs_test_level: Test level (0-5)
@@ -693,16 +694,16 @@ def test_rvs_pbqt_single(phdl, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_pbqt_single: {skip_reason}")
 
     test_name = 'pbqt_single'
-    execute_rvs_test(phdl, config_dict, test_name)
+    execute_rvs_test(orch, config_dict, test_name)
 
 
-def test_rvs_babel_stream(phdl, config_dict, rvs_version, rvs_test_level):
+def test_rvs_babel_stream(orch, config_dict, rvs_version, rvs_test_level):
     """
     Run RVS BABEL Benchmark test.
     This test runs the BABEL streaming benchmark for GPU memory bandwidth validation.
 
     Args:
-      phdl: Parallel SSH handle
+      orch: Orchestrator instance
       config_dict: RVS configuration dictionary
       rvs_version: RVS version string
       rvs_test_level: Test level (0-5)
@@ -713,4 +714,4 @@ def test_rvs_babel_stream(phdl, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_babel_stream: {skip_reason}")
 
     test_name = 'babel_stream'
-    execute_rvs_test(phdl, config_dict, test_name)
+    execute_rvs_test(orch, config_dict, test_name)
