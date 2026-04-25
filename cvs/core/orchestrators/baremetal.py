@@ -155,27 +155,6 @@ class BaremetalOrchestrator(Orchestrator):
         # Basic cleanup - no specific resources to clean for SSH-only orchestrator
         return True
 
-    @property
-    def host_all(self):
-        """All-host Pssh handle. On baremetal the suite's exec already targets
-        the host namespace, so host_all is the same self.all handle."""
-        return self.all
-
-    @property
-    def host_head(self):
-        """Head-only Pssh handle. Same handle on baremetal (exec already runs
-        on the host namespace)."""
-        return self.head
-
-    def dispose(self):
-        """Release any per-orchestrator resources. On baremetal this is just
-        cleanup() against all hosts; safe to call multiple times."""
-        try:
-            return self.cleanup(self.hosts)
-        except Exception as e:  # noqa: BLE001
-            self.log.error(f"BaremetalOrchestrator.dispose() failed: {e}")
-            return False
-
     def build_mpi_cmd(
         self,
         rank_cmd,
