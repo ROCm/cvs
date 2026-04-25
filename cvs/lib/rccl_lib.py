@@ -84,6 +84,38 @@ def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
         return False
 
 
+def detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node):
+    """
+    Detect which output file argument is supported by the RCCL test binary.
+
+    Parameters:
+      shdl: SSH handle to execute commands on the remote node.
+      rccl_test_binary_path: Full path to the RCCL test binary.
+      head_node: The head node hostname for retrieving command output.
+
+    Returns:
+      str: Either '-x' (legacy) or '-X' (new) based on what the binary supports.
+    """
+    try:
+        # Check for new format first: --rccl_output_file
+        check_new_cmd = f'strings {rccl_test_binary_path} | grep -q "\\-\\-rccl_output_file"'
+        result = shdl.exec(f'{check_new_cmd} && echo "NEW" || echo "OLD"')
+        output = result[head_node].strip()
+
+        if output == "NEW":
+            log.debug(f"Detected new RCCL test format: using -X/--rccl_output_file for {rccl_test_binary_path}")
+            return '-X'
+        else:
+            log.debug(f"Detected legacy RCCL test format: using -x/--output_file for {rccl_test_binary_path}")
+            return '-x'
+
+    except Exception as e:
+        log.warning(
+            f"Failed to detect RCCL output flag format for {rccl_test_binary_path}: {e}. Defaulting to legacy -x"
+        )
+        return '-x'
+
+
 def determine_mpi_pml_config(mpi_pml, shdl, mpi_path, head_node, net_dev_list, ucx_tls):
     """
     Determine MPI PML (Point-to-Point Messaging Layer) configuration based on user config or auto-detection.
@@ -528,6 +560,7 @@ def rccl_regression(
     )
 
     # Build RCCL test command
+    rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
     start_msg_size = rccl_test_params.get('start_msg_size', '1024')
     end_msg_size = rccl_test_params.get('end_msg_size', '16g')
     step_function = rccl_test_params.get('step_function', 2)
@@ -539,9 +572,13 @@ def rccl_regression(
 
     rccl_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
 
-    test_cmd = f'${{RCCL_TESTS_BUILD_DIR}}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
+    # Detect which output file argument is supported by the RCCL test binary
+    rccl_test_binary_path = f'{rccl_tests_dir}/{test_name}'
+    output_flag = detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node)
+
+    test_cmd = f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -t {threads_per_gpu} -w {warmup_iterations} -n {no_of_iterations} \
-        -c {no_of_cycles} -z {check_iteration_count} -Z json -x {rccl_result_file}'
+        -c {no_of_cycles} -z {check_iteration_count} -Z json {output_flag} {rccl_result_file}'
 
     # Wrap with env file sourcing
     if env_file and str(env_file).lower() != 'none':
@@ -649,7 +686,7 @@ def rccl_perf(
       min_channels: Minimum NCCL channels (NCCL_MIN_NCHANNELS).
       max_channels: Maximum NCCL channels (NCCL_MAX_NCHANNELS).
       debug_level: NCCL_DEBUG level.
-      rccl_result_file: Path where the RCCL test writes JSON results (-Z json -x file).
+      rccl_result_file: Path where the RCCL test writes JSON results (-Z json with auto-detected output flag).
       verify_bus_bw: If 'True' (string), compare bus BW vs expected thresholds.
       exp_results_dict: Dict of expected results per test for verification.
 
@@ -714,6 +751,10 @@ def rccl_perf(
     all_validated_results = []
     base_path = Path(rccl_result_file)
 
+    # Detect which output file argument is supported by the RCCL test binary (do this once outside the loop)
+    rccl_test_binary_path = f'{rccl_tests_dir}/{test_name}'
+    output_flag = detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node)
+
     for dtype in data_types:
         # Create a unique result file for each data type
         dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
@@ -722,7 +763,7 @@ def rccl_perf(
         # Wrap test binary in shell to source env script if provided
         test_cmd = f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
             -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-            -d {dtype} -n {no_of_iterations} -N {no_of_cycles} -Z json -X {dtype_result_file}'
+            -d {dtype} -n {no_of_iterations} -N {no_of_cycles} -Z json {output_flag} {dtype_result_file}'
 
         if env_file and str(env_file).lower() != 'none':
             test_cmd = f'bash -c "source {env_file} && {test_cmd}"'
