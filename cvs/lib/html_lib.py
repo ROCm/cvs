@@ -1156,7 +1156,31 @@ def build_rccl_result_table(filename, res_dict):
   </thead>'''
         fp.write(html_lines)
         for key_nam in res_dict.keys():
-            (collective, algo, protocol, qp_count, pxn_disable) = key_nam.split("-")
+            # Parse the new key format: collective-NCCL_ALGO=value NCCL_PROTO=value NCCL_IB_QPS_PER_CONNECTION=value NCCL_PXN_DISABLE=value ...
+            parts = key_nam.split("-", 1)  # Split only on first hyphen
+            collective = parts[0]
+
+            if len(parts) == 2:
+                # Parse the params string to extract individual values
+                params_str = parts[1]
+                params_dict = {}
+
+                # Split by spaces and parse key=value pairs
+                for param in params_str.split():
+                    if '=' in param:
+                        key, value = param.split('=', 1)
+                        params_dict[key] = value
+
+                # Extract the specific values we need for the table
+                algo = params_dict.get('NCCL_ALGO', 'Unknown')
+                protocol = params_dict.get('NCCL_PROTO', 'Unknown')
+                qp_count = params_dict.get('NCCL_IB_QPS_PER_CONNECTION', 'Unknown')
+                pxn_disable = params_dict.get('NCCL_PXN_DISABLE', 'Unknown')
+            else:
+                # This should not happen with current key construction (collective-params_str)
+                # but provides safety against malformed keys
+                log.error(f"Invalid key format - missing hyphen separator: {key_nam}")
+                algo = protocol = qp_count = pxn_disable = 'Unknown'
             last_bw = 0.0
             last_time = 0
             for msg_size in res_dict[key_nam].keys():
