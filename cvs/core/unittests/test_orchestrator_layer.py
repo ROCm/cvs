@@ -48,8 +48,8 @@ def _make_orch_config(orchestrator="baremetal", with_container=False, launch=Fal
 # OrchestratorFactory
 # ---------------------------------------------------------------------------
 
-class TestOrchestratorFactory(unittest.TestCase):
 
+class TestOrchestratorFactory(unittest.TestCase):
     @patch("cvs.core.orchestrators.baremetal.Pssh")
     def test_create_returns_baremetal_for_baremetal_string(self, _mock_pssh):
         cfg = _make_orch_config(orchestrator="baremetal")
@@ -85,8 +85,8 @@ class TestOrchestratorFactory(unittest.TestCase):
 # OrchestratorConfig
 # ---------------------------------------------------------------------------
 
-class TestOrchestratorConfig(unittest.TestCase):
 
+class TestOrchestratorConfig(unittest.TestCase):
     def test_get_returns_default_for_missing_key(self):
         cfg = _make_orch_config()
         self.assertEqual(cfg.get("nonexistent_key", "fallback"), "fallback")
@@ -132,6 +132,7 @@ class TestOrchestratorConfig(unittest.TestCase):
         # path-handling branch (the rvs_cvs.py orch fixture goes through this).
         import tempfile
         import os
+
         cluster = {
             "orchestrator": "baremetal",
             "node_dict": {"1.1.1.1": {}, "1.1.1.2": {}},
@@ -153,8 +154,8 @@ class TestOrchestratorConfig(unittest.TestCase):
 # BaremetalOrchestrator
 # ---------------------------------------------------------------------------
 
-class TestBaremetalOrchestrator(unittest.TestCase):
 
+class TestBaremetalOrchestrator(unittest.TestCase):
     @patch("cvs.core.orchestrators.baremetal.Pssh")
     def test_init_constructs_pssh_handles(self, mock_pssh):
         BaremetalOrchestrator(MagicMock(), _make_orch_config())
@@ -200,8 +201,8 @@ class TestBaremetalOrchestrator(unittest.TestCase):
 # ContainerOrchestrator
 # ---------------------------------------------------------------------------
 
-class TestContainerOrchestrator(unittest.TestCase):
 
+class TestContainerOrchestrator(unittest.TestCase):
     def _make(self, _mock_pssh, _mock_rf, launch=False, enabled=True):
         cfg = _make_orch_config(orchestrator="container", launch=launch, enabled=enabled)
         runtime = MagicMock(name="docker_runtime")

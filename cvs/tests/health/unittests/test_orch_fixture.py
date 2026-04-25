@@ -19,7 +19,6 @@ import pytest
 
 
 class TestOrchFixture(unittest.TestCase):
-
     def _invoke_orch_fixture(
         self,
         MockCfg,
@@ -96,18 +95,14 @@ class TestOrchFixture(unittest.TestCase):
         # setup_containers returning False -> pytest.fail; setup_sshd never reached;
         # finalizer NOT registered (pytest.fail interrupts fixture body).
         with self.assertRaises(pytest.fail.Exception) as ctx:
-            self._invoke_orch_fixture(
-                MockCfg, MockFactory, "container", setup_containers_ret=False
-            )
+            self._invoke_orch_fixture(MockCfg, MockFactory, "container", setup_containers_ret=False)
         self.assertIn("setup_containers", str(ctx.exception))
 
     @patch("cvs.tests.health.rvs_cvs.OrchestratorFactory")
     @patch("cvs.tests.health.rvs_cvs.OrchestratorConfig")
     def test_container_setup_sshd_failure_calls_pytest_fail(self, MockCfg, MockFactory):
         with self.assertRaises(pytest.fail.Exception) as ctx:
-            self._invoke_orch_fixture(
-                MockCfg, MockFactory, "container", setup_sshd_ret=False
-            )
+            self._invoke_orch_fixture(MockCfg, MockFactory, "container", setup_sshd_ret=False)
         self.assertIn("setup_sshd", str(ctx.exception))
 
 
