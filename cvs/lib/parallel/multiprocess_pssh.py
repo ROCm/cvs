@@ -9,6 +9,9 @@ from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.parallel.pssh import Pssh
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.pssh_sharder import PsshSharder
+from cvs.lib import globals
+
+global_log = globals.log
 
 
 class MultiProcessPssh(Pssh):
@@ -38,13 +41,16 @@ class MultiProcessPssh(Pssh):
         self.config = config or ParallelConfig.from_env()
         hosts_per_shard = self.config.hosts_per_shard
 
+        # Always ensure self.log is set for backward compatibility
+        self.log = global_log
+
         n = len(host_list) if host_list is not None else 0
         use_mp = hosts_per_shard > 0 and n > hosts_per_shard
 
         if not use_mp:
             # Use single-process base class
             super().__init__(
-                log,
+                log,  # Pass through log parameter to parent
                 host_list,
                 user,
                 password,
@@ -52,8 +58,11 @@ class MultiProcessPssh(Pssh):
                 host_key_check,
                 stop_on_errors,
                 env_vars,
+                process_output=True,  # Default to True for compatibility
             )
             self._use_process_sharding = False
+            # Ensure attributes needed by _shard_init_kwargs are available
+            self.env_vars = env_vars
         else:
             # Initialize for multi-process sharding
             self._init_sharded(log, host_list, user, password, pkey, host_key_check, stop_on_errors, env_vars)
@@ -73,7 +82,8 @@ class MultiProcessPssh(Pssh):
         env_vars,
     ):
         """Initialize for sharded multi-process execution."""
-        self.log = log
+        # Always use global logger but maintain self.log for backward compatibility
+        self.log = global_log
         self.host_list = host_list
         self.reachable_hosts = list(host_list)
         self.user = user
@@ -84,14 +94,18 @@ class MultiProcessPssh(Pssh):
         self.unreachable_hosts = []
         self.env_vars = env_vars
         self.env_prefix = build_env_prefix(env_vars)
+        self.process_output = True  # Default to True for compatibility
         self.client = None
         self._use_process_sharding = True
         self.log.debug(f"Environ vars: {self.env_prefix}")
 
     def _shard_init_kwargs(self):
-        """Create initialization kwargs for shard workers (host_list will be added by create_payloads)."""
+        """Create initialization kwargs for shard workers (host_list will be added by create_payloads).
+
+        Note: No logger parameter needed - child processes use module-level globals.log automatically.
+        """
         return {
-            'log': self.log,
+            'log': None,  # Backward compatibility - child processes use module-level log
             'user': self.user,
             'password': self.password,
             'pkey': self.pkey,
@@ -101,7 +115,13 @@ class MultiProcessPssh(Pssh):
         }
 
     def _merge_shard_returns(self, shard_returns, merge_unreachable=True):
-        """Update reachable / unreachable host lists from shard workers."""
+        """
+        Update reachable/unreachable host lists from shard workers and convert results to cmd_output dict.
+
+        Handles both state updates and SimpleHostOutput conversion in one place for cleaner architecture.
+        Returns cmd_output dict ready for _print_merged_outputs.
+        """
+        # 1. Update host lists (existing logic)
         reachable_set = set()
         for r in shard_returns:
             reachable_set.update(r['reachable_hosts'])
@@ -111,6 +131,27 @@ class MultiProcessPssh(Pssh):
                 for u in r['unreachable_hosts']:
                     if u not in self.unreachable_hosts:
                         self.unreachable_hosts.append(u)
+
+        # 2. Convert SimpleHostOutput objects to cmd_output dict
+        merged = {}
+        for shard in shard_returns:
+            result = shard.get('result') or {}  # treat None as {} (for scp/reboot)
+
+            if isinstance(result, list):
+                # Handle SimpleHostOutput objects - convert using _process_output
+                temp_dict = self._process_output(result, print_console=False)
+                merged.update(temp_dict)
+            else:
+                # Handle old dict format (for scp/reboot)
+                merged.update(result)
+
+        # 3. Preserve original host order
+        cmd_output = {}
+        for host in self.host_list:
+            if host in merged:
+                cmd_output[host] = merged[host]
+
+        return cmd_output
 
     def _print_merged_outputs(self, cmd_output, cmd=None, cmd_list=None, print_console=True):
         """Print command outputs in original host order."""
@@ -158,9 +199,8 @@ class MultiProcessPssh(Pssh):
         )
         shard_returns = self.sharder.execute_sharded(payloads)
 
-        # Merge results and update state
-        self._merge_shard_returns(shard_returns)
-        cmd_output = self.sharder.merge_results(shard_returns, self.host_list)
+        # Merge results, update state, and convert to cmd_output dict
+        cmd_output = self._merge_shard_returns(shard_returns)
 
         self._print_merged_outputs(cmd_output, cmd=full_cmd, cmd_list=None, print_console=print_console)
 
@@ -179,12 +219,24 @@ class MultiProcessPssh(Pssh):
         if len(cmd_list) != len(self.host_list):
             raise ValueError('cmd_list length must match host_list length')
 
+        # Apply env_prefix to all commands (for logging compatibility)
         if self.env_prefix:
             expanded = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
         else:
             expanded = list(cmd_list)
 
-        self.log.info("%s", expanded)
+        # Only filter commands if some hosts are unreachable
+        if len(self.reachable_hosts) < len(self.host_list):
+            # Filter commands to match reachable_hosts order
+            filtered_commands = []
+            for i, host in enumerate(self.host_list):
+                if host in self.reachable_hosts:
+                    filtered_commands.append(expanded[i])
+        else:
+            # All hosts are reachable, use expanded directly
+            filtered_commands = expanded
+
+        self.log.info("%s", filtered_commands)
 
         # Log command list execution
         if self.log:
@@ -200,19 +252,18 @@ class MultiProcessPssh(Pssh):
         for i in range(0, len(self.reachable_hosts), chunk_size):
             shard_hosts = self.reachable_hosts[i : i + chunk_size]
             k = len(shard_hosts)
-            sub_list = expanded[offset : offset + k]
+            shard_commands = filtered_commands[offset : offset + k]
             offset += k
             payloads.append(
                 self.sharder.create_payloads(
-                    'cmd_list', [shard_hosts], self._shard_init_kwargs(), cmd_list=sub_list, timeout=timeout
+                    'cmd_list', [shard_hosts], self._shard_init_kwargs(), cmd_list=shard_commands, timeout=timeout
                 )[0]
             )
 
         shard_returns = self.sharder.execute_sharded(payloads)
 
-        # Merge results and update state
-        self._merge_shard_returns(shard_returns)
-        cmd_output = self.sharder.merge_results(shard_returns, self.host_list)
+        # Merge results, update state, and convert to cmd_output dict
+        cmd_output = self._merge_shard_returns(shard_returns)
 
         self._print_merged_outputs(cmd_output, cmd=None, cmd_list=expanded, print_console=print_console)
 
@@ -240,8 +291,7 @@ class MultiProcessPssh(Pssh):
             recurse=recurse,
         )
         shard_returns = self.sharder.execute_sharded(payloads)
-        self._merge_shard_returns(shard_returns, merge_unreachable=False)
-        return self.sharder.merge_results(shard_returns, self.host_list)
+        return self._merge_shard_returns(shard_returns, merge_unreachable=False)
 
     def reboot_connections(self):
         """Reboot connections with automatic sharding if needed."""
@@ -253,8 +303,7 @@ class MultiProcessPssh(Pssh):
         host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
         payloads = self.sharder.create_payloads('reboot', host_chunks, self._shard_init_kwargs())
         shard_returns = self.sharder.execute_sharded(payloads)
-        self._merge_shard_returns(shard_returns, merge_unreachable=False)
-        return self.sharder.merge_results(shard_returns, self.host_list)
+        return self._merge_shard_returns(shard_returns, merge_unreachable=False)
 
     def destroy_clients(self):
         """Destroy clients - handle both sharded and non-sharded modes."""

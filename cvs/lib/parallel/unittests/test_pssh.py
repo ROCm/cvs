@@ -535,7 +535,7 @@ class TestPsshExec(unittest.TestCase):
         self.assertNotIsInstance(result["host1"], dict)
         self.assertIn("output1 line1", result["host1"])
 
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.pssh.ParallelSSHClient")
     def test_init_does_not_alias_caller_host_list(self, mock_pssh_client):
         # Regression (B2): Pssh.__init__ must not alias the caller's host_list.
         # Before the fix, self.reachable_hosts and self.host_list both pointed to
@@ -931,7 +931,7 @@ class TestPsshFileTransfer(unittest.TestCase):
     aggregation message format on partial/full failure.
     """
 
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.pssh.ParallelSSHClient")
     def setUp(self, mock_pssh_client):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
@@ -1113,10 +1113,12 @@ class TestPsshScpFile(unittest.TestCase):
     file paths, and the original exception is chained via __cause__.
     """
 
-    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    @patch("cvs.lib.parallel.pssh.ParallelSSHClient")
     def setUp(self, mock_pssh_client):
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
+        # Mock the pool.join() method that gets called in scp_file
+        self.mock_client.pool = MagicMock()
         self.mock_log = MagicMock()
         self.pssh = Pssh(self.mock_log, ["host1"], user="user", password="pass")
 

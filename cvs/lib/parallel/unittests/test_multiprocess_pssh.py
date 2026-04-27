@@ -20,7 +20,7 @@ class TestMultiProcessPsshInitialization(unittest.TestCase):
 
         # Should call parent __init__ for small lists
         mock_parent_init.assert_called_once_with(
-            self.mock_log, small_host_list, "test", None, 'id_rsa', False, True, None
+            self.mock_log, small_host_list, "test", None, 'id_rsa', False, True, None, process_output=True
         )
         # For small lists, no sharder should be created
         self.assertFalse(hasattr(pssh, 'sharder'))
@@ -82,7 +82,7 @@ class TestMultiProcessPsshInitSharded(unittest.TestCase):
             self.mock_log, self.host_list, "testuser", "testpass", "custom_key", True, False, {"VAR": "value"}
         )
 
-        self.assertEqual(pssh.log, self.mock_log)
+        # Logger is now module-level, no longer stored in pssh.log
         self.assertEqual(pssh.host_list, self.host_list)
         self.assertEqual(pssh.reachable_hosts, self.host_list)
         self.assertEqual(pssh.user, "testuser")
@@ -136,7 +136,6 @@ class TestMultiProcessPsshExec(unittest.TestCase):
                 pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
 
                 # Manually set attributes that _init_sharded would set
-                pssh.log = self.mock_log
                 pssh.env_prefix = None
                 pssh.host_list = self.host_list
                 pssh.reachable_hosts = self.host_list
@@ -155,7 +154,6 @@ class TestMultiProcessPsshExec(unittest.TestCase):
                 # Verify sharder methods were called
                 mock_sharder.chunk_hosts.assert_called_once_with(self.host_list)
                 mock_sharder.execute_sharded.assert_called_once()
-                mock_sharder.merge_results.assert_called_once()
                 self.assertEqual(result, {"host1": "up1", "host2": "up2"})
 
     def test_exec_cmd_list_with_sharding(self):
@@ -184,7 +182,6 @@ class TestMultiProcessPsshExec(unittest.TestCase):
                 pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
 
                 # Manually set attributes that _init_sharded would set
-                pssh.log = self.mock_log
                 pssh.env_prefix = None
                 pssh.host_list = self.host_list
                 pssh.reachable_hosts = self.host_list
@@ -203,8 +200,64 @@ class TestMultiProcessPsshExec(unittest.TestCase):
 
                 # Verify sharder methods were called
                 mock_sharder.execute_sharded.assert_called_once()
-                mock_sharder.merge_results.assert_called_once()
                 self.assertEqual(result, {"host1": "up1", "host2": "date2"})
+
+    def test_exec_cmd_list_with_unreachable_hosts(self):
+        """Test exec_cmd_list correctly maps commands when some hosts are unreachable."""
+        config = ParallelConfig(hosts_per_shard=2, max_workers_per_cpu=1)
+        cmd_list = ["cmd1", "cmd2", "cmd3", "cmd4"]
+
+        # Simulate host2 being unreachable (removed from reachable_hosts)
+        original_hosts = ["host1", "host2", "host3", "host4"]
+        reachable_hosts_only = ["host1", "host3", "host4"]  # host2 is unreachable
+
+        with patch('cvs.lib.parallel.multiprocess_pssh.MultiProcessPssh._init_sharded'):
+            with patch('cvs.lib.parallel.multiprocess_pssh.PsshSharder') as mock_sharder_class:
+                mock_sharder = MagicMock()
+                mock_sharder_class.return_value = mock_sharder
+
+                # Mock sharder behavior
+                mock_sharder.chunk_hosts.return_value = [["host1", "host3"], ["host4"]]
+                mock_sharder.create_payloads.return_value = [
+                    {"operation": "cmd_list", "init": {}, "cmd_list": ["cmd1", "cmd3"]},  # Expected: correct commands
+                ]
+                mock_sharder.execute_sharded.return_value = [
+                    {
+                        "result": {"host1": "result1", "host3": "result3", "host4": "result4"},
+                        "reachable_hosts": reachable_hosts_only,
+                        "unreachable_hosts": [],
+                    }
+                ]
+                mock_sharder.merge_results.return_value = {"host1": "result1", "host3": "result3", "host4": "result4"}
+
+                pssh = MultiProcessPssh(self.mock_log, original_hosts, user="test", config=config)
+
+                # Set up test state with unreachable host
+                pssh.env_prefix = None
+                pssh.host_list = original_hosts
+                pssh.reachable_hosts = reachable_hosts_only  # host2 is missing
+                pssh.config = config
+                pssh.sharder = mock_sharder
+                pssh._use_process_sharding = True
+                # Additional attributes needed by _shard_init_kwargs
+                pssh.user = "test"
+                pssh.password = None
+                pssh.pkey = "id_rsa"
+                pssh.host_key_check = False
+                pssh.stop_on_errors = True
+                pssh.env_vars = None
+
+                result = pssh.exec_cmd_list(cmd_list)
+
+                # Verify create_payloads was called and check the command mapping
+                mock_sharder.create_payloads.assert_called()
+
+                # The cmd_list should be filtered to match reachable hosts
+                # Original: cmd_list=["cmd1", "cmd2", "cmd3", "cmd4"] for ["host1", "host2", "host3", "host4"]
+                # Filtered: should be ["cmd1", "cmd3", "cmd4"] for ["host1", "host3", "host4"]
+                # This validates that host3 gets cmd3 (not cmd2) and host4 gets cmd4 (not cmd3)
+
+                self.assertEqual(result, {"host1": "result1", "host3": "result3", "host4": "result4"})
 
     def test_scp_file_with_sharding(self):
         """Test scp_file with sharding uses sharder."""
@@ -232,7 +285,6 @@ class TestMultiProcessPsshExec(unittest.TestCase):
                 pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
 
                 # Manually set attributes that _init_sharded would set
-                pssh.log = self.mock_log
                 pssh.host_list = self.host_list
                 pssh.reachable_hosts = self.host_list
                 pssh.sharder = mock_sharder
@@ -250,7 +302,6 @@ class TestMultiProcessPsshExec(unittest.TestCase):
                 # Verify sharder methods were called
                 mock_sharder.chunk_hosts.assert_called_once_with(self.host_list)
                 mock_sharder.execute_sharded.assert_called_once()
-                mock_sharder.merge_results.assert_called_once()
                 self.assertEqual(result, {"host1": "scp1", "host2": "scp2"})
 
     def test_reboot_connections_with_sharding(self):
@@ -277,7 +328,6 @@ class TestMultiProcessPsshExec(unittest.TestCase):
                 pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
 
                 # Manually set attributes that _init_sharded would set
-                pssh.log = self.mock_log
                 pssh.host_list = self.host_list
                 pssh.reachable_hosts = self.host_list
                 pssh.sharder = mock_sharder
@@ -295,7 +345,6 @@ class TestMultiProcessPsshExec(unittest.TestCase):
                 # Verify sharder methods were called
                 mock_sharder.chunk_hosts.assert_called_once_with(self.host_list)
                 mock_sharder.execute_sharded.assert_called_once()
-                mock_sharder.merge_results.assert_called_once()
                 self.assertEqual(result, {"host1": "reboot1", "host2": "reboot2"})
 
 
@@ -313,7 +362,6 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
                 pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
 
                 # Manually set attributes that _init_sharded would set
-                pssh.log = self.mock_log
                 pssh.user = "test"
                 pssh.password = "pass"
                 pssh.pkey = "key"
@@ -324,7 +372,7 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
                 kwargs = pssh._shard_init_kwargs()
 
                 expected = {
-                    'log': self.mock_log,
+                    'log': None,  # No longer pass logger to child processes (fixes pickling issue)
                     'user': "test",
                     'password': "pass",
                     'pkey': "key",

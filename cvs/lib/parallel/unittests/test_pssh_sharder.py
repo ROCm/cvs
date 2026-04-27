@@ -169,6 +169,35 @@ class TestPsshSharderMethods(unittest.TestCase):
         expected = {}
         self.assertEqual(merged, expected)
 
+    def test_merge_results_with_none_results(self):
+        """Test merging results when some shards return None (scp/reboot operations)."""
+        shard_returns = [
+            {'result': {'host1': 'exec_result', 'host2': 'exec_result'}},
+            {'result': None},  # This happens for scp/reboot operations
+        ]
+        original_hosts = ['host1', 'host2', 'host3', 'host4']
+
+        # This should not raise TypeError
+        merged = self.sharder.merge_results(shard_returns, original_hosts)
+
+        # Only hosts with actual results should be included
+        expected = {'host1': 'exec_result', 'host2': 'exec_result'}
+        self.assertEqual(merged, expected)
+
+    def test_merge_results_all_none_results(self):
+        """Test merging results when all shards return None (all scp/reboot operations)."""
+        shard_returns = [
+            {'result': None},  # scp operation
+            {'result': None},  # reboot operation
+        ]
+        original_hosts = ['host1', 'host2', 'host3', 'host4']
+
+        # This should not raise TypeError and should return empty dict
+        merged = self.sharder.merge_results(shard_returns, original_hosts)
+
+        expected = {}
+        self.assertEqual(merged, expected)
+
 
 class TestPsshShardWorker(unittest.TestCase):
     @patch('cvs.lib.parallel.pssh_sharder.Pssh')
@@ -198,7 +227,9 @@ class TestPsshShardWorker(unittest.TestCase):
         self.assertEqual(result, expected)
 
         # Verify Pssh was created and exec was called directly
-        mock_pssh_class.assert_called_once_with(log=None, host_list=['host1', 'host2'], user='test')
+        mock_pssh_class.assert_called_once_with(
+            log=None, host_list=['host1', 'host2'], user='test', process_output=False
+        )
         mock_shard.exec.assert_called_once_with('echo hello', timeout=30, print_console=False)
         mock_shard.destroy_clients.assert_called_once()
 
@@ -223,7 +254,7 @@ class TestPsshShardWorker(unittest.TestCase):
         self.assertEqual(result, expected)
 
         # Verify direct operation call
-        mock_pssh_class.assert_called_once_with(log=None, host_list=['host1'], user='test')
+        mock_pssh_class.assert_called_once_with(log=None, host_list=['host1'], user='test', process_output=False)
         mock_shard.exec_cmd_list.assert_called_once_with(['echo 1', 'echo 2'], timeout=None, print_console=False)
         mock_shard.destroy_clients.assert_called_once()
 
