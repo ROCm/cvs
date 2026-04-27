@@ -2,8 +2,9 @@ class SubcommandPlugin:
     """Base class for CLI subcommand plugins."""
 
     PLUGIN_ORDERS = {
-        "monitor": 999,
-        "exec": 1000,  # High number to ensure exec appears last
+        "monitor": 998,
+        "exec": 999,
+        "sshkeyscan": 1000,  # High number to ensure sshkeyscan appears last
     }
 
     def get_name(self):
