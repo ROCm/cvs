@@ -7,16 +7,25 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from __future__ import print_function
 
+import warnings
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError, SessionError
 
 from cvs.lib.env_lib import build_env_prefix
+from cvs.lib import globals
+
+global_log = globals.log
 
 
-def _chunk_hosts(host_list, chunk_size):
-    """Yield successive slices of host_list of length up to chunk_size."""
-    for i in range(0, len(host_list), chunk_size):
-        yield host_list[i : i + chunk_size]
+class SimpleHostOutput:
+    """Simple HostOutput-compatible object for consistent processing across process boundaries."""
+
+    def __init__(self, host, stdout_lines, stderr_lines, exception, exit_code=0):
+        self.host = host
+        self.stdout = iter(stdout_lines)  # Convert list to iterator for _process_output compatibility
+        self.stderr = iter(stderr_lines)  # Convert list to iterator for _process_output compatibility
+        self.exception = exception
+        self.exit_code = exit_code
 
 
 class Pssh:
@@ -36,8 +45,20 @@ class Pssh:
         host_key_check=False,
         stop_on_errors=True,
         env_vars=None,
+        process_output=True,
     ):
-        self.log = log
+        # Backward compatibility warning for log parameter
+        if log is not None:
+            warnings.warn(
+                "Passing 'log' parameter is deprecated. "
+                "Configure logging via cvs.lib.globals instead. "
+                "This parameter will be removed in future versions.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        # Always use global logger but maintain self.log for backward compatibility
+        self.log = global_log
         self.host_list = host_list
         self.reachable_hosts = host_list
         self.user = user
@@ -45,6 +66,7 @@ class Pssh:
         self.password = password
         self.host_key_check = host_key_check
         self.stop_on_errors = stop_on_errors
+        self.process_output = process_output
         self.unreachable_hosts = []
         self.env_prefix = build_env_prefix(env_vars)
         self.log.debug(f"Environ vars: {self.env_prefix}")
@@ -120,8 +142,11 @@ class Pssh:
     def _process_output(self, output, cmd=None, cmd_list=None, print_console=True):
         """
         Helper method to process output from run_command, collect results, and handle pruning.
-        Returns cmd_output dictionary.
+        Returns cmd_output dictionary OR SimpleHostOutput objects based on process_output flag.
         """
+        # Check if we should return raw data for sharding
+        if not self.process_output:
+            return self._extract_simple_data(output)
         cmd_output = {}
         i = 0
         for item in output:
@@ -198,10 +223,11 @@ class Pssh:
             output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
         else:
             output = self.client.run_command(full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
+
         cmd_output = self._process_output(output, cmd=full_cmd, print_console=print_console)
 
-        # Log per-host execution completion
-        if self.log:
+        # Log per-host execution completion (only for processed output)
+        if self.process_output and self.log and isinstance(cmd_output, dict):
             for host in cmd_output.keys():
                 self.log.debug(f"Command completed on {host}: {cmd}")
 
@@ -233,10 +259,11 @@ class Pssh:
             output = self.client.run_command(
                 '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors
             )
+
         cmd_output = self._process_output(output, cmd_list=cmd_list, print_console=print_console)
 
-        # Log per-host command execution
-        if self.log:
+        # Log per-host command execution (only for processed output)
+        if self.process_output and self.log and isinstance(cmd_output, dict):
             for host, cmd in zip(self.reachable_hosts, cmd_list):
                 self.log.debug(f"Command on {host}: {cmd}")
 
@@ -256,6 +283,32 @@ class Pssh:
     def reboot_connections(self):
         self.log.info('Rebooting Connections')
         self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
+
+    def _extract_simple_data(self, output):
+        """
+        Extract essential data from pssh.output.HostOutput objects for safe IPC transfer.
+
+        Converts non-picklable HostOutput objects (containing active SSH channels,
+        generators, and C extension objects) into picklable SimpleHostOutput objects
+        by consuming stdout/stderr generators into lists and extracting core attributes.
+        """
+
+        simple_outputs = []
+        for item in output:
+            # Consume generators to lists for pickling
+            stdout_lines = list(item.stdout or [])
+            stderr_lines = list(item.stderr or [])
+
+            simple_output = SimpleHostOutput(
+                host=item.host,
+                stdout_lines=stdout_lines,
+                stderr_lines=stderr_lines,
+                exception=item.exception,
+                exit_code=getattr(item, 'exit_code', 0),
+            )
+            simple_outputs.append(simple_output)
+
+        return simple_outputs
 
     def destroy_clients(self):
         self.log.info('Destroying Current phdl connections ..')

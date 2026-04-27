@@ -26,6 +26,8 @@ Implementation lives in:
   - cvs.lib.parallel.scp — standalone scp helper
 '''
 
+import warnings
+
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import ConnectionError, SessionError, Timeout
 
@@ -33,6 +35,16 @@ from pssh.exceptions import ConnectionError, SessionError, Timeout
 from cvs.lib.parallel.multiprocess_pssh import MultiProcessPssh as Pssh  # Main interface (auto-sharding)
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.scp import scp
+
+# Issue deprecation warning when module is imported
+warnings.warn(
+    "cvs.lib.parallel_ssh_lib is deprecated. "
+    "Use 'from cvs.lib.parallel.multiprocess_pssh import MultiProcessPssh' "
+    "or 'from cvs.lib.parallel.pssh import Pssh' instead. "
+    "This module will be removed in a future version.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 __all__ = [
     'Pssh',

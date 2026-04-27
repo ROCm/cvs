@@ -55,12 +55,18 @@ class PsshSharder:
 
     def merge_results(self, shard_returns, original_host_list):
         """Merge results from all shards maintaining original host order."""
+        # Step 1: Build a single lookup map
+        merged = {}
+        for shard in shard_returns:
+            result = shard.get('result') or {}  # treat None as {}
+            merged.update(result)
+
+        # Step 2: Preserve original order
         cmd_output = {}
         for host in original_host_list:
-            for r in shard_returns:
-                if host in r['result']:
-                    cmd_output[host] = r['result'][host]
-                    break
+            if host in merged:
+                cmd_output[host] = merged[host]
+
         return cmd_output
 
     @staticmethod
@@ -80,19 +86,18 @@ class PsshSharder:
 
         # Create SSH client for this shard of hosts
         init_kwargs = payload['init']
+        init_kwargs['process_output'] = False  # Force raw output mode for sharding
         shard = Pssh(**init_kwargs)
 
         try:
             # Direct operation calls - no registry needed!
             if operation == 'exec':
-                result = shard.exec(
-                    payload['cmd'], timeout=payload.get('timeout'), print_console=payload.get('print_console', False)
-                )
+                result = shard.exec(payload['cmd'], timeout=payload.get('timeout'), print_console=False)
             elif operation == 'cmd_list':
                 result = shard.exec_cmd_list(
                     payload['cmd_list'],
                     timeout=payload.get('timeout'),
-                    print_console=payload.get('print_console', False),
+                    print_console=False,
                 )
             elif operation == 'scp':
                 shard.scp_file(payload['local_file'], payload['remote_file'], recurse=payload.get('recurse', False))
