@@ -289,6 +289,38 @@ The `exec` command supports the following options:
 - `--cmd`: The shell command to execute on all nodes (required)
 - `--cluster_file`: Path to cluster configuration JSON file (optional if CLUSTER_FILE env var is set)
 
+## Managing SSH Host Keys
+
+CVS provides an `sshkeyscan` command to scan and update SSH host keys for all nodes in the cluster. This helps maintain proper SSH connectivity and avoids host verification warnings when connecting to cluster nodes.
+
+```bash
+# Scan and add SSH keys for all nodes (locally)
+cvs sshkeyscan --cluster_file /tmp/cvs/input/cluster_file/cluster.json
+
+# Scan from head node (useful for MPI/distributed jobs)
+cvs sshkeyscan --cluster_file /tmp/cvs/input/cluster_file/cluster.json --at head
+
+# Preview what would be done without making changes
+cvs sshkeyscan --at head --dry-run
+
+# Remove existing keys before scanning (clean slate)
+cvs sshkeyscan --at head --remove-existing
+
+# Use environment variable for cluster file
+CLUSTER_FILE=/tmp/cvs/input/cluster_file/cluster.json cvs sshkeyscan --at head
+
+# High concurrency scanning with custom known_hosts file
+cvs sshkeyscan --cluster_file cluster.json --parallel 50 --known_hosts /tmp/my_known_hosts
+```
+
+The `sshkeyscan` command supports the following options:
+- `--cluster_file`: Path to cluster configuration JSON file (optional if CLUSTER_FILE env var is set)
+- `--known_hosts`: Path to known_hosts file (default: ~/.ssh/known_hosts)
+- `--at`: Where to run the scan - 'local' (current node) or 'head' (head node from cluster)
+- `--parallel`: Number of parallel ssh-keyscan processes (default: 20)
+- `--remove-existing`: Remove existing host keys before scanning
+- `--dry-run`: Show what would be done without making changes
+
 ## Command Help
 
 ```bash
