@@ -72,7 +72,7 @@ RDMA-ready container; the keys below are only needed to extend or override.
 
 ## `launch` truth table (teardown semantics)
 
-`teardown_containers()` short-circuits in three cases per [`cvs/core/orchestrators/container.py`](../../core/orchestrators/container.py) (around line 439). This is pinned by the test `test_teardown_containers_short_circuits_when_launch_true` in [`cvs/core/unittests/test_orchestrator_layer.py`](../../core/unittests/test_orchestrator_layer.py).
+`teardown_containers()` short-circuits in three cases per [`cvs/core/orchestrators/container.py`](../../core/orchestrators/container.py) (around line 439). This is pinned by the test `test_teardown_containers_short_circuits_when_launch_true` in [`cvs/core/orchestrators/unittests/test_container.py`](../../core/orchestrators/unittests/test_container.py).
 
 | `enabled` | `launch` | `container_id` | Behavior |
 | --- | --- | --- | --- |
@@ -127,4 +127,4 @@ file changes. The `orch` fixture in [`cvs/tests/health/rvs_cvs.py`](../../tests/
 - [`cvs/core/orchestrators/factory.py`](../../core/orchestrators/factory.py) - canonical key list (`OrchestratorConfig.__init__` and `from_configs`).
 - [`cvs/core/orchestrators/container.py`](../../core/orchestrators/container.py) - `ContainerOrchestrator` implementation, `DEFAULT_CONTAINER_ARGS`, the `setup_containers` / `setup_sshd` / `teardown_containers` lifecycle.
 - [`cvs/tests/health/rvs_cvs.py`](../../tests/health/rvs_cvs.py) - the `orch` fixture that consumes this cluster file in test code.
-- [`cvs/core/unittests/test_orchestrator_layer.py`](../../core/unittests/test_orchestrator_layer.py) - the test suite that pins the schema and lifecycle behaviors documented above.
+- [`cvs/core/orchestrators/unittests/`](../../core/orchestrators/unittests/) - the test suite that pins the schema and lifecycle behaviors documented above (`test_factory.py`, `test_baremetal.py`, `test_container.py`).
