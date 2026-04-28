@@ -865,7 +865,7 @@ def rccl_perf(
         nic_type = 'ainic'
     elif re.search('broadcom|thor|bnxt', nic_model, re.I):
         nic_type = 'thor'
-    elif re.search('mellanox|cx|nvidia', nic_model, re.I):
+    elif re.search('mellanox|connectx|cx|nvidia', nic_model, re.I):
         nic_type = 'connectx'
     else:
         nic_type = 'ainic'
