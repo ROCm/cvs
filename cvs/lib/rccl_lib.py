@@ -548,7 +548,7 @@ def rccl_regression(
     for node in vpc_node_list:
         host_file_params = f'{host_file_params}{node} slots={proc_per_node}\n'
 
-    cmd = 'sudo rm -f /tmp/rccl_hosts_file.txt'
+    cmd = 'rm -f /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
     cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
@@ -722,7 +722,7 @@ def rccl_perf(
     for node in vpc_node_list:
         host_file_params = f'{host_file_params}' + f'{node} slots={proc_per_node}\n'
 
-    cmd = 'sudo rm -f /tmp/rccl_hosts_file.txt'
+    cmd = 'rm -f /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
     cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
