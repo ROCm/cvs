@@ -166,6 +166,24 @@ def convert_phdl_json_to_dict(dict_json):
     return out_dict
 
 
+def get_passwordless_sudo_status(phdl):
+    """
+    Return whether passwordless sudo is available on each node.
+
+    Parameters:
+      phdl: parallel SSH handle exposing exec(cmd) -> dict[node, output]
+
+    Returns:
+      dict[str, bool]: node -> True when `sudo -n true` succeeds.
+    """
+    out_dict = phdl.exec('sudo -n true >/dev/null 2>&1; echo $?')
+    sudo_status = {}
+    for node, output in out_dict.items():
+        last_line = output.strip().splitlines()[-1] if output.strip() else '1'
+        sudo_status[node] = last_line == '0'
+    return sudo_status
+
+
 def get_model_from_rocm_smi_output(smi_output):
     """
     Infer the GPU model identifier from a rocm-smi output snippet.
