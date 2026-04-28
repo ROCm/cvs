@@ -15,8 +15,7 @@ RCCL tests in CVS are split into a small set of focused workflows:
 2. `rccl_regression`  
    Regression suite with Cartesian product sweep. Uses `regression` object in JSON for NCCL/RCCL env variable combinations, or internal defaults.
 
-3. `rccl_singlenode_cvs`  
-   Single-node RCCL suite for local collective checks.
+**Single-node testing:** Configure a single-node cluster in your cluster JSON file and use the main suites above for single-node testing.
 
 4. `heatmap`  
    Standalone result-comparison suite. It generates a heatmap from two result JSON files and is reusable beyond RCCL-only flows.
@@ -36,7 +35,7 @@ All RCCL execution suites still collect host/network info and validate firewall 
 ```bash
 cvs list rccl_perf
 cvs list rccl_regression
-cvs list rccl_singlenode_cvs
+# Single-node testing via cluster config
 cvs list heatmap
 ```
 
@@ -86,22 +85,16 @@ cvs run rccl_regression \
 
 - **Keys** are real NCCL/RCCL environment variable names
 - **Values** are lists; CVS builds the Cartesian product
-- **Tree + collective rule**: `tree` is skipped for collectives other than `all_reduce_perf` (same as main's old `rccl_multinode_cvs`)
+- **Tree + collective rule**: `tree` is skipped for collectives other than `all_reduce_perf`
 - Missing `regression` or `{}` → single default case
 
 Example internal config: [`rccl_regression_internal.json`](rccl_regression_internal.json).
 
 Full design notes and a **from `main` rebuild** checklist: [RCCL_HANDOFF_FROM_MAIN.md](RCCL_HANDOFF_FROM_MAIN.md).
 
-### Single-node
+### Single-node testing
 
-```bash
-cvs run rccl_singlenode_cvs \
-  --cluster_file input/cluster_file/cluster.json \
-  --config_file input/config_file/rccl/single_node_mi355_rccl.json \
-  --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html \
-  --log-file=/tmp/rccl_singlenode.log -vvv -s
-```
+Single-node RCCL testing is achieved by using either `rccl_perf` or `rccl_regression` with a cluster configuration that contains only one node. The tests automatically adapt to single-node execution.
 
 ### Heatmap
 
@@ -166,4 +159,4 @@ The RCCL config keeps benchmark intent and validation settings, while RCCL/NCCL/
 - **Env staging**: `run_rccl` stages env scripts to `/tmp/cvs_rccl_env/` on all nodes with optional per-case overrides
 - **Regression cases**: Each combination in the Cartesian product gets its own result file suffix
 - **Single env dump**: Only `test_print_env_once` prints the environment; other tests focus on performance
-- **Tree filter**: Matches main's `rccl_multinode_cvs.py` behavior for algorithm restrictions
+- **Tree filter**: Algorithm restrictions apply to maintain compatibility
