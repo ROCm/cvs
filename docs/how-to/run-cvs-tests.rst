@@ -64,11 +64,9 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
     cvs.tests.platform (1 test suite)
       • host_configs_cvs
   
-    cvs.tests.rccl (4 test suites)
-      • rccl_heatmap_cvs
-      • rccl_multinode_cvs
-      • rccl_multinode_default_cvs
-      • rccl_singlenode_cvs
+    cvs.tests.rccl (2 test suites)
+      • rccl_perf
+      • rccl_regression
   
     cvs.tests.training.jax (3 test suites)
       • jax_llama3_1_405b_distributed
@@ -361,144 +359,70 @@ Note: Atleast two nodes are required to run IB Perf installation and tests.
 ROCm Communication Collectives Library (RCCL) test script
 ---------------------------------------------------------
 
-
-You can list all available RCCL multinode test cases using the CLI:
+You can list all available RCCL test cases using the CLI:
 
 .. code:: bash
 
-  cvs list rccl_multinode_cvs
+  cvs list rccl_perf
 
 .. code:: text
 
-  Available tests in rccl_multinode_cvs:
+  Available tests in rccl_perf:
     - test_collect_hostinfo
     - test_collect_networkinfo
     - test_disable_firewall
+    - test_gen_graph
+    - test_print_env_once
+    - test_rccl_perf[all_gather_perf]
+    - test_rccl_perf[all_reduce_perf]
+    - test_rccl_perf[alltoall_perf]
+    - test_rccl_perf[alltoallv_perf]
+    - test_rccl_perf[broadcast_perf]
+    - test_rccl_perf[gather_perf]
+    - test_rccl_perf[reduce_scatter_perf]
+    - test_rccl_perf[scatter_perf]
+    - test_rccl_perf[sendrecv_perf]
+
+.. code:: bash
+
+  cvs list rccl_regression
+
+.. code:: text
+
+  Available tests in rccl_regression:
+    - test_collect_hostinfo
+    - test_collect_networkinfo
+    - test_disable_firewall
+    - test_gen_graph
+    - test_print_env_once
     - test_rccl_perf
-    - test_gen_graph
-
-.. code:: bash
-
-  cvs list rccl_singlenode_cvs
-
-.. code:: text
-
-  Available tests in rccl_singlenode_cvs:
-    - test_collect_hostinfo
-    - test_collect_networkinfo
-    - test_disable_firewall
-    - test_gen_graph
-    - test_singlenode_perf[all_gather_perf]
-    - test_singlenode_perf[all_reduce_perf]
-    - test_singlenode_perf[alltoall_perf]
-    - test_singlenode_perf[alltoallv_perf]
-    - test_singlenode_perf[broadcast_perf]
-    - test_singlenode_perf[gather_perf]
-    - test_singlenode_perf[reduce_scatter_perf]
-    - test_singlenode_perf[scatter_perf]
-    - test_singlenode_perf[sendrecv_perf]
-
-.. code:: bash
-
-  cvs list rccl_multinode_default_cvs
-
-.. code:: text
-
-  Available tests in rccl_multinode_default_cvs:
-    - test_collect_hostinfo
-    - test_collect_networkinfo
-    - test_disable_firewall
-    - test_singlenode_perf[all_gather_perf]
-    - test_singlenode_perf[all_reduce_perf]
-    - test_singlenode_perf[alltoall_perf]
-    - test_singlenode_perf[alltoallv_perf]
-    - test_singlenode_perf[broadcast_perf]
-    - test_singlenode_perf[gather_perf]
-    - test_singlenode_perf[reduce_scatter_perf]
-    - test_singlenode_perf[scatter_perf]
-    - test_singlenode_perf[sendrecv_perf]
-    - test_gen_graph
-
-
-.. code:: bash
-
-  cvs list rccl_heatmap_cvs
-
-.. code:: text
-
-  Available tests in rccl_heatmap_cvs:
-
-    - test_collect_hostinfo
-    - test_collect_networkinfo
-    - test_disable_firewall
-    - test_rccl_perf
-    - test_gen_graph
-    - test_gen_heatmap  
-
-.. code:: bash
-
-  cvs list rccl_multinode_default_cvs
-
-.. code:: text
-
-  Available tests in rccl_multinode_default_cvs:
-    - test_collect_hostinfo
-    - test_collect_networkinfo
-    - test_disable_firewall
-    - test_rccl_perf
-    - test_gen_graph
-
-.. code:: bash
-
-  cvs list rccl_heatmap_cvs
-
-.. code:: text
-
-  Available tests in rccl_heatmap_cvs:
-    - test_collect_hostinfo
-    - test_collect_networkinfo
-    - test_disable_firewall
-    - test_rccl_perf
-    - test_gen_graph
-    - test_gen_heatmap
 
 Use these scripts to start RCCL tests with CVS:
 
-1. Run RCCL multinode parameter sweep:
+**Prerequisites: Environment Script Staging**
+
+Before running RCCL tests, ensure the environment script specified in ``env_source_script`` is available on all cluster nodes:
+
+- **With shared storage**: Place the environment script in a shared directory accessible from all nodes
+- **Without shared storage**: Use ``cvs scp`` to copy the environment script to all nodes. See :doc:`Copy files and directories to cluster nodes <copy-to-cluster>` for detailed instructions and examples.
+
+1. Run RCCL performance suite:
 
 .. code:: bash
 
-  cvs run rccl_multinode_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_multinode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_multinode.log -vvv -s
+  cvs run rccl_perf --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_perf.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_perf.log -vvv -s
 
-2. Run RCCL multinode with RCCL defaults:
-
-.. code:: bash
-
-  cvs run rccl_multinode_default_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_multinode_default.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_multinode_default.log -vvv -s
-
-3. Run RCCL single-node:
+2. Run RCCL regression suite:
 
 .. code:: bash
 
-  cvs run rccl_singlenode_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/single_node_mi355_rccl.json --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_singlenode.log -vvv -s
+  cvs run rccl_regression --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_regression.json --html=/var/www/html/cvs/rccl_regression.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_regression.log -vvv -s
 
-4. Run RCCL heatmap:
-
-.. code:: bash
-
-  cvs run rccl_heatmap_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_heatmap.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_heatmap.log -vvv -s
-
-You can run all RCCL multinode default tests using the CVS CLI:
+3. Generate RCCL performance heatmap:
 
 .. code:: bash
 
- cvs list rccl_multinode_default_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_singlenode_config.json --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_singlenode.log -vvv -s
-
-You can run all RCCL heatmap tests using the CVS CLI:
-
-.. code:: bash
-
- cvs list rccl_heatmap_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_singlenode_config.json --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_singlenode.log -vvv -s
+  cvs generate heatmap --actual /tmp/rccl_perf_results.json --reference /path/to/golden_reference.json --output /var/www/html/cvs/rccl_heatmap.html --title "RCCL Performance Comparison"
 
 
 JAX training test scripts
