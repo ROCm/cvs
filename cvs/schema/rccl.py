@@ -9,7 +9,8 @@ NonNegativeInt = Annotated[int, Field(ge=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
 NonNegativeFloat = Annotated[float, Field(ge=0.0)]
 Collective = Literal[
-    'AllReduce', 'AllGather', 'Scatter', 'Gather', 'ReduceScatter', 'SendRecv', 'AllToAll', 'AllToAllV', 'Broadcast'
+    'AllReduce', 'AllGather', 'Scatter', 'Gather', 'ReduceScatter', 'SendRecv', 'AllToAll', 'AllToAllV', 'Broadcast',
+    'Reduce', 'HyperCube',
 ]
 Type = Literal[
     'int8', 'int32', 'int64', 'uint8', 'uint32', 'uint64', 'float', 'double', 'half', 'bfloat16', 'fp8_e4m3', 'fp8_e5m2'
@@ -42,6 +43,8 @@ class RcclTests(BaseModel):
             'alltoall': 'AllToAll',  # Maps "AlltoAll" -> "AllToAll"
             'alltoallv': 'AllToAllV',
             'broadcast': 'Broadcast',
+            'reduce': 'Reduce',
+            'hypercube': 'HyperCube',
         }
 
         # Try exact match first
@@ -55,6 +58,8 @@ class RcclTests(BaseModel):
             'AllToAll',
             'AllToAllV',
             'Broadcast',
+            'Reduce',
+            'HyperCube',
         ]:
             return v
 

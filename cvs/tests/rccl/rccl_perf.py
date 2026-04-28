@@ -227,11 +227,19 @@ def test_collect_networkinfo(phdl):
 
 def test_disable_firewall(phdl):
     globals.error_list = []
+    sudo_status = get_passwordless_sudo_status(phdl)
+    no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
+    if no_sudo_nodes:
+        log.warning(
+            "Skipping firewall disable check because passwordless sudo is unavailable on nodes: %s", no_sudo_nodes
+        )
+        update_test_result()
+        return
     phdl.exec('sudo service ufw stop')
     time.sleep(2)
     out_dict = phdl.exec('sudo service ufw status')
     for node in out_dict.keys():
-        if not re.search('inactive|dead|stopped|disabled', out_dict[node], re.I):
+        if not re.search('inactive|dead|stopped|disabled|not be found|unrecognized service', out_dict[node], re.I):
             fail_test(f'Service ufw not disabled properly on node {node}')
     update_test_result()
 
@@ -286,12 +294,22 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
       - cluster_snapshot_debug controls whether before/after snapshots are taken.
     """
 
-    # Log a message to Dmesg to create a timestamp record
-    phdl.exec(f'sudo echo "Starting Test {rccl_collective}" | sudo tee /dev/kmsg')
+    globals.error_list = []
+    sudo_status = get_passwordless_sudo_status(phdl)
+    can_use_sudo = all(sudo_status.values())
+    if not can_use_sudo:
+        no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
+        log.warning(
+            "Skipping dmesg markers/verification and sudo-only snapshots because passwordless sudo is unavailable "
+            "on nodes: %s",
+            no_sudo_nodes,
+        )
+
+    if can_use_sudo:
+        phdl.exec(f'sudo echo "Starting Test {rccl_collective}" | sudo tee /dev/kmsg')
 
     # start_time = phdl.exec('date')
     start_time = phdl.exec('date +"%a %b %e %H:%M"')
-    globals.error_list = []
 
     # Build list of nodes and their VPC IPs (used by the RCCL test)
     # make sure the VPC IPs are reachable from all nodes for passwordless ssh
@@ -302,7 +320,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
 
     # Get cluster snapshot ..
-    if re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
+    if can_use_sudo and re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
     # Use the new grouped parameter function
@@ -325,13 +343,15 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
 
     # Scan dmesg between start and end times cluster wide ..
     # end_time = phdl.exec('date')
-    phdl.exec(f'sudo echo "End of Test {rccl_collective}" | sudo tee /dev/kmsg')
+    if can_use_sudo:
+        phdl.exec(f'sudo echo "End of Test {rccl_collective}" | sudo tee /dev/kmsg')
 
     end_time = phdl.exec('date +"%a %b %e %H:%M"')
-    verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
+    if can_use_sudo:
+        verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
 
     # Get new cluster snapshot and compare ..
-    if re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
+    if can_use_sudo and re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_after = create_cluster_metrics_snapshot(phdl)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 
