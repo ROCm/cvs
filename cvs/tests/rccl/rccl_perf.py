@@ -231,7 +231,7 @@ def test_disable_firewall(phdl):
     time.sleep(2)
     out_dict = phdl.exec('sudo service ufw status')
     for node in out_dict.keys():
-        if not re.search('inactive|dead|stopped|disabled', out_dict[node], re.I):
+        if not re.search('inactive|dead|stopped|disabled|not be found|unrecognized service', out_dict[node], re.I):
             fail_test(f'Service ufw not disabled properly on node {node}')
     update_test_result()
 
