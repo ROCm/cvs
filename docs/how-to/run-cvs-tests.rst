@@ -320,6 +320,10 @@ Use these scripts to start the test:
     
      cvs run rvs_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
 
+.. note::
+
+  RVS additionally supports running inside a per-host container instead of on the host filesystem. Pass a ``cluster_container.json`` cluster file with ``orchestrator: container`` to route ``rvs`` invocations through the container backend. See :doc:`/how-to/run-with-containers`.
+
 InfiniBand (IB Perf) test script
 --------------------------------
 
