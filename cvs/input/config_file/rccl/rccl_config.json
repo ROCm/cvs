@@ -26,6 +26,7 @@
             "data_types": ["float"]
         },
 
+        "_comment_cvs_params": "The rccl_result_file.json will be appended by rccl_test_params.data_types. When it's float the file name will be rccl_result_file_float.json on the head node.",
         "cvs_params": {
             "cluster_snapshot_debug": "False",
             "_comment_nic_model": "Set nic_model for validations (eg., 'thor' , 'ainic', 'connectx')",
