@@ -14,6 +14,23 @@ and pass the result to `cvs run`.
 The choice is made entirely in the cluster file. The `cvs run ...` invocation
 does not change.
 
+## Scope today
+
+The orchestrator and its container backend are wired through a focused entry
+point. Today, only the surfaces below honor the `orchestrator` key and the
+`container` block:
+
+| Surface | Honors `orchestrator: container`? | Notes |
+| --- | --- | --- |
+| `cvs run rvs_cvs` | Yes | Lifecycle is owned by the `orch` fixture in [`cvs/tests/health/rvs_cvs.py`](../../tests/health/rvs_cvs.py). |
+| All other `cvs run <suite>` | No | Other suites have not been migrated to the orchestrator yet and run on the host filesystem. |
+| `cvs exec` | No | Always runs the command on the host via parallel SSH, regardless of the `orchestrator` value. Useful for verifying container state from outside (e.g. `sudo docker ps`). |
+| Custom Python scripts | Yes (escape hatch) | Use `OrchestratorConfig.from_configs(...)` and `OrchestratorFactory.create_orchestrator(...)` directly. See [`cvs/core/orchestrators/factory.py`](../../core/orchestrators/factory.py). |
+
+If you want a non-RVS suite to support the container backend, that work is
+tracked separately as a per-suite migration; this PR does not change those
+suites.
+
 ## When to use container mode
 
 - Reproducibility: the test environment is the image, byte-for-byte across nodes
