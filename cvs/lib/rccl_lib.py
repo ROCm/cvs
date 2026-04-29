@@ -830,8 +830,9 @@ def rccl_perf(
             raise RuntimeError(f'RCCL Test {dtype} schema validation failed') from e
 
     # Save the results to a main result file
-    with open(rccl_result_file, 'w') as f:
-        json.dump(all_raw_results, f, indent=2)
+    json_string = json.dumps(all_raw_results, indent=2)
+    cmd = f"cat > {rccl_result_file} << 'EOF'\n{json_string}\nEOF"
+    shdl.exec(cmd)
     log.info(f'Saved combined results from all data types to {rccl_result_file}')
 
     # Validate the results against the schema and aggregate if multiple results are found, fail if results are not valid
@@ -842,8 +843,9 @@ def rccl_perf(
             log.info(f'Aggregation passed: {len(aggregated_rccl_tests)} RcclTestsAggregated schema validation passed')
             # Note: currently we are saving the aggregated results, but we could instead use this for final report generation
             aggregated_path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
-            with open(aggregated_path, 'w') as f:
-                json.dump([result.model_dump() for result in aggregated_rccl_tests], f, indent=2)
+            json_string = json.dumps([result.model_dump() for result in aggregated_rccl_tests], indent=2)
+            cmd = f"cat > {aggregated_path} << 'EOF'\n{json_string}\nEOF"
+            shdl.exec(cmd)
             log.info(f'Saved aggregated results to {aggregated_path}')
         else:
             log.warning('Aggregation skipped: only one run found')
