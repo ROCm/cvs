@@ -12,6 +12,12 @@ import json
 
 
 from cvs.lib.parallel_ssh_lib import *
+from cvs.lib.transferbench_ssh_helpers import (
+    assert_container_running,
+    docker_opts_from_config,
+    docker_spec_for_ssh_hosts,
+    log_transferbench_docker_resolution,
+)
 from cvs.lib.utils_lib import *
 
 from cvs.lib import globals
@@ -216,7 +222,7 @@ def phdl(cluster_dict):
     return phdl
 
 
-def test_install_transferbench(phdl, shdl, config_dict):
+def test_install_transferbench(phdl, shdl, config_dict, cluster_dict):
     """
     Install/Build TransferBench and verify installation on all nodes.
 
@@ -236,12 +242,50 @@ def test_install_transferbench(phdl, shdl, config_dict):
     Args:
       hdl: Head-node SSH handle
       phdl: Parallel SSH handle for all nodes.
+      cluster_dict (dict): Cluster config (optional Docker keys: transferbench_use_docker,
+        transferbench_container_id).
       config_dict (dict): Includes:
         - git_install_path: directory to clone/build
         - git_url: repository URL
+        - use_docker / container_id (optional): when enabled, build runs inside that container on each node.
+
     """
 
     globals.error_list = []
+
+    node_list = list(cluster_dict['node_dict'].keys())
+
+    use_docker, container_spec = docker_opts_from_config(config_dict, cluster_dict, host_list=node_list)
+    log_transferbench_docker_resolution(
+        log,
+        'install_transferbench',
+        use_docker,
+        container_spec,
+        config_dict,
+        cluster_dict,
+        info_always=True,
+    )
+
+    if use_docker:
+        assert_container_running(phdl, container_spec)
+        env_vars = cluster_dict.get('env_vars')
+        head_node = node_list[0]
+        phdl = Pssh(
+            log,
+            node_list,
+            user=cluster_dict['username'],
+            pkey=cluster_dict['priv_key_file'],
+            env_vars=env_vars,
+            docker_container_id=docker_spec_for_ssh_hosts(container_spec, node_list),
+        )
+        shdl = Pssh(
+            log,
+            [head_node],
+            user=cluster_dict['username'],
+            pkey=cluster_dict['priv_key_file'],
+            env_vars=env_vars,
+            docker_container_id=docker_spec_for_ssh_hosts(container_spec, [head_node]),
+        )
 
     # For install case, if the systems are using NFS, use single connection to
     if config_dict['nfs_install'] is True:

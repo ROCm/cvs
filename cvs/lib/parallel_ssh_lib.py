@@ -9,6 +9,7 @@ from __future__ import print_function
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError, SessionError
 
+import shlex
 import time
 
 # Following used only for scp of file
@@ -25,6 +26,15 @@ class Pssh:
 
     Input host_config should be in this format ..
     mandatory args =  user, password (or) 'private_key': load_private_key('my_key.pem')
+
+    ``docker_container_id`` may be:
+
+    - A **string**: same container ID used on every host (only valid if that ID exists on each daemon).
+    - A **dict** mapping each SSH host key to that host's container ID (required when IDs differ per node).
+
+    Commands from ``exec`` / ``exec_cmd_list`` run inside the container (``docker exec ... bash -lc ...``).
+    Use IDs from ``docker ps`` on **each** node; IMAGE column values are not valid.
+    Connectivity checks, scp_file, and reboot_connections remain host-level.
     """
 
     def __init__(
@@ -37,6 +47,7 @@ class Pssh:
         host_key_check=False,
         stop_on_errors=True,
         env_vars=None,
+        docker_container_id=None,
     ):
         self.log = log
         self.host_list = host_list
@@ -47,6 +58,7 @@ class Pssh:
         self.host_key_check = host_key_check
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
+        self.docker_container_id = docker_container_id
         self.env_prefix = build_env_prefix(env_vars)
         self.log.debug(f"Environ vars: {self.env_prefix}")
 
@@ -100,6 +112,10 @@ class Pssh:
             self.unreachable_hosts.append(host)
             self.reachable_hosts.remove(host)
         if len(self.unreachable_hosts) > initial_unreachable_len:
+            if isinstance(self.docker_container_id, dict):
+                self.docker_container_id = {
+                    h: self.docker_container_id[h] for h in self.reachable_hosts if h in self.docker_container_id
+                }
             # Recreate client with filtered reachable_hosts, only if hosts were actually pruned
             if self.password is None:
                 self.client = ParallelSSHClient(
@@ -165,6 +181,19 @@ class Pssh:
 
         return cmd_output
 
+    def _docker_exec_wrap(self, host, full_cmd):
+        """Wrap ``full_cmd`` for ``docker exec`` on ``host`` using string or per-host ID map."""
+        cid = self.docker_container_id
+        if not cid:
+            return full_cmd
+        if isinstance(cid, dict):
+            ref = cid.get(host)
+            if ref is None:
+                raise ValueError('docker_container_id has no entry for host %r' % (host,))
+        else:
+            ref = cid
+        return 'docker exec -i {} bash -lc {}'.format(shlex.quote(ref), shlex.quote(full_cmd))
+
     def _handle_timeout_exception(self, output, e):
         """
         Helper method to handle Timeout exceptions by setting exceptions for all hosts in output.
@@ -184,16 +213,83 @@ class Pssh:
         else:
             full_cmd = cmd
 
-        self.log.info(f'cmd = {full_cmd}')
+        dcid = self.docker_container_id
+        if not dcid:
+            remote_cmds = full_cmd
+            self.log.info(f'cmd = {full_cmd}')
+            if self.log:
+                if timeout is not None:
+                    self.log.debug(
+                        f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
+                    )
+                else:
+                    self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
+            if timeout is None:
+                output = self.client.run_command(remote_cmds, stop_on_errors=self.stop_on_errors)
+            else:
+                output = self.client.run_command(remote_cmds, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
+            cmd_output = self._process_output(output, cmd=full_cmd, print_console=print_console)
+        elif isinstance(dcid, str):
+            remote_cmds = self._docker_exec_wrap(self.reachable_hosts[0], full_cmd)
+            self.log.info(f'cmd = {remote_cmds}')
+            if self.log:
+                if timeout is not None:
+                    self.log.debug(
+                        f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {remote_cmds}"
+                    )
+                else:
+                    self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {remote_cmds}")
+            if timeout is None:
+                output = self.client.run_command(remote_cmds, stop_on_errors=self.stop_on_errors)
+            else:
+                output = self.client.run_command(remote_cmds, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
+            cmd_output = self._process_output(output, cmd=remote_cmds, print_console=print_console)
+        else:
+            remote_cmds = [self._docker_exec_wrap(h, full_cmd) for h in self.reachable_hosts]
+            self.log.info(f'cmd (per-host docker exec) = {remote_cmds}')
+            if self.log:
+                if timeout is not None:
+                    self.log.debug(
+                        f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]"
+                    )
+                else:
+                    self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s)")
+            if timeout is None:
+                output = self.client.run_command('%s', host_args=remote_cmds, stop_on_errors=self.stop_on_errors)
+            else:
+                output = self.client.run_command(
+                    '%s', host_args=remote_cmds, read_timeout=timeout, stop_on_errors=self.stop_on_errors
+                )
+            cmd_output = self._process_output(output, cmd=remote_cmds[0] if remote_cmds else full_cmd, print_console=print_console)
 
-        # Log command execution
+        # Log per-host execution completion
+        if self.log:
+            for host in cmd_output.keys():
+                self.log.debug(f"Command completed on {host}: {cmd}")
+
+        return cmd_output
+
+    def exec_host(self, cmd, timeout=None, print_console=True):
+        """
+        Run a command on the SSH session target host without docker exec wrapping.
+
+        Use when ``docker_container_id`` is set but the command must run on the bare-metal host
+        (e.g. ``docker inspect``, ``docker ps``).
+        """
+        if self.env_prefix:
+            full_cmd = f"{self.env_prefix} ; {cmd}"
+        else:
+            full_cmd = cmd
+
+        self.log.info(f'cmd (host) = {full_cmd}')
+
         if self.log:
             if timeout is not None:
                 self.log.debug(
-                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
+                    f"Executing host command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
                 )
             else:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
+                self.log.debug(f"Executing host command on {len(self.reachable_hosts)} host(s): {full_cmd}")
 
         if timeout is None:
             output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
@@ -201,10 +297,40 @@ class Pssh:
             output = self.client.run_command(full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
         cmd_output = self._process_output(output, cmd=full_cmd, print_console=print_console)
 
-        # Log per-host execution completion
         if self.log:
             for host in cmd_output.keys():
-                self.log.debug(f"Command completed on {host}: {cmd}")
+                self.log.debug(f"Host command completed on {host}: {cmd}")
+
+        return cmd_output
+
+    def exec_host_cmd_list(self, cmd_list, timeout=None, print_console=True):
+        """
+        Run a distinct host shell command per host (parallel), without docker exec wrapping.
+        """
+        if self.env_prefix:
+            cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
+        else:
+            cmd_list = list(cmd_list)
+
+        self.log.info("%s", cmd_list)
+
+        if self.log:
+            if timeout is not None:
+                self.log.debug(f"Executing host cmd list on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]")
+            else:
+                self.log.debug(f"Executing host cmd list on {len(self.reachable_hosts)} host(s)")
+
+        if timeout is None:
+            output = self.client.run_command('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
+        else:
+            output = self.client.run_command(
+                '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors
+            )
+        cmd_output = self._process_output(output, cmd_list=cmd_list, print_console=print_console)
+
+        if self.log:
+            for host, cmd in zip(self.reachable_hosts, cmd_list):
+                self.log.debug(f"Host command on {host}: {cmd}")
 
         return cmd_output
 
@@ -217,7 +343,17 @@ class Pssh:
         if self.env_prefix:
             cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
         else:
-            cmd_list = cmd_list
+            cmd_list = list(cmd_list)
+
+        dcid = self.docker_container_id
+        if not dcid:
+            pass
+        elif isinstance(dcid, str):
+            cmd_list = [self._docker_exec_wrap(self.reachable_hosts[0], c) for c in cmd_list]
+        else:
+            cmd_list = [
+                self._docker_exec_wrap(self.reachable_hosts[i], c) for i, c in enumerate(cmd_list)
+            ]
 
         self.log.info("%s", cmd_list)
 

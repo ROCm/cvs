@@ -13,6 +13,14 @@ import json
 
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
+from cvs.lib.transferbench_ssh_helpers import (
+    assert_container_running,
+    docker_opts_from_config,
+    docker_spec_for_ssh_hosts,
+    log_transferbench_docker_resolution,
+    remote_exec,
+    resolve_transferbench_executable,
+)
 
 from cvs.lib import globals
 
@@ -56,41 +64,50 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-def detect_rocm_path(phdl, config_rocm_path):
+def detect_rocm_path(phdl, config_rocm_path, use_docker=False, container_id=None):
     """
     Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
+
     Args:
         phdl: Parallel SSH handle
         config_rocm_path (str): Configured ROCm path from config file (empty string for auto-detect)
+        use_docker: If True, probe paths inside the container via docker exec.
+        container_id: Docker container ID (required when ``use_docker`` is True).
+
     Returns:
         str: Detected ROCm path
     """
     # If rocm_path is explicitly configured, validate and use it
     if config_rocm_path and config_rocm_path != '<changeme>':
-        # Validate the configured path exists
-        out_dict = phdl.exec(
-            f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+        out_dict = remote_exec(
+            phdl,
+            f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1',
+            use_docker,
+            container_id,
         )
         for node, output in out_dict.items():
             if output.strip() and 'libamdhip64.so' in output:
                 log.info(f'Using configured ROCm path: {config_rocm_path} (validated)')
                 return config_rocm_path
-            else:
-                log.warning(
-                    f'Configured ROCm path {config_rocm_path} does not contain required libraries, will auto-detect'
-                )
+        log.warning(
+            f'Configured ROCm path {config_rocm_path} does not contain required libraries, will auto-detect'
+        )
 
     # Auto-detect ROCm path
     log.info('Auto-detecting ROCm path...')
 
     # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
-    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    out_dict = remote_exec(
+        phdl, 'ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1', use_docker, container_id
+    )
     for node, output in out_dict.items():
         if output and '/opt/rocm/core-' in output:
             rocm_path = output.strip()
-            # Validate it has the library
-            validate_dict = phdl.exec(
-                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+            validate_dict = remote_exec(
+                phdl,
+                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1',
+                use_docker,
+                container_id,
             )
             for _, lib_output in validate_dict.items():
                 if lib_output.strip() and 'libamdhip64.so' in lib_output:
@@ -98,15 +115,42 @@ def detect_rocm_path(phdl, config_rocm_path):
                     return rocm_path
 
     # Fall back to legacy /opt/rocm
-    out_dict = phdl.exec('test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1')
+    out_dict = remote_exec(
+        phdl,
+        'test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1',
+        use_docker,
+        container_id,
+    )
     for node, output in out_dict.items():
         if output.strip() and 'libamdhip64.so' in output:
             log.info('Detected ROCm path (legacy layout): /opt/rocm')
             return '/opt/rocm'
 
-    # If nothing found, default to /opt/rocm (will fail gracefully later)
     log.warning('Could not detect ROCm path with required libraries, defaulting to /opt/rocm')
     return '/opt/rocm'
+
+
+def _run_transferbench_cmd(phdl, config_dict, transferbench_tail, timeout_sec, cluster_dict=None):
+    """
+    Run ``TransferBench`` with ``LD_LIBRARY_PATH`` including ``rocm_path/lib``.
+
+    Args:
+        transferbench_tail: Arguments after the binary (e.g. ``a2a`` or ``path/example.cfg``).
+        cluster_dict: Optional cluster JSON (enables ``transferbench_use_docker`` / ``transferbench_container_id``).
+    """
+    use_docker, container_spec = docker_opts_from_config(
+        config_dict, cluster_dict, host_list=phdl.host_list
+    )
+    log_transferbench_docker_resolution(
+        log, 'transferbench_cvs', use_docker, container_spec, config_dict, cluster_dict
+    )
+    if use_docker:
+        assert_container_running(phdl, container_spec)
+    tb_exe = resolve_transferbench_executable(config_dict)
+    log.info('TransferBench binary: %s', tb_exe)
+    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''), use_docker, container_spec)
+    inner_cmd = f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {tb_exe} {transferbench_tail}'"
+    return remote_exec(phdl, inner_cmd, use_docker, container_spec, timeout=timeout_sec)
 
 
 def parse_tb_a2a_bw(out_dict, exp_dict):
@@ -302,25 +346,36 @@ def parse_tb_example_test_results(out_dict, exp_dict):
 
 
 @pytest.fixture(scope="module")
-def phdl(cluster_dict):
+def phdl(cluster_dict, config_dict):
+    """
+    Parallel SSH handle. When ``transferbench.use_docker`` (or cluster transferbench_use_docker)
+    is true, attach ``docker_container_id`` so commands run **inside** the container — paths like
+    ``/workspace/...`` exist there; bare SSH runs on the host and those paths usually do not.
+    """
     log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
+    use_docker, container_spec = docker_opts_from_config(
+        config_dict, cluster_dict, host_list=node_list
+    )
+    kw = dict(
+        log=log,
+        host_list=node_list,
+        user=cluster_dict['username'],
+        pkey=cluster_dict['priv_key_file'],
+        env_vars=env_vars,
+    )
+    if use_docker:
+        kw['docker_container_id'] = docker_spec_for_ssh_hosts(container_spec, node_list)
+    return Pssh(**kw)
 
 
-def test_transfer_bench_example_tests_1_6_t(phdl, config_dict):
+def test_transfer_bench_example_tests_1_6_t(phdl, config_dict, cluster_dict):
     globals.error_list = []
     log.info('Testcase Run TransferBench example tests 1-6')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
     log.info("%s", config_dict)
     example_path = config_dict['example_tests_path']
-    out_dict = phdl.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench {example_path}/example.cfg'",
-        timeout=(60 * 5),
-    )
+    out_dict = _run_transferbench_cmd(phdl, config_dict, f'{example_path}/example.cfg', 60 * 5, cluster_dict)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     parse_tb_example_test_results(out_dict, config_dict['results']['example_results'])
@@ -330,15 +385,11 @@ def test_transfer_bench_example_tests_1_6_t(phdl, config_dict):
 def test_transfer_bench_a2a(
     phdl,
     config_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench a2a')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench a2a'",
-        timeout=(60 * 5),
-    )
+    out_dict = _run_transferbench_cmd(phdl, config_dict, 'a2a', 60 * 5, cluster_dict)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     parse_tb_a2a_bw(out_dict, config_dict['results'])
@@ -349,16 +400,13 @@ def test_transfer_bench_a2a(
 def test_transfer_bench_p2p(
     phdl,
     config_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench p2p')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench p2p'",
-        timeout=(60 * 5),
-    )
+    out_dict = _run_transferbench_cmd(phdl, config_dict, 'p2p', 60 * 5, cluster_dict)
     print_test_output(log, out_dict)
+    scan_test_results(out_dict)
     parse_tb_p2p_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
     update_test_result()
@@ -367,15 +415,11 @@ def test_transfer_bench_p2p(
 def test_transfer_bench_healthcheck(
     phdl,
     config_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench healthcheck')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench healthcheck'",
-        timeout=(60 * 2),
-    )
+    out_dict = _run_transferbench_cmd(phdl, config_dict, 'healthcheck', 60 * 2, cluster_dict)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     update_test_result()
@@ -384,15 +428,11 @@ def test_transfer_bench_healthcheck(
 def test_transfer_bench_a2asweep(
     phdl,
     config_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench a2asweep')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench a2asweep'",
-        timeout=(60 * 10),
-    )
+    out_dict = _run_transferbench_cmd(phdl, config_dict, 'a2asweep', 60 * 10, cluster_dict)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     update_test_result()
@@ -401,15 +441,11 @@ def test_transfer_bench_a2asweep(
 def test_transfer_bench_scaling(
     phdl,
     config_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench scaling')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench scaling'",
-        timeout=(60 * 10),
-    )
+    out_dict = _run_transferbench_cmd(phdl, config_dict, 'scaling', 60 * 10, cluster_dict)
     print_test_output(log, out_dict)
     parse_tb_scaling_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
@@ -419,15 +455,11 @@ def test_transfer_bench_scaling(
 def test_transfer_bench_schmoo(
     phdl,
     config_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench schmoo')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench schmoo'",
-        timeout=(60 * 5),
-    )
+    out_dict = _run_transferbench_cmd(phdl, config_dict, 'schmoo', 60 * 5, cluster_dict)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     parse_tb_schmoo_bw(out_dict, config_dict['results'])

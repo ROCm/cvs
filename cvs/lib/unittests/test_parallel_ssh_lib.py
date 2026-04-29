@@ -1,3 +1,4 @@
+import shlex
 import unittest
 from unittest.mock import patch, MagicMock
 from cvs.lib.parallel_ssh_lib import Pssh
@@ -716,6 +717,78 @@ class TestPsshExecCmdList(unittest.TestCase):
             self.assertNotIn("host1 output line2", call)
             self.assertNotIn("host1 error line1", call)
             self.assertNotIn("host2 output line1", call)
+
+
+class TestPsshDockerExec(unittest.TestCase):
+    """Commands run via docker exec when docker_container_id is set."""
+
+    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    def setUp(self, mock_pssh_client):
+        self.mock_client = MagicMock()
+        mock_pssh_client.return_value = self.mock_client
+        self.host_list = ["host1", "host2"]
+        self.mock_log = MagicMock()
+        self.container_id = "c6085078e85b"
+        self.pssh = Pssh(
+            self.mock_log,
+            self.host_list,
+            user="user",
+            password="pass",
+            docker_container_id=self.container_id,
+        )
+
+    def _expected_wrapped(self, inner_cmd):
+        return "docker exec -i {} bash -lc {}".format(shlex.quote(self.container_id), shlex.quote(inner_cmd))
+
+    def test_exec_wraps_command_with_docker_exec(self):
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["x"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = ["y"]
+        mock_output2.stderr = []
+        mock_output2.exception = None
+        self.mock_client.run_command.return_value = [mock_output1, mock_output2]
+
+        self.pssh.exec("echo hello")
+
+        self.mock_client.run_command.assert_called_once_with(
+            self._expected_wrapped("echo hello"), stop_on_errors=True
+        )
+
+    def test_exec_cmd_list_wraps_each_command(self):
+        inner = ["echo a", "echo b"]
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["a"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = ["b"]
+        mock_output2.stderr = []
+        mock_output2.exception = None
+        self.mock_client.run_command.return_value = [mock_output1, mock_output2]
+
+        self.pssh.exec_cmd_list(inner)
+
+        wrapped = [self._expected_wrapped(c) for c in inner]
+        self.mock_client.run_command.assert_called_once_with("%s", host_args=wrapped, stop_on_errors=True)
+
+    def test_exec_host_skips_docker_wrap(self):
+        mock_output = MagicMock()
+        mock_output.host = "host1"
+        mock_output.stdout = []
+        mock_output.stderr = []
+        mock_output.exception = None
+        self.mock_client.run_command.return_value = [mock_output]
+
+        self.pssh.exec_host('docker ps')
+
+        self.mock_client.run_command.assert_called_once_with('docker ps', stop_on_errors=True)
 
 
 if __name__ == "__main__":

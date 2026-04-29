@@ -13,6 +13,12 @@ import json
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
+from cvs.lib.transferbench_ssh_helpers import (
+    assert_container_running,
+    docker_opts_from_rvs_config,
+    docker_spec_for_ssh_hosts,
+    log_rvs_docker_resolution,
+)
 
 from cvs.lib import globals
 
@@ -212,7 +218,7 @@ def phdl(cluster_dict):
 
 
 @pytest.mark.dependency(name="init")
-def test_install_rvs(phdl, shdl, config_dict):
+def test_install_rvs(phdl, shdl, config_dict, cluster_dict):
     """
     Install/Build ROCmValidationSuite (RVS) and verify installation on all nodes.
 
@@ -228,6 +234,10 @@ def test_install_rvs(phdl, shdl, config_dict):
     that is accessible from all the nodes and installs from just a single node, otherwise install on
     all the nodes.
 
+    Docker (same pattern as install_transferbench): set ``rvs.use_docker`` and ``rvs.container_id`` /
+    ``container_id_by_node``, optionally cluster ``rvs_use_docker``, env ``CVS_RVS_USE_DOCKER``.
+    Commands run inside the container via ``docker exec`` so paths like ``/workspace/...`` resolve.
+
     Args:
       phdl: Parallel SSH handle for all nodes.
       shdl: Head-node SSH handle
@@ -236,8 +246,43 @@ def test_install_rvs(phdl, shdl, config_dict):
         - git_url: repository URL
         - path: expected installation path for RVS binary
         - nfs_install: whether to use NFS-shared installation
+      cluster_dict (dict): Optional ``rvs_use_docker``, per-node ``rvs_container_id``.
     """
     globals.error_list = []
+
+    node_list = list(cluster_dict['node_dict'].keys())
+
+    use_docker, container_spec = docker_opts_from_rvs_config(config_dict, cluster_dict, host_list=node_list)
+    log_rvs_docker_resolution(
+        log,
+        'install_rvs',
+        use_docker,
+        container_spec,
+        config_dict,
+        cluster_dict,
+        info_always=True,
+    )
+
+    if use_docker:
+        assert_container_running(phdl, container_spec)
+        env_vars = cluster_dict.get('env_vars')
+        head_node = node_list[0]
+        phdl = Pssh(
+            log,
+            node_list,
+            user=cluster_dict['username'],
+            pkey=cluster_dict['priv_key_file'],
+            env_vars=env_vars,
+            docker_container_id=docker_spec_for_ssh_hosts(container_spec, node_list),
+        )
+        shdl = Pssh(
+            log,
+            [head_node],
+            user=cluster_dict['username'],
+            pkey=cluster_dict['priv_key_file'],
+            env_vars=env_vars,
+            docker_container_id=docker_spec_for_ssh_hosts(container_spec, [head_node]),
+        )
 
     # For install case, if the systems are using NFS, use single connection to head node
     if config_dict['nfs_install'] is True:
@@ -321,7 +366,7 @@ def test_install_rvs(phdl, shdl, config_dict):
         # detected rocm_path is /opt/rocm/core-X.Y (new layout), causing path mismatches.
         if package_installed:
             verify_bin = phdl.exec(
-                f'which rvs 2>/dev/null || ls {rocm_path}/bin/rvs 2>/dev/null || ls /opt/rocm/bin/rvs 2>/dev/null',
+                f'which rvs 2>/dev/null || ls {config_dict["path"]} 2>/dev/null || ls /opt/rocm/bin/rvs 2>/dev/null',
                 timeout=60,
             )
             rvs_bin_found = False
