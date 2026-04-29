@@ -26,6 +26,8 @@ subtrees:
     title: Test configuration files
     subtrees:
     - entries:
+      - file: reference/configuration-files/cluster-file
+        title: Cluster file
       - file: reference/configuration-files/platform
         title: Platform
       - file: reference/configuration-files/health
