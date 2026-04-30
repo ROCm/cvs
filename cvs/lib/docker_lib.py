@@ -46,7 +46,7 @@ def kill_docker_container(phdl, container_name):
 
 def delete_all_containers_and_volumes(phdl):
     # out_dict = phdl.exec('docker rm -vf $(docker ps -aq)')
-    print('Deleting all containers and volumes')
+    log.info('Deleting all containers and volumes')
     # out_dict = phdl.exec('docker system prune -a --volumes --force', timeout=60*10)
     phdl.exec('docker system prune --force', timeout=60 * 10)
 
@@ -120,7 +120,7 @@ def launch_docker_container(
     cmd = cmd + f' --shm-size {shm_size} --name {container_name} {image} '
     cmd = cmd + 'tail -f /dev/null'
 
-    print(f'cmd = {cmd}')
+    log.info(f'cmd = {cmd}')
     out_dict = phdl.exec(cmd, timeout=timeout)
     time.sleep(15)
 

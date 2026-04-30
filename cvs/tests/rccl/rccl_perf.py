@@ -87,7 +87,7 @@ def cluster_dict(cluster_file):
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -113,7 +113,7 @@ def config_dict(config_file, cluster_dict):
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    log.info(config_dict)
+    log.info("%s", config_dict)
     return config_dict
 
 
@@ -137,7 +137,7 @@ def phdl(cluster_dict):
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
       - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -236,6 +236,17 @@ def test_disable_firewall(phdl):
     update_test_result()
 
 
+def test_print_env_once(phdl, shdl, config_dict):
+    """Single test to print environment script - don't dump env in every test."""
+    globals.error_list = []
+    env_script = config_dict.get('env_source_script', '/dev/null')
+    if env_script and str(env_script).lower() != 'none':
+        # Cat the env script file to show its contents
+        cmd = f'echo === Environment Script: {env_script} === && cat {env_script}'
+        shdl.exec(cmd)
+    update_test_result()
+
+
 # Change this to choose what collectives to run ..
 @pytest.mark.parametrize(
     "rccl_collective",
@@ -281,67 +292,34 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     # start_time = phdl.exec('date')
     start_time = phdl.exec('date +"%a %b %e %H:%M"')
     globals.error_list = []
-    node_list = list(cluster_dict['node_dict'].keys())
 
     # Build list of nodes and their VPC IPs (used by the RCCL test)
     # make sure the VPC IPs are reachable from all nodes for passwordless ssh
     # otherwise use the regular mgmt-ip if that is reachable.
+    node_list = list(cluster_dict['node_dict'].keys())
     vpc_node_list = []
-    for node in list(cluster_dict['node_dict'].keys()):
+    for node in node_list:
         vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
 
     # Get cluster snapshot ..
-    if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
+    if re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
-    # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
-    if not re.search('None', config_dict['env_source_script'], re.I):
-        phdl.exec(f"bash {config_dict['env_source_script']}")
-        shdl.exec(f"bash {config_dict['env_source_script']}")
-
-    # Execute the RCCL cluster test with parameters sourced from config_dict
-    result_dict = rccl_lib.rccl_cluster_test_default(
+    # Use the new grouped parameter function
+    env_script = config_dict.get('env_source_script', '/dev/null')
+    result_dict = rccl_lib.rccl_perf(
         phdl,
         shdl,
-        test_name=rccl_collective,
-        cluster_node_list=node_list,
-        vpc_node_list=vpc_node_list,
-        user_name=cluster_dict['username'],
-        ib_hca_list=config_dict['ib_hca_list'],
-        net_dev_list=config_dict['net_dev_list'],
-        oob_port=config_dict['oob_port'],
-        no_of_global_ranks=config_dict['no_of_global_ranks'],
-        rocm_path_var=config_dict['rocm_path_var'],
-        mpi_dir=config_dict['mpi_dir'],
-        mpi_path_var=config_dict['mpi_path_var'],
-        rccl_dir=config_dict['rccl_dir'],
-        rccl_path_var=config_dict['rccl_path_var'],
-        rccl_tests_dir=config_dict['rccl_tests_dir'],
-        nccl_socket_ifname=config_dict.get('nccl_socket_ifname', ''),
-        gid_index=config_dict['gid_index'],
-        start_msg_size=config_dict['start_msg_size'],
-        end_msg_size=config_dict['end_msg_size'],
-        step_function=config_dict['step_function'],
-        threads_per_gpu=config_dict['threads_per_gpu'],
-        warmup_iterations=config_dict['warmup_iterations'],
-        no_of_iterations=config_dict['no_of_iterations'],
-        no_of_cycles=config_dict['no_of_cycles'],
-        check_iteration_count=config_dict['check_iteration_count'],
-        debug_level=config_dict['debug_level'],
-        rccl_result_file=config_dict['rccl_result_file'],
-        no_of_local_ranks=config_dict['no_of_local_ranks'],
-        ucx_tls=config_dict['ucx_tls'],
-        nccl_net_plugin=config_dict['nccl_net_plugin'],
-        mpi_pml=config_dict.get('mpi_pml', 'auto'),
-        user_key_file=cluster_dict['priv_key_file'],
-        verify_bus_bw=config_dict['verify_bus_bw'],
-        verify_bw_dip=config_dict['verify_bw_dip'],
-        verify_lat_dip=config_dict['verify_lat_dip'],
-        exp_results_dict=config_dict['results'],
-        env_source_script=config_dict['env_source_script'],
+        rccl_collective,
+        env_script,
+        config_dict['mpi_params'],
+        config_dict['rccl_test_params'],
+        config_dict['cvs_params'],
+        node_list,
+        vpc_node_list,
     )
 
-    print(result_dict)
+    log.info("%s", result_dict)
     key_name = f'{rccl_collective}'
     rccl_res_dict[key_name] = result_dict
 
@@ -353,7 +331,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
 
     # Get new cluster snapshot and compare ..
-    if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
+    if re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_after = create_cluster_metrics_snapshot(phdl)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 
@@ -362,10 +340,10 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
 
 
 def test_gen_graph(request):
-    print('Final Global result dict')
-    print(rccl_res_dict)
+    log.info('Final Global result dict')
+    log.info("%s", rccl_res_dict)
     rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
-    print(rccl_graph_dict)
+    log.info("%s", rccl_graph_dict)
 
     proc_id = os.getpid()
 
@@ -384,8 +362,8 @@ def test_gen_graph(request):
     )
 
     if copied_path:
-        print(f'Perf report saved and added to report bundle: {copied_path}')
+        log.info(f'Perf report saved and added to report bundle: {copied_path}')
     else:
-        print(
+        log.info(
             f'Perf report is saved under {html_file}, pls copy it to your web server under /var/www/html folder to view'
         )

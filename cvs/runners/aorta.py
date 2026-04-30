@@ -691,7 +691,7 @@ class AortaRunner(BaseRunner):
                     artifacts["tracelens_analysis"] = analysis_result
                     log.info(f"Container TraceLens analysis completed: {analysis_result}")
                 else:
-                    log.info("Container TraceLens skipped or failed; host will parse raw traces")
+                    log.warning("Container TraceLens skipped or failed; host will parse raw traces")
 
             # Run GEMM analysis if enabled (optional, same as TraceLens)
             if self.config.analysis.enable_gemm_analysis and trace_dir and trace_dir.exists():

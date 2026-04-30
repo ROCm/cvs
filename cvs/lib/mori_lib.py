@@ -105,7 +105,7 @@ def parse_pretty_tables_multi_rank(text: str) -> dict:
     # Write to dict
     # -----------------------------
     output_dict = {"ranks": results}
-    print(output_dict)
+    log.info("%s", output_dict)
     return output_dict
 
 
@@ -194,7 +194,7 @@ class MoriBenchmark:
               ' > /tmp/mori_env_script.sh"
               '''
         formatted_cmd = textwrap_for_cmd(cmd)
-        print(f'%%%%%%% formatted_cmd = {formatted_cmd}')
+        log.info(f'%%%%%%% formatted_cmd = {formatted_cmd}')
         self.phdl.exec(formatted_cmd)
         cmd = f'''docker exec {self.container_name} /bin/bash -c "
               mkdir -p {self.log_dir}"'''
@@ -212,8 +212,8 @@ class MoriBenchmark:
                     /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so;" '
             pout_dict = self.phdl.exec(cmd)
             for node in pout_dict.keys():
-                if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
-                    print(pout_dict[node])
+                if not re.search('hca_id:\s+bnxt_', pout_dict[node], re.I):
+                    log.info("%s", pout_dict[node])
 
     def install_packages(
         self,
@@ -266,15 +266,15 @@ class MoriBenchmark:
                 fail_test('ERROR - dist_write did not complete properly - results not seen')
             else:
                 meta_data, results = parse_ibgda_output(out_dict[node])
-                print(results)
+                log.info("%s", results)
                 m_key = f'''PROCS:{no_of_procs},CTAS:{ctas},THREADS:{threads},QP_COUNT:{qp_count}'''
                 if m_key in exp_res_dict.keys():
                     for row_dict in results:
                         act_msg_size = row_dict['size_bytes']
                         actual_bw = row_dict['bandwidth_gb']
-                        print(f'exp_res_dict = {exp_res_dict}')
-                        print(f'exp_res_dict = {exp_res_dict[m_key].keys()}')
-                        print(act_msg_size)
+                        log.info(f'exp_res_dict = {exp_res_dict}')
+                        log.info(f'exp_res_dict = {exp_res_dict[m_key].keys()}')
+                        log.info("%s", act_msg_size)
                         for exp_msg_size in list(exp_res_dict[m_key].keys()):
                             exp_bw = exp_res_dict[m_key][exp_msg_size]['max_bw']
                             if int(act_msg_size) == int(exp_msg_size):
@@ -285,7 +285,7 @@ class MoriBenchmark:
                                       expected = {exp_bw}, actual = {actual_bw}'
                                     )
                                 else:
-                                    print(
+                                    log.info(
                                         f'IBGDA Mori BW is as expected for  \
                                       PROCS:{no_of_procs},CTAS:{ctas},THREADS:{threads},QP_COUNT:{qp_count} \
                                       expected = {exp_bw}, actual = {actual_bw}'
@@ -462,9 +462,9 @@ class MoriBenchmark:
         elif op_type == "write":
             op_key = "io_write"
 
-        print('^^^^^^^^^^^^^^^^^^^^')
-        print(self.expected_results_dict.keys())
-        print('^^^^^^^^^^^^^^^^^^^^')
+        log.info('^^^^^^^^^^^^^^^^^^^^')
+        log.info("%s", list(self.expected_results_dict.keys()))
+        log.info('^^^^^^^^^^^^^^^^^^^^')
         exp_res_dict = self.expected_results_dict[op_key]
         m_key = (
             'BUFF_SIZE:'
@@ -498,7 +498,7 @@ class MoriBenchmark:
                                       buffer_size,transfer_batch_size,no_of_qp_per_transfer = \
                                       {m_key}''')
                             else:
-                                print(f'''BW is as expected for \
+                                log.info(f'''BW is as expected for \
                                       rank {rank_no}, Msg size {msg_size}, \
                                       actual BW {row_dict['Avg_BW_GBps']}, \
                                       expected BW {exp_max_bw}, \
@@ -513,7 +513,7 @@ class MoriBenchmark:
                                       buffer_size,transfer_batch_size,no_of_qp_per_transfer = \
                                       {m_key}''')
                             else:
-                                print(f'''Latency is as expected for \
+                                log.info(f'''Latency is as expected for \
                                       rank {rank_no}, Msg size {msg_size}, \
                                       actual Avg Lat {row_dict['Avg_Lat_us']}, \
                                       expected Avg Lat {exp_avg_lat}, \

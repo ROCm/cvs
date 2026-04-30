@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 
 import pytest
+import yaml
 
 from cvs.runners.aorta import (
     AortaRunner,
@@ -32,11 +33,15 @@ from cvs.parsers.schemas import (
     # Config validation schemas
     ClusterConfigFile,
     AortaBenchmarkConfigFile,
-    validate_config_file,
 )
 
 from cvs.lib import globals
-from cvs.lib.utils_lib import fail_test, update_test_result, resolve_cluster_config_placeholders
+from cvs.lib.utils_lib import (
+    fail_test,
+    update_test_result,
+    resolve_cluster_config_placeholders,
+    resolve_test_config_placeholders,
+)
 
 log = logging.getLogger(__name__)
 
@@ -88,16 +93,25 @@ def validated_cluster_config(cluster_file) -> ClusterConfigFile:
 
 
 @pytest.fixture(scope="module")
-def validated_aorta_config(config_file) -> AortaBenchmarkConfigFile:
+def validated_aorta_config(config_file, validated_cluster_config: ClusterConfigFile) -> AortaBenchmarkConfigFile:
     """
     Load and validate Aorta benchmark configuration.
 
-    Fails fast with clear error messages if config is invalid.
+    Resolves the same path placeholders as other CVS test configs (using the validated
+    cluster config), then validates against the schema and checks paths.
     """
     log.info(f"Validating Aorta config: {config_file}")
 
     try:
-        config = validate_config_file(config_file, config_type="aorta")
+        with open(config_file) as f:
+            raw_config = yaml.safe_load(f)
+        if raw_config is None:
+            pytest.fail("AORTA CONFIG VALIDATION FAILED:\nConfiguration file is empty")
+
+        cluster_dict = validated_cluster_config.model_dump(mode="python")
+        resolved_config = resolve_test_config_placeholders(raw_config, cluster_dict)
+
+        config = AortaBenchmarkConfigFile.model_validate(resolved_config)
         log.info(f"Aorta config valid: image={config.docker.image}")
 
         # Additional path validation
@@ -309,7 +323,7 @@ class TestAortaBenchmark:
 
         # Log warnings (for all statuses)
         for warning in parse_result.warnings:
-            log.warning(warning)
+            log.warning("%s", warning)
 
         log.info(f"Parsed {len(parse_result.results)} rank metrics")
 

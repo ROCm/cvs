@@ -1,145 +1,114 @@
 {
-    "rccl":
-    {
-       "no_of_nodes": "2",
-       "no_of_global_ranks": "16",
-       "no_of_local_ranks": "8",
-       "ranks_per_node": "8",
-       "rccl_dir": "/opt/rccl-tests/",
-       "rccl_tests_dir": "/opt/rccl-tests/build",
-       "mpi_dir": "/usr/bin",
-       "mpi_path_var": "/usr",
-       "_comment_mpi_pml": "MPI Point-to-Point Messaging Layer: 'auto' (auto-detect UCX support), 'ucx' (force UCX), or 'ob1' (force OpenIB/TCP fallback). Auto-detection checks if UCX is available via ompi_info or library linkage.",
-       "mpi_pml" : "auto",
-       "rocm_path_var": "/opt/rocm/",
-       "rccl_path_var": "/opt/rccl-tests/",
-       "gpu_count_list": [ "8", "16", "32" ],
-       "data_type_list": [ "float", "bfloat16" ],
-       "_comment_nic_model": "Set nic_model for validations (eg., 'thor' , 'ainic', 'connectx')",
-       "nic_model": "thor",
-       "heatmap_title": "RCCL heatmap comparison between MI300s",
-       "golden_reference_json_file": "/home/{user-id}/JSONS/mi300_reference.json",
-       "cluster_snapshot_debug": "False",
-       "env_source_script": "/root/env_source_file.sh",
-       "rccl_collective": [ "all_reduce_perf", "all_gather_perf", "scatter_perf", "gather_perf", "reduce_scatter_perf", "sendrecv_perf", "alltoall_perf", "alltoallv_perf", "reduce_scatter_perf", "broadcast_perf" ],
-       "rccl_algo": [ "ring", "tree" ],
-       "rccl_protocol": [ "simple" ],
-       "qp_scale": [ "1", "2" ],
-       "ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7",
-       "net_dev_list": "ens28np0,ens27np0,ens25np0,ens26np0,ens24np0,ens23np0,ens21np0,ens22np0",
-       "oob_port": "eth0",
-       "_comment_nccl_socket_ifname": "Optional: Set interface(oob_port) for NCCL bootstrap/socket fallback. Set to empty string \"\" or remove this field if not needed (e.g., when RDMA interfaces are routable)",
-       "nccl_socket_ifname": "",
-       "gid_index": "1",
-       "start_msg_size": "1024",
-       "end_msg_size": "16g",
-       "step_function": "2",
-       "threads_per_gpu": "1",
-       "warmup_iterations": "10",
-       "no_of_iterations": "20",
-       "no_of_cycles": "1",
-       "check_iteration_count": "1",
-       "nccl_ib_timeout": "30",
-       "ib_rx_queue_len": "8192",
-       "ucx_tls": "tcp",
-       "hcoll_enable_mcast_all": "0",
-       "nccl_cumem_enable": "0",
-       "nccl_ib_sl": "0",
-       "nccl_ib_tc": "0",
-       "nccl_ib_split_data_on_qps": "0",
-       "nccl_pxn_disable": [ "0", "1" ],
-       "nccl_net_plugin": "none",
-       "_comment_channel_config_list": "NCCL channel configurations in 'min-max' format (e.g., '16-16' sets NCCL_MIN_NCHANNELS=16 and NCCL_MAX_NCHANNELS=16). Use 'default' to let RCCL choose defaults. Each value creates a separate test case. For GFX950: 1-node use [14-14, 28-28, 56-56, 112-112], multi-node use [16-16, 32-32, 48-48, 64-64]. For GFX942: 1-node use [14-14, 28-28, 56-56], multi-node use [16-16, 32-32, 48-48, 64-64]. RCCL defaults: GFX950 single-node=112, multi-node=64; GFX942 single-node=56, multi-node=64.",
-       "channel_config_list": [ "default" ],
-       "verify_bus_bw": "False",
-       "verify_bw_dip": "True",
-       "verify_lat_dip": "True",
-       "debug_level": "ERROR",
-       "rccl_result_file": "/tmp/rccl_result_file.json",
-       "_comments_results": "expected results below are for 2 node cluster, will vary based on cluster size",
-       "results":
-       {
-           "all_reduce_perf":
-           {
-               "bus_bw":
-               {
-                   "8589934592": "330.00",
-                   "17179869184": "350.00"
-               }
-           },
-           "all_gather_perf":
-           {
-               "bus_bw":
-               {
-                   "8589934592": "330.00",
-                   "17179869184": "350.00"
-               }
-           },
-           "gather_perf":
-           {
-               "bus_bw":
-               {
-                   "8589934592": "330.00",
-                   "17179869184": "350.00"
-               }
-           },
-           "scatter_perf":
-           {
-               "bus_bw":
-               {
-                   "8589934592": "330.0",
-                   "17179869184": "350.0"
-               }
-           },
-           "reduce_perf":
-           {
-               "bus_bw":
-               {
-                   "8589934592": "300.0",
-                   "17179869184": "310.00"
-               }
-           },
-           "reduce_scatter_perf":
-           {
-               "bus_bw":
-               {
-                   "8589934592": "340.0",
-                   "17179869184": "360.00"
-               }
-           },
-           "alltoall_perf":
-           {
-               "bus_bw":
-               {
-                   "8589934592": "45.00",
-                   "17179869184": "50.00"
-               }
-           },
-           "alltoallv_perf":
-           {
-               "bus_bw":
-               {
-                   "8589934592": "45.00",
-                   "17179869184": "50.00"
-               }
-           },
-           "sendrecv_perf":
-           {
-               "bus_bw":
-               {
-                   "8589934592": "47.00",
-                   "17179869184": "48.00"
-               }
-           },
-           "broadcast_perf":
-           {
-               "bus_bw":
-               {
-                   "8589934592": "310.00",
-                   "17179869184": "312.00"
-               }
-           }
+    "rccl": {
+        "mpi_params": {
+            "no_of_nodes": "2",
+            "no_of_local_ranks": "8",
+            "_comment_mpi_pml": "MPI Point-to-Point Messaging Layer: 'auto' (auto-detect UCX support), 'ucx' (force UCX), or 'ob1' (force OpenIB/TCP fallback). This remains in config because it is an MPI launch option, not an env-script setting.",
+            "mpi_pml": "auto",
+            "mpi_dir": "/home/{user-id}/openmpi/bin",
+            "mpi_oob_port": "eth0"
+        },
+
+        "_comment_env_script": "RCCL/NCCL/UCX tuning parameters. Path configurations (mpi_dir, rccl_tests_dir) are now in mpi_params and rccl_test_params respectively.",
+        "env_source_script": "/home/{user-id}/thor2_env_script.sh",
+
+        "rccl_test_params": {
+            "rccl_collective": [ "all_reduce_perf", "all_gather_perf", "scatter_perf", "gather_perf", "reduce_scatter_perf", "sendrecv_perf", "alltoall_perf", "alltoallv_perf", "broadcast_perf" ],
+            "rccl_tests_dir": "/home/{user-id}/rccl-tests/build",
+            "start_msg_size": "1024",
+            "end_msg_size": "16g",
+            "step_function": "2",
+            "threads_per_gpu": "1",
+            "warmup_iterations": "10",
+            "no_of_iterations": "20",
+            "no_of_cycles": "1",
+            "check_iteration_count": "1",
+            "data_types": ["float"]
+        },
+
+        "_comment_cvs_params": "The rccl_result_file.json will be appended by rccl_test_params.data_types. When it's float the file name will be rccl_result_file_float.json on the head node.",
+        "cvs_params": {
+            "cluster_snapshot_debug": "False",
+            "_comment_nic_model": "Set nic_model for validations (eg., 'thor' , 'ainic', 'connectx')",
+            "nic_model": "thor",
+            "verify_bus_bw": "False",
+            "verify_bw_dip": "True",
+            "verify_lat_dip": "True",
+            "rccl_result_file": "/home/{user-id}/rccl_result_file.json"
+        },
+
+        "_comment_regression": "New regression object format using NCCL_* environment variable names. Creates Cartesian product of all combinations. Channel config uses 'min-max' format (e.g., '16-16') or 'default'. Tree algorithm is automatically filtered to only run with all_reduce_perf collective.",
+        "regression": {
+            "NCCL_ALGO": [ "Ring", "Tree" ],
+            "NCCL_PROTO": [ "Simple" ],
+            "NCCL_IB_QPS_PER_CONNECTION": [ "1", "2" ],
+            "NCCL_PXN_DISABLE": [ "0", "1" ],
+            "NCCL_MIN_NCHANNELS": [ "8", "16" ],
+            "NCCL_MAX_NCHANNELS": [ "8", "16" ]
+        },
+
+        "_comments_results": "expected results below are for 2 node cluster, will vary based on cluster size",
+        "results": {
+            "all_reduce_perf": {
+                "bus_bw": {
+                    "8589934592": "330.00",
+                    "17179869184": "350.00"
+                }
+            },
+            "all_gather_perf": {
+                "bus_bw": {
+                    "8589934592": "330.00",
+                    "17179869184": "350.00"
+                }
+            },
+            "gather_perf": {
+                "bus_bw": {
+                    "8589934592": "330.00",
+                    "17179869184": "350.00"
+                }
+            },
+            "scatter_perf": {
+                "bus_bw": {
+                    "8589934592": "330.0",
+                    "17179869184": "350.0"
+                }
+            },
+            "reduce_perf": {
+                "bus_bw": {
+                    "8589934592": "300.0",
+                    "17179869184": "310.00"
+                }
+            },
+            "reduce_scatter_perf": {
+                "bus_bw": {
+                    "8589934592": "340.0",
+                    "17179869184": "360.00"
+                }
+            },
+            "alltoall_perf": {
+                "bus_bw": {
+                    "8589934592": "45.00",
+                    "17179869184": "50.00"
+                }
+            },
+            "alltoallv_perf": {
+                "bus_bw": {
+                    "8589934592": "45.00",
+                    "17179869184": "50.00"
+                }
+            },
+            "sendrecv_perf": {
+                "bus_bw": {
+                    "8589934592": "47.00",
+                    "17179869184": "48.00"
+                }
+            },
+            "broadcast_perf": {
+                "bus_bw": {
+                    "8589934592": "310.00",
+                    "17179869184": "312.00"
+                }
+            }
         }
     }
-
 }

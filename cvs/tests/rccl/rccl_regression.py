@@ -85,7 +85,7 @@ def cluster_dict(cluster_file):
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info(cluster_dict)
+    log.info("%s", cluster_dict)
     return cluster_dict
 
 
@@ -111,7 +111,7 @@ def config_dict(config_file, cluster_dict):
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    log.info(config_dict)
+    log.info("%s", config_dict)
     return config_dict
 
 
@@ -135,7 +135,7 @@ def phdl(cluster_dict):
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
       - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
     """
-    print(cluster_dict)
+    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -188,79 +188,88 @@ def vpc_node_list(cluster_dict):
 
 def pytest_generate_tests(metafunc):
     """
-    Dynamically parametrize RCCL-related tests based on a JSON config file.
+    Pytest parametrization using regression object format.
 
-    Behavior:
-      - Reads the config file path from pytest's --config_file option.
-      - Loads the JSON and extracts rccl parameters:
-          * rccl_collective: list of collectives to test (defaults provided)
-          * rccl_algo: list of algorithms (defaults: ["ring", "tree"])
-          * rccl_protocol: list of protocols (defaults: ["simple", "LL128", "LL"])
-          * qp_scale: list of queue pair scaling values (defaults: ["1", "2"])
-      - If a corresponding fixture name is present in a test function, applies
-        parametrize with the built list.
-
-    Notes:
-      - If no config_file is provided, the hook returns without parametrizing.
-      - Defaults are used when keys are absent under config['rccl'].
+    Uses 'regression' object with NCCL_* env names -> lists (Cartesian product)
+    Special handling: NCCL_MIN_NCHANNELS and NCCL_MAX_NCHANNELS are paired (not Cartesian)
     """
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.exists(config_file):
-        print(f'Warning: Missing or invalid config file {config_file}')
+        log.warning(f'Warning: Missing or invalid config file {config_file}')
         return
 
     with open(config_file) as fp:
         cfg = json.load(fp)
     rccl = cfg.get("rccl", {})
 
-    # Defaults (dedup'd)
-    rccl_collective_list = rccl.get(
-        "rccl_collective",
-        [
-            "all_reduce_perf",
-            "all_gather_perf",
-            "scatter_perf",
-            "gather_perf",
-            "reduce_scatter_perf",
-            "sendrecv_perf",
-            "alltoall_perf",
-            "alltoallv_perf",
-            "broadcast_perf",
-        ],
-    )
-    rccl_algo_list = rccl.get("rccl_algo", ["ring", "tree"])
-    rccl_protocol_list = rccl.get("rccl_protocol", ["simple", "LL128", "LL"])
-    qp_scale_list = rccl.get("qp_scale", ["1", "2"])
-    nccl_pxn_disable_list = rccl.get("nccl_pxn_disable", ["1", "0"])
-
-    # Only parametrize fixtures used by this test
-    all_keys = ("rccl_collective", "rccl_algo", "rccl_protocol", "qp_scale", "nccl_pxn_disable")
-
-    active = [k for k in all_keys if k in metafunc.fixturenames]
-    if not active:
+    # Get regression object (required)
+    regression = rccl.get("regression", {})
+    if not regression:
+        log.error("No regression object found in config - required for parametrization")
         return
 
-    domain_by_key = {
-        "rccl_collective": rccl_collective_list,
-        "rccl_algo": rccl_algo_list,
-        "rccl_protocol": rccl_protocol_list,
-        "qp_scale": qp_scale_list,
-        "nccl_pxn_disable": nccl_pxn_disable_list,
-    }
-    domains = [domain_by_key[k] for k in active]
+    # Validate and handle paired channel config
+    has_min_channels = "NCCL_MIN_NCHANNELS" in regression
+    has_max_channels = "NCCL_MAX_NCHANNELS" in regression
+    paired_channels = None
 
-    params, ids = [], []
-    for values in itertools.product(*domains):
-        combo = dict(zip(active, values))
+    if has_min_channels != has_max_channels:
+        raise ValueError("NCCL_MIN_NCHANNELS and NCCL_MAX_NCHANNELS must be both present or both absent")
 
-        if combo.get("rccl_algo") == "tree":
-            if combo.get("rccl_collective") != "all_reduce_perf":
-                continue
+    if has_min_channels and has_max_channels:
+        min_vals = regression["NCCL_MIN_NCHANNELS"]
+        max_vals = regression["NCCL_MAX_NCHANNELS"]
 
-        params.append(values)
+        if len(min_vals) != len(max_vals):
+            raise ValueError(
+                f"NCCL_MIN_NCHANNELS ({len(min_vals)} items) and NCCL_MAX_NCHANNELS ({len(max_vals)} items) "
+                "must have equal length for paired channel configuration"
+            )
 
-        ids.append("|".join(f"{k}={combo[k]}" for k in active))
-    metafunc.parametrize(",".join(active), params, ids=ids)
+        # Store paired channels in internal variable
+        paired_channels = list(zip(min_vals, max_vals))
+
+        # Remove both from regression dict to prevent Cartesian product
+        del regression["NCCL_MIN_NCHANNELS"]
+        del regression["NCCL_MAX_NCHANNELS"]
+
+    # Build product from regression object
+    env_axes = []
+    for key in sorted(regression.keys()):
+        value = regression[key]
+        if isinstance(value, list) and value:
+            env_axes.append((key, value))
+
+    if env_axes and "rccl_collective" in metafunc.fixturenames:
+        # Always parametrize collectives
+        rccl_collective_list = rccl.get("rccl_collective", ["all_reduce_perf"])
+
+        # Build environment variable combinations as dicts for **regression_params
+        env_fixture_names = [name for name, _ in env_axes]
+        env_domains = [dict(env_axes)[name] for name in env_fixture_names]
+        env_params, env_ids = [], []
+
+        # Determine if we need to add channel pairs to the product
+        channel_fixture_names = []
+        if paired_channels is not None:
+            channel_fixture_names = ["NCCL_MIN_NCHANNELS", "NCCL_MAX_NCHANNELS"]
+            env_domains.append(paired_channels)
+
+        for env_combo in itertools.product(*env_domains):
+            env_dict = dict(zip(env_fixture_names + channel_fixture_names, env_combo))
+
+            # Unpack paired channels if present
+            if paired_channels is not None:
+                min_ch, max_ch = env_dict.pop("NCCL_MIN_NCHANNELS")
+                env_dict["NCCL_MIN_NCHANNELS"] = min_ch
+                env_dict["NCCL_MAX_NCHANNELS"] = max_ch
+
+            env_params.append(env_dict)
+            env_ids.append("|".join(f"{k}={v}" for k, v in env_dict.items()))
+
+        # Parametrize collectives and regression_params dict
+        metafunc.parametrize("rccl_collective", rccl_collective_list)
+        metafunc.parametrize("regression_params", env_params, ids=env_ids)
 
 
 # Start of test cases.
@@ -311,11 +320,20 @@ def test_disable_firewall(phdl):
     update_test_result()
 
 
-def test_rccl_perf(
-    phdl, shdl, cluster_dict, config_dict, rccl_collective, rccl_algo, rccl_protocol, qp_scale, nccl_pxn_disable
-):
+def test_print_env_once(phdl, shdl, config_dict):
+    """Single test to print environment script - don't dump env in every test."""
+    globals.error_list = []
+    env_script = config_dict.get('env_source_script', '/dev/null')
+    if env_script and str(env_script).lower() != 'none':
+        # Cat the env script file to show its contents
+        cmd = f'echo === Environment Script: {env_script} === && cat {env_script}'
+        shdl.exec(cmd)
+    update_test_result()
+
+
+def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regression_params):
     """
-    Execute RCCL performance test across the cluster with given parameters.
+    Execute RCCL regression test across the cluster with parametrized environment overrides.
 
     Parameters (from fixtures and config):
       - phdl: parallel execution handle for nodes (expects exec/exec_cmd_list).
@@ -323,15 +341,13 @@ def test_rccl_perf(
       - cluster_dict: cluster topology and credentials (expects node_dict, username, etc.).
       - config_dict: test configuration with RCCL/MPI paths, env, and thresholds.
       - rccl_collective: which RCCL collective test to run (e.g., "all_reduce_perf").
-      - rccl_algo: RCCL algorithm (e.g., "ring", "tree").
-      - rccl_protocol: RCCL protocol (e.g., "simple", "LL128", "LL").
-      - qp_scale: Queue pair scaling factor as a string (e.g., "1", "2").
+      - regression_params: dict of all regression parametrized values (NCCL_ALGO, NCCL_PROTO, NCCL_*_NCHANNELS, etc.)
 
     Flow:
       1) Capture start time to bound dmesg checks later.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
-      3) Optionally source environment script if provided in config.
-      4) Invoke rccl_lib.rccl_cluster_test with parameters built from config and fixtures.
+      3) Build env_overrides dict from all regression parameters.
+      4) Invoke rccl_lib.rccl_regression with parameters built from config and fixtures.
       5) Capture end time and verify dmesg for errors between start/end.
       6) Optionally snapshot metrics again and compare before/after.
       7) Call update_test_result() to finalize test status.
@@ -341,7 +357,8 @@ def test_rccl_perf(
     """
 
     # Log a message to Dmesg to create a timestamp record
-    phdl.exec(f'sudo echo "Starting Test {rccl_collective} {rccl_algo} {rccl_protocol}" | sudo tee /dev/kmsg')
+    params_str = ' '.join(f'{k}={v}' for k, v in regression_params.items())
+    phdl.exec(f'sudo echo "Starting Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
 
     # start_time = phdl.exec('date')
     start_time = phdl.exec('date +"%a %b %e %H:%M"')
@@ -356,80 +373,39 @@ def test_rccl_perf(
         vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
 
     # Get cluster snapshot ..
-    if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
+    if re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
-    # Optionally source environment (e.g., set MPI/ROCm env) before running RCCL tests
-    if not re.search('None', config_dict['env_source_script'], re.I):
-        phdl.exec(f"bash {config_dict['env_source_script']}")
-        shdl.exec(f"bash {config_dict['env_source_script']}")
+    # Build env_overrides from all regression parameters (convert values to strings)
+    env_overrides = {k: str(v) for k, v in regression_params.items()}
 
-    # Execute the RCCL cluster test with parameters sourced from config_dict
-    result_dict = rccl_lib.rccl_cluster_test(
+    env_script = config_dict.get('env_source_script', '/dev/null')
+    result_dict = rccl_lib.rccl_regression(
         phdl,
         shdl,
-        test_name=rccl_collective,
-        cluster_node_list=node_list,
-        vpc_node_list=vpc_node_list,
-        user_name=cluster_dict['username'],
-        ib_hca_list=config_dict['ib_hca_list'],
-        net_dev_list=config_dict['net_dev_list'],
-        oob_port=config_dict['oob_port'],
-        no_of_global_ranks=config_dict['no_of_global_ranks'],
-        rocm_path_var=config_dict['rocm_path_var'],
-        mpi_dir=config_dict['mpi_dir'],
-        mpi_path_var=config_dict['mpi_path_var'],
-        rccl_dir=config_dict['rccl_dir'],
-        rccl_path_var=config_dict['rccl_path_var'],
-        rccl_tests_dir=config_dict['rccl_tests_dir'],
-        nccl_socket_ifname=config_dict.get('nccl_socket_ifname', ''),
-        nccl_algo=rccl_algo,
-        nccl_proto=rccl_protocol,
-        gid_index=config_dict['gid_index'],
-        qp_count=qp_scale,
-        start_msg_size=config_dict['start_msg_size'],
-        end_msg_size=config_dict['end_msg_size'],
-        step_function=config_dict['step_function'],
-        threads_per_gpu=config_dict['threads_per_gpu'],
-        warmup_iterations=config_dict['warmup_iterations'],
-        no_of_iterations=config_dict['no_of_iterations'],
-        no_of_cycles=config_dict['no_of_cycles'],
-        check_iteration_count=config_dict['check_iteration_count'],
-        debug_level=config_dict['debug_level'],
-        rccl_result_file=config_dict['rccl_result_file'],
-        no_of_local_ranks=config_dict['no_of_local_ranks'],
-        ib_rx_queue_len=config_dict['ib_rx_queue_len'],
-        ucx_tls=config_dict['ucx_tls'],
-        hcoll_enable_mcast_all=config_dict['hcoll_enable_mcast_all'],
-        nccl_cumem_enable=config_dict['nccl_cumem_enable'],
-        nccl_ib_timeout=config_dict['nccl_ib_timeout'],
-        nccl_ib_sl=config_dict['nccl_ib_sl'],
-        nccl_ib_tc=config_dict['nccl_ib_tc'],
-        nccl_ib_split_data_on_qps=config_dict['nccl_ib_split_data_on_qps'],
-        nccl_pxn_disable=nccl_pxn_disable,
-        nccl_net_plugin=config_dict['nccl_net_plugin'],
-        mpi_pml=config_dict.get('mpi_pml', 'auto'),
-        user_key_file=cluster_dict['priv_key_file'],
-        verify_bus_bw=config_dict['verify_bus_bw'],
-        verify_bw_dip=config_dict['verify_bw_dip'],
-        verify_lat_dip=config_dict['verify_lat_dip'],
-        exp_results_dict=config_dict['results'],
-        env_source_script=config_dict['env_source_script'],
+        rccl_collective,
+        env_script,
+        config_dict['mpi_params'],
+        config_dict['rccl_test_params'],
+        config_dict['cvs_params'],
+        node_list,
+        vpc_node_list,
+        env_overrides,
     )
 
-    print(result_dict)
-    key_name = f'{rccl_collective}-{rccl_algo}-{rccl_protocol}-{qp_scale}-{nccl_pxn_disable}'
+    log.info("%s", result_dict)
+    key_name = f'{rccl_collective}-{params_str}'
     rccl_res_dict[key_name] = result_dict
 
     # Scan dmesg between start and end times cluster wide ..
     # end_time = phdl.exec('date')
-    phdl.exec(f'sudo echo "End of Test {rccl_collective} {rccl_algo} {rccl_protocol}" | sudo tee /dev/kmsg')
+    phdl.exec(f'sudo echo "End of Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
 
     end_time = phdl.exec('date +"%a %b %e %H:%M"')
     verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
 
     # Get new cluster snapshot and compare ..
-    if re.search('True', config_dict.get('cluster_snapshot_debug', 'False'), re.I):
+    if re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
         cluster_dict_after = create_cluster_metrics_snapshot(phdl)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 
@@ -438,10 +414,10 @@ def test_rccl_perf(
 
 
 def test_gen_graph(request):
-    print('Final Global result dict')
-    print(rccl_res_dict)
+    log.info('Final Global result dict')
+    log.info("%s", rccl_res_dict)
     rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
-    print(rccl_graph_dict)
+    log.info("%s", rccl_graph_dict)
 
     proc_id = os.getpid()
 
@@ -460,8 +436,8 @@ def test_gen_graph(request):
     )
 
     if copied_path:
-        print(f'Perf report saved and added to report bundle: {copied_path}')
+        log.info(f'Perf report saved and added to report bundle: {copied_path}')
     else:
-        print(
+        log.info(
             f'Perf report is saved under {html_file}, pls copy it to your web server under /var/www/html folder to view'
         )

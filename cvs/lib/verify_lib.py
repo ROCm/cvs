@@ -200,7 +200,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
       - Consider handling cases where regex extraction fails (no match) to avoid attribute errors.
     """
 
-    print('scan dmesg')
+    log.info('scan dmesg')
 
     err_dict = {}
 
@@ -475,7 +475,7 @@ def full_dmesg_scan(
       - Consider adding case-insensitive filtering (e.g., grep -i) where appropriate.
     """
 
-    print('scan dmesg')
+    log.info('scan dmesg')
 
     err_dict = {}
 
@@ -529,7 +529,7 @@ def verify_driver_errors(phdl):
         aggregate matches and report them collectively before failing.
     """
 
-    print('Scan for AMD GPU driver errors')
+    log.info('Scan for AMD GPU driver errors')
 
     err_dict = {}
     # Collect AMDGPU-related kernel messages filtered for likely error terms
@@ -674,7 +674,7 @@ def compare_cluster_metrics_snapshots(s_dict_before, s_dict_after):
       - All diff values for matched stats are numeric or numeric strings (castable to int).
     """
 
-    print('Compare 2 cluster snapshots')
+    log.info('Compare 2 cluster snapshots')
     # err_dict will capture the ERROR, WARN log messages at a node level which have seen
     # increment in values for any error or warning counters. The same can be obtained
     # from the complete test log by doing a grep on ERROR|WARN and snapshot
@@ -704,8 +704,7 @@ def compare_cluster_metrics_snapshots(s_dict_before, s_dict_after):
                     if re.search(f'{warn_stats_pattern}', stat_nam, re.I):
                         if int(diff_dict[key_nam][node][dev_nam][stat_nam]) > 0:
                             msg = f'WARN !! cluster snapshot showing some warning counters going up - {key_nam} {node} {dev_nam} {stat_nam} have incremented by {diff_dict[key_nam][node][dev_nam][stat_nam]} Before = {s_dict_before[key_nam][node][dev_nam][stat_nam]} After = {s_dict_after[key_nam][node][dev_nam][stat_nam]}'
-                            log.warn(msg)
-                            print(msg)
+                            log.warning("%s", msg)
                             err_dict[key_nam][node].append(msg)
                         err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
                         err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = s_dict_before[key_nam][node][
@@ -722,8 +721,7 @@ def compare_cluster_metrics_snapshots(s_dict_before, s_dict_after):
                     elif re.search(f'{err_stats_pattern}', stat_nam, re.I):
                         if int(diff_dict[key_nam][node][dev_nam][stat_nam]) > 0:
                             msg = f'ERROR !! cluster snapshot showing some error counters going up - {key_nam} {node} {dev_nam} {stat_nam} have incremented by {diff_dict[key_nam][node][dev_nam][stat_nam]} Before = {s_dict_before[key_nam][node][dev_nam][stat_nam]} After = {s_dict_after[key_nam][node][dev_nam][stat_nam]}'
-                            log.error(msg)
-                            print(msg)
+                            log.error("%s", msg)
                             err_dict[key_nam][node].append(msg)
                         err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
                         err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = s_dict_before[key_nam][node][
@@ -740,8 +738,7 @@ def compare_cluster_metrics_snapshots(s_dict_before, s_dict_after):
                     elif re.search(f'{threshold_stats_pattern}', stat_nam, re.I):
                         if int(diff_dict[key_nam][node][dev_nam][stat_nam]) > threshold_counter_val:
                             msg = f'WARN !! cluster snapshot showing some threshold warn counters going up - {key_nam} {node} {dev_nam} {stat_nam} have incremented by {diff_dict[key_nam][node][dev_nam][stat_nam]} Before = {s_dict_before[key_nam][node][dev_nam][stat_nam]} After = {s_dict_after[key_nam][node][dev_nam][stat_nam]}'
-                            log.warn(msg)
-                            print(msg)
+                            log.warning("%s", msg)
                             err_dict[key_nam][node].append(msg)
                         err_stats_diff_dict[key_nam][node][dev_nam][stat_nam] = {}
                         err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'] = s_dict_before[key_nam][node][
@@ -754,5 +751,5 @@ def compare_cluster_metrics_snapshots(s_dict_before, s_dict_after):
                             err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['after']
                         ) - int(err_stats_diff_dict[key_nam][node][dev_nam][stat_nam]['before'])
 
-    print('Completed comparing the cluster snapshots')
+    log.info('Completed comparing the cluster snapshots')
     return err_dict, err_stats_diff_dict

@@ -382,10 +382,9 @@ class AortaBenchmarkConfigFile(BaseModel):
     Validates structure and provides sensible defaults.
     Fails fast with clear error messages if configuration is invalid.
 
-    Usage:
-        with open("aorta_benchmark.yaml") as f:
-            raw = yaml.safe_load(f)
-        config = AortaBenchmarkConfigFile.model_validate(raw)
+    For ``test_aorta``, load YAML, apply ``resolve_test_config_placeholders`` with the resolved
+    cluster dict (same as other CVS suites), then ``model_validate``. Standalone tools may validate
+    raw YAML without placeholder resolution if paths are already absolute.
     """
 
     model_config = ConfigDict(extra="forbid")  # Catch typos in top-level keys

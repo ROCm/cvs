@@ -39,7 +39,7 @@ def build_html_page_header(filename):
     """
     # Announce action for operator/logs
 
-    print('Build HTML Page header')
+    log.info('Build HTML Page header')
 
     # Open the file in write mode; this truncates any existing file.
     # Use a context manager to ensure the file is properly closed even if an exception occurs.
@@ -296,7 +296,7 @@ def build_html_page_footer(
       - For large pages or to avoid CDN dependency at runtime, you may want to host/serve the JS locally.
     """
 
-    print('Build HTML Page header')
+    log.info('Build HTML Page header')
     with open(filename, 'a') as fp:
         # Open the file in append mode; footer content is added at the end of the document.
         html_lines = '''
@@ -470,7 +470,7 @@ def build_rccl_heatmap(filename, chart_name, title, act_data_json, ref_data_json
         with open(act_data_json, 'r') as fp1:
             act_data_dict = json.load(fp1)
     except Exception as e:
-        print(f'Error reading file {act_data_json} - {e}')
+        log.error(f'Error reading file {act_data_json} - {e}')
 
     try:
         with open(ref_data_json, 'r') as fp2:
@@ -481,7 +481,7 @@ def build_rccl_heatmap(filename, chart_name, title, act_data_json, ref_data_json
             else:
                 ref_data_dict = ref_data_dict_t
     except Exception as e:
-        print(f'Error reading file {ref_data_json} - {e}')
+        log.error(f'Error reading file {ref_data_json} - {e}')
 
     with open(filename, 'a') as fp:
         html_lines = (
@@ -670,12 +670,12 @@ var data = [
          '''
         )
         fp.write(html_lines)
-        print(act_data_dict)
+        log.info("%s", act_data_dict)
         for collective_name in act_data_dict.keys():
-            print(collective_name)
+            log.info("%s", collective_name)
             # Skip if reference data doesn't have this collective
             if collective_name not in ref_data_dict:
-                print(f"Warning: {collective_name} not found in reference data, skipping")
+                log.warning(f"Warning: {collective_name} not found in reference data, skipping")
                 continue
             for msg_size in act_data_dict[collective_name].keys():
                 norm_msg_size = normalize_bytes(int(msg_size))
@@ -683,13 +683,13 @@ var data = [
                 act_bus_bw = act_data_dict[collective_name][msg_size]['bus_bw']
                 # Skip if reference data doesn't have this message size
                 if msg_size not in ref_data_dict[collective_name]:
-                    print(
+                    log.warning(
                         f"Warning: msg_size {msg_size} not found in reference for {collective_name}, using actual as 100%"
                     )
                     pct_val = 100.0
                 else:
                     ref_bus_bw = ref_data_dict[collective_name][msg_size]['bus_bw']
-                    print(act_bus_bw, ref_bus_bw)
+                    log.info("%s %s", act_bus_bw, ref_bus_bw)
                     if ref_bus_bw == 0 or ref_bus_bw == 0.0:
                         pct_val = 100
                     else:
@@ -1071,7 +1071,7 @@ def add_json_data(filename, json_data):
 
 
 def build_rccl_result_default_table(filename, res_dict, bw_dip_threshold=10.0, time_dip_threshold=10.0):
-    print('Build HTML RCCL Result default table')
+    log.info('Build HTML RCCL Result default table')
     with open(filename, 'a') as fp:
         html_lines = '''
 <h2 style="background-color: lightblue">RCCL Results Table</h2>
@@ -1113,8 +1113,8 @@ def build_rccl_result_default_table(filename, res_dict, bw_dip_threshold=10.0, t
                 if float(last_time) > 0.0:
                     time_change_pct = ((float(time) - float(last_time)) / float(last_time)) * 100.0
 
-                print(bus_bw, last_bw, bw_change_pct, bw_dip_threshold)
-                print(time, last_time, time_change_pct, time_dip_threshold)
+                log.info("%s %s %s %s", bus_bw, last_bw, bw_change_pct, bw_dip_threshold)
+                log.info("%s %s %s %s", time, last_time, time_change_pct, time_dip_threshold)
 
                 if bw_change_pct < -(bw_dip_threshold):
                     html_lines = '''<td><span class="label label-danger">''' + str(bus_bw) + '''</td>\n'''
@@ -1136,7 +1136,7 @@ def build_rccl_result_default_table(filename, res_dict, bw_dip_threshold=10.0, t
 
 
 def build_rccl_result_table(filename, res_dict):
-    print('Build HTML RCCL Result table')
+    log.info('Build HTML RCCL Result table')
     with open(filename, 'a') as fp:
         html_lines = '''
 <h2 style="background-color: lightblue">RCCL Results Table</h2>
@@ -1156,7 +1156,31 @@ def build_rccl_result_table(filename, res_dict):
   </thead>'''
         fp.write(html_lines)
         for key_nam in res_dict.keys():
-            (collective, algo, protocol, qp_count, pxn_disable) = key_nam.split("-")
+            # Parse the new key format: collective-NCCL_ALGO=value NCCL_PROTO=value NCCL_IB_QPS_PER_CONNECTION=value NCCL_PXN_DISABLE=value ...
+            parts = key_nam.split("-", 1)  # Split only on first hyphen
+            collective = parts[0]
+
+            if len(parts) == 2:
+                # Parse the params string to extract individual values
+                params_str = parts[1]
+                params_dict = {}
+
+                # Split by spaces and parse key=value pairs
+                for param in params_str.split():
+                    if '=' in param:
+                        key, value = param.split('=', 1)
+                        params_dict[key] = value
+
+                # Extract the specific values we need for the table
+                algo = params_dict.get('NCCL_ALGO', 'Unknown')
+                protocol = params_dict.get('NCCL_PROTO', 'Unknown')
+                qp_count = params_dict.get('NCCL_IB_QPS_PER_CONNECTION', 'Unknown')
+                pxn_disable = params_dict.get('NCCL_PXN_DISABLE', 'Unknown')
+            else:
+                # This should not happen with current key construction (collective-params_str)
+                # but provides safety against malformed keys
+                log.error(f"Invalid key format - missing hyphen separator: {key_nam}")
+                algo = protocol = qp_count = pxn_disable = 'Unknown'
             last_bw = 0.0
             last_time = 0
             for msg_size in res_dict[key_nam].keys():
@@ -1197,15 +1221,15 @@ def build_rccl_heatmap_metadata_table(filename, act_data_json, ref_data_json):
         with open(act_data_json, 'r') as fp1:
             act_data_dict = json.load(fp1)
     except Exception as e:
-        print(f'Error reading file {act_data_json} - {e}')
+        log.error(f'Error reading file {act_data_json} - {e}')
 
     try:
         with open(ref_data_json, 'r') as fp2:
             ref_data_dict = json.load(fp2)
     except Exception as e:
-        print(f'Error reading file {ref_data_json} - {e}')
+        log.error(f'Error reading file {ref_data_json} - {e}')
 
-    print('Build HTML RCCL heatmap Metadata table')
+    log.info('Build HTML RCCL heatmap Metadata table')
     with open(filename, 'a') as fp:
         html_lines = '''
          <br><br>
@@ -1228,7 +1252,7 @@ def build_rccl_heatmap_metadata_table(filename, act_data_json, ref_data_json):
         fp.write(html_lines)
         for key_nam in act_data_dict.keys():
             if 'metadata' in key_nam:
-                print(act_data_dict['metadata'].keys())
+                log.info("%s", list(act_data_dict['metadata'].keys()))
                 if 'gpu_model' in act_data_dict[key_nam].keys():
                     html_lines = f"<td>{act_data_dict['metadata']['gpu_model']}</td>"
                     fp.write(html_lines)
@@ -1276,7 +1300,7 @@ def build_rccl_heatmap_metadata_table(filename, act_data_json, ref_data_json):
                 fp.write(html_lines)
                 html_lines = '<td>Golden</td>'
                 fp.write(html_lines)
-                print(ref_data_dict[key_nam].keys())
+                log.info("%s", list(ref_data_dict[key_nam].keys()))
                 if 'gpu_model' in ref_data_dict[key_nam].keys():
                     html_lines = f"<td>{ref_data_dict['metadata']['gpu_model']}</td>"
                     fp.write(html_lines)
@@ -1323,13 +1347,13 @@ def build_rccl_heatmap_table(filename, title, act_data_json, ref_data_json):
         with open(act_data_json, 'r') as fp1:
             act_data_dict = json.load(fp1)
     except Exception as e:
-        print(f'Error reading file {act_data_json} - {e}')
+        log.error(f'Error reading file {act_data_json} - {e}')
 
     try:
         with open(ref_data_json, 'r') as fp2:
             ref_data_dict_t = json.load(fp2)
     except Exception as e:
-        print(f'Error reading file {ref_data_json} - {e}')
+        log.error(f'Error reading file {ref_data_json} - {e}')
 
     # Handle both wrapped (metadata/result) and unwrapped reference formats
     if 'result' in ref_data_dict_t.keys():
@@ -1338,7 +1362,7 @@ def build_rccl_heatmap_table(filename, title, act_data_json, ref_data_json):
         # Assume unwrapped format - use directly
         ref_data_dict = ref_data_dict_t
 
-    print('Build HTML RCCL heatmap table')
+    log.info('Build HTML RCCL heatmap table')
     missing_ref_keys = []
     missing_ref_msg_sizes = 0
     with open(filename, 'a') as fp:
@@ -1372,7 +1396,7 @@ def build_rccl_heatmap_table(filename, title, act_data_json, ref_data_json):
                 data_type = parts[1]
                 gpu_count = parts[2]
             else:
-                print(f"Warning: Invalid key format {key_nam}, skipping")
+                log.warning(f"Warning: Invalid key format {key_nam}, skipping")
                 continue
             # Skip if reference data doesn't have this test configuration.
             # Some golden reference files use keys without channel suffix (e.g. "all_reduce_perf-float-8")
@@ -1441,12 +1465,14 @@ def build_rccl_heatmap_table(filename, title, act_data_json, ref_data_json):
     # Print a concise summary instead of spamming per-key warnings
     if missing_ref_keys:
         sample = ", ".join(missing_ref_keys[:5])
-        print(
+        log.warning(
             f"Warning: {len(missing_ref_keys)} test keys not found in reference data; "
             f"skipped from table. Sample: {sample}"
         )
     if missing_ref_msg_sizes:
-        print(f"Warning: {missing_ref_msg_sizes} msg_size entries not found in reference data; skipped from table.")
+        log.warning(
+            f"Warning: {missing_ref_msg_sizes} msg_size entries not found in reference data; skipped from table."
+        )
 
 
 def insert_chart(filename, chart_name):
@@ -1705,7 +1731,7 @@ def build_snapshot_stats_diff_table(filename, d_dict, title, table_name, id_name
 
 
 def build_lldp_table(filename, lldp_dict):
-    print('Build HTML training table')
+    log.info('Build HTML training table')
     with open(filename, 'a') as fp:
         html_lines = '''
 <h2 id="lldpid"></h2><br>
@@ -1729,8 +1755,8 @@ def build_lldp_table(filename, lldp_dict):
                 l_dict_list = lldp_dict[node]['lldp']['interface']
                 for l_dict in l_dict_list:
                     intf = list(l_dict.keys())[0]
-                    print(intf)
-                    print(l_dict)
+                    log.info("%s", intf)
+                    log.info("%s", l_dict)
                     chassis_key = list(l_dict[intf]['chassis'].keys())[0]
                     chassis_dict = l_dict[intf]['chassis'][chassis_key]
                     if 'descr' in chassis_dict:
@@ -1788,7 +1814,7 @@ def build_training_results_table(filename, out_dict, title):
       - Encoding: For non-ASCII content, consider using encoding='utf-8' when opening the file.
     """
 
-    print('Build HTML training table')
+    log.info('Build HTML training table')
     with open(filename, 'a') as fp:
         html_lines = (
             '''
@@ -1837,7 +1863,7 @@ def build_training_results_table(filename, out_dict, title):
 
 
 def build_err_log_table(filename, d_dict, title, table_name, id_name):
-    print(f'Build HTML Historic error table {title}')
+    log.info(f'Build HTML Historic error table {title}')
     with open(filename, 'a') as fp:
         html_lines = f'''
 <h2 id="{id_name}"></h2><br>
@@ -1870,7 +1896,7 @@ def build_err_log_table(filename, d_dict, title, table_name, id_name):
 
 
 def build_html_nic_table(filename, rdma_dict, lshw_dict, ip_dict):
-    print('Build HTML product table')
+    log.info('Build HTML product table')
     """
     Append a Network Info HTML table to the given file, summarizing NIC and RDMA device state per node.
 
@@ -2062,7 +2088,7 @@ def build_html_cluster_product_table(filename, model_dict, fw_dict):
 
     """
 
-    print('Build HTML product table')
+    log.info('Build HTML product table')
 
     # Append to the existing HTML file (assumes <body> already opened elsewhere)
     with open(filename, 'a') as fp:
@@ -2169,7 +2195,7 @@ def build_html_gpu_utilization_table(filename, use_dict):
         but you may want to add the closing tag for strict HTML validity.
     """
 
-    print('Build HTML utilization table')
+    log.info('Build HTML utilization table')
     with open(filename, 'a') as fp:
         html_lines = '''
 <h2 id="gpuuseid"></h2><br>
@@ -2297,7 +2323,7 @@ def build_html_mem_utilization_table(filename, use_dict, amd_dict):
 
     """
 
-    print('Build HTML mem utilization table')
+    log.info('Build HTML mem utilization table')
     with open(filename, 'a') as fp:
         html_lines = '''
 <h2 id="memuseid"></h2><br>
@@ -2433,7 +2459,7 @@ def build_html_pcie_xgmi_metrics_table(filename, metrics_dict, amd_dict):
 
     """
 
-    print('Build HTML PCIe metrics table')
+    log.info('Build HTML PCIe metrics table')
     with open(filename, 'a') as fp:
         html_lines = '''
 <h2 id="pciexgmimetid"></h2><br>
@@ -2612,7 +2638,7 @@ def build_html_error_table(filename, metrics_dict, amd_dict):
 
     """
 
-    print('Build HTML Error table')
+    log.info('Build HTML Error table')
     with open(filename, 'a') as fp:
         html_lines = '''
 <h2 id="gpuerrorid"></h2><br>
@@ -2772,7 +2798,7 @@ def build_html_error_table(filename, metrics_dict, amd_dict):
 # TO BE DONE
 """
 def build_html_env_metrics_table():
-    print('Build HTML env metrics table')
+    log.info('Build HTML env metrics table')
     with open(filename, 'a') as fp:
         html_lines = '''
 <h2 id="envmetricsid"></h2><br>
@@ -2805,4 +2831,4 @@ def build_html_env_metrics_table():
 
 
 def build_html_config_table():
-    print('Build config table')
+    log.info('Build config table')

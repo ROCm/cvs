@@ -51,9 +51,9 @@ class Pssh:
         self.log.debug(f"Environ vars: {self.env_prefix}")
 
         if self.password is None:
-            print(self.reachable_hosts)
-            print(self.user)
-            print(self.pkey)
+            self.log.info("%s", self.reachable_hosts)
+            self.log.info("%s", self.user)
+            self.log.info("%s", self.pkey)
             self.client = ParallelSSHClient(self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30)
         else:
             self.client = ParallelSSHClient(
@@ -96,7 +96,7 @@ class Pssh:
         ]
         unreachable = self.check_connectivity(failed_hosts)
         for host in unreachable:
-            print(f"Host {host} is unreachable, pruning from reachable hosts list.")
+            self.log.warning(f"Host {host} is unreachable, pruning from reachable hosts list.")
             self.unreachable_hosts.append(host)
             self.reachable_hosts.remove(host)
         if len(self.unreachable_hosts) > initial_unreachable_len:
@@ -126,22 +126,22 @@ class Pssh:
         cmd_output = {}
         i = 0
         for item in output:
-            print('#----------------------------------------------------------#')
-            print(f'Host == {item.host} ==')
-            print('#----------------------------------------------------------#')
+            self.log.info('#----------------------------------------------------------#')
+            self.log.info(f'Host == {item.host} ==')
+            self.log.info('#----------------------------------------------------------#')
             cmd_out_str = ''
             if cmd_list:
-                print(cmd_list[i])
+                self.log.debug("%s", cmd_list[i])
             else:
-                print(cmd)
+                self.log.debug("%s", cmd)
             try:
                 for line in item.stdout or []:
                     if print_console:
-                        print(line)
+                        self.log.info("%s", line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
                 for line in item.stderr or []:
                     if print_console:
-                        print(line)
+                        self.log.info("%s", line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
             except Timeout as e:
                 if not self.stop_on_errors:
@@ -153,7 +153,7 @@ class Pssh:
                 exc_str = exc_str.replace('\t', '   ')
                 if isinstance(item.exception, Timeout):
                     exc_str += "\nABORT: Timeout Error in Host: " + item.host
-                print(exc_str)
+                self.log.warning("%s", exc_str)
                 cmd_out_str += exc_str + '\n'
             if cmd_list:
                 i += 1
@@ -184,7 +184,7 @@ class Pssh:
         else:
             full_cmd = cmd
 
-        print(f'cmd = {full_cmd}')
+        self.log.info(f'cmd = {full_cmd}')
 
         # Log command execution
         if self.log:
@@ -219,7 +219,7 @@ class Pssh:
         else:
             cmd_list = cmd_list
 
-        print(cmd_list)
+        self.log.info("%s", cmd_list)
 
         # Log command list execution
         if self.log:
@@ -244,7 +244,7 @@ class Pssh:
         return cmd_output
 
     def scp_file(self, local_file, remote_file, recurse=False):
-        print('About to copy local file {} to remote {} on all Hosts'.format(local_file, remote_file))
+        self.log.info('About to copy local file {} to remote {} on all Hosts'.format(local_file, remote_file))
         cmds = self.client.copy_file(local_file, remote_file, recurse=recurse)
         self.client.pool.join()
         for cmd in cmds:
@@ -255,11 +255,11 @@ class Pssh:
         return
 
     def reboot_connections(self):
-        print('Rebooting Connections')
+        self.log.info('Rebooting Connections')
         self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
 
     def destroy_clients(self):
-        print('Destroying Current phdl connections ..')
+        self.log.info('Destroying Current phdl connections ..')
         del self.client
 
 

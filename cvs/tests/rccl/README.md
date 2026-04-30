@@ -1,158 +1,162 @@
 # RCCL Performance Tests
 
-RCCL (ROCm Communication Collectives Library) tests validate distributed GPU communication performance across AMD GPU clusters. These tests run RCCL collectives through CVS, compare results against optional thresholds, and generate HTML artifacts for review.
+## Library entry points (for automation)
 
-## Supported test suites
+- `cvs.lib.rccl_lib.run_rccl` — stages the env script on the cluster, sets `env_source_script`, then runs the selected runner (`single`, `cluster`, or `cluster_default`).
+- `cvs.lib.rccl_lib.run_rccl_from_context` — same with a `RcclRunContext` (handles + runner) and a separate `engine_params` dict for message sizes, `rccl_result_file`, `mpi_oob_port`, etc.
+- `cvs.lib.rccl_lib.rccl_perf` / `rccl_regression` — call `run_rccl` for perf or multi-case regression.
+- Low-level `rccl_cluster_test` / `rccl_cluster_test_default` / `rccl_single_node_test` remain for legacy calls; new code should prefer `run_rccl`.
 
-CVS currently provides these RCCL suites:
+RCCL tests in CVS are split into a small set of focused workflows:
 
-1. `rccl_multinode_cvs`  
-   Multinode sweep across collective, algorithm, protocol, queue-pair scaling (`qp_scale`), and PXN toggle (`nccl_pxn_disable`).
+1. `rccl_perf`  
+   User-facing performance suite. It runs the configured collectives and stages one or more env scripts to every node before launch.
 
-2. `rccl_multinode_default_cvs`  
-   Multinode collectives using RCCL default algorithm/protocol behavior.
+2. `rccl_regression`  
+   Regression suite with Cartesian product sweep. Uses `regression` object in JSON for NCCL/RCCL env variable combinations, or internal defaults.
 
-3. `rccl_singlenode_cvs`  
-   Single-node collective performance and threshold checks.
+**Single-node testing:** Configure a single-node cluster in your cluster JSON file and use the main suites above for single-node testing.
 
-4. `rccl_heatmap_cvs`  
-   Multinode matrix sweep over collective, `gpu_count_list`, `data_type_list`, and `channel_config_list`, then builds a heatmap against a golden reference JSON.
+4. `heatmap`  
+   Standalone result-comparison suite. It generates a heatmap from two result JSON files and is reusable beyond RCCL-only flows.
 
-All suites also collect host/network info and validate that firewall services are not blocking the run.
-
-## Collective tests covered
-
-These RCCL binaries can be selected through `rccl_collective`:
-
-- `all_reduce_perf`: all ranks reduce and receive the reduced value.
-- `all_gather_perf`: each rank gathers data from all other ranks.
-- `scatter_perf`: one rank scatters data to all ranks.
-- `gather_perf`: all ranks gather data to one root rank.
-- `reduce_scatter_perf`: reduction followed by shard distribution.
-- `sendrecv_perf`: point-to-point send/receive performance.
-- `alltoall_perf`: all ranks exchange equal-sized payloads.
-- `alltoallv_perf`: all ranks exchange variable-sized payloads.
-- `broadcast_perf`: one rank broadcasts data to all ranks.
+All RCCL execution suites still collect host/network info and validate firewall state before performance runs.
 
 ## Prerequisites
 
-1. **Cluster file**: Provide a valid cluster file (for example `input/cluster_file/cluster.json`) with node definitions, username, key path, and reachable node IPs.
-2. **RCCL test binaries**: Install `rccl-tests` and ensure paths in config are correct (`rccl_dir`, `rccl_tests_dir`, `rccl_path_var`).
-3. **MPI/ROCm paths**: Ensure `mpi_dir`, `mpi_path_var`, and `rocm_path_var` in config match your environment.
-4. **Passwordless SSH**: Nodes should be able to run distributed MPI launch commands without interactive prompts.
-5. **Expected results**: Update `results` thresholds for your hardware and cluster size (defaults are sample values only).
+1. Provide a valid cluster file, for example `input/cluster_file/cluster.json`.
+2. Make sure your env script exports `RCCL_TESTS_BUILD_DIR` for the `*_perf` binaries.
+3. Make sure your env script exports `MPI_HOME` for the Open MPI install used by `mpirun`.
+4. Put RCCL/NCCL/UCX tuning into env scripts. CVS now stages and sources those env files instead of building `mpirun -x ...` lists from JSON.
+5. Update `results` thresholds for your hardware and cluster size before relying on pass/fail.
 
-## How to run with CVS
-
-Run from the CVS repo root (directory containing `cvs` and `input`):
-
-### List available RCCL suites
+## How to run
 
 ```bash
-cvs list rccl_multinode_cvs
-cvs list rccl_multinode_default_cvs
-cvs list rccl_singlenode_cvs
-cvs list rccl_heatmap_cvs
+cvs list rccl_perf
+cvs list rccl_regression
+# Single-node testing via cluster config
+cvs list heatmap
 ```
 
-### Multinode parameter sweep
+### Performance
 
 ```bash
-cvs run rccl_multinode_cvs \
+cvs run rccl_perf \
   --cluster_file input/cluster_file/cluster.json \
   --config_file input/config_file/rccl/rccl_config.json \
-  --html=/var/www/html/cvs/rccl_multinode.html --capture=tee-sys --self-contained-html \
-  --log-file=/tmp/rccl_multinode.log -vvv -s
+  --html=/var/www/html/cvs/rccl_perf.html --capture=tee-sys --self-contained-html \
+  --log-file=/tmp/rccl_perf.log -vvv -s
 ```
 
-### Multinode (RCCL defaults)
+`rccl_perf` accepts either:
+
+- `env_files`: list of env scripts to stage and run (supports multiple env files)
+- `env_source_script`: single env script fallback
+
+Starter scripts are shipped under `input/config_file/rccl/`:
+
+- `ainic_env_script.sh`
+- `thor2_env_script.sh`
+- `cx7_env_script.sh`
+
+Most clusters should list only the one that matches their NIC in `env_files`, or use multiple for comparison.
+
+### Regression
 
 ```bash
-cvs run rccl_multinode_default_cvs \
+cvs run rccl_regression \
   --cluster_file input/cluster_file/cluster.json \
-  --config_file input/config_file/rccl/rccl_config.json \
-  --html=/var/www/html/cvs/rccl_multinode_default.html --capture=tee-sys --self-contained-html \
-  --log-file=/tmp/rccl_multinode_default.log -vvv -s
+  --config_file /path/to/rccl_regression.json \
+  --html=/var/www/html/cvs/rccl_regression.html --capture=tee-sys --self-configured-html \
+  --log-file=/tmp/rccl_regression.log -vvv -s
 ```
 
-### Single-node run
-
-```bash
-cvs run rccl_singlenode_cvs \
-  --cluster_file input/cluster_file/cluster.json \
-  --config_file input/config_file/rccl/single_node_mi355_rccl.json \
-  --html=/var/www/html/cvs/rccl_singlenode.html --capture=tee-sys --self-contained-html \
-  --log-file=/tmp/rccl_singlenode.log -vvv -s
-```
-
-### Heatmap run
-
-```bash
-cvs run rccl_heatmap_cvs \
-  --cluster_file input/cluster_file/cluster.json \
-  --config_file input/config_file/rccl/rccl_config.json \
-  --html=/var/www/html/cvs/rccl_heatmap.html --capture=tee-sys --self-contained-html \
-  --log-file=/tmp/rccl_heatmap.log -vvv -s
-```
-
-## Parameter quick reference
-
-Edit `input/config_file/rccl/rccl_config.json` (and `single_node_mi355_rccl.json` for single-node baseline) before running:
-
-- **Scale and topology**: `no_of_nodes`, `no_of_global_ranks`, `no_of_local_ranks`, `ranks_per_node`.
-- **Sweep controls**:
-  - `rccl_collective`, `rccl_algo`, `rccl_protocol`, `qp_scale`, `nccl_pxn_disable`
-  - `gpu_count_list`, `data_type_list`, `channel_config_list` (used by `rccl_heatmap_cvs`)
-- **Message sweep**: `start_msg_size`, `end_msg_size`, `step_function`, `warmup_iterations`, `no_of_iterations`, `no_of_cycles`.
-- **Network and transport**: `ib_hca_list`, `net_dev_list`, `oob_port`, `gid_index`, `nccl_socket_ifname`, `ucx_tls`, `mpi_pml`.
-- **Validation controls**: `verify_bus_bw`, `verify_bw_dip`, `verify_lat_dip`, `results`.
-- **Artifacts/reference**: `rccl_result_file`, `golden_reference_json_file`, `output_dir`, `heatmap_title`.
-
-Additional tuning parameters used in multinode runs:
-
-- **Runtime and verbosity**: `threads_per_gpu`, `debug_level`, `cluster_snapshot_debug`.
-- **IB/UCX tuning**: `nccl_ib_timeout`, `ib_rx_queue_len`, `ucx_tls`, `hcoll_enable_mcast_all`.
-- **RCCL/NCCL behavior**: `nccl_cumem_enable`, `nccl_ib_sl`, `nccl_ib_tc`, `nccl_ib_split_data_on_qps`, `nccl_net_plugin`.
-- **Heatmap-specific validation**: `nic_model` and `golden_reference_json_file`.
-
-Placeholder handling:
-
-- `{user-id}` and other supported placeholders in cluster/config files are resolved at runtime by CVS.
-- You can keep placeholders or replace them with explicit absolute paths.
-
-Expected-results format (`results`):
-
-- Thresholds are keyed by collective and message size in bytes.
-- Typical structure:
+`rccl_regression` uses a `regression` object in the config JSON:
 
 ```json
-"results": {
-  "all_reduce_perf": {
-    "bus_bw": {
-      "8589934592": "330.00",
-      "17179869184": "350.00"
-    }
+"regression": {
+  "NCCL_ALGO": ["ring", "tree"],
+  "NCCL_PROTO": ["Simple"], 
+  "NCCL_IB_QPS_PER_CONNECTION": ["1", "2"],
+  "NCCL_PXN_DISABLE": ["0", "1"]
+}
+```
+
+- **Keys** are real NCCL/RCCL environment variable names
+- **Values** are lists; CVS builds the Cartesian product
+- **Tree + collective rule**: `tree` is skipped for collectives other than `all_reduce_perf`
+- Missing `regression` or `{}` → single default case
+
+Example internal config: [`rccl_regression_internal.json`](rccl_regression_internal.json).
+
+Full design notes and a **from `main` rebuild** checklist: [RCCL_HANDOFF_FROM_MAIN.md](RCCL_HANDOFF_FROM_MAIN.md).
+
+### Single-node testing
+
+Single-node RCCL testing is achieved by using either `rccl_perf` or `rccl_regression` with a cluster configuration that contains only one node. The tests automatically adapt to single-node execution.
+
+### Heatmap
+
+```bash
+cvs run heatmap \
+  --cluster_file input/cluster_file/cluster.json \
+  --config_file input/config_file/heatmap/heatmap_config.json \
+  --html=/var/www/html/cvs/heatmap.html --capture=tee-sys --self-contained-html \
+  --log-file=/tmp/heatmap.log -vvv -s
+```
+
+Heatmap config requires:
+- `actual_json_file`: Path to test results JSON
+- `reference_json_file`: Path to golden/reference results JSON
+- `heatmap_output_file`: Output HTML path (optional)
+
+## Configuration
+
+The RCCL config keeps benchmark intent and validation settings, while RCCL/NCCL/UCX tuning moves into env scripts.
+
+### Env files vs JSON scope
+
+- **Env scripts**: `NCCL_*`, `RCCL_*`, `UCX_*`, `MPI_HOME`, `RCCL_TESTS_BUILD_DIR`, and runtime paths
+- **JSON config**: collectives list, message sizes, thresholds (`results`), `mpi_pml`, cluster orchestration
+
+### Performance config
+
+```json
+{
+  "rccl": {
+    "env_files": ["/root/ainic_env_script.sh", "/root/thor2_env_script.sh"],
+    "rccl_collective": ["all_reduce_perf", "all_gather_perf"],
+    "rccl_result_file": "/tmp/rccl_perf_result.json",
+    "start_msg_size": "1024",
+    "end_msg_size": "16g",
+    "results": { }
   }
 }
 ```
 
-## Optional AINIC/ANP net-plugin setup
+### Regression config
 
-If using AINIC + ANP plugin:
+```json
+{
+  "rccl": {
+    "env_source_script": "/root/thor2_env_script.sh", 
+    "rccl_collective": ["all_reduce_perf"],
+    "regression": {
+      "NCCL_ALGO": ["ring", "tree"],
+      "NCCL_PROTO": ["Simple"],
+      "NCCL_IB_QPS_PER_CONNECTION": ["1", "2"]
+    },
+    "start_msg_size": "1024",
+    "end_msg_size": "16g",
+    "results": { }
+  }
+}
+```
 
-1. Ensure AMD ANP is installed and accessible on all target nodes.
-2. Edit `input/config_file/rccl/ainic_env_script.sh` and set `ANP_HOME_DIR` to your absolute ANP install path.
-3. Set `env_source_script` in your RCCL JSON config to that script path.
-4. Run RCCL with `cvs run ...`; CVS sources the script automatically before test execution.
+## Implementation details
 
-If you are not using AINIC/ANP, set `env_source_script` to your standard environment setup script (or `"None"` to skip script sourcing).
-
-## Expected output artifacts
-
-- Pytest HTML summary from `--html`.
-- RCCL perf graph HTML under `/tmp/rccl_perf_report_*.html` or `/tmp/rccl_singlenode_perf_report_*.html`.
-- Heatmap output under `/tmp/rccl_heatmap_*.html` plus JSON result files.
-- Optional copied heatmap artifacts under `output_dir` (from config) for easier sharing.
-- Graph/heatmap files under `/tmp` can be copied to your web server path (for example `/var/www/html/cvs`) for browser viewing.
-
-The run passes when command execution succeeds and configured validations (`results`, dip checks, and optional bus bandwidth checks) are met.
+- **Env staging**: `run_rccl` stages env scripts to `/tmp/cvs_rccl_env/` on all nodes with optional per-case overrides
+- **Regression cases**: Each combination in the Cartesian product gets its own result file suffix
+- **Single env dump**: Only `test_print_env_once` prints the environment; other tests focus on performance
+- **Tree filter**: Algorithm restrictions apply to maintain compatibility

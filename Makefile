@@ -2,11 +2,14 @@ TEST_VENV_DIR = .test_venv
 CVS_VENV_DIR = .cvs_venv
 RUFF_VENV_DIR = .ruff_venv
 RUFF_VERSION = 0.14.8
+# Scoped logging checks: argument count vs %-placeholders (runtime TypeError class).
+PYLINT_VERSION = 4.0.5
 PYTHON := $(shell command -v python3 || command -v python)
 PIP = $(TEST_VENV_DIR)/bin/pip
 CVS_PIP = $(CVS_VENV_DIR)/bin/pip
 RUFF_PIP = $(RUFF_VENV_DIR)/bin/pip
 RUFF = $(RUFF_VENV_DIR)/bin/ruff
+PYLINT = $(RUFF_VENV_DIR)/bin/pylint
 CVS = $(TEST_VENV_DIR)/bin/cvs
 
 .PHONY: all help sdist build test-venv cvs-venv install installtest ut test clean_test_venv clean_cvs_venv clean_sdist clean_pycache clean
@@ -24,7 +27,7 @@ help:
 	@echo "  installtest    - Install from built distribution"
 	@echo "  ut         - Execute all Unittests"
 	@echo "  test       - Execute all UTs and cvs cli tests"
-	@echo "  lint       - Run ruff linter (checks code quality, not formatting)"
+	@echo "  lint       - Run ruff + pylint (logging E1205/E1206 on cvs/)"
 	@echo "  fmt        - Run ruff formatter"
 	@echo "  fmt-check  - Check ruff formatting without modifying files"
 	@echo "  lint-fix   - Run ruff linter with auto-fix (fixes code quality issues, not formatting)"
@@ -48,9 +51,9 @@ ruff-venv:
 	@if [ ! -d $(RUFF_VENV_DIR) ]; then \
 		echo "Creating ruff virtual environment..."; \
 		$(PYTHON) -m venv $(RUFF_VENV_DIR); \
-		echo "Installing ruff..."; \
-		$(RUFF_PIP) install ruff==$(RUFF_VERSION); \
 	fi
+	@echo "Ensuring ruff and pylint..."
+	@$(RUFF_PIP) install -q ruff==$(RUFF_VERSION) pylint==$(PYLINT_VERSION)
 
 cvs-venv: clean_cvs_venv
 	@echo "Creating cvs virtual environment..."
@@ -78,6 +81,15 @@ lint: ruff-venv
 	@echo "Running ruff linter..."
 	@if ! $(RUFF) check . --unsafe-fixes ; then \
 		echo "\n\nLinting failed. Run 'make lint-fix' to auto-fix issues.\n"; exit 1; \
+	fi
+	@echo "Running pylint (logging: E1205/E1206 on cvs/)..."
+	@if ! $(PYLINT) cvs \
+		--disable=all \
+		--enable=logging-too-many-args,logging-too-few-args \
+		-j 0 \
+		--recursive=y \
+		; then \
+		echo "\n\nPylint logging checks failed. Fix logging call argument counts (see E1205/E1206).\n"; exit 1; \
 	fi
 
 fmt: ruff-venv
