@@ -321,7 +321,7 @@ def test_install_rvs(phdl, shdl, config_dict):
         # detected rocm_path is /opt/rocm/core-X.Y (new layout), causing path mismatches.
         if package_installed:
             verify_bin = phdl.exec(
-                f'which rvs 2>/dev/null || ls {rocm_path}/bin/rvs 2>/dev/null || ls /opt/rocm/bin/rvs 2>/dev/null',
+                f'which rvs 2>/dev/null || ls {config_dict["path"]} 2>/dev/null || ls /opt/rocm/bin/rvs 2>/dev/null',
                 timeout=60,
             )
             rvs_bin_found = False
