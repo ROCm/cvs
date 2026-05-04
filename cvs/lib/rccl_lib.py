@@ -569,6 +569,9 @@ def rccl_regression(
     no_of_iterations = rccl_test_params.get('no_of_iterations', 20)
     no_of_cycles = rccl_test_params.get('no_of_cycles', 1)
     check_iteration_count = rccl_test_params.get('check_iteration_count', 1)
+    cvs_exec_timeout = int(rccl_test_params.get('cvs_exec_timeout', 2400))
+    rccl_timeout = rccl_test_params.get('rccl_timeout', None)
+    output_algo_proto_channels = bool(rccl_test_params.get('output_algo_proto_channels', False))
 
     rccl_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
 
@@ -576,9 +579,15 @@ def rccl_regression(
     rccl_test_binary_path = f'{rccl_tests_dir}/{test_name}'
     output_flag = detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node)
 
+    extra_flags = ''
+    if rccl_timeout is not None:
+        extra_flags += f' -T {rccl_timeout}'
+    if output_algo_proto_channels:
+        extra_flags += ' -A 1'
+
     test_cmd = f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -t {threads_per_gpu} -w {warmup_iterations} -n {no_of_iterations} \
-        -N {no_of_cycles} -c {check_iteration_count} -Z json {output_flag} {rccl_result_file}'
+        -N {no_of_cycles} -c {check_iteration_count}{extra_flags} -Z json {output_flag} {rccl_result_file}'
 
     # Wrap with env file sourcing
     if env_file and str(env_file).lower() != 'none':
@@ -611,7 +620,7 @@ def rccl_regression(
     log.info('%%%%%%%%%%%%%%%%')
 
     try:
-        out_dict = shdl.exec(cmd, timeout=500)
+        out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
         output = out_dict[head_node]
         scan_rccl_logs(output)
     except Exception as e:
@@ -744,6 +753,9 @@ def rccl_perf(
     no_of_cycles = rccl_test_params.get('no_of_cycles', 1)
     check_iteration_count = rccl_test_params.get('check_iteration_count', 1)
     data_types = rccl_test_params.get('data_types', ['float'])
+    cvs_exec_timeout = int(rccl_test_params.get('cvs_exec_timeout', 2400))
+    rccl_timeout = rccl_test_params.get('rccl_timeout', None)
+    output_algo_proto_channels = bool(rccl_test_params.get('output_algo_proto_channels', False))
 
     rccl_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
 
@@ -755,6 +767,12 @@ def rccl_perf(
     rccl_test_binary_path = f'{rccl_tests_dir}/{test_name}'
     output_flag = detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node)
 
+    extra_flags = ''
+    if rccl_timeout is not None:
+        extra_flags += f' -T {rccl_timeout}'
+    if output_algo_proto_channels:
+        extra_flags += ' -A 1'
+
     for dtype in data_types:
         # Create a unique result file for each data type
         dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
@@ -763,7 +781,7 @@ def rccl_perf(
         # Wrap test binary in shell to source env script if provided
         test_cmd = f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
             -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-            -d {dtype} -n {no_of_iterations} -N {no_of_cycles} -Z json {output_flag} {dtype_result_file}'
+            -d {dtype} -n {no_of_iterations} -N {no_of_cycles}{extra_flags} -Z json {output_flag} {dtype_result_file}'
 
         if env_file and str(env_file).lower() != 'none':
             test_cmd = f'bash -c "source {env_file} && {test_cmd}"'
@@ -788,7 +806,7 @@ def rccl_perf(
         log.info("%s", cmd)
         log.info('%%%%%%%%%%%%%%%%')
         try:
-            out_dict = shdl.exec(cmd, timeout=500)
+            out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
             output = out_dict[head_node]
             # print(output)
             scan_rccl_logs(output)
