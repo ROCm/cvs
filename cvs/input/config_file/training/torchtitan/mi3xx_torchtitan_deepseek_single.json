@@ -1,0 +1,125 @@
+{
+
+    "config":
+    {
+        "container_image": "rocm/primus:v26.2",
+        "container_name": "torchtitan_deepseek_v3_16b",
+        "_example_nnodes": "1",
+        "nnodes": "<changeme>-no of nodes to run singlenode training",
+        "master_address": "localhost",
+        "_example_training_iterations": "30",
+        "training_iterations": "<changeme>",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "shm_size": "128G",
+        "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
+        "data_cache_dir": "/home/{user-id}/cache",
+        "mock_data": "True",
+        "log_dir": "/home/{user-id}/LOG_DIR",
+        "dataset_source":
+        {
+        },
+        "container_config":
+        {
+            "device_list": [ "/dev/dri", "/dev/kfd" ],
+            "volume_dict":
+            {
+            "/home/{user-id}": "/home/{user-id}"
+            }
+        }
+    },
+    "model_params":
+    {
+        "single_node":
+        {
+             "deepseek_v3_16b":
+             {
+                 "mi300x":
+                 {
+                     "tokenizer_path": "deepseek-ai/deepseek-moe-16b-base",
+                     "model_size": "16b",
+                     "global_batch_size": "64",
+                     "micro_batch_size": "2",
+                     "sequence_length": "4096",
+                     "data_parallel_shard_degree": "8",
+                     "tensor_parallel_degree": "1",
+                     "pipeline_parallel_degree": "1",
+                     "context_parallel_degree": "1",
+                     "expert_parallel_degree": "1",
+                     "activation_checkpointing": "selective",
+                     "compile": "false",
+                     "enable_float8": "false",
+                     "_comments": "DeepSeek-V3 is MoE model with fine-grained experts. BF16 precision recommended.",
+                     "result_dict":
+                     {
+                         "tokens_per_sec": "96000.0"
+                     }
+                 },
+                 "mi325":
+                 {
+                     "tokenizer_path": "deepseek-ai/deepseek-moe-16b-base",
+                     "model_size": "16b",
+                     "global_batch_size": "64",
+                     "micro_batch_size": "2",
+                     "sequence_length": "4096",
+                     "data_parallel_shard_degree": "8",
+                     "tensor_parallel_degree": "1",
+                     "pipeline_parallel_degree": "1",
+                     "context_parallel_degree": "1",
+                     "expert_parallel_degree": "1",
+                     "activation_checkpointing": "selective",
+                     "compile": "false",
+                     "enable_float8": "false",
+                     "_comments": "DeepSeek-V3 is MoE model with fine-grained experts. BF16 precision recommended.",
+                     "result_dict":
+                     {
+                         "tokens_per_sec": "104000.0"
+                     }
+                 },
+                 "mi350":
+                 {
+                     "tokenizer_path": "deepseek-ai/deepseek-moe-16b-base",
+                     "model_size": "16b",
+                     "global_batch_size": "64",
+                     "micro_batch_size": "2",
+                     "sequence_length": "4096",
+                     "data_parallel_shard_degree": "8",
+                     "tensor_parallel_degree": "1",
+                     "pipeline_parallel_degree": "1",
+                     "context_parallel_degree": "1",
+                     "expert_parallel_degree": "1",
+                     "activation_checkpointing": "selective",
+                     "compile": "false",
+                     "enable_float8": "false",
+                     "_comments": "DeepSeek-V3 is MoE model with fine-grained experts. BF16 precision recommended.",
+                     "result_dict":
+                     {
+                         "tokens_per_sec": "112000.0"
+                     }
+                 },
+                 "mi355":
+                 {
+                     "tokenizer_path": "deepseek-ai/deepseek-moe-16b-base",
+                     "model_size": "16b",
+                     "global_batch_size": "64",
+                     "micro_batch_size": "2",
+                     "sequence_length": "4096",
+                     "data_parallel_shard_degree": "8",
+                     "tensor_parallel_degree": "1",
+                     "pipeline_parallel_degree": "1",
+                     "context_parallel_degree": "1",
+                     "expert_parallel_degree": "1",
+                     "activation_checkpointing": "selective",
+                     "compile": "false",
+                     "enable_float8": "false",
+                     "_comments": "DeepSeek-V3 is MoE model with fine-grained experts. BF16 precision recommended.",
+                     "result_dict":
+                     {
+                         "tokens_per_sec": "120000.0"
+                     }
+                 }
+             }
+        }
+
+    }
+
+}

@@ -1,0 +1,104 @@
+{
+
+    "config":
+    {
+	"_comments__": "Config file created for 4 nodes, change expected results based on number of nodes",
+        "container_image": "rocm/primus:v26.2",
+        "container_name": "torchtitan_deepseek_v3_16b",
+        "distributed_training": "True",
+        "_example_nnodes": "4",
+        "nnodes": "<changeme>",
+        "_example_master_address": "X.X.X.X",
+        "master_address": "<changeme>",
+        "_example_training_iterations": "30",
+        "training_iterations": "<changeme>",
+        "_example_nic_type": "ainic|thor2|cx7",
+        "nic_type": "<changeme>",
+        "_example_nccl_ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7",
+        "nccl_ib_hca_list": "<changeme>",
+        "_example_nccl_socket_ifname": "ens51f1np1",
+        "nccl_socket_ifname": "<changeme>",
+        "_example_gloo_socket_ifname": "ens51f1np1",
+        "gloo_socket_ifname": "<changeme>",
+        "_example_nccl_ib_gid_index": "3",
+        "nccl_ib_gid_index": "<changeme>",
+        "nccl_debug": "ERROR",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "shm_size": "128G",
+        "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
+        "data_cache_dir": "/home/{user-id}/cache",
+        "mock_data": "True",
+        "log_dir": "/home/{user-id}/LOG_DIR",
+        "dataset_source":
+        {
+        },
+        "container_config":
+        {
+            "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm" ],
+            "volume_dict":
+            {
+            "/home/{user-id}": "/home/{user-id}",
+            "/dev/infiniband": "/dev/infiniband",
+            "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+            "/lib/libibverbs.d": "/lib/libibverbs.d",
+            "/tmp/TRAINING_LOGS": "/workspace/torchtitan/output"
+            }
+        }
+    },
+    "model_params":
+    {
+        "multi_node":
+        {
+             "deepseek_v3_16b":
+             {
+                 "mi300x":
+                 {
+                     "tokenizer_path": "deepseek-ai/deepseek-moe-16b-base",
+                     "model_size": "16b",
+                     "global_batch_size": "256",
+                     "micro_batch_size": "2",
+                     "sequence_length": "4096",
+                     "data_parallel_shard_degree": "4",
+                     "tensor_parallel_degree": "1",
+                     "pipeline_parallel_degree": "1",
+                     "context_parallel_degree": "1",
+                     "expert_parallel_degree": "8",
+                     "activation_checkpointing": "selective",
+                     "compile": "false",
+                     "enable_float8": "false",
+                     "_comments": "DeepSeek-V3 MoE: Using expert_parallel_degree=8 for distributed expert routing across 4 nodes. BF16 precision.",
+                     "result_dict":
+                     {
+                         "_example_tokens_per_sec": "307200.0",
+                         "_comments": "4 nodes x 8 GPUs x 9600 tokens/GPU/s = 307200 aggregate (MoE efficiency)",
+                         "tokens_per_sec": "<changeme>"
+                     }
+                 },
+                 "mi325":
+                 {
+                     "tokenizer_path": "deepseek-ai/deepseek-moe-16b-base",
+                     "model_size": "16b",
+                     "global_batch_size": "256",
+                     "micro_batch_size": "2",
+                     "sequence_length": "4096",
+                     "data_parallel_shard_degree": "4",
+                     "tensor_parallel_degree": "1",
+                     "pipeline_parallel_degree": "1",
+                     "context_parallel_degree": "1",
+                     "expert_parallel_degree": "8",
+                     "activation_checkpointing": "selective",
+                     "compile": "false",
+                     "enable_float8": "false",
+                     "_comments": "DeepSeek-V3 MoE: Using expert_parallel_degree=8 for distributed expert routing across 4 nodes. BF16 precision.",
+                     "result_dict":
+                     {
+                         "_example_tokens_per_sec": "332800.0",
+                         "_comments": "4 nodes x 8 GPUs x 10400 tokens/GPU/s = 332800 aggregate (MoE efficiency)",
+                         "tokens_per_sec": "<changeme>"
+                     }
+                 }
+             }
+        }
+    }
+
+}
