@@ -320,7 +320,9 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
 
     # Get cluster snapshot ..
-    if can_use_sudo and re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
+    if can_use_sudo and re.search(
+        'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
+    ):
         cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
     # Use the new grouped parameter function
@@ -351,7 +353,9 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
 
     # Get new cluster snapshot and compare ..
-    if can_use_sudo and re.search('True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I):
+    if can_use_sudo and re.search(
+        'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
+    ):
         cluster_dict_after = create_cluster_metrics_snapshot(phdl)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 
