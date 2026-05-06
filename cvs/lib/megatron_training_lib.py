@@ -89,7 +89,9 @@ class MegatronLlamaTrainingJob:
           - phdl.exec(cmd: str) -> Dict[node, str] or str, depending on implementation
           - phdl.exec_cmd_list(cmd_list: List[str]) -> Dict[node, str]
       - Docker container is pre-deployed and accessible on each node.
-      - Training scripts exist under /workspace/Megatron-LM/examples/llama/.
+      - Training scripts exist under {megatron_root}/examples/llama/ (default
+        `/workspace/Megatron-LM/`; configurable via the `megatron_root` and
+        `training_scripts` keys in the training config).
       - External helpers referenced in the methods are available in scope:
           - linux_utils.get_rdma_stats_dict, linux_utils.get_nic_ethtool_stats_dict
           - json_to_dict, fail_test, verify_dmesg_for_errors, log, training_err_dict
@@ -174,6 +176,14 @@ class MegatronLlamaTrainingJob:
         tdict.setdefault('master_address', '127.0.0.1')
         tdict.setdefault('verify_network_errors', 'False')
         tdict.setdefault('rocm_dir', '')
+        tdict.setdefault('megatron_root', '/workspace/Megatron-LM')
+        tdict.setdefault(
+            'training_scripts',
+            {
+                'llama-3': 'examples/llama/train_llama3.sh',
+                'llama-2': 'examples/llama/train_llama2.sh',
+            },
+        )
 
         self.container_image = tdict['container_image']
         self.container_name = tdict['container_name']
@@ -193,6 +203,8 @@ class MegatronLlamaTrainingJob:
         self.master_address = tdict['master_address']
         self.verify_network_errors = tdict['verify_network_errors']
         self.rocm_path = detect_rocm_path(self.phdl, tdict['rocm_dir'])
+        self.megatron_root = tdict['megatron_root']
+        self.training_scripts = tdict['training_scripts']
 
         # Get the model parameters dict
         log.info('^^^^')
@@ -235,10 +247,16 @@ class MegatronLlamaTrainingJob:
         self.recompute = pdict['recompute']
         self.precision = pdict['precision']
 
-        if re.search('llama-3', self.tokenizer_model, re.I):
-            self.training_script = '/workspace/Megatron-LM/examples/llama/train_llama3.sh'
-        elif re.search('llama-2', self.tokenizer_model, re.I):
-            self.training_script = '/workspace/Megatron-LM/examples/llama/train_llama2.sh'
+        # Resolve the training script for this tokenizer family. The mapping is
+        # config-driven (training_scripts), so adding a new family (e.g. 'llama-4')
+        # is a config edit, not a code edit. First-match-wins on dict insertion order.
+        # If no entry matches, self.training_script stays None — same fallthrough
+        # behavior as the previous if/elif chain (queued: raise instead).
+        self.training_script = None
+        for family, script_rel_path in self.training_scripts.items():
+            if re.search(family, self.tokenizer_model, re.I):
+                self.training_script = f'{self.megatron_root}/{script_rel_path}'
+                break
 
         # Remove and recreate the scripts dir
         self.phdl.exec(f'rm -rf {self.scripts_dir}')
@@ -317,7 +335,7 @@ class MegatronLlamaTrainingJob:
 
         cmd = (
             cmd
-            + 'cd /workspace/Megatron-LM; export MOCK_DATA=1; '
+            + f'cd {self.megatron_root}; export MOCK_DATA=1; '
             + f'export IMAGE={self.container_image}; '
             + f'export HF_TOKEN="{self.hf_token}"; '
             + f'export DATA_CACHE_PATH={self.data_cache_dir}; '
@@ -343,7 +361,7 @@ class MegatronLlamaTrainingJob:
             # Build CMD List as every node has different node rank
             cmd = (
                 cmd
-                + f'cd /workspace/Megatron-LM; RECOMPUTE={self.recompute} '
+                + f'cd {self.megatron_root}; RECOMPUTE={self.recompute} '
                 + f'SEQ_LENGTH={self.sequence_length} '
                 + f'MBS={self.micro_batch_size} BS={self.batch_size} '
                 + f'TP={self.tensor_parallelism} '
@@ -367,7 +385,7 @@ class MegatronLlamaTrainingJob:
             # Single node training case, run same cmd on all nodes.
             cmd = (
                 cmd
-                + f'cd /workspace/Megatron-LM; RECOMPUTE={self.recompute} '
+                + f'cd {self.megatron_root}; RECOMPUTE={self.recompute} '
                 + f'SEQ_LENGTH={self.sequence_length} '
                 + f'MBS={self.micro_batch_size} BS={self.batch_size} '
                 + f'TP={self.tensor_parallelism} '
@@ -421,7 +439,7 @@ class MegatronLlamaTrainingJob:
         cmd_list = []
         for i in range(0, int(self.nnodes)):
             result_training_log = f'{self.log_dir}/megatron-logs/out-node{i}/training.log'
-            cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i  "/^TRAIN_LOG=/c\TRAIN_LOG={result_training_log}" /workspace/Megatron-LM/examples/llama/train_llama3.sh' '''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i  "/^TRAIN_LOG=/c\TRAIN_LOG={result_training_log}" {self.training_script}' '''
             cmd_list.append(cmd)
         self.phdl.exec_cmd_list(cmd_list)
 

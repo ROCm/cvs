@@ -13,6 +13,11 @@
         "shm_size": "128G",
         "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
         "data_cache_dir": "/home/{user-id}/cache",
+        "megatron_root": "/workspace/Megatron-LM",
+        "training_scripts": {
+            "llama-3": "examples/llama/train_llama3.sh",
+            "llama-2": "examples/llama/train_llama2.sh"
+        },
         "mock_data": "True",
         "log_dir": "/home/{user-id}/LOG_DIR",
         "dataset_source": 
