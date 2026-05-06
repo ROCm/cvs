@@ -4,15 +4,15 @@ The benchmark tests run distributed training benchmarks validated by CVS. The **
 
 For details on arguments and their purpose, see the main README under the CVS parent folder.
 
-1. **Config file:** Edit `cvs/input/config_file/aorta/aorta_benchmark.yaml` and set `aorta_path` to the absolute path of your Aorta repository. Do not leave the default `<changeme>`.
-2. **Cluster file:** Provide a valid cluster file (e.g. `input/cluster_file/cluster.json`) with node and user settings.
+1. **Config file:** Edit `input/config_file/aorta/aorta_benchmark.yaml`. You may use path placeholders (`{user-id}`, `{home}`, etc.); `test_aorta` resolves them after the cluster file is validated, like other CVS suites. Use an absolute path or valid placeholders, and ensure the tree exists (or enable `aorta_auto_clone` with `aorta_clone_url`).
+2. **Cluster file:** Provide a valid cluster file (e.g. `input/cluster_file/cluster.json`) with node and user settings. If your SSH key is not under `/home/<username>/.ssh/`, set `priv_key_file` explicitly (the template assumes that layout).
 
-Example from the CVS repo root (directory containing ``cvs`` and ``input``):
+Run from the **CVS package directory**—the directory that contains the `input` folder (the inner `cvs` directory in a normal checkout, next to `tests` and `lib`):
 
 ```bash
-(myenv) [user@host]~/cvs:(main)$ pwd
-/home/user/cvs/cvs
-(myenv) [user@host]~/cvs:(main)$ cvs run test_aorta --cluster_file input/cluster_file/cluster.json --config_file input/config_file/aorta/aorta_benchmark.yaml --html=logs/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html --log-file=logs/aorta.log -vvv -s
+(myenv) [user@host myproject/cvs]$ pwd
+/home/user/myproject/cvs
+(myenv) [user@host myproject/cvs]$ cvs run test_aorta --cluster_file input/cluster_file/cluster.json --config_file input/config_file/aorta/aorta_benchmark.yaml --html=logs/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html --log-file=logs/aorta.log -vvv -s
 ```
 
 With HTML report and full logging (see also `docs/reference/configuration-files/aorta.rst`):
