@@ -96,5 +96,30 @@ class TestMegatronJobConstructor(unittest.TestCase):
         self.assertTrue(job.training_script.endswith('train_llama3.sh'))
 
 
+class TestExecNicSetupHcaIdPattern(unittest.TestCase):
+    """AIMVT-160: hca_id_pattern config key flows from training_dict into the
+    in-container HCA-id verification regex inside exec_nic_setup_scripts."""
+
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_default_pattern_matches_rocep(self, mock_fail):
+        # Default pattern 'bnxt_|rocep' must match 'rocep1s0f0' so the
+        # workaround verification doesn't fire fail_test on Mellanox/RoCE NICs.
+        job = _make_megatron_job(phdl_exec_returns='hca_id:\trocep1s0f0\n')
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_not_called()
+
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_override_pattern_matches_mlx5(self, mock_fail):
+        # Custom hca_id_pattern from config must propagate through to the regex
+        # in exec_nic_setup_scripts (catches missing setdefault, missing
+        # f-string interpolation, or a stale hardcoded literal).
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': 'mlx5_'},
+            phdl_exec_returns='hca_id:\tmlx5_0\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
