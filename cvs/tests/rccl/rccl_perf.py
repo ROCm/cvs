@@ -317,7 +317,6 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         config_dict['cvs_params'],
         node_list,
         vpc_node_list,
-        cluster_dict,
     )
 
     log.info("%s", result_dict)
