@@ -9,7 +9,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import os
 import re
 import json
-import subprocess
 import tempfile
 from typing import List
 from pathlib import Path
@@ -52,40 +51,29 @@ def _is_severe_wrong_corruption_error(err: ValidationError) -> bool:
     return 'SEVERE DATA CORRUPTION' in s or "'#wrong'" in s
 
 
-def _push_json_to_remote_head(
-    head_node: str,
-    remote_path: str,
-    json_string: str,
-    ssh_user: str,
-    ssh_key: str,
-    log_label: str,
-) -> bool:
+def _save_json_to_head_node(shdl, head_node, remote_path, payload_obj, log_label):
     """
-    Push a JSON payload from the conductor (login) node to the MPI head node via OpenSSH scp.
+    Serialize `payload_obj` to JSON and SFTP-upload it from the conductor to
+    `remote_path` on `head_node` via the existing single-host Pssh handle `shdl`.
 
-    The previous implementation embedded the JSON in a `cat > path << 'EOF' ... EOF` heredoc
-    sent over an ssh2-python (libssh2) exec channel. libssh2 rejects exec requests whose
-    command string grows past ~30 KB with InvalidRequestError, which broke saves of combined
-    raw and aggregated RCCL result files. Writing to a temp file and shelling out to OpenSSH
-    `scp` lifts that limit; OpenSSH does not have the same channel-payload constraint.
+    Replaces an earlier implementation that embedded the JSON in a `cat > path << 'EOF'`
+    heredoc over `shdl.exec`. libssh2 caps exec_request command strings at ~30 KB,
+    which broke saves on clusters of ~30+ nodes (combined raw files routinely
+    30-550 KB). SFTP transfers go over a separate channel with no such limit.
+
+    Failure is non-fatal: the benchmark and schema validation have already
+    completed before this is called and raw data remains in test.log. The caller
+    logs and continues.
 
     Parameters:
-      head_node: Hostname or IP of the MPI head node (target of the scp).
-      remote_path: Absolute destination path on the head node.
-      json_string: Serialized JSON to upload.
-      ssh_user: SSH username (must match the cluster JSON / passwordless key access).
-      ssh_key: Filesystem path to the SSH private key on the conductor.
-      log_label: Short label used in log lines for context (e.g. 'combined_rccl_results').
+      shdl: Pssh handle scoped to [head_node]. Credentials are reused from the handle.
+      head_node: Hostname/IP, used only for log context.
+      remote_path: Absolute destination path on head_node.
+      payload_obj: Any json.dumps-able Python object.
+      log_label: Short label used in log lines (e.g. 'combined_rccl_results').
 
     Returns:
-      bool: True on success, False on any scp-side failure (network, auth, missing binary,
-        non-zero exit). Failure is non-fatal to the test: the benchmark and schema validation
-        have already completed before this is called, and raw data remains in test.log; the
-        caller logs an error and continues.
-
-    Raises:
-      OSError: If the temporary file on the conductor cannot be created (e.g. /tmp full or
-        unwritable). This is a setup error and is left to propagate.
+      bool: True on success, False on transfer failure.
     """
     tmp_path = None
     try:
@@ -97,36 +85,21 @@ def _push_json_to_remote_head(
             suffix='.json',
             dir='/tmp',
         ) as tf:
-            tf.write(json_string)
+            json.dump(payload_obj, tf, indent=2)
             tmp_path = tf.name
 
-        scp_args = [
-            'scp',
-            '-i', ssh_key,
-            '-o', 'BatchMode=yes',
-            '-o', 'StrictHostKeyChecking=no',
-            tmp_path,
-            f'{ssh_user}@{head_node}:{remote_path}',
-        ]
         try:
-            subprocess.run(scp_args, check=True, capture_output=True, text=True)
-            log.info('scp push succeeded for %s -> %s:%s', log_label, head_node, remote_path)
+            shdl.upload_file(tmp_path, remote_path)
+            log.info('SFTP upload succeeded for %s -> %s:%s', log_label, head_node, remote_path)
             return True
-        except subprocess.CalledProcessError as e:
+        except IOError as e:
             log.error(
-                'scp push failed for %s -> %s:%s (exit %s): stderr=%r stdout=%r',
-                log_label, head_node, remote_path, e.returncode, e.stderr, e.stdout,
-            )
-            return False
-        except FileNotFoundError:
-            log.error(
-                'scp binary not found on conductor while pushing %s -> %s:%s',
-                log_label, head_node, remote_path,
+                'SFTP upload failed for %s -> %s:%s: %r', log_label, head_node, remote_path, e
             )
             return False
         except Exception as e:
             log.error(
-                'scp push unexpected error for %s -> %s:%s: %r',
+                'SFTP upload unexpected error for %s -> %s:%s: %r',
                 log_label, head_node, remote_path, e,
             )
             return False
@@ -136,6 +109,38 @@ def _push_json_to_remote_head(
                 os.unlink(tmp_path)
             except OSError as e:
                 log.warning('Failed to remove temp file %s: %r', tmp_path, e)
+
+
+def _read_json_from_head_node(shdl, head_node, remote_path, log_label):
+    """
+    SFTP-download a JSON file from `remote_path` on `head_node` to a conductor
+    tempfile and return the parsed object.
+
+    Replaces an earlier `shdl.exec(f'cat {remote_path}')` + line-oriented stdout
+    reassembly + `.replace('\\n','').replace('\\r','')` hack. That approach was
+    fragile for any text payload of nontrivial size and architecturally the
+    receive-direction sibling of the 30 KB exec-request bug.
+
+    Parameters:
+      shdl: Pssh handle scoped to [head_node].
+      head_node: Hostname/IP key used to look up the per-host download path.
+      remote_path: Absolute path on head_node to fetch.
+      log_label: Short label used in log lines (e.g. 'all_reduce_perf_float').
+
+    Returns:
+      The parsed JSON object.
+
+    Raises:
+      IOError: If the SFTP transfer fails.
+      json.JSONDecodeError: If the downloaded file is not valid JSON.
+    """
+    with tempfile.TemporaryDirectory(prefix='cvs_rccl_dl_') as tmpdir:
+        local_prefix = os.path.join(tmpdir, os.path.basename(remote_path))
+        paths = shdl.download_file(remote_path, local_prefix)
+        local_path = paths[head_node]
+        log.info('SFTP download succeeded for %s <- %s:%s', log_label, head_node, remote_path)
+        with open(local_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
 
 
 def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
@@ -707,9 +712,9 @@ def rccl_regression(
         log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
         fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
-    # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = shdl.exec(f'cat {rccl_result_file}')
-    result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
+    # Read the JSON results emitted by the RCCL test binary via SFTP
+    # (avoids fragile cat-over-exec stdout reassembly for large payloads)
+    result_out = _read_json_from_head_node(shdl, head_node, rccl_result_file, test_name)
 
     # Collect basic GPU information via rocm-smi
     smi_out_dict = shdl.exec('rocm-smi -a | head -30')
@@ -750,7 +755,6 @@ def rccl_perf(
     cvs_params,
     cluster_node_list,
     vpc_node_list,
-    cluster_dict,
 ):
     """
     Run an RCCL collective test across a cluster via MPI and verify results.
@@ -886,9 +890,11 @@ def rccl_perf(
             log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
             fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
-        # Read the JSON results emitted by the RCCL test binary
-        result_dict_out = shdl.exec(f'cat {dtype_result_file}')
-        dtype_result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
+        # Read the JSON results emitted by the RCCL test binary via SFTP
+        # (avoids fragile cat-over-exec stdout reassembly for large payloads)
+        dtype_result_out = _read_json_from_head_node(
+            shdl, head_node, dtype_result_file, f'{test_name}_{dtype}'
+        )
         # Validate the results against the schema fail if results are not valid
         try:
             validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
@@ -919,22 +925,11 @@ def rccl_perf(
             # IMPORTANT: schema validation failures should stop further iterations/data types
             raise RuntimeError(f'RCCL Test {dtype} schema validation failed') from e
 
-    if not isinstance(cluster_dict, dict):
-        raise ValueError('rccl_perf: cluster_dict must be a dict containing SSH credentials')
-    ssh_user = cluster_dict.get('username')
-    ssh_key = cluster_dict.get('priv_key_file')
-    if not ssh_user or not ssh_key:
-        raise ValueError(
-            "rccl_perf: cluster_dict missing required 'username' and/or 'priv_key_file' "
-            'needed to scp result JSON to the head node'
-        )
-
-    # Save the combined raw results to the head node via scp.
+    # Save the combined raw results to the head node via SFTP through `shdl`.
     # This is non-fatal: the benchmark and schema validation have already passed by this point;
     # raw data also lives in test.log. A save failure logs an ERROR but does not fail the test.
-    json_string = json.dumps(all_raw_results, indent=2)
-    if _push_json_to_remote_head(
-        head_node, rccl_result_file, json_string, ssh_user, ssh_key, 'combined_rccl_results'
+    if _save_json_to_head_node(
+        shdl, head_node, rccl_result_file, all_raw_results, 'combined_rccl_results'
     ):
         log.info(f'Saved combined results from all data types to {rccl_result_file}')
     else:
@@ -948,9 +943,9 @@ def rccl_perf(
             log.info(f'Aggregation passed: {len(aggregated_rccl_tests)} RcclTestsAggregated schema validation passed')
             # Note: currently we are saving the aggregated results, but we could instead use this for final report generation
             aggregated_path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
-            json_string = json.dumps([result.model_dump() for result in aggregated_rccl_tests], indent=2)
-            if _push_json_to_remote_head(
-                head_node, aggregated_path, json_string, ssh_user, ssh_key, 'aggregated_rccl_results'
+            aggregated_payload = [result.model_dump() for result in aggregated_rccl_tests]
+            if _save_json_to_head_node(
+                shdl, head_node, aggregated_path, aggregated_payload, 'aggregated_rccl_results'
             ):
                 log.info(f'Saved aggregated results to {aggregated_path}')
             else:
