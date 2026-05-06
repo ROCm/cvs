@@ -25,6 +25,75 @@ training_err_dict = {
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
 
+
+# Ordered fallback chains for parsing Megatron-LM training output.
+# Each chain is tried in order; first non-empty match wins. Seeded with
+# [new, old] so newer Megatron output (e.g. `throughput per GPU
+# (TFLOP/s/GPU): N`) is preferred but the original format
+# (`throughput per GPU: N`) still parses on older builds.
+TRAINING_RESULT_PATTERNS = {
+    'throughput_per_gpu': [
+        r'throughput per GPU(?:\s*\([^)]*\))?\s*:\s+([0-9\.]+)',
+        r'throughput per GPU:\s+([0-9\.]+)',
+    ],
+    'tokens_per_gpu': [r'tokens\/GPU\/s:\s+([0-9]+)'],
+    'mem_usage': [r'mem usages:\s+([0-9\.]+)'],
+    'elapsed_time_per_iteration': [r'elapsed time per iteration \(ms\):\s+([0-9\.]+)'],
+}
+
+TRAINING_PROGRESS_PATTERNS = [
+    r'throughput per GPU(?:\s*\([^)]*\))?\s*:|tokens\/GPU\/s\s+[0-9]+',
+    r'throughput per GPU:|tokens\/GPU\/s\s+[0-9]+',
+]
+
+# NOTE: the `[NaN|Inf]` character class is a long-standing bug in the
+# original code (it matches the literal characters `N`, `a`, `I`, `n`,
+# `f`, `|`, not the strings `NaN` or `Inf`). Preserved here behavior-
+# preserving — fixing the regex semantics is a separate ticket.
+TRAINING_NAN_PATTERNS = [
+    r'throughput per GPU(?:\s*\([^)]*\))?\s*:\s+[NaN|Inf]',
+    r'throughput per GPU:\s+[NaN|Inf]',
+    r'tokens\/GPU\/s:\s+[NaN|Inf]',
+    r'mem usages:\s+[NaN|Inf]',
+]
+
+
+def _parse_training_results(output):
+    """Extract metric values from training-log text using ordered fallback chains.
+
+    For each metric in TRAINING_RESULT_PATTERNS, try each pattern in order and
+    return the first non-empty list of matches. If no pattern matches, the
+    metric maps to an empty list.
+
+    Args:
+        output (str): Raw training-log text to parse.
+
+    Returns:
+        dict: {metric_name: list[str]} for every key in TRAINING_RESULT_PATTERNS.
+    """
+    out = {}
+    for metric, patterns in TRAINING_RESULT_PATTERNS.items():
+        out[metric] = []
+        for pat in patterns:
+            matches = re.findall(pat, output, re.I)
+            if matches:
+                out[metric] = matches
+                break
+    return out
+
+
+def _is_training_complete(output):
+    """Return True if the training-log text shows a completion indicator
+    matching any pattern in TRAINING_PROGRESS_PATTERNS."""
+    return any(re.search(p, output, re.I) for p in TRAINING_PROGRESS_PATTERNS)
+
+
+def _has_nan_inf_results(output):
+    """Return True if the training-log text shows a NaN/Inf result line
+    matching any pattern in TRAINING_NAN_PATTERNS."""
+    return any(re.search(p, output, re.I) for p in TRAINING_NAN_PATTERNS)
+
+
 # Library for building Megatron training jobs ..
 
 
@@ -497,8 +566,6 @@ class MegatronLlamaTrainingJob:
         - re is imported in the module scope.
         """
 
-        training_results_dict = {}
-
         # Read the training log output from the "last" node (assumed authoritative)
         last_node = self.host_list[len(self.host_list) - 1]
         last_node_num = len(self.host_list) - 1
@@ -512,22 +579,7 @@ class MegatronLlamaTrainingJob:
         log.info("%s", output)
         log.info('#===========================#')
 
-        # Extract throughput per GPU as a list of numbers (strings), if multiple occurrences exist
-        # pattern = f'throughput per GPU \(TFLOP/s/GPU\):\s+([0-9\.]+)'
-        pattern = 'throughput per GPU:\s+([0-9\.]+)'
-        training_results_dict['throughput_per_gpu'] = re.findall(pattern, output, re.I)
-
-        pattern = 'tokens\/GPU\/s:\s+([0-9]+)'
-        # Extract tokens per GPU per second (integers as strings)
-        training_results_dict['tokens_per_gpu'] = re.findall(pattern, output, re.I)
-
-        # Extract memory usage values (floats as strings)
-        pattern = 'mem usages:\s+([0-9\.]+)'
-        training_results_dict['mem_usage'] = re.findall(pattern, output, re.I)
-
-        # Extract elapsed time per iteration (floats as strings)
-        pattern = 'elapsed time per iteration \(ms\):\s+([0-9\.]+)'
-        training_results_dict['elapsed_time_per_iteration'] = re.findall(pattern, output, re.I)
+        training_results_dict = _parse_training_results(output)
 
         log.info("%s", training_results_dict)
         return training_results_dict
@@ -635,14 +687,10 @@ class MegatronLlamaTrainingJob:
             out_dict = self.phdl.exec(f'sudo cat {self.log_dir}/megatron-logs/out-node{last_node_num}/training.log')
             output = out_dict[last_node]
 
-            if not re.search('throughput per GPU:|tokens\/GPU\/s\s+[0-9]+', output, re.I):
+            if not _is_training_complete(output):
                 log.info('Training still in progress')
             else:
-                if (
-                    re.search('throughput per GPU:\s+[NaN|Inf]', output, re.I)
-                    or re.search('tokens\/GPU\/s:\s+[NaN|Inf]', output, re.I)
-                    or re.search('mem usages:\s+[NaN|Inf]', output, re.I)
-                ):
+                if _has_nan_inf_results(output):
                     fail_test(f'ERROR - NaN or Inf values seen in training results {output}')
                     return
                 else:

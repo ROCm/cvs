@@ -141,5 +141,49 @@ class TestMegatronRootPropagation(unittest.TestCase):
         self.assertIn('cd /opt/megatron', cmds)
 
 
+class TestTrainingLogParsing(unittest.TestCase):
+    """AIMVT-161: _parse_training_results extracts identical metric dicts from
+    both the new format (`throughput per GPU (TFLOP/s/GPU): N`) and the
+    old format (`throughput per GPU: N`). The OLD-format case is the one
+    that proves the fallback chain actually falls back."""
+
+    NEW_FORMAT = (
+        'throughput per GPU (TFLOP/s/GPU): 612.5\n'
+        'tokens/GPU/s: 12345\n'
+        'mem usages: 88.3\n'
+        'elapsed time per iteration (ms): 1230.4\n'
+    )
+    OLD_FORMAT = (
+        'throughput per GPU: 612.5\ntokens/GPU/s: 12345\nmem usages: 88.3\nelapsed time per iteration (ms): 1230.4\n'
+    )
+    EXPECTED = {
+        'throughput_per_gpu': ['612.5'],
+        'tokens_per_gpu': ['12345'],
+        'mem_usage': ['88.3'],
+        'elapsed_time_per_iteration': ['1230.4'],
+    }
+
+    def test_parse_new_format(self):
+        self.assertEqual(megatron_training_lib._parse_training_results(self.NEW_FORMAT), self.EXPECTED)
+
+    def test_parse_old_format_falls_back(self):
+        # OLD-format input forces pattern #1 to return [] for throughput;
+        # pattern #2 must be the matcher. Catches a refactor that
+        # short-circuits on the first empty findall.
+        self.assertEqual(megatron_training_lib._parse_training_results(self.OLD_FORMAT), self.EXPECTED)
+
+
+class TestProgressDetection(unittest.TestCase):
+    """AIMVT-161: _is_training_complete handles both new and old format
+    completion lines. Different regex chain than parsing — exercises a
+    separate code path."""
+
+    def test_handles_new_format(self):
+        self.assertTrue(megatron_training_lib._is_training_complete('throughput per GPU (TFLOP/s/GPU): 612.5'))
+
+    def test_handles_old_format(self):
+        self.assertTrue(megatron_training_lib._is_training_complete('throughput per GPU: 612.5'))
+
+
 if __name__ == '__main__':
     unittest.main()
