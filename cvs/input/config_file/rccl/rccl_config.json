@@ -23,6 +23,10 @@
             "no_of_iterations": "20",
             "no_of_cycles": "1",
             "check_iteration_count": "1",
+            "_comment_timeouts_and_diag": "Optional. cvs_exec_timeout = CVS-side outer cap on the SSH-exec call (seconds, default 2400). rccl_timeout = rccl-tests internal timer passed as -T (seconds; omit to not set). output_algo_proto_channels = boolean toggle for rccl-tests' -A 1 algorithm/protocol/channels diagnostic output.",
+            "cvs_exec_timeout": "2400",
+            "rccl_timeout": "1800",
+            "output_algo_proto_channels": false,
             "data_types": ["float"]
         },
 
