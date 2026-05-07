@@ -244,19 +244,19 @@ class Pssh:
         return cmd_output
 
     def scp_file(self, local_file, remote_file, recurse=False):
+        """
+        Backward-compatible alias for upload_file.
+
+        Kept so existing callers (and log-grep tooling looking for the legacy
+        "About to copy local file..." line) keep working. New code should call
+        upload_file directly.
+        """
         self.log.info('About to copy local file {} to remote {} on all Hosts'.format(local_file, remote_file))
-        cmds = self.client.copy_file(local_file, remote_file, recurse=recurse)
-        self.client.pool.join()
-        for cmd in cmds:
-            try:
-                cmd.get()
-            except IOError:
-                raise Exception("Expected IOError exception, got none")
-        return
+        self.upload_file(local_file, remote_file, recurse=recurse)
 
     def upload_file(self, local_file, remote_file, recurse=False):
         """
-        SFTP-upload a local file from the conductor to `remote_file` on every host
+        SFTP-upload a local file from the runner node to `remote_file` on every host
         in this Pssh's reachable_hosts. Wraps ParallelSSHClient.copy_file.
 
         Use this instead of embedding file contents in `exec()` command strings
@@ -264,10 +264,10 @@ class Pssh:
         cap. SFTP transfers go over a separate channel with no such limit and
         auto-create missing parent directories when recurse=True.
 
-        For a 1:1 conductor->head_node push, construct the Pssh with [head_node].
+        For a 1:1 runner->head_node push, construct the Pssh with [head_node].
 
         Parameters:
-          local_file: Path on the conductor to read from.
+          local_file: Path on the runner node to read from.
           remote_file: Absolute destination path on each remote host.
           recurse: If True, copy a directory tree (parent dirs auto-created).
 
@@ -293,7 +293,7 @@ class Pssh:
     def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_'):
         """
         SFTP-download `remote_file` from every host in this Pssh's reachable_hosts
-        to the conductor. Wraps ParallelSSHClient.copy_remote_file.
+        to the runner node. Wraps ParallelSSHClient.copy_remote_file.
 
         Use this instead of `exec('cat <file>')` + parsing stdout when the file
         may exceed a few KB. `cat`-over-exec reassembles bytes through the
@@ -307,7 +307,7 @@ class Pssh:
 
         Parameters:
           remote_file: Absolute path on each remote host.
-          local_file: Local path prefix on the conductor (host name will be appended).
+          local_file: Local path prefix on the runner node (host name will be appended).
           recurse: If True, recursively download a directory tree.
           suffix_separator: Separator placed between local_file and host. Default '_'.
 
