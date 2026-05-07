@@ -96,5 +96,50 @@ class TestMegatronJobConstructor(unittest.TestCase):
         self.assertTrue(job.training_script.endswith('train_llama3.sh'))
 
 
+class TestExecNicSetupHcaIdPattern(unittest.TestCase):
+    """AIMVT-160: hca_id_pattern config key flows from training_dict into the
+    in-container HCA-id verification regex inside exec_nic_setup_scripts."""
+
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_default_pattern_matches_rocep(self, mock_fail):
+        # Default pattern 'bnxt_|rocep' must match 'rocep1s0f0' so the
+        # workaround verification doesn't fire fail_test on Mellanox/RoCE NICs.
+        job = _make_megatron_job(phdl_exec_returns='hca_id:\trocep1s0f0\n')
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_not_called()
+
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_override_pattern_matches_mlx5(self, mock_fail):
+        # Custom hca_id_pattern from config must propagate through to the regex
+        # in exec_nic_setup_scripts (catches missing setdefault, missing
+        # f-string interpolation, or a stale hardcoded literal).
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': 'mlx5_'},
+            phdl_exec_returns='hca_id:\tmlx5_0\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_not_called()
+
+
+class TestMegatronRootPropagation(unittest.TestCase):
+    """AIMVT-162: megatron_root override must replace every hardcoded
+    `/workspace/Megatron-LM` site (cd targets, training_script,
+    line-430 sed). Single test with three concrete assertions."""
+
+    def test_override_replaces_all_hardcoded_uses(self):
+        job = _make_megatron_job(training_overrides={'megatron_root': '/opt/megatron'})
+        job.build_training_job_cmd()
+        cmds = ' '.join(job.job_cmd_list) + ' ' + job.job_cmd
+        # Leak check: catches every missed-replacement site at once.
+        self.assertNotIn('/workspace/Megatron-LM', cmds)
+        # __init__ branch: training_script resolved via the config-driven loop.
+        self.assertEqual(
+            job.training_script,
+            '/opt/megatron/examples/llama/train_llama3.sh',
+        )
+        # cd-site substitution actually fired in the wrapper-script body.
+        self.assertIn('cd /opt/megatron', cmds)
+
+
 if __name__ == '__main__':
     unittest.main()
