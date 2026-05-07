@@ -754,9 +754,7 @@ class TestPsshFileTransfer(unittest.TestCase):
 
         self.pssh.upload_file("/tmp/local.json", "/remote/dest.json")
 
-        self.mock_client.copy_file.assert_called_once_with(
-            "/tmp/local.json", "/remote/dest.json", recurse=False
-        )
+        self.mock_client.copy_file.assert_called_once_with("/tmp/local.json", "/remote/dest.json", recurse=False)
         self.mock_client.pool.join.assert_called_once()
 
     def test_upload_file_recurse_passes_through(self):
@@ -834,9 +832,7 @@ class TestPsshFileTransfer(unittest.TestCase):
             self._ok_greenlet(),
         ]
 
-        result = self.pssh.download_file(
-            "/remote/file.json", "/tmp/local.json", suffix_separator="."
-        )
+        result = self.pssh.download_file("/remote/file.json", "/tmp/local.json", suffix_separator=".")
 
         self.assertEqual(
             result,
@@ -893,9 +889,7 @@ class TestPsshFileTransfer(unittest.TestCase):
         # to confirm delegation rather than reimplementing the underlying mock.
         with patch.object(Pssh, "upload_file") as mock_upload:
             self.pssh.scp_file("/tmp/local.json", "/remote/dest.json", recurse=True)
-            mock_upload.assert_called_once_with(
-                "/tmp/local.json", "/remote/dest.json", recurse=True
-            )
+            mock_upload.assert_called_once_with("/tmp/local.json", "/remote/dest.json", recurse=True)
 
     def test_scp_file_propagates_ioerror_from_upload_file(self):
         # When upload_file raises, scp_file lets it propagate (no swallowing)

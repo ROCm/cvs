@@ -274,9 +274,7 @@ class Pssh:
         Raises:
           IOError: If transfer fails on any host. Message lists offending hosts.
         """
-        self.log.info(
-            'SFTP upload %s -> %s on %s', local_file, remote_file, self.reachable_hosts
-        )
+        self.log.info('SFTP upload %s -> %s on %s', local_file, remote_file, self.reachable_hosts)
         cmds = self.client.copy_file(local_file, remote_file, recurse=recurse)
         self.client.pool.join()
         errors = []
@@ -286,9 +284,7 @@ class Pssh:
             except Exception as e:
                 errors.append((host, e))
         if errors:
-            raise IOError(
-                f'upload_file failed on {len(errors)}/{len(self.reachable_hosts)} hosts: {errors}'
-            )
+            raise IOError(f'upload_file failed on {len(errors)}/{len(self.reachable_hosts)} hosts: {errors}')
 
     def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_'):
         """
@@ -317,12 +313,8 @@ class Pssh:
         Raises:
           IOError: If transfer fails on any host. Message lists offending hosts.
         """
-        self.log.info(
-            'SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts
-        )
-        cmds = self.client.copy_remote_file(
-            remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator
-        )
+        self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts)
+        cmds = self.client.copy_remote_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
         self.client.pool.join()
         errors = []
         result = {}
@@ -333,9 +325,7 @@ class Pssh:
             except Exception as e:
                 errors.append((host, e))
         if errors:
-            raise IOError(
-                f'download_file failed on {len(errors)}/{len(self.reachable_hosts)} hosts: {errors}'
-            )
+            raise IOError(f'download_file failed on {len(errors)}/{len(self.reachable_hosts)} hosts: {errors}')
         return result
 
     def reboot_connections(self):

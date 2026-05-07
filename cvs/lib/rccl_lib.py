@@ -93,14 +93,15 @@ def _save_json_to_head_node(shdl, head_node, remote_path, payload_obj, log_label
             log.info('SFTP upload succeeded for %s -> %s:%s', log_label, head_node, remote_path)
             return True
         except IOError as e:
-            log.error(
-                'SFTP upload failed for %s -> %s:%s: %r', log_label, head_node, remote_path, e
-            )
+            log.error('SFTP upload failed for %s -> %s:%s: %r', log_label, head_node, remote_path, e)
             return False
         except Exception as e:
             log.error(
                 'SFTP upload unexpected error for %s -> %s:%s: %r',
-                log_label, head_node, remote_path, e,
+                log_label,
+                head_node,
+                remote_path,
+                e,
             )
             return False
     finally:
@@ -892,9 +893,7 @@ def rccl_perf(
 
         # Read the JSON results emitted by the RCCL test binary via SFTP
         # (avoids fragile cat-over-exec stdout reassembly for large payloads)
-        dtype_result_out = _read_json_from_head_node(
-            shdl, head_node, dtype_result_file, f'{test_name}_{dtype}'
-        )
+        dtype_result_out = _read_json_from_head_node(shdl, head_node, dtype_result_file, f'{test_name}_{dtype}')
         # Validate the results against the schema fail if results are not valid
         try:
             validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
@@ -928,9 +927,7 @@ def rccl_perf(
     # Save the combined raw results to the head node via SFTP through `shdl`.
     # This is non-fatal: the benchmark and schema validation have already passed by this point;
     # raw data also lives in test.log. A save failure logs an ERROR but does not fail the test.
-    if _save_json_to_head_node(
-        shdl, head_node, rccl_result_file, all_raw_results, 'combined_rccl_results'
-    ):
+    if _save_json_to_head_node(shdl, head_node, rccl_result_file, all_raw_results, 'combined_rccl_results'):
         log.info(f'Saved combined results from all data types to {rccl_result_file}')
     else:
         log.error('Failed to save combined results to %s on head node %s', rccl_result_file, head_node)
@@ -944,9 +941,7 @@ def rccl_perf(
             # Note: currently we are saving the aggregated results, but we could instead use this for final report generation
             aggregated_path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
             aggregated_payload = [result.model_dump() for result in aggregated_rccl_tests]
-            if _save_json_to_head_node(
-                shdl, head_node, aggregated_path, aggregated_payload, 'aggregated_rccl_results'
-            ):
+            if _save_json_to_head_node(shdl, head_node, aggregated_path, aggregated_payload, 'aggregated_rccl_results'):
                 log.info(f'Saved aggregated results to {aggregated_path}')
             else:
                 log.error('Failed to save aggregated results to %s on head node %s', aggregated_path, head_node)
