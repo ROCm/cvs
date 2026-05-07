@@ -718,5 +718,243 @@ class TestPsshExecCmdList(unittest.TestCase):
             self.assertNotIn("host2 output line1", call)
 
 
+class TestPsshFileTransfer(unittest.TestCase):
+    """
+    Unit tests for upload_file / download_file / scp_file.
+
+    Strategy: mock ParallelSSHClient.copy_file and copy_remote_file. Each call
+    returns a list of greenlet-like objects whose .get() either returns or
+    raises. We verify the {host: local_path} dict contract and the IOError
+    aggregation message format on partial/full failure.
+    """
+
+    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    def setUp(self, mock_pssh_client):
+        self.mock_client = MagicMock()
+        mock_pssh_client.return_value = self.mock_client
+        self.host_list = ["host1", "host2"]
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
+
+    def _ok_greenlet(self):
+        g = MagicMock()
+        g.get.return_value = None
+        return g
+
+    def _fail_greenlet(self, exc):
+        g = MagicMock()
+        g.get.side_effect = exc
+        return g
+
+    # -------------------- upload_file --------------------
+
+    def test_upload_file_success_multi_host(self):
+        # Both hosts succeed -> no exception, copy_file called with right args
+        self.mock_client.copy_file.return_value = [self._ok_greenlet(), self._ok_greenlet()]
+
+        self.pssh.upload_file("/tmp/local.json", "/remote/dest.json")
+
+        self.mock_client.copy_file.assert_called_once_with(
+            "/tmp/local.json", "/remote/dest.json", recurse=False
+        )
+        self.mock_client.pool.join.assert_called_once()
+
+    def test_upload_file_recurse_passes_through(self):
+        # recurse=True must be propagated to copy_file
+        self.mock_client.copy_file.return_value = [self._ok_greenlet(), self._ok_greenlet()]
+
+        self.pssh.upload_file("/tmp/dir", "/remote/dir", recurse=True)
+
+        self.mock_client.copy_file.assert_called_once_with("/tmp/dir", "/remote/dir", recurse=True)
+
+    def test_upload_file_partial_failure_raises_ioerror(self):
+        # host1 ok, host2 raises -> IOError listing offending host
+        boom = IOError("permission denied")
+        self.mock_client.copy_file.return_value = [self._ok_greenlet(), self._fail_greenlet(boom)]
+
+        with self.assertRaises(IOError) as cm:
+            self.pssh.upload_file("/tmp/local.json", "/remote/dest.json")
+
+        msg = str(cm.exception)
+        self.assertIn("upload_file '/tmp/local.json' -> '/remote/dest.json'", msg)
+        self.assertIn("failed on 1/2 hosts", msg)
+        self.assertIn("host2", msg)
+        self.assertIn("permission denied", msg)
+
+    def test_upload_file_all_hosts_fail(self):
+        # Every host fails -> N/N in the message
+        self.mock_client.copy_file.return_value = [
+            self._fail_greenlet(IOError("disk full")),
+            self._fail_greenlet(IOError("disk full")),
+        ]
+
+        with self.assertRaises(IOError) as cm:
+            self.pssh.upload_file("/tmp/local.json", "/remote/dest.json")
+
+        self.assertIn("upload_file '/tmp/local.json' -> '/remote/dest.json'", str(cm.exception))
+        self.assertIn("failed on 2/2 hosts", str(cm.exception))
+
+    def test_upload_file_non_ioerror_exception_aggregated(self):
+        # Any Exception (not just IOError) from cmd.get() is caught and
+        # surfaced through the IOError aggregation. This locks in the
+        # broad `except Exception` we use deliberately.
+        self.mock_client.copy_file.return_value = [
+            self._ok_greenlet(),
+            self._fail_greenlet(RuntimeError("libssh2 channel closed")),
+        ]
+
+        with self.assertRaises(IOError) as cm:
+            self.pssh.upload_file("/tmp/local.json", "/remote/dest.json")
+
+        self.assertIn("libssh2 channel closed", str(cm.exception))
+
+    # -------------------- download_file --------------------
+
+    def test_download_file_success_returns_host_to_path_dict(self):
+        # On success returns {host: local_file<sep>host} for every host
+        self.mock_client.copy_remote_file.return_value = [
+            self._ok_greenlet(),
+            self._ok_greenlet(),
+        ]
+
+        result = self.pssh.download_file("/remote/file.json", "/tmp/local.json")
+
+        self.assertEqual(
+            result,
+            {"host1": "/tmp/local.json_host1", "host2": "/tmp/local.json_host2"},
+        )
+        self.mock_client.copy_remote_file.assert_called_once_with(
+            "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="_"
+        )
+        self.mock_client.pool.join.assert_called_once()
+
+    def test_download_file_custom_suffix_separator(self):
+        # Honors a non-default suffix_separator both in the API call and the returned paths
+        self.mock_client.copy_remote_file.return_value = [
+            self._ok_greenlet(),
+            self._ok_greenlet(),
+        ]
+
+        result = self.pssh.download_file(
+            "/remote/file.json", "/tmp/local.json", suffix_separator="."
+        )
+
+        self.assertEqual(
+            result,
+            {"host1": "/tmp/local.json.host1", "host2": "/tmp/local.json.host2"},
+        )
+        self.mock_client.copy_remote_file.assert_called_once_with(
+            "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="."
+        )
+
+    def test_download_file_partial_failure_raises_ioerror(self):
+        # Failed host -> IOError lists it; succeeded host's path is NOT returned
+        # (we raise before constructing a partial return value)
+        boom = IOError("file not found")
+        self.mock_client.copy_remote_file.return_value = [
+            self._ok_greenlet(),
+            self._fail_greenlet(boom),
+        ]
+
+        with self.assertRaises(IOError) as cm:
+            self.pssh.download_file("/remote/file.json", "/tmp/local.json")
+
+        msg = str(cm.exception)
+        self.assertIn("download_file '/remote/file.json' -> '/tmp/local.json'", msg)
+        self.assertIn("failed on 1/2 hosts", msg)
+        self.assertIn("host2", msg)
+        self.assertIn("file not found", msg)
+
+    def test_download_file_all_hosts_fail(self):
+        self.mock_client.copy_remote_file.return_value = [
+            self._fail_greenlet(IOError("nope")),
+            self._fail_greenlet(IOError("nope")),
+        ]
+
+        with self.assertRaises(IOError) as cm:
+            self.pssh.download_file("/remote/file.json", "/tmp/local.json")
+
+        self.assertIn("download_file '/remote/file.json' -> '/tmp/local.json'", str(cm.exception))
+        self.assertIn("failed on 2/2 hosts", str(cm.exception))
+
+    def test_download_file_recurse_passes_through(self):
+        self.mock_client.copy_remote_file.return_value = [
+            self._ok_greenlet(),
+            self._ok_greenlet(),
+        ]
+
+        self.pssh.download_file("/remote/dir", "/tmp/local", recurse=True)
+
+        self.mock_client.copy_remote_file.assert_called_once_with(
+            "/remote/dir", "/tmp/local", recurse=True, suffix_separator="_"
+        )
+
+    # -------------------- scp_file (alias) --------------------
+
+    def test_scp_file_delegates_to_upload_file(self):
+        # scp_file must call upload_file with the same args. We patch upload_file
+        # to confirm delegation rather than reimplementing the underlying mock.
+        with patch.object(Pssh, "upload_file") as mock_upload:
+            self.pssh.scp_file("/tmp/local.json", "/remote/dest.json", recurse=True)
+            mock_upload.assert_called_once_with(
+                "/tmp/local.json", "/remote/dest.json", recurse=True
+            )
+
+    def test_scp_file_propagates_ioerror_from_upload_file(self):
+        # When upload_file raises, scp_file lets it propagate (no swallowing)
+        with patch.object(Pssh, "upload_file", side_effect=IOError("boom")):
+            with self.assertRaises(IOError):
+                self.pssh.scp_file("/tmp/local.json", "/remote/dest.json")
+
+
+class TestPsshScpFile(unittest.TestCase):
+    """
+    Regression test from main (commit 79d7b20) covering scp_file's exception
+    semantics. With our PR, scp_file is a backward-compatible alias for
+    upload_file, so this test exercises upload_file's IOError contract via
+    scp_file: type is IOError (not bare Exception), message includes both
+    file paths, and the original exception is chained via __cause__.
+    """
+
+    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    def setUp(self, mock_pssh_client):
+        self.mock_client = MagicMock()
+        mock_pssh_client.return_value = self.mock_client
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, ["host1"], user="user", password="pass")
+
+    def test_scp_file_preserves_original_io_error(self):
+        # Regression (B3): scp_file's exception handler used to read:
+        #
+        #     except IOError:
+        #         raise Exception("Expected IOError exception, got none")
+        #
+        # which is logically inverted (the message fires precisely when an
+        # IOError WAS caught), raises bare Exception instead of IOError,
+        # drops the original traceback (no `from e`), and includes neither
+        # the host nor the file path. This made debugging scp failures
+        # nearly impossible -- the user saw "Expected IOError exception,
+        # got none" and had no way to recover the actual cause.
+        original_error = IOError("Permission denied")
+
+        fake_cmd = MagicMock()
+        fake_cmd.get.side_effect = original_error
+        self.mock_client.copy_file.return_value = [fake_cmd]
+
+        with self.assertRaises(IOError) as ctx:
+            self.pssh.scp_file("/local/x", "/remote/y")
+
+        # Must be IOError, not bare Exception (so callers catching IOError
+        # actually catch it).
+        self.assertIs(type(ctx.exception), IOError)
+        # Must surface both file paths in the message so the user knows
+        # which copy failed.
+        self.assertIn("/local/x", str(ctx.exception))
+        self.assertIn("/remote/y", str(ctx.exception))
+        # Must chain the original exception via __cause__ so the original
+        # traceback is recoverable.
+        self.assertIs(ctx.exception.__cause__, original_error)
+
+
 if __name__ == "__main__":
     unittest.main()

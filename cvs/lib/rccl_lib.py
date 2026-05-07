@@ -53,7 +53,7 @@ def _is_severe_wrong_corruption_error(err: ValidationError) -> bool:
 
 def _save_json_to_head_node(shdl, head_node, remote_path, payload_obj, log_label):
     """
-    Serialize `payload_obj` to JSON and SFTP-upload it from the conductor to
+    Serialize `payload_obj` to JSON and SFTP-upload it from the runner node to
     `remote_path` on `head_node` via the existing single-host Pssh handle `shdl`.
 
     Replaces an earlier implementation that embedded the JSON in a `cat > path << 'EOF'`
@@ -113,7 +113,7 @@ def _save_json_to_head_node(shdl, head_node, remote_path, payload_obj, log_label
 
 def _read_json_from_head_node(shdl, head_node, remote_path, log_label):
     """
-    SFTP-download a JSON file from `remote_path` on `head_node` to a conductor
+    SFTP-download a JSON file from `remote_path` on `head_node` to a runner-node
     tempfile and return the parsed object.
 
     Replaces an earlier `shdl.exec(f'cat {remote_path}')` + line-oriented stdout
