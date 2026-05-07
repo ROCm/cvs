@@ -274,9 +274,7 @@ class Pssh:
         Raises:
           IOError: If transfer fails on any host. Message lists offending hosts.
         """
-        self.log.info(
-            'SFTP upload %s -> %s on %s', local_file, remote_file, self.reachable_hosts
-        )
+        self.log.info('SFTP upload %s -> %s on %s', local_file, remote_file, self.reachable_hosts)
         cmds = self.client.copy_file(local_file, remote_file, recurse=recurse)
         self.client.pool.join()
         errors = []
@@ -318,12 +316,8 @@ class Pssh:
         Raises:
           IOError: If transfer fails on any host. Message lists offending hosts.
         """
-        self.log.info(
-            'SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts
-        )
-        cmds = self.client.copy_remote_file(
-            remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator
-        )
+        self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts)
+        cmds = self.client.copy_remote_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
         self.client.pool.join()
         errors = []
         result = {}
