@@ -25,6 +25,75 @@ training_err_dict = {
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
 
+
+# Ordered fallback chains for parsing Megatron-LM training output.
+# Each chain is tried in order; first non-empty match wins. Seeded with
+# [new, old] so newer Megatron output (e.g. `throughput per GPU
+# (TFLOP/s/GPU): N`) is preferred but the original format
+# (`throughput per GPU: N`) still parses on older builds.
+TRAINING_RESULT_PATTERNS = {
+    'throughput_per_gpu': [
+        r'throughput per GPU(?:\s*\([^)]*\))?\s*:\s+([0-9\.]+)',
+        r'throughput per GPU:\s+([0-9\.]+)',
+    ],
+    'tokens_per_gpu': [r'tokens\/GPU\/s:\s+([0-9]+)'],
+    'mem_usage': [r'mem usages:\s+([0-9\.]+)'],
+    'elapsed_time_per_iteration': [r'elapsed time per iteration \(ms\):\s+([0-9\.]+)'],
+}
+
+TRAINING_PROGRESS_PATTERNS = [
+    r'throughput per GPU(?:\s*\([^)]*\))?\s*:|tokens\/GPU\/s\s+[0-9]+',
+    r'throughput per GPU:|tokens\/GPU\/s\s+[0-9]+',
+]
+
+# NOTE: the `[NaN|Inf]` character class is a long-standing bug in the
+# original code (it matches the literal characters `N`, `a`, `I`, `n`,
+# `f`, `|`, not the strings `NaN` or `Inf`). Preserved here behavior-
+# preserving — fixing the regex semantics is a separate ticket.
+TRAINING_NAN_PATTERNS = [
+    r'throughput per GPU(?:\s*\([^)]*\))?\s*:\s+[NaN|Inf]',
+    r'throughput per GPU:\s+[NaN|Inf]',
+    r'tokens\/GPU\/s:\s+[NaN|Inf]',
+    r'mem usages:\s+[NaN|Inf]',
+]
+
+
+def _parse_training_results(output):
+    """Extract metric values from training-log text using ordered fallback chains.
+
+    For each metric in TRAINING_RESULT_PATTERNS, try each pattern in order and
+    return the first non-empty list of matches. If no pattern matches, the
+    metric maps to an empty list.
+
+    Args:
+        output (str): Raw training-log text to parse.
+
+    Returns:
+        dict: {metric_name: list[str]} for every key in TRAINING_RESULT_PATTERNS.
+    """
+    out = {}
+    for metric, patterns in TRAINING_RESULT_PATTERNS.items():
+        out[metric] = []
+        for pat in patterns:
+            matches = re.findall(pat, output, re.I)
+            if matches:
+                out[metric] = matches
+                break
+    return out
+
+
+def _is_training_complete(output):
+    """Return True if the training-log text shows a completion indicator
+    matching any pattern in TRAINING_PROGRESS_PATTERNS."""
+    return any(re.search(p, output, re.I) for p in TRAINING_PROGRESS_PATTERNS)
+
+
+def _has_nan_inf_results(output):
+    """Return True if the training-log text shows a NaN/Inf result line
+    matching any pattern in TRAINING_NAN_PATTERNS."""
+    return any(re.search(p, output, re.I) for p in TRAINING_NAN_PATTERNS)
+
+
 # Library for building Megatron training jobs ..
 
 
@@ -89,7 +158,9 @@ class MegatronLlamaTrainingJob:
           - phdl.exec(cmd: str) -> Dict[node, str] or str, depending on implementation
           - phdl.exec_cmd_list(cmd_list: List[str]) -> Dict[node, str]
       - Docker container is pre-deployed and accessible on each node.
-      - Training scripts exist under /workspace/Megatron-LM/examples/llama/.
+      - Training scripts exist under {megatron_root}/examples/llama/ (default
+        `/workspace/Megatron-LM/`; configurable via the `megatron_root` and
+        `training_scripts` keys in the training config).
       - External helpers referenced in the methods are available in scope:
           - linux_utils.get_rdma_stats_dict, linux_utils.get_nic_ethtool_stats_dict
           - json_to_dict, fail_test, verify_dmesg_for_errors, log, training_err_dict
@@ -162,6 +233,7 @@ class MegatronLlamaTrainingJob:
         tdict.setdefault('training_iterations', 10)
         tdict.setdefault('nnodes', 2)
         tdict.setdefault('nic_type', 'thor2')
+        tdict.setdefault('hca_id_pattern', 'bnxt_|rocep')
         tdict.setdefault('nccl_ib_hca_list', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_ib_hca', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_socket_ifname', 'ensf1np1')
@@ -173,6 +245,14 @@ class MegatronLlamaTrainingJob:
         tdict.setdefault('master_address', '127.0.0.1')
         tdict.setdefault('verify_network_errors', 'False')
         tdict.setdefault('rocm_dir', '')
+        tdict.setdefault('megatron_root', '/workspace/Megatron-LM')
+        tdict.setdefault(
+            'training_scripts',
+            {
+                'llama-3': 'examples/llama/train_llama3.sh',
+                'llama-2': 'examples/llama/train_llama2.sh',
+            },
+        )
 
         self.container_image = tdict['container_image']
         self.container_name = tdict['container_name']
@@ -180,6 +260,7 @@ class MegatronLlamaTrainingJob:
         self.iterations = int(tdict['training_iterations'])
         self.nnodes = tdict['nnodes']
         self.nic_type = tdict['nic_type']
+        self.hca_id_pattern = tdict['hca_id_pattern']
         self.nccl_ib_hca_list = tdict['nccl_ib_hca_list']
         self.nccl_ib_hca = tdict['nccl_ib_hca']
         self.nccl_socket_ifname = tdict['nccl_socket_ifname']
@@ -191,6 +272,8 @@ class MegatronLlamaTrainingJob:
         self.master_address = tdict['master_address']
         self.verify_network_errors = tdict['verify_network_errors']
         self.rocm_path = detect_rocm_path(self.phdl, tdict['rocm_dir'])
+        self.megatron_root = tdict['megatron_root']
+        self.training_scripts = tdict['training_scripts']
 
         # Get the model parameters dict
         log.info('^^^^')
@@ -233,10 +316,16 @@ class MegatronLlamaTrainingJob:
         self.recompute = pdict['recompute']
         self.precision = pdict['precision']
 
-        if re.search('llama-3', self.tokenizer_model, re.I):
-            self.training_script = '/workspace/Megatron-LM/examples/llama/train_llama3.sh'
-        elif re.search('llama-2', self.tokenizer_model, re.I):
-            self.training_script = '/workspace/Megatron-LM/examples/llama/train_llama2.sh'
+        # Resolve the training script for this tokenizer family. The mapping is
+        # config-driven (training_scripts), so adding a new family (e.g. 'llama-4')
+        # is a config edit, not a code edit. First-match-wins on dict insertion order.
+        # If no entry matches, self.training_script stays None — same fallthrough
+        # behavior as the previous if/elif chain (queued: raise instead).
+        self.training_script = None
+        for family, script_rel_path in self.training_scripts.items():
+            if re.search(family, self.tokenizer_model, re.I):
+                self.training_script = f'{self.megatron_root}/{script_rel_path}'
+                break
 
         # Remove and recreate the scripts dir
         self.phdl.exec(f'rm -rf {self.scripts_dir}')
@@ -299,7 +388,7 @@ class MegatronLlamaTrainingJob:
                     sleep 2;ibv_devinfo;sleep 2;"'
                 )
                 for node in out_dict.keys():
-                    if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
+                    if not re.search(rf'hca_id:\s+({self.hca_id_pattern})', out_dict[node], re.I):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
@@ -315,7 +404,7 @@ class MegatronLlamaTrainingJob:
 
         cmd = (
             cmd
-            + 'cd /workspace/Megatron-LM; export MOCK_DATA=1; '
+            + f'cd {self.megatron_root}; export MOCK_DATA=1; '
             + f'export IMAGE={self.container_image}; '
             + f'export HF_TOKEN="{self.hf_token}"; '
             + f'export DATA_CACHE_PATH={self.data_cache_dir}; '
@@ -341,7 +430,7 @@ class MegatronLlamaTrainingJob:
             # Build CMD List as every node has different node rank
             cmd = (
                 cmd
-                + f'cd /workspace/Megatron-LM; RECOMPUTE={self.recompute} '
+                + f'cd {self.megatron_root}; RECOMPUTE={self.recompute} '
                 + f'SEQ_LENGTH={self.sequence_length} '
                 + f'MBS={self.micro_batch_size} BS={self.batch_size} '
                 + f'TP={self.tensor_parallelism} '
@@ -365,7 +454,7 @@ class MegatronLlamaTrainingJob:
             # Single node training case, run same cmd on all nodes.
             cmd = (
                 cmd
-                + f'cd /workspace/Megatron-LM; RECOMPUTE={self.recompute} '
+                + f'cd {self.megatron_root}; RECOMPUTE={self.recompute} '
                 + f'SEQ_LENGTH={self.sequence_length} '
                 + f'MBS={self.micro_batch_size} BS={self.batch_size} '
                 + f'TP={self.tensor_parallelism} '
@@ -419,7 +508,7 @@ class MegatronLlamaTrainingJob:
         cmd_list = []
         for i in range(0, int(self.nnodes)):
             result_training_log = f'{self.log_dir}/megatron-logs/out-node{i}/training.log'
-            cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i  "/^TRAIN_LOG=/c\TRAIN_LOG={result_training_log}" /workspace/Megatron-LM/examples/llama/train_llama3.sh' '''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i  "/^TRAIN_LOG=/c\TRAIN_LOG={result_training_log}" {self.training_script}' '''
             cmd_list.append(cmd)
         self.phdl.exec_cmd_list(cmd_list)
 
@@ -477,8 +566,6 @@ class MegatronLlamaTrainingJob:
         - re is imported in the module scope.
         """
 
-        training_results_dict = {}
-
         # Read the training log output from the "last" node (assumed authoritative)
         last_node = self.host_list[len(self.host_list) - 1]
         last_node_num = len(self.host_list) - 1
@@ -492,22 +579,7 @@ class MegatronLlamaTrainingJob:
         log.info("%s", output)
         log.info('#===========================#')
 
-        # Extract throughput per GPU as a list of numbers (strings), if multiple occurrences exist
-        # pattern = f'throughput per GPU \(TFLOP/s/GPU\):\s+([0-9\.]+)'
-        pattern = 'throughput per GPU:\s+([0-9\.]+)'
-        training_results_dict['throughput_per_gpu'] = re.findall(pattern, output, re.I)
-
-        pattern = 'tokens\/GPU\/s:\s+([0-9]+)'
-        # Extract tokens per GPU per second (integers as strings)
-        training_results_dict['tokens_per_gpu'] = re.findall(pattern, output, re.I)
-
-        # Extract memory usage values (floats as strings)
-        pattern = 'mem usages:\s+([0-9\.]+)'
-        training_results_dict['mem_usage'] = re.findall(pattern, output, re.I)
-
-        # Extract elapsed time per iteration (floats as strings)
-        pattern = 'elapsed time per iteration \(ms\):\s+([0-9\.]+)'
-        training_results_dict['elapsed_time_per_iteration'] = re.findall(pattern, output, re.I)
+        training_results_dict = _parse_training_results(output)
 
         log.info("%s", training_results_dict)
         return training_results_dict
@@ -615,14 +687,10 @@ class MegatronLlamaTrainingJob:
             out_dict = self.phdl.exec(f'sudo cat {self.log_dir}/megatron-logs/out-node{last_node_num}/training.log')
             output = out_dict[last_node]
 
-            if not re.search('throughput per GPU:|tokens\/GPU\/s\s+[0-9]+', output, re.I):
+            if not _is_training_complete(output):
                 log.info('Training still in progress')
             else:
-                if (
-                    re.search('throughput per GPU:\s+[NaN|Inf]', output, re.I)
-                    or re.search('tokens\/GPU\/s:\s+[NaN|Inf]', output, re.I)
-                    or re.search('mem usages:\s+[NaN|Inf]', output, re.I)
-                ):
+                if _has_nan_inf_results(output):
                     fail_test(f'ERROR - NaN or Inf values seen in training results {output}')
                     return
                 else:

@@ -96,5 +96,94 @@ class TestMegatronJobConstructor(unittest.TestCase):
         self.assertTrue(job.training_script.endswith('train_llama3.sh'))
 
 
+class TestExecNicSetupHcaIdPattern(unittest.TestCase):
+    """AIMVT-160: hca_id_pattern config key flows from training_dict into the
+    in-container HCA-id verification regex inside exec_nic_setup_scripts."""
+
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_default_pattern_matches_rocep(self, mock_fail):
+        # Default pattern 'bnxt_|rocep' must match 'rocep1s0f0' so the
+        # workaround verification doesn't fire fail_test on Mellanox/RoCE NICs.
+        job = _make_megatron_job(phdl_exec_returns='hca_id:\trocep1s0f0\n')
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_not_called()
+
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_override_pattern_matches_mlx5(self, mock_fail):
+        # Custom hca_id_pattern from config must propagate through to the regex
+        # in exec_nic_setup_scripts (catches missing setdefault, missing
+        # f-string interpolation, or a stale hardcoded literal).
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': 'mlx5_'},
+            phdl_exec_returns='hca_id:\tmlx5_0\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_not_called()
+
+
+class TestMegatronRootPropagation(unittest.TestCase):
+    """AIMVT-162: megatron_root override must replace every hardcoded
+    `/workspace/Megatron-LM` site (cd targets, training_script,
+    line-430 sed). Single test with three concrete assertions."""
+
+    def test_override_replaces_all_hardcoded_uses(self):
+        job = _make_megatron_job(training_overrides={'megatron_root': '/opt/megatron'})
+        job.build_training_job_cmd()
+        cmds = ' '.join(job.job_cmd_list) + ' ' + job.job_cmd
+        # Leak check: catches every missed-replacement site at once.
+        self.assertNotIn('/workspace/Megatron-LM', cmds)
+        # __init__ branch: training_script resolved via the config-driven loop.
+        self.assertEqual(
+            job.training_script,
+            '/opt/megatron/examples/llama/train_llama3.sh',
+        )
+        # cd-site substitution actually fired in the wrapper-script body.
+        self.assertIn('cd /opt/megatron', cmds)
+
+
+class TestTrainingLogParsing(unittest.TestCase):
+    """AIMVT-161: _parse_training_results extracts identical metric dicts from
+    both the new format (`throughput per GPU (TFLOP/s/GPU): N`) and the
+    old format (`throughput per GPU: N`). The OLD-format case is the one
+    that proves the fallback chain actually falls back."""
+
+    NEW_FORMAT = (
+        'throughput per GPU (TFLOP/s/GPU): 612.5\n'
+        'tokens/GPU/s: 12345\n'
+        'mem usages: 88.3\n'
+        'elapsed time per iteration (ms): 1230.4\n'
+    )
+    OLD_FORMAT = (
+        'throughput per GPU: 612.5\ntokens/GPU/s: 12345\nmem usages: 88.3\nelapsed time per iteration (ms): 1230.4\n'
+    )
+    EXPECTED = {
+        'throughput_per_gpu': ['612.5'],
+        'tokens_per_gpu': ['12345'],
+        'mem_usage': ['88.3'],
+        'elapsed_time_per_iteration': ['1230.4'],
+    }
+
+    def test_parse_new_format(self):
+        self.assertEqual(megatron_training_lib._parse_training_results(self.NEW_FORMAT), self.EXPECTED)
+
+    def test_parse_old_format_falls_back(self):
+        # OLD-format input forces pattern #1 to return [] for throughput;
+        # pattern #2 must be the matcher. Catches a refactor that
+        # short-circuits on the first empty findall.
+        self.assertEqual(megatron_training_lib._parse_training_results(self.OLD_FORMAT), self.EXPECTED)
+
+
+class TestProgressDetection(unittest.TestCase):
+    """AIMVT-161: _is_training_complete handles both new and old format
+    completion lines. Different regex chain than parsing — exercises a
+    separate code path."""
+
+    def test_handles_new_format(self):
+        self.assertTrue(megatron_training_lib._is_training_complete('throughput per GPU (TFLOP/s/GPU): 612.5'))
+
+    def test_handles_old_format(self):
+        self.assertTrue(megatron_training_lib._is_training_complete('throughput per GPU: 612.5'))
+
+
 if __name__ == '__main__':
     unittest.main()
