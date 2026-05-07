@@ -317,6 +317,49 @@ class TestPsshExec(unittest.TestCase):
         mock_prune.assert_not_called()
         mock_inform.assert_not_called()
 
+    @patch.object(Pssh, "prune_unreachable_hosts")
+    @patch.object(Pssh, "inform_unreachability")
+    def test_exec_stdout_timeout_during_iteration_stop_on_errors_false(self, mock_inform, mock_prune):
+        # Regression: when Timeout is raised mid-stdout-iteration AND stop_on_errors=False,
+        # _process_output must call _handle_timeout_exception (which got accidentally removed
+        # in an earlier refactor). Without the helper restored, this raises AttributeError.
+        from pssh.exceptions import Timeout
+
+        self.pssh.stop_on_errors = False
+
+        timeout_error = Timeout("Read timed out")
+
+        # host1: stdout iteration raises Timeout mid-stream
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        # Iterating stdout raises Timeout
+        mock_output1.stdout = MagicMock()
+        mock_output1.stdout.__iter__ = MagicMock(side_effect=timeout_error)
+        mock_output1.stderr = []
+        mock_output1.exception = None
+
+        # host2: clean run, no exception yet
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = ["ok"]
+        mock_output2.stderr = []
+        mock_output2.exception = None
+
+        self.mock_client.run_command.return_value = [mock_output1, mock_output2]
+
+        # Must NOT raise AttributeError (the bug we are guarding against).
+        # The Pssh code catches Timeout when stop_on_errors=False and routes through
+        # _handle_timeout_exception, which propagates the timeout to all items so the
+        # subsequent item.exception handling block formats and records it.
+        result = self.pssh.exec("echo hello", timeout=10)
+
+        # _handle_timeout_exception must populate item.exception on items that had None
+        # so the subsequent formatting block records the timeout for both hosts.
+        self.assertIs(mock_output1.exception, timeout_error)
+        self.assertIs(mock_output2.exception, timeout_error)
+        self.assertIn("host1", result)
+        self.assertIn("host2", result)
+
     @patch("builtins.print")
     def test_exec_print_console_false(self, mock_print):
         # Test: Execute command with print_console=False, verify output lines are not printed
@@ -352,6 +395,166 @@ class TestPsshExec(unittest.TestCase):
             self.assertNotIn("output1 line2", call)
             self.assertNotIn("error line1", call)
             self.assertNotIn("output2 line1", call)
+
+    def test_exec_detailed_true_successful(self):
+        # Test: Execute command successfully with detailed=True
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["output1 line1", "output1 line2"]
+        mock_output1.stderr = ["error1 line1"]
+        mock_output1.exception = None
+        mock_output1.exit_code = 0
+
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = ["output2 line1"]
+        mock_output2.stderr = []
+        mock_output2.exception = None
+        mock_output2.exit_code = 0
+
+        self.mock_client.run_command.return_value = [mock_output1, mock_output2]
+
+        result = self.pssh.exec("echo hello", detailed=True)
+
+        self.assertIn("host1", result)
+        self.assertIn("host2", result)
+
+        # Check structure
+        self.assertIsInstance(result["host1"], dict)
+        self.assertIsInstance(result["host2"], dict)
+        self.assertIn("output", result["host1"])
+        self.assertIn("exit_code", result["host1"])
+        self.assertIn("output", result["host2"])
+        self.assertIn("exit_code", result["host2"])
+
+        # Check content
+        self.assertIn("output1 line1", result["host1"]["output"])
+        self.assertIn("output1 line2", result["host1"]["output"])
+        self.assertIn("error1 line1", result["host1"]["output"])
+        self.assertIn("output2 line1", result["host2"]["output"])
+        self.assertEqual(result["host1"]["exit_code"], 0)
+        self.assertEqual(result["host2"]["exit_code"], 0)
+
+    def test_exec_detailed_true_with_exit_code_failure(self):
+        # Test: Execute command with non-zero exit code and detailed=True
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["success output"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+        mock_output1.exit_code = 0
+
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = []
+        mock_output2.stderr = ["command failed"]
+        mock_output2.exception = None
+        mock_output2.exit_code = 1
+
+        self.mock_client.run_command.return_value = [mock_output1, mock_output2]
+
+        result = self.pssh.exec("failing command", detailed=True)
+
+        self.assertEqual(result["host1"]["exit_code"], 0)
+        self.assertEqual(result["host2"]["exit_code"], 1)
+        self.assertIn("success output", result["host1"]["output"])
+        self.assertIn("command failed", result["host2"]["output"])
+
+    @patch.object(Pssh, "check_connectivity")
+    def test_exec_detailed_true_with_exception(self, mock_check_connectivity):
+        # Test: Execute command with exception and detailed=True
+        self.pssh.stop_on_errors = False
+        from pssh.exceptions import ConnectionError
+
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["success output"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+        mock_output1.exit_code = 0
+
+        mock_output2 = MagicMock()
+        mock_output2.host = "host2"
+        mock_output2.stdout = []
+        mock_output2.stderr = []
+        mock_output2.exception = ConnectionError("Connection failed")
+        mock_output2.exit_code = None  # No exit code available for exceptions
+
+        self.mock_client.run_command.return_value = [mock_output1, mock_output2]
+        mock_check_connectivity.return_value = []  # No pruning
+
+        result = self.pssh.exec("echo hello", detailed=True)
+
+        self.assertEqual(result["host1"]["exit_code"], 0)
+        self.assertEqual(result["host2"]["exit_code"], -1)  # -1 for exceptions
+        self.assertIn("success output", result["host1"]["output"])
+        self.assertIn("Connection failed", result["host2"]["output"])
+
+    def test_process_output_normalizes_none_exit_code(self):
+        # Regression (L3): when the SSH channel has not reached EOF,
+        # parallel-ssh's HostOutput.exit_code property returns None
+        # (pssh/clients/native/single.py: get_exit_status returns None
+        # when not channel.eof()). The previous implementation used
+        # getattr(item, 'exit_code', -1) -- but the -1 default only
+        # fires on AttributeError, never when the property returns None.
+        # Result: cmd_output[host]['exit_code'] could be None, breaking
+        # downstream consumers in docker.py/container.py that compare
+        # exit_code against 0 (None != 0 -> spurious failure;
+        # None == 0 -> spurious success).
+        # The contract is exit_code: int, with -1 meaning "unknown/aborted".
+        mock_output = MagicMock()
+        mock_output.host = "host1"
+        mock_output.stdout = ["partial output"]
+        mock_output.stderr = []
+        mock_output.exception = None
+        mock_output.exit_code = None  # channel not EOF'd yet
+
+        self.mock_client.run_command.return_value = [mock_output]
+
+        result = self.pssh.exec("slow command", detailed=True)
+
+        # Must be -1 (the documented "unknown" sentinel), not None.
+        self.assertEqual(result["host1"]["exit_code"], -1)
+        self.assertIsNotNone(result["host1"]["exit_code"])
+
+    def test_exec_detailed_false_backward_compatibility(self):
+        # Test: detailed=False (default) maintains backward compatibility
+        mock_output1 = MagicMock()
+        mock_output1.host = "host1"
+        mock_output1.stdout = ["output1 line1"]
+        mock_output1.stderr = []
+        mock_output1.exception = None
+        mock_output1.exit_code = 0
+
+        self.mock_client.run_command.return_value = [mock_output1]
+
+        result = self.pssh.exec("echo hello", detailed=False)
+
+        # Should return string, not dict
+        self.assertIsInstance(result["host1"], str)
+        self.assertNotIsInstance(result["host1"], dict)
+        self.assertIn("output1 line1", result["host1"])
+
+    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    def test_init_does_not_alias_caller_host_list(self, mock_pssh_client):
+        # Regression (B2): Pssh.__init__ must not alias the caller's host_list.
+        # Before the fix, self.reachable_hosts and self.host_list both pointed to
+        # the caller's list object, so prune_unreachable_hosts (which calls
+        # self.reachable_hosts.remove(...)) silently mutated the caller's list.
+        # This bit BaremetalOrchestrator on the stop_on_errors=False path:
+        # a single transient ConnectionError/Timeout/SessionError permanently
+        # shrunk the orchestrator's view of the cluster.
+        mock_pssh_client.return_value = MagicMock()
+        original = ["a", "b", "c"]
+        pssh = Pssh(self.mock_log, original, user="user", password="pass")
+        # Simulate what prune_unreachable_hosts does internally.
+        pssh.reachable_hosts.remove("b")
+        # (i) Caller's list must be untouched.
+        self.assertEqual(original, ["a", "b", "c"])
+        # (ii) Internal reachable view reflects the prune.
+        self.assertEqual(pssh.reachable_hosts, ["a", "c"])
+        # (iii) host_list is a stable snapshot of the original input.
+        self.assertEqual(pssh.host_list, ["a", "b", "c"])
 
 
 class TestPsshExecCmdList(unittest.TestCase):
@@ -716,6 +919,47 @@ class TestPsshExecCmdList(unittest.TestCase):
             self.assertNotIn("host1 output line2", call)
             self.assertNotIn("host1 error line1", call)
             self.assertNotIn("host2 output line1", call)
+
+
+class TestPsshScpFile(unittest.TestCase):
+    @patch("cvs.lib.parallel_ssh_lib.ParallelSSHClient")
+    def setUp(self, mock_pssh_client):
+        self.mock_client = MagicMock()
+        mock_pssh_client.return_value = self.mock_client
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, ["host1", "host2"], user="user", password="pass")
+
+    def test_scp_file_preserves_original_io_error(self):
+        # Regression (B3): scp_file's exception handler used to read:
+        #
+        #     except IOError:
+        #         raise Exception("Expected IOError exception, got none")
+        #
+        # which is logically inverted (the message fires precisely when an
+        # IOError WAS caught), raises bare Exception instead of IOError,
+        # drops the original traceback (no `from e`), and includes neither
+        # the host nor the file path. This made debugging scp failures
+        # nearly impossible -- the user saw "Expected IOError exception,
+        # got none" and had no way to recover the actual cause.
+        original_error = IOError("Permission denied")
+
+        fake_cmd = MagicMock()
+        fake_cmd.get.side_effect = original_error
+        self.mock_client.copy_file.return_value = [fake_cmd]
+
+        with self.assertRaises(IOError) as ctx:
+            self.pssh.scp_file("/local/x", "/remote/y")
+
+        # Must be IOError, not bare Exception (so callers catching IOError
+        # actually catch it).
+        self.assertIs(type(ctx.exception), IOError)
+        # Must surface both file paths in the message so the user knows
+        # which copy failed.
+        self.assertIn("/local/x", str(ctx.exception))
+        self.assertIn("/remote/y", str(ctx.exception))
+        # Must chain the original exception via __cause__ so the original
+        # traceback is recoverable.
+        self.assertIs(ctx.exception.__cause__, original_error)
 
 
 if __name__ == "__main__":
