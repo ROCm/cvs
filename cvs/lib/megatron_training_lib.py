@@ -162,6 +162,7 @@ class MegatronLlamaTrainingJob:
         tdict.setdefault('training_iterations', 10)
         tdict.setdefault('nnodes', 2)
         tdict.setdefault('nic_type', 'thor2')
+        tdict.setdefault('hca_id_pattern', 'bnxt_|rocep')
         tdict.setdefault('nccl_ib_hca_list', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_ib_hca', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_socket_ifname', 'ensf1np1')
@@ -180,6 +181,7 @@ class MegatronLlamaTrainingJob:
         self.iterations = int(tdict['training_iterations'])
         self.nnodes = tdict['nnodes']
         self.nic_type = tdict['nic_type']
+        self.hca_id_pattern = tdict['hca_id_pattern']
         self.nccl_ib_hca_list = tdict['nccl_ib_hca_list']
         self.nccl_ib_hca = tdict['nccl_ib_hca']
         self.nccl_socket_ifname = tdict['nccl_socket_ifname']
@@ -299,7 +301,7 @@ class MegatronLlamaTrainingJob:
                     sleep 2;ibv_devinfo;sleep 2;"'
                 )
                 for node in out_dict.keys():
-                    if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
+                    if not re.search(rf'hca_id:\s+({self.hca_id_pattern})', out_dict[node], re.I):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
