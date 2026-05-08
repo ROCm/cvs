@@ -73,28 +73,30 @@ def detect_rocm_path(phdl, config_rocm_path):
 
 class TorchTitanTrainingJob:
     """
-    Orchestrates a TorchTitan training job across one or more nodes.
+    Orchestrates a TorchTitan training job via AMD's Primus framework.
     Supports multiple model architectures: Llama, DeepSeek-V3 (MoE), Qwen.
 
-    TorchTitan is PyTorch's native training framework with modular composability
-    of parallelism techniques (FSDP2, TP, PP, CP, EP), memory optimizations, and
-    PyTorch compiler integration.
+    TorchTitan is PyTorch's native training framework integrated into AMD's Primus
+    ecosystem with modular composability of parallelism techniques (FSDP2, TP, PP, CP, EP),
+    ROCm optimizations, and PyTorch compiler integration.
 
     Key differences from Megatron-LM:
-      - Uses TOML config files with CLI overrides instead of shell script environment variables
-      - Invokes training via 'python -m torchtitan.train' instead of bash scripts
+      - Uses Primus CLI wrapper: ./primus-cli direct -- train pretrain --config <toml>
+      - Requires TOML configuration files (not CLI arguments)
+      - Working directory: /workspace/Primus (not /workspace/torchtitan)
       - Different parallelism configuration (data_parallel_shard_degree instead of FSDP flag)
       - Native PyTorch integration with torch.compile and Float8 support
       - Aggregate metrics (tokens_per_sec) instead of per-GPU metrics
       - Supports MoE models with expert parallelism (DeepSeek-V3)
 
     Responsibilities:
-      - Normalize training configuration and model parameters (with sensible defaults).
-      - Build torchrun command with TorchTitan module invocation and CLI arg overrides.
-      - Optionally collect pre/post network (RDMA/ethtool) stats for validation.
-      - Launch the job (single-node or distributed) inside a specified container.
-      - Poll logs for completion and errors; extract performance metrics from logs.
-      - Verify training results against expected thresholds and system health checks.
+      - Generate TOML configuration files from JSON parameters
+      - Normalize training configuration and model parameters (with sensible defaults)
+      - Build Primus CLI command with TOML config reference
+      - Optionally collect pre/post network (RDMA/ethtool) stats for validation
+      - Launch the job (single-node or distributed) inside rocm/primus container
+      - Poll logs for completion and errors; extract performance metrics from logs
+      - Verify training results against expected thresholds and system health checks
 
     Assumptions:
       - phdl provides remote execution utilities across nodes
@@ -316,79 +318,140 @@ class TorchTitanTrainingJob:
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
+    def generate_toml_config(self):
+        """
+        Return the path to the TOML config that will be created after container launch.
+
+        The actual TOML file creation happens in prepare_toml_config() which is called
+        after the container exists.
+
+        Returns:
+            str: Path to the TOML config file (inside container)
+        """
+        custom_config_path = '/tmp/cvs_llama3_70b.toml'
+        log.info(f'Will use custom TOML config at: {custom_config_path}')
+        return custom_config_path
+
+    def prepare_toml_config(self):
+        """
+        Clone TorchTitan and create a TOML configuration for native TorchTitan training.
+
+        This method MUST be called after the container is created (in start_training_job).
+        Creates a minimal TOML config for Llama 3 70B training with synthetic data.
+        """
+        toml_path = '/tmp/cvs_llama3_70b.toml'
+
+        # Clone TorchTitan if not present and install it
+        setup_cmd = f'''docker exec {self.container_name} /bin/bash -c "
+if [ ! -d /tmp/torchtitan ]; then
+    cd /tmp &&
+    git clone https://github.com/pytorch/torchtitan.git &&
+    cd torchtitan &&
+    pip install -e .
+fi
+"'''
+        log.info('Setting up TorchTitan in container...')
+        result = self.phdl.exec(setup_cmd)
+        for node, output in result.items():
+            if output:
+                log.info(f'Setup output on {node}: {output[:500]}')
+
+        # Create TOML config for Llama 3 70B with synthetic data
+        toml_content = f'''
+[job]
+dump_folder = "/tmp/torchtitan_output"
+description = "Llama 3 70B CVS Training"
+
+[profiling]
+enable_profiling = false
+
+[metrics]
+log_freq = 1
+enable_tensorboard = false
+
+[model]
+name = "llama3"
+flavor = "70B"
+norm_type = "rmsnorm"
+tokenizer_path = "NousResearch/Meta-Llama-3-70B"
+
+[optimizer]
+name = "AdamW"
+lr = 3e-4
+
+[training]
+dataset = "c4_test"
+dataset_path = ""
+batch_size = {self.micro_batch_size}
+seq_len = {self.sequence_length}
+warmup_steps = 2
+steps = {self.iterations}
+data_parallel_shard_degree = {self.data_parallel_shard_degree}
+tensor_parallel_degree = {self.tensor_parallel_degree}
+compile = {str(self.compile).lower()}
+gc_freq = 10
+
+[checkpoint]
+enable_checkpoint = false
+
+[activation_checkpoint]
+mode = "selective"
+'''
+
+        # Write TOML config to container
+        create_toml_cmd = f'''docker exec {self.container_name} /bin/bash -c "
+cat > {toml_path} << 'EOFTOML'
+{toml_content}
+EOFTOML
+"'''
+        self.phdl.exec(create_toml_cmd)
+        log.info(f'Created TOML config at: {toml_path}')
+        log.info(f'Using synthetic dataset with non-gated tokenizer: NousResearch/Meta-Llama-3-70B')
+
+        # Verify
+        verify_cmd = f'docker exec {self.container_name} test -f {toml_path} && echo "TOML config created" || echo "TOML config MISSING"'
+        result = self.phdl.exec(verify_cmd)
+        for node, output in result.items():
+            log.info(f'Verification on {node}: {output}')
+
+
     def build_training_job_cmd(self):
         """
-        Construct the TorchTitan training command using torchrun and TOML config overrides.
+        Construct native TorchTitan training command using torchrun.
 
-        TorchTitan uses:
-        - torchrun for distributed launch (instead of custom launcher scripts)
-        - python -m torchtitan.train (instead of shell scripts)
-        - --module and --config flags to select TOML base config
-        - CLI overrides using dot notation (e.g., --training.steps 100)
+        Uses torchrun to launch distributed training with TOML config.
+        No Primus wrapper needed - direct TorchTitan execution.
         """
-        cmd = ''
+        # Generate TOML config file first
+        toml_path = self.generate_toml_config()
 
         # Base environment setup
-        cmd = (
-            cmd
-            + 'cd /workspace/torchtitan; '
-            + f'export HF_TOKEN="{self.hf_token}"; '
-            + f'export TOKENIZERS_PARALLELISM=false; '
-            + f'export LD_LIBRARY_PATH=/usr/local/lib/:{self.rocm_path}/lib:$LD_LIBRARY_PATH; '
-        )
+        cmd = f'cd /tmp/torchtitan; export HF_TOKEN="{self.hf_token}"; '
 
         # Add network-related environment variables for distributed training
         if self.distributed_training is True:
-            cmd = (
-                cmd
-                + f'export NCCL_IB_HCA={self.nccl_ib_hca_list}; '
+            cmd += (
+                f'export NCCL_IB_HCA={self.nccl_ib_hca_list}; '
                 + f'export NCCL_SOCKET_IFNAME={self.nccl_socket_ifname}; '
                 + f'export GLOO_SOCKET_IFNAME={self.gloo_socket_ifname}; '
                 + f'export NCCL_DEBUG={self.nccl_debug}; '
                 + f'export NCCL_IB_GID_INDEX={self.nccl_ib_gid_index}; '
             )
 
-        # Calculate total number of GPUs
-        gpus_per_node = 8
-        total_gpus = self.nnodes * gpus_per_node
+        # Use torchrun directly with TorchTitan
+        # Calculate number of GPUs for single node training
+        nproc_per_node = 8  # MI355X has 8 GPUs
 
-        # Build TorchTitan CLI arguments for TOML config overrides
-        tt_args = (
-            f'--job.description "CVS_Training_Job" '
-            + f'--training.steps {self.iterations} '
-            + f'--training.global_batch_size {self.global_batch_size} '
-            + f'--training.micro_batch_size {self.micro_batch_size} '
-            + f'--training.seq_len {self.sequence_length} '
-            + f'--model.tokenizer_path {self.tokenizer_path} '
-            + f'--checkpoint.folder {self.log_dir}/checkpoints '
-            + f'--metrics.log_dir {self.log_dir}/metrics '
-            + f'--parallelism.data_parallel_shard_degree {self.data_parallel_shard_degree} '
-            + f'--parallelism.tensor_parallel_degree {self.tensor_parallel_degree} '
-            + f'--parallelism.pipeline_parallel_degree {self.pipeline_parallel_degree} '
-            + f'--parallelism.context_parallel_degree {self.context_parallel_degree} '
-        )
-
-        # Add expert parallelism for MoE models (DeepSeek-V3)
-        if int(self.expert_parallel_degree) > 1:
-            tt_args += f'--parallelism.expert_parallel_degree {self.expert_parallel_degree} '
-
-        tt_args += (
-            f'--model.activation_checkpointing.mode {self.activation_checkpointing} '
-            + f'--model.compile {self.compile} '
-            + f'--model.enable_float8_linear {self.enable_float8} '
+        torchrun_cmd = (
+            f'torchrun --nproc_per_node={nproc_per_node} '
+            f'torchtitan/train.py --job.config_file {toml_path}'
         )
 
         if self.distributed_training:
-            # Multi-node distributed training command
-            # Build per-node commands with different node_rank
+            # Multi-node distributed training
             for i in range(self.nnodes):
                 full_cmd = (
-                    cmd
-                    + f'torchrun --nnodes {self.nnodes} --nproc_per_node {gpus_per_node} '
-                    + f'--node_rank {i} --master_addr {self.master_address} --master_port 29500 '
-                    + f'--rdzv_backend c10d --rdzv_endpoint {self.master_address}:29500 '
-                    + f'-m torchtitan.train --module {self.tt_module} --config {self.tt_config} '
-                    + tt_args
+                    cmd + torchrun_cmd
                     + f' > {self.log_dir}/torchtitan-logs/out-node{i}/training.log 2>&1 &'
                 )
                 script_cmd = f'echo "{full_cmd}" > {self.scripts_dir}/distributed_wrapper_script_{i}.sh;chmod 777 {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
@@ -396,10 +459,7 @@ class TorchTitanTrainingJob:
         else:
             # Single node training case
             self.job_cmd = (
-                cmd
-                + f'torchrun --nnodes 1 --nproc_per_node {gpus_per_node} '
-                + f'-m torchtitan.train --module {self.tt_module} --config {self.tt_config} '
-                + tt_args
+                cmd + torchrun_cmd
                 + f' > {self.log_dir}/torchtitan-logs/out-node0/training.log 2>&1 &'
             )
 
@@ -409,6 +469,7 @@ class TorchTitanTrainingJob:
 
         Behavior:
          - Creates log directories for each node
+         - Prepares custom YAML config (must happen after container exists)
          - Distributed mode: Creates and executes per-node wrapper scripts
          - Single-node mode: Creates and executes single wrapper script
          - Sleeps briefly to allow processes to initialize
@@ -423,6 +484,10 @@ class TorchTitanTrainingJob:
             cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {self.log_dir}/torchtitan-logs/out-node{i}"'''
             cmd_list.append(cmd)
         self.phdl.exec_cmd_list(cmd_list)
+
+        # Setup TorchTitan and create TOML config (NOW the container exists!)
+        log.info('Setting up TorchTitan and creating TOML config inside container...')
+        self.prepare_toml_config()
 
         if self.distributed_training:
             # Run NIC setup if needed

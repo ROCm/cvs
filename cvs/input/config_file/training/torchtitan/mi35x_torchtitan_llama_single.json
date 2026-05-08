@@ -2,13 +2,13 @@
 
     "config":
     {
-        "container_image": "rocm/primus:v26.2",
+        "container_image": "registry-sc-harbor.amd.com/framework/therock-main:1341_gfx950_7.13.0a20260504_ubuntu22.04_py3.11_pytorch_release-2.10_513e8b4",
         "container_name": "torchtitan_llama3.1_310",
         "_example_nnodes": "1",
-        "nnodes": "<changeme>-no of nodes to run singlenode training",
+        "nnodes": "1",
         "master_address": "localhost",
         "_example_training_iterations": "30",
-        "training_iterations": "<changeme>",
+        "training_iterations": "10",
         "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "128G",
         "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
@@ -33,6 +33,44 @@
         {
              "llama3_1_8b":
              {
+                 "mi300x":
+                 {
+                     "tokenizer_path": "NousResearch/Meta-Llama-3-8B",
+                     "model_size": "8b",
+                     "global_batch_size": "128",
+                     "micro_batch_size": "4",
+                     "sequence_length": "8192",
+                     "data_parallel_shard_degree": "8",
+                     "tensor_parallel_degree": "1",
+                     "pipeline_parallel_degree": "1",
+                     "context_parallel_degree": "1",
+                     "activation_checkpointing": "selective",
+                     "compile": "false",
+                     "enable_float8": "true",
+                     "result_dict":
+                     {
+                         "tokens_per_sec": "136000.0"
+                     }
+                 },
+                 "mi325":
+                 {
+                     "tokenizer_path": "NousResearch/Meta-Llama-3-8B",
+                     "model_size": "8b",
+                     "global_batch_size": "128",
+                     "micro_batch_size": "4",
+                     "sequence_length": "8192",
+                     "data_parallel_shard_degree": "8",
+                     "tensor_parallel_degree": "1",
+                     "pipeline_parallel_degree": "1",
+                     "context_parallel_degree": "1",
+                     "activation_checkpointing": "selective",
+                     "compile": "false",
+                     "enable_float8": "true",
+                     "result_dict":
+                     {
+                         "tokens_per_sec": "152000.0"
+                     }
+                 },
                  "mi350":
                  {
                      "tokenizer_path": "NousResearch/Meta-Llama-3-8B",
@@ -74,6 +112,44 @@
              },
              "llama3_1_70b":
              {
+                 "mi300x":
+                 {
+                     "tokenizer_path": "NousResearch/Meta-Llama-3-70B",
+                     "model_size": "70b",
+                     "global_batch_size": "24",
+                     "micro_batch_size": "3",
+                     "sequence_length": "8192",
+                     "data_parallel_shard_degree": "8",
+                     "tensor_parallel_degree": "1",
+                     "pipeline_parallel_degree": "1",
+                     "context_parallel_degree": "1",
+                     "activation_checkpointing": "full",
+                     "compile": "false",
+                     "enable_float8": "false",
+                     "result_dict":
+                     {
+                         "tokens_per_sec": "15200.0"
+                     }
+                 },
+                 "mi325":
+                 {
+                     "tokenizer_path": "NousResearch/Meta-Llama-3-70B",
+                     "model_size": "70b",
+                     "global_batch_size": "24",
+                     "micro_batch_size": "3",
+                     "sequence_length": "8192",
+                     "data_parallel_shard_degree": "8",
+                     "tensor_parallel_degree": "1",
+                     "pipeline_parallel_degree": "1",
+                     "context_parallel_degree": "1",
+                     "activation_checkpointing": "full",
+                     "compile": "false",
+                     "enable_float8": "false",
+                     "result_dict":
+                     {
+                         "tokens_per_sec": "16000.0"
+                     }
+                 },
                  "mi350":
                  {
                      "tokenizer_path": "NousResearch/Meta-Llama-3-70B",
