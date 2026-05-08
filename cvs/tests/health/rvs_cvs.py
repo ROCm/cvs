@@ -12,7 +12,6 @@ import re
 import json
 from packaging import version
 
-from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib.utils_lib import *
 
 from cvs.lib import globals
@@ -55,24 +54,6 @@ def config_dict(config_file, cluster_dict):
 
     log.info("%s", config_dict)
     return config_dict
-
-
-@pytest.fixture(scope="module")
-def orch(pytestconfig, request):
-    cluster_file = pytestconfig.getoption("cluster_file")
-    config_file = pytestconfig.getoption("config_file")
-    cfg = OrchestratorConfig.from_configs(cluster_file, config_file)
-    orch = OrchestratorFactory.create_orchestrator(log, cfg)
-
-    if cfg.orchestrator == "container":
-        container_name = orch.get_container_name(orch.container_config, orch.container_config['image'])
-        if not orch.setup_containers():
-            pytest.fail(f"Failed to launch container : {container_name}")
-        if not orch.setup_sshd():
-            pytest.fail(f"Failed to setup sshd in container : {container_name}")
-        request.addfinalizer(orch.teardown_containers)
-
-    return orch
 
 
 @pytest.fixture(scope="module")
