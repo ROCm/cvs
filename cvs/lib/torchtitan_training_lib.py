@@ -442,9 +442,10 @@ EOFTOML
         # Calculate number of GPUs for single node training
         nproc_per_node = 8  # MI355X has 8 GPUs
 
+        # TorchTitan 0.2.2+ uses --module and --config instead of --job.config_file
         torchrun_cmd = (
             f'torchrun --nproc_per_node={nproc_per_node} '
-            f'torchtitan/train.py --job.config_file {toml_path}'
+            f'torchtitan/train.py --module llama3 --config {toml_path}'
         )
 
         if self.distributed_training:
