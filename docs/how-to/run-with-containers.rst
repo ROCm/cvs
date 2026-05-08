@@ -8,9 +8,7 @@ Run CVS tests with the container backend
 
 CVS can route workload commands through a long-lived per-host container instead of running them directly on the host filesystem. This is useful when you want to validate the same image you ship to production, keep the host footprint minimal (Docker, GPU driver, and SSH only), or pin the test environment byte-for-byte.
 
-.. note::
-
-  **Scope today.** Of the test suites shipped with CVS, only ``rvs_cvs`` consumes the orchestrator and honors the ``orchestrator`` key in the cluster file. Other ``cvs run`` test suites and the ``cvs exec`` CLI run on the host regardless of the ``orchestrator`` value. See the Backends section in :doc:`/reference/configuration-files/cluster-file` for the full picture.
+.. include:: /_includes/orchestrator-scope.rst
 
 Prerequisites
 =============
