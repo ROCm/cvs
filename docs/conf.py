@@ -54,3 +54,5 @@ extensions = [
 html_title = f"{project} {version_number} documentation"
 
 external_projects_current_project = "Cluster Validation Suite"
+
+exclude_patterns = ['_includes/**']

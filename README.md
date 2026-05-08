@@ -141,8 +141,7 @@ Then copy specific files as needed:
 # Copy cluster configuration (baremetal backend, default)
 cvs copy-config cluster.json --output /tmp/cvs/input/cluster_file/cluster.json
 
-# Or copy the container-backend cluster template (today consumed by rvs_cvs only;
-# other suites and `cvs exec` ignore the orchestrator key and run on the host)
+# Or copy the container-backend cluster template
 cvs copy-config cluster_container.json --output /tmp/cvs/input/cluster_file/cluster_container.json
 
 # Alternatively, generate cluster configuration for multiple hosts (see 'Generate Cluster Configuration File' section below)
