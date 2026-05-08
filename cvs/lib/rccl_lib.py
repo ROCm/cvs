@@ -49,6 +49,22 @@ def _is_severe_wrong_corruption_error(err: ValidationError) -> bool:
     return 'SEVERE DATA CORRUPTION' in s or "'#wrong'" in s
 
 
+def _load_rccl_json_result(shdl, head_node, result_file):
+    """Read and parse a rccl-tests JSON result file with a clearer failure mode."""
+    result_dict_out = shdl.exec(f'cat {result_file}')
+    raw_output = result_dict_out[head_node].strip()
+    try:
+        return json.loads(raw_output.replace('\n', '').replace('\r', ''))
+    except json.JSONDecodeError:
+        msg = (
+            f'Unable to parse RCCL JSON result file {result_file}. '
+            f'Raw output from {head_node}: {raw_output or "<empty>"}'
+        )
+        log.error(msg)
+        fail_test(msg)
+        return []
+
+
 def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
     """
     Check if UCX is available in the OpenMPI build.
@@ -619,8 +635,7 @@ def rccl_regression(
         fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
     # Read the JSON results emitted by the RCCL test binary
-    result_dict_out = shdl.exec(f'cat {rccl_result_file}')
-    result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
+    result_out = _load_rccl_json_result(shdl, head_node, rccl_result_file)
 
     # Collect basic GPU information via rocm-smi
     smi_out_dict = shdl.exec('rocm-smi -a | head -30')
@@ -797,8 +812,7 @@ def rccl_perf(
             fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
         # Read the JSON results emitted by the RCCL test binary
-        result_dict_out = shdl.exec(f'cat {dtype_result_file}')
-        dtype_result_out = json.loads(result_dict_out[head_node].replace('\n', '').replace('\r', ''))
+        dtype_result_out = _load_rccl_json_result(shdl, head_node, dtype_result_file)
         # Validate the results against the schema fail if results are not valid
         try:
             validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
