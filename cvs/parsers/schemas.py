@@ -749,15 +749,192 @@ class PytorchXditFluxConfig(BaseModel):
         return v
 
 
+# =============================================================================
+# Preflight Check Configuration Schema
+# =============================================================================
+
+
+class PreflightParallelismConfig(BaseModel):
+    """Parallelism settings for preflight checks."""
+
+    model_config = ConfigDict(extra="allow")
+
+    parallel_group_size: int = Field(
+        default=128,
+        ge=2,
+        le=512,
+        description="Group size for parallel RDMA connectivity testing (2-512 nodes per group). Smaller groups use fewer resources per node but require more rounds.",
+    )
+
+
+class PreflightDebugConfig(BaseModel):
+    """Debug and troubleshooting settings for preflight checks."""
+
+    model_config = ConfigDict(extra="allow")
+
+    scriptlet: bool = Field(
+        default=False,
+        description=(
+            "Enable ScriptLet debug: preserve generated scripts/logs on remote nodes. "
+            "For RDMA connectivity, also wraps each ibv_rc_pingpong server in strace with "
+            "per-test traces under /tmp/preflight/strace_server_<iface>_<port>.log (expensive at scale)."
+        ),
+    )
+
+
+class PreflightNodeCheckConfig(BaseModel):
+    """Individual node validation settings."""
+
+    model_config = ConfigDict(extra="allow")
+
+    gid_index: str = Field(default="3", description="GID index to check on all RDMA interfaces (typically 3 for RoCE)")
+    expected_rocm_version: str = Field(default="6.2.0", description="Expected ROCm version across all cluster nodes")
+    rdma_interfaces: List[str] = Field(
+        default_factory=lambda: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
+        description="List of specific RDMA interface names to check and test",
+    )
+
+
+class PreflightRdmaConfig(BaseModel):
+    """RDMA connectivity testing settings."""
+
+    model_config = ConfigDict(extra="allow")
+
+    connectivity_mode: str = Field(default="basic", description="RDMA connectivity testing: basic, full_mesh, or skip")
+    ibv_test_timeout: str = Field(
+        default="10", description="Timeout in seconds for RDMA connectivity tests using ibv_rc_pingpong"
+    )
+    ibv_test_port_range: str = Field(
+        default="9000-9999", description="Port range for RDMA connectivity tests (format: start-end)"
+    )
+    inter_group_wave_pairs: str = Field(
+        default="auto", description="Max ordered group-pairs per wave during inter-group testing ('auto' or integer)"
+    )
+    prune_failure_threshold: float = Field(
+        default=0.5,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Round 1 (intra) prune before inter-group: prune nodes whose fraction of peers with ≥1 FAIL "
+            "intra test is ≥ this value (default 0.5). Peers counted per distinct other node in the same partition group."
+        ),
+    )
+    port_retry_max: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description=(
+            "After each ScriptLet wave (intra/inter), rerun only pairs whose logs show PORT_LISTEN_FAILED, "
+            "up to this many extra batches with new TCP ports (default 3)."
+        ),
+    )
+    port_retry_gap: int = Field(
+        default=1000,
+        ge=1,
+        le=65535,
+        description=(
+            "When remapping ports for PORT_LISTEN_FAILED retries, start at (max port in batch) + this gap "
+            "to reduce overlap with ephemeral ports."
+        ),
+    )
+    exclude_failed_interface_nodes: str = Field(
+        default="true",
+        description=(
+            "Legacy hint for reporting: preflight now prunes interface- and GID-failed nodes from the SSH "
+            "host list before RDMA; interface failures are not run in the mesh regardless of this flag."
+        ),
+    )
+
+    @field_validator('connectivity_mode')
+    @classmethod
+    def validate_connectivity_check(cls, v: str) -> str:
+        """Validate RDMA connectivity check setting."""
+        valid_modes = ['basic', 'full_mesh', 'skip']
+        if v not in valid_modes:
+            raise ValueError(f"connectivity_mode must be one of: {', '.join(valid_modes)}")
+        return v
+
+    @field_validator('ibv_test_port_range')
+    @classmethod
+    def validate_port_range(cls, v: str) -> str:
+        """Validate port range format."""
+        try:
+            start, end = map(int, v.split('-'))
+            if start >= end or start < 1024 or end > 65535:
+                raise ValueError("Invalid port range")
+        except (ValueError, AttributeError):
+            raise ValueError("ibv_test_port_range must be in format 'start-end' with valid port numbers")
+        return v
+
+
+class PreflightConnectivityCheckConfig(BaseModel):
+    """Connectivity check settings by protocol."""
+
+    model_config = ConfigDict(extra="allow")
+
+    rdma: PreflightRdmaConfig = Field(default_factory=PreflightRdmaConfig, description="RDMA connectivity settings")
+
+
+class PreflightReportingConfig(BaseModel):
+    """Report generation and output settings."""
+
+    model_config = ConfigDict(extra="allow")
+
+    generate_html_report: str = Field(default="true", description="Whether to generate HTML report")
+    report_output_dir: str = Field(
+        default="/tmp/preflight_reports",
+        description=(
+            "Directory for HTML report output. RDMA full_mesh ScriptLet logs also use "
+            "<report_output_dir>/rdma_connectivity_workspace/<session>/<round>/ on each node (NFS-friendly)."
+        ),
+    )
+    generate_rdma_pairs_csv: str = Field(
+        default="true",
+        description="If true, write preflight_report_*_rdma_pairs.csv beside the HTML report (failed pairs only)",
+    )
+
+
+class PreflightConfigFile(BaseModel):
+    """
+    Schema for preflight check configuration file.
+
+    Uses nested structure organized by execution phase for better organization.
+    """
+
+    model_config = ConfigDict(extra="allow")  # Allow comment fields
+
+    parallelism: PreflightParallelismConfig = Field(
+        default_factory=PreflightParallelismConfig, description="Parallel execution settings"
+    )
+    debug: PreflightDebugConfig = Field(
+        default_factory=PreflightDebugConfig, description="Debug and troubleshooting options"
+    )
+    node_check: PreflightNodeCheckConfig = Field(
+        default_factory=PreflightNodeCheckConfig, description="Individual node validation settings"
+    )
+    connectivity_check: PreflightConnectivityCheckConfig = Field(
+        default_factory=PreflightConnectivityCheckConfig, description="Inter-node connectivity tests"
+    )
+    reporting: PreflightReportingConfig = Field(
+        default_factory=PreflightReportingConfig, description="Report generation and output settings"
+    )
+
+
 def validate_config_file(
     config_path: Union[str, Path], config_type: str = "auto"
-) -> Union[AortaBenchmarkConfigFile, ClusterConfigFile, PytorchXditWanConfigFile, PytorchXditFluxConfigFile]:
+) -> Union[
+    AortaBenchmarkConfigFile,
+    ClusterConfigFile,
+    PytorchXditWanConfigFile,
+    PytorchXditFluxConfigFile,
+    PreflightConfigFile,
+]:
     """
     Load and validate a configuration file.
 
     Args:
         config_path: Path to configuration file (YAML or JSON)
-        config_type: Type of config - "aorta", "cluster", "pytorch_xdit_wan", "pytorch_xdit_flux", or "auto" (detect from content)
+        config_type: Type of config - "aorta", "cluster", "pytorch_xdit_wan", "pytorch_xdit_flux", "preflight", or "auto" (detect from content)
 
     Returns:
         Validated Pydantic model
@@ -788,6 +965,8 @@ def validate_config_file(
     if config_type == "auto":
         if "node_dict" in raw_config:
             config_type = "cluster"
+        elif "preflight" in raw_config:
+            config_type = "preflight"
         elif "aorta_path" in raw_config:
             config_type = "aorta"
         elif "config" in raw_config and "benchmark_params" in raw_config:
@@ -807,13 +986,19 @@ def validate_config_file(
         else:
             raise ValueError(
                 f"Cannot auto-detect config type for {config_path}. "
-                f"Specify config_type='aorta', config_type='cluster', config_type='pytorch_xdit_wan', or config_type='pytorch_xdit_flux'"
+                f"Specify config_type='aorta', config_type='cluster', config_type='pytorch_xdit_wan', config_type='pytorch_xdit_flux', or config_type='preflight'"
             )
 
     # Validate with appropriate schema
     try:
         if config_type == "cluster":
             return ClusterConfigFile.model_validate(raw_config)
+        elif config_type == "preflight":
+            # Extract preflight section for validation
+            if "preflight" in raw_config:
+                return PreflightConfigFile.model_validate(raw_config["preflight"])
+            else:
+                raise ValueError("Preflight config must contain 'preflight' section")
         elif config_type == "aorta":
             return AortaBenchmarkConfigFile.model_validate(raw_config)
         elif config_type == "pytorch_xdit_wan":

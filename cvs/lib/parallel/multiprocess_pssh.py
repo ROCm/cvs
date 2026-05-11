@@ -36,6 +36,7 @@ class MultiProcessPssh(Pssh):
         stop_on_errors=True,
         env_vars=None,
         config=None,
+        **ssh_client_kwargs,
     ):
         # Initialize configuration
         self.config = config or ParallelConfig.from_env()
@@ -43,6 +44,9 @@ class MultiProcessPssh(Pssh):
 
         # Always ensure self.log is set for backward compatibility
         self.log = global_log
+
+        # Store ssh_client_kwargs for forwarding to shard workers
+        self.ssh_client_kwargs = ssh_client_kwargs
 
         n = len(host_list) if host_list is not None else 0
         use_mp = hosts_per_shard > 0 and n > hosts_per_shard
@@ -59,13 +63,16 @@ class MultiProcessPssh(Pssh):
                 stop_on_errors,
                 env_vars,
                 process_output=True,  # Default to True for compatibility
+                **ssh_client_kwargs,
             )
             self._use_process_sharding = False
             # Ensure attributes needed by _shard_init_kwargs are available
             self.env_vars = env_vars
         else:
             # Initialize for multi-process sharding
-            self._init_sharded(log, host_list, user, password, pkey, host_key_check, stop_on_errors, env_vars)
+            self._init_sharded(
+                log, host_list, user, password, pkey, host_key_check, stop_on_errors, env_vars, **ssh_client_kwargs
+            )
 
             # Create the sharder - no registration needed with direct operations!
             self.sharder = PsshSharder(self.config)
@@ -80,6 +87,7 @@ class MultiProcessPssh(Pssh):
         host_key_check,
         stop_on_errors,
         env_vars,
+        **ssh_client_kwargs,
     ):
         """Initialize for sharded multi-process execution."""
         # Always use global logger but maintain self.log for backward compatibility
@@ -93,6 +101,7 @@ class MultiProcessPssh(Pssh):
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
         self.env_vars = env_vars
+        self.ssh_client_kwargs = ssh_client_kwargs
         self.env_prefix = build_env_prefix(env_vars)
         self.process_output = True  # Default to True for compatibility
         self.client = None
@@ -112,6 +121,7 @@ class MultiProcessPssh(Pssh):
             'host_key_check': self.host_key_check,
             'stop_on_errors': self.stop_on_errors,
             'env_vars': self.env_vars,
+            **self.ssh_client_kwargs,  # Forward all ssh client kwargs to shard workers
         }
 
     def _merge_shard_returns(self, shard_returns, merge_unreachable=True):
@@ -304,6 +314,46 @@ class MultiProcessPssh(Pssh):
         payloads = self.sharder.create_payloads('reboot', host_chunks, self._shard_init_kwargs())
         shard_returns = self.sharder.execute_sharded(payloads)
         return self._merge_shard_returns(shard_returns, merge_unreachable=False)
+
+    def upload_file_list(self, node_path_map):
+        """Upload different files to different hosts with automatic sharding if needed."""
+        if not getattr(self, '_use_process_sharding', False):
+            return super().upload_file_list(node_path_map)
+
+        if not node_path_map:
+            return {}
+
+        self.log.info(f"Uploading files to hosts with sharding: {len(node_path_map)} file mappings")
+
+        # Shard the file operations across hosts
+        host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
+        payloads = []
+
+        for shard_hosts in host_chunks:
+            # Create subset of node_path_map for this shard
+            shard_node_path_map = {h: node_path_map[h] for h in shard_hosts if h in node_path_map}
+            if shard_node_path_map:
+                payloads.append(
+                    self.sharder.create_payloads(
+                        'upload_file_list',
+                        [shard_hosts],
+                        self._shard_init_kwargs(),
+                        node_path_map=shard_node_path_map,
+                    )[0]
+                )
+
+        if not payloads:
+            return {}
+
+        shard_returns = self.sharder.execute_sharded(payloads)
+
+        # Merge results from all shards
+        merged_results = {}
+        for shard in shard_returns:
+            result = shard.get('result', {})
+            merged_results.update(result)
+
+        return merged_results
 
     def destroy_clients(self):
         """Destroy clients - handle both sharded and non-sharded modes."""

@@ -1,0 +1,78 @@
+{
+  "preflight": {
+    "node_check": {
+      "_comment": "Individual node validation (parallel across nodes)",
+      
+      "_example_gid_index": "3",
+      "gid_index": "<changeme>",
+      "_comment_gid_index": "GID index to check on all RDMA interfaces. Typically '3' for RoCE (RDMA over Converged Ethernet). Must be a valid GID index for your InfiniBand/RoCE setup.",
+      
+      "_example_expected_rocm_version": "6.2.0",
+      "expected_rocm_version": "<changeme>",
+      "_comment_expected_rocm_version": "Expected ROCm version across all cluster nodes. Must match the output of 'amd-smi version' on all nodes. Format: 'major.minor.patch' (e.g., '6.2.0', '5.7.1').",
+      
+      "_example_rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
+      "rdma_interfaces": "<changeme>",
+      "_comment_rdma_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand."
+    },
+    
+    "connectivity_check": {
+      "_comment": "Inter-node connectivity tests by protocol",
+      
+      "rdma": {
+        "_comment": "RDMA connectivity testing parameters using ibv_rc_pingpong (direct IB verbs) for RCCL-compatible testing",
+        
+        "connectivity_mode": "basic",
+        "_comment_connectivity_mode": "RDMA connectivity testing mode. Options: 'basic' (test adjacent node pairs, fast, ~14% coverage for 8 nodes), 'full_mesh' (test all possible node pairs, comprehensive, 100% coverage), 'skip' (skip RDMA connectivity testing entirely).",
+        
+        "ibv_test_timeout": "10",
+        "_comment_ibv_test_timeout": "Timeout in seconds for each ibv_rc_pingpong connectivity test. Uses ibv_rc_pingpong (direct IB verbs) instead of rping for RCCL-compatible testing. Increase for slower networks or high-latency connections.",
+        
+        "ibv_test_port_range": "9000-9999",
+        "_comment_ibv_test_port_range": "Port range for ibv_rc_pingpong tests to avoid conflicts. Format: 'start-end' (e.g., '9000-9999', '10000-10999'). Ensure ports are not blocked by firewalls.",
+        
+        "inter_group_wave_pairs": "auto",
+        "_comment_inter_group_wave_pairs": "Max ordered group-pairs (Gi→Gj keys) per wave during inter-group RDMA testing. 'auto' calculates as max(1, num_groups - 1). Can be set to a specific integer to control wave size and reduce memory/CPU load.",
+        
+        "prune_failure_threshold": 0.5,
+        "_comment_prune_failure_threshold": "Prune nodes whose fraction of peers with ≥1 FAIL intra test is ≥ this value. Range: 0.0 to 1.0 (0.5 = 50% failure threshold). Helps remove problematic nodes before inter-group testing. Lower values (0.2-0.3) are more aggressive.",
+        
+        "port_retry_max": 3,
+        "_comment_port_retry_max": "Max retry attempts for pairs whose logs show PORT_LISTEN_FAILED. Range: 0-10 retries with new TCP ports after each wave. Helps handle port conflicts during large-scale testing.",
+        
+        "port_retry_gap": 1000,
+        "_comment_port_retry_gap": "Port gap when remapping ports for PORT_LISTEN_FAILED retries. Range: 1-65535. Starts at (max port in batch) + this gap to reduce overlap with ephemeral ports.",
+        
+        "exclude_failed_interface_nodes": "true",
+        "_comment_exclude_failed_interface_nodes": "Legacy hint for reporting: preflight now prunes interface/GID-failed nodes from the SSH host list automatically. Interface failures are excluded from mesh testing regardless of this flag."
+      }
+    },
+    
+    "reporting": {
+      "_comment": "Post-test reporting and output",
+      
+      "generate_html_report": "true",
+      "_comment_generate_html_report": "Whether to generate detailed HTML report. Set to 'false' to disable HTML report generation.",
+      
+      "report_output_dir": "/tmp/preflight_reports",
+      "_comment_report_output_dir": "Directory where HTML reports will be saved. Must be writable by the user running the tests. RDMA full_mesh ScriptLet logs also use <report_output_dir>/rdma_connectivity_workspace/<session>/<round>/ on each node (NFS-friendly).",
+      
+      "generate_rdma_pairs_csv": "true",
+      "_comment_generate_rdma_pairs_csv": "Whether to generate CSV file with failed RDMA pairs alongside HTML report. Set to 'false' to disable CSV generation. Useful for analyzing connectivity patterns and failures."
+    },
+
+    "parallelism": {
+      "_comment": "Parallel execution and resource management settings",
+      
+      "parallel_group_size": 32,
+      "_comment_parallel_group_size": "Group size for parallel RDMA connectivity testing (2-128 nodes per group). Smaller groups use fewer resources per node but require more rounds. Adjust based on cluster size and resource constraints."
+    },
+    
+    "debug": {
+      "_comment": "Debug and troubleshooting options",
+      
+      "scriptlet": false,
+      "_comment_scriptlet": "Enable ScriptLet debug mode: preserve generated scripts/logs on remote nodes. For RDMA connectivity, wraps each ibv_rc_pingpong server in strace with per-test traces under /tmp/preflight/strace_server_<iface>_<port>.log. WARNING: Can be expensive at scale due to strace overhead."
+    }
+  }
+}

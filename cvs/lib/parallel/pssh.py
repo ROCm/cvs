@@ -46,6 +46,7 @@ class Pssh:
         stop_on_errors=True,
         env_vars=None,
         process_output=True,
+        **ssh_client_kwargs,
     ):
         # Backward compatibility warning for log parameter
         if log is not None:
@@ -68,6 +69,7 @@ class Pssh:
         self.stop_on_errors = stop_on_errors
         self.process_output = process_output
         self.unreachable_hosts = []
+        self.ssh_client_kwargs = ssh_client_kwargs
         self.env_prefix = build_env_prefix(env_vars)
         self.log.debug(f"Environ vars: {self.env_prefix}")
 
@@ -75,10 +77,16 @@ class Pssh:
             self.log.info("%s", self.reachable_hosts)
             self.log.info("%s", self.user)
             self.log.info("%s", self.pkey)
-            self.client = ParallelSSHClient(self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30)
+            self.client = ParallelSSHClient(
+                self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, **self.ssh_client_kwargs
+            )
         else:
             self.client = ParallelSSHClient(
-                self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+                self.reachable_hosts,
+                user=self.user,
+                password=self.password,
+                keepalive_seconds=30,
+                **self.ssh_client_kwargs,
             )
 
     def check_connectivity(self, hosts):
@@ -95,6 +103,7 @@ class Pssh:
             password=self.password,
             num_retries=0,
             timeout=2,
+            **self.ssh_client_kwargs,
         )
         output = temp_client.run_command('echo 1', stop_on_errors=False, read_timeout=2)
         unreachable = [item.host for item in output if item.exception]
@@ -124,11 +133,15 @@ class Pssh:
             # Recreate client with filtered reachable_hosts, only if hosts were actually pruned
             if self.password is None:
                 self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30
+                    self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, **self.ssh_client_kwargs
                 )
             else:
                 self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+                    self.reachable_hosts,
+                    user=self.user,
+                    password=self.password,
+                    keepalive_seconds=30,
+                    **self.ssh_client_kwargs,
                 )
 
     def inform_unreachability(self, cmd_output, include_exit_codes=False):
@@ -380,6 +393,51 @@ class Pssh:
                 f"{len(errors)}/{len(self.reachable_hosts)} hosts: {errors}"
             ) from errors[0][1]
         return result
+
+    def upload_file_list(self, node_path_map):
+        """
+        Upload different files to different hosts using SFTP.
+
+        Args:
+            node_path_map: dict mapping {host: (local_path, remote_path)}
+
+        Returns:
+            dict: {host: "host: SUCCESS" | "host: FAILED - ..."}
+        """
+        if not node_path_map:
+            return {}
+
+        # Build copy_args for each host
+        copy_args = []
+        valid_hosts = []
+
+        for host in self.reachable_hosts:
+            if host in node_path_map:
+                local_path, remote_path = node_path_map[host]
+                copy_args.append({'local_file': local_path, 'remote_file': remote_path})
+                valid_hosts.append(host)
+
+        if not copy_args:
+            return {}
+
+        self.log.info(f"Uploading {len(copy_args)} different files to {len(valid_hosts)} hosts")
+
+        # Use copy_file with copy_args - returns greenlets
+        cmds = self.client.copy_file("%(local_file)s", "%(remote_file)s", copy_args=copy_args)
+
+        # Wait for greenlets to complete (like upload_file does)
+        self.client.pool.join()
+
+        # Process greenlet results
+        results = {}
+        for cmd, host in zip(cmds, valid_hosts):
+            try:
+                cmd.get()  # This will raise if the greenlet failed
+                results[host] = f"{host}: SUCCESS"
+            except Exception as e:
+                results[host] = f"{host}: FAILED - {e}"
+
+        return results
 
     def reboot_connections(self):
         self.log.info('Rebooting Connections')

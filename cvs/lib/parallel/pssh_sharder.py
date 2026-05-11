@@ -105,6 +105,8 @@ class PsshSharder:
             elif operation == 'reboot':
                 shard.reboot_connections()
                 result = None
+            elif operation == 'upload_file_list':
+                result = shard.upload_file_list(payload['node_path_map'])
             else:
                 raise ValueError(f'Unknown operation: {operation}')
 
