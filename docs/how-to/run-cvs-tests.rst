@@ -116,6 +116,18 @@ These are the arguments typically used in these test scripts:
 
 You can also create a wrapper shell script to run multiple test suites sequentially by putting the different `cvs run` commands in a bash script as described in the README file under the ``cvs/tests/health`` folder.
 
+Performance and Scalability
+===========================
+
+For detailed information about CVS scalability features, performance tuning, and environment variables, see the :doc:`../cvs-at-scale` documentation.
+
+**Quick Reference:**
+
+- **CVS_HOSTS_PER_SHARD** (default: 32) - Controls shard size for parallel processing
+- **CVS_WORKERS_PER_CPU** (default: 4) - Sets worker processes per CPU core
+
+**Behavioral Change**: CVS now automatically uses multi-process execution for clusters with 32+ nodes for improved performance.
+
 Run CVS test scripts
 ====================
 
