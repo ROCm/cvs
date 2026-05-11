@@ -444,14 +444,13 @@ EOFTOML
 
         # TorchTitan 0.2.2+ uses --module and --config with pre-registered config names
         # Use debugmodel for testing with synthetic data (doesn't require downloading tokenizers)
-        # Disable activation checkpointing and compile for ROCm compatibility
+        # Disable activation checkpointing for ROCm compatibility
 
         torchrun_cmd = (
             f'torchrun --nproc_per_node={nproc_per_node} '
             f'torchtitan/train.py --module llama3 --config llama3_debugmodel '
             f'--training.steps {self.iterations} '
-            f'--activation_checkpoint.mode none '
-            f'--compile.enable false'
+            f'--activation_checkpoint.mode none'
         )
 
         if self.distributed_training:
