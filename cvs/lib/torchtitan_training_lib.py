@@ -443,18 +443,13 @@ EOFTOML
         nproc_per_node = 8  # MI355X has 8 GPUs
 
         # TorchTitan 0.2.2+ uses --module and --config with pre-registered config names
-        # Available configs: llama3_8b, llama3_70b, llama3_405b, etc.
-        # Map model names to config registry names
-        config_map = {
-            'llama3_1_8b': 'llama3_8b',
-            'llama3_1_70b': 'llama3_70b',
-            'llama3_1_405b': 'llama3_405b',
-        }
-        config_name = config_map.get(self.model_name, 'llama3_8b')
+        # Use debugmodel for testing with synthetic data (doesn't require downloading tokenizers)
+        # The debugmodel is designed for testing and doesn't need actual HF assets
 
         torchrun_cmd = (
             f'torchrun --nproc_per_node={nproc_per_node} '
-            f'torchtitan/train.py --module llama3 --config {config_name}'
+            f'torchtitan/train.py --module llama3 --config llama3_debugmodel '
+            f'--training.steps {self.iterations}'
         )
 
         if self.distributed_training:
