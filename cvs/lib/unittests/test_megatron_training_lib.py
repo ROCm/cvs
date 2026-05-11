@@ -141,5 +141,75 @@ class TestMegatronRootPropagation(unittest.TestCase):
         self.assertIn('cd /opt/megatron', cmds)
 
 
+class TestScriptsDirPropagation(unittest.TestCase):
+    """AIMVT-162 (extension): scripts_dir is config-driven via setdefault and
+    a kwarg override path. The original kwarg default
+    `os.path.expanduser("~") + '/SCRIPTS'` was devbox-resolved (typically
+    `/data/<user>/SCRIPTS`) and silently mismatched the SSH-target HOME on
+    workers (`/home/<user>/SCRIPTS`), causing nohup inside `start_training_job`
+    to fail with `No such file or directory` before training ever started.
+    These tests pin the new resolution chain: kwarg > training_dict > setdefault."""
+
+    def test_default_uses_home_dir(self):
+        # Symmetric with data_cache_dir/log_dir setdefaults: when JSON omits
+        # scripts_dir, default is f'{self.home_dir}/SCRIPTS'.
+        job = _make_megatron_job()
+        self.assertEqual(job.scripts_dir, f'{job.home_dir}/SCRIPTS')
+
+    def test_config_override_wins(self):
+        # Production configs set scripts_dir via the `{user-id}` placeholder
+        # (resolved to `/home/<user>/SCRIPTS` before the test sees it).
+        job = _make_megatron_job(training_overrides={'scripts_dir': '/home/atnair/SCRIPTS'})
+        self.assertEqual(job.scripts_dir, '/home/atnair/SCRIPTS')
+
+    def test_kwarg_override_wins_over_config(self):
+        # Backwards-compat: callers using the kwarg path (tests, custom
+        # harnesses) still take precedence over the training_dict value.
+        # Validates the `scripts_dir if scripts_dir is not None else tdict[...]`
+        # ternary — NOT a silent fallthrough to the dict value.
+        with patch('cvs.lib.megatron_training_lib.time.sleep'):
+            phdl = MagicMock()
+            phdl.host_list = ['n0']
+            phdl.exec = MagicMock(return_value={'n0': ''})
+            phdl.exec_cmd_list = MagicMock(return_value=None)
+            training_dict = {
+                'training_iterations': 2,
+                'nnodes': 1,
+                'nic_type': 'thor2',
+                'scripts_dir': '/from/config',
+            }
+            model_params_dict = {
+                'multi_node': {
+                    'llama3_1_8b': {
+                        'mi300': {
+                            'tokenizer_model': 'NousResearch/Meta-Llama-3-8B',
+                            'model_size': '8',
+                            'batch_size': '128',
+                            'micro_batch_size': '2',
+                            'precision': 'TE_FP8',
+                            'sequence_length': '8192',
+                            'tensor_parallelism': '1',
+                            'pipeline_parallelism': '1',
+                            'recompute': '0',
+                            'fsdp': '0',
+                            'result_dict': {'throughput_per_gpu': '0.0', 'tokens_per_gpu': '0.0'},
+                        }
+                    }
+                }
+            }
+            job = MegatronLlamaTrainingJob(
+                phdl,
+                'llama3_1_8b',
+                training_dict,
+                model_params_dict,
+                hf_token='dummy',
+                gpu_type='mi300',
+                distributed_training=True,
+                tune_model_params=False,
+                scripts_dir='/from/kwarg',
+            )
+        self.assertEqual(job.scripts_dir, '/from/kwarg')
+
+
 if __name__ == '__main__':
     unittest.main()
