@@ -29,7 +29,7 @@ class TestMultiProcessPsshInitialization(unittest.TestCase):
         )
         # For small lists, no sharder should be created (key difference!)
         self.assertFalse(hasattr(pssh, 'sharder'))
-        self.assertFalse(pssh._use_process_sharding)
+        self.assertIsNotNone(pssh.pssh)
         # But pssh instance should always exist
         self.assertTrue(hasattr(pssh, 'pssh'))
 
@@ -51,7 +51,7 @@ class TestMultiProcessPsshInitialization(unittest.TestCase):
         )
         # Verify sharder was created
         mock_sharder_class.assert_called_once_with(config)
-        self.assertTrue(pssh._use_process_sharding)
+        self.assertIsNone(pssh.pssh)
         # In sharded mode: pssh is None, sharder exists
         self.assertIsNone(pssh.pssh)
         self.assertTrue(hasattr(pssh, 'sharder'))
@@ -196,7 +196,6 @@ class TestMultiProcessPsshExec(unittest.TestCase):
                 pssh.reachable_hosts = reachable_hosts_only  # host2 is missing
                 pssh.config = config
                 pssh.sharder = mock_sharder
-                pssh._use_process_sharding = True
                 # Additional attributes needed by _shard_init_kwargs
                 pssh.user = "test"
                 pssh.password = None
@@ -210,10 +209,9 @@ class TestMultiProcessPsshExec(unittest.TestCase):
                 # Verify create_payloads was called and check the command mapping
                 mock_sharder.create_payloads.assert_called()
 
-                # The cmd_list should be filtered to match reachable hosts
-                # Original: cmd_list=["cmd1", "cmd2", "cmd3", "cmd4"] for ["host1", "host2", "host3", "host4"]
-                # Filtered: should be ["cmd1", "cmd3", "cmd4"] for ["host1", "host3", "host4"]
-                # This validates that host3 gets cmd3 (not cmd2) and host4 gets cmd4 (not cmd3)
+                # The cmd_list should match reachable hosts exactly (proper usage)
+                # Passed: cmd_list=["cmd1", "cmd3", "cmd4"] for ["host1", "host3", "host4"]
+                # This validates proper 1:1 mapping between commands and reachable hosts
 
                 self.assertEqual(result, {"host1": "result1", "host3": "result3", "host4": "result4"})
 
@@ -369,6 +367,76 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
 
         # upload_file should return empty dict (merged void results)
         self.assertEqual(result, {})
+
+    def test_upload_file_list_with_subset_hosts_per_shard(self):
+        """Test upload_file_list shards only targeted hosts per worker payload."""
+        host_list = ["host1", "host2", "host3", "host4"]
+        config = ParallelConfig(hosts_per_shard=2, max_workers_per_cpu=1)
+        node_path_map = {
+            "host2": ("/tmp/local2.sh", "/tmp/remote2.sh"),
+            "host3": ("/tmp/local3.sh", "/tmp/remote3.sh"),
+        }
+
+        self.mock_execute_sharded.return_value = [
+            {'result': {"host2": "host2: SUCCESS"}, 'reachable_hosts': ["host2"], 'unreachable_hosts': []},
+            {'result': {"host3": "host3: SUCCESS"}, 'reachable_hosts': ["host3"], 'unreachable_hosts': []},
+        ]
+
+        pssh = MultiProcessPssh(self.mock_log, host_list, user="test", config=config)
+        result = pssh.upload_file_list(node_path_map)
+
+        self.mock_execute_sharded.assert_called_once()
+        payloads = self.mock_execute_sharded.call_args[0][0]
+        self.assertEqual(len(payloads), 2)
+
+        self.assertEqual(payloads[0]['operation'], 'upload_file_list')
+        self.assertEqual(payloads[0]['init']['host_list'], ["host2"])
+        self.assertEqual(payloads[0]['node_path_map'], {"host2": ("/tmp/local2.sh", "/tmp/remote2.sh")})
+
+        self.assertEqual(payloads[1]['operation'], 'upload_file_list')
+        self.assertEqual(payloads[1]['init']['host_list'], ["host3"])
+        self.assertEqual(payloads[1]['node_path_map'], {"host3": ("/tmp/local3.sh", "/tmp/remote3.sh")})
+
+        self.assertEqual(result, {"host2": "host2: SUCCESS", "host3": "host3: SUCCESS"})
+
+    def test_prune_nodes_sharded_mode_updates_wrapper_state(self):
+        """Test prune_nodes in sharded mode updates wrapper state directly."""
+        with patch('cvs.lib.parallel.multiprocess_pssh.MultiProcessPssh._init_sharded'):
+            with patch('cvs.lib.parallel.multiprocess_pssh.PsshSharder'):
+                pssh = MultiProcessPssh(self.mock_log, ["host1", "host2", "host3"], user="test")
+                pssh.pssh = None
+                pssh.reachable_hosts = ["host1", "host2", "host3"]
+                pssh.host_list = ["host1", "host2", "host3"]
+                pssh.unreachable_hosts = []
+
+                removed = pssh.prune_nodes(["host2", "hostX"])
+
+                self.assertEqual(removed, ["host2"])
+                self.assertEqual(pssh.reachable_hosts, ["host1", "host3"])
+                self.assertEqual(pssh.host_list, ["host1", "host2", "host3"])
+                self.assertEqual(pssh.unreachable_hosts, ["host2"])
+
+    def test_prune_nodes_non_sharded_delegates_to_single_process_pssh(self):
+        """Test prune_nodes in non-sharded mode delegates to single-process Pssh."""
+        config = ParallelConfig(hosts_per_shard=32)
+        pssh = MultiProcessPssh(self.mock_log, ["host1", "host2"], user="test", config=config)
+        pssh.reachable_hosts = ["host1", "host2"]
+        pssh.host_list = ["host1", "host2"]
+        pssh.unreachable_hosts = []
+
+        pssh.pssh = MagicMock()
+        pssh.pssh.prune_nodes.return_value = ["host2"]
+        pssh.pssh.reachable_hosts = ["host1"]
+        pssh.pssh.host_list = ["host1"]
+        pssh.pssh.unreachable_hosts = ["host2"]
+
+        removed = pssh.prune_nodes(["host2"])
+
+        pssh.pssh.prune_nodes.assert_called_once_with(["host2"])
+        self.assertEqual(removed, ["host2"])
+        self.assertEqual(pssh.reachable_hosts, ["host1"])
+        self.assertEqual(pssh.host_list, ["host1", "host2"])
+        self.assertEqual(pssh.unreachable_hosts, ["host2"])
 
     def test_download_file_with_sharding(self):
         """Test download_file with sharding uses sharder and merges results."""
