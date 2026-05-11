@@ -171,10 +171,10 @@ class MultiProcessPssh(Pssh):
             for line in cmd_output[host].splitlines():
                 self.log.info("%s", line)
 
-    def exec(self, cmd, timeout=None, print_console=True):
+    def exec(self, cmd, timeout=None, print_console=True, detailed=False):
         """Execute command with automatic sharding if needed."""
         if not getattr(self, '_use_process_sharding', False):
-            return super().exec(cmd, timeout=timeout, print_console=print_console)
+            return super().exec(cmd, timeout=timeout, print_console=print_console, detailed=detailed)
 
         if self.env_prefix:
             full_cmd = f"{self.env_prefix} ; {cmd}"
@@ -195,7 +195,7 @@ class MultiProcessPssh(Pssh):
         # Use sharder for sharded execution
         host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
         payloads = self.sharder.create_payloads(
-            'exec', host_chunks, self._shard_init_kwargs(), cmd=cmd, timeout=timeout
+            'exec', host_chunks, self._shard_init_kwargs(), cmd=cmd, timeout=timeout, detailed=detailed
         )
         shard_returns = self.sharder.execute_sharded(payloads)
 
@@ -256,7 +256,7 @@ class MultiProcessPssh(Pssh):
             offset += k
             payloads.append(
                 self.sharder.create_payloads(
-                    'cmd_list', [shard_hosts], self._shard_init_kwargs(), cmd_list=shard_commands, timeout=timeout
+                    'exec_cmd_list', [shard_hosts], self._shard_init_kwargs(), cmd_list=shard_commands, timeout=timeout
                 )[0]
             )
 
@@ -283,7 +283,7 @@ class MultiProcessPssh(Pssh):
 
         host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
         payloads = self.sharder.create_payloads(
-            'scp',
+            'scp_file',
             host_chunks,
             self._shard_init_kwargs(),
             local_file=local_file,
@@ -293,6 +293,54 @@ class MultiProcessPssh(Pssh):
         shard_returns = self.sharder.execute_sharded(payloads)
         return self._merge_shard_returns(shard_returns, merge_unreachable=False)
 
+    def upload_file(self, local_file, remote_file, recurse=False):
+        """Upload file with automatic sharding if needed."""
+        if not getattr(self, '_use_process_sharding', False):
+            return super().upload_file(local_file, remote_file, recurse=recurse)
+
+        self.log.info('SFTP upload %s -> %s on %s', local_file, remote_file, self.reachable_hosts)
+
+        host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
+        payloads = self.sharder.create_payloads(
+            'upload_file',
+            host_chunks,
+            self._shard_init_kwargs(),
+            local_file=local_file,
+            remote_file=remote_file,
+            recurse=recurse,
+        )
+        shard_returns = self.sharder.execute_sharded(payloads)
+        return self._merge_shard_returns(shard_returns, merge_unreachable=False)
+
+    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_'):
+        """Download file with automatic sharding if needed."""
+        if not getattr(self, '_use_process_sharding', False):
+            return super().download_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
+
+        self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts)
+
+        host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
+        payloads = self.sharder.create_payloads(
+            'download_file',
+            host_chunks,
+            self._shard_init_kwargs(),
+            remote_file=remote_file,
+            local_file=local_file,
+            recurse=recurse,
+            suffix_separator=suffix_separator,
+        )
+        shard_returns = self.sharder.execute_sharded(payloads)
+
+        # For download_file, we need to merge the returned dictionaries from each shard
+        # The result is a dict mapping {host: actual_local_path}
+        merged_result = {}
+        for shard in shard_returns:
+            result = shard.get('result') or {}
+            if isinstance(result, dict):
+                merged_result.update(result)
+
+        return merged_result
+
     def reboot_connections(self):
         """Reboot connections with automatic sharding if needed."""
         if not getattr(self, '_use_process_sharding', False):
@@ -301,7 +349,7 @@ class MultiProcessPssh(Pssh):
         self.log.info('Rebooting Connections')
 
         host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
-        payloads = self.sharder.create_payloads('reboot', host_chunks, self._shard_init_kwargs())
+        payloads = self.sharder.create_payloads('reboot_connections', host_chunks, self._shard_init_kwargs())
         shard_returns = self.sharder.execute_sharded(payloads)
         return self._merge_shard_returns(shard_returns, merge_unreachable=False)
 

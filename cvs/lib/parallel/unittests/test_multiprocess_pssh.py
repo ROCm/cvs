@@ -109,7 +109,7 @@ class TestMultiProcessPsshExec(unittest.TestCase):
                 pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test")
                 result = pssh.exec("uptime")
 
-                mock_parent_exec.assert_called_once_with("uptime", timeout=None, print_console=True)
+                mock_parent_exec.assert_called_once_with("uptime", timeout=None, print_console=True, detailed=False)
                 self.assertEqual(result, {"host1": "result"})
 
     def test_exec_with_sharding(self):
@@ -405,6 +405,104 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
                 self.assertEqual(set(pssh.reachable_hosts), {"host1", "host2"})
                 self.assertEqual(pssh.unreachable_hosts, [])
 
+    def test_upload_file_with_sharding(self):
+        """Test upload_file with sharding uses sharder."""
+        config = ParallelConfig(hosts_per_shard=1, max_workers_per_cpu=1)
 
-if __name__ == "__main__":
-    unittest.main()
+        with patch('cvs.lib.parallel.multiprocess_pssh.MultiProcessPssh._init_sharded'):
+            with patch('cvs.lib.parallel.multiprocess_pssh.PsshSharder') as mock_sharder_class:
+                mock_sharder = MagicMock()
+                mock_sharder_class.return_value = mock_sharder
+
+                # Set up the mock sharder behavior
+                mock_sharder.chunk_hosts.return_value = [["host1"], ["host2"]]
+                mock_sharder.create_payloads.return_value = [
+                    {"operation": "upload", "init": {}, "local_file": "test.txt", "remote_file": "/tmp/test.txt"},
+                ]
+                mock_sharder.execute_sharded.return_value = [
+                    {
+                        "result": None,  # upload_file returns None on success
+                        "reachable_hosts": ["host1", "host2"],
+                        "unreachable_hosts": [],
+                    },
+                ]
+
+                pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
+
+                # Manually set attributes that _init_sharded would set
+                pssh.host_list = self.host_list
+                pssh.reachable_hosts = self.host_list
+                pssh.sharder = mock_sharder
+                pssh._use_process_sharding = True  # Enable sharding for this test
+                # Add attributes needed by _shard_init_kwargs()
+                pssh.user = "test"
+                pssh.password = None
+                pssh.pkey = "id_rsa"
+                pssh.host_key_check = False
+                pssh.stop_on_errors = True
+                pssh.env_vars = None
+
+                result = pssh.upload_file("test.txt", "/tmp/test.txt", recurse=True)
+
+                # Verify sharder methods were called
+                mock_sharder.chunk_hosts.assert_called_once_with(self.host_list)
+                mock_sharder.execute_sharded.assert_called_once()
+                # upload_file should return the merged results (empty dict for success)
+                self.assertEqual(result, {})
+
+    def test_download_file_with_sharding(self):
+        """Test download_file with sharding uses sharder and merges results."""
+        config = ParallelConfig(hosts_per_shard=1, max_workers_per_cpu=1)
+
+        with patch('cvs.lib.parallel.multiprocess_pssh.MultiProcessPssh._init_sharded'):
+            with patch('cvs.lib.parallel.multiprocess_pssh.PsshSharder') as mock_sharder_class:
+                mock_sharder = MagicMock()
+                mock_sharder_class.return_value = mock_sharder
+
+                # Set up the mock sharder behavior
+                mock_sharder.chunk_hosts.return_value = [["host1"], ["host2"]]
+                mock_sharder.create_payloads.return_value = [
+                    {
+                        "operation": "download",
+                        "init": {},
+                        "remote_file": "/remote/test.txt",
+                        "local_file": "/tmp/test.txt",
+                    },
+                ]
+                # Simulate download results from each shard
+                mock_sharder.execute_sharded.return_value = [
+                    {
+                        "result": {"host1": "/tmp/test.txt_host1"},  # Download results from shard 1
+                        "reachable_hosts": ["host1"],
+                        "unreachable_hosts": [],
+                    },
+                    {
+                        "result": {"host2": "/tmp/test.txt_host2"},  # Download results from shard 2
+                        "reachable_hosts": ["host2"],
+                        "unreachable_hosts": [],
+                    },
+                ]
+
+                pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
+
+                # Manually set attributes that _init_sharded would set
+                pssh.host_list = self.host_list
+                pssh.reachable_hosts = self.host_list
+                pssh.sharder = mock_sharder
+                pssh._use_process_sharding = True  # Enable sharding for this test
+                # Add attributes needed by _shard_init_kwargs()
+                pssh.user = "test"
+                pssh.password = None
+                pssh.pkey = "id_rsa"
+                pssh.host_key_check = False
+                pssh.stop_on_errors = True
+                pssh.env_vars = None
+
+                result = pssh.download_file("/remote/test.txt", "/tmp/test.txt", suffix_separator="_")
+
+                # Verify sharder methods were called
+                mock_sharder.chunk_hosts.assert_called_once_with(self.host_list)
+                mock_sharder.execute_sharded.assert_called_once()
+                # download_file should return merged host->path dict
+                expected_result = {"host1": "/tmp/test.txt_host1", "host2": "/tmp/test.txt_host2"}
+                self.assertEqual(result, expected_result)
