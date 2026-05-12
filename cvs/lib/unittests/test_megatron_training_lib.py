@@ -196,10 +196,10 @@ class TestNanInfDetection(unittest.TestCase):
     requires the full literal."""
 
     CASES = [
-        ('NaN, new format',                     'throughput per GPU (TFLOP/s/GPU): NaN',   True),
-        ('Inf, old format falls back to pat#2', 'throughput per GPU: Inf',                 True),
-        ('numeric, no false positive',          'throughput per GPU (TFLOP/s/GPU): 612.5', False),
-        ('single letter, no false positive',    'throughput per GPU (TFLOP/s/GPU): aaa',   False),
+        ('NaN, new format', 'throughput per GPU (TFLOP/s/GPU): NaN', True),
+        ('Inf, old format falls back to pat#2', 'throughput per GPU: Inf', True),
+        ('numeric, no false positive', 'throughput per GPU (TFLOP/s/GPU): 612.5', False),
+        ('single letter, no false positive', 'throughput per GPU (TFLOP/s/GPU): aaa', False),
     ]
 
     def test_has_nan_inf_results(self):
