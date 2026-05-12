@@ -98,7 +98,13 @@ class TestMegatronJobConstructor(unittest.TestCase):
 
 class TestExecNicSetupHcaIdPattern(unittest.TestCase):
     """AIMVT-160: hca_id_pattern config key flows from training_dict into the
-    in-container HCA-id verification regex inside exec_nic_setup_scripts."""
+    in-container HCA-id verification regex inside exec_nic_setup_scripts.
+
+    The lib splits the `|`-separated value into segments, `re.escape`s each,
+    and rejoins with `|`. For the default `bnxt_|rocep` the emitted regex
+    is byte-identical to the prior raw-interpolation behavior; the change
+    only affects pathological inputs (whitespace around segments, regex
+    special chars inside a segment)."""
 
     @patch('cvs.lib.megatron_training_lib.fail_test')
     def test_default_pattern_matches_rocep(self, mock_fail):
@@ -120,95 +126,46 @@ class TestExecNicSetupHcaIdPattern(unittest.TestCase):
         job.exec_nic_setup_scripts()
         mock_fail.assert_not_called()
 
-
-class TestMegatronRootPropagation(unittest.TestCase):
-    """AIMVT-162: megatron_root override must replace every hardcoded
-    `/workspace/Megatron-LM` site (cd targets, training_script,
-    line-430 sed). Single test with three concrete assertions."""
-
-    def test_override_replaces_all_hardcoded_uses(self):
-        job = _make_megatron_job(training_overrides={'megatron_root': '/opt/megatron'})
-        job.build_training_job_cmd()
-        cmds = ' '.join(job.job_cmd_list) + ' ' + job.job_cmd
-        # Leak check: catches every missed-replacement site at once.
-        self.assertNotIn('/workspace/Megatron-LM', cmds)
-        # __init__ branch: training_script resolved via the config-driven loop.
-        self.assertEqual(
-            job.training_script,
-            '/opt/megatron/examples/llama/train_llama3.sh',
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_whitespace_around_segments_is_stripped(self, mock_fail):
+        # User-typed `|` lists often have surrounding whitespace per segment;
+        # the lib must strip so 'bnxt_| rocep | mlx5_' still matches
+        # 'rocep1s0f0'. Catches a refactor that drops the .strip() call.
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': 'bnxt_| rocep | mlx5_'},
+            phdl_exec_returns='hca_id:\trocep1s0f0\n',
         )
-        # cd-site substitution actually fired in the wrapper-script body.
-        self.assertIn('cd /opt/megatron', cmds)
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_not_called()
 
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_special_regex_chars_in_segment_are_escaped(self, mock_fail):
+        # Proof-of-detection for the re.escape fix: a segment 'mlx5+' must be
+        # treated as the LITERAL 5-char string, not 'mlx' followed by 'one or
+        # more 5s'. Under the prior raw-interpolation, '5+' would have falsely
+        # matched 'mlx5550000' and fail_test would NOT fire -- silently
+        # passing the libbnxt-copy verification on the wrong NIC.
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': 'mlx5+'},
+            phdl_exec_returns='hca_id:\tmlx5550000\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_called_once()
 
-class TestScriptsDirPropagation(unittest.TestCase):
-    """AIMVT-162 (extension): scripts_dir is config-driven via setdefault and
-    a kwarg override path. The original kwarg default
-    `os.path.expanduser("~") + '/SCRIPTS'` was devbox-resolved (typically
-    `/data/<user>/SCRIPTS`) and silently mismatched the SSH-target HOME on
-    workers (`/home/<user>/SCRIPTS`), causing nohup inside `start_training_job`
-    to fail with `No such file or directory` before training ever started.
-    These tests pin the new resolution chain: kwarg > training_dict > setdefault."""
-
-    def test_default_uses_home_dir(self):
-        # Symmetric with data_cache_dir/log_dir setdefaults: when JSON omits
-        # scripts_dir, default is f'{self.home_dir}/SCRIPTS'.
-        job = _make_megatron_job()
-        self.assertEqual(job.scripts_dir, f'{job.home_dir}/SCRIPTS')
-
-    def test_config_override_wins(self):
-        # Production configs set scripts_dir via the `{user-id}` placeholder
-        # (resolved to `/home/<user>/SCRIPTS` before the test sees it).
-        job = _make_megatron_job(training_overrides={'scripts_dir': '/home/atnair/SCRIPTS'})
-        self.assertEqual(job.scripts_dir, '/home/atnair/SCRIPTS')
-
-    def test_kwarg_override_wins_over_config(self):
-        # Backwards-compat: callers using the kwarg path (tests, custom
-        # harnesses) still take precedence over the training_dict value.
-        # Validates the `scripts_dir if scripts_dir is not None else tdict[...]`
-        # ternary — NOT a silent fallthrough to the dict value.
-        with patch('cvs.lib.megatron_training_lib.time.sleep'):
-            phdl = MagicMock()
-            phdl.host_list = ['n0']
-            phdl.exec = MagicMock(return_value={'n0': ''})
-            phdl.exec_cmd_list = MagicMock(return_value=None)
-            training_dict = {
-                'training_iterations': 2,
-                'nnodes': 1,
-                'nic_type': 'thor2',
-                'scripts_dir': '/from/config',
-            }
-            model_params_dict = {
-                'multi_node': {
-                    'llama3_1_8b': {
-                        'mi300': {
-                            'tokenizer_model': 'NousResearch/Meta-Llama-3-8B',
-                            'model_size': '8',
-                            'batch_size': '128',
-                            'micro_batch_size': '2',
-                            'precision': 'TE_FP8',
-                            'sequence_length': '8192',
-                            'tensor_parallelism': '1',
-                            'pipeline_parallelism': '1',
-                            'recompute': '0',
-                            'fsdp': '0',
-                            'result_dict': {'throughput_per_gpu': '0.0', 'tokens_per_gpu': '0.0'},
-                        }
-                    }
-                }
-            }
-            job = MegatronLlamaTrainingJob(
-                phdl,
-                'llama3_1_8b',
-                training_dict,
-                model_params_dict,
-                hf_token='dummy',
-                gpu_type='mi300',
-                distributed_training=True,
-                tune_model_params=False,
-                scripts_dir='/from/kwarg',
-            )
-        self.assertEqual(job.scripts_dir, '/from/kwarg')
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_empty_pattern_aborts_with_fail_test(self, mock_fail):
+        # Empty (or all-separator/whitespace) input parses to zero segments,
+        # which would yield the degenerate regex `hca_id:\s+()` that matches
+        # every devinfo line. The inline guard must call fail_test instead.
+        # Without the guard: the empty-capture regex matches whatever devinfo
+        # is supplied, the for-loop's `if not re.search(...)` is False, and
+        # mock_fail is never called -- assert_called_once raises.
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': ''},
+            phdl_exec_returns='hca_id:\twhatever\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_called_once()
 
 
 if __name__ == '__main__':

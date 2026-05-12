@@ -1,0 +1,58 @@
+{
+    "_orchestrator_comment": "Execution backend. 'container' routes workload commands through the container runtime (docker by default). Host-namespace commands still reach the physical host. See cvs/input/cluster_file/README.md.",
+    "orchestrator": "container",
+
+    "_user_comment": "{user-id} resolves to the current login user at runtime. Replace with a literal username if you want to pin it.",
+    "username": "{user-id}",
+
+    "_key_comment": "Absolute path to the SSH private key. Same key is used for all nodes.",
+    "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+
+    "_head_comment": "Head node. mgmt_ip MUST match one of the keys in node_dict.",
+    "head_node_dict": {
+        "mgmt_ip": "{xx.xx.xx.xx|hostname-1}"
+    },
+
+    "_env_vars_comment": "Custom env variables exported on every host before each command (PATH overrides, ROCm/UCX flags, etc.).",
+    "env_vars": {},
+
+    "_node_comment": "Cluster member nodes keyed by public IP or hostname. Replace -1 / -2 suffixes with your real IPs/hostnames; add or remove entries to scale to N nodes.",
+    "_vpc_comment": "vpc_ip is the address reachable from other nodes in the cluster. Set equal to the public IP if there is no separate VPC.",
+    "node_dict": {
+        "{xx.xx.xx.xx|hostname-1}": {
+            "bmc_ip": "NA",
+            "vpc_ip": "{xx.xx.xx.xx|hostname-1}"
+        },
+        "{xx.xx.xx.xx|hostname-2}": {
+            "bmc_ip": "NA",
+            "vpc_ip": "{xx.xx.xx.xx|hostname-2}"
+        }
+    },
+
+    "_container_block_comment": "Container backend configuration. Consumed by ContainerOrchestrator in cvs/core/orchestrators/container.py. See README.md for the full schema and launch:true/launch:false semantics.",
+    "container": {
+        "_enabled_comment": "Master switch. Must be true for the container backend to do anything; if false, setup_containers/teardown_containers short-circuit to no-ops.",
+        "enabled": true,
+
+        "_launch_comment": "true = CVS owns container lifecycle (starts on setup_containers, stops on teardown_containers). false = containers are externally managed; CVS only verifies they are running and never stops them.",
+        "launch": true,
+
+        "_image_comment": "Image with test dependencies (rvs, etc.) pre-installed and an sshd you can start on port 2224. Must be present locally on each node OR pullable from a reachable registry.",
+        "image": "rocm/cvs:latest",
+
+        "_name_comment": "Container name on each host. For parallel runs make this per-iteration unique (e.g. cvs_iter_<run_id>).",
+        "name": "cvs_container",
+
+        "runtime": {
+            "_name_comment": "Supported: 'docker' (concrete), 'enroot' (stub).",
+            "name": "docker",
+
+            "_args_comment": "Backend-specific runtime arguments. Defaults from cvs/core/orchestrators/container.py:DEFAULT_CONTAINER_ARGS apply for any key omitted here. List args (volumes/devices/cap_add/security_opt/group_add/ulimit) append to defaults; scalars (network/ipc/privileged) override.",
+            "args": {
+                "network": "host",
+                "ipc": "host",
+                "privileged": true
+            }
+        }
+    }
+}

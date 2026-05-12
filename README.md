@@ -138,8 +138,12 @@ cvs copy-config --list
 Then copy specific files as needed:
 
 ```bash
-# Copy cluster configuration
+# Copy cluster configuration (baremetal backend, default)
 cvs copy-config cluster.json --output /tmp/cvs/input/cluster_file/cluster.json
+
+# Or copy the container-backend cluster template (today consumed by rvs_cvs only;
+# other suites and `cvs exec` ignore the orchestrator key and run on the host)
+cvs copy-config cluster_container.json --output /tmp/cvs/input/cluster_file/cluster_container.json
 
 # Alternatively, generate cluster configuration for multiple hosts (see 'Generate Cluster Configuration File' section below)
 
@@ -147,6 +151,8 @@ cvs copy-config cluster.json --output /tmp/cvs/input/cluster_file/cluster.json
 cvs copy-config rccl/rccl_config.json --output /tmp/cvs/input/config_file/rccl_config.json
 cvs copy-config health/mi300_health_config.json --output /tmp/cvs/input/config_file/health_config.json
 ```
+
+For the container backend, see the published [container-mode how-to](https://rocm.docs.amd.com/projects/cvs/en/latest/how-to/run-with-containers.html) and the in-tree reference next to the templates: [`cvs/input/cluster_file/README.md`](cvs/input/cluster_file/README.md).
 
 Or copy all configuration files at once:
 
@@ -244,6 +250,44 @@ After setup, your files will be at:
 - Cluster config: `/tmp/cvs/input/cluster_file/cluster.json`
 - RCCL config: `/tmp/cvs/input/config_file/rccl/rccl_config.json`
 - Other configs: `/tmp/cvs/input/config_file/*/*.json`
+
+## Scalability
+
+CVS automatically scales from small lab setups to large enterprise deployments with thousands of nodes using intelligent parallel processing and configurable performance tuning.
+
+### Automatic Multi-Process Execution
+
+CVS automatically distributes SSH operations across multiple processes when working with large host lists (32+ nodes by default). This provides:
+
+- **Efficient parallel processing**: Splits large host lists into manageable shards
+- **Optimal resource utilization**: Configurable workers per CPU core
+- **Seamless scaling**: From single nodes to thousands without code changes
+- **Result consistency**: Maintains original host order in results
+
+### Environment Variables
+
+Configure CVS parallel SSH operations and optimize performance for your cluster size:
+
+#### **`CVS_HOSTS_PER_SHARD`** (default: 32)
+Controls how many hosts are processed in each parallel shard. CVS automatically splits large host lists into smaller chunks for efficient parallel processing.
+
+```bash
+export CVS_HOSTS_PER_SHARD=64  # Process 64 hosts per shard
+```
+
+#### **`CVS_WORKERS_PER_CPU`** (default: 4)
+Sets the number of worker processes per CPU core. Total workers = `CPU_COUNT × CVS_WORKERS_PER_CPU`.
+
+```bash
+export CVS_WORKERS_PER_CPU=8  # Use 8 workers per CPU core
+```
+
+### Recommended Settings by Cluster Size
+
+- **Large clusters (1000+ nodes)**: `CVS_HOSTS_PER_SHARD=64`, `CVS_WORKERS_PER_CPU=6-8`
+- **Medium clusters (<1000 nodes)**: Default values (32 hosts per shard, 4 workers per CPU)
+- **Small clusters (< 32 nodes)**: `CVS_HOSTS_PER_SHARD=8`, `CVS_WORKERS_PER_CPU=2`
+- **Resource-constrained systems**: Lower values to reduce memory and CPU usage
 
 ## Running Tests
 
