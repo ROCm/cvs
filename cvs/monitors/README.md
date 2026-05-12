@@ -30,9 +30,9 @@ passed on the CLI.
 
 Just like `cvs exec` and `cvs scp`, the cluster file can be supplied either
 via `--cluster_file <path>` or by exporting `CLUSTER_FILE=<path>` once per
-shell. The env var takes precedence when both are set, so users can
-`export CLUSTER_FILE=...` once and then run any `cvs exec`, `cvs scp`,
-`cvs monitor check_cluster_health`, etc. without repeating the path.
+shell. An explicit `--cluster_file` flag always wins over the env var, so
+you can `export CLUSTER_FILE=...` once for the common case and still
+override it on a single invocation by passing `--cluster_file` on the CLI.
 
 ```
 (myenv) [ubuntu-host]~/cvs:(main)$ cvs monitor check_cluster_health --help
@@ -48,7 +48,7 @@ options:
   --cluster_file CLUSTER_FILE
                         Path to a CVS cluster JSON file (see cvs/input/cluster_file/cluster.json).
                         Provides node list, username, and SSH key. Recommended.
-                        Falls back to the CLUSTER_FILE environment variable when omitted.
+                        Takes precedence over the CLUSTER_FILE environment variable.
   --hosts_file HOSTS_FILE
                         [DEPRECATED] File with one host IP/hostname per line. Use --cluster_file instead.
   --username USERNAME   SSH username (required with --hosts_file)

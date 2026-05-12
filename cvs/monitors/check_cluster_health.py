@@ -397,7 +397,7 @@ class CheckClusterHealthMonitor(MonitorPlugin):
                 "Path to a CVS cluster JSON file "
                 "(see cvs/input/cluster_file/cluster.json). "
                 "Provides node list, username, and SSH key. Recommended. "
-                "Falls back to the CLUSTER_FILE environment variable when omitted."
+                "Takes precedence over the CLUSTER_FILE environment variable."
             ),
         )
         source.add_argument(
@@ -418,13 +418,14 @@ class CheckClusterHealthMonitor(MonitorPlugin):
     def _resolve_connection(self, args):
         """Return ``(node_list, username, pkey, password)`` based on parsed args.
 
-        Resolution order for the cluster file mirrors ``cvs exec`` / ``cvs scp``:
-        the ``CLUSTER_FILE`` env var takes precedence, then ``--cluster_file``.
-        ``--hosts_file`` remains as a deprecated fallback.
+        Resolution order for the cluster file matches ``cvs exec`` / ``cvs scp``:
+        an explicit ``--cluster_file`` flag takes precedence, then the
+        ``CLUSTER_FILE`` environment variable is used as a fallback.
+        ``--hosts_file`` remains as a deprecated last-resort path.
         """
-        # Mirror cvs exec / cvs scp: env var wins over --cluster_file, both
-        # win over the legacy --hosts_file path.
-        cluster_file = os.environ.get('CLUSTER_FILE') or args.cluster_file
+        # CLI flag wins; env var is the fallback. This matches standard Unix
+        # tooling and keeps cvs exec / cvs scp / cvs monitor consistent.
+        cluster_file = args.cluster_file or os.environ.get('CLUSTER_FILE')
 
         if cluster_file and args.hosts_file:
             print("ERROR: --hosts_file cannot be combined with --cluster_file or CLUSTER_FILE. Aborting.")

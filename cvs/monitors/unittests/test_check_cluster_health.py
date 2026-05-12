@@ -223,9 +223,10 @@ class TestResolveConnection(unittest.TestCase):
         self.assertEqual(nodes, ["h1"])
         self.assertEqual((user, pkey, password), ("envuser", "/envkey", None))
 
-    def test_cluster_file_env_var_takes_precedence_over_flag(self):
-        # Mirrors cvs exec / cvs scp: env wins. Pin this so a future
-        # refactor cannot silently flip the precedence.
+    def test_cluster_file_flag_takes_precedence_over_env_var(self):
+        # CLI flag wins over CLUSTER_FILE. Pin this so a future refactor
+        # cannot silently flip the precedence; it must stay in lockstep
+        # with cvs exec / cvs scp.
         env_cluster = {"username": "envuser", "priv_key_file": "/envkey", "node_dict": {"env-host": {}}}
         flag_cluster = {"username": "flaguser", "priv_key_file": "/flagkey", "node_dict": {"flag-host": {}}}
         with tempfile.TemporaryDirectory() as tmp:
@@ -233,8 +234,8 @@ class TestResolveConnection(unittest.TestCase):
             flag_path = _write(tmp, "flag.json", json.dumps(flag_cluster))
             os.environ['CLUSTER_FILE'] = env_path
             nodes, user, pkey, _ = self.monitor._resolve_connection(self._ns(cluster_file=flag_path))
-        self.assertEqual(nodes, ["env-host"])
-        self.assertEqual((user, pkey), ("envuser", "/envkey"))
+        self.assertEqual(nodes, ["flag-host"])
+        self.assertEqual((user, pkey), ("flaguser", "/flagkey"))
 
     def test_cluster_file_env_var_combined_with_hosts_file_aborts(self):
         cluster = {"username": "u", "priv_key_file": "/k", "node_dict": {"h1": {}}}
