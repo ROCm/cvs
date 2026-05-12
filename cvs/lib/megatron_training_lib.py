@@ -307,6 +307,11 @@ class MegatronLlamaTrainingJob:
                 # For the default `bnxt_|rocep`, the emitted regex is
                 # byte-identical to the prior raw-interpolation behavior.
                 segments = [re.escape(s.strip()) for s in self.hca_id_pattern.split('|') if s.strip()]
+                if not segments:
+                    fail_test(
+                        f'hca_id_pattern parsed to zero non-empty segments, got: {self.hca_id_pattern!r}. '
+                        f'Expected a `|`-separated list of NIC-name prefixes, e.g. "bnxt_|rocep".'
+                    )
                 hca_id_regex = rf'hca_id:\s+({"|".join(segments)})'
                 for node in out_dict.keys():
                     if not re.search(hca_id_regex, out_dict[node], re.I):
