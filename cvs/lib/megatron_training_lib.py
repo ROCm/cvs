@@ -46,15 +46,11 @@ TRAINING_PROGRESS_PATTERNS = [
     r'throughput per GPU:|tokens\/GPU\/s\s+[0-9]+',
 ]
 
-# NOTE: the `[NaN|Inf]` character class is a long-standing bug in the
-# original code (it matches the literal characters `N`, `a`, `I`, `n`,
-# `f`, `|`, not the strings `NaN` or `Inf`). Preserved here behavior-
-# preserving — fixing the regex semantics is a separate ticket.
 TRAINING_NAN_PATTERNS = [
-    r'throughput per GPU(?:\s*\([^)]*\))?\s*:\s+[NaN|Inf]',
-    r'throughput per GPU:\s+[NaN|Inf]',
-    r'tokens\/GPU\/s:\s+[NaN|Inf]',
-    r'mem usages:\s+[NaN|Inf]',
+    r'throughput per GPU(?:\s*\([^)]*\))?\s*:\s+(?:NaN|Inf)',
+    r'throughput per GPU:\s+(?:NaN|Inf)',
+    r'tokens\/GPU\/s:\s+(?:NaN|Inf)',
+    r'mem usages:\s+(?:NaN|Inf)',
 ]
 
 
