@@ -569,11 +569,11 @@ def rccl_regression(
     no_of_iterations = rccl_test_params.get('no_of_iterations', 20)
     no_of_cycles = rccl_test_params.get('no_of_cycles', 1)
     check_iteration_count = rccl_test_params.get('check_iteration_count', 1)
-    cvs_exec_timeout = int(rccl_test_params.get('cvs_exec_timeout', 2400))
     rccl_timeout = rccl_test_params.get('rccl_timeout', None)
     output_algo_proto_channels = bool(rccl_test_params.get('output_algo_proto_channels', False))
 
     rccl_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
+    cvs_exec_timeout = int(cvs_params.get('cvs_exec_timeout', 2400))
 
     # Detect which output file argument is supported by the RCCL test binary
     rccl_test_binary_path = f'{rccl_tests_dir}/{test_name}'
@@ -753,11 +753,11 @@ def rccl_perf(
     no_of_cycles = rccl_test_params.get('no_of_cycles', 1)
     check_iteration_count = rccl_test_params.get('check_iteration_count', 1)
     data_types = rccl_test_params.get('data_types', ['float'])
-    cvs_exec_timeout = int(rccl_test_params.get('cvs_exec_timeout', 2400))
     rccl_timeout = rccl_test_params.get('rccl_timeout', None)
     output_algo_proto_channels = bool(rccl_test_params.get('output_algo_proto_channels', False))
 
     rccl_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
+    cvs_exec_timeout = int(cvs_params.get('cvs_exec_timeout', 2400))
 
     all_raw_results = []
     all_validated_results = []
