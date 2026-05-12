@@ -300,8 +300,16 @@ class MegatronLlamaTrainingJob:
                     /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
                     sleep 2;ibv_devinfo;sleep 2;"'
                 )
+                # Treat `hca_id_pattern` as a `|`-separated list of literal
+                # NIC-name prefixes. Each segment is `re.escape`d so users
+                # can't accidentally inject regex syntax (e.g. `mlx5+` is a
+                # literal 5-char prefix, not `mlx` + `5+` quantifier).
+                # For the default `bnxt_|rocep`, the emitted regex is
+                # byte-identical to the prior raw-interpolation behavior.
+                segments = [re.escape(s.strip()) for s in self.hca_id_pattern.split('|') if s.strip()]
+                hca_id_regex = rf'hca_id:\s+({"|".join(segments)})'
                 for node in out_dict.keys():
-                    if not re.search(rf'hca_id:\s+({self.hca_id_pattern})', out_dict[node], re.I):
+                    if not re.search(hca_id_regex, out_dict[node], re.I):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
