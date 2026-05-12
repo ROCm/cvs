@@ -17,17 +17,6 @@ from cvs.lib import globals
 global_log = globals.log
 
 
-class SimpleHostOutput:
-    """Simple HostOutput-compatible object for consistent processing across process boundaries."""
-
-    def __init__(self, host, stdout_lines, stderr_lines, exception, exit_code=0):
-        self.host = host
-        self.stdout = iter(stdout_lines)  # Convert list to iterator for _process_output compatibility
-        self.stderr = iter(stderr_lines)  # Convert list to iterator for _process_output compatibility
-        self.exception = exception
-        self.exit_code = exit_code
-
-
 class Pssh:
     """
     Single-process parallel SSH: one ParallelSSHClient (one gevent hub) over a host list.
@@ -384,32 +373,6 @@ class Pssh:
     def reboot_connections(self):
         self.log.info('Rebooting Connections')
         self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
-
-    def _extract_simple_data(self, output):
-        """
-        Extract essential data from pssh.output.HostOutput objects for safe IPC transfer.
-
-        Converts non-picklable HostOutput objects (containing active SSH channels,
-        generators, and C extension objects) into picklable SimpleHostOutput objects
-        by consuming stdout/stderr generators into lists and extracting core attributes.
-        """
-
-        simple_outputs = []
-        for item in output:
-            # Consume generators to lists for pickling
-            stdout_lines = list(item.stdout or [])
-            stderr_lines = list(item.stderr or [])
-
-            simple_output = SimpleHostOutput(
-                host=item.host,
-                stdout_lines=stdout_lines,
-                stderr_lines=stderr_lines,
-                exception=item.exception,
-                exit_code=getattr(item, 'exit_code', 0),
-            )
-            simple_outputs.append(simple_output)
-
-        return simple_outputs
 
     def destroy_clients(self):
         self.log.info('Destroying Current phdl connections ..')

@@ -5,45 +5,18 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import inspect
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from cvs.lib.parallel.pssh import Pssh
+from cvs.lib.parallel.interfaces import ShardableSshInterface
 
 
-# Operation registry - single source of truth for supported operations
-# Operation names now match method names for consistency and simplicity
+# Dynamically discover supported operations from ABC (computed once at import time)
+
 SUPPORTED_OPERATIONS = {
-    'exec': {
-        'required_params': ['cmd'],
-        'optional_params': ['timeout', 'detailed'],
-        'returns_result': True,
-    },
-    'exec_cmd_list': {
-        'required_params': ['cmd_list'],
-        'optional_params': ['timeout'],
-        'returns_result': True,
-    },
-    'scp_file': {
-        'required_params': ['local_file', 'remote_file'],
-        'optional_params': ['recurse'],
-        'returns_result': False,
-    },
-    'upload_file': {
-        'required_params': ['local_file', 'remote_file'],
-        'optional_params': ['recurse'],
-        'returns_result': False,
-    },
-    'download_file': {
-        'required_params': ['remote_file', 'local_file'],
-        'optional_params': ['recurse', 'suffix_separator'],
-        'returns_result': True,
-    },
-    'reboot_connections': {
-        'required_params': [],
-        'optional_params': [],
-        'returns_result': False,
-    },
+    name for name, method in inspect.getmembers(ShardableSshInterface) if getattr(method, '__isabstractmethod__', False)
 }
 
 
@@ -110,6 +83,8 @@ class PsshSharder:
         """
         Run an SSH operation on a shard of hosts (must be picklable for multiprocessing).
 
+        Dynamically supports all abstract methods defined in ShardableSshInterface.
+
         Args:
             payload: Dict with 'operation' (operation type), 'init' (SSH setup), and operation args
 
@@ -120,80 +95,35 @@ class PsshSharder:
         if not isinstance(operation, str):
             raise TypeError('payload["operation"] must be str, got %r' % (type(operation),))
 
+        # Validate operation is supported by ABC
+        if operation not in SUPPORTED_OPERATIONS:
+            raise ValueError(f'Unknown operation: {operation}. Supported: {sorted(SUPPORTED_OPERATIONS)}')
+
         # Create SSH client for this shard of hosts
         init_kwargs = payload['init']
         init_kwargs['process_output'] = False  # Force raw output mode for sharding
         shard = Pssh(**init_kwargs)
 
         try:
-            # Use operation registry for parameter validation and documentation
-            op_config = SUPPORTED_OPERATIONS.get(operation)
-            if not op_config:
-                # Let the else clause in the operation handler catch unknown operations
-                op_config = {'required_params': [], 'optional_params': [], 'returns_result': False}
-            method_name = operation  # Operation name IS the method name!
-            shard_method = getattr(shard, method_name)
+            # Ensure method exists in Pssh
+            if not hasattr(shard, operation):
+                raise RuntimeError(f'Method {operation} not found in Pssh class')
 
-            # Build arguments from payload based on operation configuration
-            args = {}
+            shard_method = getattr(shard, operation)
 
-            # Add required parameters
-            for param in op_config['required_params']:
-                if param not in payload:
-                    raise ValueError(f"Missing required parameter '{param}' for operation '{operation}'")
-                args[param] = payload[param]
-
-            # Add optional parameters if present
-            for param in op_config['optional_params']:
-                if param in payload:
-                    args[param] = payload[param]
+            # Extract operation arguments from payload (excluding 'operation' and 'init')
+            args = {k: v for k, v in payload.items() if k not in ['operation', 'init']}
 
             # Add common parameters for operations that support them
-            if method_name in ['exec', 'exec_cmd_list']:
+            if operation in ['exec', 'exec_cmd_list']:
                 args['print_console'] = False  # Always False for sharded operations
 
-            # Execute the operation - handle special cases for method signatures
-            if operation == 'exec':
-                # Maintain existing call signature for backward compatibility
-                kwargs = {
-                    'timeout': args.get('timeout'),
-                    'print_console': False,
-                }
-                if 'detailed' in args:
-                    kwargs['detailed'] = args['detailed']
-                result = shard_method(args['cmd'], **kwargs)
-            elif operation == 'exec_cmd_list':
-                # Maintain existing call signature for backward compatibility
-                result = shard_method(args['cmd_list'], timeout=args.get('timeout'), print_console=False)
-            elif operation in ['scp_file', 'upload_file']:
-                # File upload operations
-                shard_method(args['local_file'], args['remote_file'], recurse=args.get('recurse', False))
+            # Call the method dynamically
+            result = shard_method(**args)
+
+            # Handle operations that should return None (void operations)
+            if operation in ['upload_file', 'reboot_connections']:
                 result = None
-            elif operation == 'download_file':
-                # File download operation
-                result = shard_method(
-                    args['remote_file'],
-                    args['local_file'],
-                    recurse=args.get('recurse', False),
-                    suffix_separator=args.get('suffix_separator', '_'),
-                )
-            elif operation == 'reboot_connections':
-                # Reboot operation
-                shard_method()
-                result = None
-            else:
-                # Enhanced error handling to distinguish user vs implementation errors
-                if operation in SUPPORTED_OPERATIONS:
-                    # Case #2: Implementation Error - Operation in registry but no handler
-                    raise RuntimeError(
-                        f'Implementation bug: Operation \'{operation}\' is supported (in registry) '
-                        f'but handler is missing in run_shard().'
-                    )
-                else:
-                    # Case #1: User Error - Operation not supported at all
-                    raise ValueError(
-                        f'Unknown operation: {operation}. Supported operations: {list(SUPPORTED_OPERATIONS.keys())}'
-                    )
 
             return {
                 'result': result,
