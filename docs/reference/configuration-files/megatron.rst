@@ -56,6 +56,7 @@ This is the ``mi3xx_megatron_llama_single.json`` configuration file:
           },
           "mock_data": "True",
           "log_dir": "/home/{user-id}/LOG_DIR",
+          "scripts_dir": "/home/{user-id}/SCRIPTS",
           "dataset_source": 
           {
           },
@@ -217,6 +218,9 @@ Use the parameters in these tables to configure the training file.
    * - ``log_dir``
      - ``/home/{user-id}/LOG_DIR``
      - Path where training logs should be written on the host
+   * - ``scripts_dir``
+     - ``/home/{user-id}/SCRIPTS``
+     - Per-node folder where the lib writes generated wrapper scripts (one per rank for distributed runs, single-node otherwise). Mounted into the container via the user's home volume mapping in ``container_config.volume_dict``.
    * - ``megatron_root``
      - ``/workspace/Megatron-LM``
      - Root directory of the Megatron-LM checkout inside the container; ``cd`` targets and training scripts are derived from this.
@@ -504,6 +508,7 @@ The ``mi35x_megatron_llama_single.json`` config file is used to run Megatron on 
             },
             "mock_data": "True",
             "log_dir": "/home/{user-id}/LOG_DIR",
+            "scripts_dir": "/home/{user-id}/SCRIPTS",
             "dataset_source":
             {
             },
@@ -654,6 +659,9 @@ Use the parameters in these tables to configure the training file.
    * - ``log_dir``
      - ``/home/{user-id}/LOG_DIR``
      - Path where training logs should be written on the host
+   * - ``scripts_dir``
+     - ``/home/{user-id}/SCRIPTS``
+     - Per-node folder where the lib writes generated wrapper scripts (one per rank for distributed runs, single-node otherwise). Mounted into the container via the user's home volume mapping in ``container_config.volume_dict``.
    * - ``megatron_root``
      - ``/workspace/Megatron-LM``
      - Root directory of the Megatron-LM checkout inside the container; ``cd`` targets and training scripts are derived from this.
@@ -951,6 +959,7 @@ This is the multi-node ``mi3xx_megatron_llama_distributed.json`` configuration f
             },
             "mock_data": "True",
             "log_dir": "/home/{user-id}/LOG_DIR",
+            "scripts_dir": "/home/{user-id}/SCRIPTS",
             "dataset_source":
             {
             },
@@ -1151,10 +1160,10 @@ Use the parameters in these tables to configure the training file.
      - Example of  GID index used for IB addressing (selects which GID entry on the HCA to use)
    * - ``_example_hca_id_pattern``
      - ``bnxt_|rocep|mlx5_``
-     - Example of HCA-id regex used to verify the libbnxt copy succeeded inside the container
+     - Example of HCA-id pattern used to verify the libbnxt copy succeeded inside the container
    * - ``hca_id_pattern``
      - ``bnxt_|rocep``
-     - Regex matched against ``ibv_devinfo`` ``hca_id:`` lines after libbnxt copy; must match a per-rail HCA-id like ``bnxt_re0`` or ``rocep1s0f0``. Extend (e.g. add ``|mlx5_``) for other RDMA NIC vendors.
+     - ``|``-separated list of NIC-name prefixes (e.g. ``bnxt_``, ``rocep``, ``mlx5_``) checked against ``ibv_devinfo`` ``hca_id:`` lines after the libbnxt copy. Each segment is treated as a literal prefix (regex special chars are escaped by the lib), so use ``|`` only as the separator -- not as part of a regex pattern within a segment. Add ``|mlx5_`` for Mellanox/RoCE NICs.
    * - ``nccl_debug``
      - ERROR
      - NCCL log level
@@ -1176,6 +1185,9 @@ Use the parameters in these tables to configure the training file.
    * - ``log_dir``
      - ``/home/{user-id}/LOG_DIR``
      - Path where training logs should be written on the host
+   * - ``scripts_dir``
+     - ``/home/{user-id}/SCRIPTS``
+     - Per-node folder where the lib writes generated wrapper scripts (one per rank for distributed runs, single-node otherwise). Mounted into the container via the user's home volume mapping in ``container_config.volume_dict``.
    * - ``megatron_root``
      - ``/workspace/Megatron-LM``
      - Root directory of the Megatron-LM checkout inside the container; ``cd`` targets and training scripts are derived from this.

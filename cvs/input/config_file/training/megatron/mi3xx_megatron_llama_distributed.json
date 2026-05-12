@@ -36,6 +36,7 @@
         },
         "mock_data": "True",
         "log_dir": "/home/{user-id}/LOG_DIR",
+        "scripts_dir": "/home/{user-id}/SCRIPTS",
         "dataset_source": 
         {
         },

@@ -173,7 +173,7 @@ class MegatronLlamaTrainingJob:
         gpu_type='mi300',
         distributed_training=True,
         tune_model_params=True,
-        scripts_dir=os.path.expanduser("~") + '/SCRIPTS',
+        scripts_dir=None,
     ):
         """
         Initialize job configuration and resolve defaults from the provided dicts.
@@ -190,7 +190,11 @@ class MegatronLlamaTrainingJob:
           hf_token: Hugging Face token passed to the job environment.
           gpu_type: GPU platform key to select model params (default: 'mi300').
           tune_model_params: If True, adjust some parameters based on cluster size.
-          scripts_dir: Folder on nodes to place generated wrapper scripts.
+          scripts_dir: Optional override for the per-node folder where generated
+            wrapper scripts are placed. When None (default), the value is read
+            from training_config_dict['scripts_dir'], which itself defaults to
+            ``{self.home_dir}/SCRIPTS`` (typically ``/home/{user-id}/SCRIPTS``
+            in production configs via placeholder resolution).
         """
 
         self.phdl = phdl
@@ -205,8 +209,6 @@ class MegatronLlamaTrainingJob:
         self.model_params_dict = model_params_dict
         self.iterations = int(training_config_dict['training_iterations'])
         self.tune_model_params = tune_model_params
-
-        self.scripts_dir = scripts_dir
 
         self.job_cmd = ''
         self.job_cmd_list = []
@@ -238,6 +240,7 @@ class MegatronLlamaTrainingJob:
         tdict.setdefault('nccl_debug', 'ERROR')
         tdict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         tdict.setdefault('log_dir', f'{self.home_dir}/LOGS')
+        tdict.setdefault('scripts_dir', f'{self.home_dir}/SCRIPTS')
         tdict.setdefault('master_address', '127.0.0.1')
         tdict.setdefault('verify_network_errors', 'False')
         tdict.setdefault('rocm_dir', '')
@@ -265,6 +268,9 @@ class MegatronLlamaTrainingJob:
         self.nccl_debug = tdict['nccl_debug']
         self.data_cache_dir = tdict['data_cache_dir']
         self.log_dir = tdict['log_dir']
+        # kwarg wins over training_dict so direct callers (tests, custom harnesses)
+        # can still override; falls back to the setdefault'd dict value otherwise.
+        self.scripts_dir = scripts_dir if scripts_dir is not None else tdict['scripts_dir']
         self.master_address = tdict['master_address']
         self.verify_network_errors = tdict['verify_network_errors']
         self.rocm_path = detect_rocm_path(self.phdl, tdict['rocm_dir'])
@@ -383,8 +389,21 @@ class MegatronLlamaTrainingJob:
                     /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
                     sleep 2;ibv_devinfo;sleep 2;"'
                 )
+                # Treat `hca_id_pattern` as a `|`-separated list of literal
+                # NIC-name prefixes. Each segment is `re.escape`d so users
+                # can't accidentally inject regex syntax (e.g. `mlx5+` is a
+                # literal 5-char prefix, not `mlx` + `5+` quantifier).
+                # For the default `bnxt_|rocep`, the emitted regex is
+                # byte-identical to the prior raw-interpolation behavior.
+                segments = [re.escape(s.strip()) for s in self.hca_id_pattern.split('|') if s.strip()]
+                if not segments:
+                    fail_test(
+                        f'hca_id_pattern parsed to zero non-empty segments, got: {self.hca_id_pattern!r}. '
+                        f'Expected a `|`-separated list of NIC-name prefixes, e.g. "bnxt_|rocep".'
+                    )
+                hca_id_regex = rf'hca_id:\s+({"|".join(segments)})'
                 for node in out_dict.keys():
-                    if not re.search(rf'hca_id:\s+({self.hca_id_pattern})', out_dict[node], re.I):
+                    if not re.search(hca_id_regex, out_dict[node], re.I):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 

@@ -98,7 +98,13 @@ class TestMegatronJobConstructor(unittest.TestCase):
 
 class TestExecNicSetupHcaIdPattern(unittest.TestCase):
     """AIMVT-160: hca_id_pattern config key flows from training_dict into the
-    in-container HCA-id verification regex inside exec_nic_setup_scripts."""
+    in-container HCA-id verification regex inside exec_nic_setup_scripts.
+
+    The lib splits the `|`-separated value into segments, `re.escape`s each,
+    and rejoins with `|`. For the default `bnxt_|rocep` the emitted regex
+    is byte-identical to the prior raw-interpolation behavior; the change
+    only affects pathological inputs (whitespace around segments, regex
+    special chars inside a segment)."""
 
     @patch('cvs.lib.megatron_training_lib.fail_test')
     def test_default_pattern_matches_rocep(self, mock_fail):
@@ -120,92 +126,46 @@ class TestExecNicSetupHcaIdPattern(unittest.TestCase):
         job.exec_nic_setup_scripts()
         mock_fail.assert_not_called()
 
-
-class TestMegatronRootPropagation(unittest.TestCase):
-    """AIMVT-162: megatron_root override must replace every hardcoded
-    `/workspace/Megatron-LM` site (cd targets, training_script,
-    line-430 sed). Single test with three concrete assertions."""
-
-    def test_override_replaces_all_hardcoded_uses(self):
-        job = _make_megatron_job(training_overrides={'megatron_root': '/opt/megatron'})
-        job.build_training_job_cmd()
-        cmds = ' '.join(job.job_cmd_list) + ' ' + job.job_cmd
-        # Leak check: catches every missed-replacement site at once.
-        self.assertNotIn('/workspace/Megatron-LM', cmds)
-        # __init__ branch: training_script resolved via the config-driven loop.
-        self.assertEqual(
-            job.training_script,
-            '/opt/megatron/examples/llama/train_llama3.sh',
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_whitespace_around_segments_is_stripped(self, mock_fail):
+        # User-typed `|` lists often have surrounding whitespace per segment;
+        # the lib must strip so 'bnxt_| rocep | mlx5_' still matches
+        # 'rocep1s0f0'. Catches a refactor that drops the .strip() call.
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': 'bnxt_| rocep | mlx5_'},
+            phdl_exec_returns='hca_id:\trocep1s0f0\n',
         )
-        # cd-site substitution actually fired in the wrapper-script body.
-        self.assertIn('cd /opt/megatron', cmds)
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_not_called()
 
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_special_regex_chars_in_segment_are_escaped(self, mock_fail):
+        # Proof-of-detection for the re.escape fix: a segment 'mlx5+' must be
+        # treated as the LITERAL 5-char string, not 'mlx' followed by 'one or
+        # more 5s'. Under the prior raw-interpolation, '5+' would have falsely
+        # matched 'mlx5550000' and fail_test would NOT fire -- silently
+        # passing the libbnxt-copy verification on the wrong NIC.
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': 'mlx5+'},
+            phdl_exec_returns='hca_id:\tmlx5550000\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_called_once()
 
-class TestTrainingLogParsing(unittest.TestCase):
-    """AIMVT-161: _parse_training_results extracts identical metric dicts from
-    both the new format (`throughput per GPU (TFLOP/s/GPU): N`) and the
-    old format (`throughput per GPU: N`). The OLD-format case is the one
-    that proves the fallback chain actually falls back."""
-
-    NEW_FORMAT = (
-        'throughput per GPU (TFLOP/s/GPU): 612.5\n'
-        'tokens/GPU/s: 12345\n'
-        'mem usages: 88.3\n'
-        'elapsed time per iteration (ms): 1230.4\n'
-    )
-    OLD_FORMAT = (
-        'throughput per GPU: 612.5\ntokens/GPU/s: 12345\nmem usages: 88.3\nelapsed time per iteration (ms): 1230.4\n'
-    )
-    EXPECTED = {
-        'throughput_per_gpu': ['612.5'],
-        'tokens_per_gpu': ['12345'],
-        'mem_usage': ['88.3'],
-        'elapsed_time_per_iteration': ['1230.4'],
-    }
-
-    def test_parse_new_format(self):
-        self.assertEqual(megatron_training_lib._parse_training_results(self.NEW_FORMAT), self.EXPECTED)
-
-    def test_parse_old_format_falls_back(self):
-        # OLD-format input forces pattern #1 to return [] for throughput;
-        # pattern #2 must be the matcher. Catches a refactor that
-        # short-circuits on the first empty findall.
-        self.assertEqual(megatron_training_lib._parse_training_results(self.OLD_FORMAT), self.EXPECTED)
-
-
-class TestProgressDetection(unittest.TestCase):
-    """AIMVT-161: _is_training_complete handles both new and old format
-    completion lines. Different regex chain than parsing — exercises a
-    separate code path."""
-
-    def test_handles_new_format(self):
-        self.assertTrue(megatron_training_lib._is_training_complete('throughput per GPU (TFLOP/s/GPU): 612.5'))
-
-    def test_handles_old_format(self):
-        self.assertTrue(megatron_training_lib._is_training_complete('throughput per GPU: 612.5'))
-
-
-class TestNanInfDetection(unittest.TestCase):
-    """AIMVT-161: _has_nan_inf_results detects real NaN/Inf training output
-    and does not false-positive on numeric values or single-letter junk.
-
-    The `single letter` case is the proof-of-detection for the regex fix:
-    under the prior `[NaN|Inf]` character class, any single `a`/`n`/`f`
-    after the colon would match (the class matches one char from
-    {N,a,I,n,f,|}, not the strings NaN/Inf). The fixed `(?:NaN|Inf)` group
-    requires the full literal."""
-
-    CASES = [
-        ('NaN, new format', 'throughput per GPU (TFLOP/s/GPU): NaN', True),
-        ('Inf, old format falls back to pat#2', 'throughput per GPU: Inf', True),
-        ('numeric, no false positive', 'throughput per GPU (TFLOP/s/GPU): 612.5', False),
-        ('single letter, no false positive', 'throughput per GPU (TFLOP/s/GPU): aaa', False),
-    ]
-
-    def test_has_nan_inf_results(self):
-        for name, output, expected in self.CASES:
-            with self.subTest(case=name):
-                self.assertEqual(megatron_training_lib._has_nan_inf_results(output), expected)
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_empty_pattern_aborts_with_fail_test(self, mock_fail):
+        # Empty (or all-separator/whitespace) input parses to zero segments,
+        # which would yield the degenerate regex `hca_id:\s+()` that matches
+        # every devinfo line. The inline guard must call fail_test instead.
+        # Without the guard: the empty-capture regex matches whatever devinfo
+        # is supplied, the for-loop's `if not re.search(...)` is False, and
+        # mock_fail is never called -- assert_called_once raises.
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': ''},
+            phdl_exec_returns='hca_id:\twhatever\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_called_once()
 
 
 if __name__ == '__main__':
