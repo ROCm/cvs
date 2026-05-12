@@ -331,7 +331,11 @@ class HtmlReportManager:
             updated_json = json.dumps(data)
             encoded_json = html.escape(updated_json, quote=True)
 
-            html_content = re.sub(json_pattern, f'data-jsonblob="{encoded_json}"', html_content)
+            # Function-form replacement avoids re.sub's backslash-escape
+            # processing on string replacements (which would convert JSON's
+            # 2-char `\n` / `\t` escapes into raw 0x0A / 0x09 bytes, breaking
+            # the data-jsonblob and emptying the results table in the browser).
+            html_content = re.sub(json_pattern, lambda _m: f'data-jsonblob="{encoded_json}"', html_content)
 
         except json.JSONDecodeError as e:
             log.error("Failed to parse JSON data: %s", e)
