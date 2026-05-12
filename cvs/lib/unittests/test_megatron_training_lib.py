@@ -152,6 +152,21 @@ class TestExecNicSetupHcaIdPattern(unittest.TestCase):
         job.exec_nic_setup_scripts()
         mock_fail.assert_called_once()
 
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_empty_pattern_aborts_with_fail_test(self, mock_fail):
+        # Empty (or all-separator/whitespace) input parses to zero segments,
+        # which would yield the degenerate regex `hca_id:\s+()` that matches
+        # every devinfo line. The inline guard must call fail_test instead.
+        # Without the guard: the empty-capture regex matches whatever devinfo
+        # is supplied, the for-loop's `if not re.search(...)` is False, and
+        # mock_fail is never called -- assert_called_once raises.
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': ''},
+            phdl_exec_returns='hca_id:\twhatever\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()
