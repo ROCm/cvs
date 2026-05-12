@@ -915,6 +915,8 @@ This is the multi-node ``mi3xx_megatron_llama_distributed.json`` configuration f
             "gloo_socket_ifname": "<changeme>",
             "_example_nccl_ib_gid_index": "3",
             "nccl_ib_gid_index": "<changeme>",
+            "_example_hca_id_pattern": "bnxt_|rocep|mlx5_",
+            "hca_id_pattern": "bnxt_|rocep",
             "nccl_debug": "ERROR",
             "hf_token_file": "/home/{user-id}/.hf_token",
             "shm_size": "128G",
@@ -1120,6 +1122,12 @@ Use the parameters in these tables to configure the training file.
    * - ``_example_nccl_ib_gid_index``
      - 3
      - Example of  GID index used for IB addressing (selects which GID entry on the HCA to use)
+   * - ``_example_hca_id_pattern``
+     - ``bnxt_|rocep|mlx5_``
+     - Example of HCA-id pattern used to verify the libbnxt copy succeeded inside the container
+   * - ``hca_id_pattern``
+     - ``bnxt_|rocep``
+     - ``|``-separated list of NIC-name prefixes (e.g. ``bnxt_``, ``rocep``, ``mlx5_``) checked against ``ibv_devinfo`` ``hca_id:`` lines after the libbnxt copy. Each segment is treated as a literal prefix (regex special chars are escaped by the lib), so use ``|`` only as the separator -- not as part of a regex pattern within a segment. Add ``|mlx5_`` for Mellanox/RoCE NICs.
    * - ``nccl_debug``
      - ERROR
      - NCCL log level

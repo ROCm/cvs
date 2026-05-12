@@ -162,6 +162,7 @@ class MegatronLlamaTrainingJob:
         tdict.setdefault('training_iterations', 10)
         tdict.setdefault('nnodes', 2)
         tdict.setdefault('nic_type', 'thor2')
+        tdict.setdefault('hca_id_pattern', 'bnxt_|rocep')
         tdict.setdefault('nccl_ib_hca_list', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_ib_hca', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_socket_ifname', 'ensf1np1')
@@ -180,6 +181,7 @@ class MegatronLlamaTrainingJob:
         self.iterations = int(tdict['training_iterations'])
         self.nnodes = tdict['nnodes']
         self.nic_type = tdict['nic_type']
+        self.hca_id_pattern = tdict['hca_id_pattern']
         self.nccl_ib_hca_list = tdict['nccl_ib_hca_list']
         self.nccl_ib_hca = tdict['nccl_ib_hca']
         self.nccl_socket_ifname = tdict['nccl_socket_ifname']
@@ -298,8 +300,21 @@ class MegatronLlamaTrainingJob:
                     /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
                     sleep 2;ibv_devinfo;sleep 2;"'
                 )
+                # Treat `hca_id_pattern` as a `|`-separated list of literal
+                # NIC-name prefixes. Each segment is `re.escape`d so users
+                # can't accidentally inject regex syntax (e.g. `mlx5+` is a
+                # literal 5-char prefix, not `mlx` + `5+` quantifier).
+                # For the default `bnxt_|rocep`, the emitted regex is
+                # byte-identical to the prior raw-interpolation behavior.
+                segments = [re.escape(s.strip()) for s in self.hca_id_pattern.split('|') if s.strip()]
+                if not segments:
+                    fail_test(
+                        f'hca_id_pattern parsed to zero non-empty segments, got: {self.hca_id_pattern!r}. '
+                        f'Expected a `|`-separated list of NIC-name prefixes, e.g. "bnxt_|rocep".'
+                    )
+                hca_id_regex = rf'hca_id:\s+({"|".join(segments)})'
                 for node in out_dict.keys():
-                    if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
+                    if not re.search(hca_id_regex, out_dict[node], re.I):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 

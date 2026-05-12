@@ -22,6 +22,8 @@
         "gloo_socket_ifname": "<changeme>",
         "_example_nccl_ib_gid_index": "3",
         "nccl_ib_gid_index": "<changeme>",
+        "_example_hca_id_pattern": "bnxt_|rocep|mlx5_",
+        "hca_id_pattern": "bnxt_|rocep",
         "nccl_debug": "ERROR",
         "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "128G",

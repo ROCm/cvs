@@ -96,5 +96,77 @@ class TestMegatronJobConstructor(unittest.TestCase):
         self.assertTrue(job.training_script.endswith('train_llama3.sh'))
 
 
+class TestExecNicSetupHcaIdPattern(unittest.TestCase):
+    """AIMVT-160: hca_id_pattern config key flows from training_dict into the
+    in-container HCA-id verification regex inside exec_nic_setup_scripts.
+
+    The lib splits the `|`-separated value into segments, `re.escape`s each,
+    and rejoins with `|`. For the default `bnxt_|rocep` the emitted regex
+    is byte-identical to the prior raw-interpolation behavior; the change
+    only affects pathological inputs (whitespace around segments, regex
+    special chars inside a segment)."""
+
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_default_pattern_matches_rocep(self, mock_fail):
+        # Default pattern 'bnxt_|rocep' must match 'rocep1s0f0' so the
+        # workaround verification doesn't fire fail_test on Mellanox/RoCE NICs.
+        job = _make_megatron_job(phdl_exec_returns='hca_id:\trocep1s0f0\n')
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_not_called()
+
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_override_pattern_matches_mlx5(self, mock_fail):
+        # Custom hca_id_pattern from config must propagate through to the regex
+        # in exec_nic_setup_scripts (catches missing setdefault, missing
+        # f-string interpolation, or a stale hardcoded literal).
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': 'mlx5_'},
+            phdl_exec_returns='hca_id:\tmlx5_0\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_not_called()
+
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_whitespace_around_segments_is_stripped(self, mock_fail):
+        # User-typed `|` lists often have surrounding whitespace per segment;
+        # the lib must strip so 'bnxt_| rocep | mlx5_' still matches
+        # 'rocep1s0f0'. Catches a refactor that drops the .strip() call.
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': 'bnxt_| rocep | mlx5_'},
+            phdl_exec_returns='hca_id:\trocep1s0f0\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_not_called()
+
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_special_regex_chars_in_segment_are_escaped(self, mock_fail):
+        # Proof-of-detection for the re.escape fix: a segment 'mlx5+' must be
+        # treated as the LITERAL 5-char string, not 'mlx' followed by 'one or
+        # more 5s'. Under the prior raw-interpolation, '5+' would have falsely
+        # matched 'mlx5550000' and fail_test would NOT fire -- silently
+        # passing the libbnxt-copy verification on the wrong NIC.
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': 'mlx5+'},
+            phdl_exec_returns='hca_id:\tmlx5550000\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_called_once()
+
+    @patch('cvs.lib.megatron_training_lib.fail_test')
+    def test_empty_pattern_aborts_with_fail_test(self, mock_fail):
+        # Empty (or all-separator/whitespace) input parses to zero segments,
+        # which would yield the degenerate regex `hca_id:\s+()` that matches
+        # every devinfo line. The inline guard must call fail_test instead.
+        # Without the guard: the empty-capture regex matches whatever devinfo
+        # is supplied, the for-loop's `if not re.search(...)` is False, and
+        # mock_fail is never called -- assert_called_once raises.
+        job = _make_megatron_job(
+            training_overrides={'hca_id_pattern': ''},
+            phdl_exec_returns='hca_id:\twhatever\n',
+        )
+        job.exec_nic_setup_scripts()
+        mock_fail.assert_called_once()
+
+
 if __name__ == '__main__':
     unittest.main()
