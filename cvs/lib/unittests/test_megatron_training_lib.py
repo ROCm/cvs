@@ -185,5 +185,28 @@ class TestProgressDetection(unittest.TestCase):
         self.assertTrue(megatron_training_lib._is_training_complete('throughput per GPU: 612.5'))
 
 
+class TestNanInfDetection(unittest.TestCase):
+    """AIMVT-161: _has_nan_inf_results detects real NaN/Inf training output
+    and does not false-positive on numeric values or single-letter junk.
+
+    The `single letter` case is the proof-of-detection for the regex fix:
+    under the prior `[NaN|Inf]` character class, any single `a`/`n`/`f`
+    after the colon would match (the class matches one char from
+    {N,a,I,n,f,|}, not the strings NaN/Inf). The fixed `(?:NaN|Inf)` group
+    requires the full literal."""
+
+    CASES = [
+        ('NaN, new format',                     'throughput per GPU (TFLOP/s/GPU): NaN',   True),
+        ('Inf, old format falls back to pat#2', 'throughput per GPU: Inf',                 True),
+        ('numeric, no false positive',          'throughput per GPU (TFLOP/s/GPU): 612.5', False),
+        ('single letter, no false positive',    'throughput per GPU (TFLOP/s/GPU): aaa',   False),
+    ]
+
+    def test_has_nan_inf_results(self):
+        for name, output, expected in self.CASES:
+            with self.subTest(case=name):
+                self.assertEqual(megatron_training_lib._has_nan_inf_results(output), expected)
+
+
 if __name__ == '__main__':
     unittest.main()
