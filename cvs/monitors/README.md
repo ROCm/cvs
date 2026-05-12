@@ -23,10 +23,16 @@ napshot of all counters (GPU/NIC) while your training/inference workloads are in
 ### Usage for Cluster Health Checker
 
 The Cluster Health Checker consumes the same `--cluster_file` JSON used by
-`cvs run` and `cvs exec` (see [`cvs/input/cluster_file/README.md`](../input/cluster_file/README.md)
+`cvs run`, `cvs exec`, and `cvs scp` (see [`cvs/input/cluster_file/README.md`](../input/cluster_file/README.md)
 for the schema). The node list, SSH username, and private key are all read
 from the cluster file - no separate hosts file or credentials need to be
 passed on the CLI.
+
+Just like `cvs exec` and `cvs scp`, the cluster file can be supplied either
+via `--cluster_file <path>` or by exporting `CLUSTER_FILE=<path>` once per
+shell. The env var takes precedence when both are set, so users can
+`export CLUSTER_FILE=...` once and then run any `cvs exec`, `cvs scp`,
+`cvs monitor check_cluster_health`, etc. without repeating the path.
 
 ```
 (myenv) [ubuntu-host]~/cvs:(main)$ cvs monitor check_cluster_health --help
@@ -42,6 +48,7 @@ options:
   --cluster_file CLUSTER_FILE
                         Path to a CVS cluster JSON file (see cvs/input/cluster_file/cluster.json).
                         Provides node list, username, and SSH key. Recommended.
+                        Falls back to the CLUSTER_FILE environment variable when omitted.
   --hosts_file HOSTS_FILE
                         [DEPRECATED] File with one host IP/hostname per line. Use --cluster_file instead.
   --username USERNAME   SSH username (required with --hosts_file)
@@ -61,6 +68,15 @@ options:
 cvs monitor check_cluster_health \
     --cluster_file cvs/input/cluster_file/cluster.json \
     --iterations 2
+```
+
+Or set `CLUSTER_FILE` once and reuse it across CVS commands:
+
+```
+export CLUSTER_FILE=cvs/input/cluster_file/cluster.json
+cvs monitor check_cluster_health --iterations 2
+cvs exec --cmd "hostname"
+cvs scp --file /path/to/file.txt
 ```
 
 Or directly:

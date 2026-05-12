@@ -40,7 +40,7 @@ To run the monitor and generate a health report for a cluster:
 
 5. Run the monitor with the applicable arguments for your use case:
 
-   - ``--cluster_file``: Path to the CVS cluster JSON file (the same file used by ``cvs run`` and ``cvs exec``). The monitor reads the node list, SSH username, and private key from this file. See :doc:`/reference/configuration-files/cluster-file` for the schema.
+   - ``--cluster_file``: Path to the CVS cluster JSON file (the same file used by ``cvs run``, ``cvs exec``, and ``cvs scp``). The monitor reads the node list, SSH username, and private key from this file. See :doc:`/reference/configuration-files/cluster-file` for the schema. If omitted, the monitor falls back to the ``CLUSTER_FILE`` environment variable, matching the behavior of ``cvs exec`` and ``cvs scp``.
    - ``--iterations``: Enter the number of check iterations you want to run.
    - ``--time_between_iters``: Enter the time to wait between run iterations.
    - ``--report_file``: Enter the directory you want the generated health file to save to. If you leave this argument empty, the file saves as ``cluster_report.html`` to the local directory.
@@ -50,6 +50,13 @@ To run the monitor and generate a health report for a cluster:
    .. code:: bash
 
     cvs monitor check_cluster_health --cluster_file cvs/input/cluster_file/cluster.json --iterations 2
+
+   Or export ``CLUSTER_FILE`` once and reuse it across CVS commands:
+
+   .. code:: bash
+
+    export CLUSTER_FILE=cvs/input/cluster_file/cluster.json
+    cvs monitor check_cluster_health --iterations 2
 
    The monitor logs into the nodes listed in the cluster file and captures information on potential error conditions or anomalies.
 

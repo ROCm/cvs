@@ -118,9 +118,13 @@ class TestArgParser(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.parser.parse_args(["--cluster_file", "/c.json", "--hosts_file", "/h.txt"])
 
-    def test_neither_cluster_nor_hosts_file_is_rejected(self):
-        with self.assertRaises(SystemExit):
-            self.parser.parse_args(["--iterations", "1"])
+    def test_neither_cluster_nor_hosts_file_parses(self):
+        # Argparse no longer enforces "exactly one source" because the
+        # CLUSTER_FILE env var can satisfy --cluster_file. Runtime
+        # validation lives in _resolve_connection (see TestResolveConnection).
+        args = self.parser.parse_args(["--iterations", "1"])
+        self.assertIsNone(args.cluster_file)
+        self.assertIsNone(args.hosts_file)
 
 
 class TestResolveConnection(unittest.TestCase):
@@ -128,6 +132,12 @@ class TestResolveConnection(unittest.TestCase):
 
     def setUp(self):
         self.monitor = CheckClusterHealthMonitor()
+        # Each test gets a clean env so CLUSTER_FILE leakage from the host
+        # shell or other tests cannot influence the resolution branches.
+        self._env_patch = patch.dict(os.environ, {}, clear=False)
+        self._env_patch.start()
+        os.environ.pop('CLUSTER_FILE', None)
+        self.addCleanup(self._env_patch.stop)
 
     @staticmethod
     def _ns(**overrides):
@@ -203,6 +213,42 @@ class TestResolveConnection(unittest.TestCase):
             hosts_path = _write(tmp, "hosts.txt", "# only a comment\n\n")
             with self.assertRaises(SystemExit):
                 self.monitor._resolve_connection(self._ns(hosts_file=hosts_path, username="u", key_file="/k"))
+
+    def test_cluster_file_env_var_supplies_path(self):
+        cluster = {"username": "envuser", "priv_key_file": "/envkey", "node_dict": {"h1": {}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write(tmp, "c.json", json.dumps(cluster))
+            os.environ['CLUSTER_FILE'] = path
+            nodes, user, pkey, password = self.monitor._resolve_connection(self._ns())
+        self.assertEqual(nodes, ["h1"])
+        self.assertEqual((user, pkey, password), ("envuser", "/envkey", None))
+
+    def test_cluster_file_env_var_takes_precedence_over_flag(self):
+        # Mirrors cvs exec / cvs scp: env wins. Pin this so a future
+        # refactor cannot silently flip the precedence.
+        env_cluster = {"username": "envuser", "priv_key_file": "/envkey", "node_dict": {"env-host": {}}}
+        flag_cluster = {"username": "flaguser", "priv_key_file": "/flagkey", "node_dict": {"flag-host": {}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = _write(tmp, "env.json", json.dumps(env_cluster))
+            flag_path = _write(tmp, "flag.json", json.dumps(flag_cluster))
+            os.environ['CLUSTER_FILE'] = env_path
+            nodes, user, pkey, _ = self.monitor._resolve_connection(self._ns(cluster_file=flag_path))
+        self.assertEqual(nodes, ["env-host"])
+        self.assertEqual((user, pkey), ("envuser", "/envkey"))
+
+    def test_cluster_file_env_var_combined_with_hosts_file_aborts(self):
+        cluster = {"username": "u", "priv_key_file": "/k", "node_dict": {"h1": {}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            cluster_path = _write(tmp, "c.json", json.dumps(cluster))
+            hosts_path = _write(tmp, "hosts.txt", "1.1.1.1\n")
+            os.environ['CLUSTER_FILE'] = cluster_path
+            with self.assertRaises(SystemExit):
+                self.monitor._resolve_connection(self._ns(hosts_file=hosts_path, username="u", key_file="/k"))
+
+    def test_no_source_at_all_aborts(self):
+        # Neither --cluster_file, nor --hosts_file, nor CLUSTER_FILE in env.
+        with self.assertRaises(SystemExit):
+            self.monitor._resolve_connection(self._ns())
 
 
 if __name__ == "__main__":

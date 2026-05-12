@@ -5,6 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import os
 import sys
 import json
 import logging
@@ -376,16 +377,27 @@ class CheckClusterHealthMonitor(MonitorPlugin):
         return "Generate a health report of your cluster by collecting various logs and metrics"
 
     def get_parser(self):
-        parser = argparse.ArgumentParser(description="Check Cluster Health")
-        # Source of hosts: either a CVS cluster file (preferred) or a legacy
-        # one-IP-per-line hosts file. Exactly one must be provided.
-        source = parser.add_mutually_exclusive_group(required=True)
+        parser = argparse.ArgumentParser(
+            description="Check Cluster Health",
+            epilog=(
+                "Examples:\n"
+                "  cvs monitor check_cluster_health --cluster_file cluster.json --iterations 2\n"
+                "  CLUSTER_FILE=cluster.json cvs monitor check_cluster_health --iterations 2"
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        # Source of hosts: either a CVS cluster file (preferred, can also be
+        # supplied via the CLUSTER_FILE env var) or a legacy one-IP-per-line
+        # hosts file. The "exactly one source" rule is enforced at runtime
+        # in _resolve_connection so the env var can satisfy --cluster_file.
+        source = parser.add_mutually_exclusive_group(required=False)
         source.add_argument(
             "--cluster_file",
             help=(
                 "Path to a CVS cluster JSON file "
                 "(see cvs/input/cluster_file/cluster.json). "
-                "Provides node list, username, and SSH key. Recommended."
+                "Provides node list, username, and SSH key. Recommended. "
+                "Falls back to the CLUSTER_FILE environment variable when omitted."
             ),
         )
         source.add_argument(
@@ -406,18 +418,34 @@ class CheckClusterHealthMonitor(MonitorPlugin):
     def _resolve_connection(self, args):
         """Return ``(node_list, username, pkey, password)`` based on parsed args.
 
-        Centralizes the cluster_file vs. hosts_file argument handling so the
-        ``monitor`` method stays linear and the logic stays unit-testable.
+        Resolution order for the cluster file mirrors ``cvs exec`` / ``cvs scp``:
+        the ``CLUSTER_FILE`` env var takes precedence, then ``--cluster_file``.
+        ``--hosts_file`` remains as a deprecated fallback.
         """
-        if args.cluster_file:
+        # Mirror cvs exec / cvs scp: env var wins over --cluster_file, both
+        # win over the legacy --hosts_file path.
+        cluster_file = os.environ.get('CLUSTER_FILE') or args.cluster_file
+
+        if cluster_file and args.hosts_file:
+            print("ERROR: --hosts_file cannot be combined with --cluster_file or CLUSTER_FILE. Aborting.")
+            sys.exit(1)
+
+        if cluster_file:
             if args.username or args.password or args.key_file:
                 print(
                     "ERROR: --username/--password/--key_file are not allowed with --cluster_file; "
                     "credentials come from the cluster file. Aborting."
                 )
                 sys.exit(1)
-            node_list, username, pkey = load_cluster_file(args.cluster_file)
+            node_list, username, pkey = load_cluster_file(cluster_file)
             return node_list, username, pkey, None
+
+        if not args.hosts_file:
+            print(
+                "ERROR: no cluster file specified. Set the CLUSTER_FILE environment variable, "
+                "pass --cluster_file, or (deprecated) pass --hosts_file. Aborting."
+            )
+            sys.exit(1)
 
         # Legacy --hosts_file path.
         print(
