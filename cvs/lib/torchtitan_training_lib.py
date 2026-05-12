@@ -425,8 +425,10 @@ EOFTOML
         # Generate TOML config file first
         toml_path = self.generate_toml_config()
 
-        # Base environment setup
+        # Base environment setup with ROCm workarounds for tensor allocation issues
         cmd = f'cd /tmp/torchtitan; export HF_TOKEN="{self.hf_token}"; '
+        cmd += 'export HSA_FORCE_FINE_GRAIN_PCIE=1; '
+        cmd += 'export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True; '
 
         # Add network-related environment variables for distributed training
         if self.distributed_training is True:
