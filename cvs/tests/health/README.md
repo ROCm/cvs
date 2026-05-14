@@ -61,7 +61,7 @@ RVS provides comprehensive GPU validation through multiple test modules. The tes
 
 #### Container mode
 
-To use it, copy the `cluster_container.json` template (`cvs copy-config cluster_container.json --output ...`), set the container `image` and `name`, and pass the resulting cluster file to `cvs run rvs_cvs`. See the in-tree reference at [`cvs/input/cluster_file/README.md`](../../input/cluster_file/README.md) and the published [container-mode how-to](https://rocm.docs.amd.com/projects/cvs/en/latest/how-to/run-with-containers.html).
+To use it, copy the `cluster_container.json` template (`cvs copy-config cluster_container.json --output ...`), set the container `image` and `name`, and pass the resulting cluster file to `cvs run install_rvs` or `cvs run rvs_cvs`. See the in-tree reference at [`cvs/input/cluster_file/README.md`](../../input/cluster_file/README.md) and the published [container-mode how-to](https://rocm.docs.amd.com/projects/cvs/en/latest/how-to/run-with-containers.html).
 
 #### Supported Test Modules
 

@@ -10,7 +10,6 @@ import pytest
 import re
 import json
 
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -22,12 +21,12 @@ log = globals.log
 # Importing additional cmd line args to script ..
 
 
-def detect_rocm_path(phdl, config_rocm_path):
+def detect_rocm_path(orch, config_rocm_path):
     """
     Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
 
     Args:
-        phdl: Parallel SSH handle
+        orch: Orchestrator instance
         config_rocm_path (str): Configured ROCm path from config file (empty string for auto-detect)
 
     Returns:
@@ -42,7 +41,7 @@ def detect_rocm_path(phdl, config_rocm_path):
     log.info('Auto-detecting ROCm path...')
 
     # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
-    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    out_dict = orch.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
     for node, output in out_dict.items():
         if output and '/opt/rocm/core-' in output:
             rocm_path = output.strip()
@@ -50,7 +49,7 @@ def detect_rocm_path(phdl, config_rocm_path):
             return rocm_path
 
     # Fall back to legacy /opt/rocm
-    out_dict = phdl.exec('test -d /opt/rocm && echo "/opt/rocm"')
+    out_dict = orch.exec('test -d /opt/rocm && echo "/opt/rocm"')
     for node, output in out_dict.items():
         if '/opt/rocm' in output:
             log.info('Detected ROCm path (legacy layout): /opt/rocm')
@@ -61,26 +60,26 @@ def detect_rocm_path(phdl, config_rocm_path):
     return '/opt/rocm'
 
 
-def detect_hip_compiler(phdl, rocm_path):
+def detect_hip_compiler(orch, rocm_path):
     """
     Detect the HIP compiler (hipcc or amdclang++) for the given ROCm installation.
 
     Args:
-        phdl: Parallel SSH handle
+        orch: Orchestrator instance
         rocm_path (str): ROCm installation path
 
     Returns:
         str: Full path to the HIP compiler
     """
     # Try hipcc first (ROCm 7.x)
-    out_dict = phdl.exec(f'test -f {rocm_path}/bin/hipcc && echo "{rocm_path}/bin/hipcc"')
+    out_dict = orch.exec(f'test -f {rocm_path}/bin/hipcc && echo "{rocm_path}/bin/hipcc"')
     for node, output in out_dict.items():
         if output and 'hipcc' in output:
             log.info(f'Detected HIP compiler: {rocm_path}/bin/hipcc')
             return f'{rocm_path}/bin/hipcc'
 
     # Fall back to amdclang++ (older ROCm versions)
-    out_dict = phdl.exec(f'test -f {rocm_path}/bin/amdclang++ && echo "{rocm_path}/bin/amdclang++"')
+    out_dict = orch.exec(f'test -f {rocm_path}/bin/amdclang++ && echo "{rocm_path}/bin/amdclang++"')
     for node, output in out_dict.items():
         if output and 'amdclang++' in output:
             log.info(f'Detected HIP compiler: {rocm_path}/bin/amdclang++')
@@ -167,52 +166,8 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-@pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    """
-    Build and return a parallel SSH handle (Pssh) for the head node only.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-
-    Returns:
-      Pssh: Handle configured for the first node (head node) in node_dict.
-
-    Notes:
-      - Useful when commands should be executed only from a designated head node.
-      - Module scope ensures a single connection context for the duration of the module.
-    """
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return shdl
-
-
-# Create connection to DUTs and export for later use ..
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    """
-    Create a parallel SSH handle for all cluster nodes.
-
-    Args:
-      cluster_dict (dict): Loaded cluster configuration with at least:
-        - node_dict: mapping of node -> details
-        - username: SSH username
-        - priv_key_file: path to SSH key
-
-    Returns:
-      Pssh: Handle that executes commands on all nodes and returns dict[node] -> output.
-    """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
-
-
 @pytest.mark.dependency(name="init")
-def test_install_rvs(phdl, shdl, config_dict):
+def test_install_rvs(orch, config_dict):
     """
     Install/Build ROCmValidationSuite (RVS) and verify installation on all nodes.
 
@@ -222,31 +177,19 @@ def test_install_rvs(phdl, shdl, config_dict):
       - Build and install RVS on all nodes
       - Verify RVS executable exists and configuration files are accessible
 
-    Depending on the flag nfs_install in the config_file, decide if you want to use shdl (single node)
-    or all nodes (phdl)
-    If the nfs_install flag is set to True, then it assumes the install_dir is on a common file system
-    that is accessible from all the nodes and installs from just a single node, otherwise install on
-    all the nodes.
+    Install commands and verification run across all nodes via ``orch.exec(...)``.
 
     Args:
-      phdl: Parallel SSH handle for all nodes.
-      shdl: Head-node SSH handle
+      orch: Orchestrator instance.
       config_dict (dict): Includes:
         - git_install_path: directory to clone/build
         - git_url: repository URL
         - path: expected installation path for RVS binary
-        - nfs_install: whether to use NFS-shared installation
     """
     globals.error_list = []
 
-    # For install case, if the systems are using NFS, use single connection to head node
-    if config_dict['nfs_install'] is True:
-        hdl = shdl
-    else:
-        hdl = phdl
-
     # Detect ROCm path early for use throughout function
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
+    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
     log.info(f"Using ROCm path: {rocm_path}")
 
     # Update config paths to use detected rocm_path (support both old and new ROCm layouts)
@@ -271,7 +214,7 @@ def test_install_rvs(phdl, shdl, config_dict):
     git_url = config_dict['git_url']
 
     # Check if RVS is already installed via system packages
-    out_dict = phdl.exec('which rvs', timeout=30)
+    out_dict = orch.exec('which rvs', timeout=30)
     rvs_found = False
     for node in out_dict.keys():
         if out_dict[node].strip() and re.search('rvs', out_dict[node], re.I):
@@ -281,7 +224,7 @@ def test_install_rvs(phdl, shdl, config_dict):
     # Check if RVS config files exist
     # Check MI300X path first (same order as final verification) and suppress stderr
     # so a missing fallback path's "No such file" does not contaminate the output.
-    out_dict = phdl.exec(
+    out_dict = orch.exec(
         f'ls -l {config_dict["config_path_mi300x"]}/gst_single.conf 2>/dev/null || ls -l {config_dict["config_path_default"]}/gst_single.conf 2>/dev/null',
         timeout=30,
     )
@@ -297,12 +240,12 @@ def test_install_rvs(phdl, shdl, config_dict):
 
         # First try to install from artifactory repo
         package_installed = False
-        out_dict = hdl.exec('sudo apt-get update -y', timeout=600)
-        out_dict = hdl.exec(
+        out_dict = orch.exec('sudo apt-get update -y', timeout=600)
+        out_dict = orch.exec(
             'sudo apt-get install -y libpci3 libpci-dev doxygen unzip cmake git libyaml-cpp-dev', timeout=600
         )
-        out_dict = hdl.exec('sudo apt-get install -y rocblas rocm-smi-lib', timeout=600)
-        out_dict = hdl.exec('sudo apt-get install -y rocm-validation-suite', timeout=600)
+        out_dict = orch.exec('sudo apt-get install -y rocblas rocm-smi-lib', timeout=600)
+        out_dict = orch.exec('sudo apt-get install -y rocm-validation-suite', timeout=600)
 
         for node in out_dict.keys():
             if re.search(
@@ -320,7 +263,7 @@ def test_install_rvs(phdl, shdl, config_dict):
         # The rocm-validation-suite package may install to /opt/rocm even when the
         # detected rocm_path is /opt/rocm/core-X.Y (new layout), causing path mismatches.
         if package_installed:
-            verify_bin = phdl.exec(
+            verify_bin = orch.exec(
                 f'which rvs 2>/dev/null || ls {config_dict["path"]} 2>/dev/null',
                 timeout=60,
             )
@@ -349,27 +292,27 @@ def test_install_rvs(phdl, shdl, config_dict):
             log.info('Installing RVS from source')
 
             # Check if install directory exists, otherwise create
-            out_dict = hdl.exec(f'ls -ld {git_install_path}')
+            out_dict = orch.exec(f'ls -ld {git_install_path}')
             for node in out_dict.keys():
                 if re.search('No such file', out_dict[node]):
-                    hdl.exec(f'mkdir -p {git_install_path}')
+                    orch.exec(f'mkdir -p {git_install_path}')
 
             # Remove any existing RVS directory and clone fresh
-            out_dict = hdl.exec(f'rm -rf {git_install_path}/ROCmValidationSuite')
-            out_dict = hdl.exec(f'cd {git_install_path};git clone {git_url}', timeout=300)
+            out_dict = orch.exec(f'rm -rf {git_install_path}/ROCmValidationSuite')
+            out_dict = orch.exec(f'cd {git_install_path};git clone {git_url}', timeout=300)
 
             # Build and install RVS (using rocm_path detected earlier)
             try:
-                out_dict = hdl.exec(
+                out_dict = orch.exec(
                     f'cd {git_install_path}/ROCmValidationSuite; cmake -B ./build -DROCM_PATH={rocm_path} -DCMAKE_INSTALL_PREFIX={rocm_path} -DCPACK_PACKAGING_INSTALL_PREFIX={rocm_path} -DHIP_PLATFORM=amd',
                     timeout=1200,
                 )
-                out_dict = hdl.exec(f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc)', timeout=1200)
+                out_dict = orch.exec(f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc)', timeout=1200)
 
-                out_dict = hdl.exec(
+                out_dict = orch.exec(
                     f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc) package', timeout=1200
                 )
-                out_dict = hdl.exec(
+                out_dict = orch.exec(
                     f'cd {git_install_path}/ROCmValidationSuite/build; sudo make install; echo "RVS_INSTALL_STATUS:$?"',
                     timeout=1200,
                 )
@@ -382,13 +325,13 @@ def test_install_rvs(phdl, shdl, config_dict):
                 fail_test(f'RVS installation failed with exception: {e}')
 
     # Verify RVS installation
-    out_dict = phdl.exec(f'which rvs || ls -l {rocm_path}/bin/rvs*', timeout=60)
+    out_dict = orch.exec(f'which rvs || ls -l {rocm_path}/bin/rvs*', timeout=60)
     for node in out_dict.keys():
         if re.search('not found|No such file', out_dict[node], re.I) and not re.search('rvs', out_dict[node]):
             fail_test(f'RVS installation verification failed on node {node}')
 
     # Verify config files are accessible
-    out_dict = phdl.exec(
+    out_dict = orch.exec(
         f'ls -l {config_dict["config_path_mi300x"]}/gst_single.conf || ls -l {config_dict["config_path_default"]}/gst_single.conf',
         timeout=60,
     )
