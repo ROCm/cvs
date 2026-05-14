@@ -332,7 +332,7 @@ Use these scripts to start the test:
 
 .. note::
 
-  RVS additionally supports running inside a per-host container instead of on the host filesystem. Pass a ``cluster_container.json`` cluster file with ``orchestrator: container`` to route ``rvs`` invocations through the container backend. See :doc:`/how-to/run-with-containers`.
+  Both ``cvs run install_rvs`` and ``cvs run rvs_cvs`` support running inside a per-host container instead of on the host filesystem. Pass a ``cluster_container.json`` cluster file with ``orchestrator: container`` to route invocations through the container backend. See :doc:`/how-to/run-with-containers`.
 
 InfiniBand (IB Perf) test script
 --------------------------------
