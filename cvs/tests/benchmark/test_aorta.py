@@ -23,6 +23,7 @@ from cvs.runners.aorta import (
     RcclConfig,
     AortaEnvironment,
     AortaAnalysisConfig,
+    AortaMultiNodeConfig,
 )
 from cvs.runners._base_runner import RunStatus
 from cvs.parsers.aorta_report import AortaReportParser
@@ -159,6 +160,21 @@ def aorta_runner_config(
         skip_if_exists=analysis_cfg.skip_if_exists,
     )
 
+    # Build multi-node config (used when cluster has >1 node, or when
+    # multi_node.master_launch_mode is forced to 'torchrun').
+    mn_cfg = validated_aorta_config.multi_node
+    multi_node_config = AortaMultiNodeConfig(
+        master_launch_mode=mn_cfg.master_launch_mode,
+        nproc_per_node=mn_cfg.nproc_per_node,
+        master_port=mn_cfg.master_port,
+        master_addr=mn_cfg.master_addr,
+        train_script=mn_cfg.train_script,
+        extra_torchrun_args=list(mn_cfg.extra_torchrun_args),
+        extra_train_args=list(mn_cfg.extra_train_args),
+        extra_env=dict(mn_cfg.extra_env),
+        collect_traces=mn_cfg.collect_traces,
+    )
+
     # Build full runner config
     return AortaConfig(
         nodes=node_list,
@@ -174,6 +190,7 @@ def aorta_runner_config(
         rccl=rccl_config,
         environment=env_config,
         analysis=analysis_config,
+        multi_node=multi_node_config,
         build_script=validated_aorta_config.build_script,
         experiment_script=validated_aorta_config.experiment_script,
         gpus_per_node=validated_aorta_config.gpus_per_node,
