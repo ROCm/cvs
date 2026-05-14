@@ -375,6 +375,96 @@ class AortaAnalysisConfigFile(BaseModel):
     )
 
 
+class AortaMultiNodeConfigFile(BaseModel):
+    """
+    Schema for the optional ``multi_node`` section in aorta_benchmark.yaml.
+
+    When the cluster file contains more than one node, the runner launches a
+    disaggregated ``torchrun`` invocation on every node (one per ``node_dict``
+    entry), rendezvous-ing on the head node. This block tunes that path.
+
+    Single-node clusters ignore this block; ``master_launch_mode`` defaults to
+    ``auto`` which means: ``script`` (current behavior, single-node) when the
+    cluster has one node, ``torchrun`` (multi-node disaggregated) when it has
+    more than one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    master_launch_mode: str = Field(
+        default="auto",
+        description=(
+            "How the experiment is launched on each node. 'auto' picks 'script' "
+            "for single-node clusters and 'torchrun' for multi-node clusters. "
+            "'script' always uses the configured experiment_script (single-node only). "
+            "'torchrun' always builds a multi-node torchrun command and ignores "
+            "experiment_script."
+        ),
+    )
+    nproc_per_node: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Processes (GPUs) per node passed to torchrun --nproc_per_node. "
+            "Defaults to the top-level gpus_per_node when unset."
+        ),
+    )
+    master_port: Optional[int] = Field(
+        default=None,
+        ge=1024,
+        le=65535,
+        description=(
+            "Port used for torchrun rendezvous (--master_port). When unset the "
+            "runner picks a free ephemeral port on the head node."
+        ),
+    )
+    master_addr: Optional[str] = Field(
+        default=None,
+        description=(
+            "Override the master address (--master_addr). Defaults to the head node hostname/IP from the cluster file."
+        ),
+    )
+    train_script: str = Field(
+        default="train.py",
+        description=(
+            "Path to the Aorta training entry script relative to aorta_path. "
+            "Used when master_launch_mode resolves to 'torchrun'."
+        ),
+    )
+    extra_torchrun_args: List[str] = Field(
+        default_factory=list,
+        description="Additional CLI flags appended to the torchrun command.",
+    )
+    extra_train_args: List[str] = Field(
+        default_factory=list,
+        description="Additional CLI flags appended to train.py after --config.",
+    )
+    extra_env: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Extra environment variables to export inside the container before "
+            "torchrun. Useful for NCCL_SOCKET_IFNAME, NCCL_IB_HCA, "
+            "NCCL_IB_GID_INDEX, and similar transport-tuning knobs."
+        ),
+    )
+    collect_traces: bool = Field(
+        default=True,
+        description=(
+            "When true, copy each node's torch_profiler artifacts back to the "
+            "head node under <aorta_path>/combined_traces/node_<rank>/ so the "
+            "host parsers see one unified trace tree."
+        ),
+    )
+
+    @field_validator('master_launch_mode')
+    @classmethod
+    def validate_launch_mode(cls, v: str) -> str:
+        allowed = {"auto", "script", "torchrun"}
+        if v not in allowed:
+            raise ValueError(f"master_launch_mode must be one of {sorted(allowed)}, got {v!r}")
+        return v
+
+
 class AortaBenchmarkConfigFile(BaseModel):
     """
     Schema for the entire aorta_benchmark.yaml configuration file.
@@ -443,6 +533,16 @@ class AortaBenchmarkConfigFile(BaseModel):
         default_factory=AortaAnalysisConfigFile, description="Post-benchmark analysis configuration"
     )
 
+    # Multi-node disaggregated launch (one container + torchrun rank per node)
+    multi_node: AortaMultiNodeConfigFile = Field(
+        default_factory=AortaMultiNodeConfigFile,
+        description=(
+            "Multi-node launch configuration. Used when the cluster file lists "
+            "more than one node; ignored for single-node clusters unless "
+            "master_launch_mode is forced to 'torchrun'."
+        ),
+    )
+
     @field_validator('aorta_path')
     @classmethod
     def validate_aorta_path_not_placeholder(cls, v: str) -> str:
@@ -481,6 +581,11 @@ class AortaBenchmarkConfigFile(BaseModel):
             exp_script = aorta / self.experiment_script
             if not exp_script.exists():
                 errors.append(f"experiment_script does not exist: {exp_script}")
+
+            if self.multi_node.master_launch_mode == "torchrun":
+                train_script_path = aorta / self.multi_node.train_script
+                if not train_script_path.exists():
+                    errors.append(f"multi_node.train_script does not exist: {train_script_path}")
 
             # Check analysis scripts if enabled
             if self.analysis.enable_tracelens:

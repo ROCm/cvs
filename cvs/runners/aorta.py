@@ -11,6 +11,8 @@ All rights reserved.
 from __future__ import annotations
 
 import logging
+import shlex
+import socket
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -36,6 +38,19 @@ except ImportError:
 from cvs.runners._base_runner import BaseRunner, RunConfig, RunResult, RunStatus
 
 log = logging.getLogger(__name__)
+
+
+def combined_traces_in(path: Path, root: Path) -> bool:
+    """Return True if ``path`` lives under ``root/combined_traces``.
+
+    Used to skip already-collected traces when rescanning the head node so
+    repeated runs do not nest combined_traces inside itself.
+    """
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return False
+    return rel.parts and rel.parts[0] == "combined_traces"
 
 
 @dataclass
@@ -95,6 +110,26 @@ class AortaAnalysisConfig:
 
 
 @dataclass
+class AortaMultiNodeConfig:
+    """
+    Multi-node disaggregated launch configuration.
+
+    See ``AortaMultiNodeConfigFile`` in ``cvs/parsers/schemas.py`` for the
+    YAML-facing description of each field.
+    """
+
+    master_launch_mode: str = "auto"
+    nproc_per_node: Optional[int] = None
+    master_port: Optional[int] = None
+    master_addr: Optional[str] = None
+    train_script: str = "train.py"
+    extra_torchrun_args: List[str] = field(default_factory=list)
+    extra_train_args: List[str] = field(default_factory=list)
+    extra_env: Dict[str, str] = field(default_factory=dict)
+    collect_traces: bool = True
+
+
+@dataclass
 class AortaConfig(RunConfig):
     """
     Configuration for Aorta benchmark runner.
@@ -130,6 +165,9 @@ class AortaConfig(RunConfig):
 
     # Analysis configuration (use Aorta's built-in scripts)
     analysis: AortaAnalysisConfig = field(default_factory=AortaAnalysisConfig)
+
+    # Multi-node disaggregated launch configuration
+    multi_node: AortaMultiNodeConfig = field(default_factory=AortaMultiNodeConfig)
 
     # Scripts to execute (relative to container mount)
     build_script: str = "scripts/build_rccl.sh"
@@ -196,6 +234,12 @@ class AortaRunner(BaseRunner):
         if not exp_script.exists():
             errors.append(f"Experiment script does not exist: {exp_script}")
 
+        resolved_mode = self._resolve_launch_mode()
+        if resolved_mode == "torchrun":
+            train_script = self.config.aorta_path / self.config.multi_node.train_script
+            if not train_script.exists():
+                errors.append(f"multi_node.train_script does not exist: {train_script}")
+
         return errors
 
     def _connect_docker(self, node: str) -> docker.DockerClient:
@@ -242,6 +286,156 @@ class AortaRunner(BaseRunner):
             pass  # Container doesn't exist, that's fine
         except Exception as e:
             log.warning(f"Error cleaning up container on {node}: {e}")
+
+    def _collect_multi_node_traces(self, nodes: List[str]) -> Optional[Path]:
+        """
+        Collect torch_profiler trees from every node into a single tree on the
+        head node and return the parent directory.
+
+        Layout::
+
+            <aorta_path>/combined_traces/node_<rank>/<orig_subpath>/torch_profiler/...
+
+        The head node is rsynced locally; non-head nodes are pulled with rsync
+        over SSH (``rsync -az`` with the configured ``priv_key_file``). When
+        rsync is unavailable we fall back to ``scp -r``. Failures on
+        individual nodes are logged but do not abort the overall collection;
+        the returned directory is the best-effort union.
+
+        Returns ``None`` only when nothing could be collected at all.
+        """
+        head = self.head_node
+        combined_root = self.config.aorta_path / "combined_traces"
+        try:
+            combined_root.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            log.error(f"Cannot create {combined_root}: {e}")
+            return None
+
+        any_collected = False
+        for rank, node in enumerate(nodes):
+            dest = combined_root / f"node_{rank}"
+            dest.mkdir(parents=True, exist_ok=True)
+
+            try:
+                # First pass: copy from the orchestrator's local filesystem. This handles
+                # the head==orchestrator case and any NFS-shared aorta_path.
+                found = False
+                if node == head:
+                    found = self._copy_local_torch_profilers(self.config.aorta_path, dest)
+                # Pull over SSH for non-head nodes, and also for the head when the
+                # orchestrator's local fs didn't actually have the head's traces (i.e.
+                # orchestrator is a separate login node from the head).
+                if not found:
+                    found = self._copy_remote_torch_profilers(node, dest)
+                if found:
+                    any_collected = True
+                    log.info(f"Collected traces for node_{rank} ({node}) -> {dest}")
+                else:
+                    log.warning(f"No torch_profiler artifacts found for node {node} (rank {rank})")
+            except Exception as e:
+                log.warning(f"Failed to collect traces for node {node} (rank {rank}): {e}")
+
+        return combined_root if any_collected else None
+
+    def _copy_local_torch_profilers(self, src_root: Path, dest: Path) -> bool:
+        """
+        Copy any ``torch_profiler/`` trees under ``src_root`` into ``dest``,
+        preserving the relative path. Used for the head node.
+        """
+        import shutil
+
+        copied = False
+        for tp in src_root.glob("**/torch_profiler"):
+            if not tp.is_dir():
+                continue
+            if combined_traces_in(tp, src_root):
+                continue
+            rel = tp.relative_to(src_root)
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if target.exists():
+                    shutil.rmtree(target)
+                shutil.copytree(tp, target, symlinks=True, dirs_exist_ok=False)
+                copied = True
+            except OSError as e:
+                log.warning(f"Local copy {tp} -> {target} failed: {e}")
+        return copied
+
+    def _copy_remote_torch_profilers(self, node: str, dest: Path) -> bool:
+        """
+        Pull every ``torch_profiler/`` tree under the remote ``aorta_path`` to
+        ``dest`` using rsync over SSH. Falls back to ``scp -r`` if rsync is
+        unavailable.
+        """
+        ssh_user = self.config.username
+        remote_root = str(self.config.aorta_path)
+
+        ssh_opts = ["-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+        if self.config.pkey:
+            ssh_opts.extend(["-i", self.config.pkey])
+        ssh_cmd = "ssh " + " ".join(shlex.quote(p) for p in ssh_opts)
+
+        list_cmd = [
+            "ssh",
+            *ssh_opts,
+            f"{ssh_user}@{node}",
+            f"find {shlex.quote(remote_root)} -type d -name torch_profiler -not -path '*/combined_traces/*'",
+        ]
+        try:
+            r = subprocess.run(list_cmd, capture_output=True, text=True, timeout=120)
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            log.warning(f"Listing remote torch_profiler dirs on {node} failed: {e}")
+            return False
+
+        if r.returncode != 0:
+            log.warning(f"find on {node} returned {r.returncode}: {r.stderr.strip()}")
+            return False
+
+        remote_paths = [p.strip() for p in r.stdout.splitlines() if p.strip()]
+        if not remote_paths:
+            return False
+
+        copied = False
+        rsync_available = (
+            subprocess.run(
+                ["bash", "-lc", "command -v rsync >/dev/null"],
+                capture_output=True,
+            ).returncode
+            == 0
+        )
+        for rp in remote_paths:
+            try:
+                rel = Path(rp).relative_to(remote_root)
+            except ValueError:
+                rel = Path(Path(rp).name)
+            target_parent = dest / rel.parent
+            target_parent.mkdir(parents=True, exist_ok=True)
+
+            if rsync_available:
+                cmd = [
+                    "rsync",
+                    "-az",
+                    "-e",
+                    ssh_cmd,
+                    f"{ssh_user}@{node}:{rp}/",
+                    str(target_parent / rel.name) + "/",
+                ]
+            else:
+                cmd = ["scp", "-r", *ssh_opts, f"{ssh_user}@{node}:{rp}", str(target_parent)]
+
+            log.info(f"[{node}] copying {rp} -> {target_parent / rel.name}")
+            try:
+                rr = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+                if rr.returncode == 0:
+                    copied = True
+                else:
+                    log.warning(f"copy of {rp} from {node} failed (exit {rr.returncode}): {rr.stderr.strip()}")
+            except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+                log.warning(f"copy of {rp} from {node} failed: {e}")
+
+        return copied
 
     def _get_remote_uid_gid(self, node: str) -> Optional[Tuple[int, int]]:
         """
@@ -308,7 +502,8 @@ class AortaRunner(BaseRunner):
             volumes=volumes,
             devices=devices,
             working_dir=self.config.container_mount_path,
-            group_add=["video"],
+            user="root",
+            group_add=["video", "render"],
             cap_add=["SYS_PTRACE"],
             security_opt=["seccomp=unconfined"],
             ulimits=[
@@ -553,12 +748,155 @@ class AortaRunner(BaseRunner):
         log.info(f"All {num_nodes} node(s) set up successfully")
         return True
 
+    def _resolve_launch_mode(self) -> str:
+        """
+        Resolve ``multi_node.master_launch_mode`` to a concrete mode.
+
+        - ``script`` keeps the legacy single-node behavior (delegates to
+          ``experiment_script``); fails if the cluster has more than one node.
+        - ``torchrun`` builds a multi-node ``torchrun`` command on every node,
+          rendezvous-ing on the head node.
+        - ``auto`` picks ``script`` for single-node, ``torchrun`` for >1 node.
+        """
+        mode = self.config.multi_node.master_launch_mode
+        if mode == "auto":
+            return "script" if len(self.config.nodes) <= 1 else "torchrun"
+        return mode
+
+    def _pick_master_port(self) -> int:
+        """
+        Return ``multi_node.master_port`` if set, otherwise a free ephemeral
+        port on the orchestrator host.
+
+        The bound socket is closed before the port is returned, so there is a
+        small TOCTOU window. Operators who care can pin ``master_port``
+        explicitly in the config.
+        """
+        configured = self.config.multi_node.master_port
+        if configured:
+            return int(configured)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            return int(s.getsockname()[1])
+
+    def _build_base_env(self) -> Dict[str, str]:
+        """Build the env dict shared by every node's launch."""
+        env = self.config.environment.to_dict()
+
+        rccl_path = self.config.rccl.build_path
+        env["LD_LIBRARY_PATH"] = (
+            f"{rccl_path}/build/release/:/opt/rocm/lib:/opt/rocm/lib64:"
+            f"/opt/openmpi/lib:/opt/rccl-tests/build:$LD_LIBRARY_PATH"
+        )
+        env["rccl_path"] = rccl_path
+
+        if self.config.training_overrides:
+            # aorta train.py exposes `--override` with `nargs="*"`; multiple
+            # `--override` groups collapse to the last group's values. Emit a
+            # single `--override` followed by all key=value tokens so that
+            # downstream legacy launch scripts also forward them correctly.
+            tokens = " ".join(f'{key}="{value}"' for key, value in self.config.training_overrides.items())
+            env["AORTA_OVERRIDE_ARGS"] = f"--override {tokens}"
+
+        for k, v in self.config.multi_node.extra_env.items():
+            env[str(k)] = str(v)
+
+        return env
+
+    def _build_torchrun_command(
+        self,
+        *,
+        node_rank: int,
+        nnodes: int,
+        master_addr: str,
+        master_port: int,
+        nproc_per_node: int,
+    ) -> str:
+        """
+        Build the ``torchrun ... train.py --config <CFG>`` shell command run
+        inside each node's container.
+
+        Mirrors ``scripts/multi_node/local_launch.sh`` from Aorta's own
+        repository: one rank-group per node, rendezvous on ``master_addr``.
+        Training overrides from the config are appended via ``--override`` so
+        operators get the same knobs as the single-node ``script`` mode.
+        """
+        mn = self.config.multi_node
+        mount = self.config.container_mount_path
+        config_path = f"{mount}/{self.config.base_config}"
+        train_script = f"{mount}/{mn.train_script}"
+
+        parts: List[str] = [
+            "torchrun",
+            f"--nnodes={nnodes}",
+            f"--node_rank={node_rank}",
+            f"--nproc_per_node={nproc_per_node}",
+            f"--master_addr={shlex.quote(str(master_addr))}",
+            f"--master_port={int(master_port)}",
+        ]
+        parts.extend(str(a) for a in mn.extra_torchrun_args)
+        parts.append(shlex.quote(train_script))
+        parts.extend(["--config", shlex.quote(config_path)])
+        # aorta's train.py uses `argparse(--override, nargs="*")` so emitting
+        # one `--override` per key only keeps the LAST group's values. Pack
+        # all key=value tokens behind a single `--override` so they all stick.
+        if self.config.training_overrides:
+            parts.append("--override")
+            for key, value in self.config.training_overrides.items():
+                parts.append(f"{key}={shlex.quote(str(value))}")
+        parts.extend(str(a) for a in mn.extra_train_args)
+
+        return "bash -lc " + shlex.quote(" ".join(parts))
+
+    def _run_single_node(
+        self,
+        *,
+        node: str,
+        node_rank: int,
+        launch_cmd: str,
+        env: Dict[str, str],
+    ) -> Tuple[str, int, str]:
+        """
+        Execute ``launch_cmd`` inside ``node``'s container.
+
+        Returns ``(node, exit_code, output)``. Used as the parallel worker for
+        multi-node launches.
+        """
+        container = self._containers.get(node)
+        if container is None:
+            return (node, -1, f"No container found for {node}")
+
+        log.info(f"[node {node_rank}/{node}] Launching: {launch_cmd[:200]}...")
+        exit_code, output = self._exec_in_container(
+            container,
+            launch_cmd,
+            environment=env,
+            workdir=self.config.container_mount_path,
+            stream=True,
+        )
+        log.info(f"[node {node_rank}/{node}] Exit code: {exit_code}")
+        return (node, exit_code, output)
+
     def run(self, **kwargs) -> RunResult:
         """
         Execute the Aorta benchmark.
 
-        Runs the experiment script inside the container and collects
-        profiling artifacts.
+        Two execution modes are supported, selected by
+        ``multi_node.master_launch_mode``:
+
+        - ``script`` (single-node, legacy): runs ``experiment_script`` inside
+          the head node's container.
+        - ``torchrun`` (disaggregated multi-node): launches ``torchrun`` on
+          every node in parallel with proper ``--nnodes/--node_rank/
+          --master_addr/--master_port`` rendezvous, mirroring Aorta's
+          ``scripts/multi_node/local_launch.sh`` pattern. ``auto`` picks
+          ``script`` for single-node clusters and ``torchrun`` for
+          multi-node clusters.
+
+        Profiling artifacts (``torch_profiler/`` trees) from every node are
+        collected into ``<aorta_path>/combined_traces/node_<rank>/`` on the
+        head node when running multi-node, and exposed via the
+        ``torch_traces`` artifact for downstream parsers.
         """
         start_time = time.time()
         stdout_dict: Dict[str, str] = {}
@@ -567,68 +905,123 @@ class AortaRunner(BaseRunner):
         artifacts: Dict[str, Path] = {}
 
         try:
-            # For now, run on head node only (single node v1)
-            node = self.head_node
-            container = self._containers.get(node)
+            launch_mode = self._resolve_launch_mode()
+            nodes = list(self.config.nodes)
 
-            if not container:
+            if launch_mode == "script" and len(nodes) > 1:
                 return RunResult(
                     status=RunStatus.FAILED,
                     start_time=start_time,
                     end_time=time.time(),
-                    error_message=f"No container found for {node}",
+                    error_message=(
+                        "master_launch_mode='script' but cluster has "
+                        f"{len(nodes)} nodes; either set master_launch_mode='torchrun' "
+                        "or 'auto' in the multi_node block, or shrink the cluster file."
+                    ),
                 )
 
-            # Build environment with computed values
-            env = self.config.environment.to_dict()
+            log.info(f"Launch mode: {launch_mode}; nodes={len(nodes)}; head_node={self.head_node}")
 
-            # Add RCCL library path
-            rccl_path = self.config.rccl.build_path
-            env["LD_LIBRARY_PATH"] = (
-                f"{rccl_path}/build/release/:/opt/rocm/lib:/opt/rocm/lib64:"
-                f"/opt/openmpi/lib:/opt/rccl-tests/build:$LD_LIBRARY_PATH"
-            )
-            env["rccl_path"] = rccl_path
+            base_env = self._build_base_env()
+            if base_env.get("AORTA_OVERRIDE_ARGS"):
+                log.info(f"Training overrides: {base_env['AORTA_OVERRIDE_ARGS']}")
 
-            # Build override arguments if any
-            override_args = ""
-            if self.config.training_overrides:
-                for key, value in self.config.training_overrides.items():
-                    override_args += f' --override {key}="{value}"'
+            if launch_mode == "script":
+                node = self.head_node
+                container = self._containers.get(node)
+                if not container:
+                    return RunResult(
+                        status=RunStatus.FAILED,
+                        start_time=start_time,
+                        end_time=time.time(),
+                        error_message=f"No container found for {node}",
+                    )
 
-            # Execute experiment script with streaming output for real-time feedback
-            # Note: override_args is passed via environment if the script supports it
-            if override_args:
-                env["AORTA_OVERRIDE_ARGS"] = override_args.strip()
-                log.info(f"Training overrides: {override_args.strip()}")
+                config_path = f"{self.config.container_mount_path}/{self.config.base_config}"
+                exp_cmd = f"bash {self.config.container_mount_path}/{self.config.experiment_script} {config_path}"
+                log.info(f"Running experiment: {exp_cmd}")
+                log.info("Streaming output (this may take several minutes)...")
 
-            # Pass the base config file to the experiment script
-            # launch_rocm.sh expects: CONFIG=${1:-default.yaml}
-            config_path = f"{self.config.container_mount_path}/{self.config.base_config}"
-            exp_cmd = f"bash {self.config.container_mount_path}/{self.config.experiment_script} {config_path}"
-            log.info(f"Running experiment: {exp_cmd}")
-            log.info("Streaming output (this may take several minutes)...")
-
-            exit_code, output = self._exec_in_container(
-                container,
-                exp_cmd,
-                environment=env,
-                stream=True,  # Stream output for real-time feedback
-            )
-
-            stdout_dict[node] = output
-            exit_codes[node] = exit_code
-
-            if exit_code != 0:
-                log.error(f"Experiment failed on {node} with exit code {exit_code}")
-                return RunResult(
-                    status=RunStatus.FAILED,
-                    start_time=start_time,
-                    end_time=time.time(),
-                    stdout=stdout_dict,
-                    exit_codes=exit_codes,
-                    error_message=f"Experiment exited with code {exit_code}",
+                exit_code, output = self._exec_in_container(
+                    container,
+                    exp_cmd,
+                    environment=base_env,
+                    stream=True,
                 )
+                stdout_dict[node] = output
+                exit_codes[node] = exit_code
+
+                if exit_code != 0:
+                    log.error(f"Experiment failed on {node} with exit code {exit_code}")
+                    return RunResult(
+                        status=RunStatus.FAILED,
+                        start_time=start_time,
+                        end_time=time.time(),
+                        stdout=stdout_dict,
+                        exit_codes=exit_codes,
+                        error_message=f"Experiment exited with code {exit_code}",
+                    )
+            else:
+                mn = self.config.multi_node
+                nnodes = len(nodes)
+                nproc_per_node = mn.nproc_per_node or self.config.gpus_per_node
+                master_addr = mn.master_addr or self.head_node
+                master_port = self._pick_master_port()
+
+                log.info(
+                    f"Disaggregated launch: nnodes={nnodes}, "
+                    f"nproc_per_node={nproc_per_node}, "
+                    f"master={master_addr}:{master_port}"
+                )
+
+                futures = {}
+                with ThreadPoolExecutor(max_workers=max(1, nnodes)) as executor:
+                    for rank, node in enumerate(nodes):
+                        cmd = self._build_torchrun_command(
+                            node_rank=rank,
+                            nnodes=nnodes,
+                            master_addr=master_addr,
+                            master_port=master_port,
+                            nproc_per_node=nproc_per_node,
+                        )
+                        fut = executor.submit(
+                            self._run_single_node,
+                            node=node,
+                            node_rank=rank,
+                            launch_cmd=cmd,
+                            env=base_env,
+                        )
+                        futures[fut] = (rank, node)
+
+                    for fut in as_completed(futures):
+                        rank, node = futures[fut]
+                        try:
+                            n, ec, out = fut.result()
+                        except Exception as e:
+                            log.exception(f"Node {node} (rank {rank}) raised: {e}")
+                            stdout_dict[node] = str(e)
+                            exit_codes[node] = -1
+                            continue
+                        stdout_dict[n] = out
+                        exit_codes[n] = ec
+
+                failed = {n: c for n, c in exit_codes.items() if c != 0}
+                if failed:
+                    log.error(f"Disaggregated run failed on {len(failed)}/{nnodes} nodes: {failed}")
+                    return RunResult(
+                        status=RunStatus.FAILED,
+                        start_time=start_time,
+                        end_time=time.time(),
+                        stdout=stdout_dict,
+                        exit_codes=exit_codes,
+                        error_message=(f"Disaggregated experiment failed on nodes: {sorted(failed.keys())}"),
+                    )
+
+                if mn.collect_traces:
+                    combined = self._collect_multi_node_traces(nodes)
+                    if combined is not None:
+                        artifacts["torch_traces"] = combined
+                        log.info(f"Combined per-node traces collected at {combined}")
 
             # Find torch_profiler directory - Aorta saves traces to output_dir/torch_profiler
             # The output_dir is configured in the YAML config (e.g., "overlap_debug_repro")
@@ -636,34 +1029,53 @@ class AortaRunner(BaseRunner):
             nch = self.config.environment.NCCL_MAX_NCHANNELS
             compute_ch = 256 - nch
 
-            trace_dir = None
-            output_dir = None
+            trace_dir: Optional[Path] = None
+            output_dir: Optional[Path] = None
+            trace_mtime: float = -1.0
 
-            # Search for torch_profiler directories in aorta_path (handles nested dirs like artifacts/*/torch_profiler)
+            if "torch_traces" in artifacts:
+                trace_dir = artifacts["torch_traces"]
+                output_dir = trace_dir.parent
+                # Multi-node combined_traces should win unless a fresher single-node tree
+                # is discovered below; seed mtime from this tree so the comparison is valid.
+                try:
+                    latest_file = max(
+                        trace_dir.glob("**/*"),
+                        key=lambda p: p.stat().st_mtime if p.is_file() else 0,
+                        default=None,
+                    )
+                    if latest_file is not None and latest_file.is_file():
+                        trace_mtime = latest_file.stat().st_mtime
+                    else:
+                        trace_mtime = trace_dir.stat().st_mtime
+                except (ValueError, OSError):
+                    trace_mtime = trace_dir.stat().st_mtime
+
+            # Search for torch_profiler directories in aorta_path (handles nested dirs like artifacts/*/torch_profiler).
+            # Skip anything inside the combined_traces tree we just collected so the
+            # original (older) per-node copies don't shadow the consolidated set.
+            combined_root = self.config.aorta_path / "combined_traces"
             for candidate in self.config.aorta_path.glob("**/torch_profiler"):
-                if candidate.is_dir():
-                    # Use the most recently modified one (check mtime of rank subdirs or files inside)
-                    try:
-                        # Get mtime of most recent file in the directory
-                        latest_file = max(
-                            candidate.glob("**/*"), key=lambda p: p.stat().st_mtime if p.is_file() else 0, default=None
-                        )
-                        candidate_mtime = (
-                            latest_file.stat().st_mtime
-                            if latest_file and latest_file.is_file()
-                            else candidate.stat().st_mtime
-                        )
-                    except (ValueError, OSError):
-                        candidate_mtime = candidate.stat().st_mtime
+                if not candidate.is_dir():
+                    continue
+                if combined_traces_in(candidate, combined_root):
+                    continue
+                try:
+                    latest_file = max(
+                        candidate.glob("**/*"), key=lambda p: p.stat().st_mtime if p.is_file() else 0, default=None
+                    )
+                    candidate_mtime = (
+                        latest_file.stat().st_mtime
+                        if latest_file and latest_file.is_file()
+                        else candidate.stat().st_mtime
+                    )
+                except (ValueError, OSError):
+                    candidate_mtime = candidate.stat().st_mtime
 
-                    if trace_dir is None:
-                        trace_dir = candidate
-                        output_dir = candidate.parent
-                        trace_mtime = candidate_mtime
-                    elif candidate_mtime > trace_mtime:
-                        trace_dir = candidate
-                        output_dir = candidate.parent
-                        trace_mtime = candidate_mtime
+                if trace_dir is None or candidate_mtime > trace_mtime:
+                    trace_dir = candidate
+                    output_dir = candidate.parent
+                    trace_mtime = candidate_mtime
 
             # Required artifact for host-side parsing: torch_traces (parse runs on host, not in container)
             if trace_dir and trace_dir.exists():
@@ -684,9 +1096,17 @@ class AortaRunner(BaseRunner):
 
             # Optional container_analysis_path: run TraceLens in container only if enabled and deps present.
             # Parsing/validation use host venv by default; container reports are consumed when present.
-            if self.config.analysis.enable_tracelens and trace_dir and trace_dir.exists():
+            # In multi-node mode the head node's container is used; the analysis scripts
+            # operate on traces under aorta_path which (for collected traces) is on the head node.
+            analysis_container = self._containers.get(self.head_node)
+            if (
+                self.config.analysis.enable_tracelens
+                and trace_dir
+                and trace_dir.exists()
+                and analysis_container is not None
+            ):
                 log.info("Container TraceLens analysis (optional): attempting in-container report generation")
-                analysis_result = self._run_tracelens_analysis(container, output_dir)
+                analysis_result = self._run_tracelens_analysis(analysis_container, output_dir)
                 if analysis_result:
                     artifacts["tracelens_analysis"] = analysis_result
                     log.info(f"Container TraceLens analysis completed: {analysis_result}")
@@ -694,16 +1114,23 @@ class AortaRunner(BaseRunner):
                     log.warning("Container TraceLens skipped or failed; host will parse raw traces")
 
             # Run GEMM analysis if enabled (optional, same as TraceLens)
-            if self.config.analysis.enable_gemm_analysis and trace_dir and trace_dir.exists():
-                gemm_result = self._run_gemm_analysis(container, output_dir)
+            if (
+                self.config.analysis.enable_gemm_analysis
+                and trace_dir
+                and trace_dir.exists()
+                and analysis_container is not None
+            ):
+                gemm_result = self._run_gemm_analysis(analysis_container, output_dir)
                 if gemm_result:
                     artifacts["gemm_analysis"] = gemm_result
                     log.info(f"GEMM analysis completed: {gemm_result}")
 
-            # Also collect training logs
-            log_file = self.config.aorta_path / f"training_{node}.log"
-            if log_file.exists():
-                artifacts["training_log"] = log_file
+            # Also collect training logs (best-effort, single-node legacy path)
+            for log_node in self.config.nodes:
+                log_file = self.config.aorta_path / f"training_{log_node}.log"
+                if log_file.exists():
+                    artifacts.setdefault("training_log", log_file)
+                    break
 
             return RunResult(
                 status=RunStatus.COMPLETED,
@@ -718,6 +1145,7 @@ class AortaRunner(BaseRunner):
                     "gpus_per_node": self.config.gpus_per_node,
                     "nccl_channels": nch,
                     "compute_channels": compute_ch,
+                    "launch_mode": launch_mode,
                 },
             )
 
