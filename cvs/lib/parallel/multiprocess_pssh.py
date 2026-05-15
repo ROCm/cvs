@@ -333,10 +333,16 @@ class MultiProcessPssh(Pssh):
             # Create subset of node_path_map for this shard
             shard_node_path_map = {h: node_path_map[h] for h in shard_hosts if h in node_path_map}
             if shard_node_path_map:
+                # Pass only hosts that have files to copy as the worker's host_list.
+                # parallel-ssh's copy_file requires len(copy_args) == len(hosts); passing
+                # the full chunk while node_path_map only covers a subset triggers
+                # HostArgumentError when not every host in the shard has a file (e.g.
+                # inter-group RDMA waves where only server- or client-role nodes upload).
+                upload_hosts = [h for h in shard_hosts if h in shard_node_path_map]
                 payloads.append(
                     self.sharder.create_payloads(
                         'upload_file_list',
-                        [shard_hosts],
+                        [upload_hosts],
                         self._shard_init_kwargs(),
                         node_path_map=shard_node_path_map,
                     )[0]

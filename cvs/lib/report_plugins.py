@@ -94,6 +94,24 @@ class HtmlReportManager:
         for section_name, section_content in report.sections:
             log_content.append(f"<h3>{section_name}</h3><pre>{section_content}</pre>")
 
+        # Preserve pytest's failure traceback (longrepr) so failed tests don't lose their root cause.
+        # The conftest's replace_table_html() blanks the inline log; without this, the traceback is lost.
+        if getattr(report, "failed", False):
+            longrepr_text = getattr(report, "longreprtext", "") or ""
+            if not longrepr_text:
+                lr = getattr(report, "longrepr", None)
+                if lr is not None:
+                    try:
+                        longrepr_text = str(lr)
+                    except Exception:
+                        longrepr_text = ""
+            if longrepr_text:
+                import html as _html
+                log_content.insert(
+                    0,
+                    f"<h3>Failure traceback (longrepr)</h3><pre>{_html.escape(longrepr_text)}</pre>",
+                )
+
         if log_content:
             # Persist a standalone html log page per test.
             log_path.write_text(
