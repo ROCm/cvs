@@ -11,7 +11,6 @@ import re
 import json
 
 
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 
 from cvs.lib import globals
@@ -22,12 +21,12 @@ log = globals.log
 # Importing additional cmd line args to script ..
 
 
-def detect_rocm_path(phdl, config_rocm_path):
+def detect_rocm_path(orch, config_rocm_path):
     """
     Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
 
     Args:
-        phdl: Parallel SSH handle
+        orch: Orchestrator instance
         config_rocm_path (str): Configured ROCm path from config file (empty string for auto-detect)
 
     Returns:
@@ -42,7 +41,7 @@ def detect_rocm_path(phdl, config_rocm_path):
     log.info('Auto-detecting ROCm path...')
 
     # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
-    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    out_dict = orch.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
     for node, output in out_dict.items():
         if output and '/opt/rocm/core-' in output:
             rocm_path = output.strip()
@@ -50,7 +49,7 @@ def detect_rocm_path(phdl, config_rocm_path):
             return rocm_path
 
     # Fall back to legacy /opt/rocm
-    out_dict = phdl.exec('test -d /opt/rocm && echo "/opt/rocm"')
+    out_dict = orch.exec('test -d /opt/rocm && echo "/opt/rocm"')
     for node, output in out_dict.items():
         if '/opt/rocm' in output:
             log.info('Detected ROCm path (legacy layout): /opt/rocm')
@@ -61,26 +60,26 @@ def detect_rocm_path(phdl, config_rocm_path):
     return '/opt/rocm'
 
 
-def detect_hip_compiler(phdl, rocm_path):
+def detect_hip_compiler(orch, rocm_path):
     """
     Detect the HIP compiler (hipcc or amdclang++) for the given ROCm installation.
 
     Args:
-        phdl: Parallel SSH handle
+        orch: Orchestrator instance
         rocm_path (str): ROCm installation path
 
     Returns:
         str: Full path to the HIP compiler
     """
     # Try hipcc first (ROCm 7.x)
-    out_dict = phdl.exec(f'test -f {rocm_path}/bin/hipcc && echo "{rocm_path}/bin/hipcc"')
+    out_dict = orch.exec(f'test -f {rocm_path}/bin/hipcc && echo "{rocm_path}/bin/hipcc"')
     for node, output in out_dict.items():
         if output and 'hipcc' in output:
             log.info(f'Detected HIP compiler: {rocm_path}/bin/hipcc')
             return f'{rocm_path}/bin/hipcc'
 
     # Fall back to amdclang++ (older ROCm versions)
-    out_dict = phdl.exec(f'test -f {rocm_path}/bin/amdclang++ && echo "{rocm_path}/bin/amdclang++"')
+    out_dict = orch.exec(f'test -f {rocm_path}/bin/amdclang++ && echo "{rocm_path}/bin/amdclang++"')
     for node, output in out_dict.items():
         if output and 'amdclang++' in output:
             log.info(f'Detected HIP compiler: {rocm_path}/bin/amdclang++')
@@ -170,72 +169,20 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-@pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    """
-    Build and return a parallel SSH handle (Pssh) for the head node only.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-
-    Returns:
-      Pssh: Handle configured for the first node (head node) in node_dict.
-
-    Notes:
-      - Useful when commands should be executed only from a designated head node.
-      - Module scope ensures a single connection context for the duration of the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-    """
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return shdl
-
-
-# Create connection to DUT, MTPs, Switches and export for later use ..
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    """
-    Create a parallel SSH handle for all cluster nodes.
-
-    Args:
-      cluster_dict (dict): Loaded cluster configuration with at least:
-        - node_dict: mapping of node -> details
-        - username: SSH username
-        - priv_key_file: path to SSH key
-
-    Returns:
-      Pssh: Handle that executes commands on all nodes and returns dict[node] -> output.
-
-    """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
-
-
-def test_install_transferbench(phdl, shdl, config_dict):
+def test_install_transferbench(orch, config_dict):
     """
     Install/Build TransferBench and verify installation on all nodes.
 
     Steps:
-      - Remove any stale working directory on the head node (if using shared/NFS paths).
-      - Clone TransferBench repo under git_install_path (via head-node hdl).
-      - Build on all nodes using CC=hipcc (via phdl).
-      - Verify '/opt/amd/transferbench' contains 'TransferBench' on each node.
+      - Ensure git_install_path exists on all nodes.
+      - Clone TransferBench repo under git_install_path on every node.
+      - Build on all nodes using detected ROCM_PATH and HIPCC.
+      - Verify the build artifact is present on each node.
 
-
-    Depending on the flag nfs_install in the config_file, decide if you want to use shdl (single node)
-    or all nodes (phdl)
-    If the nfs_install flag is set to True, then it assumes the install_dir is on a common file system
-    that is accessible from all the nodes and installs from just a single node, otherwise install on
-    all the nodes.
+    Clone, build, and verify all run on every node via ``orch.exec``.
 
     Args:
-      hdl: Head-node SSH handle
-      phdl: Parallel SSH handle for all nodes.
+      orch: Orchestrator instance.
       config_dict (dict): Includes:
         - git_install_path: directory to clone/build
         - git_url: repository URL
@@ -243,35 +190,29 @@ def test_install_transferbench(phdl, shdl, config_dict):
 
     globals.error_list = []
 
-    # For install case, if the systems are using NFS, use single connection to
-    if config_dict['nfs_install'] is True:
-        hdl = shdl
-    else:
-        hdl = phdl
-
     log.info('Testcase install transferbench')
     git_install_path = config_dict['git_install_path']
     git_url = config_dict['git_url']
 
-    out_dict = shdl.exec(f'ls -ld {git_install_path}')
+    out_dict = orch.exec(f'ls -ld {git_install_path}')
     for node in out_dict.keys():
         if re.search('No such file', out_dict[node]):
-            hdl.exec(f'mkdir -p {git_install_path}')
+            orch.exec(f'mkdir -p {git_install_path}')
 
-    out_dict = hdl.exec(f'rm -rf {git_install_path}/TransferBench')
-    out_dict = hdl.exec(f'cd {git_install_path};git clone {git_url}', timeout=120)
+    out_dict = orch.exec(f'rm -rf {git_install_path}/TransferBench')
+    out_dict = orch.exec(f'cd {git_install_path};git clone {git_url}', timeout=120)
 
     # Detect ROCm path and compiler
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    hip_compiler = detect_hip_compiler(phdl, rocm_path)
+    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
+    hip_compiler = detect_hip_compiler(orch, rocm_path)
 
     # Build with explicit ROCM_PATH and HIPCC
-    out_dict = hdl.exec(
+    out_dict = orch.exec(
         f'cd {git_install_path}/TransferBench;ROCM_PATH={rocm_path} HIPCC={hip_compiler} make', timeout=500
     )
 
     # Verify installation happened fine on all nodes
-    out_dict = phdl.exec(f'ls -l {git_install_path}/TransferBench')
+    out_dict = orch.exec(f'ls -l {git_install_path}/TransferBench')
     for node in out_dict.keys():
         if not re.search('TransferBench', out_dict[node]):
             fail_test(f'Transfer bench installation failed on node {node}')
