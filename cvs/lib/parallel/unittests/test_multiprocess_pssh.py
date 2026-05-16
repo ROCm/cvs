@@ -32,6 +32,11 @@ class TestMultiProcessPsshInitialization(unittest.TestCase):
         self.assertFalse(pssh._use_process_sharding)
         # But pssh instance should always exist
         self.assertTrue(hasattr(pssh, 'pssh'))
+        # Regression guard for AIMVT-183: the non-sharded branch must expose
+        # host_list on the wrapper, matching _init_sharded. Callers like
+        # megatron_training_lib / jax_training_lib / mori_lib / inference.base
+        # read phdl.host_list directly.
+        self.assertEqual(pssh.host_list, small_host_list)
 
     @patch('cvs.lib.parallel.multiprocess_pssh.MultiProcessPssh._init_sharded')
     @patch('cvs.lib.parallel.multiprocess_pssh.PsshSharder')

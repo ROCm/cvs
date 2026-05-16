@@ -70,6 +70,10 @@ class MultiProcessPssh(ShardableSshInterface):
             self._use_process_sharding = False
             # Ensure attributes needed by _shard_init_kwargs are available
             self.env_vars = env_vars
+            # Expose host_list publicly so callers (e.g. megatron/jax training libs,
+            # workload tests doing phdl.host_list[0]) work regardless of which init
+            # path was taken. Mirrors _init_sharded.
+            self.host_list = list(host_list) if host_list is not None else []
 
     def _init_sharded(
         self,
