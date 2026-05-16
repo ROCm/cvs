@@ -27,7 +27,6 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
             "install_dir": "/home/{user-id}/INSTALL/agfhc/",
             "_comments_log_dir": "log_dir has to be a NON NFS local file system",
             "log_dir": "/root/agfhc_logs",
-            "nfs_install": "True",
             "hbm_test_duration": "00:01:30"
         },
         "transferbench":
@@ -183,9 +182,6 @@ AGFHC
    * - ``log_dir``
      - ``/root/agfhc_logs``
      - Log directory
-   * - ``nfs_install``
-     - True
-     - Set the flag to install nfs
    * - ``hbm_test_duration``
      - 00:01:30
      - HBM test duration
