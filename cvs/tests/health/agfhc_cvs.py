@@ -10,7 +10,6 @@ import pytest
 import re
 import json
 
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import globals
@@ -20,7 +19,6 @@ log = globals.log
 
 # NOTE: This module assumes the following symbols are available in scope:
 # - log: a configured logger
-# - Pssh: parallel SSH helper class
 # - fail_test: helper that records/logs a failure (and may raise)
 # - update_test_result: helper to finalize a test's pass/fail status
 # - print_test_output: helper to pretty-print per-node command output
@@ -109,31 +107,8 @@ def scan_agfc_results(out_dict):
             fail_test(f'Test failed on node {host} - FAIL or ERROR or ABORT patterns seen')
 
 
-# Create connection to DUTs and export for later use ..
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    """
-    Build a parallel SSH handle to all nodes in the cluster.
-
-    Returns:
-    Pssh: A handle to execute commands across all nodes.
-    """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(
-        log,
-        node_list,
-        user=cluster_dict['username'],
-        pkey=cluster_dict['priv_key_file'],
-        stop_on_errors=False,
-        env_vars=env_vars,
-    )
-    return phdl
-
-
 def test_agfhc_hbm(
-    phdl,
+    orch,
     config_dict,
 ):
     """
@@ -155,7 +130,7 @@ def test_agfhc_hbm(
     path = config_dict['path']
     duration = convert_hms_to_secs(config_dict['hbm_test_duration'])
     (hours, mins, secs) = config_dict['hbm_test_duration'].split(":")
-    out_dict = phdl.exec(f'sudo {path}/agfhc -t hbm:d={hours}h{mins}m{secs}s --simple-output', timeout=duration + 120)
+    out_dict = orch.exec(f'sudo {path}/agfhc -t hbm:d={hours}h{mins}m{secs}s --simple-output', timeout=duration + 120)
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
@@ -163,7 +138,7 @@ def test_agfhc_hbm(
 
 # 2 hrs
 def test_agfhc_hbm1_lvl5(
-    phdl,
+    orch,
     config_dict,
 ):
     """
@@ -177,7 +152,7 @@ def test_agfhc_hbm1_lvl5(
     globals.error_list = []
     log.info('Testcase Run HBM1 Test - hbm_lvl5')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm1 -r hbm_lvl5', timeout=(60 * 300))
+    out_dict = orch.exec(f'sudo {path}/agfhc -s hbm1 -r hbm_lvl5', timeout=(60 * 300))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
@@ -185,7 +160,7 @@ def test_agfhc_hbm1_lvl5(
 
 # 2 hrs
 def test_agfhc_hbm2_lvl5(
-    phdl,
+    orch,
     config_dict,
 ):
     """
@@ -196,7 +171,7 @@ def test_agfhc_hbm2_lvl5(
     globals.error_list = []
     log.info('Testcase Run HBM2 Test - hbm_lvl5')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm2 -r hbm_lvl5', timeout=(60 * 300))
+    out_dict = orch.exec(f'sudo {path}/agfhc -s hbm2 -r hbm_lvl5', timeout=(60 * 300))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
@@ -204,7 +179,7 @@ def test_agfhc_hbm2_lvl5(
 
 # 30 min
 def test_agfhc_hbm3_lvl3(
-    phdl,
+    orch,
     config_dict,
 ):
     """
@@ -215,14 +190,14 @@ def test_agfhc_hbm3_lvl3(
     globals.error_list = []
     log.info('Testcase Run HBM3 Test - hbm_lvl3')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -s hbm3 -r hbm_lvl3', timeout=(60 * 100))
+    out_dict = orch.exec(f'sudo {path}/agfhc -s hbm3 -r hbm_lvl3', timeout=(60 * 100))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
 def test_agfhc_dma_all_lvl1(
-    phdl,
+    orch,
     config_dict,
 ):
     """
@@ -233,14 +208,14 @@ def test_agfhc_dma_all_lvl1(
     globals.error_list = []
     log.info('Testcase Run all_lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r all_lvl1', timeout=(60 * 30))
+    out_dict = orch.exec(f'sudo {path}/agfhc -r all_lvl1', timeout=(60 * 30))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
 def test_agfhc_dma_lvl1(
-    phdl,
+    orch,
     config_dict,
 ):
     """
@@ -251,14 +226,14 @@ def test_agfhc_dma_lvl1(
     globals.error_list = []
     log.info('Testcase Run DMA lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r dma_lvl1', timeout=(60 * 30))
+    out_dict = orch.exec(f'sudo {path}/agfhc -r dma_lvl1', timeout=(60 * 30))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
 def test_agfhc_gfx_lvl1(
-    phdl,
+    orch,
     config_dict,
 ):
     """
@@ -269,21 +244,21 @@ def test_agfhc_gfx_lvl1(
     globals.error_list = []
     log.info('Testcase Run GFX lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r gfx_lvl1', timeout=(60 * 60))
+    out_dict = orch.exec(f'sudo {path}/agfhc -r gfx_lvl1', timeout=(60 * 60))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
 def test_agfhc_pcie_lvl1(
-    phdl,
+    orch,
     config_dict,
 ):
     """
     Pytest: Run the AGFHC PCIe level-1 recipe on all nodes and validate results.
 
     Args:
-      phdl: Parallel SSH/process handle able to execute commands across cluster nodes.
+      orch: Parallel SSH/process handle able to execute commands across cluster nodes.
       config_dict (dict): Test configuration that must include:
         - 'path': directory where the agfhc binary is installed.
 
@@ -296,26 +271,26 @@ def test_agfhc_pcie_lvl1(
     Assumptions:
       - scan_agfc_results, print_test_output, update_test_result are available in scope.
       - config_dict['path'] is valid on each node.
-      - phdl.exec(cmd, timeout) returns a dict mapping node -> stdout/stderr string.
+      - orch.exec(cmd, timeout) returns a dict mapping node -> stdout/stderr string.
     """
     globals.error_list = []
     log.info('Testcase Run PCIe lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl1', timeout=(60 * 60))
+    out_dict = orch.exec(f'sudo {path}/agfhc -r pcie_lvl1', timeout=(60 * 60))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
 def test_agfhc_pcie_lvl3(
-    phdl,
+    orch,
     config_dict,
 ):
     """
     Pytest: Run the AGFHC PCIe level-3 recipe on all nodes and validate results.
 
     Args:
-      phdl: Parallel SSH handle for remote command execution.
+      orch: Parallel SSH handle for remote command execution.
       config_dict (dict): Includes 'path' to the agfhc binary.
 
     Behavior:
@@ -327,21 +302,21 @@ def test_agfhc_pcie_lvl3(
     globals.error_list = []
     log.info('Testcase Run PCIe lvl3')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r pcie_lvl3', timeout=(60 * 60))
+    out_dict = orch.exec(f'sudo {path}/agfhc -r pcie_lvl3', timeout=(60 * 60))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
 def test_agfhc_xgmi_lvl1(
-    phdl,
+    orch,
     config_dict,
 ):
     """
     Pytest: Run the AGFHC XGMI level-1 recipe and validate outputs.
 
     Args:
-      phdl: Parallel SSH handle.
+      orch: Parallel SSH handle.
       config_dict (dict): Includes 'path' to agfhc.
 
     Behavior:
@@ -353,21 +328,21 @@ def test_agfhc_xgmi_lvl1(
     globals.error_list = []
     log.info('Testcase Run XGMI lvl1')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r xgmi_lvl1', timeout=(60 * 90))
+    out_dict = orch.exec(f'sudo {path}/agfhc -r xgmi_lvl1', timeout=(60 * 90))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
 def test_agfhc_all_perf(
-    phdl,
+    orch,
     config_dict,
 ):
     """
     Pytest: Run the AGFHC 'all_perf' performance recipe across nodes.
 
     Args:
-      phdl: Parallel SSH handle.
+      orch: Parallel SSH handle.
       config_dict (dict): Must include 'path'.
 
     Behavior:
@@ -379,21 +354,21 @@ def test_agfhc_all_perf(
     globals.error_list = []
     log.info('Testcase Run all_perf')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -r all_perf', timeout=(60 * 90))
+    out_dict = orch.exec(f'sudo {path}/agfhc -r all_perf', timeout=(60 * 90))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
 
 
 def test_agfhc_all_lvl5(
-    phdl,
+    orch,
     config_dict,
 ):
     """
     Pytest: Query/validate the AGFHC 'all_lvl5' recipe information.
 
     Args:
-      phdl: Parallel SSH handle.
+      orch: Parallel SSH handle.
       config_dict (dict): Must include 'path'.
 
     Behavior:
@@ -403,7 +378,7 @@ def test_agfhc_all_lvl5(
     """
     log.info('Testcase all lvl5')
     path = config_dict['path']
-    out_dict = phdl.exec(f'sudo {path}/agfhc --recipe-info all_lvl5', timeout=(60 * 260))
+    out_dict = orch.exec(f'sudo {path}/agfhc --recipe-info all_lvl5', timeout=(60 * 260))
     scan_agfc_results(out_dict)
     print_test_output(log, out_dict)
     update_test_result()
@@ -411,10 +386,10 @@ def test_agfhc_all_lvl5(
 
 # 180m
 # @pytest.mark.dependency(depends=["init"])
-# def test_agfhc_rochpl(phdl, config_dict, ):
+# def test_agfhc_rochpl(orch, config_dict, ):
 #    log.info('Testcase rochpl for 180 min')
 #    path = config_dict['path']
-#    out_dict = phdl.exec(f'sudo {path}/agfhc rochpl:d=180m', timeout=(60*650))
+#    out_dict = orch.exec(f'sudo {path}/agfhc rochpl:d=180m', timeout=(60*650))
 #    scan_agfc_results(out_dict)
 #    print_test_output(log, out_dict)
 #    update_test_result()
