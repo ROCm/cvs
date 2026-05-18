@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import pytest
 
+import os
 import re
 import time
 import json
@@ -114,14 +115,32 @@ def test_install_agfhc(
             log.info(f'Install directory {install_dir} does not exist, creating')
             orch.exec(f'mkdir -p {install_dir}')
 
-    # Copy the package to the install directory and untar
-    orch.exec(f'cd {install_dir};cp {package_tar_ball} . && tar -xvf {package_tar_ball}')
+    # Copy the package to the install directory and untar. One logical
+    # operation per orch.exec so that ContainerOrchestrator's docker-exec
+    # transport (which doesn't spawn a shell) handles them correctly. Absolute
+    # paths replace what used to be `cd <dir>; cp ...` chains.
+    orch.exec(f'cp {package_tar_ball} {install_dir}')
+    tarball_basename = os.path.basename(package_tar_ball)
+    orch.exec(f'tar -xvf {install_dir}/{tarball_basename} -C {install_dir}')
 
     time.sleep(10)
 
-    # install the untarred file
+    # install the untarred file. AGFHC's `./install` is a relative-cwd
+    # script (reads sibling files via relative paths) so cwd MUST be
+    # install_dir; we wrap that single call in `bash -c` explicitly to make
+    # the cwd dependency visible at the call site rather than smuggling it
+    # in via a `cd X; cmd` shell chain.
+    #
+    # --rocm-tar uses dpkg-deb direct extraction instead of apt-based dep
+    # resolution. Required when /opt/rocm came from a TheRock tarball
+    # (libs not tracked by dpkg, apt fails with "rocm-device-libs / hipcc /
+    # lib32gcc-s1 not installable"). Safe on apt-rocm systems too: dpkg-deb
+    # just extracts the bundled debs into /, which is correct either way.
     try:
-        out_dict = orch.exec(f'cd {install_dir};sudo ./install', timeout=90)
+        out_dict = orch.exec(
+            f"sudo bash -c 'cd {install_dir} && ./install --rocm-tar'",
+            timeout=90,
+        )
         for node in out_dict.keys():
             log.info("%s", out_dict[node])
             if re.search('Error|No such file', out_dict[node], re.I):
