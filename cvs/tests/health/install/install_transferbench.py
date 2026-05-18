@@ -40,18 +40,24 @@ def detect_rocm_path(orch, config_rocm_path):
     # Auto-detect ROCm path
     log.info('Auto-detecting ROCm path...')
 
-    # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
-    out_dict = orch.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y). Wrapped in
+    # `bash -c` because we need glob expansion, stderr redirect and a pipeline
+    # to pick the highest-versioned core dir; ContainerOrchestrator's
+    # docker-exec transport does not spawn a shell on its own.
+    out_dict = orch.exec(
+        "bash -c 'ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1'",
+    )
     for node, output in out_dict.items():
         if output and '/opt/rocm/core-' in output:
             rocm_path = output.strip()
             log.info(f'Detected ROCm path (new layout): {rocm_path}')
             return rocm_path
 
-    # Fall back to legacy /opt/rocm
-    out_dict = orch.exec('test -d /opt/rocm && echo "/opt/rocm"')
-    for node, output in out_dict.items():
-        if '/opt/rocm' in output:
+    # Fall back to legacy /opt/rocm. One logical operation per orch.exec:
+    # use exit code rather than a `test ... && echo` shell short-circuit.
+    out_dict = orch.exec('test -d /opt/rocm', detailed=True)
+    for node, info in out_dict.items():
+        if info.get('exit_code') == 0:
             log.info('Detected ROCm path (legacy layout): /opt/rocm')
             return '/opt/rocm'
 
@@ -71,17 +77,18 @@ def detect_hip_compiler(orch, rocm_path):
     Returns:
         str: Full path to the HIP compiler
     """
-    # Try hipcc first (ROCm 7.x)
-    out_dict = orch.exec(f'test -f {rocm_path}/bin/hipcc && echo "{rocm_path}/bin/hipcc"')
-    for node, output in out_dict.items():
-        if output and 'hipcc' in output:
+    # Try hipcc first (ROCm 7.x). One logical operation per orch.exec:
+    # use the test(1) exit code rather than a `test ... && echo` chain.
+    out_dict = orch.exec(f'test -f {rocm_path}/bin/hipcc', detailed=True)
+    for node, info in out_dict.items():
+        if info.get('exit_code') == 0:
             log.info(f'Detected HIP compiler: {rocm_path}/bin/hipcc')
             return f'{rocm_path}/bin/hipcc'
 
-    # Fall back to amdclang++ (older ROCm versions)
-    out_dict = orch.exec(f'test -f {rocm_path}/bin/amdclang++ && echo "{rocm_path}/bin/amdclang++"')
-    for node, output in out_dict.items():
-        if output and 'amdclang++' in output:
+    # Fall back to amdclang++ (older ROCm versions).
+    out_dict = orch.exec(f'test -f {rocm_path}/bin/amdclang++', detailed=True)
+    for node, info in out_dict.items():
+        if info.get('exit_code') == 0:
             log.info(f'Detected HIP compiler: {rocm_path}/bin/amdclang++')
             return f'{rocm_path}/bin/amdclang++'
 
@@ -200,15 +207,23 @@ def test_install_transferbench(orch, config_dict):
             orch.exec(f'mkdir -p {git_install_path}')
 
     out_dict = orch.exec(f'rm -rf {git_install_path}/TransferBench')
-    out_dict = orch.exec(f'cd {git_install_path};git clone {git_url}', timeout=120)
+    # Clone with explicit destination, no cwd dependency.
+    out_dict = orch.exec(
+        f'git clone {git_url} {git_install_path}/TransferBench', timeout=120,
+    )
 
     # Detect ROCm path and compiler
     rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
     hip_compiler = detect_hip_compiler(orch, rocm_path)
 
-    # Build with explicit ROCM_PATH and HIPCC
+    # Build with explicit ROCM_PATH and HIPCC. The TransferBench Makefile
+    # uses cwd-relative paths so cwd MUST be the source tree; we wrap the
+    # build in `bash -c` explicitly to make the cwd dependency visible
+    # at the call site rather than via an implicit `cd X; cmd` chain.
+    tb_src = f'{git_install_path}/TransferBench'
     out_dict = orch.exec(
-        f'cd {git_install_path}/TransferBench;ROCM_PATH={rocm_path} HIPCC={hip_compiler} make', timeout=500
+        f"bash -c 'cd {tb_src} && ROCM_PATH={rocm_path} HIPCC={hip_compiler} make'",
+        timeout=500,
     )
 
     # Verify installation happened fine on all nodes
