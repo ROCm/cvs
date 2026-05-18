@@ -64,11 +64,14 @@ def detect_rocm_path(orch, config_rocm_path):
     Returns:
         str: Detected ROCm path
     """
-    # If rocm_path is explicitly configured, validate and use it
+    # If rocm_path is explicitly configured, validate and use it. The validation
+    # is a glob+pipe pipeline (does {path}/lib exist AND does it contain a
+    # libamdhip64.so*?), wrapped in explicit `bash -c` because
+    # ContainerOrchestrator's docker-exec transport does not spawn a shell.
     if config_rocm_path and config_rocm_path != '<changeme>':
-        # Validate the configured path exists
         out_dict = orch.exec(
-            f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+            f"bash -c 'test -d {config_rocm_path}/lib"
+            f" && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'"
         )
         for node, output in out_dict.items():
             if output.strip() and 'libamdhip64.so' in output:
@@ -82,14 +85,18 @@ def detect_rocm_path(orch, config_rocm_path):
     # Auto-detect ROCm path
     log.info('Auto-detecting ROCm path...')
 
-    # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
-    out_dict = orch.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y). Glob+pipe wrapped
+    # in explicit `bash -c`; same rationale as the configured-path probe above.
+    out_dict = orch.exec(
+        "bash -c 'ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1'"
+    )
     for node, output in out_dict.items():
         if output and '/opt/rocm/core-' in output:
             rocm_path = output.strip()
             # Validate it has the library
             validate_dict = orch.exec(
-                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+                f"bash -c 'test -d {rocm_path}/lib"
+                f" && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'"
             )
             for _, lib_output in validate_dict.items():
                 if lib_output.strip() and 'libamdhip64.so' in lib_output:
@@ -97,7 +104,10 @@ def detect_rocm_path(orch, config_rocm_path):
                     return rocm_path
 
     # Fall back to legacy /opt/rocm
-    out_dict = orch.exec('test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1')
+    out_dict = orch.exec(
+        "bash -c 'test -d /opt/rocm/lib"
+        " && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1'"
+    )
     for node, output in out_dict.items():
         if output.strip() and 'libamdhip64.so' in output:
             log.info('Detected ROCm path (legacy layout): /opt/rocm')
