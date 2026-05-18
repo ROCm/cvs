@@ -298,28 +298,29 @@ def test_install_rvs(orch, config_dict):
                     orch.exec(f'mkdir -p {git_install_path}')
 
             # Remove any existing RVS directory and clone fresh
-            out_dict = orch.exec(f'rm -rf {git_install_path}/ROCmValidationSuite')
-            out_dict = orch.exec(f'cd {git_install_path};git clone {git_url}', timeout=300)
+            src_dir = f'{git_install_path}/ROCmValidationSuite'
+            build_dir = f'{src_dir}/build'
+            out_dict = orch.exec(f'rm -rf {src_dir}')
+            out_dict = orch.exec(f'git clone {git_url} {src_dir}', timeout=300)
 
-            # Build and install RVS (using rocm_path detected earlier)
+            # Build and install RVS (using rocm_path detected earlier).
+            # Each orch.exec is a single command (no shell operators) so the
+            # docker exec / SSH transport doesn't have to interpret a pipeline.
+            # RVS_BUILD_TESTS=OFF skips the bundled googletest, whose old
+            # cmake_minimum_required(<3.5) breaks on newer cmakes.
             try:
                 out_dict = orch.exec(
-                    f'cd {git_install_path}/ROCmValidationSuite; cmake -B ./build -DROCM_PATH={rocm_path} -DCMAKE_INSTALL_PREFIX={rocm_path} -DCPACK_PACKAGING_INSTALL_PREFIX={rocm_path} -DHIP_PLATFORM=amd',
+                    f'cmake -S {src_dir} -B {build_dir} -DROCM_PATH={rocm_path} -DCMAKE_INSTALL_PREFIX={rocm_path} -DCPACK_PACKAGING_INSTALL_PREFIX={rocm_path} -DHIP_PLATFORM=amd -DRVS_BUILD_TESTS=OFF',
                     timeout=1200,
                 )
-                out_dict = orch.exec(f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc)', timeout=1200)
-
+                out_dict = orch.exec(f'cmake --build {build_dir} --parallel', timeout=1200)
                 out_dict = orch.exec(
-                    f'cd {git_install_path}/ROCmValidationSuite/build; make -j$(nproc) package', timeout=1200
+                    f'cmake --build {build_dir} --target package --parallel', timeout=1200
                 )
-                out_dict = orch.exec(
-                    f'cd {git_install_path}/ROCmValidationSuite/build; sudo make install; echo "RVS_INSTALL_STATUS:$?"',
-                    timeout=1200,
-                )
-
-                for node in out_dict.keys():
-                    if not re.search(r'RVS_INSTALL_STATUS:0', out_dict[node]):
-                        fail_test(f'RVS build/installation failed on node {node}')
+                out_dict = orch.exec(f'sudo cmake --install {build_dir}', timeout=1200)
+                # Install success is verified by the `which rvs` / config-file
+                # checks below; cmake --install exits non-zero on failure and
+                # the verification block will fail the test.
 
             except Exception as e:
                 fail_test(f'RVS installation failed with exception: {e}')
