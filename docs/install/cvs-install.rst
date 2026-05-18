@@ -144,7 +144,7 @@ The cluster file is a JSON file containing the cluster's IP addresses. You must 
      cvs copy-config cluster.json --output ~/my_cluster.json
 
 2. Edit the management IP (``"mgmt_ip"``) and node dictionary (``"node_dict"``) with the list of IPs of your cluster.
-3. Ensure the user-id (``"{user-id}"``) and ``priv_key_file`` match your setup.
+3. Ensure the user-id (``"{user-id}"``) and ``priv_key_file`` match your setup. The sample ``priv_key_file`` assumes home is ``/home/<username>``; if your site uses a different layout (for example ``/home/ORG/<user>``), set ``priv_key_file`` to the real key path. Resolving ``{user-id}`` in ``username`` does not fix a wrong key path.
 
 Here's a code snippet of the ``cluster.json`` file for reference:
 
