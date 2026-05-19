@@ -17,11 +17,7 @@ err_patterns_dict = {
     'crash': 'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|fault ',
     'test_fail': 'Test failure',
     'fault': 'no-retry page fault|Illegal register access|PROTECTION_FAULT_STATUS',
-    # Note: 'Runlist is getting oversubscribed' and 'Expect reduced ROCm performance'
-    # are amdgpu kernel info-level messages (not errors). They fire routinely on
-    # large multi-rank RCCL runs whenever HSA queue count exceeds the runlist
-    # size, even when the run itself is healthy. Excluded from failure matching.
-    'driver': 'Queue preemption failed for queue|Failed to evict process queues|No more SDMA queue to allocate|amdgpu: process pid',
+    'driver': 'Queue preemption failed for queue|Failed to evict process queues|Runlist is getting oversubscribed|No more SDMA queue to allocate|Expect reduced ROCm performance|amdgpu: process pid',
     'hardware': 'hardware error|hardware fail|ras error|uncorrectable|correctable err',
     'network': 'NIC Link is Down|link is down|ib_uverb|CQE|queue catastrophic|CQ error',
 }

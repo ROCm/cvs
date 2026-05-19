@@ -643,11 +643,10 @@ def rccl_regression(
     for node in vpc_node_list:
         host_file_params = f'{host_file_params}{node} slots={proc_per_node}\n'
 
-    hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
-    cmd = f'rm -f {hosts_file_path}'
+    cmd = 'sudo rm -f /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
-    cmd = f'echo "{host_file_params}" > {hosts_file_path}'
+    cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
     # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
@@ -701,7 +700,7 @@ def rccl_regression(
     cmd = f'''{mpi_dir}/bin/mpirun \
         --allow-run-as-root \
         -np {no_of_global_ranks} \
-        --hostfile {hosts_file_path} \
+        --hostfile /tmp/rccl_hosts_file.txt \
         --bind-to numa \
         {ucx_params} \
         --mca btl ^vader,openib \
@@ -827,11 +826,10 @@ def rccl_perf(
     for node in vpc_node_list:
         host_file_params = f'{host_file_params}' + f'{node} slots={proc_per_node}\n'
 
-    hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
-    cmd = f'rm -f {hosts_file_path}'
+    cmd = 'sudo rm -f /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
-    cmd = f'echo "{host_file_params}" > {hosts_file_path}'
+    cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
     # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
@@ -889,7 +887,7 @@ def rccl_perf(
         # Build mpirun command
         cmd = f'''{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
-        --hostfile {hosts_file_path} \
+        --hostfile /tmp/rccl_hosts_file.txt \
         --bind-to numa \
         {ucx_params} \
         --mca btl ^vader,openib \
