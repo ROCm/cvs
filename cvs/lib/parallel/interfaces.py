@@ -32,6 +32,11 @@ class ShardableSshInterface(ABC):
         pass
 
     @abstractmethod
+    def upload_file_list(self, node_path_map):
+        """Upload different files to different hosts - must support sharding for performance."""
+        pass
+
+    @abstractmethod
     def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_'):
         """Download file via SFTP - must support sharding for performance."""
         pass
