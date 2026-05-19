@@ -54,7 +54,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.all = MagicMock()
         orch.all.exec.return_value = {"10.0.0.1": "ok", "10.0.0.2": "ok"}
         result = orch.exec("ls", timeout=5)
-        orch.all.exec.assert_called_once_with("ls", timeout=5)
+        orch.all.exec.assert_called_once_with("ls", timeout=5, detailed=False)
         self.assertEqual(result, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
@@ -63,7 +63,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.head = MagicMock()
         orch.head.exec.return_value = {"10.0.0.1": "ok"}
         result = orch.exec_on_head("hostname", timeout=10)
-        orch.head.exec.assert_called_once_with("hostname", timeout=10)
+        orch.head.exec.assert_called_once_with("hostname", timeout=10, detailed=False)
         self.assertEqual(result, {"10.0.0.1": "ok"})
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
