@@ -314,9 +314,7 @@ def test_install_rvs(orch, config_dict):
                     timeout=1200,
                 )
                 out_dict = orch.exec(f'cmake --build {build_dir} --parallel', timeout=1200)
-                out_dict = orch.exec(
-                    f'cmake --build {build_dir} --target package --parallel', timeout=1200
-                )
+                out_dict = orch.exec(f'cmake --build {build_dir} --target package --parallel', timeout=1200)
                 out_dict = orch.exec(f'sudo cmake --install {build_dir}', timeout=1200)
                 # Install success is verified by the `which rvs` / config-file
                 # checks below; cmake --install exits non-zero on failure and
