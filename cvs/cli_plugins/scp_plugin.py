@@ -18,7 +18,8 @@ class ScpPlugin(SubcommandPlugin):
         parser.add_argument("--dest", help="Remote destination path (defaults to same as source)")
         parser.add_argument("--recurse", action="store_true", help="Copy directories recursively")
         parser.add_argument(
-            "--cluster_file", help="Path to cluster configuration JSON file (overrides CLUSTER_FILE env var)"
+            "--cluster_file",
+            help="Path to cluster configuration JSON file (takes precedence over CLUSTER_FILE env var)",
         )
         parser.add_argument("--parallel", type=int, default=20, help="Number of parallel SCP operations (default: 20)")
         parser.set_defaults(_plugin=self)
@@ -31,7 +32,7 @@ SCP Commands:
   cvs scp --file /local/file.txt --dest /remote/file.txt                Copy file to specific remote path
   cvs scp --file /local/dir --dest /remote/dir --recurse                Copy directory recursively
   cvs scp --file /path/to/file.txt --parallel 10                        Use 10 parallel SCP operations
-  CLUSTER_FILE=cluster.json cvs scp --file /path/to/file.txt            Use env var for cluster file"""
+  CLUSTER_FILE=cluster.json cvs scp --file /path/to/file.txt            Use env var for cluster file (fallback)"""
 
     def copy_file_to_host(self, log, host, username, pkey, local_file, remote_path, recurse=False):
         """Copy file to a single host via SCP."""
@@ -43,8 +44,9 @@ SCP Commands:
             return f"{host}: FAILED - {str(e)}"
 
     def run(self, args):
-        # Determine cluster file: env var takes precedence, then --cluster_file
-        cluster_file = os.environ.get('CLUSTER_FILE') or args.cluster_file
+        # CLI flag wins; env var is the fallback. Matches cvs exec and
+        # cvs monitor check_cluster_health for consistency.
+        cluster_file = args.cluster_file or os.environ.get('CLUSTER_FILE')
         if not cluster_file:
             print("Error: No cluster file specified. Set CLUSTER_FILE environment variable or use --cluster_file.")
             sys.exit(1)

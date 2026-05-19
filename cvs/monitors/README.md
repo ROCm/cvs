@@ -22,32 +22,82 @@ napshot of all counters (GPU/NIC) while your training/inference workloads are in
 
 ### Usage for Cluster Health Checker
 
+The Cluster Health Checker consumes the same `--cluster_file` JSON used by
+`cvs run`, `cvs exec`, and `cvs scp` (see [`cvs/input/cluster_file/README.md`](../input/cluster_file/README.md)
+for the schema). The node list, SSH username, and private key are all read
+from the cluster file - no separate hosts file or credentials need to be
+passed on the CLI.
+
+Just like `cvs exec` and `cvs scp`, the cluster file can be supplied either
+via `--cluster_file <path>` or by exporting `CLUSTER_FILE=<path>` once per
+shell. An explicit `--cluster_file` flag always wins over the env var, so
+you can `export CLUSTER_FILE=...` once for the common case and still
+override it on a single invocation by passing `--cluster_file` on the CLI.
 
 ```
-(myenv) [ubuntu-host]~/cvs:(main)$
-(myenv) [ubuntu-host]~/cvs:(main)$python3 ./cvs/monitors/check_cluster_health.py -h
-usage: check_cluster_health.py [-h] --hosts_file HOSTS_FILE --username USERNAME (--password PASSWORD | --key_file KEY_FILE)
-                               [--iterations ITERATIONS] [--time_between_iters TIME_BETWEEN_ITERS] [--report_file REPORT_FILE]
+(myenv) [ubuntu-host]~/cvs:(main)$ cvs monitor check_cluster_health --help
+usage: cvs monitor check_cluster_health [-h] (--cluster_file CLUSTER_FILE | --hosts_file HOSTS_FILE)
+                                        [--username USERNAME] [--password PASSWORD] [--key_file KEY_FILE]
+                                        [--iterations ITERATIONS] [--time_between_iters TIME_BETWEEN_ITERS]
+                                        [--report_file REPORT_FILE]
 
 Check Cluster Health
 
 options:
   -h, --help            show this help message and exit
+  --cluster_file CLUSTER_FILE
+                        Path to a CVS cluster JSON file (see cvs/input/cluster_file/cluster.json).
+                        Provides node list, username, and SSH key. Recommended.
+                        Takes precedence over the CLUSTER_FILE environment variable.
   --hosts_file HOSTS_FILE
-                        File name with list of IP address one per line
-  --username USERNAME   Username to ssh to the hosts
-  --password PASSWORD   Password for username
-  --key_file KEY_FILE   Private Keyfile for username
+                        [DEPRECATED] File with one host IP/hostname per line. Use --cluster_file instead.
+  --username USERNAME   SSH username (required with --hosts_file)
+  --password PASSWORD   SSH password (only valid with --hosts_file)
+  --key_file KEY_FILE   SSH private key file (only valid with --hosts_file)
   --iterations ITERATIONS
                         Number of iterations to run the checks
   --time_between_iters TIME_BETWEEN_ITERS
-                        Time duration to sleep between iterations ..
+                        Time duration to sleep between iterations
   --report_file REPORT_FILE
-(myenv) [ubuntu-host]~/cvs:(main)$
-(myenv) [ubuntu-host]~/cvs/cvs:(main)$
-(myenv) [ubuntu-host]~/cvs/cvs/monitors:(main)$
-(myenv) [ubuntu-host]~/cvs/cvs/monitors:(main)$python3 ./check_cluster_health.py --hosts_file /home/user1/hosts_file.txt --username user1  --key_file /home/user1/.ssh/id_rsa --iterations 2
+                        Output HTML report file path
+```
 
+#### Recommended: run with a cluster file
+
+```
+cvs monitor check_cluster_health \
+    --cluster_file cvs/input/cluster_file/cluster.json \
+    --iterations 2
+```
+
+Or set `CLUSTER_FILE` once and reuse it across CVS commands:
+
+```
+export CLUSTER_FILE=cvs/input/cluster_file/cluster.json
+cvs monitor check_cluster_health --iterations 2
+cvs exec --cmd "hostname"
+cvs scp --file /path/to/file.txt
+```
+
+Or directly:
+
+```
+python3 ./cvs/monitors/check_cluster_health.py \
+    --cluster_file cvs/input/cluster_file/cluster.json \
+    --iterations 2
+```
+
+#### Deprecated: legacy hosts file
+
+`--hosts_file` is still accepted for backward compatibility but emits a
+deprecation warning. Lines starting with `#` and blank lines are ignored.
+
+```
+python3 ./cvs/monitors/check_cluster_health.py \
+    --hosts_file /home/user1/hosts_file.txt \
+    --username user1 \
+    --key_file /home/user1/.ssh/id_rsa \
+    --iterations 2
 ```
 
 ### Debugging using RDMA Statistics Table
