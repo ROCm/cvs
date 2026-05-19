@@ -331,9 +331,12 @@ def test_install_rvs(orch, config_dict):
         if re.search('not found|No such file', out_dict[node], re.I) and not re.search('rvs', out_dict[node]):
             fail_test(f'RVS installation verification failed on node {node}')
 
-    # Verify config files are accessible
+    # Verify config files are accessible. Suppress per-clause stderr so a
+    # missing MI300X subdir (which is optional - some packagings only ship
+    # the default conf dir) doesn't leak "No such file" into the captured
+    # output and trip the regex below when the default-path fallback succeeded.
     out_dict = orch.exec(
-        f'ls -l {config_dict["config_path_mi300x"]}/gst_single.conf || ls -l {config_dict["config_path_default"]}/gst_single.conf',
+        f'ls -l {config_dict["config_path_mi300x"]}/gst_single.conf 2>/dev/null || ls -l {config_dict["config_path_default"]}/gst_single.conf 2>/dev/null',
         timeout=60,
     )
     for node in out_dict.keys():
