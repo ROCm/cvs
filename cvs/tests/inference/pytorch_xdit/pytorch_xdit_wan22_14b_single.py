@@ -33,6 +33,27 @@ from cvs.parsers.pytorch_xdit_wan import WanOutputParser
 log = globals.log
 
 
+class _SecretValue:
+    """
+    Wrapper to avoid leaking secrets in pytest tracebacks.
+
+    Pytest will include fixture values in failure reports; by wrapping the token, we ensure
+    the token's repr is redacted while still behaving like a string for command building.
+    """
+
+    def __init__(self, value: str):
+        self.value = value or ""
+
+    def __bool__(self) -> bool:  # truthiness checks like `if hf_token:`
+        return bool(self.value)
+
+    def __str__(self) -> str:  # f-strings and command assembly
+        return self.value
+
+    def __repr__(self) -> str:  # pytest failure display
+        return "<redacted>"
+
+
 def _is_local_target(target: str) -> bool:
     """
     Best-effort check whether a "target" refers to the current machine.
@@ -235,18 +256,18 @@ def hf_token(inference_dict):
     """
     hf_token_file = inference_dict['hf_token_file']
     if not hf_token_file:
-        return ""
+        return _SecretValue("")
     try:
         with open(hf_token_file, 'r') as fp:
-            hf_token = fp.read().rstrip("\n")
+            token = fp.read().rstrip("\n")
         log.info("HF token loaded successfully")
-        return hf_token
+        return _SecretValue(token)
     except FileNotFoundError:
         log.warning(f"HF token file not found: {hf_token_file}")
-        return ""
+        return _SecretValue("")
     except Exception as e:
         log.error(f"Error reading HF token file: {e}")
-        return ""
+        return _SecretValue("")
 
 
 @pytest.fixture(scope="module")

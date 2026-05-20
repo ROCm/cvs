@@ -87,7 +87,7 @@ docker image inspect amdsiloai/pytorch-xdit:v25.11.2 >/dev/null && echo IMG_OK
 
 ### 7. Minimal single-node `cluster.json`
 
-The repo includes `cvs/cvs/input/cluster_file/cluster_single_node.example.json`. A minimal single-node example with placeholders looks like:
+A minimal single-node example with placeholders looks like:
 
 ```json
 {
