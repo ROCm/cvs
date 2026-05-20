@@ -2,7 +2,7 @@
 
     "config":
     {
-        "container_image": "registry-sc-harbor.amd.com/framework/therock-main:1341_gfx950_7.13.0a20260504_ubuntu22.04_py3.11_pytorch_release-2.10_513e8b4",
+        "container_image": "rocm/pytorch-training:v26.1",
         "container_name": "torchtitan_llama3.1_310",
         "_example_nnodes": "1",
         "nnodes": "1",
