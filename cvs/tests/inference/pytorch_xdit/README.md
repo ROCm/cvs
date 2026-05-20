@@ -14,6 +14,146 @@ For how Hugging Face stores models and what `HF_HOME` means, see the official do
 
 **Thresholds** in sample configs are placeholders; tune them for your hardware and workload.
 
+## First-Time Setup
+
+The shortest path to a successful first run is:
+
+1. SSH to the reserved compute node.
+2. Stage models into a real Hugging Face cache root on that node.
+3. Pull the XDit container image on that node.
+4. Create a single-node `cluster.json`.
+5. Run the full pytest module (or `cvs run`) with `CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1` on shared systems.
+
+### 1. Connect to the compute node
+
+```bash
+ssh <reserved-compute-node-host-or-ip>
+```
+
+### 2. Install `hf` CLI on the node if needed
+
+```bash
+python3 -m venv /tmp/hf-cli-venv
+/tmp/hf-cli-venv/bin/pip install 'huggingface_hub[cli]'
+```
+
+### 3. Set the Hugging Face cache root
+
+Use the directory you want to put in `config.hf_home`. A common choice is:
+
+```bash
+export HF_HOME="$HOME/.cache/huggingface"
+```
+
+If you use a gated model and have a token file:
+
+```bash
+export HF_TOKEN="$(tr -d '\n' < "$HOME/.hf_token")"
+```
+
+If your workflow is fully offline and the model is already present in `HF_HOME`, you can skip the download step.
+
+### 4. Stage the models with `hf download`
+
+#### WAN
+
+```bash
+HF_HOME="$HF_HOME" /tmp/hf-cli-venv/bin/hf download \
+  Wan-AI/Wan2.2-I2V-A14B \
+  --revision 206a9ee1b7bfaaf8f7e4d81335650533490646a3
+```
+
+#### FLUX
+
+```bash
+HF_HOME="$HF_HOME" /tmp/hf-cli-venv/bin/hf download \
+  black-forest-labs/FLUX.1-dev
+```
+
+### 5. Pull the container image on the target node
+
+```bash
+docker pull amdsiloai/pytorch-xdit:v25.11.2
+```
+
+### 6. Quick sanity checks
+
+```bash
+test -e /dev/kfd && echo KFD_OK
+test -d "$HF_HOME/hub/models--Wan-AI--Wan2.2-I2V-A14B/snapshots/206a9ee1b7bfaaf8f7e4d81335650533490646a3" && echo WAN_OK
+test -d "$HF_HOME/hub/models--black-forest-labs--FLUX.1-dev/snapshots" && echo FLUX_OK
+docker image inspect amdsiloai/pytorch-xdit:v25.11.2 >/dev/null && echo IMG_OK
+```
+
+### 7. Minimal single-node `cluster.json`
+
+The repo includes `cvs/cvs/input/cluster_file/cluster_single_node.example.json`. A minimal single-node example with placeholders looks like:
+
+```json
+{
+  "username": "{user-id}",
+  "priv_key_file": "/path/to/private/key",
+  "head_node_dict": {
+    "mgmt_ip": "REPLACE_WITH_COMPUTE_NODE_HOST_OR_IP"
+  },
+  "env_vars": {},
+  "node_dict": {
+    "REPLACE_WITH_COMPUTE_NODE_HOST_OR_IP": {
+      "bmc_ip": "NA",
+      "vpc_ip": "REPLACE_WITH_COMPUTE_NODE_HOST_OR_IP"
+    }
+  }
+}
+```
+
+The **same SSH target string** should be used for:
+
+- `head_node_dict.mgmt_ip`
+- the `node_dict` key
+- `node_dict.<node>.vpc_ip`
+
+Unlike the test JSON files, cluster files resolve `{user-id}` only. Do not use `{home}` in `priv_key_file`; use a real absolute path if `/home/{user-id}/.ssh/id_rsa` is not correct on your system.
+
+This keeps the output directory name stable (`wan_22_<cluster_target>_outputs`, `flux_<cluster_target>_outputs`) even if the remote host reports a different short hostname or FQDN.
+
+### 8. Run the full module
+
+If your `cvs` CLI environment is installed cleanly:
+
+```bash
+CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1 \
+cvs run pytorch_xdit_wan22_14b_single \
+  --cluster_file=/path/to/cluster.json \
+  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json
+```
+
+```bash
+CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1 \
+cvs run pytorch_xdit_flux1_dev_single \
+  --cluster_file=/path/to/cluster.json \
+  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json
+```
+
+If you are running from a source checkout and do not have a working `cvs` entrypoint, the equivalent form is:
+
+```bash
+CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1 \
+PYTHONPATH=/path/to/cvs \
+python -m pytest cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_14b_single.py \
+  --cluster_file=/path/to/cluster.json \
+  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json \
+  -q -s --tb=short
+```
+
+```bash
+CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1 \
+PYTHONPATH=/path/to/cvs \
+python -m pytest cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_single.py \
+  --cluster_file=/path/to/cluster.json \
+  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json \
+  -q -s --tb=short
+```
+
 ---
 
 ## WAN 2.2 Image-to-Video A14B Test
@@ -39,7 +179,7 @@ Runs WAN 2.2 I2V-A14B inference inside the `amdsiloai/pytorch-xdit:v25.11.2` con
    - Set `config.model_repo` to an explicit on-disk path on every node (recommended), e.g. `/models/Wan-AI/Wan2.2-I2V-A14B`
    - Alternatively, use a HF repo id in `config.model_repo` only if the snapshot is already cached under `hf_home` (offline mode). For `Wan-AI/Wan2.2-I2V-A14B`, the verification step applies additional snapshot layout checks.
 
-3. **Targets** with Docker, GPUs, and ROCm device nodes as required by the container (sample configs use eight processes).
+3. **Targets** with Docker, the configured `container_image` already pulled locally, and ROCm device nodes as required by the container (sample configs use eight processes).
 
 4. **Storage requirements**:
    - ~40GB for model cache (`hf_home`)
@@ -72,10 +212,10 @@ Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22
     "config": {
         "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
         "container_name": "wan22-benchmark",
-        "hf_token_file": "",
-        "hf_home": "/home/{user-id}",
-        "output_base_dir": "/home/{user-id}/cvs_wan_output",
-        "model_repo": "/models/Wan-AI/Wan2.2-I2V-A14B",
+        "hf_token_file": "{home}/.hf_token",
+        "hf_home": "{home}/.cache/huggingface",
+        "output_base_dir": "{home}/cvs_outputs",
+        "model_repo": "Wan-AI/Wan2.2-I2V-A14B",
         "model_rev": "206a9ee1b7bfaaf8f7e4d81335650533490646a3",
         "container_config": {
             "device_list": ["/dev/dri", "/dev/kfd"],
@@ -101,12 +241,12 @@ Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22
 
 **Placeholders** (automatically resolved in test config):
 
-- `{user-id}`: Current system user
-- `{home}`: User's home directory
+- `{user-id}`: Username
+- `{home}`: Home directory of that user
 
 **Key parameters**:
 
-- `hf_home`: Host directory for HF model cache (mounted to `/hf_home` in container)
+- `hf_home`: Host directory for HF model cache (mounted to `/hf_home` in container). This should be the root that contains `hub/`, typically `{home}/.cache/huggingface`.
 - `output_base_dir`: Host directory for benchmark outputs
 - `num_benchmark_steps`: Number of inference iterations (5 recommended)
 - `torchrun_nproc`: Number of GPU processes (typically 8 for MI300X)
@@ -175,7 +315,7 @@ Local model path not found on <node>: /models/...
 Container image not found locally on <node>...
 ```
 
-**Solution**: `docker pull` the configured image on each target node.
+**Solution**: `docker pull` the configured image on each target node before running the test.
 
 #### Performance Threshold Exceeded
 
@@ -271,7 +411,7 @@ Runs FLUX.1-dev text-to-image inference inside the `amdsiloai/pytorch-xdit:v25.1
    - Alternatively, use a HF repo id in `config.model_repo` only if the snapshot is already cached under `hf_home` (offline mode)
    - If you pre-download from Hugging Face, ensure any required model license is accepted beforehand
 
-3. **Targets** with Docker, GPUs, and ROCm as required by the container.
+3. **Targets** with Docker, the configured `container_image` already pulled locally, and ROCm as required by the container.
 
 4. **Storage requirements**:
    - ~35GB for model cache (`hf_home`)
@@ -304,10 +444,10 @@ Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1
     "config": {
         "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
         "container_name": "flux-benchmark",
-        "hf_token_file": "",
-        "hf_home": "/home/{user-id}",
-        "output_base_dir": "/home/{user-id}/cvs_flux_output",
-        "model_repo": "/models/black-forest-labs/FLUX.1-dev",
+        "hf_token_file": "{home}/.hf_token",
+        "hf_home": "{home}/.cache/huggingface",
+        "output_base_dir": "{home}/cvs_flux_output",
+        "model_repo": "black-forest-labs/FLUX.1-dev",
         "model_rev": "",
         "container_config": {
             "device_list": ["/dev/dri", "/dev/kfd"],
@@ -341,12 +481,12 @@ Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1
 
 **Placeholders** (automatically resolved in test config):
 
-- `{user-id}`: Current system user
-- `{home}`: User's home directory
+- `{user-id}`: Username
+- `{home}`: Home directory of that user
 
 **Key parameters**:
 
-- `hf_home`: Host directory for HF model cache (mounted to `/hf_home` in container)
+- `hf_home`: Host directory for HF model cache (mounted to `/hf_home` in container). This should be the root that contains `hub/`, typically `{home}/.cache/huggingface`.
 - `output_base_dir`: Host directory for benchmark outputs
 - `model_rev`: Model revision (empty string means use any available snapshot)
 - `num_repetitions`: Number of inference iterations (25 recommended for stable averages)
@@ -428,7 +568,7 @@ Errors about missing transformer/VAE weights or `model_index.json`.
 Container image not found locally on <node>...
 ```
 
-**Solution**: `docker pull` the configured image on each target node.
+**Solution**: `docker pull` the configured image on each target node before running the test.
 
 #### Performance Threshold Exceeded
 

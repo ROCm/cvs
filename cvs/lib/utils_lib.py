@@ -439,7 +439,7 @@ def cluster_target_output_label(cluster_node_key: str) -> str:
 
     Uses the cluster ``node_dict`` key (the SSH target string) instead of the remote
     ``hostname`` command, so the same node does not produce multiple output trees when
-    FQDN/short-name resolution drifts (for example ``.adc.amd.com`` vs ``.amd.com``).
+    short and fully-qualified hostnames vary across environments.
     """
     if not cluster_node_key:
         return "unknown_node"
