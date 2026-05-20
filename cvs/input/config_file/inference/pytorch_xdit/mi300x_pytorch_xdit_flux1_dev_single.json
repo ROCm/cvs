@@ -32,6 +32,7 @@
             "ring_degree": 1,
             "use_torch_compile": true,
             "torchrun_nproc": 8,
+            "_expected_results_comment": "Validation thresholds below are placeholders. Tune them for your target cluster, software stack, and benchmark conditions before using them as pass/fail criteria.",
             "expected_results": {
                 "auto": {
                     "max_avg_pipe_time_s": 10.0
