@@ -342,10 +342,11 @@ class TorchTitanTrainingJob:
         toml_path = '/tmp/cvs_llama3_70b.toml'
 
         # Clone TorchTitan if not present and install it
+        # Use v0.2.1 tag which is compatible with PyTorch 2.10
         setup_cmd = f'''docker exec {self.container_name} /bin/bash -c "
 if [ ! -d /tmp/torchtitan ]; then
     cd /tmp &&
-    git clone https://github.com/pytorch/torchtitan.git &&
+    git clone --branch v0.2.1 https://github.com/pytorch/torchtitan.git &&
     cd torchtitan &&
     pip install -e .
 fi
