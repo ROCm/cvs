@@ -24,6 +24,7 @@
             "num_benchmark_steps": 5,
             "compile": true,
             "torchrun_nproc": 8,
+            "_expected_results_comment": "Validation thresholds below are placeholders. Tune them for your target cluster, software stack, and benchmark conditions before using them as pass/fail criteria.",
             "expected_results": {
                 "auto": {
                     "max_avg_total_time_s": 15.0
