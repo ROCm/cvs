@@ -5,7 +5,6 @@
         "install_dir": "/home/{user-id}/INSTALL/agfhc/",
         "_comments_log_dir": "log_dir has to be a NON NFS local file system",
         "log_dir": "/root/agfhc_logs",
-        "nfs_install": "True",
         "hbm_test_duration": "00:01:30"
     },
     "transferbench": {

@@ -7,11 +7,11 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import pytest
 
+import os
 import re
 import time
 import json
 
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -22,7 +22,6 @@ log = globals.log
 
 # NOTE: This module assumes the following symbols are available in scope:
 # - log: a configured logger
-# - Pssh: parallel SSH helper class
 # - fail_test: helper that records/logs a failure (and may raise)
 # - update_test_result: helper to finalize a test's pass/fail status
 # - print_test_output: helper to pretty-print per-node command output
@@ -91,89 +90,57 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-@pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    """
-    Build and return a parallel SSH handle (Pssh) for the head node only.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-
-    Returns:
-      Pssh: Handle configured for the first node (head node) in node_dict.
-
-    Notes:
-      - Useful when commands should be executed only from a designated head node.
-      - Module scope ensures a single connection context for the duration of the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-    """
-    node_list = list(cluster_dict['node_dict'].keys())
-    head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'])
-    return shdl
-
-
-# Create connection to DUTs and export for later use ..
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    """
-    Build a parallel SSH handle to all nodes in the cluster.
-
-    Returns:
-    Pssh: A handle to execute commands across all nodes.
-    """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
-
-
 @pytest.mark.dependency(name="init")
 def test_install_agfhc(
-    phdl,
-    shdl,
+    orch,
     config_dict,
 ):
     """
     Install AGFHC from the tarball package provided in the input config_file.json - package_tar_ball
     under the directory specified in the config_file - install_dir
 
-    Depending on the flag nfs_install in the config_file, decide if you want to use shdl (single node)
-    or all nodes (phdl)
-    If the nfs_install flag is set to True, then it assumes the install_dir is on a common file system
-    that is accessible from all the nodes and installs from just a single node, otherwise install on
-    all the nodes.
+    Install runs on every node via ``orch.exec``.
     """
     globals.error_list = []
     log.info('Testcase install agfhc')
     install_dir = config_dict['install_dir']
     package_tar_ball = config_dict['package_tar_ball']
 
-    if re.search('True', config_dict['nfs_install'], re.I):
-        hdl = shdl
-    else:
-        hdl = phdl
-
     # Check if install directory exists, otherwise create.
-    out_dict = phdl.exec(f'ls -ld {install_dir}')
+    out_dict = orch.exec(f'ls -ld {install_dir}')
     for node in out_dict.keys():
         log.info(f'node ip {node}')
         log.info("%s", out_dict[node])
         if re.search('No such file or directory', out_dict[node], re.I):
             log.info(f'Install directory {install_dir} does not exist, creating')
-            hdl.exec(f'mkdir -p {install_dir}')
+            orch.exec(f'mkdir -p {install_dir}')
 
-    # Copy the package to the install directory and untar
-    hdl.exec(f'cd {install_dir};cp {package_tar_ball} . && tar -xvf {package_tar_ball}')
+    # Copy the package to the install directory and untar. One logical
+    # operation per orch.exec so that ContainerOrchestrator's docker-exec
+    # transport (which doesn't spawn a shell) handles them correctly. Absolute
+    # paths replace what used to be `cd <dir>; cp ...` chains.
+    orch.exec(f'cp {package_tar_ball} {install_dir}')
+    tarball_basename = os.path.basename(package_tar_ball)
+    orch.exec(f'tar -xvf {install_dir}/{tarball_basename} -C {install_dir}')
 
     time.sleep(10)
-    # Set hdl to parallel fleet wide
-    hdl = phdl
 
-    # install the untarred file
+    # install the untarred file. AGFHC's `./install` is a relative-cwd
+    # script (reads sibling files via relative paths) so cwd MUST be
+    # install_dir; we wrap that single call in `bash -c` explicitly to make
+    # the cwd dependency visible at the call site rather than smuggling it
+    # in via a `cd X; cmd` shell chain.
+    #
+    # --rocm-tar uses dpkg-deb direct extraction instead of apt-based dep
+    # resolution. Required when /opt/rocm came from a TheRock tarball
+    # (libs not tracked by dpkg, apt fails with "rocm-device-libs / hipcc /
+    # lib32gcc-s1 not installable"). Safe on apt-rocm systems too: dpkg-deb
+    # just extracts the bundled debs into /, which is correct either way.
     try:
-        out_dict = hdl.exec(f'cd {install_dir};sudo ./install', timeout=90)
+        out_dict = orch.exec(
+            f"sudo bash -c 'cd {install_dir} && ./install --rocm-tar'",
+            timeout=90,
+        )
         for node in out_dict.keys():
             log.info("%s", out_dict[node])
             if re.search('Error|No such file', out_dict[node], re.I):
@@ -182,7 +149,7 @@ def test_install_agfhc(
         log.error(f'Install of AGFHC failed, hit exception {e}')
 
     # verify agfhc path exists after installation ..
-    out_dict = phdl.exec(f'ls -l {config_dict["path"]}/agfhc')
+    out_dict = orch.exec(f'ls -l {config_dict["path"]}/agfhc')
     for node in out_dict.keys():
         log.info("%s", out_dict[node])
         if re.search('No such file', out_dict[node], re.I):
