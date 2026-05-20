@@ -209,7 +209,8 @@ def test_install_transferbench(orch, config_dict):
     out_dict = orch.exec(f'rm -rf {git_install_path}/TransferBench')
     # Clone with explicit destination, no cwd dependency.
     out_dict = orch.exec(
-        f'git clone {git_url} {git_install_path}/TransferBench', timeout=120,
+        f'git clone {git_url} {git_install_path}/TransferBench',
+        timeout=120,
     )
 
     # Detect ROCm path and compiler
