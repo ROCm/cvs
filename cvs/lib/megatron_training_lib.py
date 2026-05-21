@@ -42,7 +42,7 @@ TRAINING_RESULT_PATTERNS = {
 }
 
 TRAINING_PROGRESS_PATTERNS = [
-    r'iteration\s+(\d+)/\s+\1\s*\|',
+    r'iteration\s+(\d+)\s*/\s*\1\s*\|',
 ]
 
 TRAINING_NAN_PATTERNS = [
@@ -588,7 +588,7 @@ class MegatronLlamaTrainingJob:
         last_node = self.host_list[len(self.host_list) - 1]
         last_node_num = len(self.host_list) - 1
         out_dict = self.phdl.exec(
-            f"grep -E 'iteration[[:space:]]+[0-9]+/[[:space:]]+[0-9]+[[:space:]]*\\|' "
+            f"grep -E 'iteration[[:space:]]+[0-9]+[[:space:]]*/[[:space:]]*[0-9]+[[:space:]]*\\|' "
             f"{self.log_dir}/megatron-logs/out-node{last_node_num}/training.log | tail -15"
         )
 
