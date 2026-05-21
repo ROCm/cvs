@@ -92,9 +92,7 @@ class TestPsshExec(unittest.TestCase):
         self.pssh.exec("slow_cmd", timeout=120)
 
         self.assertEqual(self.mock_client.run_command.call_count, 2)
-        self.mock_client.run_command.assert_called_with(
-            "slow_cmd", read_timeout=120, stop_on_errors=True
-        )
+        self.mock_client.run_command.assert_called_with("slow_cmd", read_timeout=120, stop_on_errors=True)
 
     def test_exec_propagates_session_error_after_failed_retry(self):
         from pssh.exceptions import SessionError
