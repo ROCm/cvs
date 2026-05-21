@@ -179,6 +179,69 @@ def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
         return False
 
 
+def get_ompi_major_version(shdl, mpi_path, head_node):
+    """
+    Return the OpenMPI major version (int) on the head node, or None if it
+    cannot be determined.
+
+    Used by :func:`get_prte_mca_prefix` to decide which CLI prefix to use
+    for PRRTE-layer MCA params (``oob_tcp_if_include`` etc.). In OpenMPI
+    5.0+, PRRTE is a standalone runtime and PRRTE-layer params must be
+    passed with ``--prtemca``; passing them via ``--mca`` routes them to
+    the OMPI layer where PRRTE never sees them, which on multi-NIC hosts
+    causes prted to pick the wrong control-plane interface and crash
+    inside ``prte_ess_base_prted_setup`` ("PRTE has lost communication
+    with a remote daemon" within ~3s of launch).
+
+    See:
+      https://docs.open-mpi.org/en/v5.0.x/mca.html#command-line-parameters
+      https://github.com/openpmix/prrte/issues/1731
+    """
+    try:
+        out_dict = shdl.exec(f'{mpi_path}/bin/ompi_info --version | head -1')
+        version_line = out_dict[head_node].strip()
+        # Examples we want to match:
+        #   "Open MPI v5.0.8"
+        #   "mpirun (Open MPI) 4.1.6"
+        match = re.search(r'(\d+)\.\d+(?:\.\d+)?', version_line)
+        if match:
+            major = int(match.group(1))
+            log.info(f"Detected OpenMPI major version: {major} (from: {version_line!r})")
+            return major
+        log.warning(f"Could not parse OpenMPI version from ompi_info output: {version_line!r}")
+        return None
+    except Exception as e:
+        log.warning(f"ompi_info --version probe failed: {e}; OpenMPI major version unknown")
+        return None
+
+
+def get_prte_mca_prefix(shdl, mpi_path, head_node):
+    """
+    Return the correct mpirun CLI prefix for PRRTE-layer MCA params on the
+    target OpenMPI install.
+
+    - OpenMPI >= 5.0: use ``--prtemca`` (PRRTE is a separate project; its
+      params must be explicitly addressed, otherwise the OMPI schizo
+      parser keeps them on the OMPI side and PRRTE never sees them).
+    - OpenMPI <= 4.x: use ``--mca`` (ORTE is built in; there is no
+      separate PRRTE layer to address).
+    - Unknown version (probe failed): fall back to single-dash ``-mca``.
+      It is accepted by both OMPI 4.x and 5.x argv parsers and, on 5.x,
+      happens to be routed through PRRTE's schizo before the OMPI-side
+      dispatch, which avoids the silent mis-route. This is intentionally
+      a conservative fallback rather than ``--mca``.
+    """
+    major = get_ompi_major_version(shdl, mpi_path, head_node)
+    if major is None:
+        log.info("Using '-mca' prefix for PRRTE-layer params (OpenMPI version unknown)")
+        return '-mca'
+    if major >= 5:
+        log.info("Using '--prtemca' prefix for PRRTE-layer params (OpenMPI 5.x)")
+        return '--prtemca'
+    log.info("Using '--mca' prefix for PRRTE-layer params (OpenMPI <= 4.x)")
+    return '--mca'
+
+
 def detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node):
     """
     Detect which output file argument is supported by the RCCL test binary.
@@ -696,7 +759,9 @@ def rccl_regression(
     if env_overrides:
         env_override_params = ' '.join([f'-x {k}={v}' for k, v in env_overrides.items()])
 
-    # Build mpirun command
+    # Build mpirun command. PRRTE-layer params (oob/btl_tcp_if_include)
+    # need the version-correct prefix; see get_prte_mca_prefix() docstring.
+    prte_mca = get_prte_mca_prefix(shdl, mpi_dir, head_node)
     cmd = f'''{mpi_dir}/bin/mpirun \
         --allow-run-as-root \
         -np {no_of_global_ranks} \
@@ -704,8 +769,8 @@ def rccl_regression(
         --bind-to numa \
         {ucx_params} \
         --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {mpi_oob_port} \
-        --mca oob_tcp_if_include {mpi_oob_port} \
+        {prte_mca} btl_tcp_if_include {mpi_oob_port} \
+        {prte_mca} oob_tcp_if_include {mpi_oob_port} \
         {pml_param} \
         {env_override_params} \
         {test_cmd}'''
@@ -884,15 +949,17 @@ def rccl_perf(
             # Always wrap in bash to interpret && shell operator
             test_cmd = f'bash -c "{test_cmd}"'
 
-        # Build mpirun command
+        # Build mpirun command. PRRTE-layer params (oob/btl_tcp_if_include)
+        # need the version-correct prefix; see get_prte_mca_prefix() docstring.
+        prte_mca = get_prte_mca_prefix(shdl, mpi_dir, head_node)
         cmd = f'''{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
         --bind-to numa \
         {ucx_params} \
         --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {mpi_oob_port} \
-        --mca oob_tcp_if_include {mpi_oob_port} \
+        {prte_mca} btl_tcp_if_include {mpi_oob_port} \
+        {prte_mca} oob_tcp_if_include {mpi_oob_port} \
         {pml_param} \
         {test_cmd}
         '''
