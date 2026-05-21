@@ -12,7 +12,6 @@
         "example_tests_path": "/home/{user-id}/INSTALL/TransferBench/examples",
         "git_install_path": "/home/{user-id}/INSTALL/",
         "git_url": "https://github.com/ROCm/TransferBench.git",
-        "nfs_install": "True",
         "_comment_rocm_path": "ROCm installation path. Set the placeholder changeme to auto-detect from /opt/rocm or /opt/rocm/core-*",
         "rocm_path": "<changeme>",
         "results": {

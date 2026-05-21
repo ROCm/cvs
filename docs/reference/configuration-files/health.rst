@@ -35,7 +35,6 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
           "example_tests_path": "/home/{user-id}/INSTALL/TransferBench/examples",
           "git_install_path": "/home/{user-id}/INSTALL/",
           "git_url": "https://github.com/ROCm/TransferBench.git",
-          "nfs_install": "True",
           "_comment_rocm_path": "ROCm installation path. Set the placeholder changeme to auto-detect from /opt/rocm or /opt/rocm/core-*",
           "rocm_path": "<changeme>",
           "results":
@@ -208,9 +207,6 @@ TransferBench
    * - ``git_url``
      - `https://github.com/ROCm/TransferBench.git <https://github.com/ROCm/TransferBench.git>`_
      - URL for Git repo
-   * - ``nfs_install``
-     - True
-     - Set the flag to install nfs
    * - ``rocm_path``
      - ``<changeme>``
      - Set the path of rocm       
