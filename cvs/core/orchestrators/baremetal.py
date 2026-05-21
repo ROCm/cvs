@@ -71,7 +71,7 @@ class BaremetalOrchestrator(Orchestrator):
             stop_on_errors=self.stop_on_errors,
         )
 
-    def exec(self, cmd, hosts=None, timeout=None):
+    def exec(self, cmd, hosts=None, timeout=None, detailed=False):
         """
         Execute command across hosts via SSH (baremetal execution).
 
@@ -79,6 +79,8 @@ class BaremetalOrchestrator(Orchestrator):
             cmd: Command to execute
             hosts: Target hosts (if None, uses all hosts)
             timeout: Command timeout
+            detailed: If True, return detailed execution info including
+                exit_code (mirrors ContainerOrchestrator.exec).
 
         Returns:
             Dictionary mapping hosts to execution results
@@ -88,7 +90,7 @@ class BaremetalOrchestrator(Orchestrator):
 
         # Use appropriate handle based on target hosts
         if set(hosts) == set(self.hosts):
-            return self.all.exec(cmd, timeout=timeout)
+            return self.all.exec(cmd, timeout=timeout, detailed=detailed)
         else:
             # For arbitrary subset (including head node), create temporary handle
             pssh = Pssh(
@@ -100,20 +102,21 @@ class BaremetalOrchestrator(Orchestrator):
                 host_key_check=False,
                 stop_on_errors=self.stop_on_errors,
             )
-            return pssh.exec(cmd, timeout=timeout)
+            return pssh.exec(cmd, timeout=timeout, detailed=detailed)
 
-    def exec_on_head(self, cmd, timeout=None):
+    def exec_on_head(self, cmd, timeout=None, detailed=False):
         """
         Execute command on head node only via SSH.
 
         Args:
             cmd: Command to execute
             timeout: Command timeout
+            detailed: See exec().
 
         Returns:
             Dictionary mapping head node to execution result
         """
-        return self.head.exec(cmd, timeout=timeout)
+        return self.head.exec(cmd, timeout=timeout, detailed=detailed)
 
     def setup_env(self, hosts, env_script=None):
         """Set up environment on hosts."""
