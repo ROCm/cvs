@@ -162,6 +162,7 @@ class RCCLCollector(BaseCollector):
                     logger.debug(f"rcclras raw output from {leader}:\n{raw_text}")
 
                 snapshot = self._parse_response(raw_text, leader, cap)
+                await self._check_and_emit_skew(snapshot, app_state)
                 self.job_state = self._health_from_snapshot(snapshot)
                 await self._push_state_event(prev_state, self.job_state, app_state, leader)
                 snapshot_dict = snapshot.model_dump()
@@ -299,20 +300,69 @@ class RCCLCollector(BaseCollector):
     def _parse_response(
         self, raw_text: str, leader: str, cap: NodeRCCLCapability
     ) -> RCCLSnapshot:
-        """Route raw RAS output to the correct parser based on `cap`."""
+        """Route raw RAS output to the correct parser based on `cap`.
+
+        Back-fills detected_rccl_version into the capability record from
+        whichever parser succeeds — both JSON and text parsers extract it.
+        This allows version skew detection to work on text-only nodes too.
+        """
         if cap.json_ras:
             from app.collectors.rccl_json_parser import RCCLJsonParser
             snapshot = RCCLJsonParser().parse(raw_text)
-            # Back-fill version into capability record if newly discovered
-            if (
-                snapshot.job_summary is not None
-                and cap.detected_rccl_version is None
-                and snapshot.job_summary.rccl_version != "unknown"
-            ):
-                cap.detected_rccl_version = snapshot.job_summary.rccl_version
-            return snapshot
-        from app.collectors.rccl_text_parser import RCCLTextParser
-        return RCCLTextParser().parse(raw_text)
+        else:
+            from app.collectors.rccl_text_parser import RCCLTextParser
+            snapshot = RCCLTextParser().parse(raw_text)
+
+        # Back-fill version regardless of parser path (first non-unknown value wins)
+        if (
+            snapshot.job_summary is not None
+            and cap.detected_rccl_version is None
+            and snapshot.job_summary.rccl_version not in (None, "unknown")
+        ):
+            cap.detected_rccl_version = snapshot.job_summary.rccl_version
+
+        return snapshot
+
+    async def _check_and_emit_skew(
+        self,
+        snapshot: RCCLSnapshot,
+        app_state: Any,
+    ) -> None:
+        """
+        Detect cross-node RCCL version skew from the capability map.
+
+        If two or more nodes have different detected_rccl_version values,
+        emit a version_skew event and mark the snapshot's topology as
+        inconsistent. Nodes with no detected version yet are skipped.
+        """
+        caps: dict = getattr(app_state, 'node_capabilities', {})
+        versions: dict[str, str] = {
+            node: cap.detected_rccl_version
+            for node, cap in caps.items()
+            if cap.detected_rccl_version is not None
+        }
+        unique = set(versions.values())
+        if len(unique) <= 1:
+            return
+
+        # Skew detected
+        if snapshot.job_summary is not None:
+            snapshot.job_summary.inconsistent_topology = True
+
+        data_store = getattr(app_state, 'rccl_data_store', None)
+        if not data_store:
+            return
+
+        logger.warning(
+            f"RCCL version skew detected across nodes: "
+            + ", ".join(f"{n}={v}" for n, v in sorted(versions.items()))
+        )
+        await data_store.push_event({
+            "event_type": "version_skew",
+            "timestamp": time.time(),
+            "versions_by_node": versions,
+            "unique_versions": sorted(unique),
+        })
 
     async def _push_state_event(
         self,

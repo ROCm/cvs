@@ -6,7 +6,7 @@ Phase 1: status, communicators, events, markers.
 import logging
 from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Query
-from app.models.rccl_models import RCCLMarker
+from app.models.rccl_models import RCCLMarker, hip_version_str
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -24,6 +24,20 @@ async def get_rccl_status() -> dict[str, Any]:
     snapshot = getattr(app_state, 'latest_rccl_snapshot', None)
     if snapshot is None:
         return {"state": "no_job", "message": "No RCCL snapshot collected yet"}
+
+    # Augment job_summary with human-readable version strings and mismatch flag.
+    # Done here (not in the model) so model_dump() stays canonical integers and
+    # the parser is not responsible for display formatting.
+    summary = snapshot.get("job_summary")
+    if summary:
+        hip = summary.get("hip_runtime_version", 0)
+        drv = summary.get("amdgpu_driver_version", 0)
+        snapshot = dict(snapshot)  # shallow copy — don't mutate app_state
+        snapshot["job_summary"] = dict(summary)
+        snapshot["job_summary"]["hip_runtime_version_str"] = hip_version_str(hip)
+        snapshot["job_summary"]["amdgpu_driver_version_str"] = hip_version_str(drv)
+        snapshot["job_summary"]["driver_runtime_mismatch"] = hip != drv
+
     return snapshot
 
 

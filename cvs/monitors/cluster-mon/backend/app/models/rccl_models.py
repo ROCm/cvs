@@ -74,6 +74,24 @@ class RCCLPeer(BaseModel):
     is_dead: bool
 
 
+def hip_version_str(v: int) -> str:
+    """
+    Decode a HIP/amdgpu integer version into a human-readable string.
+
+    Encoding: major*10_000_000 + minor*100_000 + patch
+    Example: 60500000 → "6.5.0", 70226015 → "7.2.26015"
+
+    The patch component may encode a build revision rather than a semantic
+    patch version, which is why it can appear large (e.g. 26015).
+    """
+    if v <= 0:
+        return "unknown"
+    major = v // 10_000_000
+    minor = (v // 100_000) % 100
+    patch = v % 100_000
+    return f"{major}.{minor}.{patch}"
+
+
 class RCCLJobSummary(BaseModel):
     total_nodes: int
     total_processes: int
@@ -81,7 +99,7 @@ class RCCLJobSummary(BaseModel):
     rccl_version: str
     hip_runtime_version: int
     amdgpu_driver_version: int
-    inconsistent_topology: bool  # True when nodes have different process/GPU counts
+    inconsistent_topology: bool  # True when nodes have different process/GPU counts or versions
 
 
 class RCCLSnapshot(BaseModel):
