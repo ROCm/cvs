@@ -4,8 +4,9 @@ RCCLJobState is the canonical definition — import from here, not from collecto
 """
 
 import time
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 
@@ -95,6 +96,25 @@ class RCCLSnapshot(BaseModel):
     @classmethod
     def empty(cls, state: RCCLJobState = RCCLJobState.NO_JOB) -> "RCCLSnapshot":
         return cls(timestamp=time.time(), state=state)
+
+
+@dataclass
+class NodeRCCLCapability:
+    """
+    Probed, per-node capability record for the RAS service.
+
+    Populated on the first successful connection to each node's rcclras port.
+    Used by RCCLCollector to select the correct parser (JSON vs text) without
+    relying on assumed protocol version numbers.
+
+    TTL: refresh after `ttl` seconds. Stale data is served rather than None
+    on transient probe failure so monitoring continues during node hiccups.
+    """
+    json_ras: bool                         # SET FORMAT json → OK
+    detected_rccl_version: Optional[str]   # from JSON nccl_version field if available
+    detection_method: Literal["probe", "heuristic"]
+    probed_at: float = field(default_factory=time.time)
+    ttl: float = 300.0                     # 5-minute default; 3600 after first success
 
 
 class RCCLEvent(BaseModel):

@@ -118,6 +118,9 @@ class AppState:
         self.rccl_data_store = None   # RCCLDataStore, set in lifespan
         self.latest_rccl_snapshot: Optional[dict] = None
         self.rccl_websocket_clients: List[WebSocket] = []
+        # Per-node capability map: populated on first successful RAS connection.
+        # Key = node hostname. Value = NodeRCCLCapability (probed, with TTL).
+        self.node_capabilities: dict = {}  # dict[str, NodeRCCLCapability]
 
 
 app_state = AppState()

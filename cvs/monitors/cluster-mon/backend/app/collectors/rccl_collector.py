@@ -16,8 +16,8 @@ from typing import Optional, Any
 from paramiko.ssh_exception import ChannelException
 
 from app.collectors.base import BaseCollector, CollectorResult, CollectorState
-from app.collectors.rccl_ras_client import RCCLRasClient, ProtocolError
-from app.models.rccl_models import RCCLJobState, RCCLSnapshot
+from app.collectors.rccl_ras_client import RCCLRasClient, ProtocolError, ProtocolVersionError
+from app.models.rccl_models import NodeRCCLCapability, RCCLJobState, RCCLSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -157,10 +157,11 @@ class RCCLCollector(BaseCollector):
                     client = RCCLRasClient(reader, writer)
                     await client.handshake()
                     await client.set_timeout(collective_timeout)
+                    cap = await self._ensure_capability(client, leader, app_state)
                     raw_text = await client.get_status(verbose=True)
                     logger.debug(f"rcclras raw output from {leader}:\n{raw_text}")
 
-                snapshot = self._parse_text_response(raw_text, leader)
+                snapshot = self._parse_response(raw_text, leader, cap)
                 self.job_state = self._health_from_snapshot(snapshot)
                 await self._push_state_event(prev_state, self.job_state, app_state, leader)
                 snapshot_dict = snapshot.model_dump()
@@ -254,8 +255,62 @@ class RCCLCollector(BaseCollector):
             error=f"Port {ras_port} not listening on any healthy node -- no RCCL job running",
         )
 
-    def _parse_text_response(self, raw_text: str, leader: str) -> RCCLSnapshot:
-        """Parse rcclras VERBOSE STATUS text output using RCCLTextParser."""
+    async def _ensure_capability(
+        self,
+        client: RCCLRasClient,
+        node: str,
+        app_state: Any,
+    ) -> NodeRCCLCapability:
+        """
+        Return (and if necessary probe) the capability record for `node`.
+
+        Probe strategy:
+        - If a fresh record exists in app_state.node_capabilities, return it.
+        - Otherwise send SET FORMAT json and observe OK vs ProtocolVersionError.
+        - Store the result with an appropriate TTL.
+        - On any unexpected error, fall back to text-only (safe default).
+        """
+        caps: dict = getattr(app_state, 'node_capabilities', {})
+        existing = caps.get(node)
+        if existing is not None and (time.time() - existing.probed_at) < existing.ttl:
+            return existing
+
+        # Probe: attempt SET FORMAT json
+        json_supported = False
+        try:
+            await client.set_format("json")
+            json_supported = True
+            logger.info(f"Node {node}: RAS JSON format confirmed (v2.28.9+)")
+        except ProtocolVersionError:
+            logger.info(f"Node {node}: RAS JSON not supported (v2.28.3 text-only)")
+        except (ProtocolError, asyncio.TimeoutError) as e:
+            logger.warning(f"Node {node}: SET FORMAT probe failed ({e}); assuming text-only")
+
+        cap = NodeRCCLCapability(
+            json_ras=json_supported,
+            detected_rccl_version=None,    # filled in after first successful JSON parse
+            detection_method="probe",
+            probed_at=time.time(),
+            ttl=3600.0 if json_supported else 300.0,
+        )
+        caps[node] = cap
+        return cap
+
+    def _parse_response(
+        self, raw_text: str, leader: str, cap: NodeRCCLCapability
+    ) -> RCCLSnapshot:
+        """Route raw RAS output to the correct parser based on `cap`."""
+        if cap.json_ras:
+            from app.collectors.rccl_json_parser import RCCLJsonParser
+            snapshot = RCCLJsonParser().parse(raw_text)
+            # Back-fill version into capability record if newly discovered
+            if (
+                snapshot.job_summary is not None
+                and cap.detected_rccl_version is None
+                and snapshot.job_summary.rccl_version != "unknown"
+            ):
+                cap.detected_rccl_version = snapshot.job_summary.rccl_version
+            return snapshot
         from app.collectors.rccl_text_parser import RCCLTextParser
         return RCCLTextParser().parse(raw_text)
 
