@@ -187,3 +187,26 @@ def test_parser_does_not_crash_on_garbage(parser):
     snapshot = parser.parse("some random garbage that is not rcclras output")
     # Should return a snapshot (not raise), with NO_JOB or ERROR state
     assert snapshot.state in (RCCLJobState.NO_JOB, RCCLJobState.ERROR)
+
+
+def test_json_input_returns_error_not_healthy(parser):
+    """JSON from a v2.28.9+ RAS server must not be silently reported as NO_JOB.
+
+    If the text parser receives JSON it cannot parse, it must return ERROR so
+    the caller knows there is a live job with a parser mismatch — not that no
+    job exists. Returning NO_JOB would suppress a real job's existence.
+    """
+    json_input = (
+        '{"nccl_version": "2.28.9", "communicators_count": 1, '
+        '"communicators": [{"hash": "0xabc", "size": 8, '
+        '"ranks": [{"rank": 0, "host": "node1", '
+        '"status": {"init_state": 0, "abort_flag": false}}]}]}'
+    )
+    snapshot = parser.parse(json_input)
+    assert snapshot.state == RCCLJobState.ERROR
+
+
+def test_json_input_with_leading_whitespace_returns_error(parser):
+    """JSON with leading whitespace is still detected."""
+    snapshot = parser.parse('\n  {"nccl_version": "2.30.4", "communicators": []}')
+    assert snapshot.state == RCCLJobState.ERROR
