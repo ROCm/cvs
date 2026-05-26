@@ -198,7 +198,7 @@ class InspectorCollPerf(BaseModel):
     algo_bw_gbps: float         # coll_perf.coll_algobw_gbs
     bus_bw_gbps: float          # coll_perf.coll_busbw_gbs
     event_trace: Optional[InspectorEventTrace] = None  # present only with NCCL_INSPECTOR_DUMP_VERBOSE=1
-    # v5.0+ fields (RCCL ≥ 2.28.9)
+    # v5.0+ fields (exact RCCL version boundary TBD — not confirmed in NCCL sync diff)
     inspector_format_version: str = "v4.0"   # metadata.inspector_output_format_version
     graph_captured: Optional[bool] = None    # coll_perf.graphCaptured; None on v4 records
 

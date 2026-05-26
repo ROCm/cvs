@@ -107,7 +107,7 @@ class InspectorCollector(BaseCollector):
 
         If a node is marked inspector_v5=True but its NodeRCCLCapability has
         json_ras=False, that is a warning-level inconsistency: Inspector reports
-        RCCL ≥ 2.28.9 features but the RAS probe returned text-only output.
+        v5 fields but the RAS probe returned text-only output.
         Likely cause: node upgrade in progress or RAS port bound before upgrade.
         """
         node_capabilities = getattr(app_state, 'node_capabilities', {})
@@ -119,7 +119,7 @@ class InspectorCollector(BaseCollector):
                 continue
             if not cap.inspector_v5:
                 cap.inspector_v5 = True
-                logger.info(f"Inspector oracle: {hostname} running RCCL ≥ 2.28.9 (v5 fields present)")
+                logger.info(f"Inspector oracle: {hostname} has Inspector v5 fields (graphCaptured present)")
             # Cross-check: Inspector says v5 but RAS is still text-mode
             if not cap.json_ras:
                 logger.warning(

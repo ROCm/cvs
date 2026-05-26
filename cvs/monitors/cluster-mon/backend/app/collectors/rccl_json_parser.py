@@ -1,5 +1,5 @@
 """
-Parser for rcclras JSON output (RCCL v2.28.9+ with -f json / SET FORMAT json).
+Parser for rcclras JSON output (RCCL v2.28.7+ with -f json / SET FORMAT json).
 
 The RAS server emits a single JSON document (from jsonWriteHeader etc. in
 client_support.cc). This parser populates per-rank status flags that the text
@@ -28,7 +28,7 @@ class RCCLJsonParser:
     """
     Parses rcclras JSON output into RCCLSnapshot.
 
-    Schema (from client_support.cc jsonWrite* functions, RCCL v2.28.9+):
+    Schema (from client_support.cc jsonWrite* functions, RCCL v2.28.7+):
       {
         "nccl_version": "2.28.9",
         "cuda_runtime_version": 12040,

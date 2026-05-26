@@ -6,10 +6,10 @@ most recently completed collective for a communicator during a dump interval.
 This is a "latest snapshot" model — not a complete event log.
 
 v4.0 (RCCL ≤ 2.28.3): metadata has no inspector_output_format_version field.
-v5.0+ (RCCL ≥ 2.28.9): adds metadata.inspector_output_format_version and
-  coll_perf.graphCaptured (bool indicating CUDA graph capture).
+v5.0+ (RCCL version TBD — unconfirmed in NCCL sync diff): adds
+  metadata.inspector_output_format_version and coll_perf.graphCaptured.
 
-Reference: ext-profiler/inspector/inspector.cc (RCCL v2.28.3 / v2.28.9)
+Reference: ext-profiler/inspector/inspector.cc (RCCL v2.28.3 baseline)
 """
 
 import json

@@ -6,7 +6,7 @@ Connection is owned by the caller's context manager (ssh_manager.open_port_forwa
 
 Warning: Protocol version caveat: Values 3 and 4 for JSON_FORMAT and MONITOR_MODE
 are ASSUMPTIONS -- not verified against actual rcclras server responses for
-v2.28.9 and v2.29.2. Verify by running a v2.28.9 rcclras server and checking
+v2.28.7 and v2.29.2. Verify by running a v2.28.7 rcclras server and checking
 its handshake response before implementing version-gated features. If the
 server always responds SERVER PROTOCOL 2, the version guards will never
 activate and an alternative feature-detection mechanism will be required.
@@ -29,7 +29,7 @@ class ProtocolVersionError(ProtocolError):
 
 class ProtocolVersion:
     TEXT_ONLY = 2    # v2.28.3: STATUS, VERBOSE STATUS, TIMEOUT only
-    JSON_FORMAT = 3  # v2.28.9+: adds SET FORMAT json (ASSUMPTION — verify)
+    JSON_FORMAT = 3  # v2.28.7+: adds SET FORMAT json
     MONITOR_MODE = 4  # v2.29.2+: adds MONITOR [groups] (ASSUMPTION — verify)
 
 
@@ -81,7 +81,7 @@ class RCCLRasClient:
 
     async def set_format(self, fmt: str = "json") -> None:
         """
-        Set output format. Available only in v2.28.9+ (protocol 3+).
+        Set output format. Available only in v2.28.7+ (protocol 3+).
         Raises ProtocolVersionError if server does not support it.
         """
         if self.server_protocol < ProtocolVersion.JSON_FORMAT:

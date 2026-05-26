@@ -281,7 +281,7 @@ class RCCLCollector(BaseCollector):
         try:
             await client.set_format("json")
             json_supported = True
-            logger.info(f"Node {node}: RAS JSON format confirmed (v2.28.9+)")
+            logger.info(f"Node {node}: RAS JSON format confirmed (v2.28.7+)")
         except ProtocolVersionError:
             logger.info(f"Node {node}: RAS JSON not supported (v2.28.3 text-only)")
         except (ProtocolError, asyncio.TimeoutError) as e:

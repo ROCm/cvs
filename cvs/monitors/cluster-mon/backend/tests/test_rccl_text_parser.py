@@ -197,7 +197,7 @@ def test_json_input_returns_error_not_healthy(parser):
     job exists. Returning NO_JOB would suppress a real job's existence.
     """
     json_input = (
-        '{"nccl_version": "2.28.9", "communicators_count": 1, '
+        '{"nccl_version": "2.28.7", "communicators_count": 1, '
         '"communicators": [{"hash": "0xabc", "size": 8, '
         '"ranks": [{"rank": 0, "host": "node1", '
         '"status": {"init_state": 0, "abort_flag": false}}]}]}'

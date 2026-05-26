@@ -66,7 +66,7 @@ class RCCLTextParser:
         re.IGNORECASE,
     )
 
-    # JSON input from a v2.28.9+ RAS server that was queried with -f json.
+    # JSON input from a v2.28.7+ RAS server that was queried with -f json.
     # The text parser cannot handle this; return ERROR so the caller knows
     # there is a live job but a parser mismatch, not that no job exists.
     _JSON_START_RE = re.compile(r'^\s*\{')
@@ -80,12 +80,12 @@ class RCCLTextParser:
         if self._CONNECTION_REFUSED_RE.search(raw_text):
             return RCCLSnapshot.empty(state=RCCLJobState.NO_JOB)
 
-        # Detect JSON input (RAS server running v2.28.9+ with -f json).
+        # Detect JSON input (RAS server running v2.28.7+ with -f json).
         # Returning NO_JOB here would be a false signal — there IS a job, we
         # just cannot parse it with the text parser. ERROR signals a mismatch.
         if self._JSON_START_RE.match(raw_text):
             logger.error(
-                "RCCLTextParser received JSON input — RAS server is v2.28.9+ "
+                "RCCLTextParser received JSON input — RAS server is v2.28.7+ "
                 "with JSON format enabled. Use RCCLJsonParser for this node."
             )
             return RCCLSnapshot.empty(state=RCCLJobState.ERROR)

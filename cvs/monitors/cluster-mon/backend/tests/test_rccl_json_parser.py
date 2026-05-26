@@ -1,5 +1,5 @@
 """
-Tests for RCCL RAS JSON output parser (RCCL v2.28.9+ with -f json).
+Tests for RCCL RAS JSON output parser (RCCL v2.28.7+ with -f json).
 Fixtures are synthetic but schema-faithful to client_support.cc jsonWrite* output.
 """
 import pytest
