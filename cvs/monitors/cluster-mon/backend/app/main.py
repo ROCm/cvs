@@ -729,33 +729,40 @@ async def lifespan(app: FastAPI):
     # 1. Signal all background loops to stop accepting new work
     app_state.is_collecting = False
 
-    # 2. Cancel collector tasks.  Collectors call SSH inside asyncio.to_thread()
-    #    which cannot be interrupted once the thread has started.  Set client to
-    #    None first so any in-flight thread that finishes and tries to issue the
-    #    next SSH command gets the "no client" early-return rather than an
-    #    AttributeError after destroy_clients() deletes the attribute.
+    # 2. Destroy SSH client first — this closes libssh2 sessions and unblocks any
+    #    thread currently blocked in pssh's gevent poll loop (stdout _unread_data.wait).
+    #    Without this, asyncio.to_thread tasks block until read_timeout expires (~22s).
+    #    Set client to None before destroy so any thread that finishes between now and
+    #    destroy_clients() gets the "no client" early-return instead of an AttributeError.
     if app_state.ssh_manager:
         app_state.ssh_manager.client = None  # type: ignore[assignment]
+        app_state.ssh_manager.destroy_clients()
 
+    # 3. Cancel collector tasks and wait with a short deadline.
+    #    asyncio.to_thread tasks cannot be interrupted mid-thread, but destroying the
+    #    SSH client above should unblock the blocking pssh read.  The 5s deadline is a
+    #    safety net for any thread that is still in teardown.
     for task in app_state.collector_tasks.values():
         task.cancel()
     if app_state.collector_tasks:
-        await asyncio.gather(*app_state.collector_tasks.values(), return_exceptions=True)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*app_state.collector_tasks.values(), return_exceptions=True),
+                timeout=5.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Collector tasks did not finish within 5s — forcing shutdown")
 
     if app_state.probe_task:
         app_state.probe_task.cancel()
         try:
-            await app_state.probe_task
-        except asyncio.CancelledError:
+            await asyncio.wait_for(app_state.probe_task, timeout=2.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
             pass
 
-    # 3. Close Redis
+    # 4. Close Redis
     if app_state.redis:
         await app_state.redis.aclose()
-
-    # 4. Destroy SSH connections (client already None, this cleans up port-forward state)
-    if app_state.ssh_manager:
-        app_state.ssh_manager.destroy_clients()
 
     logger.info("Shutdown complete")
 

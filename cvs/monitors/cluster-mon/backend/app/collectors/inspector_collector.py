@@ -156,27 +156,38 @@ class InspectorCollector(BaseCollector):
 
         active_pids = self._active_pids()
 
+        # __INSP_EOF__ sentinel: appended to every SSH command so pssh always gets
+        # at least one line of output. Without it, libssh2 waits the full read_timeout
+        # when tail produces no output (no matching files), because it polls for channel
+        # EOF rather than detecting an empty stdout stream. The sentinel guarantees at
+        # least one byte of output so the channel drains immediately.
+        _SENTINEL = "__INSP_EOF__"
+
+        # Inspector log filenames encode the writing host: <hostname>-pid<PID>.log
+        # When dump_dir is on shared NFS all 16 files are visible from every node.
+        # Scope each node's tail to files whose name starts with that node's own
+        # hostname so we read each file exactly once and avoid cross-node duplication.
+        # The ${HOSTNAME} shell variable is expanded on the remote node at runtime.
+
         if active_pids:
-            # Build a grep pattern so only files for the current job are read.
-            # Example: grep -E 'pid(3404720|3404721|...)\.log$'
+            # Filter to current-job PIDs AND current-node hostname.
             pid_pattern = "|".join(f"pid{p}" for p in sorted(active_pids))
             cmd = (
                 f"ls {cfg.dump_dir}/ 2>/dev/null "
-                f"| grep -E '({pid_pattern})\\.log$' "
+                f"| grep -E '^${{HOSTNAME}}-({pid_pattern})\\.log$' "
                 f"| xargs -I{{}} tail -n {cfg.max_records_per_file} {cfg.dump_dir}/{{}} "
-                f"2>/dev/null || true"
+                f"2>/dev/null; echo {_SENTINEL}"
             )
-            logger.debug(f"Inspector SSH: filtering to {len(active_pids)} active PIDs")
+            logger.debug(f"Inspector SSH: filtering to {len(active_pids)} active PIDs on ${{HOSTNAME}}")
         else:
-            # No rcclras snapshot yet — read all pid log files as fallback
+            # No rcclras snapshot — read all files belonging to this node.
             cmd = (
                 f"tail -n {cfg.max_records_per_file} "
-                f"{cfg.dump_dir}/*-pid*.log 2>/dev/null || true"
+                f"{cfg.dump_dir}/${{HOSTNAME}}-pid*.log 2>/dev/null; echo {_SENTINEL}"
             )
-            logger.debug("Inspector SSH: no active PIDs known, reading all log files")
+            logger.debug("Inspector SSH: no active PIDs known, reading all local-node log files")
 
-        # Pass collect_timeout as read_timeout so pssh doesn't block waiting for
-        # channel close if a node is slow. Subtract 2s for asyncio/thread overhead.
+        # Pass collect_timeout as read_timeout so pssh doesn't block beyond the window.
         ssh_timeout = max(5.0, InspectorCollector.collect_timeout - 2.0)
         try:
             outputs = await ssh_manager.exec_async(cmd, timeout=ssh_timeout)
@@ -188,7 +199,15 @@ class InspectorCollector(BaseCollector):
         for node, output in outputs.items():
             if not output:
                 continue
-            node_records = self._parser.parse_lines(output)
+            # Strip sentinel and tail's multi-file headers (==> filename <==)
+            # before parsing — neither is a JSONL record.
+            clean = "\n".join(
+                line for line in output.splitlines()
+                if line.strip() != _SENTINEL and not line.startswith("==>")
+            )
+            if not clean.strip():
+                continue
+            node_records = self._parser.parse_lines(clean)
             records.extend(node_records)
             logger.debug(f"Inspector SSH: {len(node_records)} records from {node}")
 

@@ -536,8 +536,17 @@ class Pssh:
 
     def destroy_clients(self):
         logger.info('Destroying Current phdl connections ..')
+        # Disconnect the ParallelSSHClient before clearing the reference.
+        # This closes the underlying libssh2 sessions, which unblocks any gevent
+        # greenlet currently stuck in poll/wait_eof inside a background thread.
         with _ssh_lock:
+            client = self.client
             self.client = None  # set to None (not del) so exec() guard stays valid
+        if client is not None:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
         with self._pf_lock:
             for c in self._pf_clients.values():
                 try:
