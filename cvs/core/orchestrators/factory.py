@@ -84,7 +84,10 @@ class OrchestratorConfig:
         Create config from multiple configuration sources.
 
         Merges cluster_config.json and <testsuite>_config.json configurations, with testsuite_config
-        taking precedence for overlapping keys.
+        taking precedence for overlapping keys. After merging, the {user-id} placeholder is
+        resolved recursively (via cvs.lib.utils_lib.resolve_cluster_config_placeholders) so SSH
+        credentials and any nested container fields carry real values when consumed by Pssh /
+        docker run. Unresolved <changeme> tokens trigger sys.exit(1) at this boundary.
 
         Args:
             cluster_config: Cluster configuration (dict or path to cluster_config.json)
@@ -115,6 +118,13 @@ class OrchestratorConfig:
         merged_config = cluster_config.copy()
         if testsuite_config:
             merged_config.update(testsuite_config)
+
+        # Resolve {user-id} recursively so SSH credentials (username, priv_key_file) and any
+        # nested container fields carry real values when consumed by Pssh / docker run. Applied
+        # AFTER the merge so testsuite overrides containing placeholders are also resolved.
+        from cvs.lib.utils_lib import resolve_cluster_config_placeholders  # Lazy: avoids core->lib import at module load
+
+        merged_config = resolve_cluster_config_placeholders(merged_config)
 
         # Extract only required keys for orchestrators
         required_config = {

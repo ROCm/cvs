@@ -127,14 +127,16 @@ class TestOrchestratorConfig(unittest.TestCase):
             )
         self.assertIn("priv_key_file", str(ctx.exception))
 
+    @patch.dict(os.environ, {"USER": "alice", "LOGNAME": "", "USERNAME": ""}, clear=False)
     def test_from_configs_reads_from_file_path(self):
         # Round-trip a real JSON file through from_configs to exercise the
         # path-handling branch (the rvs_cvs.py orch fixture goes through this).
+        # Also pins that {user-id} placeholders are resolved when input came from disk.
         cluster = {
             "orchestrator": "baremetal",
             "node_dict": {"1.1.1.1": {}, "1.1.1.2": {}},
-            "username": "u",
-            "priv_key_file": "/dev/null",
+            "username": "{user-id}",
+            "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
         }
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(cluster, f)
@@ -143,8 +145,85 @@ class TestOrchestratorConfig(unittest.TestCase):
             cfg = OrchestratorConfig.from_configs(path)
             self.assertEqual(cfg.orchestrator, "baremetal")
             self.assertEqual(len(cfg.node_dict), 2)
+            self.assertEqual(cfg.username, "alice")
+            self.assertEqual(cfg.priv_key_file, "/home/alice/.ssh/id_rsa")
         finally:
             os.unlink(path)
+
+    # ------------------------------------------------------------------
+    # Placeholder resolution at the from_configs boundary.
+    #
+    # Pins that {user-id} in the cluster file (and any merged testsuite
+    # overrides) is substituted before the values reach BaremetalOrchestrator /
+    # Pssh / docker run. Env is patched so the substituted value is
+    # deterministic regardless of host $USER (CI / sudo / containers).
+    # ------------------------------------------------------------------
+
+    @patch.dict(os.environ, {"USER": "alice", "LOGNAME": "", "USERNAME": ""}, clear=False)
+    def test_from_configs_resolves_user_id_in_username_and_priv_key(self):
+        cluster = {
+            "node_dict": {"1.1.1.1": {}},
+            "username": "{user-id}",
+            "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+        }
+        cfg = OrchestratorConfig.from_configs(cluster)
+        self.assertEqual(cfg.username, "alice")
+        self.assertEqual(cfg.priv_key_file, "/home/alice/.ssh/id_rsa")
+
+    @patch.dict(os.environ, {"USER": "alice", "LOGNAME": "", "USERNAME": ""}, clear=False)
+    def test_from_configs_resolves_user_id_throughout_container_block(self):
+        # The recursive walk must descend into container at every nesting shape:
+        # top-level string scalar (image, name), and list item under a nested dict
+        # (runtime.args.volumes).
+        cluster = {
+            "orchestrator": "container",
+            "node_dict": {"1.1.1.1": {}},
+            "username": "{user-id}",
+            "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+            "container": {
+                "enabled": True,
+                "image": "rocm/{user-id}:test",
+                "name": "{user-id}_cvs",
+                "runtime": {
+                    "name": "docker",
+                    "args": {"volumes": ["/home/{user-id}/data:/data"]},
+                },
+            },
+        }
+        cfg = OrchestratorConfig.from_configs(cluster)
+        self.assertEqual(cfg.container["image"], "rocm/alice:test")
+        self.assertEqual(cfg.container["name"], "alice_cvs")
+        self.assertEqual(
+            cfg.container["runtime"]["args"]["volumes"],
+            ["/home/alice/data:/data"],
+        )
+
+    @patch.dict(os.environ, {"USER": "alice", "LOGNAME": "", "USERNAME": ""}, clear=False)
+    def test_from_configs_resolves_user_id_in_testsuite_override(self):
+        # Pins that resolution runs AFTER the cluster+testsuite merge. If a future
+        # refactor moves the resolver call before the merge, the testsuite override
+        # would leak {user-id} verbatim and this test would fail.
+        cluster = {
+            "node_dict": {"1.1.1.1": {}},
+            "username": "literal_user",
+            "priv_key_file": "/dev/null",
+        }
+        testsuite = {"username": "{user-id}"}
+        cfg = OrchestratorConfig.from_configs(cluster, testsuite)
+        self.assertEqual(cfg.username, "alice")
+
+    def test_from_configs_exits_on_unresolved_changeme(self):
+        # Pins that the resolver's <changeme> guard propagates through from_configs.
+        # Defends against a future change that disables the guard and silently leaks
+        # <changeme> into Pssh / docker run.
+        cluster = {
+            "node_dict": {"1.1.1.1": {}},
+            "username": "<changeme>",
+            "priv_key_file": "/dev/null",
+        }
+        with self.assertRaises(SystemExit) as ctx:
+            OrchestratorConfig.from_configs(cluster)
+        self.assertEqual(ctx.exception.code, 1)
 
 
 if __name__ == "__main__":
