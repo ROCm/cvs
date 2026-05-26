@@ -48,9 +48,19 @@ class RCCLDataStore:
         self._mem_current: Optional[dict] = None
         self._mem_inspector_snapshots: collections.deque[dict] = collections.deque(maxlen=_MEMORY_INSPECTOR_MAX)
         self._mem_inspector_current: Optional[dict] = None
+        # Last observed rccl_version — used to detect software upgrades
+        self._last_rccl_version: Optional[str] = None
 
     async def push_snapshot(self, snapshot: dict) -> None:
-        """Atomically append snapshot to ring buffer and update current."""
+        """Atomically append snapshot to ring buffer and update current.
+
+        Also detects rccl_version changes and emits a software_upgrade event
+        when the version transitions from one known value to another. Version
+        strings of "unknown" are ignored to avoid spurious events on parse
+        failure or during startup before the RAS server responds.
+        """
+        await self._maybe_emit_version_event(snapshot)
+
         if self._r is None:
             self._mem_snapshots.append(snapshot)
             self._mem_current = snapshot
@@ -70,6 +80,27 @@ class RCCLDataStore:
             logger.warning(f"RCCLDataStore.push_snapshot failed (falling back to memory): {e}")
             self._mem_snapshots.append(snapshot)
             self._mem_current = snapshot
+
+    async def _maybe_emit_version_event(self, snapshot: dict) -> None:
+        """Emit a software_upgrade event if rccl_version changed since last push."""
+        import time as _time
+        summary = snapshot.get("job_summary") or {}
+        new_version = summary.get("rccl_version") if isinstance(summary, dict) else None
+        if not new_version or new_version == "unknown":
+            return
+        prev = self._last_rccl_version
+        self._last_rccl_version = new_version
+        if prev is None or prev == new_version:
+            return
+        # Version changed — emit upgrade event
+        event = {
+            "event_type": "software_upgrade",
+            "timestamp": _time.time(),
+            "from_version": prev,
+            "to_version": new_version,
+        }
+        logger.info(f"RCCL software upgrade detected: {prev} → {new_version}")
+        await self.push_event(event)
 
     async def push_event(self, event: dict) -> None:
         """Atomically append event to event stream."""
