@@ -122,7 +122,9 @@ class OrchestratorConfig:
         # Resolve {user-id} recursively so SSH credentials (username, priv_key_file) and any
         # nested container fields carry real values when consumed by Pssh / docker run. Applied
         # AFTER the merge so testsuite overrides containing placeholders are also resolved.
-        from cvs.lib.utils_lib import resolve_cluster_config_placeholders  # Lazy: avoids core->lib import at module load
+        from cvs.lib.utils_lib import (
+            resolve_cluster_config_placeholders,
+        )  # Lazy: avoids core->lib import at module load
 
         merged_config = resolve_cluster_config_placeholders(merged_config)
 
