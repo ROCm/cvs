@@ -85,12 +85,47 @@ class InspectorCollector(BaseCollector):
         if data_store is not None:
             await data_store.push_inspector_snapshot(snapshot_dict)
 
+        # Secondary oracle: if any record carries v5 fields, mark per-node capabilities.
+        # This lets RCCLCollector cross-check: json_ras=False + inspector_v5=True → mismatch.
+        self._apply_inspector_v5_oracle(records, app_state)
+
         return CollectorResult(
             collector_name=self.name,
             timestamp=CollectorResult.now_iso(),
             state=CollectorState.OK,
             data=snapshot_dict,
         )
+
+    # ------------------------------------------------------------------
+    # Inspector v5 secondary oracle
+    # ------------------------------------------------------------------
+
+    def _apply_inspector_v5_oracle(self, records: list[InspectorCollPerf], app_state) -> None:
+        """
+        Mark node_capabilities.inspector_v5=True for any hostname whose Inspector
+        records carry v5 fields (graph_captured is not None).
+
+        If a node is marked inspector_v5=True but its NodeRCCLCapability has
+        json_ras=False, that is a warning-level inconsistency: Inspector reports
+        RCCL ≥ 2.28.9 features but the RAS probe returned text-only output.
+        Likely cause: node upgrade in progress or RAS port bound before upgrade.
+        """
+        node_capabilities = getattr(app_state, 'node_capabilities', {})
+        v5_hosts: set[str] = {r.hostname for r in records if r.graph_captured is not None}
+
+        for hostname in v5_hosts:
+            cap = node_capabilities.get(hostname)
+            if cap is None:
+                continue
+            if not cap.inspector_v5:
+                cap.inspector_v5 = True
+                logger.info(f"Inspector oracle: {hostname} running RCCL ≥ 2.28.9 (v5 fields present)")
+            # Cross-check: Inspector says v5 but RAS is still text-mode
+            if not cap.json_ras:
+                logger.warning(
+                    f"Inspector oracle: {hostname} shows v5 Inspector but json_ras=False — "
+                    "node may be mid-upgrade or RAS probe needs refresh"
+                )
 
     # ------------------------------------------------------------------
     # File mode

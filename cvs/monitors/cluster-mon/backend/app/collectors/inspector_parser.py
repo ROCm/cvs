@@ -1,11 +1,15 @@
 """
-Parser for RCCL Inspector plugin JSONL output (format version v4.0).
+Parser for RCCL Inspector plugin JSONL output (format versions v4.0 and v5.0+).
 
 Each line in an Inspector log file is one JSON object representing the
 most recently completed collective for a communicator during a dump interval.
 This is a "latest snapshot" model — not a complete event log.
 
-Reference: ext-profiler/inspector/inspector.cc (RCCL v2.28.3)
+v4.0 (RCCL ≤ 2.28.3): metadata has no inspector_output_format_version field.
+v5.0+ (RCCL ≥ 2.28.9): adds metadata.inspector_output_format_version and
+  coll_perf.graphCaptured (bool indicating CUDA graph capture).
+
+Reference: ext-profiler/inspector/inspector.cc (RCCL v2.28.3 / v2.28.9)
 """
 
 import json
@@ -72,6 +76,10 @@ class InspectorParser:
             header = obj["header"]
             meta = obj["metadata"]
             perf = obj["coll_perf"]
+            # v5.0+ adds metadata.inspector_output_format_version; absent → v4.0
+            fmt_version: str = meta.get("inspector_output_format_version", "v4.0")
+            # v5.0+ adds coll_perf.graphCaptured; absent on v4 records
+            graph_captured: Optional[bool] = perf.get("graphCaptured")
             return InspectorCollPerf(
                 timestamp=meta["dump_timestamp_us"] / 1_000_000.0,
                 comm_hash=header["id"],
@@ -88,6 +96,8 @@ class InspectorParser:
                 algo_bw_gbps=float(perf["coll_algobw_gbs"]),
                 bus_bw_gbps=float(perf["coll_busbw_gbs"]),
                 event_trace=self._parse_event_trace(perf),
+                inspector_format_version=fmt_version,
+                graph_captured=graph_captured,
             )
         except (KeyError, TypeError, ValueError) as e:
             logger.debug(f"Inspector: skipping line {lineno} — missing field: {e}")

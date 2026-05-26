@@ -14,3 +14,4 @@ asyncio==3.4.3
 aiofiles==23.2.1
 python-dateutil==2.8.2
 requests==2.31.0
+httpx>=0.27.0

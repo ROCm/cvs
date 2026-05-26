@@ -13,17 +13,17 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 @pytest.fixture
 def healthy_output():
-    return (FIXTURES_DIR / "rccl_verbose_status_healthy.txt").read_text()
+    return (FIXTURES_DIR / "rccl_v2283_text_healthy.txt").read_text()
 
 
 @pytest.fixture
 def degraded_output():
-    return (FIXTURES_DIR / "rccl_verbose_status_degraded.txt").read_text()
+    return (FIXTURES_DIR / "rccl_v2283_text_degraded.txt").read_text()
 
 
 @pytest.fixture
 def connection_reset_output():
-    return (FIXTURES_DIR / "rccl_verbose_status_connection_reset.txt").read_text()
+    return (FIXTURES_DIR / "rccl_v2283_text_connection_reset.txt").read_text()
 
 
 @pytest.fixture
@@ -131,7 +131,7 @@ def test_parse_degraded_errors_section_not_empty(parser, degraded_output):
 
 @pytest.fixture
 def degraded_2node_output():
-    return (FIXTURES_DIR / "rccl_verbose_status_degraded_2node.txt").read_text()
+    return (FIXTURES_DIR / "rccl_v2283_text_degraded_2node.txt").read_text()
 
 
 def test_parse_degraded_2node_state(parser, degraded_2node_output):

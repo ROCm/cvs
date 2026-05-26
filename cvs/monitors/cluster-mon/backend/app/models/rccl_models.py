@@ -133,6 +133,7 @@ class NodeRCCLCapability:
     detection_method: Literal["probe", "heuristic"]
     probed_at: float = field(default_factory=time.time)
     ttl: float = 300.0                     # 5-minute default; 3600 after first success
+    inspector_v5: bool = False             # Inspector JSONL format v5.0+ detected (graphCaptured present)
 
 
 class RCCLEvent(BaseModel):
@@ -197,6 +198,9 @@ class InspectorCollPerf(BaseModel):
     algo_bw_gbps: float         # coll_perf.coll_algobw_gbs
     bus_bw_gbps: float          # coll_perf.coll_busbw_gbs
     event_trace: Optional[InspectorEventTrace] = None  # present only with NCCL_INSPECTOR_DUMP_VERBOSE=1
+    # v5.0+ fields (RCCL ≥ 2.28.9)
+    inspector_format_version: str = "v4.0"   # metadata.inspector_output_format_version
+    graph_captured: Optional[bool] = None    # coll_perf.graphCaptured; None on v4 records
 
 
 class InspectorSnapshot(BaseModel):

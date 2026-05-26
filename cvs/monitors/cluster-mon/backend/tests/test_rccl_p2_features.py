@@ -24,7 +24,7 @@ def test_hip_version_str_known_value():
 
 
 def test_hip_version_str_from_fixture():
-    # Value seen in rccl_verbose_status_healthy.txt
+    # Value seen in rccl_v2283_text_healthy.txt
     assert hip_version_str(70226015) == "7.2.26015"
 
 
@@ -58,7 +58,7 @@ def test_text_path_backfills_version(tmp_path):
     """After parsing text output, detected_rccl_version must be filled in."""
     from pathlib import Path
     fixtures = Path(__file__).parent / "fixtures"
-    healthy_text = (fixtures / "rccl_verbose_status_healthy.txt").read_text()
+    healthy_text = (fixtures / "rccl_v2283_text_healthy.txt").read_text()
 
     collector = RCCLCollector()
     cap = _text_cap()
@@ -70,7 +70,7 @@ def test_text_path_backfills_version(tmp_path):
 def test_text_path_does_not_overwrite_existing_version():
     from pathlib import Path
     fixtures = Path(__file__).parent / "fixtures"
-    healthy_text = (fixtures / "rccl_verbose_status_healthy.txt").read_text()
+    healthy_text = (fixtures / "rccl_v2283_text_healthy.txt").read_text()
 
     collector = RCCLCollector()
     cap = _text_cap()
