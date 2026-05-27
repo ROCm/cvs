@@ -348,6 +348,39 @@ def determine_rvs_config_path(orch, config_dict, config_file):
     return None
 
 
+def _build_rvs_cmd(rvs_path, rvs_args, *, sudo=False, ld_path=None):
+    """
+    Build a fully-formed RVS command string, optionally injecting LD_LIBRARY_PATH.
+
+    Why this helper exists:
+      RVS binaries packaged under /opt/rocm/extras-7 are often built against a newer
+      ROCm runtime than the one that /opt/rocm symlinks to. Prepending the user's
+      ROCm install (typically ~/install/lib + rocm_sysdeps + llvm/lib) to
+      LD_LIBRARY_PATH makes the dynamic loader pick up the matching libs (amd_smi,
+      rocm_smi, hsa, libdrm shims) instead of the system ones. We also have to
+      wrap it in `sudo env LD_LIBRARY_PATH=...` for tests that need root (peqt,
+      level_config) because sudo strips LD_LIBRARY_PATH by default.
+
+    Args:
+      rvs_path: Directory containing the rvs binary (e.g. '/opt/rocm/extras-7/bin').
+      rvs_args: Args to rvs (e.g. '-c /path/to.conf', '-r 4').
+      sudo: When True, prefix with sudo (required for level_config and peqt_single).
+      ld_path: Optional LD_LIBRARY_PATH prefix; falsy values mean "don't override".
+
+    Returns:
+      str: Shell command suitable for orch.exec(...).
+    """
+    bin_path = f'{rvs_path}/rvs'
+    if ld_path:
+        ld_expr = f'{ld_path}:$LD_LIBRARY_PATH'
+        if sudo:
+            return f'sudo env LD_LIBRARY_PATH="{ld_expr}" {bin_path} {rvs_args}'
+        return f'LD_LIBRARY_PATH="{ld_expr}" {bin_path} {rvs_args}'
+    if sudo:
+        return f'sudo {bin_path} {rvs_args}'
+    return f'{bin_path} {rvs_args}'
+
+
 def parse_rvs_test_results(test_config, out_dict):
     """
     Generic parser for RVS test results that validates against expected patterns.
@@ -431,12 +464,14 @@ def execute_rvs_test(orch, config_dict, test_name):
     # TEMP-FIX  end
 
     if config_path is not None:
-        # Run RVS test
-        if test_name == 'peqt_single':
-            # PEQT test requires elevated permissions
-            rvs_cmd = f'sudo {rvs_path}/rvs -c {config_path}'
-        else:
-            rvs_cmd = f'{rvs_path}/rvs -c {config_path}'
+        # Optional LD_LIBRARY_PATH override so RVS loads a matching ROCm runtime
+        # (e.g. an unpacked tarball under ~/install) instead of whatever
+        # /opt/rocm currently symlinks to. See _build_rvs_cmd for rationale.
+        ld_path = config_dict.get('rocm_runtime_lib_path') or ''
+
+        # PEQT requires elevated permissions; everything else runs as the SSH user.
+        sudo = (test_name == 'peqt_single')
+        rvs_cmd = _build_rvs_cmd(rvs_path, f'-c {config_path}', sudo=sudo, ld_path=ld_path)
 
         out_dict = orch.exec(f'{rvs_cmd}', timeout=timeout)
         print_test_output(log, out_dict)
@@ -536,9 +571,13 @@ def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level):
     rvs_path = config_dict['path']
     timeout = test_config.get('timeout', 7200)
 
+    # Optional LD_LIBRARY_PATH override so RVS loads a matching ROCm runtime
+    # instead of whatever /opt/rocm currently symlinks to. Empty/unset = no override.
+    ld_path = config_dict.get('rocm_runtime_lib_path') or ''
+
     # Run RVS with level configuration
     # The -r option runs all modules with predefined configuration for that level
-    rvs_cmd = f'sudo {rvs_path}/rvs -r {rvs_test_level}'
+    rvs_cmd = _build_rvs_cmd(rvs_path, f'-r {rvs_test_level}', sudo=True, ld_path=ld_path)
 
     log.info(f'Executing: {rvs_cmd}')
     out_dict = orch.exec(rvs_cmd, timeout=timeout)
