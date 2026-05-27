@@ -211,7 +211,6 @@ def test_install_rvs(orch, config_dict):
 
     log.info('Testcase install RVS (ROCmValidationSuite)')
     git_install_path = config_dict['git_install_path']
-    git_url = config_dict['git_url']
 
     # Check if RVS is already installed via system packages
     out_dict = orch.exec('which rvs', timeout=30)
