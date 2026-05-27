@@ -470,7 +470,7 @@ def execute_rvs_test(orch, config_dict, test_name):
         ld_path = config_dict.get('rocm_runtime_lib_path') or ''
 
         # PEQT requires elevated permissions; everything else runs as the SSH user.
-        sudo = (test_name == 'peqt_single')
+        sudo = test_name == 'peqt_single'
         rvs_cmd = _build_rvs_cmd(rvs_path, f'-c {config_path}', sudo=sudo, ld_path=ld_path)
 
         out_dict = orch.exec(f'{rvs_cmd}', timeout=timeout)
