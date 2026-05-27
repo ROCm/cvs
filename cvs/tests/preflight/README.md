@@ -4,12 +4,13 @@ A comprehensive validation system for GPU clusters before running performance te
 
 ## Overview
 
-The preflight checks system validates essential cluster health and configuration consistency across all nodes. It performs four critical validations:
+The preflight checks system validates essential cluster health and configuration consistency across all nodes. It performs the following validations:
 
 1. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
-2. **RDMA Connectivity** - Tests node-to-node RDMA communication using `rping`
+2. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
 3. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
-4. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present
+4. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(AIMVT-180; opt-in)*
+5. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Quick Start
 
@@ -84,10 +85,54 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 ### Key Parameters
 
 - **`connectivity_check.rdma.connectivity_mode`**: `"basic"`, `"full_mesh"`, or `"skip"`
+- **`connectivity_check.ifoe.connectivity_mode`**: `"run"` or `"skip"` (default)
 - **`node_check.expected_rocm_version`**: ROCm version expected across all nodes
 - **`node_check.rdma_interfaces`**: List of expected RDMA interface names
 - **`connectivity_check.rdma.ibv_test_timeout`**: Timeout in seconds for ibv_rc_pingpong tests
 - **`connectivity_check.rdma.ibv_test_port_range`**: Port range for parallel ibv_rc_pingpong tests
+
+## IFoE L2 Connectivity (AIMVT-180)
+
+Validates L2 reachability of IFoE links by invoking `afmctl test ping` on
+each reachable node and parsing the per-port pass/fail counts and the
+aggregate `Summary:` section from `afmctl`'s output.
+
+Each invocation issues:
+
+```
+<afmctl_path> test ping -b <bdf> -c <pings_per_port> [-p <ports>] \
+    --dst-accelerator <accel_id> [-t <per_ping_timeout>] [--traffic-type ...]
+```
+
+The check is **opt-in**: it defaults to `connectivity_mode: "skip"` so it
+will not run unless explicitly enabled. Enable it by setting
+`preflight.connectivity_check.ifoe.connectivity_mode` to `"run"` once the
+IFoE driver and `afmctl` are available on every node.
+
+When `bdfs` is empty and `bdf_discovery` is `"auto"` (default), preflight
+runs `afmctl show device` on every reachable node and uses the BDFs it
+reports. A node is marked **FAIL** if any enabled traffic type
+(`ifoe_req`, `ifoe_resp`, `non_ifoe`) exceeds `loss_threshold_pct` (default
+`0.0`), or if any per-port table entry reports `FAIL`.
+
+### Example IFoE config block
+
+```json
+"connectivity_check": {
+  "ifoe": {
+    "connectivity_mode": "run",
+    "afmctl_path": "/usr/local/bin/afmctl",
+    "use_sudo": true,
+    "bdf_discovery": "auto",
+    "dst_accelerators": [0, 1],
+    "ports": "all",
+    "pings_per_port": 5,
+    "traffic_types": ["ifoe_req", "ifoe_resp", "non_ifoe"],
+    "loss_threshold_pct": 0.0,
+    "ssh_timeout": 240
+  }
+}
+```
 
 ## Output and Reporting
 
