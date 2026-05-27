@@ -303,8 +303,7 @@ def test_install_rvs(orch, config_dict):
             try:
                 # Resolve the latest amdrocm7-rvs-*.tar.gz from the directory listing
                 out_dict = orch.exec(
-                    f"curl -sSL {tarball_index_url} | "
-                    f"grep -oE 'amdrocm7-rvs-[^\"]+\\.tar\\.gz' | sort -V -u | tail -1",
+                    f"curl -sSL {tarball_index_url} | grep -oE 'amdrocm7-rvs-[^\"]+\\.tar\\.gz' | sort -V -u | tail -1",
                     timeout=60,
                 )
                 latest_tarball = ''
@@ -359,8 +358,7 @@ def test_install_rvs(orch, config_dict):
                 # RVS now lives under /opt/rocm/extras-7; realign paths so the
                 # subsequent verification finds the binary and config files.
                 log.info(
-                    f'RVS installed via tarball to {extras_dir}; '
-                    f'updating rocm_path from {rocm_path} to {extras_dir}'
+                    f'RVS installed via tarball to {extras_dir}; updating rocm_path from {rocm_path} to {extras_dir}'
                 )
                 for key in ('path', 'config_path_mi300x', 'config_path_default'):
                     if key in config_dict:
