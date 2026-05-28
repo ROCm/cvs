@@ -1,0 +1,132 @@
+{
+
+    "config":
+    {
+        "container_image": "<changeme>",
+        "container_name": "torchtitan_llama3.1",
+        "nnodes": "1",
+        "_example_training_iterations": "30",
+        "training_iterations": "<changeme>",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "shm_size": "128G",
+        "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
+        "data_cache_dir": "/home/{user-id}/cache",
+        "log_dir": "/home/{user-id}/LOG_DIR",
+        "scripts_dir": "/home/{user-id}/SCRIPTS",
+        "rocm_dir": "",
+        "verify_network_errors": "False",
+        "container_config":
+        {
+            "device_list": [ "/dev/dri", "/dev/kfd" ],
+            "volume_dict":
+            {
+                "/home/{user-id}": "/home/{user-id}"
+            }
+        }
+    },
+    "model_params":
+    {
+        "single_node":
+        {
+            "llama3_1_8b":
+            {
+                "mi300x":
+                {
+                    "tokenizer_path": "meta-llama/Llama-3.1-8B",
+                    "model_size": "8b",
+                    "global_batch_size": "<changeme>",
+                    "micro_batch_size": "<changeme>",
+                    "sequence_length": "8192",
+                    "data_parallel_shard_degree": "8",
+                    "tensor_parallel_degree": "1",
+                    "pipeline_parallel_degree": "1",
+                    "context_parallel_degree": "1",
+                    "expert_parallel_degree": "1",
+                    "activation_checkpointing": "selective",
+                    "compile": "false",
+                    "enable_float8": "true",
+                    "result_dict":
+                    {
+                        "_example_tokens_per_sec": "10000.0",
+                        "_example_loss": "2.5",
+                        "tokens_per_sec": "<changeme>",
+                        "loss": "<changeme>"
+                    }
+                },
+                "mi325":
+                {
+                    "tokenizer_path": "meta-llama/Llama-3.1-8B",
+                    "model_size": "8b",
+                    "global_batch_size": "<changeme>",
+                    "micro_batch_size": "<changeme>",
+                    "sequence_length": "8192",
+                    "data_parallel_shard_degree": "8",
+                    "tensor_parallel_degree": "1",
+                    "pipeline_parallel_degree": "1",
+                    "context_parallel_degree": "1",
+                    "expert_parallel_degree": "1",
+                    "activation_checkpointing": "selective",
+                    "compile": "false",
+                    "enable_float8": "true",
+                    "result_dict":
+                    {
+                        "_example_tokens_per_sec": "11000.0",
+                        "_example_loss": "2.5",
+                        "tokens_per_sec": "<changeme>",
+                        "loss": "<changeme>"
+                    }
+                }
+            },
+            "llama3_1_70b":
+            {
+                "mi300x":
+                {
+                    "tokenizer_path": "meta-llama/Llama-3.1-70B",
+                    "model_size": "70b",
+                    "global_batch_size": "<changeme>",
+                    "micro_batch_size": "<changeme>",
+                    "sequence_length": "8192",
+                    "data_parallel_shard_degree": "8",
+                    "tensor_parallel_degree": "1",
+                    "pipeline_parallel_degree": "1",
+                    "context_parallel_degree": "1",
+                    "expert_parallel_degree": "1",
+                    "activation_checkpointing": "selective",
+                    "compile": "false",
+                    "enable_float8": "true",
+                    "result_dict":
+                    {
+                        "_example_tokens_per_sec": "1000.0",
+                        "_example_loss": "3.0",
+                        "tokens_per_sec": "<changeme>",
+                        "loss": "<changeme>"
+                    }
+                },
+                "mi325":
+                {
+                    "tokenizer_path": "meta-llama/Llama-3.1-70B",
+                    "model_size": "70b",
+                    "global_batch_size": "<changeme>",
+                    "micro_batch_size": "<changeme>",
+                    "sequence_length": "8192",
+                    "data_parallel_shard_degree": "8",
+                    "tensor_parallel_degree": "1",
+                    "pipeline_parallel_degree": "1",
+                    "context_parallel_degree": "1",
+                    "expert_parallel_degree": "1",
+                    "activation_checkpointing": "selective",
+                    "compile": "false",
+                    "enable_float8": "true",
+                    "result_dict":
+                    {
+                        "_example_tokens_per_sec": "1100.0",
+                        "_example_loss": "3.0",
+                        "tokens_per_sec": "<changeme>",
+                        "loss": "<changeme>"
+                    }
+                }
+            }
+        }
+    }
+
+}
