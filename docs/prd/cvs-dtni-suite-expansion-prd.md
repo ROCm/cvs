@@ -99,6 +99,63 @@ Two launch models:
 - `"barrier"` — symmetric distributed training (torchrun, jax.distributed). All sub-adapters in a cohort start simultaneously to avoid racing collective bootstrap timeouts.
 - `"dag"` — genuinely sequential pipelines (sglang disagg: servers → router → bench). Cohorts run in topological order; within a cohort, sub-adapters still launch in parallel.
 
+**Worked example: sglang disaggregated PD as a Composite.**
+
+The current `cvs/lib/sglang_disagg_lib.py` (1200 LOC) is replaced by a factory that builds four Strategy classes — `SglangServerAdapter` (reused for both prefill and decode roles, differing only by `mode`), `SglangRouterAdapter`, `SglangBenchAdapter` — and wires them into a single `CompositeAdapter`. The `Job` driver never sees the topology.
+
+```python
+def sglang_disagg_factory(cfg, cluster, gpu, secrets) -> CompositeAdapter:
+    # 1. Per-role Strategy instances. SglangServerAdapter is reused twice.
+    prefills = [SglangServerAdapter(node=n, mode="prefill",
+                                    peer_addrs=PeerAddrs(decode_addrs=[d.addr for d in cluster.decode_nodes]))
+                for n in cluster.prefill_nodes]
+    decodes  = [SglangServerAdapter(node=n, mode="decode",
+                                    peer_addrs=PeerAddrs(prefill_addrs=[p.addr for p in cluster.prefill_nodes]))
+                for n in cluster.decode_nodes]
+    router   =  SglangRouterAdapter(node=cluster.router_node,
+                                    prefill_addrs=[p.addr for p in cluster.prefill_nodes],
+                                    decode_addrs =[d.addr for d in cluster.decode_nodes])
+    bench    =  SglangBenchAdapter(node=cluster.bench_node,
+                                   router_addr=cluster.router_node.addr,
+                                   workload=cfg.workload)
+
+    # 2. Index every sub-adapter and lay out the DAG: servers -> router -> bench.
+    sub_adapters   = [*prefills, *decodes, router, bench]
+    sub_role_names = ([f"prefill-{i}" for i in range(len(prefills))] +
+                      [f"decode-{i}"  for i in range(len(decodes))]  +
+                      ["router", "bench"])
+    server_idxs = list(range(len(prefills) + len(decodes)))
+    router_idx  = len(server_idxs)
+    bench_idx   = router_idx + 1
+
+    return CompositeAdapter(
+        sub_adapters=sub_adapters,
+        sub_role_names=sub_role_names,
+        launch_model="dag",
+        barrier_cohorts=[
+            server_idxs,         # cohort 1: every prefill + decode in parallel
+            [router_idx],        # cohort 2: router (after servers ready)
+            [bench_idx],         # cohort 3: bench-client (after router ready)
+        ],
+        depends_on={router_idx: server_idxs, bench_idx: [router_idx]},
+        composite_progress_predicates=[
+            RouterBalancePredicate(max_imbalance_pct=0.30),   # catches 90/10 routing
+        ],
+        composite_parsers=[
+            PdHandoffJoinParser(),       # joins prefill/decode rows on request_id
+            RouterTrajectoryParser(),    # router queue depth trajectory
+        ],
+    )
+```
+
+What this buys:
+
+- **Reuse.** `SglangServerAdapter` is ~200 LOC and ships once; the disagg Composite invokes it twice (`mode="prefill"`, `mode="decode"`). Today's 1200-LOC monolith cannot be partially reused.
+- **Correct launch ordering.** `barrier_cohorts` enforces that all servers come up before the router, and the router before the bench client — but every prefill and every decode launches *in parallel* within cohort 1. Today's sequential `test_launch_prefill_servers` → `test_launch_decode_servers` is unnecessarily serial.
+- **Composite-level signal.** `RouterBalancePredicate` lifts a Composite-only invariant (no single server taking >70% of requests) into a `safety_violation` failure category. A stuck router with empty decode queues — silently passing today — surfaces mid-run.
+- **Cross-role parsing.** `PdHandoffJoinParser` joins prefill-role rows and decode-role rows on `request_id`, producing the `cross_role_samples_rows` carrier (§4.1) with `{request_id, prefill_done_ns, decode_start_ns, kv_transfer_ms, e2e_ms}`. This is the only shape that can express prefill→decode handoff latency.
+- **Driver indifference.** From the `Job` driver's perspective this returns a `WorkloadAdapter`. Same six lifecycle calls. No `if framework == "sglang_disagg"` branching anywhere.
+
 **In scope.**
 
 - `VllmAdapter`, `PytorchXditAdapter`, `InferenceMaxAdapter`, single-node training as Strategy.
