@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import os
 import re
+import textwrap
 import time
 
 from cvs.lib import globals
@@ -24,6 +25,68 @@ training_err_dict = {
 }
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
+
+
+# Ordered fallback chains for parsing TorchTitan training output.
+# Each chain is tried in order; first non-empty match wins. Single-entry
+# lists today, but the structure matches megatron_training_lib.py so adding
+# alternate log formats later is a one-line change.
+TRAINING_RESULT_PATTERNS = {
+    'tokens_per_sec': [r'tok/s:\s+([0-9\.]+)'],
+    'loss': [r'loss:\s+([0-9\.]+)'],
+    'mem_usage_gb': [r'mem:\s+([0-9\.]+)\s+GB'],
+}
+
+# Completion indicator: TorchTitan emits `step: <N>` where N is the configured
+# final iteration count. Populated per-instance because it depends on
+# self.iterations; see _is_training_complete.
+TRAINING_PROGRESS_PATTERNS_TEMPLATE = [r'step:\s+{iterations}']
+
+# NaN/Inf detection on result lines. NOTE: `[NaN|Inf]` is a character class
+# (matches any one of N,a,I,n,f,|) — preserved verbatim from the prior inline
+# regex to honor "don't change functionality". Switch to `(NaN|Inf)` to make
+# this check actually fire.
+TRAINING_NAN_PATTERNS = [
+    r'tok/s:\s+[NaN|Inf]',
+    r'loss:\s+[NaN|Inf]',
+]
+
+
+def _parse_training_results(output):
+    """Extract metric values from training-log text using ordered fallback chains.
+
+    For each metric in TRAINING_RESULT_PATTERNS, try each pattern in order and
+    return the first non-empty list of matches. If no pattern matches, the
+    metric maps to an empty list.
+
+    Args:
+        output (str): Raw training-log text to parse.
+
+    Returns:
+        dict: {metric_name: list[str]} for every key in TRAINING_RESULT_PATTERNS.
+    """
+    out = {}
+    for metric, patterns in TRAINING_RESULT_PATTERNS.items():
+        out[metric] = []
+        for pat in patterns:
+            matches = re.findall(pat, output, re.I)
+            if matches:
+                out[metric] = matches
+                break
+    return out
+
+
+def _is_training_complete(output, iterations):
+    """Return True if the training-log text shows the configured final step
+    matching any pattern in TRAINING_PROGRESS_PATTERNS_TEMPLATE."""
+    patterns = [p.format(iterations=iterations) for p in TRAINING_PROGRESS_PATTERNS_TEMPLATE]
+    return any(re.search(p, output, re.I) for p in patterns)
+
+
+def _has_nan_inf_results(output):
+    """Return True if the training-log text shows a NaN/Inf result line
+    matching any pattern in TRAINING_NAN_PATTERNS."""
+    return any(re.search(p, output, re.I) for p in TRAINING_NAN_PATTERNS)
 
 
 def detect_rocm_path(phdl, config_rocm_path):
@@ -99,6 +162,28 @@ class TorchTitanTrainingJob:
         tune_model_params=True,
         scripts_dir=None,
     ):
+        """
+        Initialize job configuration and resolve defaults from the provided dicts.
+
+        - Normalizes training_config_dict and model_params_dict; applies defaults
+          if fields are missing.
+        - Builds paths and internal state used later to construct torchrun commands.
+
+        Args:
+          phdl: Remote execution handle for multi-node command execution.
+          model_name: Canonical model name key used in model_params_dict
+            (e.g., "llama3_1_8b", "deepseek_v3", "qwen3").
+          training_config_dict: Unstructured training config; defaults are applied here.
+          model_params_dict: Parameter sets per model and topology (single/multi-node).
+          hf_token: Hugging Face token passed to the job environment.
+          gpu_type: GPU platform key to select model params (default: 'mi350').
+          distributed_training: If True, build multi-node torchrun launchers.
+          tune_model_params: If True, adjust global_batch_size based on cluster size.
+          scripts_dir: Optional override for the per-node folder where generated
+            wrapper scripts are placed. When None (default), the value is read
+            from training_config_dict['scripts_dir'], which itself defaults to
+            ``{self.home_dir}/SCRIPTS``.
+        """
         self.phdl = phdl
         self.host_list = phdl.host_list
         self.model_name = model_name
@@ -131,6 +216,7 @@ class TorchTitanTrainingJob:
         tdict.setdefault('training_iterations', 10)
         tdict.setdefault('nnodes', 1)
         tdict.setdefault('nic_type', 'thor2')
+        tdict.setdefault('hca_id_pattern', 'bnxt_|rocep')
         tdict.setdefault('nccl_ib_hca_list', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_ib_hca', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_socket_ifname', 'ensf1np1')
@@ -141,6 +227,11 @@ class TorchTitanTrainingJob:
         tdict.setdefault('master_address', '127.0.0.1')
         tdict.setdefault('verify_network_errors', 'False')
         tdict.setdefault('rocm_dir', '')
+        tdict.setdefault('torchtitan_root', '/workspace/torchtitan')
+        # 'True'  -> generate a TOML from JSON model_params and point torchrun at it
+        # 'False' -> use the canned TOML shipped with TorchTitan at
+        #            ./torchtitan/models/{tt_module}/train_configs/{tt_config}
+        tdict.setdefault('use_generated_config', 'True')
 
         self.container_image = tdict['container_image']
         self.container_name = tdict['container_name']
@@ -148,6 +239,7 @@ class TorchTitanTrainingJob:
         self.iterations = int(tdict['training_iterations'])
         self.nnodes = int(tdict['nnodes'])
         self.nic_type = tdict['nic_type']
+        self.hca_id_pattern = tdict['hca_id_pattern']
         self.nccl_ib_hca_list = tdict['nccl_ib_hca_list']
         self.nccl_ib_hca = tdict['nccl_ib_hca']
         self.nccl_socket_ifname = tdict['nccl_socket_ifname']
@@ -156,10 +248,14 @@ class TorchTitanTrainingJob:
         self.nccl_debug = tdict['nccl_debug']
         self.data_cache_dir = tdict['data_cache_dir']
         self.log_dir = tdict['log_dir']
-        self.scripts_dir = scripts_dir or tdict['scripts_dir']
+        # kwarg wins over training_dict so direct callers (tests, custom harnesses)
+        # can still override; falls back to the setdefault'd dict value otherwise.
+        self.scripts_dir = scripts_dir if scripts_dir is not None else tdict['scripts_dir']
         self.master_address = tdict['master_address']
         self.verify_network_errors = tdict['verify_network_errors']
         self.rocm_path = detect_rocm_path(self.phdl, tdict['rocm_dir'])
+        self.use_generated_config = tdict['use_generated_config']
+        self.torchtitan_root = tdict['torchtitan_root']
 
         log.info('^^^^')
         log.info("%s", self.model_params_dict)
@@ -188,6 +284,15 @@ class TorchTitanTrainingJob:
         pdict.setdefault('activation_checkpointing', 'selective')
         pdict.setdefault('compile', 'false')
         pdict.setdefault('enable_float8', 'true')
+        # New fields driving the generated TOML (all values stored as strings per
+        # CVS config convention; lib classifies emit kind per field).
+        pdict.setdefault('hf_assets_path', './assets/hf/Llama-3.1-70B')
+        pdict.setdefault('converters', '["float8"]')
+        pdict.setdefault('dataset', 'c4')
+        pdict.setdefault('lr', '8e-5')
+        pdict.setdefault('warmup_steps', '600')
+        pdict.setdefault('enable_async_tensor_parallel', 'true')
+        pdict.setdefault('precompute_float8_dynamic_scale_for_fsdp', 'true')
 
         self.tokenizer_path = pdict['tokenizer_path']
         self.model_size = pdict['model_size']
@@ -202,6 +307,13 @@ class TorchTitanTrainingJob:
         self.activation_checkpointing = pdict['activation_checkpointing']
         self.compile = pdict['compile']
         self.enable_float8 = pdict['enable_float8']
+        self.hf_assets_path = pdict['hf_assets_path']
+        self.converters = pdict['converters']
+        self.dataset = pdict['dataset']
+        self.lr = pdict['lr']
+        self.warmup_steps = pdict['warmup_steps']
+        self.enable_async_tensor_parallel = pdict['enable_async_tensor_parallel']
+        self.precompute_float8_dynamic_scale_for_fsdp = pdict['precompute_float8_dynamic_scale_for_fsdp']
 
         # Determine TorchTitan module from model name; config is always {module}_{model_size}
         if re.search('deepseek', self.model_name, re.I):
@@ -229,7 +341,19 @@ class TorchTitanTrainingJob:
                     self.global_batch_size = str(int(per_gpu_batch_size * total_gpus))
 
     def run_pretraining_tasks(self):
-        """Collect network stats before training starts (for distributed training)."""
+        """
+        Snapshot per-node RDMA and ethtool counters before training starts.
+
+        Behavior:
+          - Only runs when distributed_training is True (single-node skips network
+            stat collection entirely).
+          - Stores pre-training counters on self.rdma_stats_dict_before and
+            self.ethtool_stats_dict_before for later diff in verify_training_results.
+
+        Assumptions:
+          - linux_utils.get_rdma_stats_dict / get_nic_ethtool_stats_dict return
+            {node: {counter: value}} mappings.
+        """
         if self.distributed_training is True:
             self.rdma_stats_dict_before = linux_utils.get_rdma_stats_dict(self.phdl)
             self.ethtool_stats_dict_before = linux_utils.get_nic_ethtool_stats_dict(self.phdl)
@@ -237,7 +361,19 @@ class TorchTitanTrainingJob:
     def exec_nic_setup_scripts(self):
         """
         Prepare backend NICs inside containers before starting distributed training.
-        Applies vendor-specific workarounds (e.g., Broadcom RDMA library setup).
+
+        Behavior:
+          - Only runs when distributed_training is True.
+          - If nic_type indicates Broadcom/Thor, it:
+            * Forces NCCL GID index to 3 (common Broadcom requirement).
+            * Copies the host-side libbnxt_re library into the container's ibverbs path.
+            * Runs ibv_devinfo to verify the RDMA device enumerates against hca_id_pattern.
+            * Fails the test if the expected device string is not detected on any node.
+
+        Assumptions:
+          - self.phdl provides exec(...) to run commands on all nodes/hosts.
+          - Docker is installed and the container is already running on each node.
+          - fail_test(...) is available in scope to abort on setup failures.
         """
         if self.distributed_training is True:
             if re.search('broadcom|thor', self.nic_type, re.I):
@@ -248,21 +384,128 @@ class TorchTitanTrainingJob:
                     /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
                     sleep 2;ibv_devinfo;sleep 2;"'
                 )
+                # Treat `hca_id_pattern` as a `|`-separated list of literal
+                # NIC-name prefixes. Each segment is `re.escape`d so users
+                # can't accidentally inject regex syntax (e.g. `mlx5+` is a
+                # literal 5-char prefix, not `mlx` + `5+` quantifier).
+                segments = [re.escape(s.strip()) for s in self.hca_id_pattern.split('|') if s.strip()]
+                if not segments:
+                    fail_test(
+                        f'hca_id_pattern parsed to zero non-empty segments, got: {self.hca_id_pattern!r}. '
+                        f'Expected a `|`-separated list of NIC-name prefixes, e.g. "bnxt_|rocep".'
+                    )
+                hca_id_regex = rf'hca_id:\s+({"|".join(segments)})'
                 for node in out_dict.keys():
-                    if not re.search(r'hca_id:\s+bnxt_', out_dict[node], re.I):
+                    if not re.search(hca_id_regex, out_dict[node], re.I):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
+
+    def _build_generated_toml(self):
+        """
+        Render a TorchTitan job-config TOML from JSON model_params.
+
+        Section/key layout follows the upstream TorchTitan preset; values come
+        from self.* (sourced from JSON model_params) or are kept as TorchTitan
+        defaults where the JSON doesn't expose a knob (e.g. dtype, name,
+        filter_fqns, comm timeout).
+
+        Extras beyond the upstream preset (kept for CVS reproducibility):
+          - [model]    tokenizer_path
+          - [training] global_batch_size
+          - [parallelism] data_parallel_shard_degree, expert_parallel_degree
+
+        Booleans (compile, enable_float8, enable_async_tensor_parallel,
+        precompute_float8_dynamic_scale_for_fsdp) are stored as 'true'/'false'
+        strings in JSON and lowercased here for TOML literal form.
+        """
+        compile_lower = str(self.compile).lower()
+        float8_lower = str(self.enable_float8).lower()
+        async_tp_lower = str(self.enable_async_tensor_parallel).lower()
+        float8_precompute_lower = str(self.precompute_float8_dynamic_scale_for_fsdp).lower()
+        return textwrap.dedent(f"""\
+            [model]
+            name = "llama3"
+            flavor = "{self.model_size}"
+            hf_assets_path = "{self.hf_assets_path}"
+            tokenizer_path = "{self.tokenizer_path}"
+            converters = {self.converters}
+
+            [training]
+            dataset = "{self.dataset}"
+            local_batch_size = {self.micro_batch_size}
+            global_batch_size = {self.global_batch_size}
+            seq_len = {self.sequence_length}
+            steps = {self.iterations}
+            dtype = "bfloat16"
+
+            [optimizer]
+            lr = {self.lr}
+
+            [lr_scheduler]
+            warmup_steps = {self.warmup_steps}
+
+            [parallelism]
+            data_parallel_shard_degree = {self.data_parallel_shard_degree}
+            tensor_parallel_degree = {self.tensor_parallel_degree}
+            pipeline_parallel_degree = {self.pipeline_parallel_degree}
+            context_parallel_degree = {self.context_parallel_degree}
+            expert_parallel_degree = {self.expert_parallel_degree}
+            enable_async_tensor_parallel = {async_tp_lower}
+
+            [activation_checkpoint]
+            mode = "{self.activation_checkpointing}"
+
+            [compile]
+            enable = {compile_lower}
+
+            [quantize.linear.float8]
+            enable_fsdp_float8_all_gather = {float8_lower}
+            precompute_float8_dynamic_scale_for_fsdp = {float8_precompute_lower}
+            filter_fqns = ["output"]
+
+            [comm]
+            init_timeout_seconds = 600
+            """)
+
+    def _write_generated_toml(self, dest_path):
+        """
+        Push the generated TOML to `dest_path` on every node via a quoted
+        heredoc (no shell expansion). Relies on scripts_dir being on a
+        bind-mounted host path so the same path is visible inside the container.
+        """
+        toml_str = self._build_generated_toml()
+        log.info('Generated TorchTitan TOML config:\n%s', toml_str)
+        # 'CVS_TOML_EOF' quoted -> bash does not expand $vars or backticks.
+        # Sentinel chosen to not collide with TOML content.
+        write_cmd = f"cat > {dest_path} <<'CVS_TOML_EOF'\n{toml_str}\nCVS_TOML_EOF"
+        self.phdl.exec(write_cmd)
 
     def build_training_job_cmd(self):
         """
         Construct native TorchTitan training command using torchrun.
 
-        Uses torchrun to launch distributed training with TOML config.
+        Two job-config sources, selected by self.use_generated_config:
+          - 'True'  -> generate a TOML from JSON model_params (written to
+            {scripts_dir}/run_config.toml on every node) and pass it to
+            --job.config_file. All run-tuning knobs come from JSON.
+          - 'False' -> use the canned TOML shipped with TorchTitan at
+            ./torchtitan/models/{tt_module}/train_configs/{tt_config}.
+            Customer tunes by editing that TOML directly.
         """
-        cmd = f'cd /workspace/torchtitan; export HF_TOKEN={self.hf_token}; '
+        cmd = f'cd {self.torchtitan_root}; export HF_TOKEN={self.hf_token}; '
         cmd += 'export HSA_FORCE_FINE_GRAIN_PCIE=1; '
         cmd += 'export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True; '
-        cmd += f'export CONFIG_FILE="./torchtitan/models/{self.tt_module}/train_configs/{self.tt_config}"; '
+        # Path is inlined into torchrun below (not exported as $CONFIG_FILE).
+        # Reason: start_training_job uses double-quoted `echo` to write the
+        # wrapper, which would expand `$CONFIG_FILE` against the SSH session's
+        # env at echo-time -- silently overriding our export if the host
+        # environment already has CONFIG_FILE set (e.g. baked into the
+        # container image or the user's shell init).
+        if self.use_generated_config == 'True':
+            config_file_path = f'{self.scripts_dir}/run_config.toml'
+            self._write_generated_toml(config_file_path)
+        else:
+            config_file_path = f'./torchtitan/models/{self.tt_module}/train_configs/{self.tt_config}.toml'
 
         if self.distributed_training is True:
             cmd += (
@@ -276,7 +519,7 @@ class TorchTitanTrainingJob:
         nproc_per_node = 8
 
         download_tokenizer_cmd = (
-            f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} --assets --all tokenizer --hf_token={self.hf_token}'
+            f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} --assets tokenizer --all --hf_token={self.hf_token}'
         )
 
         if self.distributed_training:
@@ -286,11 +529,26 @@ class TorchTitanTrainingJob:
                     f' --rdzv_id 101 --rdzv_backend c10d'
                     f' --rdzv_endpoint "{self.master_address}:29500"'
                     f' --role rank --tee 3'
-                    f' -m torchtitan.train --job.config_file $CONFIG_FILE'
+                    f' -m torchtitan.train --job.config_file {config_file_path}'
+                )
+                # Truncate any stale training.log from a prior run *before*
+                # the download/sleep window. The `>` redirect on torchrun only
+                # opens the file once torchrun itself runs; without this,
+                # poll_for_training_completion would scan the previous run's
+                # output during the download + sleep gap.
+                log_path = f'{self.log_dir}/torchtitan-logs/out-node{i}/training.log'
+                # Wrap the chain in `nohup sh -c '...' & disown` so it
+                # survives the wrapper bash exiting. Without this, the
+                # backgrounded chain dies when `docker exec` returns because
+                # its parent bash also exits, leaving the chain unreparented
+                # and reaped.
+                inner_chain = (
+                    f'{download_tokenizer_cmd} && sleep 200 && '
+                    f'{torchrun_cmd} > {log_path} 2>&1'
                 )
                 full_cmd = (
-                    cmd + download_tokenizer_cmd + ' && ' + torchrun_cmd
-                    + f' > {self.log_dir}/torchtitan-logs/out-node{i}/training.log 2>&1 &'
+                    cmd + f': > {log_path}; '
+                    + f"nohup sh -c '{inner_chain}' </dev/null >/dev/null 2>&1 & disown"
                 )
                 script_cmd = (
                     f'echo "{full_cmd}" > {self.scripts_dir}/distributed_wrapper_script_{i}.sh;'
@@ -303,11 +561,16 @@ class TorchTitanTrainingJob:
                 f' --rdzv_id 101 --rdzv_backend c10d'
                 f' --rdzv_endpoint "{self.master_address}:29500"'
                 f' --role rank --tee 3'
-                f' -m torchtitan.train --job.config_file $CONFIG_FILE'
+                f' -m torchtitan.train --job.config_file {config_file_path}'
+            )
+            log_path = f'{self.log_dir}/torchtitan-logs/out-node0/training.log'
+            inner_chain = (
+                f'{download_tokenizer_cmd} && sleep 200 && '
+                f'{torchrun_cmd} > {log_path} 2>&1'
             )
             self.job_cmd = (
-                cmd + download_tokenizer_cmd + ' && ' + torchrun_cmd
-                + f' > {self.log_dir}/torchtitan-logs/out-node0/training.log 2>&1 &'
+                cmd + f': > {log_path}; '
+                + f"nohup sh -c '{inner_chain}' </dev/null >/dev/null 2>&1 & disown"
             )
 
     def start_training_job(self, timeout=500):
@@ -349,18 +612,26 @@ class TorchTitanTrainingJob:
 
     def get_training_results_dict(self):
         """
-        Parse TorchTitan training log output and extract key performance metrics.
+        Parse the last node's training log and extract TorchTitan metrics.
 
         TorchTitan log format: "step: X, loss: Y, tok/s: Z, mem: W GB"
 
         Returns:
-            dict: Extracted metric lists:
+            dict: Extracted metric lists (one entry per regex match):
               - 'tokens_per_sec': Matches 'tok/s: <float>'
               - 'loss':           Matches 'loss: <float>'
               - 'mem_usage_gb':   Matches 'mem: <float> GB'
-        """
-        training_results_dict = {}
 
+        Behavior:
+          - Reads the tail of the training log on the last node (authoritative
+            per project convention).
+          - Delegates regex extraction to _parse_training_results so the metric
+            set is config-table driven.
+
+        Assumptions:
+          - self.phdl.exec(cmd) returns {host: stdout_str}.
+          - self.host_list is non-empty; the last entry contains the final log.
+        """
         last_node = self.host_list[-1]
         last_node_num = len(self.host_list) - 1
         out_dict = self.phdl.exec(
@@ -373,19 +644,33 @@ class TorchTitanTrainingJob:
         log.info("%s", output)
         log.info('#===========================#')
 
-        training_results_dict['tokens_per_sec'] = re.findall(r'tok/s:\s+([0-9\.]+)', output, re.I)
-        training_results_dict['loss'] = re.findall(r'loss:\s+([0-9\.]+)', output, re.I)
-        training_results_dict['mem_usage_gb'] = re.findall(r'mem:\s+([0-9\.]+)\s+GB', output, re.I)
+        training_results_dict = _parse_training_results(output)
 
         log.info("%s", training_results_dict)
         return training_results_dict
 
     def scan_for_training_errors(self):
         """
-        Scan training logs for known error patterns.
+        Scan the consolidated training logs for known error patterns.
 
         Returns:
-            bool: True if no errors found; False otherwise.
+            bool: True if no error patterns are found; False otherwise.
+
+        Behavior:
+          - Reads the training log file from the last node (authoritative).
+          - Iterates through regex patterns in training_err_dict and searches
+            the log content.
+          - On first match: calls fail_test, logs an abort message, and sets
+            training_pass to False. Does not short-circuit; continues scanning
+            so all matched patterns get recorded.
+
+        Assumptions:
+          - self.phdl.exec(cmd) returns {host: stdout_str}.
+          - training_err_dict is a module-level dict of name -> regex.
+          - sudo can read the training log without an interactive prompt.
+
+        Notes:
+          - Regex search is case-sensitive as written.
         """
         log.info('Scan for training errors')
         training_pass = True
@@ -407,12 +692,34 @@ class TorchTitanTrainingJob:
 
     def poll_for_training_completion(self, time_between_iters=120):
         """
-        Periodically poll training logs to detect completion and surface errors.
+        Periodically poll training logs to detect completion, surface errors,
+        and validate results.
 
-        TorchTitan completion detection looks for "step: {iterations}" in logs.
+        Args:
+            time_between_iters (int | float): Seconds to sleep between each
+                polling iteration.
+
+        Behavior:
+          - Waits an initial 80s to allow training to start producing logs.
+          - For up to self.iterations + 10 loops:
+            * Invokes scan_for_training_errors(); aborts if it flags errors.
+            * Reads the consolidated training log from the last node.
+            * Checks for completion via _is_training_complete (looks for
+              `step: {self.iterations}` line).
+          - If not seen: logs in-progress and sleeps time_between_iters.
+          - If seen: verifies via _has_nan_inf_results that metric lines are
+            not NaN/Inf, then parses and stores results.
+
+        Notes:
+          - TorchTitan completion detection looks for `step: {iterations}`.
+          - The NaN/Inf check uses the legacy `[NaN|Inf]` character-class
+            pattern preserved verbatim from prior behavior (see
+            TRAINING_NAN_PATTERNS comment).
         """
         log.info('Poll for training completion ..')
-        time.sleep(80)
+        # Wrapper does: download (~1 min) + `sleep 200` + torchrun. Wait past
+        # that window before scanning logs so we don't poll an empty file.
+        time.sleep(300)
 
         last_node = self.host_list[-1]
         last_node_num = len(self.host_list) - 1
@@ -429,12 +736,10 @@ class TorchTitanTrainingJob:
             )
             output = out_dict[last_node]
 
-            final_step_pattern = f'step:\\s+{self.iterations}'
-
-            if not re.search(final_step_pattern, output, re.I):
+            if not _is_training_complete(output, self.iterations):
                 log.info('Training still in progress - final step not yet reached')
             else:
-                if re.search(r'tok/s:\s+[NaN|Inf]', output, re.I) or re.search(r'loss:\s+[NaN|Inf]', output, re.I):
+                if _has_nan_inf_results(output):
                     fail_test(f'ERROR - NaN or Inf values seen in training results {output}')
                     return
                 else:
@@ -447,13 +752,28 @@ class TorchTitanTrainingJob:
 
     def verify_training_results(self):
         """
-        Validate collected training results and environment health after a training run.
+        Validate collected training results and environment health after a run.
 
-        Checks:
-          - training_results_dict for NaN/Inf values
-          - Network stats (RDMA, ethtool) if distributed and verify_network_errors enabled
-          - Kernel logs (dmesg) for errors
-          - Performance results against expected thresholds
+        Behavior:
+          - Records the training end time for dmesg time-bounded scanning.
+          - Fails if training_results_dict is empty.
+          - Scans every parsed metric for NaN/Inf and fails on any match.
+          - Distributed only: collects post-training RDMA + ethtool stats and
+            fails if any error counter (matching err_counters_pattern) went up
+            vs. the pre-training baseline.
+          - Scans dmesg between training_start_time and training_end_time.
+          - Compares each observed metric against the threshold in
+            self.expected_result_dict; fails on any node below threshold.
+
+        Assumptions:
+          - self.phdl.exec returns {node: stdout_str}.
+          - self.verify_network_errors is the string 'True' or 'False' (per
+            CVS config convention).
+          - self.expected_result_dict supplies numeric thresholds keyed by
+            the same names as TRAINING_RESULT_PATTERNS.
+
+        Side effects:
+          - Accumulates failures via fail_test; does not raise.
         """
         self.training_end_time = self.phdl.exec('date')
 
