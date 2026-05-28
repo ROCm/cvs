@@ -6,6 +6,59 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Cluster Validation Suite (CVS)** is a pytest-based testing framework for validating AMD AI clusters — from single-node burn-in to multi-node distributed training and inference. It is distributed as a Python package with a `cvs` CLI entry point.
 
+## Project Structure
+
+```
+cvs/
+├── main.py                  # CLI entry point
+├── cli_plugins/             # Subcommand plugins (run, list, generate, exec, scp, monitor)
+├── core/
+│   ├── orchestrators/       # Baremetal and container orchestration
+│   └── runtimes/            # Runtime abstraction for test execution
+├── lib/                     # Reusable library modules
+│   ├── docker_lib.py        # Docker container orchestration helpers
+│   ├── env_lib.py           # Environment variable management
+│   ├── globals.py           # Global constants
+│   ├── html_lib.py          # HTML report generation
+│   ├── ibperf_lib.py        # InfiniBand performance testing
+│   ├── inference_lib.py     # Inference validation logic
+│   ├── jax_training_lib.py  # JAX distributed training
+│   ├── linux_utils.py       # Linux host utilities
+│   ├── megatron_training_lib.py  # Megatron-LM distributed training
+│   ├── mori_lib.py          # Memory and bandwidth testing
+│   ├── parallel_ssh_lib.py  # Parallel SSH entry point
+│   ├── rccl_lib.py          # RCCL collective communications validation
+│   ├── report_plugins.py    # Extensible report generation
+│   ├── rocm_plib.py         # ROCm platform utilities
+│   ├── scriptlet.py         # Script generation and execution
+│   ├── sglang_disagg_lib.py # SGLang disaggregated serving
+│   ├── utils_lib.py         # General utilities
+│   ├── verify_lib.py        # GPU, NIC, BIOS verification
+│   ├── inference/           # Inference sub-library (base, vllm, inference_max)
+│   ├── parallel/            # Parallel SSH internals (pssh, pssh_sharder, multiprocess_pssh, scp)
+│   └── preflight/           # Preflight checks (RDMA, GID, interface consistency, version check)
+├── tests/                   # Cluster validation tests (pytest)
+│   ├── benchmark/
+│   ├── health/
+│   ├── ibperf/
+│   ├── inference/
+│   ├── mori/
+│   ├── platform/
+│   ├── preflight/
+│   ├── rccl/
+│   └── training/
+├── parsers/                 # Output parsers and Pydantic config schemas
+├── runners/                 # Concrete benchmark runner implementations
+├── monitors/                # Cluster monitoring scripts
+├── input/                   # Config/cluster file templates
+│   ├── cluster_file/
+│   ├── config_file/
+│   ├── env_file/
+│   └── generate/
+├── schema/                  # RCCL and other test schemas
+└── unittests/               # Top-level unit tests for CLI and extension loading
+```
+
 ## Commands
 
 ### Build
