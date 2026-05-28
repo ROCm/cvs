@@ -203,31 +203,14 @@ class TorchTitanTrainingJob:
         self.compile = pdict['compile']
         self.enable_float8 = pdict['enable_float8']
 
-        # Determine TorchTitan module and config based on model name
-        if re.search('llama.*[34]', self.model_name, re.I):
-            self.tt_module = 'llama3'
-            if '70' in str(self.model_size):
-                self.tt_config = 'llama3_70b'
-            elif '405' in str(self.model_size):
-                self.tt_config = 'llama3_405b'
-            else:
-                self.tt_config = 'llama3_8b'
-        elif re.search('deepseek', self.model_name, re.I):
+        # Determine TorchTitan module from model name; config is always {module}_{model_size}
+        if re.search('deepseek', self.model_name, re.I):
             self.tt_module = 'deepseek_v3'
-            self.tt_config = 'deepseek_v3_16b'
         elif re.search('qwen', self.model_name, re.I):
             self.tt_module = 'qwen3'
-            if '32' in str(self.model_size):
-                self.tt_config = 'qwen3_32b'
-            elif '14' in str(self.model_size):
-                self.tt_config = 'qwen3_14b'
-            elif '7' in str(self.model_size):
-                self.tt_config = 'qwen3_7b'
-            else:
-                self.tt_config = 'qwen3_4b'
         else:
             self.tt_module = 'llama3'
-            self.tt_config = 'llama3_8b'
+        self.tt_config = f'{self.tt_module}_{self.model_size}'
 
         # Remove and recreate the scripts dir
         self.phdl.exec(f'rm -rf {self.scripts_dir}')
@@ -318,7 +301,7 @@ class TorchTitanTrainingJob:
             torchrun_cmd = (
                 f'torchrun --nnodes 1 --node_rank=0 --nproc_per_node {nproc_per_node}'
                 f' --rdzv_id 101 --rdzv_backend c10d'
-                f' --rdzv_endpoint "127.0.0.1:29500"'
+                f' --rdzv_endpoint "{self.master_address}:29500"'
                 f' --role rank --tee 3'
                 f' -m torchtitan.train --job.config_file $CONFIG_FILE'
             )
@@ -360,11 +343,7 @@ class TorchTitanTrainingJob:
                 f'echo "{self.job_cmd}" > {self.scripts_dir}/single_node_wrapper_script.sh; '
                 f'chmod 777 {self.scripts_dir}/single_node_wrapper_script.sh'
             )
-            cmd_list = []
-            for i in range(self.nnodes):
-                cmd = f'docker exec {self.container_name} /bin/bash {self.scripts_dir}/single_node_wrapper_script.sh'
-                cmd_list.append(cmd)
-            self.phdl.exec_cmd_list(cmd_list)
+            self.phdl.exec(f'docker exec {self.container_name} /bin/bash {self.scripts_dir}/single_node_wrapper_script.sh')
 
         time.sleep(50)
 
