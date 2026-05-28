@@ -48,17 +48,92 @@ The dominant gap across all seven frameworks is "framework emits, CVS throws awa
 
 A single `Job` driver runs the same six steps in order for every workload, training or inference. No mode branching at the driver level.
 
+**The `WorkloadAdapter` protocol.** Every adapter — Strategy or Composite, inference or training — satisfies this protocol. It is the closed contract between the `Job` driver and adapter implementations.
+
 ```python
-def run(adapter, ctx):
-    adapter.prepare(ctx)
-    run = adapter.launch(ctx)
-    adapter.await_completion(run)              # polls progress_predicate
-    result = adapter.parse(run, manifest)
-    verdict = adapter.verify(result, thresholds)
-    adapter.teardown(run)                      # always runs (RAII)
+# cvs/lib/adapter_protocol.py
+class WorkloadAdapter(Protocol):
+    def prepare(self, ctx: Context) -> None: ...
+    def launch(self, ctx: Context) -> AdapterRun: ...
+    def await_completion(self, run: AdapterRun) -> None: ...        # polls progress_predicate
+    def progress_predicate(self, run: AdapterRun) -> ProgressStatus: ...
+    def parse(self, run: AdapterRun, manifest: Manifest) -> WorkloadResult: ...
+    def verify(self, result: WorkloadResult, thresholds: list[Threshold]) -> list[Verdict]: ...
+    def teardown(self, run: AdapterRun) -> None: ...
 ```
 
-The protocol has a **closed set** of lifecycle methods (`prepare`, `launch`, `await_completion`, `parse`, `verify`, `teardown`) plus `progress_predicate`. The protocol does not gain new steps to accommodate one mode's needs. This is the guardrail that keeps a single spine safe across both training and inference.
+The protocol has a **closed set** of methods. It does not gain new steps to accommodate one mode's needs. Cross-cutting behavior lives in hooks (§3.5), handles (§3.3), or adapter-internal helpers — never in the protocol. This is the guardrail that keeps a single spine safe across both training and inference.
+
+**The `Job` driver.** Same six-step body for every workload. Failures are classified into the §4.5 five-category taxonomy at the boundary where they originate, not by post-hoc inspection of a stack trace. Teardown always runs.
+
+```python
+# cvs/lib/job.py
+class Job:
+    def __init__(self, adapter: WorkloadAdapter, cfg: BaseTestConfig,
+                 cluster: ClusterConfig, gpu: GpuPlatform, secrets: Secrets):
+        self.adapter = adapter
+        self.ctx     = Context(cfg=cfg, cluster=cluster, gpu=gpu, secrets=secrets,
+                               pssh=Pssh(cluster), run_id=mint_run_id())
+        self.manifest = Manifest.create(self.ctx.test_id, cfg, cluster)
+
+    def run(self) -> Manifest:
+        run: AdapterRun | None = None
+        try:
+            self.manifest.append_event("prepare.start", source="job")
+            self.adapter.prepare(self.ctx)
+
+            run = self.adapter.launch(self.ctx)                     # raises -> setup_failure
+            self.manifest.append_event("launch.role_ready", source="job")
+
+            self._await_with_progress(run)                          # may raise safety_violation
+                                                                    # or liveness_failure
+            result = self.adapter.parse(run, self.manifest)
+            self.manifest.record_result(result)
+
+            verdicts = self.adapter.verify(result, self.ctx.cfg.thresholds)
+            self.manifest.record_verdicts(verdicts)                 # status = pass | verification_failure
+
+        except SetupFailure as e:
+            self.manifest.record_failure("setup_failure", evidence=e.evidence)
+        except SafetyViolation as e:
+            self.manifest.record_failure("safety_violation",
+                                         predicate_name=e.predicate, evidence=e.evidence)
+        except LivenessFailure as e:
+            self.manifest.record_failure("liveness_failure", evidence=e.evidence)
+        except FailurePatternMatched as e:
+            self.manifest.record_failure("failure_pattern_matched",
+                                         pattern_id=e.pattern_id, evidence=e.line)
+        finally:
+            if run is not None:
+                self.adapter.teardown(run)                          # RAII: always runs
+            self.manifest.append_event("teardown.done", source="job")
+            self.manifest.flush()
+
+        return self.manifest
+
+    def _await_with_progress(self, run: AdapterRun) -> None:
+        deadline = time.monotonic() + self.ctx.cfg.await_timeout_sec
+        while time.monotonic() < deadline:
+            status = self.adapter.progress_predicate(run)
+            if not status.ok:
+                raise SafetyViolation(predicate=status.predicate_name,
+                                      evidence=status.evidence)
+            if self.adapter.await_completion_check(run):            # workload finished cleanly
+                return
+            time.sleep(self.ctx.cfg.poll_interval_sec)
+        raise LivenessFailure(evidence=f"timeout after {self.ctx.cfg.await_timeout_sec}s")
+```
+
+Driver-level dispatch — the only place that picks an adapter by framework — is three lines. The driver itself is mode-blind:
+
+```python
+def run_workload(cfg, cluster, gpu, secrets) -> Manifest:
+    registry = INFERENCE_REGISTRY if isinstance(cfg, InferenceTestConfig) else TRAINING_REGISTRY
+    adapter  = registry[cfg.framework](cfg, cluster, gpu, secrets)
+    return Job(adapter, cfg, cluster, gpu, secrets).run()
+```
+
+Whether `adapter` is a `VllmAdapter` (Strategy), a four-role sglang `CompositeAdapter`, or a sixteen-rank megatron `CompositeAdapter`, `Job.run()` is identical.
 
 **In scope.**
 
