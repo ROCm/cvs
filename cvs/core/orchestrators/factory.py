@@ -84,10 +84,13 @@ class OrchestratorConfig:
         Create config from multiple configuration sources.
 
         Merges cluster_config.json and <testsuite>_config.json configurations, with testsuite_config
-        taking precedence for overlapping keys. After merging, the {user-id} placeholder is
-        resolved recursively (via cvs.lib.utils_lib.resolve_cluster_config_placeholders) so SSH
-        credentials and any nested container fields carry real values when consumed by Pssh /
-        docker run. Unresolved <changeme> tokens trigger sys.exit(1) at this boundary.
+        taking precedence for overlapping keys. Before merging, the cluster_config is run through
+        cvs.lib.utils_lib.resolve_cluster_config_placeholders to substitute {user-id} and enforce
+        the <changeme> guard on cluster-portion fields (username, priv_key_file, container.*) --
+        unresolved <changeme> tokens in the cluster portion trigger sys.exit(1) at this boundary.
+        testsuite_config is then merged in verbatim; testsuite subsections (transferbench, rvs,
+        agfhc, ...) are resolved later by per-test fixtures (resolve_test_config_placeholders),
+        scoped to the subsection the test actually consumes.
 
         Args:
             cluster_config: Cluster configuration (dict or path to cluster_config.json)
@@ -114,19 +117,23 @@ class OrchestratorConfig:
             with open(testsuite_config) as f:
                 testsuite_config = json.load(f)
 
-        # Merge configurations
-        merged_config = cluster_config.copy()
-        if testsuite_config:
-            merged_config.update(testsuite_config)
-
-        # Resolve {user-id} recursively so SSH credentials (username, priv_key_file) and any
-        # nested container fields carry real values when consumed by Pssh / docker run. Applied
-        # AFTER the merge so testsuite overrides containing placeholders are also resolved.
+        # Resolve {user-id} on the CLUSTER PORTION ONLY, before merging. from_configs only
+        # consumes cluster-portion keys (orchestrator, node_dict, username, priv_key_file,
+        # password, head_node_dict, container). Testsuite subsections (transferbench, rvs,
+        # agfhc, ...) belong to per-test fixtures which do their own subsection-scoped
+        # resolution via resolve_test_config_placeholders. Resolving the merged dict here
+        # would walk testsuite subsections that use <changeme> as a legitimate auto-detect
+        # sentinel (e.g. transferbench.rocm_path), causing cross-subsection guard trips on
+        # tests that don't even use that subsection.
         from cvs.lib.utils_lib import (
             resolve_cluster_config_placeholders,
         )  # Lazy: avoids core->lib import at module load
 
-        merged_config = resolve_cluster_config_placeholders(merged_config)
+        cluster_config = resolve_cluster_config_placeholders(cluster_config)
+
+        merged_config = cluster_config.copy()
+        if testsuite_config:
+            merged_config.update(testsuite_config)
 
         # Extract only required keys for orchestrators
         required_config = {
