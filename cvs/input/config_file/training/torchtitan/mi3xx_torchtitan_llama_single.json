@@ -16,7 +16,7 @@
         "rocm_dir": "",
         "verify_network_errors": "False",
         "_comments_use_generated_config": "True = generate TOML from model_params and pass to torchrun (recommended). False = use canned TOML at ./torchtitan/models/{module}/train_configs/{config}",
-        "use_generated_config": "True",
+        "use_generated_config": "False",
         "_comments_torchtitan_root": "Path inside the container where the torchtitan repo lives",
         "torchtitan_root": "/workspace/torchtitan",
         "container_config":
