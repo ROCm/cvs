@@ -80,7 +80,6 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         if not self.container_config:
             raise ValueError("ContainerOrchestrator requires 'container' config in OrchestratorConfig")
 
-        self.container_enabled = True
         self.container_id = None  # Track running container ID
 
         # Initialize container runtime
@@ -263,12 +262,15 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         ulimits=None,
     ):
         """
-        Set up containers based on configuration.
+        Set up containers according to the configured container.lifetime policy.
 
         This method should be called explicitly by tests when they need containers.
-        It respects the 'enabled' flag and handles container lifecycle appropriately.
-        If 'launch' is true, checks that containers are already running and sets container_id.
-        If containers are not running when expected, fails and informs the user.
+        Behavior branches on container.lifetime:
+          - 'external'   : verify the (externally managed) container is running and
+                           set container_id; never starts anything.
+          - 'per_run'    : start fresh containers on all hosts.
+          - 'persistent' : attach to a container already running on all hosts (with
+                           an image-SHA check), otherwise start fresh. Idempotent.
 
         Args:
             volumes: Optional list of volume mounts (uses standards if not provided)
@@ -282,67 +284,131 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         Returns:
             bool: True if containers were set up successfully or no setup needed
         """
-        if not self.container_config or not self.container_config.get('enabled', False):
-            self.log.debug("Container mode not enabled, skipping setup")
-            return True
+        lifetime = self.container_config.get('lifetime', 'per_run')
 
-        if self.container_config.get('launch', False):
-            # Launch containers
-            self.log.info("Launching containers...")
-            container_name = self.get_container_name(self.container_config, self.container_config['image'])
-            self.container_id = container_name
-
-            # Use provided parameters or get standards
-            volumes = volumes if volumes is not None else self.get_volumes()
-            devices = devices if devices is not None else self.get_devices()
-            capabilities = capabilities if capabilities is not None else self.get_capabilities()
-            security_opts = security_opts if security_opts is not None else self.get_security_opts()
-            environment = environment if environment is not None else self.get_environment()
-            groups = groups if groups is not None else self.get_groups()
-            ulimits = ulimits if ulimits is not None else self.get_ulimits()
-
-            # Create a modified container config with standard settings
-            modified_config = dict(self.container_config)
-
-            # Ensure runtime config exists
-            if 'runtime' not in modified_config:
-                modified_config['runtime'] = {}
-            if 'args' not in modified_config['runtime']:
-                modified_config['runtime']['args'] = {}
-
-            # Set standard runtime args if not already set
-            runtime_args = modified_config['runtime']['args']
-            if 'network' not in runtime_args:
-                runtime_args['network'] = self.get_network_mode()
-            if 'ipc' not in runtime_args:
-                runtime_args['ipc'] = self.get_ipc_mode()
-            if 'privileged' not in runtime_args:
-                runtime_args['privileged'] = self.is_privileged()
-
-            # Add InfiniBand device discovery via shell expansion (per-host)
-            ib_device_expansion = '$(for dev in /dev/infiniband/*; do echo -n "--device $dev:$dev "; done)'
-
-            return self.runtime.setup_containers(
-                modified_config,
-                container_name,
-                volumes=volumes,
-                devices=devices,
-                capabilities=capabilities,
-                security_opts=security_opts,
-                environment=environment,
-                groups=groups,
-                ulimits=ulimits,
-                device_expansion=ib_device_expansion,
-            )
-
-        # Assume containers are running
         image = self.container_config.get('image')
         if not image:
             self.log.error("Container image not specified in config")
             return False
-
         container_name = self.get_container_name(self.container_config, image)
-        return self.verify_containers_running(container_name)
+
+        if lifetime == 'external':
+            # Externally managed: verify only, never start.
+            return self.verify_containers_running(container_name)
+
+        if lifetime == 'persistent':
+            # Attach if already running on every host, otherwise (re)launch.
+            status = self.runtime.is_running(container_name)
+            if status and all(info.get('running') for info in status.values()):
+                self.container_id = container_name
+                self.log.info(f"Attaching to running container '{container_name}'")
+                return self._verify_persistent_image(container_name, image)
+            self.log.info("Persistent container not running on all hosts, launching...")
+            return self._launch_containers(
+                volumes, devices, capabilities, security_opts, environment, groups, ulimits
+            )
+
+        # 'per_run' (default): always start fresh.
+        return self._launch_containers(
+            volumes, devices, capabilities, security_opts, environment, groups, ulimits
+        )
+
+    def _launch_containers(
+        self,
+        volumes=None,
+        devices=None,
+        capabilities=None,
+        security_opts=None,
+        environment=None,
+        groups=None,
+        ulimits=None,
+    ):
+        """Start fresh containers on all hosts via the runtime.
+
+        Shared by the 'per_run' path and the 'persistent' path when no container
+        is already running. The runtime force-removes any stale same-named
+        container before starting.
+        """
+        self.log.info("Launching containers...")
+        container_name = self.get_container_name(self.container_config, self.container_config['image'])
+        self.container_id = container_name
+
+        # Use provided parameters or get standards
+        volumes = volumes if volumes is not None else self.get_volumes()
+        devices = devices if devices is not None else self.get_devices()
+        capabilities = capabilities if capabilities is not None else self.get_capabilities()
+        security_opts = security_opts if security_opts is not None else self.get_security_opts()
+        environment = environment if environment is not None else self.get_environment()
+        groups = groups if groups is not None else self.get_groups()
+        ulimits = ulimits if ulimits is not None else self.get_ulimits()
+
+        # Create a modified container config with standard settings
+        modified_config = dict(self.container_config)
+
+        # Ensure runtime config exists
+        if 'runtime' not in modified_config:
+            modified_config['runtime'] = {}
+        if 'args' not in modified_config['runtime']:
+            modified_config['runtime']['args'] = {}
+
+        # Set standard runtime args if not already set
+        runtime_args = modified_config['runtime']['args']
+        if 'network' not in runtime_args:
+            runtime_args['network'] = self.get_network_mode()
+        if 'ipc' not in runtime_args:
+            runtime_args['ipc'] = self.get_ipc_mode()
+        if 'privileged' not in runtime_args:
+            runtime_args['privileged'] = self.is_privileged()
+
+        # Add InfiniBand device discovery via shell expansion (per-host)
+        ib_device_expansion = '$(for dev in /dev/infiniband/*; do echo -n "--device $dev:$dev "; done)'
+
+        return self.runtime.setup_containers(
+            modified_config,
+            container_name,
+            volumes=volumes,
+            devices=devices,
+            capabilities=capabilities,
+            security_opts=security_opts,
+            environment=environment,
+            groups=groups,
+            ulimits=ulimits,
+            device_expansion=ib_device_expansion,
+        )
+
+    def _verify_persistent_image(self, container_name, image):
+        """Compare the running container's image SHA to the local image tag on
+        each host (persistent attach only).
+
+        - Per-host mismatch (container created from an image older than the local
+          ``<image>`` tag): WARN and continue -- the overlay may be stale.
+        - Cross-host SHA skew (hosts running different image SHAs): ERROR and
+          return False -- a correctness problem, not mere staleness.
+
+        Returns:
+            bool: False on cross-host skew, True otherwise.
+        """
+        status = self.runtime.image_sha_status(container_name, image)
+        container_shas = set()
+        for host, info in status.items():
+            container_sha = info.get('container_sha', '')
+            image_sha = info.get('image_sha', '')
+            if container_sha:
+                container_shas.add(container_sha)
+            if container_sha and image_sha and container_sha != image_sha:
+                self.log.warning(
+                    f"Container '{container_name}' on {host} runs image "
+                    f"{container_sha[:19]} but local '{image}' is {image_sha[:19]}; "
+                    f"overlay may be stale"
+                )
+
+        if len(container_shas) > 1:
+            self.log.error(
+                f"Cross-host image SHA skew for container '{container_name}': "
+                f"hosts are running different images {sorted(container_shas)}"
+            )
+            return False
+        return True
 
     def setup_sshd(self):
         """
@@ -365,6 +431,16 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         self.log.info(f"Setting up SSH daemon in containers: {self.container_id}")
 
+        # Idempotency precheck (required by lifetime: persistent): on a second
+        # `cvs run` the container's sshd is already bound to 2224, so re-running
+        # `/usr/sbin/sshd -p2224` would fail with "address already in use". Skip
+        # the setup commands on any host that already has sshd on 2224.
+        precheck = self.exec("pgrep -f 'sshd.*2224' > /dev/null 2>&1", timeout=10, detailed=True)
+        hosts_needing_sshd = [host for host, output in precheck.items() if output['exit_code'] != 0]
+        if not hosts_needing_sshd:
+            self.log.info("SSH daemon already running on all hosts, skipping setup")
+            return True
+
         # Execute SSH setup commands
         # Note: Commands with shell operators must be wrapped in bash -c for proper execution inside container
         ssh_setup_commands = [
@@ -377,8 +453,8 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         ]
 
         for cmd in ssh_setup_commands:
-            result = self.exec(cmd, timeout=10, detailed=True)
-            # Check if command succeeded on all hosts
+            result = self.exec(cmd, hosts=hosts_needing_sshd, timeout=10, detailed=True)
+            # Check if command succeeded on all targeted hosts
             for hostname, output in result.items():
                 if output['exit_code'] != 0:
                     self.log.error(f"SSH setup command failed on {hostname}: {cmd}")
@@ -437,21 +513,22 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
     def teardown_containers(self):
         """
-        Tear down containers if they are running.
+        Tear down containers according to the configured container.lifetime policy.
 
-        This method should be called explicitly by tests for cleanup.
-        It respects the 'enabled' flag and handles container lifecycle appropriately.
-        If 'launch' is False, assumes containers should not be stopped (externally managed).
+        This method should be called explicitly by tests for cleanup. Behavior
+        branches on container.lifetime:
+          - 'external'   : no-op (CVS does not own externally managed containers).
+          - 'persistent' : no-op (left running for the next run; user removes it
+                           explicitly).
+          - 'per_run'    : force-remove the container CVS started.
 
         Returns:
             bool: True if containers were torn down successfully or no teardown needed
         """
-        if not self.container_config or not self.container_config.get('enabled', False):
-            self.log.debug("Container mode not enabled, skipping teardown")
-            return True
+        lifetime = self.container_config.get('lifetime', 'per_run')
 
-        if not self.container_config.get('launch', False):
-            self.log.debug("launch is False, not stopping externally managed containers")
+        if lifetime in ('external', 'persistent'):
+            self.log.debug(f"lifetime={lifetime}, leaving containers running")
             return True
 
         if not self.container_id:
