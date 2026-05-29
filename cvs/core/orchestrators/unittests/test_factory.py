@@ -20,7 +20,7 @@ from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.container import ContainerOrchestrator
 
 
-def _make_orch_config(orchestrator="baremetal", with_container=False, launch=False, enabled=True):
+def _make_orch_config(orchestrator="baremetal", with_container=False, lifetime="per_run"):
     """Minimal OrchestratorConfig that satisfies BaremetalOrchestrator and (optionally)
     ContainerOrchestrator __init__ without touching disk or SSH."""
     kwargs = dict(
@@ -34,8 +34,7 @@ def _make_orch_config(orchestrator="baremetal", with_container=False, launch=Fal
     )
     if with_container or orchestrator == "container":
         kwargs["container"] = {
-            "enabled": enabled,
-            "launch": launch,
+            "lifetime": lifetime,
             "image": "rocm/cvs:test",
             "name": "cvs_iter_test",
             "runtime": {"name": "docker", "args": {}},
@@ -181,7 +180,7 @@ class TestOrchestratorConfig(unittest.TestCase):
             "username": "{user-id}",
             "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
             "container": {
-                "enabled": True,
+                "lifetime": "per_run",
                 "image": "rocm/{user-id}:test",
                 "name": "{user-id}_cvs",
                 "runtime": {

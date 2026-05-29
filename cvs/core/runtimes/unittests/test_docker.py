@@ -43,11 +43,13 @@ def _make_runtime(captured):
     return DockerRuntime(log, orchestrator)
 
 
-def _container_config(launch=True, image="img:test", extra_runtime_args=None, **extra):
-    """Minimal container config dict for setup_containers."""
+def _container_config(image="img:test", extra_runtime_args=None, **extra):
+    """Minimal container config dict for setup_containers.
+
+    The runtime no longer reads enabled/launch -- lifetime resolution lives in
+    OrchestratorConfig -- so neither key is present here.
+    """
     cfg = {
-        "enabled": True,
-        "launch": launch,
         "image": image,
         "name": "cvs_iter_test",
         "runtime": {"name": "docker", "args": dict(extra_runtime_args or {})},
@@ -57,6 +59,21 @@ def _container_config(launch=True, image="img:test", extra_runtime_args=None, **
 
 
 class TestDockerRuntimeSetupContainers(unittest.TestCase):
+    def test_setup_containers_always_proceeds(self):
+        # The legacy `if not launch: return True` short-circuit was removed. The
+        # orchestrator only calls runtime.setup_containers on start paths, so the
+        # runtime must always render a `docker run` when invoked.
+        captured = []
+        rt = _make_runtime(captured)
+        result = rt.setup_containers(
+            container_config=_container_config(),
+            container_name="cvs_iter_test",
+            volumes=["/home/u:/workspace"],
+        )
+        self.assertTrue(result)
+        self.assertEqual(len(captured), 1)
+        self.assertIn("docker run", captured[0])
+
     def test_user_volume_listed_once(self):
         # With runtime.args.volumes=['/foo:/bar'] AND positional volumes that
         # already include '/foo:/bar' (mirroring what
