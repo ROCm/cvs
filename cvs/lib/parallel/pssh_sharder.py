@@ -10,7 +10,7 @@ import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from cvs.lib.parallel.pssh import Pssh
-from cvs.lib.parallel.interfaces import ShardableSshInterface
+from cvs.lib.parallel.interfaces import ShardableSshInterface, SharderInterface, WorkerTable
 
 
 # Dynamically discover supported operations from ABC (computed once at import time)
@@ -20,11 +20,13 @@ SUPPORTED_OPERATIONS = {
 }
 
 
-class PsshSharder:
+class PsshSharder(SharderInterface):
     """Shards SSH operations across multiple processes for large host lists."""
 
     def __init__(self, config):
         self.config = config
+        self._worker_state_table = WorkerTable()
+        self._all_hosts = []
 
     def chunk_hosts(self, host_list):
         """Divide hosts into processing shards."""
@@ -32,25 +34,32 @@ class PsshSharder:
         for i in range(0, len(host_list), chunk_size):
             yield host_list[i : i + chunk_size]
 
-    def create_payloads(self, operation, host_chunks, shard_init_kwargs, **operation_args):
-        """Build payloads for worker processes."""
-        payloads = []
-        for chunk in host_chunks:
-            payloads.append(
-                {
-                    'operation': operation,
-                    'init': {**shard_init_kwargs, 'host_list': chunk},
-                    **operation_args,
-                }
-            )
-        return payloads
+    def create_payloads(self, operation, shard_init_kwargs, **operation_args):
+        """Create payloads with worker routing for transient workers."""
+        routing_map = {}
 
-    def execute_sharded(self, payloads):
-        """Execute payloads across worker processes."""
-        if not payloads:
+        # Internal logic: get active workers from worker table
+        for worker_state in self._worker_state_table:
+            if not worker_state.reachable_hosts:
+                continue
+
+            payload = {
+                'operation': operation,
+                'init': {**shard_init_kwargs, 'host_list': list(worker_state.reachable_hosts)},
+                **operation_args,
+            }
+
+            routing_map[worker_state.worker_id] = payload
+
+        return routing_map
+
+    def execute_sharded(self, routing_map):
+        """Execute payloads with explicit worker_id → payload routing."""
+        if not routing_map:
             return []
 
         ctx = mp.get_context('spawn')
+        payloads = list(routing_map.values())
         max_workers = min(len(payloads), self.config.max_workers)
         results = [None] * len(payloads)
 
@@ -61,6 +70,56 @@ class PsshSharder:
                 results[i] = fut.result()
 
         return results
+
+    def initialize_workers(self, hosts, shard_init_kwargs=None):
+        """Build per-call transient worker table from current reachable hosts."""
+        self._all_hosts = list(hosts)
+        self._worker_state_table.clear()
+        for idx, chunk in enumerate(self.chunk_hosts(hosts)):
+            self._worker_state_table.append(idx, chunk, chunk, ())
+
+    def get_worker_table(self):
+        """Return transient worker-state iterator for current call."""
+        return iter(self._worker_state_table)
+
+    def update_worker_table(self, shard_returns, merge_unreachable=True):
+        """
+        Update transient worker-state snapshot and rebalance worker layout.
+
+        Transient mode has per-call workers; after each operation we rebuild worker
+        partitions from the latest reachable host set for the next operation.
+        """
+        reachable_set = set()
+        for shard_ret in shard_returns:
+            reachable_set.update(shard_ret.get('reachable_hosts', []))
+
+        # Preserve deterministic host order based on initial inventory.
+        reachable_hosts = [h for h in self._all_hosts if h in reachable_set]
+        unreachable_hosts = [h for h in self._all_hosts if h not in reachable_set] if merge_unreachable else []
+
+        self._worker_state_table.clear()
+        for idx, chunk in enumerate(self.chunk_hosts(reachable_hosts)):
+            # Keep explicit unreachable information in the worker table so
+            # wrapper aggregation does not need a fallback path.
+            self._worker_state_table.append(idx, chunk, chunk, unreachable_hosts)
+
+    def prune_worker_nodes(self, remove_set):
+        """Prune hosts from transient worker-state table."""
+        for idx, row in enumerate(self._worker_state_table.list()):
+            pruned_reachable = [h for h in row.reachable_hosts if h not in remove_set]
+            pruned_unreachable = [h for h in row.unreachable_hosts if h not in remove_set]
+            # In transient mode, host_list mirrors currently reachable hosts.
+            self._worker_state_table.update(
+                idx,
+                row.worker_id,
+                pruned_reachable,
+                pruned_reachable,
+                pruned_unreachable,
+            )
+
+    def destroy_clients(self):
+        """Transient sharder has no persistent clients to clean up."""
+        return None
 
     def merge_results(self, shard_returns, original_host_list):
         """Merge results from all shards maintaining original host order."""

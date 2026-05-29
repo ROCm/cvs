@@ -51,49 +51,53 @@ class TestPsshSharderMethods(unittest.TestCase):
 
     def test_create_payloads_exec_mode(self):
         """Test creating payloads for exec mode."""
-        host_chunks = [["host1", "host2"], ["host3", "host4"]]
+        # Setup worker table for new API
+        self.sharder._worker_state_table.append(0, ['host1', 'host2'], ['host1', 'host2'], [])
+        self.sharder._worker_state_table.append(1, ['host3', 'host4'], ['host3', 'host4'], [])
+
         shard_init_kwargs = {'user': 'testuser', 'password': 'testpass'}
 
-        payloads = self.sharder.create_payloads('exec', host_chunks, shard_init_kwargs, cmd='echo hello', timeout=30)
+        routing_map = self.sharder.create_payloads('exec', shard_init_kwargs, cmd='echo hello', timeout=30)
 
-        expected = [
-            {
+        expected = {
+            0: {
                 'operation': 'exec',
                 'init': {'user': 'testuser', 'password': 'testpass', 'host_list': ['host1', 'host2']},
                 'cmd': 'echo hello',
                 'timeout': 30,
             },
-            {
+            1: {
                 'operation': 'exec',
                 'init': {'user': 'testuser', 'password': 'testpass', 'host_list': ['host3', 'host4']},
                 'cmd': 'echo hello',
                 'timeout': 30,
             },
-        ]
-        self.assertEqual(payloads, expected)
+        }
+        self.assertEqual(routing_map, expected)
 
     def test_create_payloads_cmd_list_mode(self):
         """Test creating payloads for cmd_list mode."""
-        host_chunks = [["host1", "host2"]]
+        # Setup worker table for new API
+        self.sharder._worker_state_table.append(0, ['host1', 'host2'], ['host1', 'host2'], [])
+
         shard_init_kwargs = {'user': 'testuser'}
 
-        payloads = self.sharder.create_payloads(
-            'exec_cmd_list', host_chunks, shard_init_kwargs, cmd_list=['echo 1', 'echo 2']
-        )
+        routing_map = self.sharder.create_payloads('exec_cmd_list', shard_init_kwargs, cmd_list=['echo 1', 'echo 2'])
 
-        expected = [
-            {
+        expected = {
+            0: {
                 'operation': 'exec_cmd_list',
                 'init': {'user': 'testuser', 'host_list': ['host1', 'host2']},
                 'cmd_list': ['echo 1', 'echo 2'],
             }
-        ]
-        self.assertEqual(payloads, expected)
+        }
+        self.assertEqual(routing_map, expected)
 
     def test_create_payloads_empty_chunks(self):
         """Test creating payloads with empty chunks."""
-        payloads = self.sharder.create_payloads('exec', [], {}, cmd='test')
-        self.assertEqual(payloads, [])
+        # No workers in table - should return empty routing map
+        routing_map = self.sharder.create_payloads('exec', {}, cmd='test')
+        self.assertEqual(routing_map, {})
 
     @patch('cvs.lib.parallel.pssh_sharder.ProcessPoolExecutor')
     def test_execute_sharded_empty_payloads(self, mock_executor):
@@ -122,12 +126,12 @@ class TestPsshSharderMethods(unittest.TestCase):
             mock_future2.result.return_value = mock_result2
             mock_as_completed.return_value = [mock_future1, mock_future2]
 
-            payloads = [
-                {'operation': 'exec', 'init': {}, 'cmd': 'test1'},
-                {'operation': 'exec', 'init': {}, 'cmd': 'test2'},
-            ]
+            routing_map = {
+                0: {'operation': 'exec', 'init': {}, 'cmd': 'test1'},
+                1: {'operation': 'exec', 'init': {}, 'cmd': 'test2'},
+            }
 
-            result = self.sharder.execute_sharded(payloads)
+            result = self.sharder.execute_sharded(routing_map)
 
             expected = [mock_result1, mock_result2]
             self.assertEqual(result, expected)
