@@ -44,8 +44,8 @@ class DockerRuntime:
 
         Args:
             container_config: Container configuration dictionary. Recognized
-                top-level keys include ``image``, ``launch``, ``runtime`` (with
-                nested ``args``), and ``env``.
+                top-level keys include ``image``, ``runtime`` (with nested
+                ``args``), and ``env``.
             container_name: Name to assign to the containers
             volumes: Optional list of volume mounts (overrides config)
             devices: Optional list of device passthroughs (overrides config)
@@ -59,11 +59,6 @@ class DockerRuntime:
         if not container_config or not container_config.get('image'):
             self.log.warning("No container config or image specified, skipping container start")
             return False
-
-        launch = container_config.get('launch', False)
-        if not launch:
-            self.log.info("Container launch disabled, assuming containers are already running")
-            return True
 
         image = container_config['image']
 
@@ -171,6 +166,37 @@ class DockerRuntime:
                 'exit_code': exit_code,
                 'running': exit_code == 0 and running_name == container_name,
                 'name': running_name,
+            }
+        return out
+
+    def image_sha_status(self, container_name, image_name):
+        """Compare a running container's image SHA to the local image tag, per host.
+
+        Used by the ``lifetime: persistent`` attach path to detect overlay
+        staleness and cross-host image skew. Runs both ``docker inspect`` probes
+        in one fan-out and emits ``<container_sha>|<image_sha>`` per host.
+
+        Args:
+            container_name: Name of the running container to inspect.
+            image_name: Local image tag to compare against.
+
+        Returns:
+            dict: per-host result with keys 'container_sha' (image ID the running
+            container was created from, ``.Image``), 'image_sha' (local image's
+            current ID, ``.Id``), and 'exit_code' (the probe's exit code).
+        """
+        cmd = (
+            f"echo \"$(sudo docker inspect --format '{{{{.Image}}}}' {container_name} 2>/dev/null)"
+            f"|$(sudo docker inspect --format '{{{{.Id}}}}' {image_name} 2>/dev/null)\""
+        )
+        raw = self.orchestrator.all.exec(cmd, timeout=30, detailed=True)
+        out = {}
+        for host, res in raw.items():
+            parts = (res.get('output') or '').strip().split('|')
+            out[host] = {
+                'exit_code': res.get('exit_code'),
+                'container_sha': parts[0] if len(parts) > 0 else '',
+                'image_sha': parts[1] if len(parts) > 1 else '',
             }
         return out
 

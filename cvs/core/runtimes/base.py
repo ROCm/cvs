@@ -19,6 +19,16 @@ class ContainerRuntime(Protocol):
         """Tear down containers on all nodes."""
         ...
 
+    def image_sha_status(self, container_name, image_name):
+        """Compare a running container's image SHA to a local image tag, per host.
+
+        Returns:
+            dict: per-host result with keys 'container_sha' (image ID the running
+            container was created from), 'image_sha' (local image's current ID),
+            and 'exit_code' (the underlying probe command's exit code).
+        """
+        ...
+
     def is_running(self, container_name):
         """Check whether a container with the given name is running on each host.
 
