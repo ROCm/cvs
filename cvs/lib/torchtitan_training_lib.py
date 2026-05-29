@@ -265,10 +265,14 @@ class TorchTitanTrainingJob:
 
         if not self.distributed_training:
             pdict = self.model_params_dict['single_node'][self.model_name][self.gpu_type]
-            self.expected_result_dict = self.model_params_dict['single_node'][self.model_name][self.gpu_type]['result_dict']
+            self.expected_result_dict = self.model_params_dict['single_node'][self.model_name][self.gpu_type][
+                'result_dict'
+            ]
         else:
             pdict = self.model_params_dict['multi_node'][self.model_name][self.gpu_type]
-            self.expected_result_dict = self.model_params_dict['multi_node'][self.model_name][self.gpu_type]['result_dict']
+            self.expected_result_dict = self.model_params_dict['multi_node'][self.model_name][self.gpu_type][
+                'result_dict'
+            ]
 
         # Model params - set defaults if not defined in input json file
         pdict.setdefault('tokenizer_path', 'meta-llama/Llama-3.1-70B')
@@ -518,9 +522,7 @@ class TorchTitanTrainingJob:
 
         nproc_per_node = 8
 
-        download_tokenizer_cmd = (
-            f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} --assets tokenizer --all --hf_token={self.hf_token}'
-        )
+        download_tokenizer_cmd = f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} --assets tokenizer --all --hf_token={self.hf_token}'
 
         if self.distributed_training:
             for i in range(self.nnodes):
@@ -542,13 +544,9 @@ class TorchTitanTrainingJob:
                 # backgrounded chain dies when `docker exec` returns because
                 # its parent bash also exits, leaving the chain unreparented
                 # and reaped.
-                inner_chain = (
-                    f'{download_tokenizer_cmd} && sleep 200 && '
-                    f'{torchrun_cmd} > {log_path} 2>&1'
-                )
+                inner_chain = f'{download_tokenizer_cmd} && sleep 200 && {torchrun_cmd} > {log_path} 2>&1'
                 full_cmd = (
-                    cmd + f': > {log_path}; '
-                    + f"nohup sh -c '{inner_chain}' </dev/null >/dev/null 2>&1 & disown"
+                    cmd + f': > {log_path}; ' + f"nohup sh -c '{inner_chain}' </dev/null >/dev/null 2>&1 & disown"
                 )
                 script_cmd = (
                     f'echo "{full_cmd}" > {self.scripts_dir}/distributed_wrapper_script_{i}.sh;'
@@ -564,13 +562,9 @@ class TorchTitanTrainingJob:
                 f' -m torchtitan.train --job.config_file {config_file_path}'
             )
             log_path = f'{self.log_dir}/torchtitan-logs/out-node0/training.log'
-            inner_chain = (
-                f'{download_tokenizer_cmd} && sleep 200 && '
-                f'{torchrun_cmd} > {log_path} 2>&1'
-            )
+            inner_chain = f'{download_tokenizer_cmd} && sleep 200 && {torchrun_cmd} > {log_path} 2>&1'
             self.job_cmd = (
-                cmd + f': > {log_path}; '
-                + f"nohup sh -c '{inner_chain}' </dev/null >/dev/null 2>&1 & disown"
+                cmd + f': > {log_path}; ' + f"nohup sh -c '{inner_chain}' </dev/null >/dev/null 2>&1 & disown"
             )
 
     def start_training_job(self, timeout=500):
@@ -588,7 +582,9 @@ class TorchTitanTrainingJob:
         # Create log directories
         cmd_list = []
         for i in range(self.nnodes):
-            cmd = f'docker exec {self.container_name} /bin/bash -c "mkdir -p {self.log_dir}/torchtitan-logs/out-node{i}"'
+            cmd = (
+                f'docker exec {self.container_name} /bin/bash -c "mkdir -p {self.log_dir}/torchtitan-logs/out-node{i}"'
+            )
             cmd_list.append(cmd)
         self.phdl.exec_cmd_list(cmd_list)
 
@@ -598,7 +594,9 @@ class TorchTitanTrainingJob:
 
             cmd_list = []
             for i in range(self.nnodes):
-                cmd = f'docker exec {self.container_name} /bin/bash {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
+                cmd = (
+                    f'docker exec {self.container_name} /bin/bash {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
+                )
                 cmd_list.append(cmd)
             self.phdl.exec_cmd_list(cmd_list)
         else:
@@ -606,7 +604,9 @@ class TorchTitanTrainingJob:
                 f'echo "{self.job_cmd}" > {self.scripts_dir}/single_node_wrapper_script.sh; '
                 f'chmod 777 {self.scripts_dir}/single_node_wrapper_script.sh'
             )
-            self.phdl.exec(f'docker exec {self.container_name} /bin/bash {self.scripts_dir}/single_node_wrapper_script.sh')
+            self.phdl.exec(
+                f'docker exec {self.container_name} /bin/bash {self.scripts_dir}/single_node_wrapper_script.sh'
+            )
 
         time.sleep(50)
 
@@ -634,9 +634,7 @@ class TorchTitanTrainingJob:
         """
         last_node = self.host_list[-1]
         last_node_num = len(self.host_list) - 1
-        out_dict = self.phdl.exec(
-            f'cat {self.log_dir}/torchtitan-logs/out-node{last_node_num}/training.log | tail -20'
-        )
+        out_dict = self.phdl.exec(f'cat {self.log_dir}/torchtitan-logs/out-node{last_node_num}/training.log | tail -20')
         output = out_dict[last_node]
 
         log.info('Extracting results from logs')
@@ -678,9 +676,7 @@ class TorchTitanTrainingJob:
         last_node = self.host_list[-1]
         last_node_num = len(self.host_list) - 1
 
-        out_dict = self.phdl.exec(
-            f'sudo cat {self.log_dir}/torchtitan-logs/out-node{last_node_num}/training.log'
-        )
+        out_dict = self.phdl.exec(f'sudo cat {self.log_dir}/torchtitan-logs/out-node{last_node_num}/training.log')
         output = out_dict[last_node]
 
         for err_key in training_err_dict:
@@ -731,9 +727,7 @@ class TorchTitanTrainingJob:
                 fail_test('Failures seen in training logs, Aborting!!!')
                 return
 
-            out_dict = self.phdl.exec(
-                f'sudo cat {self.log_dir}/torchtitan-logs/out-node{last_node_num}/training.log'
-            )
+            out_dict = self.phdl.exec(f'sudo cat {self.log_dir}/torchtitan-logs/out-node{last_node_num}/training.log')
             output = out_dict[last_node]
 
             if not _is_training_complete(output, self.iterations):
