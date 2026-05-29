@@ -77,8 +77,7 @@ Both templates share the same top-level shape. The ``container`` block and the `
         },
 
         "container": {
-            "enabled": true,
-            "launch": true,
+            "lifetime": "per_run",
             "image": "rocm/cvs:latest",
             "name": "cvs_container",
             "runtime": {
@@ -136,12 +135,9 @@ The ``container`` block configures the container backend. It is consumed by the 
    * - Configuration parameter
      - Default value
      - Description
-   * - ``enabled``
-     - ``false``
-     - Master switch. Must be ``true`` for the container backend to do anything. When ``false``, ``setup_containers`` and ``teardown_containers`` short-circuit to no-ops.
-   * - ``launch``
-     - ``false``
-     - When ``true``, CVS starts the long-running containers on every host as part of test setup. When ``false``, CVS only verifies that containers with the configured name are already running on every host and never stops them.
+   * - ``lifetime``
+     - ``per_run``
+     - Container lifecycle policy: ``external``, ``per_run``, or ``persistent``. See the truth table below.
    * - ``image``
      - (required)
      - Image with the test dependencies (for example ``rvs``) pre-installed and an ``sshd`` you can start on port ``2224``. Must be present locally on each node or pullable from a reachable registry.
@@ -199,35 +195,31 @@ When ``runtime.name`` is ``docker``, the keys below configure the underlying ``d
      - ``["memlock=-1"]`` (appended)
      - Per-process resource limits. ``memlock=-1`` is required for RDMA.
 
-``launch`` truth table
-======================
+``lifetime`` truth table
+========================
 
-The ``launch`` flag interacts with ``enabled`` and the runtime-tracked ``container_id`` to decide whether ``teardown_containers`` actually stops anything. The behavior below is pinned by the unit test ``test_teardown_containers_short_circuits_when_launch_true`` in `cvs/core/orchestrators/unittests/test_container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/unittests/test_container.py>`_.
+``setup_containers`` and ``teardown_containers`` branch on ``container.lifetime``. The behavior below is pinned by the per-lifetime unit tests in `cvs/core/orchestrators/unittests/test_container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/unittests/test_container.py>`_.
 
 .. list-table::
-   :widths: 2 2 2 5
+   :widths: 2 4 4
    :header-rows: 1
 
-   * - ``enabled``
-     - ``launch``
-     - ``container_id``
-     - Behavior of ``teardown_containers``
-   * - ``false``
-     - any
-     - any
-     - Short-circuit (no-op, returns ``True``).
-   * - ``true``
-     - ``true``
-     - any
-     - Short-circuit. Containers are treated as externally managed; CVS does not stop them.
-   * - ``true``
-     - ``false``
-     - unset
-     - Short-circuit. Nothing was started.
-   * - ``true``
-     - ``false``
-     - set
-     - Calls the runtime's ``teardown_containers`` to stop and remove the container.
+   * - ``lifetime``
+     - ``setup_containers``
+     - ``teardown_containers``
+   * - ``external``
+     - Verify a container with the configured name is already running on every host; set ``container_id``. Never starts anything.
+     - No-op. CVS does not own externally managed containers.
+   * - ``per_run`` (default)
+     - Start a fresh container on every host (force-removing any stale same-named container first).
+     - Force-remove the container CVS started.
+   * - ``persistent``
+     - Attach if the container is already running on every host (with a per-host image-SHA check; cross-host SHA skew is a hard error). Otherwise start fresh. Idempotent across runs.
+     - No-op. The container is left running for the next run; remove it yourself when done.
+
+.. note::
+
+  With ``lifetime: persistent``, pin ``container.name`` explicitly. The default ``<user>_<sanitized_image>`` name shifts when you bump the image tag, silently abandoning the previous container's overlay.
 
 Prerequisites on each cluster node
 ==================================

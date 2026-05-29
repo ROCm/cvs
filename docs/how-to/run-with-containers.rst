@@ -49,8 +49,8 @@ Open the copied file and edit:
 - ``priv_key_file``: absolute path to your SSH private key.
 - ``head_node_dict.mgmt_ip`` and the keys of ``node_dict``: real IPs or hostnames of your cluster nodes. ``mgmt_ip`` must equal one of the keys in ``node_dict``.
 - ``container.image``: an image present on every node or pullable from a reachable registry. The image must include ``openssh-server`` and the workload binary (for example ``rvs``).
-- ``container.name``: container name on each host. For parallel runs make this per-iteration unique (for example ``cvs_iter_<run_id>``).
-- ``container.launch``: see the lifecycle note below.
+- ``container.name``: container name on each host. For parallel runs make this per-iteration unique (for example ``cvs_iter_<run_id>``). Pin it explicitly when using ``lifetime: persistent``.
+- ``container.lifetime``: ``external``, ``per_run``, or ``persistent``. See the lifecycle note below.
 
 For the full schema and runtime argument reference, see :doc:`/reference/configuration-files/cluster-file`.
 
@@ -73,8 +73,9 @@ Run ``rvs_cvs`` the same way you run any CVS test suite, but with the container 
 What happens during the run:
 
 - The ``orch`` fixture in ``rvs_cvs`` reads ``orchestrator: container`` from the cluster file and constructs a ``ContainerOrchestrator``.
-- If ``container.launch`` is ``true``, CVS removes any container with the same name on each host, runs the configured image with the merged ``runtime.args``, and starts an in-container ``sshd`` on port ``2224``.
-- If ``container.launch`` is ``false``, CVS verifies that a container with the configured name is already running on every host and reuses it.
+- With ``lifetime: per_run``, CVS removes any container with the same name on each host, runs the configured image with the merged ``runtime.args``, and starts an in-container ``sshd`` on port ``2224``.
+- With ``lifetime: persistent``, CVS attaches to a container already running on every host (skipping ``sshd`` setup if it is already up), or starts one fresh if none is running.
+- With ``lifetime: external``, CVS verifies that a container with the configured name is already running on every host and reuses it.
 - All ``rvs`` invocations are routed through the container via ``docker exec`` and the in-container ``sshd``.
 
 Step 4: Verify the run actually used the container
@@ -100,14 +101,15 @@ You should see one running container per node with the configured name and image
 Lifecycle and teardown
 ======================
 
-The ``container.launch`` flag controls who owns the container lifecycle:
+The ``container.lifetime`` policy controls who owns the container lifecycle:
 
-- ``launch: true`` - CVS starts the long-running container as part of test setup. Teardown is a no-op; CVS does not stop the container so that you can inspect it after the run. Stop and remove it manually when you are done.
-- ``launch: false`` - CVS does not start anything. It verifies that a container with the configured name is already running on every host and reuses it. Teardown is a no-op.
+- ``per_run`` (default) - CVS starts a fresh container at setup and force-removes it at teardown. Anything written to the container overlay is lost when the run ends.
+- ``persistent`` - CVS starts the container if it is not already running, otherwise attaches to it. Teardown is a no-op, so the container (and its overlay) survives across runs. This unblocks install-then-run workflows: ``cvs run install_rvs`` followed by ``cvs run rvs_cvs`` in separate invocations. Pin ``container.name`` so a tag bump does not silently abandon the overlay.
+- ``external`` - CVS does not start anything. It verifies that a container with the configured name is already running on every host and reuses it. Teardown is a no-op.
 
-When ``container.enabled`` is ``false``, both setup and teardown short-circuit to no-ops. See the launch truth table in :doc:`/reference/configuration-files/cluster-file` for the full state matrix.
+See the ``lifetime`` truth table in :doc:`/reference/configuration-files/cluster-file` for the full state matrix.
 
-To stop and remove a container started with ``launch: true``, run on every node:
+To stop and remove a container that CVS left running (``persistent`` or ``external``), run on every node:
 
 .. code:: bash
 
@@ -119,10 +121,9 @@ Replace ``cvs_container`` with the actual ``container.name`` from your cluster f
 Common pitfalls
 ===============
 
-- **Forgot ``enabled: true``.** The container block is present but the orchestrator silently no-ops every lifecycle call. The first ``orch.exec`` call then errors with "no container running".
 - **Image without ``openssh-server``.** ``setup_sshd`` cannot start ``sshd`` on port ``2224`` and ``orch.exec`` fails to connect. Make sure the image installs ``openssh-server`` and exposes the binary at ``/usr/sbin/sshd``.
 - **Image without the workload binary.** ``cvs run rvs_cvs`` invokes ``rvs`` inside the container; if the image lacks ``/opt/rocm/bin/rvs`` the test fails with a "command not found" style error.
-- **``launch: true`` plus a stale container with the same name.** On rerun, ``docker run`` would refuse to start because the name is taken. CVS's launch path issues ``docker rm -f`` before ``docker run`` to handle this; if you start a container outside CVS with the same name, stop it first.
+- **``lifetime: persistent`` without a pinned ``name``.** The default container name is ``<user>_<sanitized_image>``, which shifts when you bump the image tag. A tag bump silently abandons the previous container's overlay (installs, clones) and starts fresh. Pin ``container.name`` when using ``persistent``.
 - **Port ``2224`` already bound on the host.** With ``network: host`` the in-container ``sshd`` binds to ``2224`` in the host's network namespace. If something else on the host already listens on ``2224`` the bind fails. Stop the conflicting service.
 - **Picked the wrong cluster template.** Use ``cluster_container.json`` (with ``orchestrator: container``) for container mode. Using ``cluster.json`` runs the suite on the host even when the image you wanted to test is sitting on every node.
 
