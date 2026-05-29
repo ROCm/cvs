@@ -5,8 +5,63 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import warnings
+
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.container import ContainerOrchestrator
+
+
+VALID_CONTAINER_LIFETIMES = ("external", "per_run", "persistent")
+
+
+def _resolve_container_lifetime(container):
+    """Normalize a container config block to a single resolved ``lifetime`` key.
+
+    Collapses the legacy two-axis schema (``enabled`` + ``launch``) into one
+    tri-valued ``container.lifetime``. Mutates and returns the passed dict.
+
+    Resolution rules (first match wins):
+      - ``enabled`` present (any value) -> ``ValueError``. The field is removed
+        from the schema; the user must delete it and set ``lifetime``.
+      - ``lifetime`` present            -> validated, kept as-is.
+      - ``launch`` present (no enabled) -> ``DeprecationWarning``; ``True`` maps
+        to ``per_run``, ``False`` maps to ``external``. The legacy key is dropped.
+      - none of the above               -> default ``per_run``.
+
+    An empty/absent container block is returned untouched (baremetal path).
+    """
+    if not container:
+        return container
+
+    if 'enabled' in container:
+        raise ValueError(
+            "container.enabled is removed; delete the field and set "
+            "container.lifetime to one of 'external', 'per_run', 'persistent'"
+        )
+
+    if 'lifetime' in container:
+        lifetime = container['lifetime']
+        if lifetime not in VALID_CONTAINER_LIFETIMES:
+            raise ValueError(
+                f"container.lifetime must be one of {VALID_CONTAINER_LIFETIMES}, "
+                f"got {lifetime!r}"
+            )
+        return container
+
+    if 'launch' in container:
+        launch = container.pop('launch')
+        lifetime = 'per_run' if launch else 'external'
+        warnings.warn(
+            f"container.launch is deprecated, use container.lifetime "
+            f"(mapped launch={launch!r} -> lifetime={lifetime!r})",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        container['lifetime'] = lifetime
+        return container
+
+    container['lifetime'] = 'per_run'
+    return container
 
 
 class OrchestratorConfig:
@@ -26,8 +81,7 @@ class OrchestratorConfig:
           Example container configuration:
           ```json
           "container": {
-            "enabled": true,
-            "launch": false,
+            "lifetime": "per_run",
             "runtime": {
               "name": "docker",
               "args": {
@@ -47,7 +101,13 @@ class OrchestratorConfig:
             "name": "myuser_rocm_cvs_latest"
           }
           ```
-          launch: Containers are already running, test suite should not start/stop them [default: false]
+          lifetime: Container lifecycle policy [default: 'per_run']
+            - 'external'   : containers managed outside CVS. Setup verifies they
+                             are running; teardown is a no-op.
+            - 'per_run'    : start at setup, remove at teardown (the default).
+            - 'persistent' : start if absent / attach if present; never torn down
+                             by the run. Pin container.name explicitly under this
+                             mode (the default <user>_<image> name shifts on tag bumps).
     """
 
     def __init__(self, **kwargs):
@@ -72,7 +132,11 @@ class OrchestratorConfig:
         self.priv_key_file = kwargs['priv_key_file']
         self.password = kwargs.get('password')
         self.head_node_dict = kwargs.get('head_node_dict', {})
-        self.container = kwargs.get('container', {})
+        # Normalize the container block to a resolved 'lifetime'. This is the
+        # single chokepoint: from_configs constructs via cls(**required_config),
+        # so both file-driven and direct programmatic construction hit the same
+        # normalization (and the same enabled-removed / launch-deprecated errors).
+        self.container = _resolve_container_lifetime(kwargs.get('container', {}))
 
     def get(self, key, default=None):
         """Get configuration value with default."""
@@ -97,7 +161,7 @@ class OrchestratorConfig:
                            Required keys: orchestrator, node_dict, username, priv_key_file
                            Optional keys: container,
                            head_node_dict, password (defaults provided for missing optional keys)
-                           Container structure: {enabled: bool, launch: bool, runtime: {name: str, args: dict}, image: str, name: str, ...}
+                           Container structure: {lifetime: 'external'|'per_run'|'persistent', runtime: {name: str, args: dict}, image: str, name: str, ...}
             testsuite_config: Test suite specific configuration (dict or path to <testsuite>_config.json)
                             Can override any keys from cluster_config
 
