@@ -1,208 +1,58 @@
-# CVS DTNI v1 — implementation spec (digestible)
+# CVS DTNI v1 — refactor overview
 
 **Status:** Draft for team review. Full prose lives in [`cvs-dtni-v1-spec.md`](cvs-dtni-v1-spec.md); this file is the PR body and the entry point.
 
+This PR is a refactor of the DTNI (data-center training and inference) suite — turning a fork-per-workload structure (one Python wrapper per `(framework, model, single/distributed)` tuple, one monolithic library per framework) into a **uniform lifecycle-driven workload runner**. The goal of this overview is to show what the redesign *enables*, not to enumerate every line that moves. Four capabilities are the headline:
+
+- **Typed declarative configs** — one YAML per `(framework, model)`, Pydantic-validated, fail-fast on typos.
+- **Pytest-as-first-class matrix slicing** — every axis a benchmark engineer cares about (framework, model, dataset, benchmark, metric, hyperparameter, backend knob like Mooncake or AITER) is a sliceable pytest marker on day one.
+- **Durable on-disk artifacts** — per-cell content-addressable directory with a manifest + Parquet sidecars + raw logs, queryable directly from pandas / DuckDB. No regression-analysis service required.
+- **Clean separation** between framework-agnostic orchestration (one Job driver, one lifecycle) and per-framework specifics (one adapter per framework, registered via a factory).
+
+**Reading guide** — seven sections, ~15 min end-to-end:
+
+1. Code structure and design philosophy
+2. Tiered tests — what they are and why
+3. Pytest invocation and lifecycle — the matrix story
+4. Config files — categories of dials
+5. Sweeps — how the matrix expands
+6. Metrics and benchmarks supported per framework
+7. Manifest and sidecars — durable runs and regression analysis
+
+An appendix covers adoption, security/correctness fixes (W7), and the open reviewer decision.
+
 ---
 
-## TLDR
+## §1. Code structure and design philosophy
 
-Two of CVS's real sglang test wrappers are **429 lines each**. They differ by **one line** — `'llama-70b'` vs `'deepseek-r1'` on line 297. v1 collapses both into one parametrized test consuming two YAMLs, deletes `cvs/lib/sglang_disagg_lib.py` (1261 LOC), and stops the HF token from being logged in `phdl.exec` debug output on every multi-node run. Net change: ~**−5000 LOC** across `cvs/lib/` and `cvs/tests/`, **+1** lifecycle driver, **+6** adapters, **+6** typed threshold predicates, **+1** content-addressable manifest tree that pandas / DuckDB read directly.
+The redesign rests on three primitives.
 
-The matrix is the artifact: pick any axis a benchmark engineer cares about — framework, model, knob (`aiter`, `fa`, `fp4`, `mooncake`), threshold, git SHA, cluster — and `pytest -m "..."` slices it on day one.
+### Three primitives
 
-**Reading order if you only have N minutes:**
+1. **A uniform lifecycle.** Every workload — training or inference, single-role or multi-role — executes the same six phases: `prepare → launch → await_completion → parse → verify → teardown`. The `Job` driver runs this lifecycle the same way for every workload; per-framework specialization lives entirely inside the adapter that implements those six methods.
 
-- **5 min:** §1 data flow → §2 sglang before/after → §13 W7 security fixes (independently shippable)
-- **15 min:** add §3 one config → N pytest IDs → §8 manifest + cross-run query → §11 failure walkthrough
-- **Full:** §1–§16 below, with anchors into [`cvs-dtni-v1-spec.md`](cvs-dtni-v1-spec.md) for the long form
+2. **A factory + registry.** A typed config selects which adapter handles it. `INFERENCE_REGISTRY` and `TRAINING_REGISTRY` map `framework: vllm` (or `megatron`, `sglang_disagg`, etc.) to the concrete adapter class. The `Job` driver never branches on framework name; adding a new framework is one new adapter + one registry line.
 
----
+3. **State on disk, not in memory.** Every cell of a run produces a content-addressable directory containing `manifest.json` + Parquet sidecars + raw logs. Tests, dashboards, and CI consumers all read from that directory. Nothing depends on module-level Python state surviving a process exit.
 
-## §1. End-to-end data flow
-
-One picture covers the whole thing.
+### The flow
 
 ```mermaid
 flowchart LR
-    cfg["config.yaml<br/>cluster.json"] --> plan["cvs plan<br/>(sweep expansion + binder)"]
-    plan -->|"N cells"| job["Job.run per cell<br/>prepare → launch → await → parse → verify → teardown"]
-    job --> art["per-run dir:<br/>manifest.json<br/>samples.parquet<br/>trajectory.parquet<br/>events.jsonl<br/>config.resolved.yaml<br/>logs/"]
-    art --> pytest["pytest reads manifest<br/>N test IDs per cell"]
-    art --> export["cvs export"]
-    export --> fact["fact.parquet<br/>(M runs × all metrics)"]
-    fact --> nb["notebook /<br/>dashboard /<br/>regression alert"]
+    cfg["Typed config<br/>(framework: vllm)"] --> reg["Registry<br/>(INFERENCE / TRAINING)"]
+    reg --> adapter["Concrete adapter<br/>(VllmAdapter, MegatronAdapter, ...)"]
+    adapter --> job["Job driver<br/>(6-step lifecycle)"]
+    job --> dir["Per-run dir on disk<br/>(manifest + parquet + logs)"]
+    dir --> tests["pytest functions<br/>(read manifest, fire assertions)"]
+    dir --> exp["cvs export<br/>(flatten to fact.parquet)"]
+    exp --> nb["pandas / DuckDB / dashboard"]
 ```
 
-The persistent artifacts are everything under the per-run dir. `cvs plan` and pytest invocation are ephemeral. `cvs export` is the data-science seam — flatten N runs into one Parquet fact table; pandas/DuckDB consume it without a service.
+The dashed arrows from `dir` indicate that the manifest tree is the single source of truth: pytest functions, cross-run exports, and any future dashboard all read the same artifacts.
 
-Full prose: [W4 in spec](cvs-dtni-v1-spec.md#w4-manifest-sidecars-and-cross-run-export), [W5 in spec](cvs-dtni-v1-spec.md#w5-cluster-pool-deterministic-binder-sweep-expansion).
+### The adapter contract
 
----
-
-## §2. The sglang before/after
-
-The single most persuasive change in the PR.
-
-**Before** (`cvs/tests/inference/sglang/`):
-
-```text
-sglang_llama_70b_distributed.py        429 LOC
-sglang_deepseek_r1_671b_distributed.py 429 LOC
-                                       ─────────
-                                       858 LOC
-```
-
-These two files are **byte-identical except for line 297**:
-
-```python
-# sglang_llama_70b_distributed.py:297
-bp_dict = benchmark_params_dict['llama-70b']
-
-# sglang_deepseek_r1_671b_distributed.py:297
-bp_dict = benchmark_params_dict['deepseek-r1']
-```
-
-Plus the library they both consume: `cvs/lib/sglang_disagg_lib.py` at **1261 LOC** — a single monolithic class that cannot be partially reused.
-
-**After:**
-
-```text
-cvs/tests/inference/test_inference.py                          (one parametrized test)
-cvs/input/config_file/inference/sglang/llama_70b_disagg.yaml   (~80 LOC YAML)
-cvs/input/config_file/inference/sglang/deepseek_r1_disagg.yaml (~80 LOC YAML)
-cvs/lib/adapters/sglang_disagg.py                              (~400 LOC adapter)
-```
-
-**Net delta:** −2119 LOC of duplicated Python and monolithic library; +1 reusable adapter; +N typed configs (one per model). The same shape applies to the other 14 wrappers (see §5).
-
-Full prose: [W2 in spec](cvs-dtni-v1-spec.md#w2-six-concrete-adapters).
-
----
-
-## §3. One config → N pytest IDs
-
-The matrix story, end-to-end.
-
-### 3a. The config
-
-```yaml
-# cvs/input/config_file/inference/vllm/gpt-oss-120b_mi355x_aiter.yaml
-schema_version: "2"
-test_id: vllm_gpt_oss_120b_mi355x_aiter
-target_gpu: mi355x
-
-framework: vllm
-workload_kind: inference
-topology:
-  roles:
-    server: {count: 1, gpus_per_node: 8, selector: "mi355x"}
-
-model: gpt-oss-120b
-knobs:
-  attention: aiter
-  quant: fp4
-  backend: vllm-native
-
-params:
-  tensor_parallelism: 1
-  max_model_length: 9216
-  num_prompts: 3200
-
-sweep:
-  concurrency: [16, 32, 64]
-  isl_osl:
-    - {isl: 1024, osl: 1024, name: balanced}
-    - {isl: 4096, osl: 128,  name: prefill_heavy}
-
-benchmarks: [throughput, ttft_p99, tpot_p99]
-
-thresholds:
-  - {kind: Rate,       metric: throughput, per_unit: sec, op: ">=", min_rate: 1200}
-  - {kind: Percentile, metric: ttft_ms,    percentile: 99, op: "<=", value: 50}
-  - {kind: Percentile, metric: tpot_ms,    percentile: 99, op: "<=", value: 25}
-```
-
-### 3b. `cvs plan` output
-
-```text
-$ cvs plan --cluster cluster.json --config gpt-oss-120b_mi355x_aiter.yaml
-
-6 cells (concurrency × isl_osl, cartesian):
-
-Cell                                    Bindings         Tests   Markers
-──────────────────────────────────────  ───────────────  ──────  ─────────────────────────────────────────
-[balanced-conc16]                       server=[n1]      13      framework_vllm, model_gpt_oss_120b,
-[balanced-conc32]                       server=[n1]      13        knob_attention_aiter, knob_quant_fp4,
-[balanced-conc64]                       server=[n1]      13        topology_single, workload_inference,
-[prefill_heavy-conc16]                  server=[n1]      13        gpu_mi355x, benchmark_throughput,
-[prefill_heavy-conc32]                  server=[n1]      13        benchmark_ttft_p99, benchmark_tpot_p99,
-[prefill_heavy-conc64]                  server=[n1]      13        tier_1, tier_3, tier_4, tier_5
-
-Tests collected per cell (after collect-skip):
-  logistics/test_prepare.py::test_image_pullable
-  logistics/test_launch.py::test_container_up
-  logistics/test_launch.py::test_role_ready
-  logistics/test_teardown.py::test_no_orphans
-  logistics/test_teardown.py::test_dmesg_clean
-  inference/test_serving.py::test_server_health
-  inference/test_serving.py::test_request_success_rate
-  frameworks/test_vllm.py::test_aiter_flags_active
-  frameworks/test_vllm.py::test_attention_backend_matches[aiter]
-  benchmarks/test_throughput.py::test_throughput_min
-  benchmarks/test_latency.py::test_ttft_p99
-  benchmarks/test_latency.py::test_tpot_p99
-  models/test_gpt_oss.py::test_quant_conversion_consistent
-
-Total: 78 pytest IDs (6 cells × 13 tests).
-Estimated wall time: ~24 min (based on 3 prior matching runs).
-```
-
-### 3c. CLI slicing — three real queries
-
-```bash
-# All vLLM + AITER cells across every model and concurrency
-cvs run -m "framework_vllm and knob_attention_aiter"
-
-# Just the P99 TTFT claim across the whole nightly sweep
-cvs run -m "tier_5 and benchmark_ttft_p99"
-
-# Distributed training cells only, just convergence claims, FP8 quant only
-cvs run -m "workload_training and topology_distributed and knob_quant_fp8 and benchmark_convergence"
-```
-
-Each query lowers to standard `pytest -m` (markers auto-applied at collection from config fields — see §6 derivation table). Slicing along framework, model, knob, topology, benchmark, GPU, or tier all work on day one.
-
-Full prose: [W6 in spec](cvs-dtni-v1-spec.md#w6-pytest-layer-and-test-taxonomy).
-
----
-
-## §4. The lifecycle and its driver
-
-```mermaid
-flowchart TD
-    prepare["prepare()"] --> launch["launch()"]
-    launch --> awaitc["await_completion()<br/>(polls progress_predicate)"]
-    awaitc --> parse["parse()"]
-    parse --> verify["verify()<br/>(evaluates thresholds)"]
-    verify --> teardown["teardown()<br/>(RAII; always runs)"]
-
-    prepare -.->|"raises"| setup["setup_failure"]
-    launch -.->|"raises"| setup
-    awaitc -.->|"predicate broke"| safety["safety_violation"]
-    awaitc -.->|"timeout"| liveness["liveness_failure"]
-    parse -.->|"pattern hit"| pattern["failure_pattern_matched"]
-    verify -.->|"threshold False"| verif["verification_failure"]
-
-    setup --> teardown
-    safety --> teardown
-    liveness --> teardown
-    pattern --> teardown
-    verif --> teardown
-```
-
-The `Job` driver runs the same six-step body for every workload — no `if mode == "training"` branching. The five failure categories are classified at the boundary where they originate, not by post-hoc stack-trace inspection.
-
-### The Protocol
+The factory hands a registered class to the Job driver; the Job driver calls these seven methods in order:
 
 ```python
 # cvs/lib/adapter_protocol.py
@@ -216,20 +66,128 @@ class WorkloadAdapter(Protocol):
     def teardown(self, run: AdapterRun) -> None: ...
 ```
 
-### The driver
+`BaseWorkloadAdapter` provides concrete defaults for `teardown` (always capture logs + dmesg + GPU state, then `docker rm` by label), `await_completion` (poll the predicate with timeout), and `prepare` (no-op). Most adapters override 3 of the 7 methods.
+
+```mermaid
+flowchart TD
+    proto["WorkloadAdapter (Protocol)"]
+    proto --> base["BaseWorkloadAdapter<br/>(concrete defaults: teardown, await_completion, prepare)"]
+    base --> vllm["VllmAdapter"]
+    base --> imax["InferenceMaxAdapter"]
+    base --> sgl["SglangDisaggAdapter"]
+    base --> xdit["PytorchXditAdapter"]
+    base --> meg["MegatronAdapter"]
+    base --> jax["JaxAdapter"]
+```
+
+### Design philosophy
+
+Two principles drove the choices above.
+
+**Framework emits → CVS retains.** Today the frameworks already emit rich data — per-request JSONL (vLLM), per-step trajectories (Megatron, JAX), Prometheus metrics (vLLM, sglang), per-batch JSON (InferenceMAX), per-step latency tracelogs (xDiT). Today CVS tail-greps the console and discards everything else. The redesign routes the framework's native emission directly into Parquet sidecars; nothing is invented and nothing is lost. Adding a metric is a `parse()` change, not a new pipeline.
+
+**One workload run → many sliceable claims.** A single cell of a sweep produces one manifest. Many pytest test functions (logistics, framework-specific, benchmark-specific, model-specific) read that one manifest and assert independent properties. Failure of one assertion doesn't invalidate the run; the manifest is durable; rerunning a subset of claims against an existing manifest becomes one CLI flag (see §7).
+
+The abstraction is intentionally shallow. If a hypothetical future workload needs to override all seven adapter methods, the abstraction has failed for that workload and the right move is to refactor at that point — not build for it speculatively now.
+
+Full prose: [W1](cvs-dtni-v1-spec.md#w1-core-lifecycle-and-adapter-framework), [W2](cvs-dtni-v1-spec.md#w2-six-concrete-adapters).
+
+---
+
+## §2. Tiered tests — what they are and why
+
+A "test" in v1 isn't "did the workload run end-to-end and produce one pass/fail line." It's a layered stack of independent claims about the same workload run. Tier = directory under `cvs/tests/` = abstraction layer of the claim.
+
+| Tier | What it claims | Applies to | Example test functions |
+|---|---|---|---|
+| 1. Logistics | The workload started, ran, and cleaned up | Every config | `test_image_pullable`, `test_container_up`, `test_role_ready`, `test_no_orphans`, `test_dmesg_clean` |
+| 2. Workload-kind | Training/inference invariants | training or inference configs respectively | `test_loss_finite`, `test_request_success_rate`, `test_no_5xx_burst` |
+| 3. Topology | Distribution/disagg invariants | only distributed or disagg configs | `test_per_rank_step_sync`, `test_no_straggler`, `test_router_balance` |
+| 4. Framework | Framework knobs were applied correctly | only the matching framework | `test_aiter_flags_active`, `test_xla_flags_applied`, `test_attention_backend_matches` |
+| 5. Benchmark | The perf claims declared in `benchmarks:` | opt-in per config | `test_throughput_min`, `test_ttft_p99`, `test_convergence`, `test_goodput` |
+| 6. Model | Known model-family edge cases | only the matching model | `test_quant_conversion_consistent` (gpt-oss-120b) |
+
+```text
+cvs/tests/
+├── conftest.py
+├── logistics/        # tier 1
+├── training/         # tier 2 + 3 (distributed subset)
+├── inference/        # tier 2 + 3 (disagg / distributed subsets)
+├── frameworks/       # tier 4 — one file per framework
+├── benchmarks/       # tier 5 — opt-in via config benchmarks: [...]
+└── models/           # tier 6 — rarely used; documents quirks
+```
+
+### How tiers are collected
+
+The framework collects tier 1 for every config. Tiers 2–4 are gated by a `collect-skip` hook in `pytest_collection_modifyitems` that compares each test's tier predicate against the cell's config (`workload_kind`, `topology`, `framework`) and **deselects** mismatched items (not skipped — deselected, so the report stays clean). Tier 5 is opt-in via the config's `benchmarks: [...]` list and a `@requires_benchmark("name")` decorator. Tier 6 is rare and routes by `model:`.
+
+A typical inference cell collects ~13 test IDs (5 logistics + 2 inference-kind + 2 framework + 3 benchmark + 1 model). A typical training cell collects ~10.
+
+### Why tier structure matters
+
+Slicing. A reviewer who wants only "did training loss diverge anywhere last night?" runs `pytest -m "tier_2 and benchmark_loss_finite"` and gets exactly those claims, without needing to know which configs declared `loss_finite` as a check. A user investigating an HF token leak runs `pytest -m "tier_1 and not skipped_insufficient_nodes"` to see only logistics across the whole nightly sweep. Tiers are the structure that makes the test matrix queryable rather than monolithic.
+
+Full prose: [W6](cvs-dtni-v1-spec.md#w6-pytest-layer-and-test-taxonomy).
+
+---
+
+## §3. Pytest invocation and lifecycle — the matrix story
+
+### What happens when a user runs `cvs run`
+
+The user types:
+
+```bash
+cvs run --cluster cluster.json --config configs/inference/vllm/gpt-oss-120b.yaml
+```
+
+Internally:
+
+1. The config is parsed and Pydantic-validated (`extra = "forbid"`, so typos fail here).
+2. The sweep block expands into N cells (§5).
+3. The binder assigns physical nodes from the cluster pool to each cell's role requirements (per-cell, deterministic; §4 covers the topology dial).
+4. Pytest collects test functions for each cell, applies markers derived from config fields (§2's tier predicate determines which functions actually run for that cell), runs the lifecycle once per cell via the `workload_run` session-scoped fixture, and fires the collected test functions against the resulting manifest.
+5. A `pytest_terminal_summary` hook aggregates verdicts across all cells.
+
+### The lifecycle
+
+```mermaid
+flowchart TD
+    prep["prepare()"] --> lau["launch()"]
+    lau --> aw["await_completion()<br/>(polls progress_predicate)"]
+    aw --> par["parse()"]
+    par --> ver["verify()<br/>(evaluates thresholds)"]
+    ver --> td["teardown()<br/>(RAII; always runs)"]
+
+    prep -.->|"raises"| setup["setup_failure"]
+    lau -.->|"raises"| setup
+    aw -.->|"predicate broke"| safety["safety_violation"]
+    aw -.->|"timeout"| liveness["liveness_failure"]
+    par -.->|"pattern hit"| pattern["failure_pattern_matched"]
+    ver -.->|"threshold False"| verif["verification_failure"]
+
+    setup --> td
+    safety --> td
+    liveness --> td
+    pattern --> td
+    verif --> td
+```
+
+The 6-step body is identical for every workload — no `if mode == "training"` branching in the driver. Failures are classified at the boundary where they originate; `teardown` always runs in `finally`. The five failure categories map to actionable next steps: `setup_failure` means your config or environment is wrong; `safety_violation` means the workload broke its own invariants mid-run (NaN loss, server health probe failing, etc.); `verification_failure` means it ran cleanly but missed a threshold.
 
 ```python
-# cvs/lib/job.py
+# cvs/lib/job.py (skeleton)
 class Job:
     def run(self) -> Manifest:
         run = None
         try:
-            self.adapter.prepare(self.ctx)              # raises -> setup_failure
-            run = self.adapter.launch(self.ctx)         # raises -> setup_failure
-            self._await_with_progress(run)              # raises -> safety / liveness
+            self.adapter.prepare(self.ctx)
+            run = self.adapter.launch(self.ctx)            # raises -> setup_failure
+            self._await_with_progress(run)                 # raises -> safety / liveness
             result = self.adapter.parse(run, self.manifest)
             verdicts = self.adapter.verify(result, self.ctx.cfg.thresholds)
-            self.manifest.record_verdicts(verdicts)     # status -> pass | verification_failure
+            self.manifest.record_verdicts(verdicts)        # status: pass | verification_failure
         except SetupFailure as e:
             self.manifest.record_failure("setup_failure", e.evidence)
         except SafetyViolation as e:
@@ -240,332 +198,165 @@ class Job:
             self.manifest.record_failure("failure_pattern_matched", e.pattern_id, e.line)
         finally:
             if run is not None:
-                self.adapter.teardown(run)              # RAII: always runs
+                self.adapter.teardown(run)                 # always runs
             self.manifest.flush()
         return self.manifest
 ```
 
-Full prose: [W1 in spec](cvs-dtni-v1-spec.md#w1-core-lifecycle-and-adapter-framework).
+### Markers — the matrix surface
 
----
+Pytest markers are auto-derived from config fields at collection time. This is the surface a user actually queries:
 
-## §5. What changes in the repo
-
-### `cvs/lib/` before vs after
-
-```text
-BEFORE                                              LOC          AFTER                                          LOC
-─────────────────────────────────────────────────   ─────        ──────────────────────────────────────────     ─────
-cvs/lib/sglang_disagg_lib.py                       1261          cvs/lib/adapter_protocol.py                      ~30
-cvs/lib/megatron_training_lib.py                    ~830         cvs/lib/base_adapter.py                          ~150
-cvs/lib/jax_training_lib.py                         ~830         cvs/lib/job.py                                   ~120
-cvs/lib/inference/base.py                           ~720         cvs/lib/failure_taxonomy.py                       ~40
-cvs/lib/inference/vllm.py                            ~60         cvs/lib/registry.py                               ~30
-cvs/lib/inference/inference_max.py                   ~60         cvs/lib/adapters/vllm.py                         ~250
-cvs/lib/inference_lib.py    (orphan; broken)         ~80         cvs/lib/adapters/inferencemax.py                 ~200
-                                                                 cvs/lib/adapters/sglang_disagg.py                ~400
-                                                                 cvs/lib/adapters/pytorch_xdit.py                 ~250
-                                                                 cvs/lib/adapters/megatron.py                     ~350
-                                                                 cvs/lib/adapters/jax.py                          ~350
-                                                                 cvs/lib/config/ (Pydantic schemas, params)       ~400
-                                                                 cvs/lib/handles/secret.py + container.py         ~150
-                                                                 cvs/lib/manifest.py                              ~300
-                                                                 cvs/lib/binder.py                                ~200
-─────────────────────────────────────────────────   ─────        ──────────────────────────────────────────     ─────
-                                                  ~3841                                                          ~3220
-```
-
-`cvs/tests/{training,inference}/` collapses from **16 wrappers** (7 training + 9 inference, ~3800 LOC of which ~1120 is byte-identical fixture boilerplate) into **~6 parametrized test files** (~300 LOC total) plus the per-suite `conftest.py`.
-
-### Class hierarchy
-
-```mermaid
-flowchart TD
-    proto["WorkloadAdapter (Protocol)"]
-    proto --> base["BaseWorkloadAdapter (abc.ABC)<br/>concrete: teardown, await_completion, prepare"]
-    base --> vllm["VllmAdapter<br/>overrides: launch, parse, progress_predicate"]
-    base --> imax["InferenceMaxAdapter<br/>overrides: launch, parse, progress_predicate"]
-    base --> sgl["SglangDisaggAdapter<br/>overrides: prepare, launch, parse, progress_predicate, teardown"]
-    base --> xdit["PytorchXditAdapter<br/>overrides: launch, parse, progress_predicate"]
-    base --> meg["MegatronAdapter<br/>overrides: launch, parse, progress_predicate"]
-    base --> jax["JaxAdapter<br/>overrides: launch, parse, progress_predicate"]
-```
-
-Most adapters override 3 of 7 methods. `SglangDisaggAdapter` overrides 5 because it manages multi-role orchestration internally. If a future adapter needs to override all 7, the abstraction is failing — refactor to a Composite (deferred to a later release; one multi-role workload doesn't justify it yet).
-
-### `cvs/tests/` tier tree
-
-```text
-cvs/tests/
-├── conftest.py                       # session: workload_run fixture, marker registration, collect-skip
-├── logistics/                        # TIER 1 — every config runs
-│   ├── test_prepare.py
-│   ├── test_launch.py
-│   └── test_teardown.py
-├── training/                         # TIER 2 — workload_kind=training only
-│   ├── conftest.py
-│   ├── test_trajectory.py
-│   └── test_distributed.py
-├── inference/                        # TIER 3 — workload_kind=inference only
-│   ├── conftest.py
-│   ├── test_serving.py
-│   ├── test_disagg.py
-│   └── test_distributed.py
-├── frameworks/                       # TIER 4 — one file per framework
-│   ├── test_vllm.py
-│   ├── test_sglang.py
-│   ├── test_inferencemax.py
-│   ├── test_pytorch_xdit.py
-│   ├── test_megatron.py
-│   └── test_jax.py
-├── benchmarks/                       # TIER 5 — opt-in via config benchmarks: [...]
-│   ├── test_throughput.py
-│   ├── test_latency.py
-│   ├── test_accuracy.py
-│   └── test_convergence.py
-└── models/                           # TIER 6 — model-family edge cases (often empty)
-    ├── test_gpt_oss.py
-    └── test_llama.py
-```
-
-Tier = directory. Claim = test function. One workload run feeds many independent assertions.
-
-Full prose: [W2](cvs-dtni-v1-spec.md#w2-six-concrete-adapters), [W6](cvs-dtni-v1-spec.md#w6-pytest-layer-and-test-taxonomy).
-
----
-
-## §6. Markers — derivation rules
-
-| Config field | Marker pattern | Example value → marker | Scope |
-|---|---|---|---|
-| `framework` | `framework_<name>` | `vllm` → `framework_vllm` | always |
-| `model` | `model_<name>` (underscores normalized) | `gpt-oss-120b` → `model_gpt_oss_120b` | always |
-| `workload_kind` | `workload_<kind>` | `inference` → `workload_inference` | always |
-| `topology` (single/distributed/disagg) | `topology_<kind>` | `disagg` → `topology_disagg` | always |
-| `target_gpu` | `gpu_<family>` | `mi355x` → `gpu_mi355x` | always |
-| `knobs.<key>` (scalar) | `knob_<key>_<value>` | `attention: aiter` → `knob_attention_aiter` | always |
-| `benchmarks: [...]` (list) | `benchmark_<name>` per entry | `[throughput, ttft_p99]` → `benchmark_throughput`, `benchmark_ttft_p99` | opt-in |
-| tier (from directory) | `tier_N` | `cvs/tests/benchmarks/` → `tier_5` | always |
-| skip reason (from binder) | `skipped_<reason>` | `insufficient_nodes` → `skipped_insufficient_nodes` | conditional |
-
-Registered via `pytest_configure` so `-m` queries don't warn. List-valued config fields fan out into multiple markers. Nested dict knobs flatten with one underscore.
-
-Full prose: [W6](cvs-dtni-v1-spec.md#w6-pytest-layer-and-test-taxonomy).
-
----
-
-## §7. Cluster + binder walkthrough
-
-### Cluster file (pool only — no role assignments)
-
-```yaml
-# cluster.json
-nodes:
-  n1: {ip: 10.0.0.11, user: atnair, ssh_key: ~/.ssh/id, gpus: 8, labels: [mi355x]}
-  n2: {ip: 10.0.0.12, user: atnair, ssh_key: ~/.ssh/id, gpus: 8, labels: [mi355x]}
-  n3: {ip: 10.0.0.13, user: atnair, ssh_key: ~/.ssh/id, gpus: 8, labels: [mi355x]}
-  n4: {ip: 10.0.0.14, user: atnair, ssh_key: ~/.ssh/id, gpus: 0, labels: [mi355x, cpu_only]}
-```
-
-### Config role requirements (in the test config)
-
-```yaml
-topology:
-  roles:
-    prefill: {count: 2, gpus_per_node: 8, selector: "mi355x"}
-    decode:  {count: 1, gpus_per_node: 8, selector: "mi355x"}
-    router:  {count: 1, gpus_per_node: 0}
-```
-
-### Binder behavior — small dev cluster (3 GPU nodes, 1 CPU node)
-
-```text
-$ cvs plan --cluster small_cluster.json --config sglang_2p1d.yaml
-
-Cell           Bindings                                       Status
-─────────────  ─────────────────────────────────────────────  ────────────────────────────────────
-[conc32]       prefill=[n1,n2]  decode=[n3]  router=[n4]      OK
-[conc64]       prefill=[n1,n2]  decode=[n3]  router=[n4]      OK
-
-Plan summary: 2 cells will execute, 0 will skip
-```
-
-Now swap in a config that needs 4 GPU nodes:
-
-```text
-$ cvs plan --cluster small_cluster.json --config sglang_2p2d.yaml
-
-Cell           Bindings                                       Status
-─────────────  ─────────────────────────────────────────────  ────────────────────────────────────
-[conc32]       —                                              SKIP: insufficient GPU nodes (need 4, have 3)
-[conc64]       —                                              SKIP: insufficient GPU nodes (need 4, have 3)
-
-Plan summary: 0 cells will execute, 2 will skip
-Hint: cells require a 4-node topology this cluster cannot satisfy.
-```
-
-Skipped cells still produce manifests (with `status: skipped`, `reason: "insufficient_nodes ..."`), still appear in `pytest --collect-only` with a `skipped_insufficient_nodes` marker, and remain queryable in dashboards. Partial coverage on a small cluster is a feature, not an error.
-
-The binder is **deterministic** (first-fit by cluster-file declaration order): same cluster + same config → same bindings, always. This is load-bearing for future caching features.
-
-Full prose: [W5](cvs-dtni-v1-spec.md#w5-cluster-pool-deterministic-binder-sweep-expansion).
-
----
-
-## §8. Manifest + sidecars + cross-run analysis
-
-### Per-run directory layout
-
-```text
-<artifact_dir>/vllm_gpt_oss_120b_mi355x_aiter/balanced-conc64/sha7d3a/0193a8e2-71c1.../
-├── manifest.json              # 5-50 KB; metadata + verdicts + scalars + sidecar pointers
-├── events.jsonl               # append-only; closed vocab events
-├── samples.parquet            # per-request rows (long format)
-├── trajectory.parquet         # per-step rows (long format)
-├── config.resolved.yaml       # full resolved config for reproducibility
-└── logs/
-    ├── stdout.log
-    ├── stderr.log
-    ├── dmesg.n2.pre.txt
-    ├── dmesg.n2.post.txt
-    ├── gpu_state.n2.pre.json
-    └── gpu_state.n2.post.json
-```
-
-### Sample `manifest.json` (abbreviated, real values)
-
-```json
-{
-  "schema_version": "1.0",
-  "manifest_kind": "workload_run",
-  "run_id": "0193a8e2-71c1-7e0f-9c1a-7d5e8e1f4a02",
-  "test_id": "vllm_gpt_oss_120b_mi355x_aiter",
-  "cell_id": "balanced-conc64",
-  "config_hash": "sha256:91a2...e44b",
-  "workload_hash": "sha256:7d3a...b21f",
-  "verification_hash": "sha256:9c1e...8f12",
-  "experiment_id": "vllm/gpt-oss-120b/fp4+aiter+vllm-native/mi355x",
-  "cvs_version": "2.4.0",
-  "cvs_git_sha": "a4f1e2c",
-  "framework_image_digest": "sha256:7d3a...b21f",
-  "framework_versions": {"vllm": "0.10.2", "torch": "2.7.1", "rocm": "6.4.0"},
-  "timestamp_start": "2026-05-28T20:01:08Z",
-  "timestamp_end":   "2026-05-28T20:14:52Z",
-  "hosts": [{"hostname": "n1", "ip": "10.0.0.11", "role": "server", "role_index": 0}],
-  "model_descriptor": {"hf_repo": "openai/gpt-oss-120b", "revision": "main", "precision": "fp4"},
-  "phases": {
-    "prepare":  {"duration_s":   4.3, "status": "ok"},
-    "launch":   {"duration_s":  41.7, "status": "ok"},
-    "await":    {"duration_s": 720.0, "status": "ok"},
-    "parse":    {"duration_s":   1.8, "status": "ok"},
-    "verify":   {"duration_s":   0.1, "status": "failed"},
-    "teardown": {"duration_s":   6.9, "status": "ok"}
-  },
-  "status": "failed_verification",
-  "failure": {
-    "category": "verification_failure",
-    "originated_in_phase": "verify",
-    "message": "P99 TTFT 73.4ms exceeds threshold 50.0ms"
-  },
-  "verdicts": [
-    {"kind": "Percentile", "metric": "ttft_ms", "percentile": 99, "op": "<=",
-     "expected": 50.0, "actual": 73.4, "passed": false, "margin": -23.4},
-    {"kind": "Percentile", "metric": "tpot_ms", "percentile": 99, "op": "<=",
-     "expected": 25.0, "actual": 14.2, "passed": true,  "margin":  10.8},
-    {"kind": "Rate", "metric": "throughput", "per_unit": "sec", "op": ">=",
-     "expected": 1200.0, "actual": 1318.0, "passed": true, "margin": 118.0}
-  ],
-  "result": {
-    "scalars": {"ttft_p99_ms": 73.4, "tpot_p99_ms": 14.2, "throughput_tps": 1318.0}
-  },
-  "resource_summary": {"n1": {"gpu_util_mean": 78.1, "hbm_used_max_gb": 142.0, "oom_killed": false}},
-  "samples_path":     "samples.parquet",
-  "trajectory_path":  "trajectory.parquet",
-  "events_path":      "events.jsonl"
-}
-```
-
-### `samples.parquet` schema (long format)
-
-| Column | Type | Semantics | Example |
-|---|---|---|---|
-| `request_id` | string | unique per request | `"req-00042"` |
-| `ts` | timestamp | request arrival time | `2026-05-28T20:02:14.110Z` |
-| `ttft_ms` | float64 | time to first token | `43.2` |
-| `tpot_ms` | float64 | time per output token | `8.1` |
-| `itl_ms` | float64 | inter-token latency | `7.9` |
-| `e2el_ms` | float64 | end-to-end latency | `1124.0` |
-| `output_tokens` | int32 | output token count | `128` |
-| `role` | string | role that handled (for composites) | `"decode"` |
-| `host` | string | hostname | `"n1"` |
-
-Long format means new metrics (`memory_pressure`, `kv_cache_util`) become new rows, not new columns — no schema migration.
-
-### `trajectory.parquet` schema
-
-| Column | Type | Example |
+| Config field | Marker pattern | Example value → marker |
 |---|---|---|
-| `step` | int64 | `100` |
-| `ts` | timestamp | `2026-05-28T20:05:00Z` |
-| `metric` | string | `"loss"`, `"throughput_tps"`, `"grad_norm"`, `"router_queue"` |
-| `value` | float64 | `4.21` |
-| `role` | string | `"worker"`, `"router"` |
-| `host` | string | `"n1"` |
+| `framework` | `framework_<name>` | `vllm` → `framework_vllm` |
+| `model` | `model_<name>` (underscores normalized) | `gpt-oss-120b` → `model_gpt_oss_120b` |
+| `workload_kind` | `workload_<kind>` | `inference` → `workload_inference` |
+| `topology` | `topology_<kind>` | `disagg` → `topology_disagg` |
+| `target_gpu` | `gpu_<family>` | `mi355x` → `gpu_mi355x` |
+| `knobs.<key>` (scalar) | `knob_<key>_<value>` | `attention: aiter` → `knob_attention_aiter` |
+| `benchmarks: [...]` (list) | `benchmark_<name>` per entry | `[throughput, ttft_p99]` → `benchmark_throughput`, `benchmark_ttft_p99` |
+| tier (from directory) | `tier_N` | `cvs/tests/benchmarks/` → `tier_5` |
+| skip reason (binder) | `skipped_<reason>` | `insufficient_nodes` → `skipped_insufficient_nodes` |
 
-### `events.jsonl` — closed vocabulary
+Registered via `pytest_configure` so `-m` queries don't emit unknown-marker warnings. List-valued config fields fan out into multiple markers.
 
-| Event | Emitted by | Example payload (besides `ts`) |
-|---|---|---|
-| `prepare.start` | Job | `{}` |
-| `prepare.done` | Job | `{phase_duration_s: 4.3}` |
-| `launch.container_up` | Adapter | `{role: "server", host: "n1"}` |
-| `launch.role_ready` | Adapter | `{role: "server", host: "n1"}` |
-| `step` | Adapter (training) | `{step: 100, loss: 4.21, throughput: 1342}` |
-| `request` | Adapter (inference) | `{request_id: "...", ttft_ms: 43.2}` |
-| `safety.violated` | Job | `{predicate: "loss_is_finite", detail: "NaN at step 412"}` |
-| `pattern.matched` | FailurePatternScanner | `{pattern_id: "oom_kill", source: "dmesg", line: "..."}` |
-| `parse.done` | Job | `{samples_rows: 3200, trajectory_rows: 412}` |
-| `verify.failed` | Job | `{metric: "ttft_ms", actual: 73.4, expected_max: 50.0}` |
-| `teardown.done` | Job | `{}` |
+### What a test ID looks like
 
-Adding an event name is a schema change reviewed in PR, not a free-for-all `log.info`.
+```text
+benchmarks/test_latency.py::test_ttft_p99[vllm-gpt_oss_120b-mi355x-aiter-fp4-balanced-conc64]
+```
 
-### Cross-run regression query (the data-science seam)
+Every axis a benchmark engineer might want to slice on — framework, model, GPU, attention knob, quant knob, sweep cell (`balanced-conc64`) — appears in the parametrize bracket. The test function name (`test_ttft_p99`) names the claim. The marker set on this item includes `framework_vllm`, `model_gpt_oss_120b`, `gpu_mi355x`, `knob_attention_aiter`, `knob_quant_fp4`, `workload_inference`, `topology_single`, `benchmark_ttft_p99`, `tier_5`.
+
+### Three real CLI queries
 
 ```bash
-# Flatten N runs into one fact table
-cvs export --artifact-dir ./runs --since 30d -o fact.parquet
+# All vLLM + AITER cells across every model and concurrency
+cvs run -m "framework_vllm and knob_attention_aiter"
+
+# Just the P99 TTFT claim across the whole nightly sweep, all frameworks
+cvs run -m "benchmark_ttft_p99"
+
+# Distributed training cells only, FP8 quant, just convergence claims
+cvs run -m "workload_training and topology_distributed and knob_quant_fp8 and benchmark_convergence"
 ```
+
+### One workload run, many independent claims
+
+The `workload_run` fixture in `cvs/tests/conftest.py` is session-scoped. For each cell, it instantiates the adapter (via the registry), runs `Job.run()` once, and yields the resulting manifest. Every test function for that cell then consumes the same manifest object:
 
 ```python
-# notebook
-import pandas as pd
-import matplotlib.pyplot as plt
-
-fact = pd.read_parquet("fact.parquet")
-
-# P99 TTFT trend for vLLM gpt-oss-120b with AITER + FP4 on mi355x, by CVS commit
-sub = fact.query(
-    "framework == 'vllm' and model == 'gpt_oss_120b' "
-    "and knob_attention == 'aiter' and knob_quant == 'fp4' "
-    "and gpu == 'mi355x' and cell_id == 'balanced-conc64'"
-)
-sub.groupby("cvs_git_sha")["ttft_p99_ms"].median().plot(
-    marker="o", title="P99 TTFT regression (gpt-oss-120b)"
-)
-plt.axhline(50.0, color="red", linestyle="--", label="threshold")
-plt.show()
+# cvs/tests/conftest.py (sketch)
+@pytest.fixture(scope="session")
+def workload_run(config_cell, cluster):
+    adapter_cls = REGISTRY[config_cell.framework]
+    adapter = adapter_cls(config_cell, cluster, gpu, secrets)
+    manifest = Job(adapter, config_cell, cluster, gpu, secrets).run()
+    return manifest
 ```
 
-Three lines of pandas catches a regression. No service, no dashboard infra required. A real dashboard (Grafana / Streamlit) reads the same Parquet.
+Thirteen test IDs per cell does not mean thirteen workload launches — it means one launch and thirteen independent verdicts. Most tests are pure manifest-reads (`assert manifest.scalars["ttft_p99_ms"] <= threshold.value`), so post-launch verification adds milliseconds per assertion.
 
-Full prose: [W4](cvs-dtni-v1-spec.md#w4-manifest-sidecars-and-cross-run-export), [W8](cvs-dtni-v1-spec.md#w8-tooling-and-documentation).
+Full prose: [W1](cvs-dtni-v1-spec.md#w1-core-lifecycle-and-adapter-framework), [W6](cvs-dtni-v1-spec.md#w6-pytest-layer-and-test-taxonomy).
 
 ---
 
-## §9. Sweep semantics — three walkthroughs
+## §4. Config files — categories of dials
 
-### Cartesian (the common case)
+Today's config story is fragmented: cluster JSON declares hostnames, the test wrapper hard-codes role lists, the per-framework library applies defaults via `dict.setdefault`, threshold values live in a stringified-key dict (`"ISL=1024,OSL=1024,TP=8,CONC=64"`), and typos silently fall through to defaults. v1 collapses all of this into **one Pydantic-validated YAML per `(framework, model)`**. The schema is `extra = "forbid"`, so any unknown field is a `model_validate()` error at parse time.
+
+### Anatomy of a config
+
+```yaml
+# cvs/input/config_file/inference/vllm/gpt-oss-120b_mi355x_aiter.yaml
+
+# ---- Identity ----
+schema_version: "2"
+test_id: vllm_gpt_oss_120b_mi355x_aiter
+target_gpu: mi355x
+
+# ---- Workload kind & framework ----
+framework: vllm
+workload_kind: inference
+topology:
+  roles:
+    server: {count: 1, gpus_per_node: 8, selector: "mi355x"}
+
+# ---- Model ----
+model: gpt-oss-120b
+
+# ---- Knobs (first-class; become pytest markers) ----
+knobs:
+  attention: aiter
+  quant: fp4
+  backend: vllm-native
+  fused_moe: aiter_a16w4
+
+# ---- Framework-specific params ----
+params:
+  tensor_parallelism: 1
+  max_model_length: 9216
+  num_prompts: 3200
+
+# ---- Sweep (see §5) ----
+sweep:
+  concurrency: [16, 32, 64]
+  isl_osl:
+    - {isl: 1024, osl: 1024, name: balanced}
+    - {isl: 4096, osl: 128,  name: prefill_heavy}
+
+# ---- Tier-5 benchmark opt-in ----
+benchmarks: [throughput, ttft_p99, tpot_p99]
+
+# ---- Typed thresholds ----
+thresholds:
+  - {kind: Rate,       metric: throughput, per_unit: sec, op: ">=", min_rate: 1200}
+  - {kind: Percentile, metric: ttft_ms,    percentile: 99, op: "<=", value: 50}
+  - {kind: Percentile, metric: tpot_ms,    percentile: 99, op: "<=", value: 25}
+
+# ---- Secrets (type-redacted) ----
+secrets:
+  hf_token: {kind: SecretValue, source: env, env_var: HF_TOKEN}
+```
+
+### Each category, one paragraph
+
+**Identity** — `schema_version`, `test_id`, `target_gpu`. `target_gpu` is asserted against `GpuPlatform.detect()` at config load; running a `mi355x`-targeted config on an `mi300x` cluster is a fail-fast at config load, not a 20-minute crash.
+
+**Workload** — `framework`, `workload_kind`, `topology`. The framework Literal routes through `INFERENCE_REGISTRY` or `TRAINING_REGISTRY`. `topology.roles` declares what the workload needs (count, GPUs per node, optional label selector); the binder maps roles onto cluster nodes at run time. The same config runs on any cluster that has enough nodes matching the selector — no hostname is ever baked into the config.
+
+**Model** — single string. Becomes the `model_<name>` marker; routes tier-6 model-specific tests.
+
+**Knobs** — first-class dict for backend-stack details that benchmark engineers care to slice on. Currently used: `attention` (`aiter` / `fa` / `te`), `quant` (`fp4` / `fp8` / `bf16`), `backend` (engine variant such as `vllm-native` vs `mooncake` vs `sglang-native`), `fused_moe` (kernel variant). Each becomes a `knob_<key>_<value>` marker; slicing the matrix on "all Mooncake configs" is one `-m "knob_backend_mooncake"` query.
+
+**Params** — framework-specific scalars. Inference: `tensor_parallelism`, `max_model_length`, `num_prompts`. Training: `tp` / `pp` / `dp` / `fsdp` parallelism degrees, `micro_batch_size`, `sequence_length`. Per-framework Pydantic classes (`VllmParams`, `MegatronParams`, …) own validation; Megatron has a validator that asserts `product(parallelism) == total_gpus`, so an invalid combo is caught at parse.
+
+**Sweep** — declarative axis expansion; full coverage in §5.
+
+**Benchmarks** — opt-in list naming which tier-5 claim families this config asks for. Configs that don't list `convergence` won't have the `test_convergence` function collected for them, even though the function exists in the test tree.
+
+**Thresholds** — list of typed predicates that name a metric, an operator, and a target value or window. Six kinds: `Percentile`, `Monotonicity`, `Convergence`, `Stability`, `Rate`, `Goodput`. Direction always comes from the explicit `op:` field — never inferred from the metric name (today, the substring `"ms"` flips the comparison; a future `latency_seconds` field would invert).
+
+**Topology requirements** — covered above under Workload. Worth saying again: the cluster file is a pool of nodes only (hostnames, GPUs, labels). All role assignment happens at run time in the binder, per cell.
+
+**Secrets** — `SecretValue` wrapper. Stringification redacts (`<SecretValue label=hf_token>`); `.reveal()` is only invoked at env-file write time inside the container. HF token never appears in command-line logs.
+
+Full prose: [W3](cvs-dtni-v1-spec.md#w3-typed-config-schema), [W5](cvs-dtni-v1-spec.md#w5-cluster-pool-deterministic-binder-sweep-expansion).
+
+---
+
+## §5. Sweeps — how the matrix expands
+
+A sweep declares one config that expands into N cells. Three semantics, all YAML-driven:
+
+- **Cartesian** (default): scalar lists cross with each other.
+- **Paired** (no cross): a single list-of-objects, where each object is one cell. Each entry can include a `name:` that becomes the parametrize ID.
+- **Constraint-validated**: per-framework `SweepParams` Pydantic classes enforce invariants (e.g. parallelism product must equal GPU count).
+
+Topology-changing axes (P/D split, node count, parallelism degrees) carry a per-cell `topology` block; the binder re-evaluates node assignments per cell.
+
+### Example A — Cartesian (the common case)
 
 ```yaml
 sweep:
@@ -577,7 +368,7 @@ sweep:
 
 → **6 cells:** `[balanced-conc16]`, `[balanced-conc32]`, `[balanced-conc64]`, `[prefill_heavy-conc16]`, `[prefill_heavy-conc32]`, `[prefill_heavy-conc64]`.
 
-### Paired with topology change (sglang P/D split)
+### Example B — Paired with topology change (sglang P/D split)
 
 ```yaml
 sweep:
@@ -595,9 +386,9 @@ sweep:
   concurrency: [32, 64]
 ```
 
-→ **4 cells**, binder re-evaluates per cell (different node assignments for 2p2d vs 1p3d). `cvs plan` shows the bindings before any container starts.
+→ **4 cells**; binder re-evaluates per cell because each `pd_split` carries its own topology block.
 
-### Constraint-validated (megatron parallelism)
+### Example C — Constraint-validated (Megatron parallelism)
 
 ```yaml
 topology:
@@ -609,19 +400,81 @@ sweep:
     - {tp: 8, pp: 1, dp: 4, fsdp: 1, name: tp8_dp4}     # 8*1*4*1 = 32 ✓
     - {tp: 4, pp: 2, dp: 4, fsdp: 1, name: tp4_pp2_dp4} # 4*2*4*1 = 32 ✓
     - {tp: 1, pp: 1, dp: 1, fsdp: 32, name: fsdp_only}  # 1*1*1*32 = 32 ✓
-    # {tp: 8, pp: 2, dp: 4, fsdp: 1, name: bad}         # 8*2*4*1 = 64 ✗ — Pydantic validator rejects at parse
+    # {tp: 8, pp: 2, dp: 4, fsdp: 1, name: bad}         # 8*2*4*1 = 64 ✗ — rejected at parse
   micro_batch_size: [1, 2]
 ```
 
 → **6 cells.** The `product(parallelism) == total_gpus` constraint is a Pydantic validator on `MegatronSweepParams`; nonsense combos fail at `model_validate()`, not 20 minutes into the run.
 
-Full prose: [W3](cvs-dtni-v1-spec.md#w3-typed-config-schema), [W5](cvs-dtni-v1-spec.md#w5-cluster-pool-deterministic-binder-sweep-expansion).
+### How sweeps propagate into pytest
+
+Each cell becomes a pytest parametrize ID via its `name:` field (or an auto-derived name from scalar values). The full pipeline:
+
+```text
+config sweep block
+   ↓ (sweep expansion)
+N cells, each with its own resolved params + topology
+   ↓ (binder)
+N cells, each with role → host bindings (or "skipped: insufficient_nodes")
+   ↓ (pytest_generate_tests)
+N parametrize IDs per applicable test function
+   ↓ (workload_run fixture, session-scoped per cell)
+N workload runs, one manifest each
+   ↓ (test functions read manifests)
+N × M test verdicts (M = collected test functions per cell)
+```
+
+A cell that the cluster can't satisfy gets a manifest with `status: skipped` and a `skipped_<reason>` marker on its pytest items. The cell still appears in `cvs plan` output and remains queryable in `pytest -m`. The matrix degrades gracefully on under-resourced clusters — useful for dev boxes.
+
+### Dry-running the matrix
+
+`cvs plan --cluster cluster.json --config foo.yaml` is the matrix-preview command. Same code path as `cvs run` up to the point where the `Job` driver would call `adapter.prepare()`, then prints what would happen and exits. Output includes: cells, per-cell role-to-host bindings, selected test functions per cell, skip reasons, estimated wall time. Useful to catch "config doesn't fit cluster" in 2 seconds rather than 30 minutes.
+
+Full prose: [W5](cvs-dtni-v1-spec.md#w5-cluster-pool-deterministic-binder-sweep-expansion), [W8](cvs-dtni-v1-spec.md#w8-tooling-and-documentation).
 
 ---
 
-## §10. Threshold predicates
+## §6. Metrics and benchmarks supported per framework
 
-Six kinds; explicit `op:` (never inferred from metric name):
+The "framework emits → CVS retains" principle (§1) means each framework's native telemetry routes directly into the manifest's Parquet sidecars. The contract is uniform across adapters: `samples.parquet` is request-grained or sample-grained (inference); `trajectory.parquet` is time-grained (training, or inference time-series). Benchmarks (tier-5 claims) opt in per config.
+
+### Captured metrics per framework
+
+| Framework | `samples.parquet` columns | `trajectory.parquet` series |
+|---|---|---|
+| **vllm** | `request_id`, `ttft_ms`, `tpot_ms`, `itl_ms`, `e2el_ms`, `output_tokens` | `queue_depth`, `memory_pressure`, `gpu_util` |
+| **sglang_disagg** | (above) + `kv_transfer_ms` (P→D handoff), `prefill_done_ns`, `decode_start_ns` | (above) + `router_queue`, `decode_kv_cache_util`, `per_role_startup_ms` |
+| **inferencemax** | per-batch `latency_ms`, `tokens`, `throughput_tps` | per-batch series |
+| **pytorch_xdit (Flux)** | per-image `generation_ms`, `prompt_id`, `seed`, `num_inference_steps` | per-step `latency_ms` |
+| **pytorch_xdit (Wan)** | per-frame `latency_ms`, `frame_idx`, `bitrate_kbps` | `fps`, `aggregate_bitrate` |
+| **megatron** | (training: trajectory only) | `loss`, `throughput`, `step_time_ms`, `grad_norm`, `mem_used_gb` (per-rank) |
+| **jax** | (training: trajectory only) | `loss`, `throughput`, `step_time_ms`, per-host metrics from coordinator |
+
+Long-format Parquet means adding a new metric is a new row, not a new column — no schema migration on existing manifests. A new field that's already in the framework's emission costs one line in `parse()` and zero elsewhere.
+
+### Benchmarks (tier-5 claims) supported per framework
+
+| Benchmark | Threshold kind | Frameworks supported |
+|---|---|---|
+| `throughput` | `Rate` | vllm, sglang, inferencemax, xdit, megatron, jax |
+| `ttft_p99` | `Percentile` | vllm, sglang, inferencemax |
+| `tpot_p99` | `Percentile` | vllm, sglang, inferencemax |
+| `itl_p99` | `Percentile` | vllm, sglang |
+| `goodput` | `Goodput` | vllm, sglang |
+| `handoff_latency` | `Percentile` | sglang_disagg |
+| `router_balance` | (progress predicate) | sglang_disagg |
+| `image_throughput` | `Rate` | xdit (Flux) |
+| `step_time_p99` | `Percentile` | xdit |
+| `video_throughput` | `Rate` | xdit (Wan) |
+| `convergence` | `Convergence` | megatron, jax |
+| `loss_finite` | (progress predicate) | megatron, jax |
+| `monotonic_loss` | `Monotonicity` | megatron, jax |
+| `step_time_stability` | `Stability` | megatron, jax |
+| `no_straggler` | (progress predicate, distributed only) | megatron, jax (distributed) |
+
+### Threshold predicates
+
+All six kinds, as they appear in config:
 
 ```yaml
 # 1. Percentile (over samples)
@@ -642,140 +495,206 @@ Six kinds; explicit `op:` (never inferred from metric name):
 - {kind: Rate, metric: throughput, per_unit: sec, op: ">=", min_rate: 1200}
 
 # 6. Goodput (filtered rate — the MLPerf headline)
-- {kind: Goodput,
-   metric_pair: {ttft: ttft_ms, tpot: tpot_ms},
-   ttft_max_ms: 450, tpot_max_ms: 40,
-   op: ">=", min_qps: 600}
+- {kind: Goodput, metric_pair: {ttft: ttft_ms, tpot: tpot_ms},
+   ttft_max_ms: 450, tpot_max_ms: 40, op: ">=", min_qps: 600}
 ```
 
-Each evaluates against the manifest's `samples` or `trajectory` carriers and emits a `Verdict` row with `expected`, `actual`, `passed`, `margin`. The `margin` field powers regression alerts ("p99 TTFT margin shrank from +12 ms to +2 ms over the last 10 runs" is one DuckDB query away).
+Each evaluates against the manifest's `samples` or `trajectory` carriers and emits a `Verdict` row with `expected`, `actual`, `passed`, `margin`. The `margin` field powers regression alerts — "P99 TTFT margin shrank from +12 ms to +2 ms over the last 10 runs" is one DuckDB query away (§7).
 
-Full prose: [W3](cvs-dtni-v1-spec.md#w3-typed-config-schema).
+### Adding new coverage
+
+The three common add-flows are intentionally cheap:
+
+- **New metric on an existing framework** — one extra column write in `parse()`. No schema migration. Existing manifests don't know about the new metric; new manifests do.
+- **New benchmark on an existing config** — append the name to `benchmarks: [...]` in the YAML. The matching tier-5 test function collects automatically.
+- **New threshold predicate kind** — new Pydantic class + an evaluator function. Doesn't invalidate existing manifests (they don't reference the new kind).
+
+Full prose: [W2](cvs-dtni-v1-spec.md#w2-six-concrete-adapters), [W3](cvs-dtni-v1-spec.md#w3-typed-config-schema).
 
 ---
 
-## §11. Failure walkthrough — `safety_violation` end-to-end
+## §7. Manifest and sidecars — durable runs and regression analysis
 
-A training run hits `NaN` loss at step 412. Here's the trail.
+The manifest is the contract between "the workload ran" and every downstream consumer (tests, dashboards, regression analysis). It exists on disk at a content-addressable path, survives pytest's process, and is the single artifact every test function reads. Today, a CVS run prints results to stdout and forgets them; v1 makes the run a queryable record.
 
-**1. Adapter's `progress_predicate` returns ProgressStatus(ok=False, predicate_name="loss_is_finite", evidence="NaN at step 412").**
+### Per-run directory layout
 
-**2. `Job._await_with_progress` raises `SafetyViolation`. `Job.run`'s `except` clause classifies and records:**
-
-```python
-except SafetyViolation as e:
-    self.manifest.record_failure("safety_violation",
-                                 predicate=e.predicate,
-                                 evidence=e.evidence)
+```text
+<artifact_dir>/<test_id>/<cell_id>/<short_hash>/<run_id>/
+├── manifest.json           # 5-50 KB; metadata + verdicts + scalars + sidecar pointers
+├── events.jsonl            # append-only; closed-vocab events
+├── samples.parquet         # per-request rows (long format)
+├── trajectory.parquet      # per-step rows (long format)
+├── config.resolved.yaml    # full resolved config for reproducibility
+└── logs/
+    ├── stdout.log
+    ├── stderr.log
+    ├── dmesg.<host>.pre.txt
+    ├── dmesg.<host>.post.txt
+    └── gpu_state.<host>.pre.json
+    └── gpu_state.<host>.post.json
 ```
 
-**3. `events.jsonl` gets a row:**
+Content-addressable directory key = `<short_hash>` of (workload-defining inputs + framework image digest + bindings). Same config + same cluster always lands at the same path.
+
+### Sample `manifest.json` (abbreviated, real values)
 
 ```json
-{"ts": "2026-05-28T20:08:33.012Z", "event": "safety.violated",
- "predicate": "loss_is_finite", "detail": "NaN at step 412"}
-```
-
-**4. `manifest.json` reflects:**
-
-```json
-"status": "failed_safety",
-"failure": {
-  "category": "safety_violation",
-  "originated_in_phase": "await_completion",
-  "originated_at_ts": "2026-05-28T20:08:33.012Z",
-  "message": "loss_is_finite broke: NaN at step 412"
+{
+  "schema_version": "1.0",
+  "run_id": "0193a8e2-71c1-7e0f-9c1a-7d5e8e1f4a02",
+  "test_id": "vllm_gpt_oss_120b_mi355x_aiter",
+  "cell_id": "balanced-conc64",
+  "config_hash": "sha256:91a2...e44b",
+  "workload_hash": "sha256:7d3a...b21f",
+  "verification_hash": "sha256:9c1e...8f12",
+  "experiment_id": "vllm/gpt-oss-120b/fp4+aiter+vllm-native/mi355x",
+  "cvs_git_sha": "a4f1e2c",
+  "framework_image_digest": "sha256:7d3a...b21f",
+  "framework_versions": {"vllm": "0.10.2", "torch": "2.7.1", "rocm": "6.4.0"},
+  "timestamp_start": "2026-05-28T20:01:08Z",
+  "timestamp_end":   "2026-05-28T20:14:52Z",
+  "hosts": [{"hostname": "n1", "ip": "10.0.0.11", "role": "server"}],
+  "model_descriptor": {"hf_repo": "openai/gpt-oss-120b", "precision": "fp4"},
+  "phases": {
+    "prepare":  {"duration_s":   4.3, "status": "ok"},
+    "launch":   {"duration_s":  41.7, "status": "ok"},
+    "await":    {"duration_s": 720.0, "status": "ok"},
+    "parse":    {"duration_s":   1.8, "status": "ok"},
+    "verify":   {"duration_s":   0.1, "status": "failed"},
+    "teardown": {"duration_s":   6.9, "status": "ok"}
+  },
+  "status": "failed_verification",
+  "failure": {
+    "category": "verification_failure",
+    "originated_in_phase": "verify",
+    "message": "P99 TTFT 73.4ms exceeds threshold 50.0ms"
+  },
+  "verdicts": [
+    {"kind": "Percentile", "metric": "ttft_ms", "op": "<=",
+     "expected": 50.0, "actual": 73.4, "passed": false, "margin": -23.4},
+    {"kind": "Percentile", "metric": "tpot_ms", "op": "<=",
+     "expected": 25.0, "actual": 14.2, "passed": true,  "margin":  10.8},
+    {"kind": "Rate", "metric": "throughput", "op": ">=",
+     "expected": 1200.0, "actual": 1318.0, "passed": true, "margin": 118.0}
+  ],
+  "result": {"scalars": {"ttft_p99_ms": 73.4, "tpot_p99_ms": 14.2, "throughput_tps": 1318.0}},
+  "samples_path": "samples.parquet",
+  "trajectory_path": "trajectory.parquet",
+  "events_path": "events.jsonl"
 }
 ```
 
-**5. `finally` block runs `adapter.teardown(run)` — containers `docker rm`'d by label, logs + dmesg captured.**
+### Sidecar schemas
 
-**6. pytest terminal summary, end of session:**
+**`samples.parquet`** (long-format — one row per request/sample):
 
-```text
-FAILED training/test_trajectory.py::test_loss_finite[megatron-llama_70b-tp8_dp4-mbs2]
-   safety_violation: loss_is_finite broke at step 412
-   manifest: runs/megatron_llama_70b/tp8_dp4-mbs2/.../manifest.json
+| Column | Type | Semantics |
+|---|---|---|
+| `request_id` | string | unique per request |
+| `ts` | timestamp | request arrival |
+| `ttft_ms` | float64 | time to first token |
+| `tpot_ms` | float64 | time per output token |
+| `itl_ms` | float64 | inter-token latency |
+| `e2el_ms` | float64 | end-to-end latency |
+| `output_tokens` | int32 | output token count |
+| `role` | string | role that handled (for composites) |
+| `host` | string | hostname |
+
+**`trajectory.parquet`** (long-format — one row per (step, metric)):
+
+| Column | Type | Example |
+|---|---|---|
+| `step` | int64 | `100` |
+| `ts` | timestamp | `2026-05-28T20:05:00Z` |
+| `metric` | string | `"loss"`, `"throughput_tps"`, `"router_queue"` |
+| `value` | float64 | `4.21` |
+| `role` | string | `"worker"`, `"router"` |
+| `host` | string | `"n1"` |
+
+**`events.jsonl`** — closed vocabulary, one line per event:
+
+| Event | Emitted by | Payload (besides `ts`) |
+|---|---|---|
+| `prepare.start` / `prepare.done` | Job | `phase_duration_s` |
+| `launch.container_up` / `launch.role_ready` | Adapter | `role`, `host` |
+| `step` | Adapter (training) | `step`, `loss`, `throughput` |
+| `request` | Adapter (inference) | `request_id`, `ttft_ms`, … |
+| `safety.violated` | Job | `predicate`, `detail` |
+| `pattern.matched` | FailurePatternScanner | `pattern_id`, `source`, `line` |
+| `parse.done` | Job | `samples_rows`, `trajectory_rows` |
+| `verify.failed` | Job | `metric`, `actual`, `expected_max` |
+| `teardown.done` | Job | (empty) |
+
+Adding an event is a schema change reviewed in PR, not a free-for-all `log.info`.
+
+### Cross-run regression analysis (the data-science seam)
+
+```bash
+# Flatten N runs into one fact table
+cvs export --artifact-dir ./runs --since 30d -o fact.parquet
 ```
 
-The pytest-html report carries the same line plus the manifest path; from there, the notebook query in §8 finds whether this is a one-off or a regression.
+```python
+# notebook
+import pandas as pd, matplotlib.pyplot as plt
+fact = pd.read_parquet("fact.parquet")
 
-Full prose: [W1](cvs-dtni-v1-spec.md#w1-core-lifecycle-and-adapter-framework), [W8](cvs-dtni-v1-spec.md#w8-tooling-and-documentation).
-
----
-
-## §12. Security and correctness fixes (W7)
-
-Eight independently-shippable fixes. None depend on the rest of the architecture; can land as a standalone PR series.
-
-| Defect today | Fix in v1 |
-|---|---|
-| HF token logged plaintext in `phdl.exec` debug output on every multi-node run | `SecretValue` wrapper; `repr`/`str` redact; `.reveal()` only at env-file write; sentinel-leak CI test |
-| `docker run --privileged` + `seccomp=unconfined` default | `ContainerHandle` non-privileged default; readiness probe in `__enter__`; label-scoped cleanup |
-| `docker system prune --force` wipes other users' containers on shared hosts | `docker rm` by `run_id` label only |
-| `fail_test()` appends to `globals.error_list` and returns; multi-step tests march past first failure | `fail_test()` calls `pytest.fail` |
-| Threshold direction inferred from substring `"ms"` in metric name (any `latency_seconds` flips comparison) | explicit `op:` field in every `Threshold` |
-| Inferencemax silently passes when threshold is missing from config | `InferenceMaxAdapter.verify` raises on missing threshold |
-| `UnboundLocalError` in HF-token fixture on missing token file | clean `pytest.skip(reason="...")` |
-| `mi355` vs `mi355x` literal inconsistency across 4 files | single `GpuPlatform.detect()` source of truth |
-| `sudo rm -rf $log_dir` unquoted (user-controlled paths) | quoted everywhere; lint check in CI |
-
-Full prose: [W7](cvs-dtni-v1-spec.md#w7-security-and-correctness-fixes).
-
----
-
-## §13. Workstream DAG
-
-```mermaid
-flowchart LR
-    W7["W7 security/correctness<br/>(standalone)"]
-    W3["W3 typed configs"]
-    W1["W1 lifecycle + adapters"]
-    W4["W4 manifest"]
-    W5["W5 cluster/binder/sweep"]
-    W2["W2 six adapters"]
-    W6["W6 pytest layer"]
-    W8["W8 tooling + docs"]
-
-    W1 --> W2
-    W3 --> W2
-    W3 --> W6
-    W3 --> W5
-    W1 --> W6
-    W4 --> W6
-    W5 --> W6
-    W3 --> W8
-    W4 --> W8
-    W5 --> W8
-    W6 --> W8
+# P99 TTFT trend for vLLM gpt-oss-120b with AITER + FP4 on mi355x, by CVS commit
+sub = fact.query(
+    "framework == 'vllm' and model == 'gpt_oss_120b' "
+    "and knob_attention == 'aiter' and knob_quant == 'fp4' "
+    "and gpu == 'mi355x' and cell_id == 'balanced-conc64'"
+)
+sub.groupby("cvs_git_sha")["ttft_p99_ms"].median().plot(
+    marker="o", title="P99 TTFT regression (gpt-oss-120b)"
+)
+plt.axhline(50.0, color="red", linestyle="--", label="threshold")
+plt.show()
 ```
 
-W7 ships first (no upstream). W8 ships last. W3 is the most depended-on.
+Three lines of pandas catches a regression. Same Parquet file feeds a Grafana panel, a Streamlit dashboard, or a nightly alert script. No CVS service required.
+
+### Why the manifest design makes future capabilities cheap
+
+Three things fall out of this schema for free:
+
+1. **Re-verify without re-running.** The manifest splits `workload_hash` (workload-defining inputs: framework, image digest, model, dataset, knobs, params, bindings, seed) from `verification_hash` (thresholds + pattern catalog). If only thresholds change, a future `--reuse-manifests` flag can re-evaluate verdicts against cached `samples.parquet` and rewrite the verdicts block — no workload launch. The hashes are recorded from day one even though the flag isn't shipped in v1, so the feature lands later as ~100 LOC with no historical-manifest migration.
+
+2. **Re-parse logs into new metrics.** Raw logs persist in `logs/`. If a new metric becomes valuable post-hoc (e.g. a tail-latency percentile we forgot to capture), a `--reparse` flag can re-run the current parser against the saved logs and rewrite `samples.parquet`. Same content-addressable path; same manifest gets a new parse-time verdict block.
+
+3. **Dashboards consume Parquet directly.** Long-format columnar layout means a new metric becomes a new row group, not a schema migration. Cross-run aggregations are DuckDB one-liners. No bespoke ingestion pipeline needs to be built before the data is queryable.
+
+Full prose: [W4](cvs-dtni-v1-spec.md#w4-manifest-sidecars-and-cross-run-export), [W8](cvs-dtni-v1-spec.md#w8-tooling-and-documentation).
 
 ---
 
-## §14. Adoption
+## Appendix
 
-- **One-shot:** `cvs migrate-config` rewrites every existing JSON under `cvs/input/config_file/{training,inference}/` to v2 YAML. No backwards-compat reader.
-- **Wrappers deleted:** all 16 (7 training + 9 inference) replaced by ~6 parametrized test files.
-- **CLI unchanged:** `cvs run --cluster_file=... --config_file=...` works identically. Existing automation unaffected.
-- **Markers additive:** new `pytest -m "..."` queries become possible; nothing previously possible breaks.
+### Adoption
 
-Full prose: [Migration story in spec](cvs-dtni-v1-spec.md#migration-story).
+- **One-shot config migration.** `cvs migrate-config` rewrites every existing JSON under `cvs/input/config_file/{training,inference}/` to v2 YAML in a single pass. The new schema is the only schema; no backwards-compat reader path.
+- **Wrappers deleted.** The 16 existing wrappers under `cvs/tests/{training,inference}/` (7 training + 9 inference) are replaced by ~6 parametrized test files. Adding a new model is a new YAML, not a new Python file.
+- **CLI unchanged.** `cvs run --cluster_file=... --config_file=...` works identically. Existing automation continues to work.
+- **Markers are additive.** New `pytest -m "..."` queries become possible; nothing previously possible breaks.
 
----
+### Security and correctness fixes (W7)
 
-## §15. Decision wanted
+W7 is a set of eight latent-defect fixes that ride alongside the redesign but have no architectural dependency on it. They can ship as a standalone PR series before the rest of v1 lands. Highlights:
 
-**W7 as a standalone PR series, or merged with the rest?** The eight security/correctness fixes (§12) have zero upstream dependencies in the redesign. Reviewer preference welcome on:
+- `SecretValue` wrapper for HF tokens — type-level redaction; `.reveal()` only at env-file write time; sentinel-leak CI test.
+- `ContainerHandle` — non-privileged default; readiness probe in `__enter__`; label-scoped cleanup; **no more `docker system prune --force`** wiping other users' containers on shared nodes.
+- `fail_test()` actually calls `pytest.fail` (today it appends to `globals.error_list` and returns).
+- Explicit `op:` field in every `Threshold` — kills the substring-`"ms"` direction inference.
+- `InferenceMaxAdapter.verify` raises on missing threshold instead of silently passing.
+- `mi355` / `mi355x` literal normalization via a single GPU-family detection path.
+- Quoted `$log_dir` in every `sudo rm -rf` call.
 
-- **Land first, standalone:** smaller PRs, faster review, fixes ship before the architecture work completes. Recommended.
-- **Land bundled with v1:** one cohesive review, but blocks security fixes behind architecture review cycle.
+### Open decision for reviewers
 
----
+**W7 as a standalone PR series, or merged with the rest?** Recommended: standalone first. Smaller PRs, faster review, security fixes ship without waiting on the architecture work.
 
-## §16. Pointers
+### Pointers
 
 - Full spec (long-form prose): [`docs/prd/cvs-dtni-v1-spec.md`](cvs-dtni-v1-spec.md)
-- Original architecture PRD (superseded): preserved at commit [`0d0dd1a`](https://github.com/ROCm/cvs/blob/0d0dd1a/docs/prd/cvs-dtni-suite-expansion-prd.md) on this branch
-- Per-workstream history: see commits `625c8f2`, `f6c84ba`, `0d0dd1a`, and HEAD on `atnair/prd-dtni-refactor`
+- Original architecture PRD (superseded): commit [`0d0dd1a`](https://github.com/ROCm/cvs/blob/0d0dd1a/docs/prd/cvs-dtni-suite-expansion-prd.md) on this branch
