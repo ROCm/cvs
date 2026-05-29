@@ -29,13 +29,10 @@
         }
     },
 
-    "_container_block_comment": "Container backend configuration. Consumed by ContainerOrchestrator in cvs/core/orchestrators/container.py. See README.md for the full schema and launch:true/launch:false semantics.",
+    "_container_block_comment": "Container backend configuration. Consumed by ContainerOrchestrator in cvs/core/orchestrators/container.py. See README.md for the full schema and lifetime semantics.",
     "container": {
-        "_enabled_comment": "Master switch. Must be true for the container backend to do anything; if false, setup_containers/teardown_containers short-circuit to no-ops.",
-        "enabled": true,
-
-        "_launch_comment": "true = CVS owns container lifecycle (starts on setup_containers, stops on teardown_containers). false = containers are externally managed; CVS only verifies they are running and never stops them.",
-        "launch": true,
+        "_lifetime_comment": "Container lifecycle policy. 'external' = containers managed outside CVS (verify-only, never stopped). 'per_run' = CVS starts on setup and removes on teardown. 'persistent' = CVS starts if absent / attaches if present and leaves running on exit (unblocks install-then-run; pin 'name' explicitly).",
+        "lifetime": "per_run",
 
         "_image_comment": "Image with test dependencies (rvs, etc.) pre-installed and an sshd you can start on port 2224. Must be present locally on each node OR pullable from a reachable registry.",
         "image": "rocm/cvs:latest",
