@@ -11,9 +11,10 @@ import os
 class ParallelConfig:
     """Configuration for parallel SSH operations."""
 
-    def __init__(self, hosts_per_shard=32, max_workers_per_cpu=4):
+    def __init__(self, hosts_per_shard=32, max_workers_per_cpu=4, persistent_shards=False):
         self.hosts_per_shard = hosts_per_shard
         self.max_workers_per_cpu = max_workers_per_cpu
+        self.persistent_shards = persistent_shards
 
     @property
     def max_workers(self):
@@ -24,7 +25,14 @@ class ParallelConfig:
     @classmethod
     def from_env(cls):
         """Create configuration from environment variables."""
+        persistent_shards = os.environ.get('CVS_PERSISTENT_SHARDS', 'false').lower() in (
+            '1',
+            'true',
+            'yes',
+            'on',
+        )
         return cls(
             hosts_per_shard=int(os.environ.get('CVS_HOSTS_PER_SHARD', 32)),
             max_workers_per_cpu=int(os.environ.get('CVS_WORKERS_PER_CPU', 4)),
+            persistent_shards=persistent_shards,
         )
