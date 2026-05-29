@@ -835,7 +835,3 @@ class TorchTitanTrainingJob:
                         )
             else:
                 log.warning(f'Perf result key {result_key} not provided in input JSON file, so will not be checked')
-
-
-# Backward compatibility alias for existing Llama test files
-TorchTitanLlamaTrainingJob = TorchTitanTrainingJob
