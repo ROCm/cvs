@@ -100,3 +100,29 @@ def get_gpu_model_dict(phdl):
 def get_gpu_temp_dict(phdl):
     d_dict = convert_phdl_json_to_dict(phdl.exec('sudo rocm-smi --loglevel error --showtemp --json'))
     return d_dict
+
+
+def get_gpu_fabric_info_dict(phdl, use_sudo=True, amd_smi_path='amd-smi'):
+    """Return ``amd-smi fabric --topology --json`` output per cluster node.
+
+    Parsed via ``convert_phdl_json_to_dict``. The structure is amd-smi's JSON
+    topology payload (GPU records with fabric port and pod-membership fields).
+    Used by the AIMVT-181 IFoE TransferBench preflight check to detect pPod
+    (physical pod) and vPod (virtual / logical pod) membership before invoking
+    the TransferBench smoketest preset.
+
+    Args:
+        phdl: Parallel SSH handle for cluster nodes.
+        use_sudo: When True (default), prefix the command with ``sudo``.
+        amd_smi_path: Override for the ``amd-smi`` binary (e.g. an absolute
+            path). Defaults to PATH-resolved ``amd-smi``.
+
+    Returns:
+        dict[str, Any]: ``{node: parsed_amd_smi_topology_json | str}``.
+        When ``amd-smi`` output is not valid JSON on a node, the raw string is
+        returned for that node so callers can degrade gracefully.
+    """
+    cmd = f'{amd_smi_path} fabric --topology --json'
+    if use_sudo:
+        cmd = 'sudo ' + cmd
+    return convert_phdl_json_to_dict(phdl.exec(cmd))

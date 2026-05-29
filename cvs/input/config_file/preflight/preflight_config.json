@@ -89,6 +89,67 @@
 
         "ssh_timeout": 180,
         "_comment_ssh_timeout": "Overall SSH timeout (seconds) for each afmctl invocation. Increase for large port counts or high pings_per_port values."
+      },
+
+      "transferbench": {
+        "_comment": "IFoE scale-up data-path validation via the TransferBench candidate-branch smoketest preset (AIMVT-181). Opt-in: defaults to 'skip'. Enforces a single-vPod precondition via 'amd-smi fabric --topology --json' before invoking TransferBench.",
+
+        "connectivity_mode": "skip",
+        "_comment_connectivity_mode": "TransferBench smoketest mode. Options: 'run' (execute the smoketest preset on each reachable node) or 'skip' (default; preflight will not invoke TransferBench). Flip to 'run' once the TransferBench candidate-branch binary and amd-smi are installed cluster-wide.",
+
+        "tb_binary": "TransferBench",
+        "_comment_tb_binary": "Absolute path or PATH-resolved name of the TransferBench binary on each node. Examples: 'TransferBench', '/opt/rocm/bin/TransferBench'.",
+
+        "rocm_path": "",
+        "_comment_rocm_path": "Optional ROCm install directory used to prepend PATH=<rocm_path>/bin and LD_LIBRARY_PATH=<rocm_path>/lib when invoking TransferBench. Leave empty to rely on the node's default environment.",
+
+        "amd_smi_path": "amd-smi",
+        "_comment_amd_smi_path": "Absolute path or PATH-resolved name of the amd-smi binary used for the pod-membership precondition.",
+
+        "use_sudo": true,
+        "_comment_use_sudo": "When true, both TransferBench and amd-smi are invoked with sudo. amd-smi fabric topology queries and TransferBench's IFoE access typically require root on production cluster images.",
+
+        "preset": "smoketest",
+        "_comment_preset": "TransferBench preset name. Defaults to 'smoketest' (the AIMVT-181 target). Change only when a TransferBench build ships a renamed preset with the same semantics.",
+
+        "size_list": ["1K", "16M"],
+        "_comment_size_list": "Transfer sizes passed positionally to TransferBench. The smoketest preset accepts a list and runs each test at every size. Keep the list small for preflight; default '1K' (small, latency-sensitive) and '16M' (large, bandwidth-sensitive) covers both regimes without exploding runtime.",
+
+        "num_iterations": 2,
+        "_comment_num_iterations": "Value for the NUM_ITERATIONS env var. Defaults to 2 -- enough to surface intermittent failures but small enough to keep total preflight runtime bounded.",
+
+        "num_warmups": 0,
+        "_comment_num_warmups": "Value for the NUM_WARMUPS env var. Preflight is a connectivity gate (not a benchmark), so the default skips warmup iterations.",
+
+        "always_validate": true,
+        "_comment_always_validate": "When true, sets ALWAYS_VALIDATE=1 so every iteration is data-validated. Required for the smoketest to detect silent data corruption.",
+
+        "run_parallel": true,
+        "_comment_run_parallel": "When true, sets RUN_PARALLEL=1 so tests sharing distinct executors run concurrently. Off-loads more of the smoketest into parallel execution; turn off for diagnostic step-by-step runs.",
+
+        "use_bdma": false,
+        "_comment_use_bdma": "When true, sets USE_BDMA=1 to prefer the BDMA path on supported hardware. Defaults to false (use the default SDMA path) for broadest compatibility.",
+
+        "force_single_pod": true,
+        "_comment_force_single_pod": "When true, sets FORCE_SINGLE_POD=1 so the preset short-circuits any test that would cross a vPod boundary. Defense-in-depth in addition to the amd-smi vPod precondition.",
+
+        "rank_mode": "per_node",
+        "_comment_rank_mode": "Orchestration mode. 'per_node' (default) runs an independent single-rank TransferBench on each reachable node and exercises intra-node IFoE only. 'multi_rank' wires every reachable node into one socket-comm cluster (TB_NUM_RANKS=N, TB_RANK=0..N-1) so the smoketest traverses the rack IFoE switch end-to-end. multi_rank requires all reachable nodes to share a single vPod and bidirectional IP reachability on TB_MASTER_PORT.",
+
+        "socket_master_port": 31337,
+        "_comment_socket_master_port": "TB_MASTER_PORT used by the smoketest's built-in socket-comm in multi_rank mode. Pick a free port that is reachable between every pair of nodes (or open it in your firewall).",
+
+        "master_node": "",
+        "_comment_master_node": "Optional hostname / IP to use as rank 0 (TB_MASTER_ADDR) in multi_rank mode. Leave empty to deterministically pick the lexicographically smallest reachable host.",
+
+        "max_skip_pct": 25.0,
+        "_comment_max_skip_pct": "Maximum percentage of smoketest cells allowed to be SKIPped before the node is downgraded to WARNING. Defaults to 25%, which tolerates the expected skips on partial fabrics (e.g. some D2D tests are skipped on multi-pod nodes); set to 0 for the strictest gate.",
+
+        "ssh_timeout": 600,
+        "_comment_ssh_timeout": "Overall SSH timeout (seconds) for each TransferBench invocation. The smoketest typically completes well within this on healthy hardware; increase for large size_list values or slow validate paths.",
+
+        "skip_pod_check": false,
+        "_comment_skip_pod_check": "When true, bypasses the amd-smi pod-membership precondition. Only flip this on for environments where amd-smi is not yet available; you lose the early failure signal."
       }
     },
     

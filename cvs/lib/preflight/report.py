@@ -100,6 +100,7 @@ class PreflightReportGenerator(PreflightCheck):
         rocm_results = self.results.get('rocm_versions', {})
         interface_results = self.results.get('interface_names', {})
         ifoe_l2_results = self.results.get('ifoe_l2_connectivity', {})
+        tb_smoke_results = self.results.get('transferbench_smoke', {})
         reachability_results = self.results.get('node_reachability')
         ssh_connectivity_results = self.results.get('ssh_connectivity')
         summary = {
@@ -108,6 +109,7 @@ class PreflightReportGenerator(PreflightCheck):
                 'ssh_reachability': self._summarize_reachability_results(reachability_results),
                 'gid_consistency': self._summarize_gid_results(gid_results),
                 'ifoe_l2_connectivity': self._summarize_ifoe_l2_results(ifoe_l2_results),
+                'transferbench_smoke': self._summarize_transferbench_smoke_results(tb_smoke_results),
                 'rdma_connectivity': self._summarize_connectivity_results(connectivity_results),
                 'rocm_versions': self._summarize_rocm_results(rocm_results),
                 'interface_names': self._summarize_interface_results(interface_results),
@@ -132,6 +134,17 @@ class PreflightReportGenerator(PreflightCheck):
         if summary['checks']['ifoe_l2_connectivity']['status'] == 'FAIL':
             summary['recommendations'].append(
                 "Address IFoE L2 ping failures via afmctl on affected nodes before benchmarking"
+            )
+
+        if summary['checks']['transferbench_smoke']['status'] == 'FAIL':
+            summary['recommendations'].append(
+                "Investigate TransferBench smoketest failures (likely IFoE data-path or pod-membership "
+                "issue) on affected nodes before benchmarking"
+            )
+        elif summary['checks']['transferbench_smoke']['status'] == 'WARNING':
+            summary['recommendations'].append(
+                "Review TransferBench smoketest skip-budget warnings -- some tests were skipped beyond "
+                "the configured tolerance"
             )
 
         if summary['checks']['rdma_connectivity']['status'] == 'FAIL':
@@ -331,6 +344,54 @@ class PreflightReportGenerator(PreflightCheck):
             'summary': summary_text,
         }
 
+    def _summarize_transferbench_smoke_results(self, tb_results):
+        """Summarize TransferBench smoketest results (AIMVT-181)."""
+        if not tb_results or tb_results.get('skipped'):
+            msg = (
+                tb_results.get('message')
+                if isinstance(tb_results, dict)
+                else 'TransferBench smoketest not performed'
+            )
+            return {
+                'status': 'SKIPPED',
+                'nodes_total': 0,
+                'nodes_pass': 0,
+                'nodes_warning': 0,
+                'nodes_fail': 0,
+                'failed_nodes': [],
+                'summary': msg or 'TransferBench smoketest skipped',
+            }
+
+        totals = tb_results.get('totals') or {}
+        nodes = tb_results.get('nodes') or {}
+        failed_nodes = sorted(n for n, r in nodes.items() if r.get('status') == 'FAIL')
+        warning_nodes = sorted(n for n, r in nodes.items() if r.get('status') == 'WARNING')
+
+        status = tb_results.get('status') or ('FAIL' if failed_nodes else ('WARNING' if warning_nodes else 'PASS'))
+        summary_text = (
+            f"{totals.get('nodes_pass', 0)}/{totals.get('nodes_total', 0)} nodes passed "
+            f"TransferBench smoketest"
+        )
+        if warning_nodes:
+            summary_text += f" ({len(warning_nodes)} with skip-budget warnings)"
+        if totals.get('tests_fail', 0) or totals.get('tests_skip', 0):
+            summary_text += (
+                f"; tests pass/fail/skip = "
+                f"{totals.get('tests_pass', 0)}/{totals.get('tests_fail', 0)}/"
+                f"{totals.get('tests_skip', 0)}"
+            )
+        return {
+            'status': status,
+            'nodes_total': totals.get('nodes_total', 0),
+            'nodes_pass': totals.get('nodes_pass', 0),
+            'nodes_warning': totals.get('nodes_warning', 0),
+            'nodes_fail': totals.get('nodes_fail', 0),
+            'failed_nodes': failed_nodes,
+            'warning_nodes': warning_nodes,
+            'rank_mode': tb_results.get('rank_mode'),
+            'summary': summary_text,
+        }
+
     def _summarize_reachability_results(self, reachability_results):
         """Summarize SSH reachability check results."""
         if not reachability_results:
@@ -433,6 +494,7 @@ class PreflightReportGenerator(PreflightCheck):
             {self._generate_executive_summary_html(summary)}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
             {self._generate_ifoe_l2_html(results.get('ifoe_l2_connectivity', {}))}
+            {self._generate_transferbench_smoke_html(results.get('transferbench_smoke', {}))}
             {self._generate_connectivity_html(results.get('rdma_connectivity', {}))}
             {self._generate_ssh_connectivity_html(results.get('ssh_connectivity', {}))}
             {self._generate_rocm_versions_html(results.get('rocm_versions', {}))}
@@ -989,6 +1051,157 @@ class PreflightReportGenerator(PreflightCheck):
         """
 
         return header + table
+
+    def _generate_transferbench_smoke_html(self, tb_results):
+        """Generate TransferBench smoketest section (AIMVT-181)."""
+        if not tb_results:
+            return ""
+
+        if tb_results.get('skipped'):
+            msg = tb_results.get('message', 'TransferBench smoketest skipped')
+            return f"""
+        <section>
+            <h2>IFoE TransferBench Smoketest</h2>
+            <p><em>{html.escape(msg)}</em></p>
+        </section>
+        """
+
+        nodes = tb_results.get('nodes') or {}
+        totals = tb_results.get('totals') or {}
+        pod_membership = tb_results.get('pod_membership') or {}
+        rank_mode = tb_results.get('rank_mode') or 'per_node'
+        max_skip = tb_results.get('max_skip_pct', 25.0)
+        cluster_errors = tb_results.get('errors') or []
+
+        pod_summary_parts = []
+        if isinstance(pod_membership, dict):
+            if pod_membership.get('status') == 'SKIPPED':
+                pod_summary_parts.append('<em>pod-membership precondition skipped by config</em>')
+            else:
+                vpod_id = pod_membership.get('vpod_id')
+                ppod_id = pod_membership.get('ppod_id')
+                if vpod_id is not None:
+                    pod_summary_parts.append(f'shared vpod_id=<code>{html.escape(str(vpod_id))}</code>')
+                if ppod_id is not None:
+                    pod_summary_parts.append(f'shared ppod_id=<code>{html.escape(str(ppod_id))}</code>')
+                if pod_membership.get('status') == 'FAIL':
+                    pod_summary_parts.append(
+                        '<span class="status-fail">precondition FAILED</span>'
+                    )
+        pod_summary_html = (
+            '; '.join(pod_summary_parts) if pod_summary_parts else 'pod-membership info unavailable'
+        )
+
+        header_html = f"""
+        <section>
+            <h2>IFoE TransferBench Smoketest</h2>
+            <p>Tested via the TransferBench candidate-branch <code>smoketest</code> preset.
+            Rank mode: <code>{html.escape(rank_mode)}</code>;
+            skip budget: <code>{html.escape(str(max_skip))}%</code>;
+            nodes pass/warn/fail: <code>{totals.get('nodes_pass', 0)}/{totals.get('nodes_warning', 0)}/{totals.get('nodes_fail', 0)}</code>
+            (of {totals.get('nodes_total', 0)} total);
+            tests pass/fail/skip: <code>{totals.get('tests_pass', 0)}/{totals.get('tests_fail', 0)}/{totals.get('tests_skip', 0)}</code>.
+            Pod membership: {pod_summary_html}.</p>
+        """
+
+        cluster_err_html = ''
+        if cluster_errors:
+            err_items = ''.join(
+                f'<li>{html.escape(str(e))}</li>' for e in cluster_errors
+            )
+            cluster_err_html = (
+                f'<div class="error-list"><strong>Cluster-level errors:</strong>'
+                f'<ul>{err_items}</ul></div>'
+            )
+
+        failing = sorted(
+            (n for n, r in nodes.items() if r.get('status') in ('FAIL', 'WARNING')),
+            key=str,
+        )
+
+        if not failing:
+            return header_html + cluster_err_html + (
+                '<p class="status-pass">All reachable nodes passed TransferBench smoketest.</p>'
+                '</section>'
+            )
+
+        rows = []
+        for node in failing:
+            entry = nodes[node]
+            verdict = entry.get('status', 'FAIL')
+            exit_code = entry.get('exit_code')
+            parsed = entry.get('parsed') or {}
+            errors = entry.get('errors') or []
+            warnings = parsed.get('warnings') or []
+            stdout_errors = parsed.get('errors') or []
+
+            detail_bits = []
+            counts = (
+                f"pass={parsed.get('num_pass', 0)}, "
+                f"fail={parsed.get('num_fail', 0)}, "
+                f"skip={parsed.get('num_skip', 0)}, "
+                f"total={parsed.get('num_tests', 0)}"
+            )
+            detail_bits.append(f'<p><strong>Test marker counts:</strong> <code>{html.escape(counts)}</code></p>')
+            if exit_code is not None:
+                detail_bits.append(
+                    f'<p><strong>Exit code:</strong> <code>{html.escape(str(exit_code))}</code></p>'
+                )
+            if errors:
+                detail_bits.append(
+                    '<p><strong>Verdict errors:</strong></p><ul style="color:#721c24;margin:6px 0;">'
+                    + ''.join(f'<li>{html.escape(str(e))}</li>' for e in errors)
+                    + '</ul>'
+                )
+            if stdout_errors:
+                detail_bits.append(
+                    '<details><summary>stdout fatal lines</summary><ul>'
+                    + ''.join(f'<li>{html.escape(str(e))}</li>' for e in stdout_errors[:25])
+                    + '</ul></details>'
+                )
+            if warnings:
+                detail_bits.append(
+                    '<details><summary>stdout warning lines</summary><ul>'
+                    + ''.join(f'<li>{html.escape(str(w))}</li>' for w in warnings[:25])
+                    + '</ul></details>'
+                )
+            raw = entry.get('raw_output') or ''
+            if raw.strip():
+                snippet = raw if len(raw) <= 4000 else raw[:4000] + '\n... (truncated) ...'
+                detail_bits.append(
+                    '<details><summary>TransferBench output</summary>'
+                    f'<pre style="white-space:pre-wrap;">{html.escape(snippet)}</pre>'
+                    '</details>'
+                )
+
+            status_class = 'status-fail' if verdict == 'FAIL' else 'status-skipped'
+            rows.append(f"""
+                <tr>
+                    <td><code>{html.escape(str(node))}</code></td>
+                    <td><span class="status-badge {status_class}">{html.escape(verdict)}</span></td>
+                    <td><code>{html.escape(entry.get('command', '') or '')}</code></td>
+                    <td>{''.join(detail_bits)}</td>
+                </tr>
+            """)
+
+        table_html = """
+            <p class="error-summary">The following nodes failed or warned on the TransferBench smoketest:</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>Status</th>
+                        <th>Command</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """ + ''.join(rows) + """
+                </tbody>
+            </table>
+        </section>
+        """
+        return header_html + cluster_err_html + table_html
 
     @staticmethod
     def _rdma_pair_row_fields(pair_key, pair_result):

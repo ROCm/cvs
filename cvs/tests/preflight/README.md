@@ -10,7 +10,10 @@ The preflight checks system validates essential cluster health and configuration
 2. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
 3. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
 4. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(AIMVT-180; opt-in)*
-5. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
+5. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
+   preset to validate IFoE scale-up data-path (after a single-vPod precondition via
+   `amd-smi fabric --topology --json`) *(AIMVT-181; opt-in)*
+6. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Quick Start
 
@@ -86,6 +89,7 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 
 - **`connectivity_check.rdma.connectivity_mode`**: `"basic"`, `"full_mesh"`, or `"skip"`
 - **`connectivity_check.ifoe.connectivity_mode`**: `"run"` or `"skip"` (default)
+- **`connectivity_check.transferbench.connectivity_mode`**: `"run"` or `"skip"` (default)
 - **`node_check.expected_rocm_version`**: ROCm version expected across all nodes
 - **`node_check.rdma_interfaces`**: List of expected RDMA interface names
 - **`connectivity_check.rdma.ibv_test_timeout`**: Timeout in seconds for ibv_rc_pingpong tests
@@ -133,6 +137,94 @@ reports. A node is marked **FAIL** if any enabled traffic type
   }
 }
 ```
+
+## IFoE TransferBench Smoketest (AIMVT-181)
+
+Validates IFoE scale-up data-path one layer above L2 by invoking the
+TransferBench candidate-branch **`smoketest`** preset on every reachable
+node and reconciling the binary's exit code with per-cell
+`[PASS] / [FAIL] / [SKIP]` markers in its output.
+
+Before TransferBench runs the check enforces a single-vPod precondition by
+querying:
+
+```
+sudo amd-smi fabric --topology --json
+```
+
+on every reachable node and verifying that every node reports exactly one
+`vpod_id` and all nodes share the same `vpod_id`. The TransferBench
+candidate-branch smoketest preset exits with `ERR_FATAL` (exit code `2`)
+when ranks span multiple virtual pods, so this precondition lets us surface
+the cause clearly rather than blaming the smoketest for an environment
+issue.
+
+Each TransferBench invocation issues:
+
+```
+[sudo] [PATH=<rocm>/bin:... LD_LIBRARY_PATH=<rocm>/lib:...] \
+  NUM_ITERATIONS=<n> NUM_WARMUPS=<n> ALWAYS_VALIDATE=1 RUN_PARALLEL=1 \
+  [TB_NUM_RANKS=<n> TB_RANK=<r> TB_MASTER_ADDR=<rank0> TB_MASTER_PORT=<port>] \
+  <tb_binary> smoketest <size_list...>
+```
+
+with a `__TB_SMOKE_EXIT__=$?` sentinel appended so we can recover the
+binary's exit code from stdout even when the parallel SSH transport
+discards process exit codes.
+
+### Orchestration modes
+
+- **`per_node`** (default) — one independent single-rank TransferBench per
+  reachable node. Exercises intra-node AID↔MID IFoE only, but needs no
+  cross-node coordination and is the safest first run when bringing up a
+  cluster.
+- **`multi_rank`** — every reachable node is wired into one socket-comm
+  cluster (`TB_NUM_RANKS=N`, `TB_RANK=0..N-1`, `TB_MASTER_ADDR=<rank0>`).
+  This is the closest thing to a full-mesh IFoE scale-up test the candidate
+  branch ships today; it traverses the rack IFoE switch end-to-end. Requires
+  bidirectional IP reachability on `socket_master_port` between every pair
+  of nodes, and at least two reachable hosts (otherwise we degrade to
+  `per_node` automatically and log a warning).
+
+### Verdict logic
+
+Per-node verdict is derived as:
+
+1. No `__TB_SMOKE_EXIT__` sentinel observed → **FAIL** (orchestration broke)
+2. Exit code `2` → **FAIL** (TransferBench precondition fired; usually a
+   pod-membership or executor-symmetry issue inside the preset)
+3. Any non-zero exit code → **FAIL**
+4. Any parsed `FAIL` marker or fatal-keyword line in stdout → **FAIL**
+5. `num_skip / num_tests > max_skip_pct%` → **WARNING**
+6. Otherwise → **PASS**
+
+### Example TransferBench config block
+
+```json
+"connectivity_check": {
+  "transferbench": {
+    "connectivity_mode": "run",
+    "tb_binary": "/opt/rocm/bin/TransferBench",
+    "rocm_path": "/opt/rocm",
+    "amd_smi_path": "amd-smi",
+    "use_sudo": true,
+    "preset": "smoketest",
+    "size_list": ["1K", "16M"],
+    "num_iterations": 2,
+    "num_warmups": 0,
+    "always_validate": true,
+    "run_parallel": true,
+    "force_single_pod": true,
+    "rank_mode": "per_node",
+    "max_skip_pct": 25.0,
+    "ssh_timeout": 600
+  }
+}
+```
+
+To exercise the rack IFoE switch end-to-end, flip `rank_mode` to
+`"multi_rank"` and open `socket_master_port` (default `31337`) in the
+firewall between every node pair.
 
 ## Output and Reporting
 
