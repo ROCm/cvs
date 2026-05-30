@@ -513,7 +513,10 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         # `cvs run` the container's sshd is already bound to 2224, so re-running
         # `/usr/sbin/sshd -p2224` would fail with "address already in use". Skip
         # the setup commands on any host that already has sshd on 2224.
-        precheck = self.exec("pgrep -f 'sshd.*2224' > /dev/null 2>&1", timeout=10, detailed=True)
+        # Pattern uses the `[s]shd` trick so pgrep -f does not match its own
+        # parent shell (whose argv contains the pattern); a literal 'sshd.*2224'
+        # self-matches and makes this precheck always report "already running".
+        precheck = self.exec("pgrep -f '[s]shd.*2224' > /dev/null 2>&1", timeout=10, detailed=True)
         hosts_needing_sshd = [host for host, output in precheck.items() if output['exit_code'] != 0]
         if not hosts_needing_sshd:
             self.log.info("SSH daemon already running on all hosts, skipping setup")
@@ -543,8 +546,9 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         time.sleep(2)
 
-        # Validate sshd is running by checking process
-        check_cmd = "pgrep -f 'sshd.*2224' > /dev/null 2>&1"
+        # Validate sshd is running by checking process. Same `[s]shd` trick as the
+        # precheck so this validates the real sshd, not pgrep's own parent shell.
+        check_cmd = "pgrep -f '[s]shd.*2224' > /dev/null 2>&1"
         result = self.exec(check_cmd, timeout=10, detailed=True)
 
         # Check if all hosts have sshd running
