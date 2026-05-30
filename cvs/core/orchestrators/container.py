@@ -6,6 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
+import base64
 import getpass
 import re
 from cvs.core.runtimes import RuntimeFactory
@@ -41,6 +42,14 @@ DEFAULT_CONTAINER_ARGS = {
     "ipc_mode": "host",
     "privileged": True,
 }
+
+# Upper bound on a setup_script that can be delivered inline. _provision_container
+# ships the script base64-encoded inside the `docker exec ... bash -c` command
+# string, which rides the SSH exec channel (bounded to ~30 KB by libssh2 in
+# cvs/lib/parallel/pssh.py). base64 inflates by ~4/3, so cap the raw script well
+# under that so a too-large script fails with a clear message instead of an
+# opaque SSH/exec truncation error.
+MAX_INLINE_SETUP_SCRIPT_BYTES = 16384
 
 
 class ContainerOrchestrator(BaremetalOrchestrator):
@@ -363,7 +372,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         # Add InfiniBand device discovery via shell expansion (per-host)
         ib_device_expansion = '$(for dev in /dev/infiniband/*; do echo -n "--device $dev:$dev "; done)'
 
-        return self.runtime.setup_containers(
+        launched = self.runtime.setup_containers(
             modified_config,
             container_name,
             volumes=volumes,
@@ -375,6 +384,75 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             ulimits=ulimits,
             device_expansion=ib_device_expansion,
         )
+        if not launched:
+            return False
+
+        # Provision the freshly-launched container (install packages on top of
+        # the base image, e.g. openssh-server). Runs only on this fresh-start
+        # path, so 'external' and 'persistent'-attach skip it automatically.
+        return self._provision_container()
+
+    def _provision_container(self):
+        """Run the configured setup_script inside the freshly-launched container.
+
+        Reads the resolved ``container.setup_script`` on the control host,
+        base64-encodes it, and executes it inside the container on every host via
+        ``docker exec`` (``self.exec``), which works before sshd exists -- the same
+        mechanism ``setup_sshd`` uses. The default script installs
+        ``openssh-server`` so the subsequent ``setup_sshd`` can start sshd; a
+        user-supplied script can install anything else the base image lacks.
+
+        Returns:
+            bool: True if provisioning succeeded on all hosts (or no script is
+            configured), False otherwise.
+        """
+        setup_script = self.container_config.get('setup_script')
+        if not setup_script:
+            # Defensive: the factory always resolves a default for container
+            # configs, so this only triggers for a hand-built config dict.
+            return True
+
+        try:
+            with open(setup_script, 'rb') as f:
+                script_bytes = f.read()
+        except OSError as exc:
+            self.log.error(f"Cannot read container setup_script {setup_script!r}: {exc}")
+            return False
+
+        if len(script_bytes) > MAX_INLINE_SETUP_SCRIPT_BYTES:
+            # Delivered inline over the SSH exec channel; a too-large script would
+            # otherwise fail with an opaque truncation error mid-run.
+            self.log.error(
+                f"container.setup_script {setup_script!r} is too large for inline "
+                f"delivery ({len(script_bytes)} bytes > {MAX_INLINE_SETUP_SCRIPT_BYTES}). "
+                f"Slim the script, or bake the packages into the image."
+            )
+            return False
+
+        self.log.info(f"Provisioning containers via setup_script: {setup_script}")
+        encoded = base64.b64encode(script_bytes).decode('ascii')
+        # docker exec already wraps the command in `bash -c`, so decode the
+        # script and pipe it straight into bash. base64 sidesteps all quoting and
+        # newline issues with arbitrary script content over pssh.
+        cmd = f"echo {encoded} | base64 -d | bash"
+        result = self.exec(cmd, timeout=600, detailed=True)
+
+        ok = True
+        for hostname, output in result.items():
+            if output.get('exit_code') != 0:
+                # Surface the in-container stderr/stdout so a failed apt/bash is
+                # diagnosable from the log without re-running by hand.
+                detail = (output.get('output') or '').strip()
+                self.log.error(
+                    f"Container provisioning failed on {hostname} "
+                    f"(setup_script: {setup_script}, exit_code: {output.get('exit_code')})"
+                    + (f": {detail}" if detail else "")
+                )
+                ok = False
+        if not ok:
+            return False
+        self.log.info("Container provisioning succeeded on all hosts")
+        return True
 
     def _verify_persistent_image(self, container_name, image):
         """Compare the running container's image SHA to the local image tag on
