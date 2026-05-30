@@ -80,6 +80,7 @@ Both templates share the same top-level shape. The ``container`` block and the `
             "lifetime": "per_run",
             "image": "rocm/cvs:latest",
             "name": "cvs_container",
+            "setup_script": null,
             "runtime": {
                 "name": "docker",
                 "args": {
@@ -140,10 +141,13 @@ The ``container`` block configures the container backend. It is consumed by the 
      - Container lifecycle policy: ``external``, ``per_run``, or ``persistent``. See the truth table below.
    * - ``image``
      - (required)
-     - Image with the test dependencies (for example ``rvs``) pre-installed and an ``sshd`` you can start on port ``2224``. Must be present locally on each node or pullable from a reachable registry.
+     - Image with the test dependencies (for example ``rvs``) the suite invokes. Must be present locally on each node or pullable from a reachable registry. An in-container ``sshd`` is not required up front; it is installed at launch by ``setup_script``.
    * - ``name``
      - (required)
      - Container name on each host. For parallel runs, make this per-iteration unique (for example ``cvs_iter_<run_id>``).
+   * - ``setup_script``
+     - (packaged default)
+     - Optional path to a shell script run inside each freshly-launched container (before sshd setup) to install packages on top of the base image. Omit to use the packaged default that installs ``openssh-server`` only. A non-existent path fails at config load. apt-based; non-apt images need a custom script.
    * - ``runtime.name``
      - ``docker``
      - Container runtime. Today only ``docker`` is implemented. ``enroot`` is registered as a stub and is not yet functional.
@@ -229,7 +233,7 @@ To use the container backend, every cluster node must have:
 - **Docker installed** with passwordless ``sudo docker`` for the SSH user.
 - **Host driver loaded** so ``/dev/kfd``, ``/dev/dri/*``, and ``/dev/infiniband/*`` (when RDMA is in scope) are present for passthrough.
 - **SSH user home directory accessible**. The orchestrator mounts ``~/.ssh`` as ``/host_ssh`` and copies keys into ``/root/.ssh`` inside the container so that the in-container ``sshd`` on port ``2224`` can authenticate.
-- **Container image** either pre-loaded on every node (``docker load``) or pullable from a reachable registry. The image must contain ``openssh-server`` (for the in-container ``sshd``) and the workload binaries the suite invokes (for example ``/opt/rocm/bin/rvs``).
+- **Container image** either pre-loaded on every node (``docker load``) or pullable from a reachable registry. The image must contain the workload binaries the suite invokes (for example ``/opt/rocm/bin/rvs``). ``openssh-server`` (for the in-container ``sshd``) is not required in the image -- it is installed at launch by ``container.setup_script``.
 
 See also
 ========
