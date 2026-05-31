@@ -334,14 +334,10 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
             # Not running on any host: legitimate cold start, launch fresh on all.
             self.log.info("Persistent container not running on any host, launching...")
-            return self._launch_containers(
-                volumes, devices, capabilities, security_opts, environment, groups, ulimits
-            )
+            return self._launch_containers(volumes, devices, capabilities, security_opts, environment, groups, ulimits)
 
         # 'per_run' (default): always start fresh.
-        return self._launch_containers(
-            volumes, devices, capabilities, security_opts, environment, groups, ulimits
-        )
+        return self._launch_containers(volumes, devices, capabilities, security_opts, environment, groups, ulimits)
 
     def _launch_containers(
         self,

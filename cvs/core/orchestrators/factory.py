@@ -57,10 +57,7 @@ def _resolve_container_lifetime(container):
     if 'lifetime' in container:
         lifetime = container['lifetime']
         if lifetime not in VALID_CONTAINER_LIFETIMES:
-            raise ValueError(
-                f"container.lifetime must be one of {VALID_CONTAINER_LIFETIMES}, "
-                f"got {lifetime!r}"
-            )
+            raise ValueError(f"container.lifetime must be one of {VALID_CONTAINER_LIFETIMES}, got {lifetime!r}")
         return container
 
     container['lifetime'] = 'per_run'
@@ -90,10 +87,7 @@ def _resolve_container_setup_script(container):
     if setup_script:
         resolved = os.path.abspath(os.path.expanduser(setup_script))
         if not os.path.isfile(resolved):
-            raise ValueError(
-                f"container.setup_script not found: {setup_script!r} "
-                f"(resolved to {resolved!r})"
-            )
+            raise ValueError(f"container.setup_script not found: {setup_script!r} (resolved to {resolved!r})")
         container['setup_script'] = resolved
         return container
 

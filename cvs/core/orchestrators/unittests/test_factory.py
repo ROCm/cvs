@@ -290,9 +290,7 @@ class TestResolveContainerSetupScript(unittest.TestCase):
 
     def test_missing_user_path_raises(self):
         with self.assertRaises(ValueError) as ctx:
-            _resolve_container_setup_script(
-                {"image": "x", "setup_script": "/no/such/setup_script.sh"}
-            )
+            _resolve_container_setup_script({"image": "x", "setup_script": "/no/such/setup_script.sh"})
         self.assertIn("setup_script", str(ctx.exception))
 
     def test_missing_packaged_default_raises(self):
@@ -323,9 +321,7 @@ class TestResolveContainerSetupScript(unittest.TestCase):
         # A ~ path is expanded before the existence check (proven via the resolved
         # path in the error message since the file does not exist).
         with self.assertRaises(ValueError) as ctx:
-            _resolve_container_setup_script(
-                {"image": "x", "setup_script": "~/__cvs_missing_setup__.sh"}
-            )
+            _resolve_container_setup_script({"image": "x", "setup_script": "~/__cvs_missing_setup__.sh"})
         msg = str(ctx.exception)
         self.assertIn(os.path.expanduser("~"), msg)
         self.assertNotIn("~", msg.split("resolved to", 1)[-1])
