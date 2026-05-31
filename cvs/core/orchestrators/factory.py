@@ -6,7 +6,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import os
-import warnings
 
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.container import ContainerOrchestrator
@@ -26,15 +25,15 @@ DEFAULT_CONTAINER_SETUP_SCRIPT = os.path.join(
 def _resolve_container_lifetime(container):
     """Normalize a container config block to a single resolved ``lifetime`` key.
 
-    Collapses the legacy two-axis schema (``enabled`` + ``launch``) into one
-    tri-valued ``container.lifetime``. Mutates and returns the passed dict.
+    The legacy two-axis schema (``enabled`` + ``launch``) is removed in favor of
+    one tri-valued ``container.lifetime``. Mutates and returns the passed dict.
 
     Resolution rules (first match wins):
-      - ``enabled`` present (any value) -> ``ValueError``. The field is removed
-        from the schema; the user must delete it and set ``lifetime``.
+      - ``enabled`` present (any value) -> ``ValueError`` (removed field).
+      - ``launch`` present (any value)  -> ``ValueError`` (removed field). Both
+        removed fields fail loudly rather than being silently mapped, so a stale
+        flag can never quietly override an explicit ``lifetime``.
       - ``lifetime`` present            -> validated, kept as-is.
-      - ``launch`` present (no enabled) -> ``DeprecationWarning``; ``True`` maps
-        to ``per_run``, ``False`` maps to ``external``. The legacy key is dropped.
       - none of the above               -> default ``per_run``.
 
     An empty/absent container block is returned untouched (baremetal path).
@@ -48,6 +47,13 @@ def _resolve_container_lifetime(container):
             "container.lifetime to one of 'external', 'per_run', 'persistent'"
         )
 
+    if 'launch' in container:
+        raise ValueError(
+            "container.launch is removed; delete the field and set "
+            "container.lifetime ('launch: true' -> 'per_run', "
+            "'launch: false' -> 'external')"
+        )
+
     if 'lifetime' in container:
         lifetime = container['lifetime']
         if lifetime not in VALID_CONTAINER_LIFETIMES:
@@ -55,18 +61,6 @@ def _resolve_container_lifetime(container):
                 f"container.lifetime must be one of {VALID_CONTAINER_LIFETIMES}, "
                 f"got {lifetime!r}"
             )
-        return container
-
-    if 'launch' in container:
-        launch = container.pop('launch')
-        lifetime = 'per_run' if launch else 'external'
-        warnings.warn(
-            f"container.launch is deprecated, use container.lifetime "
-            f"(mapped launch={launch!r} -> lifetime={lifetime!r})",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        container['lifetime'] = lifetime
         return container
 
     container['lifetime'] = 'per_run'

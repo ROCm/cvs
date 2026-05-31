@@ -306,13 +306,34 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             return self.verify_containers_running(container_name)
 
         if lifetime == 'persistent':
-            # Attach if already running on every host, otherwise (re)launch.
             status = self.runtime.is_running(container_name)
-            if status and all(info.get('running') for info in status.values()):
+            running_hosts = [h for h, info in status.items() if info.get('running')]
+            missing_hosts = [h for h, info in status.items() if not info.get('running')]
+
+            if running_hosts and not missing_hosts:
+                # Running on every host: attach (with image-SHA check).
                 self.container_id = container_name
                 self.log.info(f"Attaching to running container '{container_name}'")
                 return self._verify_persistent_image(container_name, image)
-            self.log.info("Persistent container not running on all hosts, launching...")
+
+            if running_hosts and missing_hosts:
+                # Partial: refuse to auto-relaunch. _launch_containers force-removes
+                # the same-named container on ALL hosts before recreating, which would
+                # destroy the overlay (installs, clones) on the still-running hosts --
+                # the opposite of what 'persistent' promises. Fail loudly and let the
+                # user choose: remove on all hosts and rerun (clean rebuild), or
+                # restart the container on the missing hosts to reattach.
+                self.log.error(
+                    f"Persistent container '{container_name}' is running on {running_hosts} "
+                    f"but missing on {missing_hosts}. Refusing to auto-relaunch: that would "
+                    f"force-remove and rebuild the containers on the still-running hosts, "
+                    f"destroying their overlay. Either remove '{container_name}' on all hosts "
+                    f"and rerun, or restart it on {missing_hosts} to reattach."
+                )
+                return False
+
+            # Not running on any host: legitimate cold start, launch fresh on all.
+            self.log.info("Persistent container not running on any host, launching...")
             return self._launch_containers(
                 volumes, devices, capabilities, security_opts, environment, groups, ulimits
             )
@@ -433,8 +454,12 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         encoded = base64.b64encode(script_bytes).decode('ascii')
         # docker exec already wraps the command in `bash -c`, so decode the
         # script and pipe it straight into bash. base64 sidesteps all quoting and
-        # newline issues with arbitrary script content over pssh.
-        cmd = f"echo {encoded} | base64 -d | bash"
+        # newline issues with arbitrary script content over pssh. `set -o pipefail`
+        # is required: without it the pipeline's exit code is bash's (the last
+        # stage), so a missing/failing `base64` in the image would exit 0 and the
+        # provisioning would silently no-op, surfacing later as an opaque sshd
+        # failure. pipefail makes that fail here with a diagnosable error instead.
+        cmd = f"set -o pipefail; echo {encoded} | base64 -d | bash"
         result = self.exec(cmd, timeout=600, detailed=True)
 
         ok = True
@@ -458,27 +483,44 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         """Compare the running container's image SHA to the local image tag on
         each host (persistent attach only).
 
+        This runs only after ``is_running`` confirmed the container is up on every
+        host, so every host MUST yield a readable container SHA.
+
+        - Unreadable SHA on any host (probe failed / container vanished): ERROR
+          and return False -- we cannot vouch for consistency, so do not silently
+          pass.
         - Per-host mismatch (container created from an image older than the local
           ``<image>`` tag): WARN and continue -- the overlay may be stale.
         - Cross-host SHA skew (hosts running different image SHAs): ERROR and
           return False -- a correctness problem, not mere staleness.
 
         Returns:
-            bool: False on cross-host skew, True otherwise.
+            bool: False on unreadable SHA or cross-host skew, True otherwise.
         """
         status = self.runtime.image_sha_status(container_name, image)
         container_shas = set()
+        unreadable_hosts = []
         for host, info in status.items():
             container_sha = info.get('container_sha', '')
             image_sha = info.get('image_sha', '')
-            if container_sha:
-                container_shas.add(container_sha)
-            if container_sha and image_sha and container_sha != image_sha:
+            if not container_sha:
+                unreadable_hosts.append(host)
+                continue
+            container_shas.add(container_sha)
+            if image_sha and container_sha != image_sha:
                 self.log.warning(
                     f"Container '{container_name}' on {host} runs image "
                     f"{container_sha[:19]} but local '{image}' is {image_sha[:19]}; "
                     f"overlay may be stale"
                 )
+
+        if unreadable_hosts:
+            self.log.error(
+                f"Could not read the running image SHA for container "
+                f"'{container_name}' on {unreadable_hosts}; cannot verify image "
+                f"consistency across hosts"
+            )
+            return False
 
         if len(container_shas) > 1:
             self.log.error(

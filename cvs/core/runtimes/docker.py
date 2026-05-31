@@ -8,6 +8,13 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import shlex
 
 
+# Timeout (seconds) for the `docker run` that starts a container. This is the
+# step that implicitly pulls the image when it is not already present locally,
+# so it must allow for a cold pull of a large image (multi-GB ROCm images can
+# take several minutes). 15 minutes covers a fresh pull on launch.
+CONTAINER_START_TIMEOUT_S = 900
+
+
 class DockerRuntime:
     """Docker container runtime implementation."""
 
@@ -130,7 +137,9 @@ class DockerRuntime:
         remove_cmd = f"sudo docker rm -f {container_name} || true"
         self.orchestrator.all.exec(remove_cmd, timeout=30, print_console=False)
 
-        result = self.orchestrator.all.exec(cmd, timeout=60, detailed=True)
+        # CONTAINER_START_TIMEOUT_S (not 60s): `docker run` implicitly pulls the
+        # image on a cold node, which for a multi-GB image far exceeds a minute.
+        result = self.orchestrator.all.exec(cmd, timeout=CONTAINER_START_TIMEOUT_S, detailed=True)
 
         # Check if all hosts started successfully
         success = all(output['exit_code'] == 0 for output in result.values())
@@ -176,14 +185,19 @@ class DockerRuntime:
         staleness and cross-host image skew. Runs both ``docker inspect`` probes
         in one fan-out and emits ``<container_sha>|<image_sha>`` per host.
 
+        A failed ``docker inspect`` (missing container/image) yields an empty
+        string for that SHA; callers treat an empty ``container_sha`` as a probe
+        failure. No exit code is returned because the wrapping ``echo`` always
+        succeeds, so it carries no signal.
+
         Args:
             container_name: Name of the running container to inspect.
             image_name: Local image tag to compare against.
 
         Returns:
             dict: per-host result with keys 'container_sha' (image ID the running
-            container was created from, ``.Image``), 'image_sha' (local image's
-            current ID, ``.Id``), and 'exit_code' (the probe's exit code).
+            container was created from, ``.Image``) and 'image_sha' (local image's
+            current ID, ``.Id``); each is '' when its probe could not read a value.
         """
         cmd = (
             f"echo \"$(sudo docker inspect --format '{{{{.Image}}}}' {container_name} 2>/dev/null)"
@@ -194,7 +208,6 @@ class DockerRuntime:
         for host, res in raw.items():
             parts = (res.get('output') or '').strip().split('|')
             out[host] = {
-                'exit_code': res.get('exit_code'),
                 'container_sha': parts[0] if len(parts) > 0 else '',
                 'image_sha': parts[1] if len(parts) > 1 else '',
             }

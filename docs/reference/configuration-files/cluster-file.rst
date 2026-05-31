@@ -218,7 +218,7 @@ When ``runtime.name`` is ``docker``, the keys below configure the underlying ``d
      - Start a fresh container on every host (force-removing any stale same-named container first).
      - Force-remove the container CVS started.
    * - ``persistent``
-     - Attach if the container is already running on every host (with a per-host image-SHA check; cross-host SHA skew is a hard error). Otherwise start fresh. Idempotent across runs.
+     - Attach if the container is already running on every host (with a per-host image-SHA check; cross-host SHA skew or an unreadable SHA is a hard error). Start fresh only if it is running on no host. Running on some hosts but not all is a hard error (CVS will not force-remove the still-running hosts and destroy their overlay). Idempotent across runs.
      - No-op. The container is left running for the next run; remove it yourself when done.
 
 .. note::

@@ -105,7 +105,7 @@ Lifecycle and teardown
 The ``container.lifetime`` policy controls who owns the container lifecycle:
 
 - ``per_run`` (default) - CVS starts a fresh container at setup and force-removes it at teardown. Anything written to the container overlay is lost when the run ends.
-- ``persistent`` - CVS starts the container if it is not already running, otherwise attaches to it. Teardown is a no-op, so the container (and its overlay) survives across runs. This unblocks install-then-run workflows: ``cvs run install_rvs`` followed by ``cvs run rvs_cvs`` in separate invocations. Pin ``container.name`` so a tag bump does not silently abandon the overlay.
+- ``persistent`` - CVS attaches to the container if it is already running on every host, or starts it fresh if it is running on no host. Teardown is a no-op, so the container (and its overlay) survives across runs. This unblocks install-then-run workflows: ``cvs run install_rvs`` followed by ``cvs run rvs_cvs`` in separate invocations. If the container is running on some hosts but not all, CVS fails rather than rebuilding (which would destroy the overlay on the still-running hosts) -- remove it on all hosts and rerun, or restart it on the missing hosts. Pin ``container.name`` so a tag bump does not silently abandon the overlay.
 - ``external`` - CVS does not start anything. It verifies that a container with the configured name is already running on every host and reuses it. Teardown is a no-op.
 
 See the ``lifetime`` truth table in :doc:`/reference/configuration-files/cluster-file` for the full state matrix.

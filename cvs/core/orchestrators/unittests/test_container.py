@@ -37,8 +37,8 @@ _NOT_RUNNING = {
     "10.0.0.2": {"running": False, "exit_code": 0, "name": ""},
 }
 _SHA_MATCH = {
-    "10.0.0.1": {"container_sha": "sha:abc", "image_sha": "sha:abc", "exit_code": 0},
-    "10.0.0.2": {"container_sha": "sha:abc", "image_sha": "sha:abc", "exit_code": 0},
+    "10.0.0.1": {"container_sha": "sha:abc", "image_sha": "sha:abc"},
+    "10.0.0.2": {"container_sha": "sha:abc", "image_sha": "sha:abc"},
 }
 
 
@@ -168,7 +168,7 @@ class TestContainerOrchestrator(unittest.TestCase):
             "10.0.0.1": {"running": True, "exit_code": 0, "name": "cvs_iter_test"},
         }
         runtime.image_sha_status.return_value = {
-            "10.0.0.1": {"container_sha": "sha:abc", "image_sha": "sha:abc", "exit_code": 0},
+            "10.0.0.1": {"container_sha": "sha:abc", "image_sha": "sha:abc"},
         }
         self.assertTrue(orch.setup_containers())
         self.assertTrue(orch.setup_containers())
@@ -179,8 +179,8 @@ class TestContainerOrchestrator(unittest.TestCase):
         orch, runtime = self._make(lifetime="persistent")
         runtime.is_running.return_value = _RUNNING
         runtime.image_sha_status.return_value = {
-            "10.0.0.1": {"container_sha": "sha:abc", "image_sha": "sha:abc", "exit_code": 0},
-            "10.0.0.2": {"container_sha": "sha:def", "image_sha": "sha:def", "exit_code": 0},
+            "10.0.0.1": {"container_sha": "sha:abc", "image_sha": "sha:abc"},
+            "10.0.0.2": {"container_sha": "sha:def", "image_sha": "sha:def"},
         }
         self.assertFalse(orch.setup_containers())
 
@@ -191,9 +191,34 @@ class TestContainerOrchestrator(unittest.TestCase):
             "10.0.0.1": {"running": True, "exit_code": 0, "name": "cvs_iter_test"},
         }
         runtime.image_sha_status.return_value = {
-            "10.0.0.1": {"container_sha": "sha:old", "image_sha": "sha:new", "exit_code": 0},
+            "10.0.0.1": {"container_sha": "sha:old", "image_sha": "sha:new"},
         }
         self.assertTrue(orch.setup_containers())
+
+    def test_setup_containers_persistent_partial_running_refuses(self):
+        # Running on some hosts but not all must NOT auto-relaunch (that would
+        # force-remove and rebuild the still-running hosts, destroying their
+        # overlay). It fails loudly and starts nothing.
+        orch, runtime = self._make(lifetime="persistent")
+        runtime.is_running.return_value = {
+            "10.0.0.1": {"running": True, "exit_code": 0, "name": "cvs_iter_test"},
+            "10.0.0.2": {"running": False, "exit_code": 0, "name": ""},
+        }
+        self.assertFalse(orch.setup_containers())
+        runtime.setup_containers.assert_not_called()
+        # No image-SHA attach check either; it bailed before attaching.
+        runtime.image_sha_status.assert_not_called()
+
+    def test_setup_containers_persistent_unreadable_sha_fails(self):
+        # Attach path: container is running on all hosts but the image-SHA probe
+        # yields no SHA -> cannot verify consistency, so fail rather than silently pass.
+        orch, runtime = self._make(lifetime="persistent")
+        runtime.is_running.return_value = _RUNNING
+        runtime.image_sha_status.return_value = {
+            "10.0.0.1": {"container_sha": "", "image_sha": ""},
+            "10.0.0.2": {"container_sha": "", "image_sha": ""},
+        }
+        self.assertFalse(orch.setup_containers())
 
     # ------------------------------------------------------------------
     # teardown_containers lifetime branching
@@ -418,17 +443,21 @@ class TestResolveContainerLifetime(unittest.TestCase):
         with self.assertRaises(ValueError):
             _resolve_container_lifetime({"lifetime": "forever", "image": "x"})
 
-    def test_launch_true_maps_to_per_run_with_deprecation(self):
-        with self.assertWarns(DeprecationWarning):
-            out = _resolve_container_lifetime({"launch": True, "image": "x"})
-        self.assertEqual(out["lifetime"], "per_run")
-        self.assertNotIn("launch", out)
+    def test_launch_present_raises(self):
+        # launch is a removed field: any value is a hard error (no silent mapping).
+        with self.assertRaises(ValueError) as ctx:
+            _resolve_container_lifetime({"launch": True, "image": "x"})
+        self.assertIn("launch", str(ctx.exception))
 
-    def test_launch_false_maps_to_external_with_deprecation(self):
-        with self.assertWarns(DeprecationWarning):
-            out = _resolve_container_lifetime({"launch": False, "image": "x"})
-        self.assertEqual(out["lifetime"], "external")
-        self.assertNotIn("launch", out)
+    def test_launch_false_also_raises(self):
+        with self.assertRaises(ValueError):
+            _resolve_container_lifetime({"launch": False, "image": "x"})
+
+    def test_launch_alongside_lifetime_raises(self):
+        # A stale launch flag next to an explicit lifetime must fail loudly rather
+        # than being silently retained/ignored.
+        with self.assertRaises(ValueError):
+            _resolve_container_lifetime({"lifetime": "per_run", "launch": True, "image": "x"})
 
     def test_no_policy_keys_defaults_to_per_run(self):
         out = _resolve_container_lifetime({"image": "x"})
@@ -439,18 +468,17 @@ class TestResolveContainerLifetime(unittest.TestCase):
         self.assertEqual(_resolve_container_lifetime({}), {})
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
-    def test_orchestratorconfig_init_resolves_launch_alias(self, _mock_pssh):
+    def test_orchestratorconfig_init_rejects_launch(self, _mock_pssh):
         # Direct construction routes through __init__ -> the same helper, so a
-        # legacy launch flag is resolved identically to from_configs.
-        with self.assertWarns(DeprecationWarning):
-            cfg = OrchestratorConfig(
+        # legacy launch flag is rejected identically to from_configs.
+        with self.assertRaises(ValueError):
+            OrchestratorConfig(
                 orchestrator="container",
                 node_dict={"1.1.1.1": {}},
                 username="u",
                 priv_key_file="/dev/null",
                 container={"launch": True, "image": "x"},
             )
-        self.assertEqual(cfg.container["lifetime"], "per_run")
 
 
 if __name__ == "__main__":

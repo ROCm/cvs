@@ -24,8 +24,8 @@ class ContainerRuntime(Protocol):
 
         Returns:
             dict: per-host result with keys 'container_sha' (image ID the running
-            container was created from), 'image_sha' (local image's current ID),
-            and 'exit_code' (the underlying probe command's exit code).
+            container was created from) and 'image_sha' (local image's current ID).
+            Either is '' when its probe could not read a value.
         """
         ...
 
