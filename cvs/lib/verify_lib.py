@@ -17,9 +17,28 @@ err_patterns_dict = {
     'crash': 'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|fault ',
     'test_fail': 'Test failure',
     'fault': 'no-retry page fault|Illegal register access|PROTECTION_FAULT_STATUS',
-    'driver': 'Queue preemption failed for queue|Failed to evict process queues|Runlist is getting oversubscribed|No more SDMA queue to allocate|Expect reduced ROCm performance|amdgpu: process pid',
+    # Note: amdgpu oversubscription messages ('Runlist is getting oversubscribed',
+    # 'Expect reduced ROCm performance') are perf-degrading but not test failures —
+    # they're matched as warnings via warn_patterns_dict below. See AMD docs:
+    # https://instinct.docs.amd.com/projects/amdgpu-docs/en/latest/conceptual/oversubscription.html
+    'driver': 'Queue preemption failed for queue|Failed to evict process queues|No more SDMA queue to allocate|amdgpu: process pid',
     'hardware': 'hardware error|hardware fail|ras error|uncorrectable|correctable err',
     'network': 'NIC Link is Down|link is down|ib_uverb|CQE|queue catastrophic|CQ error',
+}
+
+
+# warn_patterns_dict captures kernel events that indicate the GPU entered a
+# perf-degrading state but the workload itself still completes correctly. Matches
+# emit a WARN to the run log (no fail_test) so reviewers know the perf numbers
+# from this run were measured under a degraded HW state and should not be trusted
+# blindly for regression comparisons.
+warn_patterns_dict = {
+    # GPU runlist / VM context oversubscription. Per AMD docs, when this fires the
+    # HW scheduler is round-robining queues and inactive queues can block the GPU
+    # for millisecond-scale windows. Triggers: >24 user-mode compute queues per
+    # GPU, >11 VM context slots, or >1 process using cooperative workgroups.
+    # https://instinct.docs.amd.com/projects/amdgpu-docs/en/latest/conceptual/oversubscription.html
+    'oversubscribed': 'Runlist is getting oversubscribed|Expect reduced ROCm performance',
 }
 
 
@@ -174,7 +193,8 @@ def verify_gpu_pcie_errors(phdl):
 def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=True):
     """
     Scan kernel logs (dmesg) between given start and end timestamps across nodes
-    and fail if any known error patterns are detected.
+    and fail if any known error patterns are detected. Lines matching warn-only
+    patterns are logged via log.warning but do not fail the test.
 
     Parameters:
       phdl: pssh handle that can execute remote shell commands via .exec(cmd) -> dict.
@@ -185,17 +205,19 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
       - Extracts a human-readable timestamp prefix (e.g., 'Mon Jan  2 03:04:05') from provided times.
       - Uses dmesg -T (human-readable timestamps) piped to awk to slice the log from start to end.
       - Filters out lines containing 'ALLOWED' or 'DENIED' (non-fatal/noisy) via egrep -v.
-      - Scans each line against a set of known error regex patterns (err_patterns_dict).
-      - Immediately fails the test via fail_test if any error pattern is seen.
+      - Scans each line against err_patterns_dict (fail_test on match) and warn_patterns_dict
+        (log.warning only on match; test still passes but run carries a visible WARN).
 
     Assumptions:
-      - err_patterns_dict is defined in scope: {name: regex_pattern, ...}.
+      - err_patterns_dict and warn_patterns_dict are defined in scope: {name: regex_pattern, ...}.
       - phdl.exec(cmd) returns a dict: { node: stdout_str }.
       - Input timestamps contain a prefix matching the regex used here.
       - sudo is available and does not prompt for a password when running dmesg.
 
     Notes:
       - This function fails fast on the first detected error to shorten feedback cycles.
+      - Warn-bucket matches are non-fatal but should be reviewed before trusting any
+        perf measurements from the run (e.g. RCCL bandwidth, training step time).
       - If start/end times are not aligned with dmesg -T formatting, the awk range may be empty.
       - Consider handling cases where regex extraction fails (no match) to avoid attribute errors.
     """
@@ -233,13 +255,23 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     for node in output_dict.keys():
         err_dict[node] = []
 
-    # Iterate through each node's sliced dmesg and scan for known error patterns
+    # Iterate through each node's sliced dmesg and scan for known error/warn patterns.
+    # err patterns -> fail_test (existing behavior).
+    # warn patterns -> log.warning only; the test still passes but the run carries a
+    # visible WARN so callers / reviewers know the GPU was in a degraded state and
+    # any perf numbers from this run should not be trusted blindly.
     for node in output_dict.keys():
         for line in output_dict[node].split("\n"):
             for err_key in err_patterns_dict.keys():
                 if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
                     fail_test(f'ERROR - Failue pattern ** {line} ** seen in Dmesg')
                     err_dict[node].append(line)
+            for warn_key in warn_patterns_dict.keys():
+                if re.search(f'{warn_patterns_dict[warn_key]}', line, re.I):
+                    log.warning(
+                        f'WARN - GPU in degraded state ({warn_key}) on {node}: {line.strip()} '
+                        f'-- perf numbers from this run may not be trustworthy'
+                    )
 
     return err_dict
 
