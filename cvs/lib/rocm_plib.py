@@ -8,34 +8,46 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from cvs.lib.utils_lib import *
 
 
+def _amd_smi_json_command(args: str) -> str:
+    """Build a portable amd-smi JSON command for nodes with different install paths."""
+    return (
+        "sudo bash -lc '"
+        "if command -v amd-smi >/dev/null 2>&1; then AMD_SMI=$(command -v amd-smi); "
+        "elif [ -x /opt/rocm/bin/amd-smi ]; then AMD_SMI=/opt/rocm/bin/amd-smi; "
+        "else echo \"[]\"; exit 0; fi; "
+        "\"${AMD_SMI}\" "
+        f"{args} --json'"
+    )
+
+
 def get_rocm_smi_dict(phdl):
     rocm_smi_dict = convert_phdl_json_to_dict(phdl.exec('sudo rocm-smi -a --json'))
     return rocm_smi_dict
 
 
 def get_gpu_partition_dict(phdl):
-    amd_part_dict = convert_phdl_json_to_dict(phdl.exec('sudo amd-smi partition --json'))
+    amd_part_dict = convert_phdl_json_to_dict(phdl.exec(_amd_smi_json_command('partition')))
     return amd_part_dict
 
 
 def get_gpu_process_dict(phdl):
-    amd_proc_dict = convert_phdl_json_to_dict(phdl.exec('sudo amd-smi process --json'))
+    amd_proc_dict = convert_phdl_json_to_dict(phdl.exec(_amd_smi_json_command('process')))
     return amd_proc_dict
 
 
 def get_amd_smi_metric_dict(phdl):
-    amd_metric_dict = convert_phdl_json_to_dict(phdl.exec('sudo amd-smi metric --json'))
+    amd_metric_dict = convert_phdl_json_to_dict(phdl.exec(_amd_smi_json_command('metric')))
     return amd_metric_dict
 
 
 def get_amd_smi_fw_dict(phdl):
-    firmware_dict = convert_phdl_json_to_dict(phdl.exec('sudo amd-smi firmware --json'))
+    firmware_dict = convert_phdl_json_to_dict(phdl.exec(_amd_smi_json_command('firmware')))
     return firmware_dict
 
 
 def get_amd_smi_ras_metrics_dict(phdl):
     ras_dict = {}
-    ras_dict_t = convert_phdl_json_to_dict(phdl.exec('sudo amd-smi metric --ecc --json'))
+    ras_dict_t = convert_phdl_json_to_dict(phdl.exec(_amd_smi_json_command('metric --ecc')))
     log.info("%s", ras_dict_t)
     for node in ras_dict_t.keys():
         ras_dict[node] = {}
@@ -54,7 +66,7 @@ def get_amd_smi_ras_metrics_dict(phdl):
 
 def get_amd_smi_pcie_metrics_dict(phdl):
     pcie_dict = {}
-    pcie_dict_t = convert_phdl_json_to_dict(phdl.exec('sudo amd-smi metric --pcie --json'))
+    pcie_dict_t = convert_phdl_json_to_dict(phdl.exec(_amd_smi_json_command('metric --pcie')))
     for node in pcie_dict_t.keys():
         pcie_dict[node] = {}
         if isinstance(pcie_dict_t[node], dict):
