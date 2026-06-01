@@ -738,66 +738,6 @@ class SglangDisaggPD:
         log.info('Waiting 120 secs after launching proxy router script')
         time.sleep(120)
 
-    # def run_gsm8k_benchmark_test(self, d_type='auto'):
-    #     """
-    #     Run the GSM8K inference benchmark against the SGLang disaggregated
-    #     Prefill/Decode deployment and validate throughput.
-
-    #     Purpose:
-    #     --------
-    #     This method executes a real-world inference workload (GSM8K question
-    #     answering) to:
-    #     - Validate end-to-end correctness of the inference pipeline
-    #     - Measure sustained output token throughput
-    #     - Ensure performance meets expected SLA thresholds
-
-    #     The benchmark traffic is sent to the Proxy Router, which:
-    #     - Routes requests to Prefill servers
-    #     - Coordinates Decode servers for token generation
-    #     """
-    #     log.info('#================ * * * =========================#')
-    #     log.info('Create Benchmark script')
-    #     log.info('#================ * * * =========================#')
-
-    #     i_dict = self.bp_dict['inference_tests']['gsm8k']
-    #     # ------------------------------------------------------------------
-    #     # Construct command to run GSM8K benchmark inside the container
-    #     #
-    #     # Key steps:
-    #     #   - Create a directory to store benchmark logs
-    #     #   - Navigate to the GSM8K benchmark directory
-    #     #   - Source environment variables required for benchmark execution
-    #     #   - Launch the benchmark using nohup to allow async execution
-    #     #
-    #     # Benchmark parameters:
-    #     #   --num-questions : Total GSM8K questions to run
-    #     #   --parallel      : Maximum concurrent inference requests
-    #     #   --host / --port : Proxy Router endpoint for inference
-    #     # ------------------------------------------------------------------
-    #     cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-    #                   mkdir -p {self.log_dir}/benchmark_node; \
-    #                   cd /sgl-workspace/sglang/benchmark/gsm8k; \
-    #                   source /tmp/benchmark_env_script.sh && \
-    #                   nohup python3 ./bench_sglang.py \
-    #                   --num-questions {i_dict['num_questions']} \
-    #                   --parallel {i_dict['max_concurrency']} \
-    #                   --host http://0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']}" '''
-    #     formatted_cmd = textwrap_for_yml(cmd)
-    #     out_dict = self.b_phdl.exec(formatted_cmd, timeout=800)
-    #     time.sleep(5)
-    #     for node in out_dict.keys():
-    #         if not re.search('Output throughput', out_dict[node], re.I):
-    #             fail_test(f'Benchmark test did not complete properly on node {node}, no throughput pattern seen')
-    #         else:
-    #             match = re.search('Output throughput:\s+([0-9\.]+)\s+token', out_dict[node], re.I)
-    #             actual_tps = match.group(1)
-    #             if float(actual_tps) < float(i_dict['expected_results'][d_type]['tokens_per_sec']):
-    #                 fail_test(
-    #                     f"Test FAILED due to low performance, \
-    #                         expected tokens per sec = {i_dict['expected_results'][d_type]['tokens_per_sec']}, \
-    #                         actual tokens per sec = {actual_tps}"
-    #                 )
-
     def run_gsm8k_benchmark_test(self, d_type='auto'):
         """
         Run the GSM8K inference benchmark against the SGLang disaggregated
@@ -820,59 +760,6 @@ class SglangDisaggPD:
         log.info('#================ * * * =========================#')
 
         i_dict = self.bp_dict['inference_tests']['gsm8k']
-
-        # ------------------------------------------------------------------
-        # Patch bench_sglang.py inside the container before running.
-        #
-        # Problem:
-        #   bench_sglang.py crashes with KeyError: 'answer' because SGLang's
-        #   ProgramState object raises KeyError via __getitem__ when the answer
-        #   variable was never populated (e.g. failed/incomplete requests).
-        #   This prevents 'Output throughput' from ever being printed.
-        #
-        # Fix:
-        #   Replace the bare dict-style access with a try/except so failed
-        #   states are skipped (appended as None) and the benchmark runs to
-        #   completion. Uses try/except rather than .get() because ProgramState
-        #   is not a dict and does not support .get().
-        #
-        # Safety:
-        #   - Original is backed up to bench_sglang_orig.py (idempotent)
-        #   - Patch validates its own target string before writing
-        #   - If patch target is not found, fail_test is called immediately
-        #   - Heredoc Python code is at column 0 (required by bash heredoc syntax)
-        # ------------------------------------------------------------------
-        patch_cmd = f'''docker exec {self.container_name} /bin/bash -c "
-            ORIG=/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang_orig.py;
-            BENCH=/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang.py;
-            [ -f \$ORIG ] || cp \$BENCH \$ORIG;
-            python3 - << 'EOF'
-    src = open('/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang_orig.py').read()
-    old = 'preds.append(get_answer_value(states[i][\"answer\"]))'
-    new = (
-        'try:\\n'
-        '            ans = states[i][\"answer\"]\\n'
-        '            preds.append(get_answer_value(ans))\\n'
-        '        except (KeyError, Exception):\\n'
-        '            preds.append(None)'
-    )
-    if old in src:
-        patched = src.replace(old, new)
-        open('/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang.py', 'w').write(patched)
-        print('Patch applied successfully')
-    else:
-        print('WARNING: patch target not found - script may have changed')
-    EOF
-            " '''
-
-        formatted_patch_cmd = textwrap_for_yml(patch_cmd)
-        patch_out = self.b_phdl.exec(formatted_patch_cmd, timeout=30)
-        for node, output in patch_out.items():
-            if 'Patch applied successfully' not in output:
-                fail_test(f'[{node}] Failed to patch bench_sglang.py: {output}')
-            else:
-                log.info(f'[{node}] bench_sglang.py patched successfully')
-
         # ------------------------------------------------------------------
         # Construct command to run GSM8K benchmark inside the container
         #
@@ -888,33 +775,30 @@ class SglangDisaggPD:
         #   --host / --port : Proxy Router endpoint for inference
         # ------------------------------------------------------------------
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                    mkdir -p {self.log_dir}/benchmark_node; \
-                    cd /sgl-workspace/sglang/benchmark/gsm8k; \
-                    source /tmp/benchmark_env_script.sh && \
-                    nohup python3 ./bench_sglang.py \
-                    --num-questions {i_dict['num_questions']} \
-                    --parallel {i_dict['max_concurrency']} \
-                    --host http://0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']}" '''
+                      mkdir -p {self.log_dir}/benchmark_node; \
+                      cd /sgl-workspace/sglang/benchmark/gsm8k; \
+                      source /tmp/benchmark_env_script.sh && \
+                      nohup python3 ./bench_sglang.py \
+                      --num-questions {i_dict['num_questions']} \
+                      --parallel {i_dict['max_concurrency']} \
+                      --host http://0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']}" '''
         formatted_cmd = textwrap_for_yml(cmd)
         out_dict = self.b_phdl.exec(formatted_cmd, timeout=800)
         time.sleep(5)
         for node in out_dict.keys():
             if not re.search('Output throughput', out_dict[node], re.I):
-                fail_test(
-                    f'Benchmark test did not complete properly on node {node}, '
-                    f'no throughput pattern seen'
-                )
+                fail_test(f'Benchmark test did not complete properly on node {node}, no throughput pattern seen')
             else:
-                match = re.search(r'Output throughput:\s+([0-9\.]+)\s+token',
-                                out_dict[node], re.I)
+                match = re.search('Output throughput:\s+([0-9\.]+)\s+token', out_dict[node], re.I)
                 actual_tps = match.group(1)
                 if float(actual_tps) < float(i_dict['expected_results'][d_type]['tokens_per_sec']):
                     fail_test(
-                        f"Test FAILED due to low performance, "
-                        f"expected tokens per sec = {i_dict['expected_results'][d_type]['tokens_per_sec']}, "
-                        f"actual tokens per sec = {actual_tps}"
+                        f"Test FAILED due to low performance, \
+                            expected tokens per sec = {i_dict['expected_results'][d_type]['tokens_per_sec']}, \
+                            actual tokens per sec = {actual_tps}"
                     )
 
+    
     def get_inference_results_dict(self, out_dict):
         """
         Parse inference benchmark output logs and extract key performance metrics
