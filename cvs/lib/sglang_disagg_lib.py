@@ -840,30 +840,29 @@ class SglangDisaggPD:
         #   - Original is backed up to bench_sglang_orig.py (idempotent)
         #   - Patch validates its own target string before writing
         #   - If patch target is not found, fail_test is called immediately
+        #   - Heredoc Python code is at column 0 (required by bash heredoc syntax)
         # ------------------------------------------------------------------
         patch_cmd = f'''docker exec {self.container_name} /bin/bash -c "
             ORIG=/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang_orig.py;
             BENCH=/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang.py;
             [ -f \$ORIG ] || cp \$BENCH \$ORIG;
             python3 - << 'EOF'
-        src = open('/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang_orig.py').read()
-
-        old = 'preds.append(get_answer_value(states[i][\"answer\"]))'
-        new = (
-            'try:\\n'
-            '            ans = states[i][\"answer\"]\\n'
-            '            preds.append(get_answer_value(ans))\\n'
-            '        except (KeyError, Exception):\\n'
-            '            preds.append(None)'
-        )
-
-        if old in src:
-            patched = src.replace(old, new)
-            open('/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang.py', 'w').write(patched)
-            print('Patch applied successfully')
-        else:
-            print('WARNING: patch target not found - script may have changed')
-        EOF
+    src = open('/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang_orig.py').read()
+    old = 'preds.append(get_answer_value(states[i][\"answer\"]))'
+    new = (
+        'try:\\n'
+        '            ans = states[i][\"answer\"]\\n'
+        '            preds.append(get_answer_value(ans))\\n'
+        '        except (KeyError, Exception):\\n'
+        '            preds.append(None)'
+    )
+    if old in src:
+        patched = src.replace(old, new)
+        open('/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang.py', 'w').write(patched)
+        print('Patch applied successfully')
+    else:
+        print('WARNING: patch target not found - script may have changed')
+    EOF
             " '''
 
         formatted_patch_cmd = textwrap_for_yml(patch_cmd)
@@ -901,9 +900,13 @@ class SglangDisaggPD:
         time.sleep(5)
         for node in out_dict.keys():
             if not re.search('Output throughput', out_dict[node], re.I):
-                fail_test(f'Benchmark test did not complete properly on node {node}, no throughput pattern seen')
+                fail_test(
+                    f'Benchmark test did not complete properly on node {node}, '
+                    f'no throughput pattern seen'
+                )
             else:
-                match = re.search(r'Output throughput:\s+([0-9\.]+)\s+token', out_dict[node], re.I)
+                match = re.search(r'Output throughput:\s+([0-9\.]+)\s+token',
+                                out_dict[node], re.I)
                 actual_tps = match.group(1)
                 if float(actual_tps) < float(i_dict['expected_results'][d_type]['tokens_per_sec']):
                     fail_test(
