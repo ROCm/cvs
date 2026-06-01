@@ -72,6 +72,14 @@ You may instead use fully absolute paths with no placeholders. Other entry point
       gemm_script: scripts/gemm_analysis/run_tracelens_analysis.sh
       skip_if_exists: false
 
+    multi_node:
+      master_launch_mode: auto
+      train_script: train.py
+      extra_torchrun_args: []
+      extra_train_args: []
+      extra_env: {}
+      collect_traces: true
+
     expected_results:
       max_avg_iteration_ms: 12000
       min_compute_ratio: 0.01
@@ -186,6 +194,33 @@ The **dropdown above** is the full **shipped** ``aorta_benchmark.yaml``. Where t
    * - ``analysis.skip_if_exists``
      - ``false``
      - Skip analysis if ``tracelens_analysis`` already exists.
+   * - ``multi_node.master_launch_mode``
+     - ``auto``
+     - ``auto`` picks ``script`` for single-node clusters and ``torchrun`` for multi-node clusters. Set to ``script`` to force the single-node ``experiment_script`` path (errors out on >1 node), or ``torchrun`` to always build a disaggregated ``torchrun`` command.
+   * - ``multi_node.nproc_per_node``
+     - ``null`` (defaults to ``gpus_per_node``)
+     - Processes/GPUs per node passed as ``torchrun --nproc_per_node``.
+   * - ``multi_node.master_port``
+     - ``null`` (free ephemeral port)
+     - Port for the ``torchrun`` rendezvous (``--master_port``). Pin this when you need a deterministic port (e.g., firewalled environments).
+   * - ``multi_node.master_addr``
+     - ``null`` (head node from cluster.json)
+     - Override the rendezvous address (``--master_addr``).
+   * - ``multi_node.train_script``
+     - ``train.py``
+     - Aorta training entry script relative to ``aorta_path``. Used in ``torchrun`` mode.
+   * - ``multi_node.extra_torchrun_args``
+     - ``[]``
+     - Additional ``torchrun`` flags appended before the training script.
+   * - ``multi_node.extra_train_args``
+     - ``[]``
+     - Additional ``train.py`` flags appended after ``--config``.
+   * - ``multi_node.extra_env``
+     - ``{}``
+     - Extra environment variables exported inside each container before ``torchrun``. Use for transport tuning (``NCCL_SOCKET_IFNAME``, ``NCCL_IB_HCA``, ``NCCL_IB_GID_INDEX``, ...).
+   * - ``multi_node.collect_traces``
+     - ``true``
+     - When true, the runner pulls each node's ``torch_profiler/`` trees back to ``<aorta_path>/combined_traces/node_<rank>/`` on the head node so host parsers see one unified trace tree.
    * - ``expected_results.max_avg_iteration_ms``
      - optional
      - Maximum acceptable average iteration time (ms).
@@ -215,6 +250,33 @@ Use the **CVS package directory** as the working directory: the directory that c
 Provide a valid ``cluster_file``. Ensure ``aorta_path`` exists after placeholder resolution, or enable auto-clone with a valid URL. With ``skip_rccl_build: false``, the runner builds RCCL from ``rccl.clone_url`` unless skipped; with ``skip_rccl_build: true``, the experiment script runs without that build step. The runner collects ``torch_traces`` (PyTorch profiler output) and optionally runs TraceLens inside the container. Parsing and threshold checks run on the host.
 
 Alternate mirrors for ``rccl.clone_url`` may work if they track the same upstream; the canonical default string in schema, runner, and sample is ``https://github.com/ROCmSoftwarePlatform/rccl.git``.
+
+Multi-node disaggregated launch
+===============================
+
+By default, when the cluster file contains more than one node, ``test_aorta`` runs a disaggregated launch: a single Aorta container is started on every node, then the runner kicks off ``torchrun`` in parallel on each container with ``--nnodes``, ``--node_rank``, ``--master_addr``, and ``--master_port`` set so the ranks rendezvous on the head node. This mirrors Aorta's own ``scripts/multi_node/local_launch.sh`` pattern and brings the benchmark in line with the other multi-node CVS suites (sglang, pytorch-xdit), which only require **one** ``cluster.json`` for a multi-node run.
+
+The multi-node behavior is controlled by the ``multi_node`` block in ``aorta_benchmark.yaml``:
+
+.. code:: yaml
+
+  multi_node:
+    master_launch_mode: auto      # auto | script | torchrun
+    nproc_per_node: 8             # defaults to gpus_per_node
+    master_port: 29500            # default: free ephemeral port
+    master_addr: 10.0.0.1         # default: head node from cluster.json
+    train_script: train.py
+    extra_torchrun_args: []
+    extra_train_args: []
+    extra_env:
+      NCCL_SOCKET_IFNAME: bond0
+      NCCL_IB_HCA: rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7
+      NCCL_IB_GID_INDEX: "3"
+    collect_traces: true
+
+Single-node clusters keep using the configured ``experiment_script`` (``master_launch_mode: auto`` resolves to ``script``). Force the disaggregated path with ``master_launch_mode: torchrun`` if you want it for a single-node cluster too.
+
+When ``collect_traces`` is true, every node's ``torch_profiler/`` directories are rsynced back to ``<aorta_path>/combined_traces/node_<rank>/`` on the head node and exposed as the ``torch_traces`` artifact, so the existing host parsers and threshold checks see one unified tree without further configuration.
 
 Expected results and artifacts
 ==============================
