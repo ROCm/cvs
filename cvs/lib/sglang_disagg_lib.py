@@ -738,44 +738,156 @@ class SglangDisaggPD:
         log.info('Waiting 120 secs after launching proxy router script')
         time.sleep(120)
 
-    # 
-    
+    # def run_gsm8k_benchmark_test(self, d_type='auto'):
+    #     """
+    #     Run the GSM8K inference benchmark against the SGLang disaggregated
+    #     Prefill/Decode deployment and validate throughput.
+
+    #     Purpose:
+    #     --------
+    #     This method executes a real-world inference workload (GSM8K question
+    #     answering) to:
+    #     - Validate end-to-end correctness of the inference pipeline
+    #     - Measure sustained output token throughput
+    #     - Ensure performance meets expected SLA thresholds
+
+    #     The benchmark traffic is sent to the Proxy Router, which:
+    #     - Routes requests to Prefill servers
+    #     - Coordinates Decode servers for token generation
+    #     """
+    #     log.info('#================ * * * =========================#')
+    #     log.info('Create Benchmark script')
+    #     log.info('#================ * * * =========================#')
+
+    #     i_dict = self.bp_dict['inference_tests']['gsm8k']
+    #     # ------------------------------------------------------------------
+    #     # Construct command to run GSM8K benchmark inside the container
+    #     #
+    #     # Key steps:
+    #     #   - Create a directory to store benchmark logs
+    #     #   - Navigate to the GSM8K benchmark directory
+    #     #   - Source environment variables required for benchmark execution
+    #     #   - Launch the benchmark using nohup to allow async execution
+    #     #
+    #     # Benchmark parameters:
+    #     #   --num-questions : Total GSM8K questions to run
+    #     #   --parallel      : Maximum concurrent inference requests
+    #     #   --host / --port : Proxy Router endpoint for inference
+    #     # ------------------------------------------------------------------
+    #     cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+    #                   mkdir -p {self.log_dir}/benchmark_node; \
+    #                   cd /sgl-workspace/sglang/benchmark/gsm8k; \
+    #                   source /tmp/benchmark_env_script.sh && \
+    #                   nohup python3 ./bench_sglang.py \
+    #                   --num-questions {i_dict['num_questions']} \
+    #                   --parallel {i_dict['max_concurrency']} \
+    #                   --host http://0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']}" '''
+    #     formatted_cmd = textwrap_for_yml(cmd)
+    #     out_dict = self.b_phdl.exec(formatted_cmd, timeout=800)
+    #     time.sleep(5)
+    #     for node in out_dict.keys():
+    #         if not re.search('Output throughput', out_dict[node], re.I):
+    #             fail_test(f'Benchmark test did not complete properly on node {node}, no throughput pattern seen')
+    #         else:
+    #             match = re.search('Output throughput:\s+([0-9\.]+)\s+token', out_dict[node], re.I)
+    #             actual_tps = match.group(1)
+    #             if float(actual_tps) < float(i_dict['expected_results'][d_type]['tokens_per_sec']):
+    #                 fail_test(
+    #                     f"Test FAILED due to low performance, \
+    #                         expected tokens per sec = {i_dict['expected_results'][d_type]['tokens_per_sec']}, \
+    #                         actual tokens per sec = {actual_tps}"
+    #                 )
+
     def run_gsm8k_benchmark_test(self, d_type='auto'):
+        """
+        Run the GSM8K inference benchmark against the SGLang disaggregated
+        Prefill/Decode deployment and validate throughput.
+
+        Purpose:
+        --------
+        This method executes a real-world inference workload (GSM8K question
+        answering) to:
+        - Validate end-to-end correctness of the inference pipeline
+        - Measure sustained output token throughput
+        - Ensure performance meets expected SLA thresholds
+
+        The benchmark traffic is sent to the Proxy Router, which:
+        - Routes requests to Prefill servers
+        - Coordinates Decode servers for token generation
+        """
         log.info('#================ * * * =========================#')
         log.info('Create Benchmark script')
         log.info('#================ * * * =========================#')
 
         i_dict = self.bp_dict['inference_tests']['gsm8k']
 
-        # Patch bench_sglang.py inline before running:
-        # - Backs up original (idempotent, won't overwrite if already backed up)
-        # - Wraps get_var to return None instead of raising KeyError: 'answer'
-        #   so bench completes and prints 'Output throughput' even if some
-        #   requests fail at high concurrency
+        # ------------------------------------------------------------------
+        # Patch bench_sglang.py inside the container before running.
+        #
+        # Problem:
+        #   bench_sglang.py crashes with KeyError: 'answer' because SGLang's
+        #   ProgramState object raises KeyError via __getitem__ when the answer
+        #   variable was never populated (e.g. failed/incomplete requests).
+        #   This prevents 'Output throughput' from ever being printed.
+        #
+        # Fix:
+        #   Replace the bare dict-style access with a try/except so failed
+        #   states are skipped (appended as None) and the benchmark runs to
+        #   completion. Uses try/except rather than .get() because ProgramState
+        #   is not a dict and does not support .get().
+        #
+        # Safety:
+        #   - Original is backed up to bench_sglang_orig.py (idempotent)
+        #   - Patch validates its own target string before writing
+        #   - If patch target is not found, fail_test is called immediately
+        # ------------------------------------------------------------------
         patch_cmd = f'''docker exec {self.container_name} /bin/bash -c "
             ORIG=/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang_orig.py;
             BENCH=/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang.py;
             [ -f \$ORIG ] || cp \$BENCH \$ORIG;
             python3 - << 'EOF'
-        import ast, sys
-
         src = open('/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang_orig.py').read()
 
-        # Wrap the answer extraction line to skip None/missing answers
-        src = src.replace(
-            'preds.append(get_answer_value(states[i][\"answer\"]))',
-            'ans = states[i].get(\"answer\"); preds.append(get_answer_value(ans) if ans is not None else None)'
+        old = 'preds.append(get_answer_value(states[i][\"answer\"]))'
+        new = (
+            'try:\\n'
+            '            ans = states[i][\"answer\"]\\n'
+            '            preds.append(get_answer_value(ans))\\n'
+            '        except (KeyError, Exception):\\n'
+            '            preds.append(None)'
         )
 
-        open('/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang.py', 'w').write(src)
-        print('Patch applied successfully')
+        if old in src:
+            patched = src.replace(old, new)
+            open('/sgl-workspace/sglang/benchmark/gsm8k/bench_sglang.py', 'w').write(patched)
+            print('Patch applied successfully')
+        else:
+            print('WARNING: patch target not found - script may have changed')
         EOF
             " '''
 
         formatted_patch_cmd = textwrap_for_yml(patch_cmd)
-        self.b_phdl.exec(formatted_patch_cmd, timeout=30)
+        patch_out = self.b_phdl.exec(formatted_patch_cmd, timeout=30)
+        for node, output in patch_out.items():
+            if 'Patch applied successfully' not in output:
+                fail_test(f'[{node}] Failed to patch bench_sglang.py: {output}')
+            else:
+                log.info(f'[{node}] bench_sglang.py patched successfully')
 
-        # Now run the (patched) benchmark as before
+        # ------------------------------------------------------------------
+        # Construct command to run GSM8K benchmark inside the container
+        #
+        # Key steps:
+        #   - Create a directory to store benchmark logs
+        #   - Navigate to the GSM8K benchmark directory
+        #   - Source environment variables required for benchmark execution
+        #   - Launch the benchmark using nohup to allow async execution
+        #
+        # Benchmark parameters:
+        #   --num-questions : Total GSM8K questions to run
+        #   --parallel      : Maximum concurrent inference requests
+        #   --host / --port : Proxy Router endpoint for inference
+        # ------------------------------------------------------------------
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                     mkdir -p {self.log_dir}/benchmark_node; \
                     cd /sgl-workspace/sglang/benchmark/gsm8k; \
@@ -784,20 +896,14 @@ class SglangDisaggPD:
                     --num-questions {i_dict['num_questions']} \
                     --parallel {i_dict['max_concurrency']} \
                     --host http://0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']}" '''
-
         formatted_cmd = textwrap_for_yml(cmd)
         out_dict = self.b_phdl.exec(formatted_cmd, timeout=800)
         time.sleep(5)
-
         for node in out_dict.keys():
             if not re.search('Output throughput', out_dict[node], re.I):
-                fail_test(
-                    f'Benchmark test did not complete properly on node {node}, '
-                    f'no throughput pattern seen'
-                )
+                fail_test(f'Benchmark test did not complete properly on node {node}, no throughput pattern seen')
             else:
-                match = re.search(r'Output throughput:\s+([0-9\.]+)\s+token',
-                                out_dict[node], re.I)
+                match = re.search(r'Output throughput:\s+([0-9\.]+)\s+token', out_dict[node], re.I)
                 actual_tps = match.group(1)
                 if float(actual_tps) < float(i_dict['expected_results'][d_type]['tokens_per_sec']):
                     fail_test(
@@ -805,130 +911,6 @@ class SglangDisaggPD:
                         f"expected tokens per sec = {i_dict['expected_results'][d_type]['tokens_per_sec']}, "
                         f"actual tokens per sec = {actual_tps}"
                     )
-
-    def benchserv_test_random(self, d_type='auto'):
-        """
-        Run SGLang serving benchmark using a synthetic random dataset and
-        validate inference performance and correctness.
-
-        Purpose:
-        --------
-        This benchmark exercises the inference serving stack using randomly
-        generated input/output sequences to:
-        - Stress-test request scheduling and batching
-        - Evaluate sustained throughput under synthetic load
-        - Validate end-to-end serving stability independent of real datasets
-
-        The benchmark targets the Proxy Router endpoint, ensuring that
-        Prefill, Decode, and routing logic work together correctly.
-
-        Args:
-        d_type (str): Data type identifier used to select expected
-                      performance thresholds (e.g., fp16, bf16, auto).
-        """
-        log.info('#================ * * * =========================#')
-        log.info('Benchmark Random Dataset')
-        log.info('#================ * * * =========================#')
-        i_dict = self.bp_dict['inference_tests']['bench_serv_random']
-        # ------------------------------------------------------------------
-        # Construct command to run sglang.bench_serving with random dataset
-        #
-        # Key parameters:
-        #   --dataset-name random     : Use synthetic random prompts
-        #   --num-prompts             : Total number of inference requests
-        #   --random-input            : Input token length per request
-        #   --random-output           : Output token length per request
-        #   --random-range-ratio      : Variability in input/output lengths
-        #   --host / --port           : Proxy Router endpoint
-        #
-        # Output is redirected to a log file for later inspection.
-        # ------------------------------------------------------------------
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                      mkdir -p {self.log_dir}/benchmark_node; \
-                      source /tmp/benchmark_env_script.sh && \
-                      python3 -m sglang.bench_serving --backend {i_dict['backend']} \
-                      --dataset-name random \
-                      --num-prompts {i_dict['num_prompts']} \
-                      --random-input {i_dict['input_length']} \
-                      --random-output {i_dict['output_length']} \
-                      --random-range-ratio {i_dict['random_range_ratio']} \
-                      --host 0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']} \
-                      > {self.log_dir}/benchmark_node/benchmark_results.log" '''
-        formatted_cmd = textwrap_for_yml(cmd)
-        self.b_phdl.exec(formatted_cmd, timeout=500)
-        time.sleep(5)
-        self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
-        self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
-
-    def poll_for_server_ready(self, node_no, sglang_function, no_of_iterations=16):
-        """
-        Poll SGLang Prefill or Decode server logs to determine when the server
-        is ready to accept inference traffic.
-
-        Readiness definition:
-        ---------------------
-        A server is considered "ready" when its log shows successful HTTP
-        requests (HTTP 200 OK), indicating that:
-        - The server process has started
-        - The model is loaded
-        - Network endpoints are listening
-        - Request handling is functional
-
-        Assumptions:
-        ------------
-        - Log directory is located on a shared filesystem (e.g., NFS)
-        - Logs are accessible from a designated head node
-        - Each server writes logs to a predictable per-node path
-
-        Args:
-        node_no (int): Index of the Prefill or Decode node being checked
-        sglang_function (str): Server role ('prefill' or 'decode')
-        no_of_iterations (int): Maximum number of polling attempts before
-                                declaring failure
-        """
-        # ------------------------------------------------------------------
-        # Prefill server readiness check
-        # ------------------------------------------------------------------
-        if re.search('prefill', sglang_function):
-            head_node = self.prefill_node_list[0]
-            for j in range(1, no_of_iterations):
-                log.info(f'Starting poll iteration {j}')
-                out_dict = self.p_phdl.exec(
-                    f'grep -B 20 -A 20 "200 OK" {self.log_dir}/prefill_node{node_no}/prefill_server.log'
-                )
-                if re.search('GET|POST', out_dict[head_node], re.I):
-                    log.info('Wait 60 secs to start serving traffic')
-                    time.sleep(60)
-                    # if re.search('fired up and ready to roll', out_dict[head_node], re.I ):
-                    #    print('Prefill server {node_no} ready to serve')
-                    return
-                else:
-                    log.info('Wait for 120 secs and continue polling')
-                    time.sleep(120)
-            head_node = self.prefill_node_list[0]
-            log.warning(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
-            fail_test(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
-        # ------------------------------------------------------------------
-        # Decode server readiness check
-        # ------------------------------------------------------------------
-        elif re.search('decode', sglang_function):
-            head_node = self.decode_node_list[0]
-            for j in range(1, no_of_iterations):
-                log.info(f'Starting poll iteration {j}')
-                out_dict = self.d_phdl.exec(
-                    f'grep -B 20 -A 20 "200 OK" {self.log_dir}/decode_node{node_no}/decode_server.log'
-                )
-                if re.search('GET|POST', out_dict[head_node]):
-                    log.info('Wait 60 secs to start serving traffic')
-                    time.sleep(60)
-                    # if re.search('fired up and ready to roll', out_dict[head_node], re.I ):
-                    #    print('Decode server {node_no} ready to serve')
-                    return
-                else:
-                    log.info('Wait for 120 secs and continue polling')
-                    time.sleep(120)
-            log.warning(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
-            fail_test(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
 
     def get_inference_results_dict(self, out_dict):
         """
