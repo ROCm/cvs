@@ -267,15 +267,16 @@ class SglangDisaggPD:
             self.nccl_ib_gid_index = 3
             cmd = f'docker exec {self.container_name} /bin/bash -c "sudo \
                     cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
-                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so;" '
+                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
+                    sleep 2; ibv_devinfo; sleep 2;" '
             pout_dict = self.p_phdl.exec(cmd)
             dout_dict = self.d_phdl.exec(cmd)
             for node in pout_dict.keys():
-                if not re.search('hca_id:\s+bnxt_', pout_dict[node], re.I):
+                if not re.search('hca_id:\s+(bnxt_|rocep)', pout_dict[node], re.I):
                     log.info("%s", pout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
             for node in dout_dict.keys():
-                if not re.search('hca_id:\s+bnxt_', dout_dict[node], re.I):
+                if not re.search('hca_id:\s+(bnxt_|rocep)', dout_dict[node], re.I):
                     log.info("%s", dout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
