@@ -60,12 +60,19 @@ class EventWriter:
             raise UnknownEventError(
                 f"event {name!r} is not in the closed vocabulary; add it to EVENT_VOCAB in a reviewed change"
             )
+        # Fail loud rather than silently dropping a durable write: a file-backed
+        # writer used after close() would otherwise look like it persisted the event.
+        if self.path is not None and self._fh is None:
+            raise ValueError("EventWriter.emit called after close(); the events.jsonl handle is closed")
         record = {"ts": datetime.now(timezone.utc).isoformat(), "event": name}
         record.update(fields)
-        self.records.append(record)
         if self._fh is not None:
             self._fh.write(json.dumps(record, default=str) + "\n")
             self._fh.flush()
+        else:
+            # Only buffer in memory when there is no file to stream to. High-frequency
+            # events ("step", "request") would otherwise grow self.records without bound.
+            self.records.append(record)
         return record
 
     def close(self) -> None:
@@ -79,3 +86,10 @@ class EventWriter:
     def __exit__(self, *exc) -> bool:
         self.close()
         return False
+
+    def __del__(self) -> None:
+        # Safety net for writers not used via close()/`with`; never raise in __del__.
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001
+            pass

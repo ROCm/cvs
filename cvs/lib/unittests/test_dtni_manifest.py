@@ -34,7 +34,7 @@ from cvs.lib.manifest import (
     write_trajectory,
 )
 from cvs.lib.manifest.events import EVENT_VOCAB, UnknownEventError
-from cvs.lib.manifest.export import collect_manifests, export_runs
+from cvs.lib.manifest.export import FACT_COLUMNS, _flatten_manifest, collect_manifests, export_runs
 
 
 def _full_manifest(run_id: str = "run-1", **scalars) -> Manifest:
@@ -168,6 +168,13 @@ class TestLayout(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not under RunLayout.root"):
             layout.to_remote(Path("/etc/passwd"))
 
+    def test_rejects_escaping_segment(self):
+        """A path-bearing or absolute component must not silently escape the root."""
+        tmp = Path(tempfile.mkdtemp())
+        for bad in ("/etc/cron.d", "..", "a/b", ""):
+            with self.assertRaisesRegex(ValueError, "single path segment"):
+                RunLayout(tmp, "suite", bad, "h123", "run-1")
+
 
 class TestEvents(unittest.TestCase):
     def test_closed_vocabulary(self):
@@ -194,6 +201,18 @@ class TestEvents(unittest.TestCase):
         self.assertEqual([r["event"] for r in records], ["prepare.start", "step", "teardown.done"])
         self.assertTrue(all("ts" in r for r in records))
         self.assertEqual(records[1]["step"], 1)
+
+    def test_streaming_mode_does_not_buffer_in_memory(self):
+        """Flow 7: when streaming to a file, records are not also retained in RAM."""
+        tmp = Path(tempfile.mkdtemp())
+        with EventWriter(tmp / "events.jsonl") as ew:
+            for i in range(100):
+                ew.emit("step", step=i)
+            self.assertEqual(ew.records, [])
+        # In-memory mode (no path) still buffers for callers that read .records.
+        mem = EventWriter(None)
+        mem.emit("step", step=0)
+        self.assertEqual(len(mem.records), 1)
 
 
 class TestSidecars(unittest.TestCase):
@@ -223,6 +242,25 @@ class TestSidecars(unittest.TestCase):
         dump = {"framework": "vllm", "params": {"model": "llama", "tensor_parallelism": 8}}
         out = write_resolved_config(tmp / "config.resolved.yaml", dump)
         self.assertEqual(yaml.safe_load(out.read_text()), dump)
+
+    def test_trajectory_rejects_wide_row(self):
+        """Long-format invariant: a row with an off-schema column is rejected."""
+        tmp = Path(tempfile.mkdtemp())
+        wide = [{"step": 0, "loss": 2.0, "role": "trainer", "host": "n0"}]
+        with self.assertRaisesRegex(ValueError, "long-format"):
+            write_trajectory(tmp / "trajectory.parquet", wide)
+
+    def test_empty_rows_preserve_declared_columns(self):
+        """Empty input keeps the declared schema instead of a column-less frame."""
+        tmp = Path(tempfile.mkdtemp())
+        write_trajectory(tmp / "trajectory.parquet", [])
+        traj = read_trajectory(tmp / "trajectory.parquet")
+        self.assertEqual(len(traj), 0)
+        self.assertEqual(sorted(traj.columns), sorted(["step", "metric", "value", "role", "host"]))
+        write_samples(tmp / "samples.parquet", [])
+        samples = read_samples(tmp / "samples.parquet")
+        self.assertEqual(len(samples), 0)
+        self.assertIn("request_id", samples.columns)
 
 
 class TestExport(unittest.TestCase):
@@ -254,6 +292,97 @@ class TestExport(unittest.TestCase):
         ):
             self.assertIn(col, fact.columns)
         self.assertEqual(set(fact["run_id"]), {"run-1", "run-2"})
+
+
+class TestManifestHardening(unittest.TestCase):
+    """Latent-bug hardening (NaN/Inf JSON, emit-after-close, empty export, visible skip)."""
+
+    def test_nonfinite_scalars_are_valid_json(self):
+        """A NaN/Inf scalar persists as null so the manifest stays strict-JSON and reads back."""
+        tmp = Path(tempfile.mkdtemp())
+        manifest = _full_manifest()
+        manifest.verdicts.scalars["loss"] = float("nan")
+        manifest.verdicts.scalars["tput"] = float("inf")
+        manifest.resources.per_host["n0"]["gpu_util"] = float("-inf")
+        layout = RunLayout(tmp, "s", "c", "h", "r").ensure()
+        manifest.write(layout.manifest_path)
+        raw = layout.manifest_path.read_text()
+
+        def _reject(token):
+            raise AssertionError(f"non-finite token {token!r} in manifest JSON")
+
+        parsed = json.loads(raw, parse_constant=_reject)  # strict JSON: must not raise
+        self.assertIsNone(parsed["verdicts"]["scalars"]["loss"])
+        self.assertIsNone(parsed["verdicts"]["scalars"]["tput"])
+        self.assertIsNone(parsed["resources"]["per_host"]["n0"]["gpu_util"])
+        again = Manifest.read(layout.manifest_path)
+        self.assertIsNone(again.verdicts.scalars["loss"])
+
+    def test_finite_scalar_survives_as_float(self):
+        """Guard: a finite scalar must NOT be coerced to None."""
+        tmp = Path(tempfile.mkdtemp())
+        manifest = _full_manifest(throughput=1234.5)
+        layout = RunLayout(tmp, "s", "c", "h", "r").ensure()
+        manifest.write(layout.manifest_path)
+        self.assertEqual(Manifest.read(layout.manifest_path).verdicts.scalars["throughput"], 1234.5)
+
+    def test_emit_after_close_raises(self):
+        """A file-backed writer raises on emit-after-close; in-memory is unaffected."""
+        tmp = Path(tempfile.mkdtemp())
+        ew = EventWriter(tmp / "events.jsonl")
+        ew.emit("prepare.start")
+        ew.close()
+        with self.assertRaisesRegex(ValueError, "after close"):
+            ew.emit("prepare.done")
+        mem = EventWriter(None)
+        mem.close()
+        self.assertEqual(mem.emit("step", step=1)["event"], "step")
+
+    def test_empty_export_has_fact_columns(self):
+        """Exporting an empty tree yields the fixed-schema fact table, not column-less."""
+        import pandas as pd
+
+        tmp = Path(tempfile.mkdtemp())
+        fact = pd.read_parquet(export_runs(tmp, tmp / "fact.parquet"))
+        self.assertEqual(len(fact), 0)
+        self.assertEqual(list(fact.columns), FACT_COLUMNS)
+        self.assertEqual(list(fact["run_id"]), [])  # column access must not KeyError
+
+    def test_fact_columns_match_flatten(self):
+        """Parity guard: FACT_COLUMNS must equal the static (non-scalar) keys of _flatten_manifest."""
+        static = [k for k in _flatten_manifest(_full_manifest()) if not k.startswith("scalar_")]
+        self.assertEqual(static, FACT_COLUMNS)
+
+    def test_collect_logs_unreadable_skip(self):
+        """A skipped corrupt/forward-incompatible manifest is logged, not silently dropped."""
+        tmp = Path(tempfile.mkdtemp())
+        good = RunLayout(tmp, "s", "c", "h", "good").ensure()
+        _full_manifest(run_id="good").write(good.manifest_path)
+        bad = RunLayout(tmp, "s", "c", "h", "bad").ensure()
+        payload = json.loads(good.manifest_path.read_text())
+        payload["unknown_future_field"] = 1  # rejected by extra="forbid"
+        bad.manifest_path.write_text(json.dumps(payload))
+        with self.assertLogs("cvs.lib.manifest.export", level="WARNING") as cm:
+            manifests = collect_manifests(tmp)
+        self.assertEqual([m.identity.run_id for m in manifests], ["good"])
+        self.assertTrue(any("bad" in line for line in cm.output))
+
+    def test_never_touched_fields_roundtrip(self):
+        """Populate rarely-set fields so write/read equality actually guards them."""
+        tmp = Path(tempfile.mkdtemp())
+        manifest = _full_manifest()
+        manifest.schema_version = "9"
+        manifest.identity.framework_versions = {"vllm": "0.6.0"}
+        manifest.identity.cvs_version = "1.2.3"
+        manifest.config.datasets = [{"name": "sharegpt", "sha": "abc"}]
+        manifest.verdicts.flags = {"degraded": "true"}
+        manifest.verdicts.failure_category = "liveness_timeout"
+        manifest.verdicts.skip_reason = "no gpus"
+        manifest.resources.oom = True
+        manifest.sidecars.trajectory = "trajectory.parquet"
+        layout = RunLayout(tmp, "s", "c", "h", "r").ensure()
+        manifest.write(layout.manifest_path)
+        self.assertEqual(Manifest.read(layout.manifest_path), manifest)
 
 
 if __name__ == "__main__":

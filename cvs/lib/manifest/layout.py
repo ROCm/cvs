@@ -7,10 +7,28 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional, Union
 
 _PathLike = Union[str, "Path"]
+
+_RESERVED_SEGMENTS = frozenset({"", ".", ".."})
+
+
+def _safe_segment(field: str, value: str) -> str:
+    """Reject a path component that could escape the artifact root.
+
+    The content-addressable suffix is reused verbatim on the remote mirror (A1),
+    so an absolute or ``..``/separator-bearing component would silently relocate
+    or escape *both* trees (e.g. an absolute component discards ``artifact_dir``).
+    """
+    if value in _RESERVED_SEGMENTS or "/" in value or "\\" in value or os.sep in value:
+        raise ValueError(
+            f"RunLayout {field}={value!r} must be a single path segment "
+            r"(no '', '.', '..', '/', or '\')"
+        )
+    return value
 
 
 class RunLayout:
@@ -48,10 +66,10 @@ class RunLayout:
         remote_artifact_dir: Optional[_PathLike] = None,
     ) -> None:
         self.artifact_dir = Path(artifact_dir)
-        self.test_id = test_id
-        self.cell_id = cell_id
-        self.short_hash = short_hash
-        self.run_id = run_id
+        self.test_id = _safe_segment("test_id", test_id)
+        self.cell_id = _safe_segment("cell_id", cell_id)
+        self.short_hash = _safe_segment("short_hash", short_hash)
+        self.run_id = _safe_segment("run_id", run_id)
         self.remote_artifact_dir = Path(remote_artifact_dir) if remote_artifact_dir is not None else None
 
     @property

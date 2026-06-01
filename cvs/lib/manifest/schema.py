@@ -8,6 +8,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from __future__ import annotations
 
 import json
+import math
+import os
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
@@ -16,6 +19,23 @@ from pydantic import BaseModel, ConfigDict, Field
 from cvs.lib.config.thresholds import ThresholdVerdict
 
 OverallStatus = Literal["complete", "failed", "skipped", "error"]
+
+
+def _finite_only(value):
+    """Replace non-finite floats (NaN/Inf) with None so the manifest is strict JSON.
+
+    A diverged-loss run (``NaN``) or an ``inf`` rate/goodput would otherwise emit
+    the bare ``NaN``/``Infinity`` tokens that jq / duckdb / Go reject -- exactly on
+    the failure runs the manifest most needs to stay cat-able. Recurses dicts/lists;
+    every float-bearing manifest field is Optional so the coerced ``None`` reads back.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _finite_only(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_finite_only(v) for v in value]
+    return value
 
 
 class Identity(BaseModel):
@@ -75,7 +95,7 @@ class ConfigInputs(BaseModel):
     model: Optional[str] = None
     env: Dict[str, str] = Field(default_factory=dict)
     commands: List[str] = Field(default_factory=list)
-    seed: int = 0
+    seed: Optional[int] = None
 
 
 class PhaseTiming(BaseModel):
@@ -106,14 +126,16 @@ class Verdicts(BaseModel):
     skip_reason: Optional[str] = None
     threshold_verdicts: List[ThresholdVerdict] = Field(default_factory=list)
     pattern_matches: List[PatternMatch] = Field(default_factory=list)
-    scalars: Dict[str, float] = Field(default_factory=dict)
+    # Optional so a non-finite metric (NaN loss, inf goodput) persists as null
+    # rather than breaking strict JSON; see Manifest.write / _finite_only.
+    scalars: Dict[str, Optional[float]] = Field(default_factory=dict)
     flags: Dict[str, str] = Field(default_factory=dict)
 
 
 class ResourceSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    per_host: Dict[str, Dict[str, float]] = Field(default_factory=dict)
+    per_host: Dict[str, Dict[str, Optional[float]]] = Field(default_factory=dict)
     oom: bool = False
 
 
@@ -150,7 +172,23 @@ class Manifest(BaseModel):
     def write(self, path) -> Path:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(self.model_dump(mode="json"), indent=2, default=str))
+        # allow_nan=False + _finite_only keep the file strict-JSON (jq/duckdb-safe)
+        # even when a failed run carries NaN/Inf scalars.
+        payload = json.dumps(_finite_only(self.model_dump(mode="json")), indent=2, allow_nan=False)
+        # Atomic write: a crash mid-write must never leave a half-written
+        # manifest.json for export.collect_manifests to trip over. Stage into a
+        # sibling temp file (same filesystem) and os.replace into place.
+        fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=f".{p.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(payload)
+            os.replace(tmp, p)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
         return p
 
     @classmethod

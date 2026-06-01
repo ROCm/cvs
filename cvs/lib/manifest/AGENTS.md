@@ -17,20 +17,29 @@ v2.A reuse — so its shape is a contract.
 
 - **The manifest stays small — pointers, not arrays.** `Manifest` holds
   identity, verdicts, scalars, phase timings, and `SidecarPointers`
-  (`schema.py:120`). Per-sample/per-step arrays NEVER go in the manifest; they
+  (`schema.py:142`). Per-sample/per-step arrays NEVER go in the manifest; they
   go to `samples.parquet` / `trajectory.parquet` referenced by path. Target
   5–50 KB, cat-able.
 - **`events.jsonl` vocabulary is CLOSED.** `EventWriter.emit` raises
   `UnknownEventError` for any name outside `EVENT_VOCAB` (`events.py:19`). A new
   event name is a deliberate, reviewed edit to that frozenset — not an ad-hoc
-  `log.info`.
+  `log.info`. A file-backed writer also raises if `emit` is called after
+  `close()` (no silent dropped writes) and streams (does NOT buffer `.records`);
+  non-JSON-serializable `**fields` are persisted via `default=str` (lossy) — pass
+  JSON-native values.
+- **Manifest scalars stay strict-JSON.** `Verdicts.scalars` and
+  `ResourceSummary.per_host` are `Optional[float]`; `Manifest.write` coerces any
+  non-finite value (NaN loss, inf goodput) to `null` via `_finite_only` +
+  `allow_nan=False`, so a failed run's manifest is still jq/duckdb-parseable. A
+  reader must therefore guard `scalars[k]` for `None` before arithmetic.
 - **Sidecars are long-format: a new metric is a new ROW, not a new column.**
   `TRAJECTORY_COLUMNS = [step, metric, value, role, host]` (`sidecars.py:20`).
-  Keeping the schema fixed is what makes the Parquet stable across frameworks.
-  (Per-sample rows may stay wide, but new measurements still arrive as data, not
-  schema changes.)
+  `write_trajectory` enforces it (a row with an off-schema key raises). Keeping
+  the schema fixed is what makes the Parquet stable across frameworks. Per-sample
+  rows stay wide (`SAMPLE_COLUMNS` is only the empty-input identity skeleton); new
+  measurements arrive as data, not schema changes.
 - **`workload_hash` + `verification_hash` are recorded day one.** `Identity`
-  carries both (`schema.py:31`), populated by `Job._build_manifest` from
+  carries both (`schema.py:51`), populated by `Job._build_manifest` from
   `config.workload_hash()` / `config.verification_hash()`. They exist so v2.A
   reuse-manifests is a pure tack-on with no migration — never drop or repurpose
   them.
@@ -55,7 +64,7 @@ v2.A reuse — so its shape is a contract.
 
 Scalars are open: in the adapter's `parse`, put the value in
 `ctx.result.scalars["<name>"]`; `Job` copies it into `Verdicts.scalars`
-(`schema.py:109`) and `export._flatten_manifest` emits it as a `scalar_<name>`
+(`schema.py:131`) and `export._flatten_manifest` emits it as a `scalar_<name>`
 fact-table column automatically. A *structural* verdict field (new typed key on
 `Verdicts`/`Identity`) is a reviewed schema edit — add it with a default so old
 manifests still validate (`extra="forbid"` is on every model).
