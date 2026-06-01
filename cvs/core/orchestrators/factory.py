@@ -11,7 +11,7 @@ from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.container import ContainerOrchestrator
 
 
-VALID_CONTAINER_LIFETIMES = ("external", "per_run", "persistent")
+VALID_CONTAINER_LIFETIMES = ("no_launch", "per_run", "persistent")
 
 # Packaged default provisioning script, run inside each freshly-launched
 # container when container.setup_script is not set. Installs openssh-server so
@@ -44,14 +44,14 @@ def _resolve_container_lifetime(container):
     if 'enabled' in container:
         raise ValueError(
             "container.enabled is removed; delete the field and set "
-            "container.lifetime to one of 'external', 'per_run', 'persistent'"
+            "container.lifetime to one of 'no_launch', 'per_run', 'persistent'"
         )
 
     if 'launch' in container:
         raise ValueError(
             "container.launch is removed; delete the field and set "
             "container.lifetime ('launch: true' -> 'per_run', "
-            "'launch: false' -> 'external')"
+            "'launch: false' -> 'no_launch')"
         )
 
     if 'lifetime' in container:
@@ -143,8 +143,9 @@ class OrchestratorConfig:
           }
           ```
           lifetime: Container lifecycle policy [default: 'per_run']
-            - 'external'   : containers managed outside CVS. Setup verifies they
-                             are running; teardown is a no-op.
+            - 'no_launch'  : CVS never launches the container. Setup verifies a
+                             container with the configured name is already running
+                             on every host; teardown is a no-op.
             - 'per_run'    : start at setup, remove at teardown (the default).
             - 'persistent' : start if absent / attach if present; never torn down
                              by the run. Pin container.name explicitly under this
@@ -209,7 +210,7 @@ class OrchestratorConfig:
                            Required keys: orchestrator, node_dict, username, priv_key_file
                            Optional keys: container,
                            head_node_dict, password (defaults provided for missing optional keys)
-                           Container structure: {lifetime: 'external'|'per_run'|'persistent', runtime: {name: str, args: dict}, image: str, name: str, setup_script: str, ...}
+                           Container structure: {lifetime: 'no_launch'|'per_run'|'persistent', runtime: {name: str, args: dict}, image: str, name: str, setup_script: str, ...}
             testsuite_config: Test suite specific configuration (dict or path to <testsuite>_config.json)
                             Can override any keys from cluster_config
 

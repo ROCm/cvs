@@ -275,8 +275,8 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         This method should be called explicitly by tests when they need containers.
         Behavior branches on container.lifetime:
-          - 'external'   : verify the (externally managed) container is running and
-                           set container_id; never starts anything.
+          - 'no_launch'  : verify a container with the configured name is running
+                           and set container_id; never starts anything.
           - 'per_run'    : start fresh containers on all hosts.
           - 'persistent' : attach to a container already running on all hosts (with
                            an image-SHA check), otherwise start fresh. Idempotent.
@@ -301,8 +301,8 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             return False
         container_name = self.get_container_name(self.container_config, image)
 
-        if lifetime == 'external':
-            # Externally managed: verify only, never start.
+        if lifetime == 'no_launch':
+            # CVS never launches it: verify only, never start.
             return self.verify_containers_running(container_name)
 
         if lifetime == 'persistent':
@@ -406,7 +406,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         # Provision the freshly-launched container (install packages on top of
         # the base image, e.g. openssh-server). Runs only on this fresh-start
-        # path, so 'external' and 'persistent'-attach skip it automatically.
+        # path, so 'no_launch' and 'persistent'-attach skip it automatically.
         return self._provision_container()
 
     def _provision_container(self):
@@ -637,7 +637,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         This method should be called explicitly by tests for cleanup. Behavior
         branches on container.lifetime:
-          - 'external'   : no-op (CVS does not own externally managed containers).
+          - 'no_launch'  : no-op (CVS does not own a container it did not launch).
           - 'persistent' : no-op (left running for the next run; user removes it
                            explicitly).
           - 'per_run'    : force-remove the container CVS started.
@@ -647,7 +647,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         """
         lifetime = self.container_config.get('lifetime', 'per_run')
 
-        if lifetime in ('external', 'persistent'):
+        if lifetime in ('no_launch', 'persistent'):
             self.log.debug(f"lifetime={lifetime}, leaving containers running")
             return True
 

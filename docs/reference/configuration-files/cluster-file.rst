@@ -138,7 +138,7 @@ The ``container`` block configures the container backend. It is consumed by the 
      - Description
    * - ``lifetime``
      - ``per_run``
-     - Container lifecycle policy: ``external``, ``per_run``, or ``persistent``. See the truth table below.
+     - Container lifecycle policy: ``no_launch``, ``per_run``, or ``persistent``. See the truth table below.
    * - ``image``
      - (required)
      - Image with the test dependencies (for example ``rvs``) the suite invokes. Must be present locally on each node or pullable from a reachable registry. An in-container ``sshd`` is not required up front; it is installed at launch by ``setup_script``.
@@ -211,9 +211,9 @@ When ``runtime.name`` is ``docker``, the keys below configure the underlying ``d
    * - ``lifetime``
      - ``setup_containers``
      - ``teardown_containers``
-   * - ``external``
+   * - ``no_launch``
      - Verify a container with the configured name is already running on every host; set ``container_id``. Never starts anything.
-     - No-op. CVS does not own externally managed containers.
+     - No-op. CVS does not own a container it did not launch.
    * - ``per_run`` (default)
      - Start a fresh container on every host (force-removing any stale same-named container first).
      - Force-remove the container CVS started.

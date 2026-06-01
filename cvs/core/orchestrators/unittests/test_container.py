@@ -11,7 +11,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # so tests run with no SSH or container runtime.
 #
 # The per-lifetime setup/teardown behavior is pinned here so any future change to the
-# external / per_run / persistent contract has a loud canary. Pssh + RuntimeFactory are
+# no_launch / per_run / persistent contract has a loud canary. Pssh + RuntimeFactory are
 # patched once in setUp (not per method); _make() returns a fresh orch + runtime mock.
 
 import base64
@@ -122,18 +122,18 @@ class TestContainerOrchestrator(unittest.TestCase):
         self.assertTrue(orch.setup_containers())
         runtime.setup_containers.assert_called_once()
 
-    def test_setup_containers_external_verifies_only(self):
-        # external never starts a container; it verifies and sets container_id.
-        orch, runtime = self._make(lifetime="external")
+    def test_setup_containers_no_launch_verifies_only(self):
+        # no_launch never starts a container; it verifies and sets container_id.
+        orch, runtime = self._make(lifetime="no_launch")
         runtime.is_running.return_value = _RUNNING
         self.assertTrue(orch.setup_containers())
         runtime.setup_containers.assert_not_called()
         self.assertEqual(orch.container_id, "cvs_iter_test")
 
-    def test_setup_containers_external_not_running_fails(self):
-        # external + container not actually running -> verification fails; nothing
+    def test_setup_containers_no_launch_not_running_fails(self):
+        # no_launch + container not actually running -> verification fails; nothing
         # is launched and nothing is provisioned.
-        orch, runtime = self._make(lifetime="external")
+        orch, runtime = self._make(lifetime="no_launch")
         runtime.is_running.return_value = {
             "10.0.0.1": {"running": False, "exit_code": 0, "name": ""},
         }
@@ -224,9 +224,9 @@ class TestContainerOrchestrator(unittest.TestCase):
     # teardown_containers lifetime branching
     # ------------------------------------------------------------------
 
-    def test_teardown_containers_short_circuits_when_lifetime_external(self):
-        # external means containers are externally managed; teardown is a no-op.
-        orch, runtime = self._make(lifetime="external")
+    def test_teardown_containers_short_circuits_when_lifetime_no_launch(self):
+        # no_launch means CVS did not launch the container; teardown is a no-op.
+        orch, runtime = self._make(lifetime="no_launch")
         orch.container_id = "test_container"
         self.assertTrue(orch.teardown_containers())
         runtime.teardown_containers.assert_not_called()
@@ -302,12 +302,12 @@ class TestContainerOrchestrator(unittest.TestCase):
 
     def test_provisioning_runs_only_on_fresh_launch(self):
         # Dispatch matrix: provisioning (one exec) happens only on a fresh launch
-        # (per_run, persistent cold-start); external and persistent-attach skip it.
+        # (per_run, persistent cold-start); no_launch and persistent-attach skip it.
         # (name, lifetime, is_running, image_sha, expect_provision)
         cases = [
             ("per_run", "per_run", None, None, True),
             ("persistent_cold", "persistent", _NOT_RUNNING, None, True),
-            ("external", "external", _RUNNING, None, False),
+            ("no_launch", "no_launch", _RUNNING, None, False),
             ("persistent_attach", "persistent", _RUNNING, _SHA_MATCH, False),
         ]
         for name, lifetime, is_running, image_sha, expect in cases:

@@ -51,7 +51,7 @@ Open the copied file and edit:
 - ``container.image``: an image present on every node or pullable from a reachable registry. The image must include the workload binary (for example ``rvs``); ``openssh-server`` is installed at launch by ``setup_script``, not required in the image.
 - ``container.name``: container name on each host. For parallel runs make this per-iteration unique (for example ``cvs_iter_<run_id>``). Pin it explicitly when using ``lifetime: persistent``.
 - ``container.setup_script`` (optional): path to a shell script run inside each freshly-launched container before sshd setup, to install packages on top of the base image. Omit to use the packaged default that installs ``openssh-server``.
-- ``container.lifetime``: ``external``, ``per_run``, or ``persistent``. See the lifecycle note below.
+- ``container.lifetime``: ``no_launch``, ``per_run``, or ``persistent``. See the lifecycle note below.
 
 For the full schema and runtime argument reference, see :doc:`/reference/configuration-files/cluster-file`.
 
@@ -76,7 +76,7 @@ What happens during the run:
 - The ``orch`` fixture in ``rvs_cvs`` reads ``orchestrator: container`` from the cluster file and constructs a ``ContainerOrchestrator``.
 - With ``lifetime: per_run``, CVS removes any container with the same name on each host, runs the configured image with the merged ``runtime.args``, runs ``container.setup_script`` inside the new container (default: install ``openssh-server``), and starts an in-container ``sshd`` on port ``2224``.
 - With ``lifetime: persistent``, CVS attaches to a container already running on every host (skipping provisioning and ``sshd`` setup if it is already up), or starts one fresh -- provisioning it -- if none is running.
-- With ``lifetime: external``, CVS verifies that a container with the configured name is already running on every host and reuses it.
+- With ``lifetime: no_launch``, CVS verifies that a container with the configured name is already running on every host and reuses it.
 - All ``rvs`` invocations are routed through the container via ``docker exec`` and the in-container ``sshd``.
 
 Step 4: Verify the run actually used the container
@@ -106,11 +106,11 @@ The ``container.lifetime`` policy controls who owns the container lifecycle:
 
 - ``per_run`` (default) - CVS starts a fresh container at setup and force-removes it at teardown. Anything written to the container overlay is lost when the run ends.
 - ``persistent`` - CVS attaches to the container if it is already running on every host, or starts it fresh if it is running on no host. Teardown is a no-op, so the container (and its overlay) survives across runs. This unblocks install-then-run workflows: ``cvs run install_rvs`` followed by ``cvs run rvs_cvs`` in separate invocations. If the container is running on some hosts but not all, CVS fails rather than rebuilding (which would destroy the overlay on the still-running hosts) -- remove it on all hosts and rerun, or restart it on the missing hosts. Pin ``container.name`` so a tag bump does not silently abandon the overlay.
-- ``external`` - CVS does not start anything. It verifies that a container with the configured name is already running on every host and reuses it. Teardown is a no-op.
+- ``no_launch`` - CVS does not start anything. It verifies that a container with the configured name is already running on every host and reuses it. Teardown is a no-op.
 
 See the ``lifetime`` truth table in :doc:`/reference/configuration-files/cluster-file` for the full state matrix.
 
-To stop and remove a container that CVS left running (``persistent`` or ``external``), run on every node:
+To stop and remove a container that CVS left running (``persistent`` or ``no_launch``), run on every node:
 
 .. code:: bash
 

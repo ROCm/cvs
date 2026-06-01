@@ -31,7 +31,7 @@
 
     "_container_block_comment": "Container backend configuration. Consumed by ContainerOrchestrator in cvs/core/orchestrators/container.py. See README.md for the full schema and lifetime semantics.",
     "container": {
-        "_lifetime_comment": "Container lifecycle policy. 'external' = containers managed outside CVS (verify-only, never stopped). 'per_run' = CVS starts on setup and removes on teardown. 'persistent' = CVS starts if absent / attaches if present and leaves running on exit (unblocks install-then-run; pin 'name' explicitly).",
+        "_lifetime_comment": "Container lifecycle policy. 'no_launch' = CVS never launches the container (verify it is already running, never stopped). 'per_run' = CVS starts on setup and removes on teardown. 'persistent' = CVS starts if absent / attaches if present and leaves running on exit (unblocks install-then-run; pin 'name' explicitly).",
         "lifetime": "per_run",
 
         "_image_comment": "Image with the test dependencies (rvs, etc.) the suite invokes. Must be present locally on each node OR pullable from a reachable registry. An in-container sshd is NOT required up front -- it is installed by setup_script (see below) if missing.",

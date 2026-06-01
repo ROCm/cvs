@@ -43,7 +43,7 @@ Consumed by `ContainerOrchestrator` in [`cvs/core/orchestrators/container.py`](.
 
 | Key | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `lifetime` | str | `"per_run"` | Container lifecycle policy: `external`, `per_run`, or `persistent`. See the truth table below. |
+| `lifetime` | str | `"per_run"` | Container lifecycle policy: `no_launch`, `per_run`, or `persistent`. See the truth table below. |
 | `image` | str | (required) | Image with the test dependencies (rvs, etc.) the suite invokes. Must be present locally on each node OR pullable from a reachable registry. An in-container sshd is **not** required up front -- `setup_script` installs it if missing. |
 | `name` | str | (required) | Container name on each host. For parallel runs make this per-iteration unique (e.g. `cvs_iter_<run_id>`). |
 | `setup_script` | str | (packaged default) | Optional path to a shell script run inside each freshly-launched container (before sshd setup) to install packages on top of the base image. `null` or omitting the key both use the packaged default that installs `openssh-server` only (there is no value that disables provisioning). A non-existent path fails at config load. Delivered inline via `docker exec` (so the base image needs `bash` + `base64`, and the script must stay under ~16 KB); the default is apt-based and runs as the container's exec user (root) -- non-apt images need a custom script. |
@@ -76,7 +76,7 @@ RDMA-ready container; the keys below are only needed to extend or override.
 
 | `lifetime` | `setup_containers` | `teardown_containers` |
 | --- | --- | --- |
-| `external` | Verify the container is already running on every host; set `container_id`. Never starts anything. | No-op. CVS does not own externally managed containers. |
+| `no_launch` | Verify the container is already running on every host; set `container_id`. Never starts anything. | No-op. CVS does not own a container it did not launch. |
 | `per_run` (default) | Start a fresh container on every host (force-removing any stale same-named container first). | Force-remove the container CVS started. |
 | `persistent` | Attach if the container is already running on every host (with a per-host image-SHA check; cross-host SHA skew or an unreadable SHA is a hard error). Start fresh only if it is running on no host. Running on some hosts but not all is a hard error (CVS will not force-remove the still-running hosts and destroy their overlay). Idempotent across runs. | No-op. The container is left running for the next run; remove it yourself when done. |
 
