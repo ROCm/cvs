@@ -86,6 +86,12 @@ def _resolve_class(raw: dict) -> Type[BaseTestConfig]:
     framework = raw.get("framework")
     if framework is None:
         raise ConfigError("config is missing required 'framework' field")
+    # Guard the type before the registry lookup: an unhashable ``framework``
+    # (list/dict) would make ``CONFIG_REGISTRY.get(framework)`` raise a raw
+    # TypeError that escapes the ConfigError contract, and a non-str (int/bool)
+    # can never match a registered key anyway.
+    if not isinstance(framework, str):
+        raise ConfigError(f"'framework' must be a string, got {type(framework).__name__}")
     cls = CONFIG_REGISTRY.get(framework)
     if cls is None:
         known = ", ".join(sorted(CONFIG_REGISTRY)) or "<none>"

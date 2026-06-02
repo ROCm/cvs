@@ -36,6 +36,15 @@ class TestConfigDispatch(unittest.TestCase):
         with self.assertRaises(ConfigError):
             parse_config({**make_base(), "framework": "vlm"})
 
+    def test_rejects_non_string_framework_as_configerror(self):
+        # A non-str framework must fail closed as ConfigError. An unhashable
+        # value (list/dict) previously leaked a raw TypeError from the registry
+        # dict.get(); int/bool can never match a registered key.
+        for bad in ([], {}, 1, True):
+            with self.subTest(framework=bad):
+                with self.assertRaises(ConfigError):
+                    parse_config({**make_base(), "framework": bad})
+
     def test_rejects_extra_key(self):
         for framework, base in iter_bases():
             with self.subTest(framework=framework):

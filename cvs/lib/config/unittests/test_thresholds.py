@@ -178,6 +178,35 @@ class TestNumericFieldBounds(unittest.TestCase):
                 ConvergenceThreshold(metric="loss", target=0.0, epsilon=0.1, by_step=bad)
         ConvergenceThreshold(metric="loss", target=0.0, epsilon=0.1, by_step=1)
 
+    def test_negative_bounds_rejected_at_load(self):
+        # A negative tolerance/epsilon/max_variance is never satisfiable (the
+        # measured quantity is >= 0), so it would silently fail every run rather
+        # than erroring. It must be rejected at construction, like percentile.
+        with self.assertRaises(ValidationError):
+            MonotonicityThreshold(metric="loss", tolerance=-0.1)
+        with self.assertRaises(ValidationError):
+            ConvergenceThreshold(metric="loss", target=0.0, epsilon=-0.1)
+        with self.assertRaises(ValidationError):
+            StabilityThreshold(metric="ttft_ms", max_variance=-1.0)
+
+    def test_zero_bounds_accepted(self):
+        # Zero is the meaningful strict edge (exact match / perfectly constant),
+        # so the lower bound is inclusive.
+        MonotonicityThreshold(metric="loss", tolerance=0.0)
+        ConvergenceThreshold(metric="loss", target=0.0, epsilon=0.0)
+        StabilityThreshold(metric="ttft_ms", max_variance=0.0)
+
+    def test_negative_bounds_rejected_via_config(self):
+        for framework, base in iter_bases():
+            for thr in (
+                {"type": "convergence", "metric": "loss", "target": 0.0, "epsilon": -0.1},
+                {"type": "stability", "metric": "ttft_ms", "max_variance": -1.0},
+                {"type": "monotonicity", "metric": "loss", "tolerance": -0.1},
+            ):
+                with self.subTest(framework=framework, threshold=thr["type"]):
+                    with self.assertRaises(ConfigError):
+                        parse_config({**base, "thresholds": [thr]})
+
 
 if __name__ == "__main__":
     unittest.main()

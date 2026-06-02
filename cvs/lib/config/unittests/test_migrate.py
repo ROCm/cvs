@@ -166,6 +166,25 @@ class TestMigrateFailsClosed(unittest.TestCase):
         with self.assertRaises(ValueError):
             migrate_vllm_megaconfig(mega, target_gpu="mi300")
 
+    def test_nonnumeric_result_value_fails_loud_with_context(self):
+        # A non-numeric result_dict target must abort migration with a clear,
+        # metric-named error -- not a bare float() ValueError mid-derivation, and
+        # never a silently-dropped threshold.
+        mega = {
+            "config": {"nnodes": "1"},
+            "benchmark_params": {
+                "bad": {
+                    "model": "z",
+                    "concurrency_levels": [1],
+                    "sequence_combinations": [{"isl": "1", "osl": "1"}],
+                    "server_script": "s.sh",
+                    "result_dict": {"c1": {"total_throughput_per_sec": "n/a"}},
+                },
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "total_throughput_per_sec"):
+            migrate_vllm_megaconfig(mega, target_gpu="mi300")
+
 
 if __name__ == "__main__":
     unittest.main()
