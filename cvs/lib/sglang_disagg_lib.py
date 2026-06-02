@@ -776,7 +776,7 @@ class SglangDisaggPD:
         # ------------------------------------------------------------------
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
-                      pip install --upgrade 'sglang[all]' && \
+                      pip install --upgrade --no-deps 'sglang[all]' && \
                       cd /sgl-workspace/sglang/benchmark/gsm8k && \
                       source /tmp/benchmark_env_script.sh && \
                       nohup python3 ./bench_sglang.py \
