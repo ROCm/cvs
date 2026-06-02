@@ -39,6 +39,22 @@ def _csv_list(value) -> List[str]:
     return []
 
 
+def _result_float(metric: str, value) -> float:
+    """Coerce a v1 ``result_dict`` value to float, failing loud at conversion.
+
+    Unlike ``_int`` (which defaults), a non-numeric threshold target must NOT be
+    silently dropped -- that would drop the derived threshold and lose the
+    guarantee. Raise a clear ValueError naming the metric instead of letting the
+    bare ``float()`` error escape mid-derivation.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"result_dict metric {metric!r} has non-numeric value {value!r}; cannot derive a threshold from it"
+        ) from exc
+
+
 def _thresholds_from_result_dict(result_dict: Dict) -> List[Dict]:
     """Best-effort: floor throughput at the observed min, ceil latencies at max.
 
@@ -61,11 +77,11 @@ def _thresholds_from_result_dict(result_dict: Dict) -> List[Dict]:
         if not isinstance(entry, dict):
             continue
         if "total_throughput_per_sec" in entry:
-            throughputs.append(float(entry["total_throughput_per_sec"]))
+            throughputs.append(_result_float("total_throughput_per_sec", entry["total_throughput_per_sec"]))
         if "mean_ttft_ms" in entry:
-            ttfts.append(float(entry["mean_ttft_ms"]))
+            ttfts.append(_result_float("mean_ttft_ms", entry["mean_ttft_ms"]))
         if "mean_tpot_ms" in entry:
-            tpots.append(float(entry["mean_tpot_ms"]))
+            tpots.append(_result_float("mean_tpot_ms", entry["mean_tpot_ms"]))
     thresholds: List[Dict] = []
     if throughputs:
         thresholds.append(

@@ -236,7 +236,10 @@ class MonotonicityThreshold(Threshold):
     metric: str
     direction: Literal["non_increasing", "non_decreasing"] = "non_increasing"
     window: float = Field(default=0.25, gt=0, le=1)
-    tolerance: float = 0.0
+    # Allowed reversal magnitude; must be non-negative. A negative tolerance makes
+    # ``worst <= tolerance`` unsatisfiable even for a perfectly monotonic series
+    # (worst is >= 0), so every run would fail with no error -- reject at load.
+    tolerance: float = Field(default=0.0, ge=0)
     role: Optional[str] = None
 
     def evaluate(self, view: ResultView) -> ThresholdVerdict:
@@ -273,7 +276,10 @@ class ConvergenceThreshold(Threshold):
     type: Literal["convergence"] = "convergence"
     metric: str
     target: float
-    epsilon: float
+    # Tolerance band around ``target``; must be non-negative. A negative epsilon
+    # makes ``abs(v - target) <= epsilon`` unsatisfiable, so the series can never
+    # converge regardless of the data -- a silent always-fail. Reject at load.
+    epsilon: float = Field(ge=0)
     # Same class of bug as PercentileThreshold.percentile: a by_step < 1 is
     # meaningless and would slice the series from the wrong end (``series[:0]``
     # -> vacuous, ``series[:-k]`` -> silently drops the tail).
@@ -302,7 +308,10 @@ class StabilityThreshold(Threshold):
 
     type: Literal["stability"] = "stability"
     metric: str
-    max_variance: float
+    # Variance is always >= 0, so a negative bound can never be satisfied and
+    # would fail every run with no error. Reject at load (0 means "require a
+    # perfectly constant series").
+    max_variance: float = Field(ge=0)
     source: Literal["samples", "trajectory"] = "samples"
     role: Optional[str] = None
 
