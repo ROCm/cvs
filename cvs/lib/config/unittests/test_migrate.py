@@ -5,6 +5,19 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 """
 
+# Unit tests for cvs/lib/config/migrate.py: migrate_vllm_megaconfig v1 -> v2.
+#
+# Pinned invariants:
+#   - A multi-model v1 megaconfig splits per model and each output round-trips
+#     through the typed v2 schema (parse_config).
+#   - result_dict becomes honest thresholds (throughput floors >=, latencies
+#     ceil <=); a v1 mean is never relabeled a P99 percentile (C5); an empty
+#     result_dict yields no thresholds.
+#   - The HF token is emitted into container.env as ${env:HF_TOKEN}, not a
+#     secrets block; TP lives only in topology.gpus_per_node, not a sweep axis.
+#   - Migration fails closed at conversion time on slug collisions, empty sweep
+#     axes, and the <changeme> sentinel.
+
 import os
 import unittest
 

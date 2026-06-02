@@ -5,6 +5,15 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 """
 
+# Unit tests for cvs/lib/failure_taxonomy.py: the closed five-category failure
+# model and category_of dispatch.
+#
+# Pinned invariants:
+#   - The category set and its priority order are fixed (lower priority wins
+#     when several conditions hold), so a value typo or mid-list reorder fails.
+#   - Every exception subclass binds its own category; the base defaults to
+#     setup, and category_of maps an unclassified exception to setup.
+
 import unittest
 
 from cvs.lib.failure_taxonomy import (
