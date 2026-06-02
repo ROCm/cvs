@@ -5,8 +5,22 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 """
 
+# Unit tests for cvs/lib/runtime/container_handle.py: the docker `run` command
+# builder and the context-manager lifecycle, driven by a FakeRunner that records
+# every command instead of touching docker/SSH.
+#
+# Pinned invariants:
+#   - No privilege escalation unless explicitly opted in; every interpolated
+#     field is shell-quoted so injected `; rm -rf /` / `$(...)` stays in one arg.
+#   - Lifecycle: forensics (docker logs) are captured before the label-scoped
+#     `docker rm -f` (never prune); a readiness timeout in __enter__ still tears
+#     down the started container; body exceptions propagate.
+#   - The ContainerSpec -> handle seam: a spec feeds the handle clean str kwargs,
+#     and the handle itself fails closed (TypeError) on a raw non-str.
+
 import unittest
 
+from cvs.lib.config.base import ContainerSpec
 from cvs.lib.runtime.container_handle import ContainerHandle
 
 
@@ -112,6 +126,28 @@ class TestContainerHandleRuntime(unittest.TestCase):
         # A per-host dict result (Pssh) is flattened to one newline-joined string.
         r = FakeRunner(output={"hostA": "out-a", "hostB": "out-b"})
         self.assertEqual(ContainerHandle("img", "run1", r)._run("cmd"), "out-a\nout-b")
+
+
+class TestContainerSpecHandleSeam(unittest.TestCase):
+    """The A3 contract spans ContainerSpec (config) and ContainerHandle (runtime):
+    the spec owns str conversion so the handle's shlex.quote emits a clean command,
+    and the handle still fails closed if fed a raw non-str directly."""
+
+    def test_feeds_container_handle_without_typeerror(self):
+        # A3 contract: the spec owns str conversion, so ContainerHandle's
+        # shlex.quote (which raises TypeError on non-str) emits a clean command.
+        spec = ContainerSpec(ports={8888: 8888}, env={"HF_TOKEN": "tok"})
+        handle = ContainerHandle(image="img:tag", run_id="r1", runner=FakeRunner(), **spec.to_handle_kwargs())
+        cmd = handle.build_run_command()
+        self.assertIn("8888:8888", cmd)
+        self.assertIn("HF_TOKEN=tok", cmd)
+
+    def test_handle_fails_closed_on_raw_non_str(self):
+        # The other half of the contract: bypass the spec and feed the handle a
+        # non-str directly -> shlex.quote raises rather than emitting a bad arg.
+        handle = ContainerHandle(image="i", run_id="r", runner=FakeRunner(), ports={8888: 8888})
+        with self.assertRaises(TypeError):
+            handle.build_run_command()
 
 
 if __name__ == "__main__":
