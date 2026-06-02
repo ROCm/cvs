@@ -1,10 +1,10 @@
 import json
 import logging
 import sys
-import os
 
 from .base import SubcommandPlugin
 from cvs.lib.parallel_ssh_lib import Pssh
+from cvs.lib.env_vars import get
 
 
 class ExecPlugin(SubcommandPlugin):
@@ -30,7 +30,7 @@ Exec Commands:
     def run(self, args):
         # CLI flag wins; env var is the fallback. Matches cvs scp and
         # cvs monitor check_cluster_health for consistency.
-        cluster_file = args.cluster_file or os.environ.get('CLUSTER_FILE')
+        cluster_file = args.cluster_file or get('CLUSTER_FILE')
         if not cluster_file:
             print("Error: No cluster file specified. Set CLUSTER_FILE environment variable or use --cluster_file.")
             sys.exit(1)

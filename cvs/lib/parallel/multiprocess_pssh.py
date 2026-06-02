@@ -67,6 +67,18 @@ class MultiProcessPssh(ShardableSshInterface):
             self.pssh = None  # No Pssh instance needed for sharded mode
         else:
             # No sharding - create Pssh instance for delegation
+            jump_host_kwargs = {}
+            if self.config.uses_jump_host:
+                jump_host_kwargs.update(
+                    {
+                        'jump_host': self.config.jump_host,
+                        'jump_user': self.config.jump_user,
+                        'jump_password': self.config.jump_password,
+                        'jump_pkey': self.config.jump_pkey,
+                        'jump_port': self.config.jump_port,
+                    }
+                )
+
             self.pssh = Pssh(
                 log,
                 host_list,
@@ -77,6 +89,7 @@ class MultiProcessPssh(ShardableSshInterface):
                 stop_on_errors,
                 env_vars,
                 process_output=True,  # Default to True for compatibility
+                **jump_host_kwargs,
                 **ssh_client_kwargs,
             )
             # Ensure attributes needed by _shard_init_kwargs are available
@@ -120,7 +133,7 @@ class MultiProcessPssh(ShardableSshInterface):
 
         Note: No logger parameter needed - child processes use module-level globals.log automatically.
         """
-        return {
+        kwargs = {
             'log': None,  # Backward compatibility - child processes use module-level log
             'user': self.user,
             'password': self.password,
@@ -130,6 +143,20 @@ class MultiProcessPssh(ShardableSshInterface):
             'env_vars': self.env_vars,
             **self.ssh_client_kwargs,  # Forward all ssh client kwargs to shard workers
         }
+
+        # Forward jump host parameters to shard workers when configured.
+        if self.config.uses_jump_host:
+            kwargs.update(
+                {
+                    'jump_host': self.config.jump_host,
+                    'jump_user': self.config.jump_user,
+                    'jump_password': self.config.jump_password,
+                    'jump_pkey': self.config.jump_pkey,
+                    'jump_port': self.config.jump_port,
+                }
+            )
+
+        return kwargs
 
     def _sync_pssh_state(self):
         """Sync wrapper reachability state from Single-process Pssh (non-sharded mode)."""

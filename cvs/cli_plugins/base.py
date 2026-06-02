@@ -2,8 +2,9 @@ class SubcommandPlugin:
     """Base class for CLI subcommand plugins."""
 
     PLUGIN_ORDERS = {
-        "monitor": 999,
-        "exec": 1000,  # High number to ensure exec appears last
+        "monitor": 998,
+        "exec": 999,
+        "env": 1000,  # High number to ensure env appears near the end (after exec)
     }
 
     def get_name(self):

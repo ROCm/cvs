@@ -35,6 +35,12 @@ class Pssh:
         stop_on_errors=True,
         env_vars=None,
         process_output=True,
+        # Jump host parameters
+        jump_host=None,
+        jump_user=None,
+        jump_password=None,
+        jump_pkey=None,
+        jump_port=22,
         **ssh_client_kwargs,
     ):
         # Backward compatibility warning for log parameter
@@ -61,6 +67,20 @@ class Pssh:
         self.ssh_client_kwargs = ssh_client_kwargs
         self.env_prefix = build_env_prefix(env_vars)
         self.log.debug(f"Environ vars: {self.env_prefix}")
+
+        # Jump host (bastion) support: the native ParallelSSHClient tunnels
+        # target connections through its built-in proxy_* parameters, so no
+        # extra SSH library (paramiko) is needed.
+        if jump_host:
+            self.ssh_client_kwargs['proxy_host'] = jump_host
+            if jump_user:
+                self.ssh_client_kwargs['proxy_user'] = jump_user
+            if jump_password:
+                self.ssh_client_kwargs['proxy_password'] = jump_password
+            if jump_pkey:
+                self.ssh_client_kwargs['proxy_pkey'] = jump_pkey
+            if jump_port != 22:
+                self.ssh_client_kwargs['proxy_port'] = jump_port
 
         if self.password is None:
             self.log.info("%s", self.reachable_hosts)
@@ -248,6 +268,8 @@ class Pssh:
         If detailed=True, returns structured dict with 'output' and 'exit_code' keys.
         If detailed=False (default), returns output strings.
         """
+        # Jump host connection handled by ParallelSSHClient proxy parameters
+
         if self.env_prefix:
             full_cmd = f"{self.env_prefix} ; {cmd}"
         else:
@@ -285,6 +307,8 @@ class Pssh:
         which runs the same command on all hosts.
         Returns a dictionary of host as key and command output as values
         """
+        # Jump host connection handled by ParallelSSHClient proxy parameters
+
         if self.env_prefix:
             cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
         else:
@@ -457,4 +481,5 @@ class Pssh:
 
     def destroy_clients(self):
         self.log.info('Destroying Current phdl connections ..')
-        del self.client
+        if hasattr(self, 'client'):
+            del self.client
