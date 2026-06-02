@@ -5,7 +5,6 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import os
 import sys
 import json
 import logging
@@ -13,6 +12,7 @@ import argparse
 import time
 
 from cvs.monitors.base import MonitorPlugin
+from cvs.lib.env_vars import get
 from cvs.lib import parallel_ssh_lib
 from cvs.lib import verify_lib
 from cvs.lib import linux_utils
@@ -425,7 +425,7 @@ class CheckClusterHealthMonitor(MonitorPlugin):
         """
         # CLI flag wins; env var is the fallback. This matches standard Unix
         # tooling and keeps cvs exec / cvs scp / cvs monitor consistent.
-        cluster_file = args.cluster_file or os.environ.get('CLUSTER_FILE')
+        cluster_file = args.cluster_file or get('CLUSTER_FILE')
 
         if cluster_file and args.hosts_file:
             print("ERROR: --hosts_file cannot be combined with --cluster_file or CLUSTER_FILE. Aborting.")

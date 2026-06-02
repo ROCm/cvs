@@ -67,6 +67,18 @@ class MultiProcessPssh(ShardableSshInterface):
             self.pssh = None  # No Pssh instance needed for sharded mode
         else:
             # No sharding - create Pssh instance for delegation
+            jump_host_kwargs = {}
+            if self.config.uses_jump_host:
+                jump_host_kwargs.update(
+                    {
+                        'jump_host': self.config.jump_host,
+                        'jump_user': self.config.jump_user,
+                        'jump_password': self.config.jump_password,
+                        'jump_pkey': self.config.jump_pkey,
+                        'jump_port': self.config.jump_port,
+                    }
+                )
+
             self.pssh = Pssh(
                 log,
                 host_list,
@@ -77,6 +89,7 @@ class MultiProcessPssh(ShardableSshInterface):
                 stop_on_errors,
                 env_vars,
                 process_output=True,  # Default to True for compatibility
+                **jump_host_kwargs,
                 **ssh_client_kwargs,
             )
             # Ensure attributes needed by _shard_init_kwargs are available
@@ -415,6 +428,32 @@ class MultiProcessPssh(ShardableSshInterface):
             merged_results.update(result)
 
         return merged_results
+
+    def _shard_init_kwargs(self):
+        """Prepare kwargs for shard worker initialization."""
+        kwargs = {
+            'log': None,  # Backward compatibility - child processes use module-level log
+            'user': self.user,
+            'password': self.password,
+            'pkey': self.pkey,
+            'host_key_check': self.host_key_check,
+            'stop_on_errors': self.stop_on_errors,
+            'env_vars': self.env_vars,
+        }
+
+        # Add jump host parameters to shard init
+        if self.config.uses_jump_host:
+            kwargs.update(
+                {
+                    'jump_host': self.config.jump_host,
+                    'jump_user': self.config.jump_user,
+                    'jump_password': self.config.jump_password,
+                    'jump_pkey': self.config.jump_pkey,
+                    'jump_port': self.config.jump_port,
+                }
+            )
+
+        return kwargs
 
     def prune_nodes(self, nodes_to_remove):
         """

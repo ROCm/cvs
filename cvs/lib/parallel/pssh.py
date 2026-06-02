@@ -14,6 +14,14 @@ from pssh.exceptions import Timeout, ConnectionError, SessionError
 from cvs.lib.env_lib import build_env_prefix
 from cvs.lib import globals
 
+# Import jump host utilities - only when needed to avoid dependency issues
+try:
+    from .jump_host_utils import JumpHostManager
+
+    JUMP_HOST_AVAILABLE = True
+except ImportError:
+    JUMP_HOST_AVAILABLE = False
+
 global_log = globals.log
 
 
@@ -35,6 +43,12 @@ class Pssh:
         stop_on_errors=True,
         env_vars=None,
         process_output=True,
+        # Jump host parameters
+        jump_host=None,
+        jump_user=None,
+        jump_password=None,
+        jump_pkey=None,
+        jump_port=22,
         **ssh_client_kwargs,
     ):
         # Backward compatibility warning for log parameter
@@ -61,6 +75,33 @@ class Pssh:
         self.ssh_client_kwargs = ssh_client_kwargs
         self.env_prefix = build_env_prefix(env_vars)
         self.log.debug(f"Environ vars: {self.env_prefix}")
+
+        # Jump host setup
+        self.jump_manager = None
+        if jump_host:
+            if not JUMP_HOST_AVAILABLE:
+                raise ImportError("Jump host functionality requires paramiko. Install with: pip install paramiko")
+
+            self.jump_manager = JumpHostManager(
+                jump_host=jump_host,
+                jump_user=jump_user,
+                jump_password=jump_password,
+                jump_pkey=jump_pkey,
+                jump_port=jump_port,
+            )
+            # Note: No manual connection - ParallelSSHClient will handle proxy connection
+
+            # Add jump host parameters to ssh_client_kwargs for ParallelSSHClient
+            # Use ParallelSSHClient's built-in proxy support
+            self.ssh_client_kwargs['proxy_host'] = self.jump_manager.jump_host
+            if self.jump_manager.jump_user:
+                self.ssh_client_kwargs['proxy_user'] = self.jump_manager.jump_user
+            if self.jump_manager.jump_password:
+                self.ssh_client_kwargs['proxy_password'] = self.jump_manager.jump_password
+            if self.jump_manager.jump_pkey:
+                self.ssh_client_kwargs['proxy_pkey'] = self.jump_manager.jump_pkey
+            if self.jump_manager.jump_port != 22:
+                self.ssh_client_kwargs['proxy_port'] = self.jump_manager.jump_port
 
         if self.password is None:
             self.log.info("%s", self.reachable_hosts)
@@ -248,6 +289,8 @@ class Pssh:
         If detailed=True, returns structured dict with 'output' and 'exit_code' keys.
         If detailed=False (default), returns output strings.
         """
+        # Jump host connection handled by ParallelSSHClient proxy parameters
+
         if self.env_prefix:
             full_cmd = f"{self.env_prefix} ; {cmd}"
         else:
@@ -285,6 +328,8 @@ class Pssh:
         which runs the same command on all hosts.
         Returns a dictionary of host as key and command output as values
         """
+        # Jump host connection handled by ParallelSSHClient proxy parameters
+
         if self.env_prefix:
             cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
         else:
@@ -457,4 +502,8 @@ class Pssh:
 
     def destroy_clients(self):
         self.log.info('Destroying Current phdl connections ..')
-        del self.client
+        if hasattr(self, 'client'):
+            del self.client
+        # Clean up jump host connection
+        if self.jump_manager:
+            self.jump_manager.disconnect()

@@ -406,3 +406,111 @@ class PersistentPsshSharder(SharderInterface):
 
         self._workers = {}
         self._worker_state_table.clear()
+
+
+def _persistent_worker_main(init_payload, req_queue, resp_queue):
+    """Main function for persistent shard worker process."""
+    from cvs.lib.parallel.pssh import Pssh
+    from cvs.lib import globals
+    import uuid
+
+    logger = globals.log
+    pssh = None
+
+    try:
+        # Extract jump host parameters from init_payload
+        jump_host_kwargs = {}
+        for key in ['jump_host', 'jump_user', 'jump_password', 'jump_pkey', 'jump_port']:
+            if key in init_payload:
+                jump_host_kwargs[key] = init_payload[key]
+
+        # Create Pssh instance with jump host support
+        pssh = Pssh(
+            log=None,  # Use global logger in worker
+            host_list=init_payload['host_list'],
+            user=init_payload['user'],
+            password=init_payload.get('password'),
+            pkey=init_payload.get('pkey', 'id_rsa'),
+            host_key_check=init_payload.get('host_key_check', False),
+            stop_on_errors=init_payload.get('stop_on_errors', True),
+            env_vars=init_payload.get('env_vars'),
+            **jump_host_kwargs,  # Jump host support
+        )
+
+        # Send initialization success
+        resp_queue.put({'type': 'init', 'ok': True})
+        logger.info(f"Persistent worker initialized with {len(init_payload['host_list'])} hosts")
+
+        # Main worker loop
+        while True:
+            try:
+                request = req_queue.get(timeout=1)
+            except:
+                continue
+
+            if request.get('type') == 'shutdown':
+                logger.info("Persistent worker shutting down")
+                break
+
+            # Handle operation requests
+            request_id = request.get('request_id', str(uuid.uuid4()))
+            operation = request.get('operation')
+
+            try:
+                if operation == 'exec':
+                    result = pssh.exec(
+                        request['cmd'],
+                        timeout=request.get('timeout'),
+                        print_console=request.get('print_console', True),
+                        detailed=request.get('detailed', False),
+                    )
+                elif operation == 'exec_cmd_list':
+                    result = pssh.exec_cmd_list(
+                        request['cmd_list'],
+                        timeout=request.get('timeout'),
+                        print_console=request.get('print_console', True),
+                    )
+                elif operation == 'upload_file':
+                    result = pssh.upload_file(
+                        request['local_file'], request['remote_file'], recurse=request.get('recurse', False)
+                    )
+                elif operation == 'upload_file_list':
+                    result = pssh.upload_file_list(request['node_path_map'])
+                elif operation == 'reboot_connections':
+                    result = pssh.reboot_connections()
+                else:
+                    raise ValueError(f"Unknown operation: {operation}")
+
+                # Send successful response
+                resp_queue.put(
+                    {
+                        'request_id': request_id,
+                        'ok': True,
+                        'result': result,
+                        'reachable_hosts': pssh.reachable_hosts,
+                        'unreachable_hosts': pssh.unreachable_hosts,
+                    }
+                )
+
+            except Exception as e:
+                logger.error(f"Persistent worker operation failed: {e}")
+                resp_queue.put(
+                    {
+                        'request_id': request_id,
+                        'ok': False,
+                        'result': {},
+                        'reachable_hosts': getattr(pssh, 'reachable_hosts', []),
+                        'unreachable_hosts': getattr(pssh, 'unreachable_hosts', []),
+                        'error': str(e),
+                    }
+                )
+
+    except Exception as e:
+        logger.error(f"Persistent worker init failed: {e}")
+        resp_queue.put({'type': 'init', 'ok': False, 'error': str(e)})
+    finally:
+        if pssh:
+            try:
+                pssh.destroy_clients()
+            except:
+                pass
