@@ -223,7 +223,7 @@ def test_cleanup_stale_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict
 
 
 def test_launch_inference_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict):
-    log.info('Testcase launch InferenceMax containers')
+    log.info('Testcase launch SGLang containers')
     globals.error_list = []
     container_name = inference_dict['container_name']
     # Launch the containers ..
@@ -313,6 +313,18 @@ def test_rms_norm(im_obj):
     globals.error_list = []
     im_obj.run_test_rmsnorm()
     update_test_result()
+
+def test_upgrade_sglang(im_obj):
+    """
+    Upgrade SGLang inside all inference containers from the bundled git repo.
+
+    Runs after container launch and sanity checks, and before Prefill/Decode
+    servers start, so every node uses the same updated sglang package.
+    """
+    globals.error_list = []
+    im_obj.upgrade_sglang_from_source()
+    update_test_result()
+
 
 
 # Test to start the prefill servers using sglang.launch_server
