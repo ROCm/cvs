@@ -2,17 +2,17 @@
 SSH-manager contract test.
 
 Characterizes the behavior cluster-mon relies on from its SSH manager. The
-assertions live in ``SshManagerContractMixin`` and are run against BOTH:
+assertions live in ``SshManagerContractMixin`` and run against the
+``cluster_ssh_manager.ClusterSshManager`` adapter (the production SSH manager).
 
-- the legacy ``cvs_parallel_ssh_reliable.Pssh`` (the original behavior), and
-- the new ``cluster_ssh_manager.ClusterSshManager`` adapter (the migration
-  target), proving parity.
+The mixin was originally also exercised against the legacy
+``cvs_parallel_ssh_reliable.Pssh`` to prove parity during the migration; that
+implementation has since been removed, so only the adapter contract remains.
 
 Each concrete TestCase supplies the impl-specific mocking via the hook methods
 (``make_manager`` / ``seed_exec_output`` / ``seed_cmd_list_output`` /
-``set_refresh_probe`` / ``assert_recreate_rebuilds``). No network: parallel-ssh's
-``ParallelSSHClient`` / ``MultiProcessPssh`` and the TCP probe
-(``discover_reachable_hosts``) are mocked.
+``set_refresh_probe`` / ``assert_recreate_rebuilds``). No network:
+``MultiProcessPssh`` and the TCP probe (``discover_reachable_hosts``) are mocked.
 """
 
 import asyncio
@@ -20,22 +20,11 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.core.cvs_parallel_ssh_reliable import Pssh
 from app.core.cluster_ssh_manager import ClusterSshManager
 
-PSSH_MODULE = "app.core.cvs_parallel_ssh_reliable"
 ADAPTER_MODULE = "app.core.cluster_ssh_manager"
 
 ABORT = "ABORT: Host Unreachable Error"
-
-
-def make_item(host, stdout=None, stderr=None, exception=None):
-    item = MagicMock()
-    item.host = host
-    item.stdout = stdout or []
-    item.stderr = stderr or []
-    item.exception = exception
-    return item
 
 
 class SshManagerContractMixin:
@@ -170,37 +159,8 @@ class SshManagerContractMixin:
         self.assertEqual(ticks["n"], 5)
 
 
-class TestPsshContract(SshManagerContractMixin, unittest.TestCase):
-    """Run the contract against the legacy Pssh (mock ParallelSSHClient + probe)."""
-
-    def make_manager(self, reachable, unreachable):
-        disc = patch(f"{PSSH_MODULE}.discover_reachable_hosts", return_value=(list(reachable), list(unreachable)))
-        cls = patch(f"{PSSH_MODULE}.ParallelSSHClient")
-        self._mock_discover = disc.start()
-        self.addCleanup(disc.stop)
-        self._mock_cls = cls.start()
-        self.addCleanup(cls.stop)
-        self._client = MagicMock()
-        self._mock_cls.return_value = self._client
-        return Pssh(MagicMock(), list(reachable) + list(unreachable), user="u", password="p", stop_on_errors=False)
-
-    def seed_exec_output(self, mapping):
-        self._client.run_command.return_value = [make_item(host, stdout=[text]) for host, text in mapping.items()]
-
-    def seed_cmd_list_output(self, mapping):
-        self.seed_exec_output(mapping)
-
-    def set_refresh_probe(self, reachable, unreachable):
-        self._mock_discover.return_value = (list(reachable), list(unreachable))
-
-    def assert_recreate_rebuilds(self, manager):
-        self._mock_cls.reset_mock()
-        manager.recreate_client()
-        self._mock_cls.assert_called_once()
-
-
 class TestClusterSshManagerContract(SshManagerContractMixin, unittest.TestCase):
-    """Run the same contract against the new ClusterSshManager (mock MultiProcessPssh + probe)."""
+    """Run the contract against ClusterSshManager (mock MultiProcessPssh + probe)."""
 
     def make_manager(self, reachable, unreachable):
         disc = patch(f"{ADAPTER_MODULE}.discover_reachable_hosts", return_value=(list(reachable), list(unreachable)))

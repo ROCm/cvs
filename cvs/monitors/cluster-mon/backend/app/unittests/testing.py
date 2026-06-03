@@ -1,11 +1,10 @@
 """
 Shared test helpers for the cluster-mon backend test suite.
 
-`FakeSshManager` is an in-memory stand-in for the SSH manager (currently
-`cvs_parallel_ssh_reliable.Pssh` / `jump_host_pssh.JumpHostPssh`, later the
-`ClusterSshManager` adapter). It implements the exact surface the collectors and
-API endpoints depend on so tests can pin the `exec_async(cmd) -> {host: str}`
-contract without any real SSH or network access.
+`FakeSshManager` is an in-memory stand-in for the SSH manager (the
+`cluster_ssh_manager.ClusterSshManager` adapter). It implements the exact surface
+the collectors and API endpoints depend on so tests can pin the
+`exec_async(cmd) -> {host: str}` contract without any real SSH or network access.
 """
 
 from typing import Dict, List, Optional
