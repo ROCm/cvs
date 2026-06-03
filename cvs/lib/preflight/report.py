@@ -99,6 +99,7 @@ class PreflightReportGenerator(PreflightCheck):
         connectivity_results = self.results.get('rdma_connectivity', {})
         rocm_results = self.results.get('rocm_versions', {})
         interface_results = self.results.get('interface_names', {})
+        ifoe_l2_results = self.results.get('ifoe_l2_connectivity', {})
         reachability_results = self.results.get('node_reachability')
         ssh_connectivity_results = self.results.get('ssh_connectivity')
         summary = {
@@ -106,6 +107,7 @@ class PreflightReportGenerator(PreflightCheck):
             'checks': {
                 'ssh_reachability': self._summarize_reachability_results(reachability_results),
                 'gid_consistency': self._summarize_gid_results(gid_results),
+                'ifoe_l2_connectivity': self._summarize_ifoe_l2_results(ifoe_l2_results),
                 'rdma_connectivity': self._summarize_connectivity_results(connectivity_results),
                 'rocm_versions': self._summarize_rocm_results(rocm_results),
                 'interface_names': self._summarize_interface_results(interface_results),
@@ -125,6 +127,11 @@ class PreflightReportGenerator(PreflightCheck):
         if summary['checks']['gid_consistency']['status'] == 'FAIL':
             summary['recommendations'].append(
                 "Fix GID configuration on RDMA interfaces before running performance tests"
+            )
+
+        if summary['checks']['ifoe_l2_connectivity']['status'] == 'FAIL':
+            summary['recommendations'].append(
+                "Address IFoE L2 ping failures via afmctl on affected nodes before benchmarking"
             )
 
         if summary['checks']['rdma_connectivity']['status'] == 'FAIL':
@@ -282,6 +289,47 @@ class PreflightReportGenerator(PreflightCheck):
             'summary': f"{compliant_nodes}/{total_nodes} nodes have compliant interface names",
         }
 
+    def _summarize_ifoe_l2_results(self, ifoe_results):
+        """Summarize IFoE L2 connectivity (afmctl) check results."""
+        if not ifoe_results or ifoe_results.get('skipped'):
+            msg = (
+                ifoe_results.get('message')
+                if isinstance(ifoe_results, dict)
+                else 'IFoE L2 connectivity test not performed'
+            )
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'failed_nodes': [],
+                'total_invocations': 0,
+                'failed_invocations': 0,
+                'summary': msg or 'IFoE L2 connectivity test skipped',
+            }
+
+        node_results = ifoe_results.get('node_results') or {}
+        total_nodes = len(node_results)
+        failed_nodes = list(
+            ifoe_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+        )
+        passing_nodes = total_nodes - len(failed_nodes)
+        total_invocations = int(ifoe_results.get('total_invocations', 0))
+        failed_invocations = int(ifoe_results.get('failed_invocations', 0))
+        status = 'PASS' if not failed_nodes else 'FAIL'
+        summary_text = f"{passing_nodes}/{total_nodes} nodes passed IFoE L2 ping"
+        if total_invocations:
+            summary_text += (
+                f"; {total_invocations - failed_invocations}/{total_invocations} afmctl invocations succeeded"
+            )
+        return {
+            'status': status,
+            'total_nodes': total_nodes,
+            'passing_nodes': passing_nodes,
+            'failed_nodes': failed_nodes,
+            'total_invocations': total_invocations,
+            'failed_invocations': failed_invocations,
+            'summary': summary_text,
+        }
+
     def _summarize_reachability_results(self, reachability_results):
         """Summarize SSH reachability check results."""
         if not reachability_results:
@@ -383,6 +431,7 @@ class PreflightReportGenerator(PreflightCheck):
 
             {self._generate_executive_summary_html(summary)}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
+            {self._generate_ifoe_l2_html(results.get('ifoe_l2_connectivity', {}))}
             {self._generate_connectivity_html(results.get('rdma_connectivity', {}))}
             {self._generate_ssh_connectivity_html(results.get('ssh_connectivity', {}))}
             {self._generate_rocm_versions_html(results.get('rocm_versions', {}))}
@@ -795,6 +844,157 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
         return html
+
+    def _generate_ifoe_l2_html(self, ifoe_results):
+        """Generate IFoE L2 connectivity section - failure details and a per-node breakdown."""
+        if not ifoe_results:
+            return ""
+
+        if ifoe_results.get('skipped'):
+            msg = ifoe_results.get('message', 'IFoE L2 connectivity test skipped')
+            return f"""
+        <section>
+            <h2>IFoE L2 Connectivity (afmctl)</h2>
+            <p><em>{html.escape(msg)}</em></p>
+        </section>
+        """
+
+        node_results = ifoe_results.get('node_results') or {}
+        if not node_results:
+            return ""
+
+        failed_nodes = sorted(n for n, r in node_results.items() if r.get('status') == 'FAIL')
+        total_invocations = int(ifoe_results.get('total_invocations', 0))
+        failed_invocations = int(ifoe_results.get('failed_invocations', 0))
+        loss_threshold = ifoe_results.get('loss_threshold_pct', 0.0)
+        traffic_types = ifoe_results.get('traffic_types') or []
+
+        header = f"""
+        <section>
+            <h2>IFoE L2 Connectivity (afmctl)</h2>
+            <p>Tested via <code>afmctl test ping</code>.
+            Traffic types enforced: <code>{html.escape(", ".join(str(t) for t in traffic_types))}</code>;
+            loss threshold: <code>{html.escape(str(loss_threshold))}%</code>;
+            invocations: <code>{total_invocations - failed_invocations}/{total_invocations}</code> succeeded.</p>
+        """
+
+        if not failed_nodes:
+            return (
+                header
+                + """
+            <p class="status-pass">All reachable nodes passed IFoE L2 ping.</p>
+        </section>
+        """
+            )
+
+        rows = []
+        for node in failed_nodes:
+            node_block = node_results[node]
+            node_errors = node_block.get('errors') or []
+            for bdf, invocations in (node_block.get('accelerators') or {}).items():
+                for dst, invocation in invocations.items():
+                    if invocation.get('status') != 'FAIL':
+                        continue
+                    parsed = invocation.get('parsed') or {}
+                    summary_lines = []
+                    for ttype, label in (
+                        ('ifoe_req', 'IFoE Request'),
+                        ('ifoe_resp', 'IFoE Response'),
+                        ('non_ifoe', 'Non-IFoE'),
+                    ):
+                        s = (parsed.get('summary') or {}).get(ttype)
+                        if not s:
+                            continue
+                        summary_lines.append(
+                            f"{html.escape(label)}: {s['pass']}/{s['total']} "
+                            f"PASS, {s['fail']}/{s['total']} fail ({s['loss_pct']:.2f}% loss)"
+                        )
+                    failed_ports = []
+                    for port, port_result in (parsed.get('ports') or {}).items():
+                        bad = [
+                            (label, port_result[k])
+                            for k, label in (
+                                ('ifoe_req', 'IFoE Req'),
+                                ('ifoe_resp', 'IFoE Rsp'),
+                                ('non_ifoe', 'Non-IFoE'),
+                            )
+                            if isinstance(port_result.get(k), dict) and port_result[k].get('status') == 'FAIL'
+                        ]
+                        if bad:
+                            parts = ", ".join(f"{lbl}={rr['pass']}/{rr['total']}" for lbl, rr in bad)
+                            failed_ports.append(f"port {html.escape(str(port))} ({parts})")
+
+                    detail_html = ""
+                    if summary_lines:
+                        detail_html += "<ul style='margin:6px 0;'>"
+                        for line in summary_lines:
+                            detail_html += f"<li>{line}</li>"
+                        detail_html += "</ul>"
+                    if failed_ports:
+                        detail_html += "<p><strong>Failed ports:</strong> " + "; ".join(failed_ports) + "</p>"
+                    invocation_errors = invocation.get('errors') or []
+                    if invocation_errors:
+                        detail_html += "<ul style='margin:6px 0;color:#721c24;'>"
+                        for err in invocation_errors[:20]:
+                            detail_html += f"<li>{html.escape(str(err))}</li>"
+                        detail_html += "</ul>"
+
+                    raw = invocation.get('raw_output') or ''
+                    if raw.strip():
+                        snippet = raw if len(raw) <= 4000 else raw[:4000] + "\n... (truncated) ..."
+                        detail_html += (
+                            "<details><summary>afmctl output</summary>"
+                            f"<pre style='white-space:pre-wrap;'>{html.escape(snippet)}</pre>"
+                            "</details>"
+                        )
+
+                    rows.append(f"""
+                <tr>
+                    <td><code>{html.escape(str(node))}</code></td>
+                    <td><code>{html.escape(str(bdf))}</code></td>
+                    <td>{html.escape(str(dst))}</td>
+                    <td><code>{html.escape(invocation.get('command', ''))}</code></td>
+                    <td>{detail_html}</td>
+                </tr>
+                """)
+            if not (node_block.get('accelerators') or {}) and node_errors:
+                node_err_html = (
+                    "<ul style='margin:6px 0;color:#721c24;'>"
+                    + "".join(f"<li>{html.escape(str(e))}</li>" for e in node_errors)
+                    + "</ul>"
+                )
+                rows.append(f"""
+                <tr>
+                    <td><code>{html.escape(str(node))}</code></td>
+                    <td colspan='3'><em>No afmctl invocations completed</em></td>
+                    <td>{node_err_html}</td>
+                </tr>
+                """)
+
+        table = (
+            """
+            <p class="error-summary">The following IFoE L2 ping invocations failed:</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>BDF</th>
+                        <th>--dst-accelerator</th>
+                        <th>Command</th>
+                        <th>Failure Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+            + "".join(rows)
+            + """
+                </tbody>
+            </table>
+        </section>
+        """
+        )
+
+        return header + table
 
     @staticmethod
     def _rdma_pair_row_fields(pair_key, pair_result):
