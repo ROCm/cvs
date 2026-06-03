@@ -270,6 +270,118 @@ class TestRcclLib(unittest.TestCase):
         rccl_lib.check_lat_dip(test_name, output, None)
         mock_fail_test.assert_not_called()
 
+    # ---------------------------------------------------------------------
+    # Group-by / key-correctness regression tests (AIMVT-196)
+    # ---------------------------------------------------------------------
+
+    def test_group_rccl_results_groups_and_sorts(self):
+        """Rows are grouped by (type, inPlace) and sorted ascending by size."""
+        rows = [
+            {"size": 2048, "type": "float", "inPlace": 1, "busBw": 20.0},
+            {"size": 1024, "type": "float", "inPlace": 1, "busBw": 10.0},
+            {"size": 1024, "type": "float", "inPlace": 0, "busBw": 9.0},
+            {"size": 1024, "type": "bfloat16", "inPlace": 1, "busBw": 11.0},
+        ]
+        groups = rccl_lib.group_rccl_results(rows)
+        # Three distinct (type, inPlace) groups
+        self.assertEqual(
+            set(groups.keys()),
+            {("float", 1), ("float", 0), ("bfloat16", 1)},
+        )
+        # float/in-place group sorted ascending by size
+        sizes = [r["size"] for r in groups[("float", 1)]]
+        self.assertEqual(sizes, [1024, 2048])
+
+    def test_convert_to_graph_dict_preserves_inplace(self):
+        """In-place and out-of-place rows for the same size must NOT collapse."""
+        result_dict = {
+            "all_reduce_perf-NCCL_ALGO=Ring": [
+                {"size": 1024, "name": "AllReduce", "type": "float", "inPlace": 0,
+                 "busBw": 10.0, "algBw": 5.0, "time": 1.0},
+                {"size": 1024, "name": "AllReduce", "type": "float", "inPlace": 1,
+                 "busBw": 99.0, "algBw": 50.0, "time": 2.0},
+            ]
+        }
+        graph = rccl_lib.convert_to_graph_dict(result_dict)
+        # Two separate series, one per inPlace orientation
+        self.assertEqual(len(graph), 2)
+        in_series = next(k for k in graph if "in_place" in k)
+        out_series = next(k for k in graph if "out_of_place" in k)
+        self.assertEqual(graph[out_series][1024]["bus_bw"], 10.0)
+        self.assertEqual(graph[in_series][1024]["bus_bw"], 99.0)
+
+    def test_convert_to_graph_dict_preserves_dtype(self):
+        """Different data types for the same size must NOT collapse."""
+        result_dict = {
+            "all_reduce_perf-NCCL_ALGO=Ring": [
+                {"size": 1024, "name": "AllReduce", "type": "float", "inPlace": 1,
+                 "busBw": 10.0, "algBw": 5.0, "time": 1.0},
+                {"size": 1024, "name": "AllReduce", "type": "bfloat16", "inPlace": 1,
+                 "busBw": 20.0, "algBw": 10.0, "time": 1.0},
+            ]
+        }
+        graph = rccl_lib.convert_to_graph_dict(result_dict)
+        self.assertEqual(len(graph), 2)
+        float_series = next(k for k in graph if "type=float" in k)
+        bf16_series = next(k for k in graph if "type=bfloat16" in k)
+        self.assertEqual(graph[float_series][1024]["bus_bw"], 10.0)
+        self.assertEqual(graph[bf16_series][1024]["bus_bw"], 20.0)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_check_bw_dip_multi_dtype_no_false_positive(self, mock_fail_test):
+        """A data-type boundary must not be mistaken for a bandwidth dip."""
+        test_name = "all_reduce_perf"
+        # float ascending then bfloat16 restarting at the smallest size.
+        output = [
+            {"size": 1024, "type": "float", "inPlace": 1, "busBw": 10.0, "time": 1.0},
+            {"size": 2048, "type": "float", "inPlace": 1, "busBw": 20.0, "time": 2.0},
+            {"size": 1024, "type": "bfloat16", "inPlace": 1, "busBw": 10.0, "time": 1.0},
+            {"size": 2048, "type": "bfloat16", "inPlace": 1, "busBw": 20.0, "time": 2.0},
+        ]
+        ref = {"1024": {"bus_bw": 1}, "2048": {"bus_bw": 1}}
+        rccl_lib.check_bw_dip(test_name, output, ref)
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_check_bw_dip_detects_real_dip_within_dtype(self, mock_fail_test):
+        """A genuine within-data-type bandwidth dip is still flagged."""
+        test_name = "all_reduce_perf"
+        output = [
+            {"size": 1024, "type": "float", "inPlace": 1, "busBw": 100.0, "time": 1.0},
+            {"size": 2048, "type": "float", "inPlace": 1, "busBw": 50.0, "time": 2.0},
+        ]
+        ref = {"1024": {"bus_bw": 1}, "2048": {"bus_bw": 1}}
+        rccl_lib.check_bw_dip(test_name, output, ref)
+        mock_fail_test.assert_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_check_lat_dip_multi_dtype_no_false_positive(self, mock_fail_test):
+        """A data-type boundary must not be mistaken for a latency dip."""
+        test_name = "all_reduce_perf"
+        output = [
+            {"size": 1024, "type": "float", "inPlace": 1, "busBw": 10.0, "time": 10.0},
+            {"size": 2048, "type": "float", "inPlace": 1, "busBw": 20.0, "time": 20.0},
+            {"size": 1024, "type": "bfloat16", "inPlace": 1, "busBw": 10.0, "time": 10.0},
+            {"size": 2048, "type": "bfloat16", "inPlace": 1, "busBw": 20.0, "time": 20.0},
+        ]
+        ref = {"1024": {"bus_bw": 1}, "2048": {"bus_bw": 1}}
+        rccl_lib.check_lat_dip(test_name, output, ref)
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_check_bus_bw_multi_dtype_each_compared(self, mock_fail_test):
+        """Both data types are compared against the size-keyed reference."""
+        test_name = "all_reduce_perf"
+        output = [
+            {"name": "all_reduce_perf", "size": 1024, "type": "float", "inPlace": 1,
+             "busBw": 90.0, "algBw": 45.0, "time": 12.3},
+            {"name": "all_reduce_perf", "size": 1024, "type": "bfloat16", "inPlace": 1,
+             "busBw": 70.0, "algBw": 35.0, "time": 12.3},  # below threshold -> must fail
+        ]
+        exp_res_dict = {"1024": {"bus_bw": 80.0}}  # 95% threshold = 76.0
+        rccl_lib.check_bus_bw(test_name, output, exp_res_dict)
+        mock_fail_test.assert_called()
+
 
 if __name__ == '__main__':
     unittest.main()
