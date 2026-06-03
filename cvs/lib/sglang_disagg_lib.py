@@ -267,7 +267,7 @@ class SglangDisaggPD:
             self.nccl_ib_gid_index = 3
             cmd = f'docker exec {self.container_name} /bin/bash -c "sudo \
                     cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
-                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so;\
+                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
                     sleep 2; ibv_devinfo; sleep 2;" '
             pout_dict = self.p_phdl.exec(cmd)
             dout_dict = self.d_phdl.exec(cmd)
@@ -776,7 +776,7 @@ class SglangDisaggPD:
         # ------------------------------------------------------------------
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
-                      cd /sgl-workspace/sglang/benchmark/gsm8k && \
+                      cd /sgl-workspace/sglang/benchmark/gsm8k; \
                       source /tmp/benchmark_env_script.sh && \
                       nohup python3 ./bench_sglang.py \
                       --num-questions {i_dict['num_questions']} \
@@ -851,62 +851,6 @@ class SglangDisaggPD:
         time.sleep(5)
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
         self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
-
-    # def benchserv_test_random(self, d_type='auto'):
-    #     """
-    #     Run SGLang serving benchmark using a synthetic random dataset and
-    #     validate inference performance and correctness.
-
-    #     Purpose:
-    #     --------
-    #     This benchmark exercises the inference serving stack using randomly
-    #     generated input/output sequences to:
-    #     - Stress-test request scheduling and batching
-    #     - Evaluate sustained throughput under synthetic load
-    #     - Validate end-to-end serving stability independent of real datasets
-
-    #     The benchmark targets the Proxy Router endpoint, ensuring that
-    #     Prefill, Decode, and routing logic work together correctly.
-
-    #     Args:
-    #     d_type (str): Data type identifier used to select expected
-    #                   performance thresholds (e.g., fp16, bf16, auto).
-    #     """
-    #     log.info('#================ * * * =========================#')
-    #     log.info('Benchmark Random Dataset')
-    #     log.info('#================ * * * =========================#')
-    #     i_dict = self.bp_dict['inference_tests']['bench_serv_random']
-    #     # ------------------------------------------------------------------
-    #     # Construct command to run sglang.bench_serving with random dataset
-    #     #
-    #     # Key parameters:
-    #     #   --dataset-name random     : Use synthetic random prompts
-    #     #   --num-prompts             : Total number of inference requests
-    #     #   --random-input            : Input token length per request
-    #     #   --random-output           : Output token length per request
-    #     #   --random-range-ratio      : Variability in input/output lengths
-    #     #   --host / --port           : Proxy Router endpoint
-    #     #
-    #     # Output is redirected to a log file for later inspection.
-    #     # ------------------------------------------------------------------
-    #     cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-    #                   mkdir -p {self.log_dir}/benchmark_node; \
-    #                   source /tmp/benchmark_env_script.sh && \
-    #                   pip install --upgrade --no-deps sglang --quiet &&  \
-    #                   pip list | grep -E "torch|torchvision|sglang" && \
-    #                   python3 -m sglang.bench_serving --backend {i_dict['backend']} \
-    #                   --dataset-name random \
-    #                   --num-prompts {i_dict['num_prompts']} \
-    #                   --random-input {i_dict['input_length']} \
-    #                   --random-output {i_dict['output_length']} \
-    #                   --random-range-ratio {i_dict['random_range_ratio']} \
-    #                   --host 0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']} \
-    #                   > {self.log_dir}/benchmark_node/benchmark_results.log" '''
-    #     formatted_cmd = textwrap_for_yml(cmd)
-    #     self.b_phdl.exec(formatted_cmd, timeout=500)
-    #     time.sleep(5)
-    #     self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
-    #     self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
 
     def poll_for_server_ready(self, node_no, sglang_function, no_of_iterations=16):
         """
