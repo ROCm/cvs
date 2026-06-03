@@ -108,9 +108,19 @@ def launch_docker_container(
     network='host',
     shm_size='64G',
     timeout=60 * 10,
+    ulimit_nofile=None,
 ):
     cmd = f'docker run -d --network {network} --ipc {network} \
             --cap-add=IPC_LOCK --security-opt seccomp=unconfined --privileged '
+    if ulimit_nofile is None:
+        host_ulimit = phdl.exec('ulimit -n')
+        for node in host_ulimit:
+            val = host_ulimit[node].strip()
+            if val.isdigit():
+                ulimit_nofile = f'{val}:{val}'
+                break
+    if ulimit_nofile:
+        cmd = cmd + f' --ulimit nofile={ulimit_nofile} '
     for device in device_list:
         cmd = cmd + f' --device {device} '
     for src_vol in volume_dict.keys():
