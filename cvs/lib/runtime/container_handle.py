@@ -8,8 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from __future__ import annotations
 
 import shlex
-import time
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 # Teardown reclaims strictly by this label (label-scoped ``docker rm -f``), never
 # a global prune that could reap unrelated containers on a shared host.
@@ -58,9 +57,6 @@ class ContainerHandle:
         seccomp_unconfined: bool = False,
         command: Optional[str] = None,
         extra_args: Optional[Sequence[str]] = None,
-        readiness: Optional[Callable[["ContainerHandle"], bool]] = None,
-        readiness_timeout_s: float = 600.0,
-        readiness_interval_s: float = 5.0,
     ) -> None:
         self.image = image
         self.run_id = run_id
@@ -77,9 +73,6 @@ class ContainerHandle:
         self.seccomp_unconfined = seccomp_unconfined
         self.command = command
         self.extra_args = list(extra_args or [])
-        self.readiness = readiness
-        self.readiness_timeout_s = readiness_timeout_s
-        self.readiness_interval_s = readiness_interval_s
         self.started = False
 
     def build_run_command(self) -> str:
@@ -125,27 +118,15 @@ class ContainerHandle:
         try:
             self._run(self.build_run_command())
             self.started = True
-            self._await_ready()
         except BaseException:
             # __exit__ does not run when __enter__ raises, so apply the same
             # teardown contract here: forensics (if launched) then label-scoped
-            # removal, so a failed launch / readiness timeout never leaks a
-            # container. capture()/remove() are best-effort and re-raise nothing.
+            # removal, so a failed launch never leaks a container. capture()/remove() are best-effort and re-raise nothing.
             if self.started:
                 self.capture()
             self.remove()
             raise
         return self
-
-    def _await_ready(self) -> None:
-        if self.readiness is None:
-            return
-        deadline = time.monotonic() + self.readiness_timeout_s
-        while time.monotonic() < deadline:
-            if self.readiness(self):
-                return
-            time.sleep(self.readiness_interval_s)
-        raise TimeoutError(f"container {self.name} not ready within {self.readiness_timeout_s}s")
 
     def capture(self) -> Dict[str, str]:
         """Snapshot logs + dmesg + GPU state. Best-effort; never raises."""

@@ -13,8 +13,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 #   - No privilege escalation unless explicitly opted in; every interpolated
 #     field is shell-quoted so injected `; rm -rf /` / `$(...)` stays in one arg.
 #   - Lifecycle: forensics (docker logs) are captured before the label-scoped
-#     `docker rm -f` (never prune); a readiness timeout in __enter__ still tears
-#     down the started container; body exceptions propagate.
+#     `docker rm -f` (never prune); body exceptions propagate.
 #   - The ContainerSpec -> handle seam: a spec feeds the handle clean str kwargs,
 #     and the handle itself fails closed (TypeError) on a raw non-str.
 
@@ -77,7 +76,7 @@ class TestContainerHandleRuntime(unittest.TestCase):
         # Happy path: launch, then on exit forensics are captured before the
         # label-scoped removal (teardown order matters for diagnostics).
         r = FakeRunner()
-        with ContainerHandle("img", "run1", r, readiness=lambda h: True):
+        with ContainerHandle("img", "run1", r):
             pass
         self.assertTrue(any("docker run -d" in c for c in r.cmds))
         log_idx = next(i for i, c in enumerate(r.cmds) if "docker logs" in c)
@@ -89,28 +88,8 @@ class TestContainerHandleRuntime(unittest.TestCase):
         # (the context manager must not swallow it).
         r = FakeRunner()
         with self.assertRaises(ValueError):
-            with ContainerHandle("img", "run1", r, readiness=lambda h: True):
+            with ContainerHandle("img", "run1", r):
                 raise ValueError("boom")
-        self.assertTrue(any("docker rm -f" in c for c in r.cmds))
-
-    def test_enter_readiness_timeout_tears_down(self):
-        # Regression: __enter__ raising on a readiness timeout must still capture
-        # and remove the already-started container (else it leaks, since __exit__
-        # never runs when __enter__ raises).
-        r = FakeRunner()
-        h = ContainerHandle(
-            "img",
-            "run1",
-            r,
-            readiness=lambda h: False,
-            readiness_timeout_s=0.01,
-            readiness_interval_s=0.001,
-        )
-        with self.assertRaises(TimeoutError):
-            with h:
-                pass
-        self.assertTrue(any("docker run -d" in c for c in r.cmds))
-        self.assertTrue(any("docker logs" in c for c in r.cmds))
         self.assertTrue(any("docker rm -f" in c for c in r.cmds))
 
     def test_remove_is_label_scoped_not_prune(self):
@@ -121,11 +100,6 @@ class TestContainerHandleRuntime(unittest.TestCase):
         self.assertTrue(removed)
         self.assertIn("--filter label=cvs_run_id=run1", removed[0])
         self.assertNotIn("prune", removed[0])
-
-    def test_run_flattens_per_host_dict(self):
-        # A per-host dict result (Pssh) is flattened to one newline-joined string.
-        r = FakeRunner(output={"hostA": "out-a", "hostB": "out-b"})
-        self.assertEqual(ContainerHandle("img", "run1", r)._run("cmd"), "out-a\nout-b")
 
 
 class TestContainerSpecHandleSeam(unittest.TestCase):

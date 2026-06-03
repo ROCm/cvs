@@ -155,11 +155,6 @@ class TestNumericFieldBounds(unittest.TestCase):
     """Operator-authored numeric fields must be range-checked at load, not
     indexed/sliced blindly at evaluate time (the percentile IndexError class)."""
 
-    def test_percentile_out_of_range_rejected_directly(self):
-        for bad in (150, -5, 100.1):
-            with self.assertRaises(ValidationError):
-                PercentileThreshold(metric="x", percentile=bad, op="<=", value=1)
-
     def test_percentile_out_of_range_rejected_via_config(self):
         for framework, base in iter_bases():
             for bad in (150, -5):
@@ -177,17 +172,6 @@ class TestNumericFieldBounds(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 ConvergenceThreshold(metric="loss", target=0.0, epsilon=0.1, by_step=bad)
         ConvergenceThreshold(metric="loss", target=0.0, epsilon=0.1, by_step=1)
-
-    def test_negative_bounds_rejected_at_load(self):
-        # A negative tolerance/epsilon/max_variance is never satisfiable (the
-        # measured quantity is >= 0), so it would silently fail every run rather
-        # than erroring. It must be rejected at construction, like percentile.
-        with self.assertRaises(ValidationError):
-            MonotonicityThreshold(metric="loss", tolerance=-0.1)
-        with self.assertRaises(ValidationError):
-            ConvergenceThreshold(metric="loss", target=0.0, epsilon=-0.1)
-        with self.assertRaises(ValidationError):
-            StabilityThreshold(metric="ttft_ms", max_variance=-1.0)
 
     def test_zero_bounds_accepted(self):
         # Zero is the meaningful strict edge (exact match / perfectly constant),

@@ -12,7 +12,6 @@ from cvs.lib.config.loader import (
     load_config_file,
     parse_config,
     register_config,
-    validate_config,
 )
 from cvs.lib.config.sweep import SweepCell, SweepParams, expand_sweep
 from cvs.lib.config.thresholds import (
@@ -37,7 +36,6 @@ __all__ = [
     "ConfigError",
     "register_config",
     "parse_config",
-    "validate_config",
     "load_config_file",
     "SweepParams",
     "SweepCell",

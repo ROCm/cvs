@@ -19,11 +19,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
 from cvs.lib.manifest import (
-    read_samples,
-    read_trajectory,
     write_resolved_config,
     write_samples,
     write_trajectory,
@@ -36,7 +35,7 @@ class TestSidecars(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp())
         rows = [{"request_id": i, "ttft_ms": 10 + i, "role": "server", "host": "n0"} for i in range(5)]
         write_samples(tmp / "samples.parquet", rows)
-        frame = read_samples(tmp / "samples.parquet")
+        frame = pd.read_parquet(tmp / "samples.parquet")
         self.assertEqual(len(frame), 5)
         self.assertIn("ttft_ms", frame.columns)
 
@@ -47,7 +46,7 @@ class TestSidecars(unittest.TestCase):
             {"step": i, "metric": "loss", "value": 2.0 - i * 0.1, "role": "trainer", "host": "n0"} for i in range(4)
         ]
         write_trajectory(tmp / "trajectory.parquet", rows)
-        frame = read_trajectory(tmp / "trajectory.parquet")
+        frame = pd.read_parquet(tmp / "trajectory.parquet")
         self.assertEqual(len(frame), 4)
         self.assertEqual(sorted(frame.columns), sorted(["step", "metric", "value", "role", "host"]))
 
@@ -69,11 +68,11 @@ class TestSidecars(unittest.TestCase):
         """Empty input keeps the declared schema instead of a column-less frame."""
         tmp = Path(tempfile.mkdtemp())
         write_trajectory(tmp / "trajectory.parquet", [])
-        traj = read_trajectory(tmp / "trajectory.parquet")
+        traj = pd.read_parquet(tmp / "trajectory.parquet")
         self.assertEqual(len(traj), 0)
         self.assertEqual(sorted(traj.columns), sorted(["step", "metric", "value", "role", "host"]))
         write_samples(tmp / "samples.parquet", [])
-        samples = read_samples(tmp / "samples.parquet")
+        samples = pd.read_parquet(tmp / "samples.parquet")
         self.assertEqual(len(samples), 0)
         self.assertIn("request_id", samples.columns)
 

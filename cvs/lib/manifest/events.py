@@ -86,10 +86,3 @@ class EventWriter:
     def __exit__(self, *exc) -> bool:
         self.close()
         return False
-
-    def __del__(self) -> None:
-        # Safety net for writers not used via close()/`with`; never raise in __del__.
-        try:
-            self.close()
-        except Exception:  # noqa: BLE001
-            pass

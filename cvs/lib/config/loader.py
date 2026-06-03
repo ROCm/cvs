@@ -99,23 +99,6 @@ def _resolve_class(raw: dict) -> Type[BaseTestConfig]:
     return cls
 
 
-def validate_config(raw: dict) -> BaseTestConfig:
-    """Dispatch + schema-validate WITHOUT resolving ``${env:...}`` / ``{user-id}``.
-
-    The migration tool uses this to fail fast on a structurally invalid output
-    (e.g. an empty sweep axis) at *conversion* time, without requiring deferred
-    secrets such as ``${env:HF_TOKEN}`` to be present in the migrating shell --
-    that is the whole point of deferring them. ``parse_config`` is the runtime
-    path that also resolves placeholders.
-    """
-    _ensure_frameworks_loaded()
-    cls = _resolve_class(raw)
-    try:
-        return cls.model_validate(raw)
-    except ValidationError as exc:
-        raise ConfigError(f"invalid {raw.get('framework')} config: {exc}") from exc
-
-
 def parse_config(raw: dict) -> BaseTestConfig:
     """Dispatch on ``framework``, resolve placeholders, and validate."""
     _ensure_frameworks_loaded()

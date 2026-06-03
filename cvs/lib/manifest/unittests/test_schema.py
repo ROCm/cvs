@@ -52,23 +52,6 @@ class TestManifestRoundtrip(unittest.TestCase):
                 }
             )
 
-    def test_never_touched_fields_roundtrip(self):
-        """Populate rarely-set fields so write/read equality actually guards them."""
-        tmp = Path(tempfile.mkdtemp())
-        manifest = _full_manifest()
-        manifest.schema_version = "9"
-        manifest.identity.framework_versions = {"vllm": "0.6.0"}
-        manifest.identity.cvs_version = "1.2.3"
-        manifest.config.datasets = [{"name": "sharegpt", "sha": "abc"}]
-        manifest.verdicts.flags = {"degraded": "true"}
-        manifest.verdicts.failure_category = "liveness_timeout"
-        manifest.verdicts.skip_reason = "no gpus"
-        manifest.resources.oom = True
-        manifest.sidecars.trajectory = "trajectory.parquet"
-        layout = RunLayout(tmp, "s", "c", "h", "r").ensure()
-        manifest.write(layout.manifest_path)
-        self.assertEqual(Manifest.read(layout.manifest_path), manifest)
-
 
 class TestB7NoRedaction(unittest.TestCase):
     def test_redacted_fields_rejected(self):

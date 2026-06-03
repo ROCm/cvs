@@ -66,14 +66,6 @@ def write_trajectory(path, rows: List[Dict]) -> Path:
     return _write_parquet(path, rows, TRAJECTORY_COLUMNS)
 
 
-def read_samples(path) -> pd.DataFrame:
-    return pd.read_parquet(path)
-
-
-def read_trajectory(path) -> pd.DataFrame:
-    return pd.read_parquet(path)
-
-
 def write_resolved_config(path, config_dump: Dict) -> Path:
     """Write the fully-resolved config as YAML.
 

@@ -26,13 +26,6 @@ class FailureCategory(str, enum.Enum):
     LIVENESS_FAILURE = "liveness_failure"
     VERIFICATION_FAILURE = "verification_failure"
 
-    @property
-    def priority(self) -> int:
-        return _PRIORITY[self]
-
-
-_PRIORITY = {cat: i for i, cat in enumerate(FailureCategory)}
-
 
 class WorkloadFailure(Exception):
     """Base for all classified workload failures.

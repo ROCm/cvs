@@ -20,8 +20,6 @@ from cvs.lib.manifest.schema import (
     Verdicts,
 )
 from cvs.lib.manifest.sidecars import (
-    read_samples,
-    read_trajectory,
     write_resolved_config,
     write_samples,
     write_trajectory,
@@ -43,7 +41,5 @@ __all__ = [
     "SidecarPointers",
     "write_samples",
     "write_trajectory",
-    "read_samples",
-    "read_trajectory",
     "write_resolved_config",
 ]

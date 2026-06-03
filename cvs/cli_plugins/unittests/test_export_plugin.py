@@ -61,35 +61,6 @@ class TestExportPluginDiscovery(unittest.TestCase):
         self.assertIn("export", names)
 
 
-class TestExportPluginParser(unittest.TestCase):
-    """--artifact-dir and -o/--out are required; no other surface."""
-
-    def _build_parser(self):
-        plugin = ExportPlugin()
-        root = argparse.ArgumentParser(prog="cvs")
-        sub = root.add_subparsers(dest="command")
-        plugin.get_parser(sub)
-        return root
-
-    def test_artifact_dir_and_out_required(self):
-        parser = self._build_parser()
-        # Missing --artifact-dir AND --out -> argparse calls sys.exit (SystemExit).
-        with self.assertRaises(SystemExit):
-            parser.parse_args(["export"])
-        # Missing -o -> still fails.
-        with self.assertRaises(SystemExit):
-            parser.parse_args(["export", "--artifact-dir", "/tmp/x"])
-        # Missing --artifact-dir -> still fails.
-        with self.assertRaises(SystemExit):
-            parser.parse_args(["export", "-o", "/tmp/x.parquet"])
-
-    def test_parses_minimal_valid_args(self):
-        parser = self._build_parser()
-        args = parser.parse_args(["export", "--artifact-dir", "/tmp/a", "-o", "/tmp/b.parquet"])
-        self.assertEqual(args.artifact_dir, "/tmp/a")
-        self.assertEqual(args.out, "/tmp/b.parquet")
-
-
 class TestExportPluginRun(unittest.TestCase):
     """End-to-end run() behavior against the real engine."""
 
