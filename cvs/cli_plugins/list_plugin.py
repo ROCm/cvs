@@ -52,11 +52,45 @@ class ListPlugin(SubcommandPlugin):
                         test_name = os.path.splitext(file)[0]
                         test_map[pkg_name][test_name] = module_path
 
+            # A4: DTNI tier-tree suites live as DIRECTORIES under tests/dtni/<suite>/
+            # (one suite == many tier test files). Surface each subdir as a suite
+            # whose "module_path" is the package itself; get_test_file returns the
+            # directory path so pytest collects the whole tree.
+            dtni_root = os.path.join(tests_dir, "dtni")
+            if os.path.isdir(dtni_root):
+                for entry in os.listdir(dtni_root):
+                    sub = os.path.join(dtni_root, entry)
+                    if not os.path.isdir(sub):
+                        continue
+                    # Skip private/dunder dirs and the suite-private `unittests/`
+                    # gate tree (it is for offline gates, not a runnable suite).
+                    if entry.startswith("_") or entry.startswith(".") or entry == "unittests":
+                        continue
+                    # Reserve names that would shadow a flat test_<name>.py stem.
+                    if entry in test_map[pkg_name]:
+                        continue
+                    test_map[pkg_name][entry] = f"{tests_path}.dtni.{entry}"
+
         return test_map
 
     @staticmethod
     def get_test_file(module_path):
-        """Helper to get the test file path from module path."""
+        """Helper to get the test file path from module path.
+
+        A4: if ``module_path`` itself names a package (a DTNI suite directory
+        under ``cvs/tests/dtni/<suite>/``), return that directory so pytest
+        collects the whole tree. Otherwise fall through to the existing
+        ``test_<name>.py`` file resolution.
+        """
+        # A4: DTNI suite (module_path resolves to a package directory).
+        try:
+            files = resources.files(module_path)
+            pkg_path = str(files)
+            if os.path.isdir(pkg_path):
+                return pkg_path
+        except (ModuleNotFoundError, AttributeError, TypeError):
+            pass
+
         try:
             # Module path is already correct (e.g., cvs.tests.<category>.<test> or extension_package.tests.<test>)
             # Just split and use it directly
