@@ -212,16 +212,22 @@ AIMVT-180 L2 ping). Enforces a single-vPod precondition by parsing
 `amd-smi fabric --topology --json` before invoking TransferBench, and reconciles
 the binary's exit code with per-cell `[PASS]/[FAIL]/[SKIP]` markers.
 
+> **PATH / LD_LIBRARY_PATH.** This check resolves `TransferBench` and `amd-smi`
+> from each node's `PATH`. Cluster-wide tool location (e.g. a non-default ROCm
+> install root) should be set via the cluster file's top-level `env_vars` block
+> (see [`cvs/input/cluster_file/README.md`](../../cluster_file/README.md)), not
+> duplicated here.
+
 - **`connectivity_mode`** (default: `"skip"`)
   - `"run"` — execute the smoketest on every reachable node
   - `"skip"` — preflight records a SKIPPED result and does not invoke TransferBench
 - **`tb_binary`** (default: `"TransferBench"`)
-  - Absolute path or PATH-resolved binary name on each node
-- **`rocm_path`** (default: `""`)
-  - Optional ROCm install root; when set, prepends `<rocm_path>/bin` to PATH and
-    `<rocm_path>/lib` to LD_LIBRARY_PATH for the invocation
-- **`amd_smi_path`** (default: `"amd-smi"`)
-  - Path / name of the amd-smi binary used for the pod-membership precondition
+  - TransferBench binary name; PATH-resolved on each node. Override with an
+    absolute path here only when this single preflight check needs to point at
+    a different binary than the rest of the cluster's tooling. The
+    pod-membership precondition uses `amd-smi` resolved from `PATH` and has no
+    per-check override (use cluster file `env_vars` to point at a non-default
+    install).
 - **`use_sudo`** (default: `true`)
   - Prepend `sudo` to TransferBench and amd-smi calls (typically required
     on production cluster images for IFoE access and the fabric topology query)

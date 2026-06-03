@@ -661,10 +661,6 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
     tb_binary = get_nested_config(
         config_dict, 'connectivity_check.transferbench', 'tb_binary', 'TransferBench'
     )
-    rocm_path = get_nested_config(config_dict, 'connectivity_check.transferbench', 'rocm_path', '')
-    amd_smi_path = get_nested_config(
-        config_dict, 'connectivity_check.transferbench', 'amd_smi_path', 'amd-smi'
-    )
     use_sudo = _config_flag_enabled(
         get_nested_config(config_dict, 'connectivity_check.transferbench', 'use_sudo', True),
         default=True,
@@ -742,8 +738,6 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
     checker = TransferBenchSmokeCheck(
         phdl,
         tb_binary=tb_binary,
-        rocm_path=rocm_path or None,
-        amd_smi_path=amd_smi_path,
         use_sudo=use_sudo,
         preset=preset,
         size_list=size_list if isinstance(size_list, (list, tuple)) else [size_list],

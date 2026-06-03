@@ -52,7 +52,6 @@ from cvs.lib.preflight.base import PreflightCheck
 # ---------------------------------------------------------------------------
 
 DEFAULT_TB_BINARY = 'TransferBench'
-DEFAULT_AMD_SMI_PATH = 'amd-smi'
 DEFAULT_PRESET = 'smoketest'
 DEFAULT_SIZE_LIST = ['1K', '16M']
 DEFAULT_NUM_ITERATIONS = 2
@@ -684,8 +683,6 @@ class TransferBenchSmokeCheck(PreflightCheck):
         phdl,
         *,
         tb_binary: str = DEFAULT_TB_BINARY,
-        rocm_path: Optional[str] = None,
-        amd_smi_path: str = DEFAULT_AMD_SMI_PATH,
         use_sudo: bool = False,
         preset: str = DEFAULT_PRESET,
         size_list: Optional[Sequence[str]] = None,
@@ -707,8 +704,6 @@ class TransferBenchSmokeCheck(PreflightCheck):
     ) -> None:
         super().__init__(phdl, config_dict)
         self.tb_binary = tb_binary
-        self.rocm_path = (rocm_path or '').strip()
-        self.amd_smi_path = amd_smi_path
         self.use_sudo = bool(use_sudo)
         self.preset = preset
         self.size_list = list(size_list) if size_list else list(DEFAULT_SIZE_LIST)
@@ -760,14 +755,6 @@ class TransferBenchSmokeCheck(PreflightCheck):
             env[k] = str(v)
         return [f'{k}={shlex.quote(v)}' for k, v in env.items()]
 
-    def _rocm_env_prefix(self) -> str:
-        """ROCm PATH/LD_LIBRARY_PATH prefix evaluated inside the inner shell."""
-        if not self.rocm_path:
-            return ''
-        rocm_bin = shlex.quote(f'{self.rocm_path}/bin')
-        rocm_lib = shlex.quote(f'{self.rocm_path}/lib')
-        return f'PATH={rocm_bin}:$PATH LD_LIBRARY_PATH={rocm_lib}:${{LD_LIBRARY_PATH:-}}'
-
     def build_command(
         self,
         rank: int,
@@ -777,13 +764,19 @@ class TransferBenchSmokeCheck(PreflightCheck):
     ) -> str:
         """Render a complete shell command for one rank.
 
-        Env-var prefixes (TB_*, NUM_ITERATIONS, etc.) and ROCm PATH/library
-        path mods are placed **inside** the inner shell so that, even when
-        ``use_sudo=True``, the privileged child process sees them: ``sudo``
-        otherwise sanitizes the calling shell's environment. The command
-        also appends a sentinel ``__TB_SMOKE_EXIT__=<code>`` line so the
-        orchestrator can recover the binary's exit code from stdout when
-        the parallel SSH layer discards process exit codes.
+        Env-var prefixes (``TB_*``, ``NUM_ITERATIONS``, etc.) are placed
+        **inside** the inner shell so that, even when ``use_sudo=True``,
+        the privileged child process sees them: ``sudo`` otherwise sanitizes
+        the calling shell's environment. The command also appends a sentinel
+        ``__TB_SMOKE_EXIT__=<code>`` line so the orchestrator can recover
+        the binary's exit code from stdout when the parallel SSH layer
+        discards process exit codes.
+
+        ``PATH`` / ``LD_LIBRARY_PATH`` (e.g. for a custom ROCm install) are
+        intentionally **not** injected here -- they are inherited from the
+        cluster file's ``env_vars`` block, which the parallel SSH layer
+        exports on every host before each command. This keeps a single
+        cluster-wide source of truth for tool location.
         """
         env_parts = self._env_assignments(rank, num_ranks, master_addr)
         binary = shlex.quote(self.tb_binary)
@@ -791,7 +784,7 @@ class TransferBenchSmokeCheck(PreflightCheck):
         sizes = list(size_list) if size_list is not None else self.size_list
         size_args = ' '.join(shlex.quote(str(s)) for s in sizes)
         extras = ' '.join(shlex.quote(s) for s in self.extra_args)
-        env_inline = ' '.join([self._rocm_env_prefix(), *env_parts]).strip()
+        env_inline = ' '.join(env_parts).strip()
         binary_invocation = f'{binary} {preset} {size_args} {extras}'.strip()
         if env_inline:
             inner = f'{env_inline} {binary_invocation}'
@@ -807,7 +800,14 @@ class TransferBenchSmokeCheck(PreflightCheck):
     # ------------------------------------------------------------------
 
     def _amd_smi_fabric_command(self) -> str:
-        cmd = f'{self.amd_smi_path} fabric --topology --json'
+        """Build the ``amd-smi fabric --topology --json`` invocation.
+
+        The ``amd-smi`` binary is resolved from ``PATH`` on each node;
+        operators who install ROCm in a non-default location should
+        export the appropriate ``PATH`` (and, when needed,
+        ``LD_LIBRARY_PATH``) via the cluster file's ``env_vars`` block.
+        """
+        cmd = 'amd-smi fabric --topology --json'
         if self.use_sudo:
             cmd = 'sudo ' + cmd
         return cmd

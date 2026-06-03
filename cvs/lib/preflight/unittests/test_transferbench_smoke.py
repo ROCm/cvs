@@ -448,16 +448,61 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         self.assertIn('TB_MASTER_ADDR=10.0.0.1', cmd)
         self.assertIn('TB_MASTER_PORT=31337', cmd)
 
-    def test_build_command_respects_sudo_and_rocm_path(self):
-        check = TransferBenchSmokeCheck(
-            MagicMock(),
-            use_sudo=True,
-            rocm_path='/opt/rocm',
-        )
+    def test_build_command_respects_sudo(self):
+        check = TransferBenchSmokeCheck(MagicMock(), use_sudo=True)
         cmd = check.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
-        self.assertTrue(cmd.startswith('sudo '))
-        self.assertIn('/opt/rocm/bin', cmd)
-        self.assertIn('/opt/rocm/lib', cmd)
+        self.assertTrue(cmd.startswith('sudo bash -c '))
+        self.assertIn('TransferBench', cmd)
+
+    def test_build_command_does_not_inject_path_or_ld_library_path(self):
+        """PATH / LD_LIBRARY_PATH come from cluster file env_vars (AIMVT-181 review).
+
+        The smoketest used to expose ``rocm_path``/``amd_smi_path`` knobs that
+        prepended PATH=<rocm>/bin and LD_LIBRARY_PATH=<rocm>/lib inline. Those
+        were removed in favour of the cluster file's top-level ``env_vars``
+        block, which the parallel SSH layer exports on every host before each
+        command. This regression guard ensures we never re-grow that
+        duplication: ``build_command`` must not emit either token.
+        """
+        check = TransferBenchSmokeCheck(MagicMock(), use_sudo=True)
+        cmd = check.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
+        self.assertNotIn('PATH=', cmd)
+        self.assertNotIn('LD_LIBRARY_PATH=', cmd)
+        check_no_sudo = TransferBenchSmokeCheck(MagicMock(), use_sudo=False)
+        cmd_no_sudo = check_no_sudo.build_command(
+            rank=0, num_ranks=1, master_addr='127.0.0.1'
+        )
+        self.assertNotIn('PATH=', cmd_no_sudo)
+        self.assertNotIn('LD_LIBRARY_PATH=', cmd_no_sudo)
+
+    def test_amd_smi_fabric_command_uses_bare_binary(self):
+        """The pod-membership query resolves ``amd-smi`` from PATH (AIMVT-181 review).
+
+        Operators who install ROCm in a non-default location set the
+        cluster-wide ``PATH`` via the cluster file's ``env_vars`` block; the
+        smoketest does not expose a per-check ``amd_smi_path`` knob.
+        """
+        check_no_sudo = TransferBenchSmokeCheck(MagicMock(), use_sudo=False)
+        self.assertEqual(
+            check_no_sudo._amd_smi_fabric_command(),
+            'amd-smi fabric --topology --json',
+        )
+        check_sudo = TransferBenchSmokeCheck(MagicMock(), use_sudo=True)
+        self.assertEqual(
+            check_sudo._amd_smi_fabric_command(),
+            'sudo amd-smi fabric --topology --json',
+        )
+
+    def test_constructor_rejects_removed_path_kwargs(self):
+        """``rocm_path`` and ``amd_smi_path`` were removed in the AIMVT-181 review.
+
+        Passing either should raise ``TypeError`` so that stale configs/tests
+        fail loudly instead of silently being ignored.
+        """
+        with self.assertRaises(TypeError):
+            TransferBenchSmokeCheck(MagicMock(), rocm_path='/opt/rocm')  # type: ignore[call-arg]
+        with self.assertRaises(TypeError):
+            TransferBenchSmokeCheck(MagicMock(), amd_smi_path='/opt/rocm/bin/amd-smi')  # type: ignore[call-arg]
 
     def test_run_pass_per_node(self):
         phdl = self._make_phdl(

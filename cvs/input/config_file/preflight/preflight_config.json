@@ -92,19 +92,13 @@
       },
 
       "transferbench": {
-        "_comment": "IFoE scale-up data-path validation via the TransferBench candidate-branch smoketest preset (AIMVT-181). Opt-in: defaults to 'skip'. Enforces a single-vPod precondition via 'amd-smi fabric --topology --json' before invoking TransferBench.",
+        "_comment": "IFoE scale-up data-path validation via the TransferBench candidate-branch smoketest preset (AIMVT-181). Opt-in: defaults to 'skip'. Enforces a single-vPod precondition via 'amd-smi fabric --topology --json' before invoking TransferBench. PATH and LD_LIBRARY_PATH for ROCm / amd-smi / TransferBench should be set cluster-wide via the cluster file's top-level 'env_vars' block (see cvs/input/cluster_file/README.md); they are not duplicated here.",
 
         "connectivity_mode": "skip",
-        "_comment_connectivity_mode": "TransferBench smoketest mode. Options: 'run' (execute the smoketest preset on each reachable node) or 'skip' (default; preflight will not invoke TransferBench). Flip to 'run' once the TransferBench candidate-branch binary and amd-smi are installed cluster-wide.",
+        "_comment_connectivity_mode": "TransferBench smoketest mode. Options: 'run' (execute the smoketest preset on each reachable node) or 'skip' (default; preflight will not invoke TransferBench). Flip to 'run' once the TransferBench candidate-branch binary and amd-smi are installed cluster-wide and reachable on PATH (typically via cluster file 'env_vars').",
 
         "tb_binary": "TransferBench",
-        "_comment_tb_binary": "Absolute path or PATH-resolved name of the TransferBench binary on each node. Examples: 'TransferBench', '/opt/rocm/bin/TransferBench'.",
-
-        "rocm_path": "",
-        "_comment_rocm_path": "Optional ROCm install directory used to prepend PATH=<rocm_path>/bin and LD_LIBRARY_PATH=<rocm_path>/lib when invoking TransferBench. Leave empty to rely on the node's default environment.",
-
-        "amd_smi_path": "amd-smi",
-        "_comment_amd_smi_path": "Absolute path or PATH-resolved name of the amd-smi binary used for the pod-membership precondition.",
+        "_comment_tb_binary": "TransferBench binary name. PATH-resolved by default; set cluster-wide PATH overrides via the cluster file's 'env_vars'. Override with an absolute path here only when this single preflight check needs to point at a different binary than the rest of the cluster's tooling.",
 
         "use_sudo": true,
         "_comment_use_sudo": "When true, both TransferBench and amd-smi are invoked with sudo. amd-smi fabric topology queries and TransferBench's IFoE access typically require root on production cluster images.",

@@ -162,8 +162,7 @@ issue.
 Each TransferBench invocation issues:
 
 ```
-[sudo] [PATH=<rocm>/bin:... LD_LIBRARY_PATH=<rocm>/lib:...] \
-  NUM_ITERATIONS=<n> NUM_WARMUPS=<n> ALWAYS_VALIDATE=1 RUN_PARALLEL=1 \
+[sudo] NUM_ITERATIONS=<n> NUM_WARMUPS=<n> ALWAYS_VALIDATE=1 RUN_PARALLEL=1 \
   [TB_NUM_RANKS=<n> TB_RANK=<r> TB_MASTER_ADDR=<rank0> TB_MASTER_PORT=<port>] \
   <tb_binary> smoketest <size_list...>
 ```
@@ -171,6 +170,11 @@ Each TransferBench invocation issues:
 with a `__TB_SMOKE_EXIT__=$?` sentinel appended so we can recover the
 binary's exit code from stdout even when the parallel SSH transport
 discards process exit codes.
+
+`PATH` and `LD_LIBRARY_PATH` (e.g. for a non-default ROCm install) are
+inherited from the cluster file's top-level `env_vars` block — the
+parallel SSH layer exports them on every host before each command, so
+the smoketest does not duplicate that knob in its own config.
 
 ### Orchestration modes
 
@@ -204,9 +208,7 @@ Per-node verdict is derived as:
 "connectivity_check": {
   "transferbench": {
     "connectivity_mode": "run",
-    "tb_binary": "/opt/rocm/bin/TransferBench",
-    "rocm_path": "/opt/rocm",
-    "amd_smi_path": "amd-smi",
+    "tb_binary": "TransferBench",
     "use_sudo": true,
     "preset": "smoketest",
     "size_list": ["1K", "16M"],
