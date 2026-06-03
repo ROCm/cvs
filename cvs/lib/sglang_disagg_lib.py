@@ -1262,3 +1262,27 @@ class SglangDisaggPD:
         verify_dmesg_for_errors(self.r_phdl, self.inference_start_time, self.inference_end_time)
         verify_dmesg_for_errors(self.b_phdl, self.inference_start_time, self.inference_end_time)
         log.info("%s", self.inference_results_dict)
+
+    def upgrade_sglang_from_source(self, git_branch='main', timeout=60 * 30):
+        """
+        Upgrade SGLang inside every inference container from the bundled git repo.
+        Must run after containers are up and before launch_server / launch_router.
+        """
+        log.info('Upgrade SGLang from source inside containers')
+
+        cmd = f'''docker exec {self.container_name} /bin/bash -c "
+            cd /sgl-workspace/sglang && \
+            git pull --no-rebase origin {git_branch} && \
+            pip install --upgrade -e 'python/[all]'" '''
+
+        verify_cmd = f'docker exec {self.container_name} pip list | grep -i sglang'
+
+        for hdl in [self.p_phdl, self.d_phdl, self.r_phdl, self.b_phdl]:
+            out_dict = hdl.exec(cmd, timeout=timeout)
+            for node, out in out_dict.items():
+                if re.search('error|fail|fatal', out, re.I):
+                    fail_test(f'SGLang upgrade failed on node {node}')
+
+            out_dict = hdl.exec(verify_cmd, timeout=120)
+            for node, out in out_dict.items():
+                log.info('SGLang package on node %s:\n%s', node, out)  
