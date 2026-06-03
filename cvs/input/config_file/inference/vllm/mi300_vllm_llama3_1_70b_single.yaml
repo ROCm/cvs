@@ -1,0 +1,78 @@
+# CVS DTNI v2 config -- vLLM Llama-3.1-70B single-node inference.
+#
+# PR-Y barebones milestone (addendum §9 "G6 re-split"): SINGLE CELL.
+# ``sweep`` declares one TP / one concurrency / one sequence combo so the
+# expansion produces exactly one ``SweepCell``. PR-Z (matrix layer) lowers
+# real swept values into the launch command (real C3); until then C3
+# collapses to "adapter consumes the single configured TP value".
+#
+# A1 staging deferred (G5b): the bench result reaches devbox via the
+# SHARED-FS path -- ``logs_dir`` is mounted into the container at the
+# same path it has on the devbox/host so a single write lands at a path
+# both sides see. The cluster used here is expected to mount Weka/NFS at
+# the same path on devbox + nodes; on a no-shared-FS cluster the
+# operator would either move to one or follow the adapter-local SFTP
+# fallback documented in cvs/lib/adapters/AGENTS.md.
+#
+# C4 descoped (security removed, addendum §4 B7 / §5 C4): HF token rides
+# in ``container.env`` and is recorded verbatim in pssh logs / manifest
+# commands / container.log / docker inspect. Accepted on
+# closed/internal clusters.
+schema_version: "2"
+framework: vllm
+target_gpu: mi300
+model: meta-llama/Llama-3.1-70B-Instruct
+cluster_ref: cluster_file/mi300_pool_example.yaml
+seed: 0
+
+knobs:
+  attention: aiter_unified
+  quant: fp8
+  backend: vllm
+
+container:
+  env:
+    HF_TOKEN: ${env:HF_TOKEN}
+  shm_size: 16G
+  ipc: host
+  network: host
+
+params:
+  server_script: llama3_1_70b_fp8_mi300_vllm_docker.sh
+  bench_serv_script: benchmark_serving.py
+  backend: vllm
+  container_image: rocm/vllm-dev:nightly
+  dataset_name: random
+  num_prompts: 3200
+  max_model_length: 9216
+  request_rate: inf
+  burstiness: 1.0
+  tokenizer_mode: auto
+  percentile_metrics: [ttft, tpot, itl, e2el]
+  metric_percentiles: 99
+  base_url: http://0.0.0.0
+  port_no: 8888
+
+topology:
+  roles:
+    server:
+      count: 1
+      gpus_per_node: 8
+      selector: mi300
+
+# Single-cell barebones: one value per axis. ``tensor_parallelism: [8]``
+# must equal a role's ``gpus_per_node`` (VllmConfig._tp_consistent_with_topology
+# enforces this at load). PR-Z grows real cartesian sweeps.
+sweep:
+  tensor_parallelism: [8]
+  concurrency: [16]
+  sequence_combinations:
+    - { isl: 1024, osl: 1024, name: single }
+
+# Placeholders to be calibrated from a baseline Llama-70B run.
+thresholds:
+  - { type: rate,       metric: total_throughput, op: ">=", value: 1200, unit: tok/s }
+  - { type: percentile, metric: ttft_ms, percentile: 99, op: "<=", value: 200, unit: ms }
+  - { type: percentile, metric: tpot_ms, percentile: 99, op: "<=", value: 30,  unit: ms }
+
+benchmarks: [throughput, ttft_p99]

@@ -40,12 +40,24 @@ def register_adapter(framework: str, kind: str = "inference") -> Callable[[Type]
     return _wrap
 
 
+def _ensure_adapters_loaded() -> None:
+    """Lazy import so ``get_adapter`` works without a hard import-time dep.
+
+    Adapter modules under ``cvs/lib/adapters/`` register themselves via
+    ``@register_adapter`` at import time; importing the package once forces
+    every shipped adapter to register. Mirrors the loader's
+    ``_ensure_frameworks_loaded`` pattern.
+    """
+    import cvs.lib.adapters  # noqa: F401  - side-effect: register adapters
+
+
 def get_adapter(framework: str) -> Type:
     """Return the adapter class for ``framework`` (searches both registries).
 
     Raises ``ValueError`` when no adapter is registered: silent fallback to a
     default would hide a config typo until a real workload run.
     """
+    _ensure_adapters_loaded()
     if framework in INFERENCE_REGISTRY:
         return INFERENCE_REGISTRY[framework]
     if framework in TRAINING_REGISTRY:
