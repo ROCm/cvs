@@ -32,6 +32,63 @@ class NodePaths(BaseModel):
     dataset_root: Optional[str] = None
 
 
+class NodeDevices(BaseModel):
+    """Site/hardware device tokens (e.g. /dev/infiniband/uverbs*) the
+    container needs ``--device`` passthrough for.
+
+    Device enumeration is site-dependent (a Thor2 cluster exposes
+    ``/dev/infiniband/uverbs{0..7}`` + ``/dev/infiniband/rdma_cm``; an AINIC
+    cluster looks different). Putting this on the cluster file rather than
+    per-workload means the same vLLM/megatron/sglang config moves between
+    clusters without an edit.
+
+    ``ib`` and ``gpu`` are typed lists of docker --device tokens. ``extra``
+    is the escape hatch for site-specific devices we haven't categorized.
+    G5b merges all three into ``ContainerSpec.devices`` at launch time.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ib: List[str] = Field(default_factory=list)
+    gpu: List[str] = Field(default_factory=list)
+    extra: List[str] = Field(default_factory=list)
+
+
+class NodeNetwork(BaseModel):
+    """Site/fabric-determined NCCL/UCX/Gloo collective env.
+
+    These knobs depend on the fabric (mlx5_* vs bnxt_re* vs rdma*), the GID
+    table (RoCEv2 per site), the QoS class, and the host NIC names. They are
+    NOT workload-dependent and should not be carried in per-workload
+    ``container.env`` (which leaks site bleed across configs and breaks
+    cross-site reuse).
+
+    Six typed Optional[str] knobs covering the universal NCCL/UCX/Gloo
+    site-env surface every multi-node framework hits (megatron, sglang-
+    disagg, jax, pytorch-xdit). Site-only vars not in this list (NCCL_IB_TC,
+    NCCL_NET_GDR_LEVEL, OFI provider, etc.) ride in ``extra_env`` until a
+    second site asks for typing.
+
+    G5b merges ``{typed fields as NCCL_*/UCX_*/GLOO_* env, then extra_env}``
+    into ``ContainerSpec.env`` before applying the per-workload override --
+    workload env wins on conflict (so per-run debug knobs still work).
+
+    extra=forbid catches typos in the typed fields (``nccl_ib_gid_indx`` ->
+    load-time error). Typos inside ``extra_env`` cannot be caught; that is
+    the escape hatch's cost.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    nccl_socket_ifname: Optional[str] = None  # -> NCCL_SOCKET_IFNAME
+    nccl_ib_hca: Optional[str] = None  # -> NCCL_IB_HCA
+    nccl_ib_gid_index: Optional[str] = None  # -> NCCL_IB_GID_INDEX
+    nccl_ib_sl: Optional[str] = None  # -> NCCL_IB_SL
+    ucx_net_devices: Optional[str] = None  # -> UCX_NET_DEVICES
+    gloo_socket_ifname: Optional[str] = None  # -> GLOO_SOCKET_IFNAME
+    extra_env: Dict[str, str] = Field(default_factory=dict)
+
+
 class Node(BaseModel):
     """A single physical node in the cluster pool.
 
@@ -49,6 +106,8 @@ class Node(BaseModel):
     gpus: int = Field(default=0, ge=0)
     labels: List[str] = Field(default_factory=list)
     paths: NodePaths = Field(default_factory=NodePaths)
+    devices: NodeDevices = Field(default_factory=NodeDevices)
+    network: NodeNetwork = Field(default_factory=NodeNetwork)
 
 
 class ClusterPool(BaseModel):
