@@ -8,8 +8,10 @@ version: '3.8'
 services:
   cvs-cluster-monitor:
     build:
-      context: .
-      dockerfile: Dockerfile
+      # Context is the repo root so the image can build the cvs package
+      # (cvs.lib.parallel) that the backend's SSH adapter imports.
+      context: ../../..
+      dockerfile: cvs/monitors/cluster-mon/Dockerfile
     container_name: cvs-cluster-monitor
 
     # Network mode: Use "host" to avoid iptables issues (recommended for production)

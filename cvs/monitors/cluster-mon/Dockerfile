@@ -1,23 +1,38 @@
 # Multi-stage build for CVS Cluster Monitor
+#
+# NOTE: the build context is the REPO ROOT (see docker-compose.yml build.context),
+# not this directory, so the image can build/install the repo-root `cvs` package
+# (cvs.lib.parallel) that the SSH adapter imports. All COPY paths below are
+# therefore relative to the repo root.
+
 # Stage 1: Build React frontend
 FROM node:18-slim AS frontend-builder
 
 WORKDIR /app/frontend
 
-# Copy frontend package files
-COPY frontend/package*.json ./
-
-# Install dependencies
+# Install dependencies (copy lockfiles first for layer caching)
+COPY cvs/monitors/cluster-mon/frontend/package*.json ./
 RUN npm ci
 
-# Copy frontend source
-COPY frontend/ ./
-
 # Build frontend for production
+COPY cvs/monitors/cluster-mon/frontend/ ./
 RUN npm run build
 
 
-# Stage 2: Main application image
+# Stage 2: Build the cvs wheel from the repo-root source
+FROM python:3.10-slim AS cvs-builder
+
+WORKDIR /src
+
+# setup.py reads requirements.txt and version.txt at build time.
+COPY setup.py requirements.txt version.txt ./
+COPY cvs/ ./cvs/
+
+# Build only the cvs wheel (no runtime deps; those come from backend reqs below).
+RUN pip wheel --no-deps -w /wheels .
+
+
+# Stage 3: Main application image
 FROM python:3.10-slim
 
 # Install system dependencies
@@ -33,12 +48,18 @@ ENV CLUSTER_MONITOR_HOME=/app
 ENV PYTHONUNBUFFERED=1
 ENV HOME=/root
 
-# Copy backend requirements and install Python dependencies
-COPY backend/requirements.txt ./
+# Backend Python dependencies (provides the SSH stack: parallel-ssh/paramiko/scp)
+COPY cvs/monitors/cluster-mon/backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install the cvs package (provides cvs.lib.parallel used by the SSH adapter).
+# --no-deps so it does NOT override the backend's pinned SSH stack installed
+# above; the libs the adapter needs come from backend/requirements.txt.
+COPY --from=cvs-builder /wheels/*.whl /tmp/cvs-wheels/
+RUN pip install --no-cache-dir --no-deps /tmp/cvs-wheels/*.whl
+
 # Copy backend code
-COPY backend/app/ ./app/
+COPY cvs/monitors/cluster-mon/backend/app/ ./app/
 
 # Copy frontend build from builder stage
 COPY --from=frontend-builder /app/frontend/dist ./static
