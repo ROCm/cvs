@@ -4,7 +4,7 @@
     {
         "_comments__": "Config file created for multi-node distributed training, change expected results based on number of nodes",
         "container_image": "<changeme>",
-        "container_name": "torchtitan_llama3.1",
+        "container_name": "torchtitan_qwen3",
         "distributed_training": "True",
         "_example_nnodes": "4",
         "nnodes": "<changeme>",
@@ -33,7 +33,7 @@
         "rocm_dir": "",
         "verify_network_errors": "False",
         "_comments_use_generated_config": "True = generate TOML from model_params and pass to torchrun (recommended). False = use canned TOML at ./torchtitan/models/{module}/train_configs/{config}",
-        "use_generated_config": "False",
+        "use_generated_config": "True",
         "_comments_torchtitan_root": "Path inside the container where the torchtitan repo lives",
         "torchtitan_root": "/workspace/torchtitan",
         "container_config":
@@ -52,16 +52,16 @@
     {
         "multi_node":
         {
-            "llama3_1_8b":
+            "qwen3_32b":
             {
                 "mi300x":
                 {
-                    "tokenizer_path": "meta-llama/Llama-3.1-8B",
-                    "model_size": "8b",
+                    "tokenizer_path": "Qwen/Qwen3-32B",
+                    "model_size": "32b",
                     "global_batch_size": "<changeme>",
                     "micro_batch_size": "<changeme>",
                     "sequence_length": "8192",
-                    "data_parallel_shard_degree": "8",
+                    "data_parallel_shard_degree": "16",
                     "tensor_parallel_degree": "1",
                     "pipeline_parallel_degree": "1",
                     "context_parallel_degree": "1",
@@ -69,7 +69,7 @@
                     "activation_checkpointing": "selective",
                     "compile": "false",
                     "enable_float8": "true",
-                    "hf_assets_path": "./assets/hf/Llama-3.1-8B",
+                    "hf_assets_path": "./assets/hf",
                     "converters": "[\"float8\"]",
                     "dataset": "c4",
                     "lr": "3e-4",
@@ -84,12 +84,12 @@
                 },
                 "mi325":
                 {
-                    "tokenizer_path": "meta-llama/Llama-3.1-8B",
-                    "model_size": "8b",
+                    "tokenizer_path": "Qwen/Qwen3-32B",
+                    "model_size": "32b",
                     "global_batch_size": "<changeme>",
                     "micro_batch_size": "<changeme>",
                     "sequence_length": "8192",
-                    "data_parallel_shard_degree": "8",
+                    "data_parallel_shard_degree": "16",
                     "tensor_parallel_degree": "1",
                     "pipeline_parallel_degree": "1",
                     "context_parallel_degree": "1",
@@ -97,7 +97,7 @@
                     "activation_checkpointing": "selective",
                     "compile": "false",
                     "enable_float8": "true",
-                    "hf_assets_path": "./assets/hf/Llama-3.1-8B",
+                    "hf_assets_path": "./assets/hf",
                     "converters": "[\"float8\"]",
                     "dataset": "c4",
                     "lr": "3e-4",
@@ -107,65 +107,6 @@
                     "result_dict":
                     {
                         "_example_tokens_per_sec": "16000.0",
-                        "tokens_per_sec": "<changeme>"
-                    }
-                }
-            },
-            "llama3_1_70b":
-            {
-                "mi300x":
-                {
-                    "tokenizer_path": "meta-llama/Llama-3.1-70B",
-                    "model_size": "70b",
-                    "global_batch_size": "<changeme>",
-                    "micro_batch_size": "<changeme>",
-                    "sequence_length": "8192",
-                    "data_parallel_shard_degree": "8",
-                    "tensor_parallel_degree": "1",
-                    "pipeline_parallel_degree": "1",
-                    "context_parallel_degree": "1",
-                    "expert_parallel_degree": "1",
-                    "activation_checkpointing": "selective",
-                    "compile": "false",
-                    "enable_float8": "true",
-                    "hf_assets_path": "./assets/hf/Llama-3.1-70B",
-                    "converters": "[\"float8\"]",
-                    "dataset": "c4",
-                    "lr": "1.5e-4",
-                    "warmup_steps": "200",
-                    "enable_async_tensor_parallel": "false",
-                    "precompute_float8_dynamic_scale_for_fsdp": "false",
-                    "result_dict":
-                    {
-                        "_example_tokens_per_sec": "2000.0",
-                        "tokens_per_sec": "<changeme>"
-                    }
-                },
-                "mi325":
-                {
-                    "tokenizer_path": "meta-llama/Llama-3.1-70B",
-                    "model_size": "70b",
-                    "global_batch_size": "<changeme>",
-                    "micro_batch_size": "<changeme>",
-                    "sequence_length": "8192",
-                    "data_parallel_shard_degree": "8",
-                    "tensor_parallel_degree": "1",
-                    "pipeline_parallel_degree": "1",
-                    "context_parallel_degree": "1",
-                    "expert_parallel_degree": "1",
-                    "activation_checkpointing": "selective",
-                    "compile": "false",
-                    "enable_float8": "true",
-                    "hf_assets_path": "./assets/hf/Llama-3.1-70B",
-                    "converters": "[\"float8\"]",
-                    "dataset": "c4",
-                    "lr": "1.5e-4",
-                    "warmup_steps": "200",
-                    "enable_async_tensor_parallel": "false",
-                    "precompute_float8_dynamic_scale_for_fsdp": "false",
-                    "result_dict":
-                    {
-                        "_example_tokens_per_sec": "2200.0",
                         "tokens_per_sec": "<changeme>"
                     }
                 }

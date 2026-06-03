@@ -251,6 +251,7 @@ def test_llama_3_1_8b_single_node(phdl, gpu_type, training_dict, model_params_di
     )
     tt_obj.exec_nic_setup_scripts()
     tt_obj.build_training_job_cmd()
+    tt_obj.download_hf_assets()
     tt_obj.start_training_job()
     tt_obj.poll_for_training_completion()
     tt_obj.verify_training_results()

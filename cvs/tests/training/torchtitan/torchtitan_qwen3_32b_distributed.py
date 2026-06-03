@@ -243,9 +243,9 @@ def test_launch_torchtitan_containers(phdl, training_dict):
     update_test_result()
 
 
-def test_llama_3_1_8b_distributed(phdl, gpu_type, training_dict, model_params_dict, hf_token):
+def test_qwen3_32b_distributed(phdl, gpu_type, training_dict, model_params_dict, hf_token):
     """
-    Pytest: Multi-node TorchTitan Llama 3.1 8B distributed training lifecycle test.
+    Pytest: Multi-node TorchTitan Qwen3 32B distributed training lifecycle test.
 
     Args:
       phdl: Cluster handle used by the training job to execute commands.
@@ -257,7 +257,7 @@ def test_llama_3_1_8b_distributed(phdl, gpu_type, training_dict, model_params_di
     globals.error_list = []
     tt_obj = torchtitan_training_lib.TorchTitanTrainingJob(
         phdl,
-        'llama3_1_8b',
+        'qwen3_32b',
         training_dict,
         model_params_dict,
         hf_token,

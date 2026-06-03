@@ -32,9 +32,9 @@ err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_bu
 # lists today, but the structure matches megatron_training_lib.py so adding
 # alternate log formats later is a one-line change.
 TRAINING_RESULT_PATTERNS = {
-    'tokens_per_sec': [r'tok/s:\s+([0-9\.]+)'],
+    'tokens_per_sec': [r'tps:\s+([0-9,\.]+)', r'tok/s:\s+([0-9\.]+)'],
     'loss': [r'loss:\s+([0-9\.]+)'],
-    'mem_usage_gb': [r'mem:\s+([0-9\.]+)\s+GB'],
+    'mem_usage_gb': [r'memory:\s+([0-9\.]+)\s*GiB', r'mem:\s+([0-9\.]+)\s+GB'],
 }
 
 # Completion indicator: TorchTitan emits `step: <N>` where N is the configured
@@ -71,7 +71,9 @@ def _parse_training_results(output):
         for pat in patterns:
             matches = re.findall(pat, output, re.I)
             if matches:
-                out[metric] = matches
+                # TorchTitan emits comma-grouped numbers (e.g. "tps: 4,716");
+                # strip so downstream float() doesn't choke.
+                out[metric] = [m.replace(',', '') for m in matches]
                 break
     return out
 
@@ -275,8 +277,8 @@ class TorchTitanTrainingJob:
             ]
 
         # Model params - set defaults if not defined in input json file
-        pdict.setdefault('tokenizer_path', 'meta-llama/Llama-3.1-70B')
-        pdict.setdefault('model_size', '70b')
+        pdict.setdefault('tokenizer_path', 'meta-llama/Llama-3.1-8B')
+        pdict.setdefault('model_size', '8b')
         pdict.setdefault('sequence_length', '8192')
         pdict.setdefault('global_batch_size', '128')
         pdict.setdefault('micro_batch_size', '2')
@@ -290,7 +292,7 @@ class TorchTitanTrainingJob:
         pdict.setdefault('enable_float8', 'true')
         # New fields driving the generated TOML (all values stored as strings per
         # CVS config convention; lib classifies emit kind per field).
-        pdict.setdefault('hf_assets_path', './assets/hf/Llama-3.1-70B')
+        pdict.setdefault('hf_assets_path', './assets/hf')
         pdict.setdefault('converters', '["float8"]')
         pdict.setdefault('dataset', 'c4')
         pdict.setdefault('lr', '8e-5')
@@ -428,11 +430,11 @@ class TorchTitanTrainingJob:
         float8_precompute_lower = str(self.precompute_float8_dynamic_scale_for_fsdp).lower()
         return textwrap.dedent(f"""\
             [model]
-            name = "llama3"
-            flavor = "{self.model_size}"
-            hf_assets_path = "{self.hf_assets_path}"
-            tokenizer_path = "{self.tokenizer_path}"
-            converters = {self.converters}
+            name = "{self.tt_module}"
+            flavor = "{self.model_size.upper()}"
+            hf_assets_path = "{self.hf_assets_path}/{self.tokenizer_path.rsplit('/', 1)[-1]}"
+           
+            
 
             [training]
             dataset = "{self.dataset}"
@@ -484,6 +486,34 @@ class TorchTitanTrainingJob:
         write_cmd = f"cat > {dest_path} <<'CVS_TOML_EOF'\n{toml_str}\nCVS_TOML_EOF"
         self.phdl.exec(write_cmd)
 
+    def download_hf_assets(self):
+        """
+        Download Hugging Face assets (tokenizer + model) synchronously on
+        every node. Blocks until the download finishes on all nodes, so the
+        subsequent torchrun launch can assume assets are in place.
+
+        Path mirrors what build_training_job_cmd would have used inline:
+          - use_generated_config == 'True'  -> --local_dir self.hf_assets_path
+          - use_generated_config == 'False' -> --local_dir ./assets/hf/
+        The download script itself appends a per-model subdir
+        (e.g. './assets/hf/Qwen3-32B'); see _build_generated_toml for the
+        matching path used in the generated TOML.
+
+        Runs per-node (paths are container-local, not NFS-shared in the
+        current setup); idempotent — download_hf_assets.py skips files
+        already present, so re-runs are cheap.
+        """
+        local_dir = self.hf_assets_path if self.use_generated_config == 'True' else './assets/hf/'
+        download_cmd = (
+            f'docker exec {self.container_name} /bin/bash -c '
+            f'"cd {self.torchtitan_root} && '
+            f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} '
+            f'--assets tokenizer --all --hf_token={self.hf_token} --local_dir {local_dir}"'
+        )
+        log.info('Downloading HF assets for %s (may take a while for large models)...', self.tokenizer_path)
+        self.phdl.exec(download_cmd)
+        log.info('HF asset download complete')
+
     def build_training_job_cmd(self):
         """
         Construct native TorchTitan training command using torchrun.
@@ -522,8 +552,6 @@ class TorchTitanTrainingJob:
 
         nproc_per_node = 8
 
-        download_tokenizer_cmd = f'python scripts/download_hf_assets.py --repo_id {self.tokenizer_path} --assets tokenizer --all --hf_token={self.hf_token}'
-
         if self.distributed_training:
             for i in range(self.nnodes):
                 torchrun_cmd = (
@@ -533,18 +561,17 @@ class TorchTitanTrainingJob:
                     f' --role rank --tee 3'
                     f' -m torchtitan.train --job.config_file {config_file_path}'
                 )
-                # Truncate any stale training.log from a prior run *before*
-                # the download/sleep window. The `>` redirect on torchrun only
-                # opens the file once torchrun itself runs; without this,
-                # poll_for_training_completion would scan the previous run's
-                # output during the download + sleep gap.
+                # Truncate any stale training.log from a prior run before
+                # torchrun opens it. download_hf_assets() runs synchronously
+                # before this script executes, so torchrun is the only thing
+                # writing to log_path now.
                 log_path = f'{self.log_dir}/torchtitan-logs/out-node{i}/training.log'
                 # Wrap the chain in `nohup sh -c '...' & disown` so it
                 # survives the wrapper bash exiting. Without this, the
                 # backgrounded chain dies when `docker exec` returns because
                 # its parent bash also exits, leaving the chain unreparented
                 # and reaped.
-                inner_chain = f'{download_tokenizer_cmd} && sleep 200 && {torchrun_cmd} > {log_path} 2>&1'
+                inner_chain = f'{torchrun_cmd} > {log_path} 2>&1'
                 full_cmd = (
                     cmd + f': > {log_path}; ' + f"nohup sh -c '{inner_chain}' </dev/null >/dev/null 2>&1 & disown"
                 )
@@ -562,7 +589,7 @@ class TorchTitanTrainingJob:
                 f' -m torchtitan.train --job.config_file {config_file_path}'
             )
             log_path = f'{self.log_dir}/torchtitan-logs/out-node0/training.log'
-            inner_chain = f'{download_tokenizer_cmd} && sleep 200 && {torchrun_cmd} > {log_path} 2>&1'
+            inner_chain = f'{torchrun_cmd} > {log_path} 2>&1'
             self.job_cmd = (
                 cmd + f': > {log_path}; ' + f"nohup sh -c '{inner_chain}' </dev/null >/dev/null 2>&1 & disown"
             )
@@ -713,9 +740,10 @@ class TorchTitanTrainingJob:
             TRAINING_NAN_PATTERNS comment).
         """
         log.info('Poll for training completion ..')
-        # Wrapper does: download (~1 min) + `sleep 200` + torchrun. Wait past
-        # that window before scanning logs so we don't poll an empty file.
-        time.sleep(300)
+        # Download is now done synchronously in download_hf_assets() before
+        # the wrapper script runs, so torchrun starts immediately. Short
+        # warmup gives torchrun time to write its first log line.
+        time.sleep(30)
 
         last_node = self.host_list[-1]
         last_node_num = len(self.host_list) - 1
