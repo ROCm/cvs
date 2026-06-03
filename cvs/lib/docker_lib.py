@@ -108,9 +108,18 @@ def launch_docker_container(
     network='host',
     shm_size='64G',
     timeout=60 * 10,
+    privileged=True,
+    extra_run_args='',
 ):
+    # `--privileged` exposes every host device (including all RDMA HCAs under
+    # /dev/infiniband) regardless of `device_list`. Callers that need to
+    # restrict device discovery pass `privileged=False` and an explicit
+    # `device_list`; defaults preserve the historical privileged behavior.
+    priv_flag = '--privileged ' if privileged else ''
     cmd = f'docker run -d --network {network} --ipc {network} \
-            --cap-add=IPC_LOCK --security-opt seccomp=unconfined --privileged '
+            --cap-add=IPC_LOCK --security-opt seccomp=unconfined {priv_flag}'
+    if extra_run_args:
+        cmd = cmd + f'{extra_run_args} '
     for device in device_list:
         cmd = cmd + f' --device {device} '
     for src_vol in volume_dict.keys():

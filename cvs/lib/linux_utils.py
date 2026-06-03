@@ -331,6 +331,60 @@ def get_rdma_capable_devices_dict(phdl):
     return rdma_cap_dict
 
 
+def get_uverbs_devices_for_hcas(phdl, hca_csv, include_rdma_cm=True):
+    """
+    Resolve a comma-separated list of RDMA HCA (ibdev) names to their
+    /dev/infiniband/uverbsN character-device paths on each node.
+
+    This is used to expose ONLY a chosen subset of RDMA devices to an
+    unprivileged container (`docker run --device ...`), so that RDMA device
+    discovery (e.g. `ibv_devinfo`) inside the container is restricted to the
+    requested HCAs instead of every device the host exposes.
+
+    The ibdev -> uverbs mapping is read per node from
+    /sys/class/infiniband_verbs/uverbs*/ibdev because the uverbs index is not
+    guaranteed to follow ibdev ordering and can differ across nodes.
+
+    Args:
+      phdl: parallel-ssh handle; phdl.exec(cmd) returns {node: stdout}.
+      hca_csv (str): comma-separated ibdev names (e.g. 'rocep28s0,rocep62s0').
+      include_rdma_cm (bool): append '/dev/infiniband/rdma_cm' to each node's
+        list (required for RDMA connection management).
+
+    Returns:
+      dict: {node: ['/dev/infiniband/uverbsN', ..., '/dev/infiniband/rdma_cm']}
+        ordered to follow hca_csv. HCAs that cannot be resolved on a node are
+        skipped with a warning.
+    """
+    requested = [h.strip() for h in hca_csv.split(',') if h.strip()]
+    cmd = 'for u in /sys/class/infiniband_verbs/uverbs*; do echo "$(basename $u) $(cat $u/ibdev)"; done'
+    out_dict = phdl.exec(cmd)
+    dev_dict = {}
+    for node in out_dict.keys():
+        # Build ibdev -> uverbs name map for this node.
+        ibdev_to_uverbs = {}
+        for line in out_dict[node].split('\n'):
+            parts = line.split()
+            if len(parts) != 2:
+                continue
+            uverbs_name, ibdev = parts[0], parts[1]
+            if uverbs_name.startswith('uverbs'):
+                ibdev_to_uverbs[ibdev] = uverbs_name
+        node_devs = []
+        for hca in requested:
+            if hca in ibdev_to_uverbs:
+                node_devs.append(f'/dev/infiniband/{ibdev_to_uverbs[hca]}')
+            else:
+                log.warning(
+                    f'HCA {hca} not found in /sys/class/infiniband_verbs on node {node}; '
+                    f'available ibdevs: {sorted(ibdev_to_uverbs.keys())}'
+                )
+        if include_rdma_cm:
+            node_devs.append('/dev/infiniband/rdma_cm')
+        dev_dict[node] = node_devs
+    return dev_dict
+
+
 def get_backend_nic_dict(phdl):
     lshw_dict = get_lshw_network_dict(phdl)
     rdma_cap_devs = get_rdma_capable_devices_dict(phdl)
