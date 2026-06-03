@@ -48,6 +48,47 @@
         
         "exclude_failed_interface_nodes": "true",
         "_comment_exclude_failed_interface_nodes": "Legacy hint for reporting: preflight now prunes interface/GID-failed nodes from the SSH host list automatically. Interface failures are excluded from mesh testing regardless of this flag."
+      },
+
+      "ifoe": {
+        "_comment": "IFoE L2 connectivity testing via 'afmctl test ping' (AIMVT-180). Opt-in: defaults to 'skip'.",
+
+        "connectivity_mode": "skip",
+        "_comment_connectivity_mode": "IFoE L2 ping mode. Options: 'run' (execute afmctl L2 ping on every reachable node) or 'skip' (default; preflight will not invoke afmctl). Enable once afmctl and the IFoE driver are available on every node.",
+
+        "afmctl_path": "afmctl",
+        "_comment_afmctl_path": "Absolute path or PATH-resolved name of the afmctl binary on each cluster node. Examples: 'afmctl', '/usr/local/bin/afmctl'.",
+
+        "use_sudo": false,
+        "_comment_use_sudo": "When true, afmctl is invoked with sudo. Enable if afmctl needs root on the cluster image.",
+
+        "bdf_discovery": "auto",
+        "_comment_bdf_discovery": "How to determine which accelerator BDFs to ping on each node. 'auto' runs 'afmctl show device' on each node and uses the BDFs reported there. 'config' uses only the explicit 'bdfs' list below.",
+
+        "_example_bdfs": ["0001:01:00.1"],
+        "bdfs": [],
+        "_comment_bdfs": "Optional explicit list of accelerator BDFs (e.g. ['0001:01:00.1']) shared across the cluster. Leave empty to defer to bdf_discovery='auto'.",
+
+        "dst_accelerators": [0],
+        "_comment_dst_accelerators": "Destination accelerator IDs passed to --dst-accelerator. One afmctl ping is issued per (bdf, dst_accelerator). Use [0] for a single-accelerator destination; use a list like [0, 1] to ping multiple peers.",
+
+        "ports": "all",
+        "_comment_ports": "Ports passed to -p. Use 'all' (default; omits -p so afmctl tests every port), a string like '0,1,2' or '0-7', or a list [0,1,2].",
+
+        "pings_per_port": 1,
+        "_comment_pings_per_port": "Value for -c (pings per port pair). Larger values smooth over transient losses.",
+
+        "per_ping_timeout": null,
+        "_comment_per_ping_timeout": "Optional value for afmctl's -t flag (per-ping timeout). Leave null to use afmctl's default.",
+
+        "traffic_types": ["ifoe_req", "ifoe_resp", "non_ifoe"],
+        "_comment_traffic_types": "Traffic categories to enforce when evaluating PASS/FAIL. Maps to afmctl's --traffic-type (request, response, non-ifoe). When all three are selected (default) --traffic-type is omitted so afmctl exercises every category.",
+
+        "loss_threshold_pct": 0.0,
+        "_comment_loss_threshold_pct": "Maximum tolerated packet loss percentage per traffic type. Defaults to 0.0 (any failure marks the node as FAIL).",
+
+        "ssh_timeout": 180,
+        "_comment_ssh_timeout": "Overall SSH timeout (seconds) for each afmctl invocation. Increase for large port counts or high pings_per_port values."
       }
     },
     

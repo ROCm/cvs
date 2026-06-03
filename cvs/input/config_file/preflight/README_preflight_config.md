@@ -4,12 +4,14 @@ This document explains how to configure the GPU cluster preflight checks system.
 
 ## Overview
 
-The preflight checks system validates essential cluster health before running performance tests like IB performance tests, RCCL training, and inference workloads. It performs four key validations:
+The preflight checks system validates essential cluster health before running performance tests like IB performance tests, RCCL training, and inference workloads. It performs the following validations:
 
 1. **GID Consistency** - Ensures RDMA interfaces have valid GID entries
 2. **RDMA Connectivity** - Tests node-to-node RDMA communication using ibv_rc_pingpong
 3. **ROCm Version Consistency** - Verifies consistent ROCm versions across nodes
 4. **Interface Name Consistency** - Validates RDMA interface naming patterns
+5. **IFoE L2 Connectivity (AIMVT-180; opt-in)** - Runs `afmctl test ping`
+   on each node and enforces per-port and Summary pass/fail accounting
 
 ## Configuration File Structure
 
@@ -55,8 +57,8 @@ preflight/
 ├── debug/                # Debug and troubleshooting options  
 ├── node_check/           # Individual node validation parameters
 ├── connectivity_check/   # Inter-node connectivity tests
-│   └── rdma/             # RDMA-specific parameters (including nodes_per_full_mesh_group)
-│   └── ifoe/            # (Future: IFoE parameters)
+│   ├── rdma/             # RDMA-specific parameters (including nodes_per_full_mesh_group)
+│   └── ifoe/             # IFoE L2 ping parameters (AIMVT-180; opt-in)
 └── reporting/           # Output and report generation
 ```
 
@@ -162,6 +164,40 @@ All parameters below are optional and have sensible defaults. The sample configu
 - **`exclude_failed_interface_nodes`** (default: "true")
   - Legacy hint for reporting: preflight now prunes interface/GID-failed nodes automatically
   - Interface failures are excluded from mesh testing regardless of this flag
+
+#### IFoE Settings (`connectivity_check.ifoe`) — opt-in (AIMVT-180)
+
+Runs `afmctl test ping` on each reachable node and validates the per-port
+pass/fail table plus the aggregate `Summary:` block in afmctl's output.
+
+- **`connectivity_mode`** (default: `"skip"`)
+  - `"run"` — execute the L2 ping on every reachable node
+  - `"skip"` — preflight records a SKIPPED result and does not invoke afmctl
+- **`afmctl_path`** (default: `"afmctl"`)
+  - Absolute path or PATH-resolved binary name on each node
+- **`use_sudo`** (default: `false`)
+  - Prepend `sudo` to the afmctl invocation when the cluster image requires root
+- **`bdf_discovery`** (default: `"auto"`)
+  - `"auto"` — run `afmctl show device` on each node and use the reported BDFs
+  - `"config"` — use only the `bdfs` list below; nodes with no matching BDFs FAIL
+- **`bdfs`** (default: `[]`)
+  - Optional explicit list of accelerator BDFs to test on every node
+  - Example: `["0001:01:00.1"]`
+- **`dst_accelerators`** (default: `[0]`)
+  - One afmctl invocation is issued per `(bdf, dst_accelerator)` combination
+- **`ports`** (default: `"all"`)
+  - `"all"` (omit `-p`), a string like `"0-7"` or `"0,1,2"`, or a list `[0, 1, 2]`
+- **`pings_per_port`** (default: `1`)
+  - Passed to afmctl as `-c <count>`
+- **`per_ping_timeout`** (default: `null`)
+  - Optional afmctl `-t <seconds>` value; omitted when `null`
+- **`traffic_types`** (default: `["ifoe_req", "ifoe_resp", "non_ifoe"]`)
+  - Determines which afmctl traffic categories are required to pass
+  - When all three are selected, `--traffic-type` is omitted so afmctl runs them all
+- **`loss_threshold_pct`** (default: `0.0`)
+  - Maximum tolerated loss percentage per traffic type (Summary line)
+- **`ssh_timeout`** (default: `180`)
+  - Per-invocation SSH timeout (seconds); raise for high `pings_per_port`
 
 ### Reporting Settings (`reporting`)
 
