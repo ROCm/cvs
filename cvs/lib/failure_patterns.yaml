@@ -1,0 +1,30 @@
+# Seed catalog for the DTNI failure-pattern scanner. Adding a pattern is a
+# YAML edit -- no code change. Each row:
+#   id       : stable identifier (also the marker/event payload)
+#   source   : dmesg | framework_log  (which stream to scan; typed Literal)
+#   pattern  : Python regex, matched per line (case-insensitive)
+#   category : FailureCategory value from cvs.lib.failure_taxonomy
+#   severity : fatal | warn  (typed Literal; fatal flips the verdict)
+#   hint     : human-facing remediation pointer
+patterns:
+  - id: oom_killer
+    source: dmesg
+    pattern: "Out of memory: Killed process|invoked oom-killer"
+    category: failure_pattern_matched
+    severity: fatal
+    hint: "Host OOM killer fired; reduce batch/concurrency or check for a leak."
+  - id: hbm_ecc
+    source: dmesg
+    pattern: "uncorrectable|HBM.*ECC|GPU ECC error"
+    category: failure_pattern_matched
+    severity: fatal
+    hint: "Uncorrectable GPU memory error; quarantine the node."
+  - id: container_oom
+    source: dmesg
+    # Canonical cgroup-OOM dmesg lines contain "memory cgroup out of memory"
+    # OR an oom-kill: line with oom_memcg= (the memcg path). The earlier
+    # ".*container" alternative did not match real kernel output.
+    pattern: "memory cgroup out of memory|oom-kill:.*oom_memcg="
+    category: failure_pattern_matched
+    severity: fatal
+    hint: "Container hit its cgroup memory limit; raise --shm-size / limits."
