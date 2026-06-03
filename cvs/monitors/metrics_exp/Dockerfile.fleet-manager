@@ -1,0 +1,60 @@
+# AMD GPU Fleet Manager - Docker Image
+# Multi-stage build: Node for frontend, Python for backend
+
+# Stage 1: Build React frontend
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/ui
+
+# Copy package files
+COPY server/ui/package.json server/ui/package-lock.json* ./
+
+# Install dependencies
+RUN npm install
+
+# Copy UI source
+COPY server/ui/ ./
+
+# Build production bundle
+RUN npm run build
+
+# Stage 2: Python backend with frontend
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    openssh-client \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY server/fleet_manager /app/fleet_manager
+COPY server/config /app/config
+COPY scripts /app/scripts
+COPY templates /app/templates
+
+# Copy built frontend from Stage 1
+COPY --from=frontend-builder /app/ui/dist /app/fleet_manager/static
+
+# Create directories
+RUN mkdir -p /app/ssh_keys /prometheus-config /prometheus-targets
+
+# Set permissions
+RUN chmod +x /app/scripts/*.sh 2>/dev/null || true
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Run application
+CMD ["uvicorn", "fleet_manager.main:app", "--host", "0.0.0.0", "--port", "8080"]

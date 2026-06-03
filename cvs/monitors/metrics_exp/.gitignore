@@ -1,0 +1,72 @@
+# Environment files
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# Node.js
+node_modules/
+dist/
+.npm
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Docker
+.docker/
+
+# Secrets
+*.pem
+*.key
+id_rsa*
+ssh_keys/
+
+# Database
+*.db
+*.sqlite
+
+# Volumes (when running locally)
+prometheus_data/
+loki_data/
+grafana_data/
+postgres_data/
+
+# Auto-generated target files (contain real IPs/hostnames)
+server/config/prometheus/targets/*.json
+!server/config/prometheus/targets/.gitkeep
+
+# Environment-specific scripts
+nuke-and-rebuild.sh
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.egg-info/
+build/
+*.egg
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/

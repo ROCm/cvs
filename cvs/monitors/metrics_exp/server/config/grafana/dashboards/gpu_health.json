@@ -1,0 +1,166 @@
+{
+  "uid": "gpu-health",
+  "title": "GPU Health & Errors",
+  "description": "Detailed GPU health status, ECC errors, and RAS events",
+  "tags": ["gpu-fleet", "health", "ecc", "ras"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "nodegroup",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(gpu_power_usage, node_group)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "hostname",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(gpu_power_usage{node_group=~\"$nodegroup\"}, hostname)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Health Overview",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total GPUs",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "targets": [{"expr": "count(gpu_power_usage{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})", "legendFormat": "Total"}],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Healthy GPUs",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "targets": [{"expr": "count(gpu_health{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} == 1) or count(gpu_power_usage{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} > 0)", "legendFormat": "Healthy"}],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "ECC Errors (Uncorrectable)",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "targets": [{"expr": "sum(gpu_ecc_uncorrect_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}) or vector(0)", "legendFormat": "UE Errors"}],
+      "options": {"colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]}}}
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "ECC Errors (Correctable)",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "targets": [{"expr": "sum(gpu_ecc_correct_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}) or vector(0)", "legendFormat": "CE Errors"}],
+      "options": {"colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}]}}}
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "GPU Health Status",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "GPU Power Over Time",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 6},
+      "targets": [{"expr": "gpu_power_usage{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}} GPU{{gpu_id}}"}],
+      "fieldConfig": {"defaults": {"unit": "watt", "custom": {"lineWidth": 1}}}
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "ECC Errors",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 14}
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Uncorrectable ECC Errors",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
+      "targets": [{"expr": "gpu_ecc_uncorrect_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}} GPU{{gpu_id}}"}],
+      "fieldConfig": {"defaults": {"custom": {"lineWidth": 2}}}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Correctable ECC Errors",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
+      "targets": [{"expr": "gpu_ecc_correct_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}} GPU{{gpu_id}}"}],
+      "fieldConfig": {"defaults": {"custom": {"lineWidth": 2}}}
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "Top 10 Nodes by ECC Errors",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 23}
+    },
+    {
+      "id": 30,
+      "type": "barchart",
+      "title": "Top 10 Nodes by Uncorrectable ECC Errors",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "targets": [{"expr": "topk(10, sum by (hostname) (gpu_ecc_uncorrect_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))", "legendFormat": "{{hostname}}", "instant": true}],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]}}}
+    },
+    {
+      "id": 31,
+      "type": "barchart",
+      "title": "Top 10 Nodes by Correctable ECC Errors",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "targets": [{"expr": "topk(10, sum by (hostname) (gpu_ecc_correct_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))", "legendFormat": "{{hostname}}", "instant": true}],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}]}}}
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Detailed ECC by Component",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 32}
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "ECC Errors by Component (Correctable)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 33},
+      "targets": [
+        {"expr": "gpu_ecc_correct_umc{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}} GPU{{gpu_id}} UMC"},
+        {"expr": "gpu_ecc_correct_gfx{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}} GPU{{gpu_id}} GFX"},
+        {"expr": "gpu_ecc_correct_sdma{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}} GPU{{gpu_id}} SDMA"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"lineWidth": 1}}}
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "ECC Errors by Component (Uncorrectable)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 33},
+      "targets": [
+        {"expr": "gpu_ecc_uncorrect_umc{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}} GPU{{gpu_id}} UMC"},
+        {"expr": "gpu_ecc_uncorrect_gfx{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}} GPU{{gpu_id}} GFX"},
+        {"expr": "gpu_ecc_uncorrect_sdma{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}} GPU{{gpu_id}} SDMA"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"lineWidth": 1}}}
+    }
+  ]
+}

@@ -1,0 +1,463 @@
+{
+  "id": null,
+  "uid": "rdma-network",
+  "title": "RDMA Network",
+  "description": "RDMA/RoCE network metrics including traffic, congestion (PFC/DCQCN), and errors. Supports AMD AINIC, Broadcom Thor2, and NVIDIA ConnectX NICs.",
+  "tags": ["gpu-fleet", "rdma", "network", "roce", "pfc", "dcqcn"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "nodegroup",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(rdma_link_state, node_group)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "hostname",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(rdma_link_state{node_group=~\"$nodegroup\"}, hostname)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "device",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(rdma_link_state{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}, device)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Link Status Overview",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total RDMA Ports",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "targets": [{"expr": "count(rdma_link_state{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"})", "legendFormat": "Total"}],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Ports Up",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+      "targets": [{"expr": "count(rdma_link_physical_state{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"} == 1)", "legendFormat": "Up"}],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Ports Down",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+      "targets": [{"expr": "count(rdma_link_physical_state{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"} == 0) or vector(0)", "legendFormat": "Down"}],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}}
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Active Links",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+      "targets": [{"expr": "count(rdma_link_state{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"} == 1)", "legendFormat": "Active"}],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}}
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Link Status Table",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 1},
+      "targets": [{"expr": "rdma_link_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}", "format": "table", "instant": true}],
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "node_group": true}, "renameByName": {"hostname": "Host", "device": "Device", "port": "Port", "netdev": "NetDev", "link_layer": "Type"}}}]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Traffic - TX/RX Bytes",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "TX Bytes Rate",
+      "description": "Transmit bytes per second",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "targets": [
+        {"expr": "rate(rdma_stat_tx_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}}/{{port}}"},
+        {"expr": "rate(rdma_stat_tx_write_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} write"},
+        {"expr": "rate(rdma_stat_tx_read_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} read"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "Bps", "custom": {"lineWidth": 1, "fillOpacity": 10}}}
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "RX Bytes Rate",
+      "description": "Receive bytes per second",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "targets": [
+        {"expr": "rate(rdma_stat_rx_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}}/{{port}}"},
+        {"expr": "rate(rdma_stat_rx_write_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} write"},
+        {"expr": "rate(rdma_stat_rx_read_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} read"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "Bps", "custom": {"lineWidth": 1, "fillOpacity": 10}}}
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Traffic - TX/RX Packets",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 14}
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "TX Packets Rate",
+      "description": "Transmit packets per second",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
+      "targets": [
+        {"expr": "rate(rdma_stat_tx_pkts{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}}/{{port}}"},
+        {"expr": "rate(rdma_stat_tx_write_requests{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} write_req"},
+        {"expr": "rate(rdma_stat_tx_read_requests{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} read_req"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 1, "fillOpacity": 10}}}
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "RX Packets Rate",
+      "description": "Receive packets per second",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
+      "targets": [
+        {"expr": "rate(rdma_stat_rx_pkts{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}}/{{port}}"},
+        {"expr": "rate(rdma_stat_rx_write_requests{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} write_req"},
+        {"expr": "rate(rdma_stat_rx_read_requests{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} read_req"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 1, "fillOpacity": 10}}}
+    },
+    {
+      "id": 50,
+      "type": "row",
+      "title": "Congestion Control - CNP (DCQCN)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 23},
+      "collapsed": false
+    },
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "CNP Packets Sent (Notification Point)",
+      "description": "Congestion Notification Packets sent in response to ECN-marked packets. High values indicate congestion at remote endpoints. Metrics: np_cnp_sent, cnp_sent (vendor varies)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "targets": [
+        {"expr": "rate(rdma_stat_np_cnp_sent{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} np_cnp_sent"},
+        {"expr": "rate(rdma_stat_cnp_sent{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} cnp_sent"},
+        {"expr": "rate(rdma_stat_roce_np_cnp_sent{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} roce_np_cnp"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 2, "fillOpacity": 15}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 1000}]}}}
+    },
+    {
+      "id": 52,
+      "type": "timeseries",
+      "title": "CNP Packets Received/Handled (Reaction Point)",
+      "description": "CNP packets received and acted upon - sender reduced rate. Metrics: rp_cnp_handled, rp_cnp_received, cnp_received (vendor varies)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "targets": [
+        {"expr": "rate(rdma_stat_rp_cnp_handled{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rp_handled"},
+        {"expr": "rate(rdma_stat_rp_cnp_received{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rp_received"},
+        {"expr": "rate(rdma_stat_cnp_received{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} cnp_rcvd"},
+        {"expr": "rate(rdma_stat_roce_rp_cnp_handled{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} roce_rp_handled"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 2, "fillOpacity": 15}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 1000}]}}}
+    },
+    {
+      "id": 53,
+      "type": "timeseries",
+      "title": "CNP Ignored",
+      "description": "CNP packets ignored (not acted upon). High values may indicate misconfiguration. Metrics: cnp_ignored, rp_cnp_ignored",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 32},
+      "targets": [
+        {"expr": "rate(rdma_stat_cnp_ignored{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} ignored"},
+        {"expr": "rate(rdma_stat_rp_cnp_ignored{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rp_ignored"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 2}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 10}]}}}
+    },
+    {
+      "id": 54,
+      "type": "timeseries",
+      "title": "ECN Marked Packets",
+      "description": "Packets marked with ECN (Explicit Congestion Notification) indicating network congestion. Metrics: np_ecn_marked_roce_packets, ecn_marked, rx_ecn_marked_pkts",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 32},
+      "targets": [
+        {"expr": "rate(rdma_stat_np_ecn_marked_roce_packets{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} np_ecn_marked"},
+        {"expr": "rate(rdma_stat_ecn_marked{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} ecn_marked"},
+        {"expr": "rate(rdma_stat_rx_ecn_marked_pkts{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rx_ecn_marked"},
+        {"expr": "rate(rdma_stat_cc_rx_ce_pkts{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} cc_rx_ce"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 2, "fillOpacity": 10}}}
+    },
+    {
+      "id": 55,
+      "type": "timeseries",
+      "title": "DCQCN Rate Adjustments",
+      "description": "RoCE adaptive retransmission and slow restart events. Metrics: roce_adp_retrans, roce_slow_restart",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 32},
+      "targets": [
+        {"expr": "rate(rdma_stat_roce_adp_retrans{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} adp_retrans"},
+        {"expr": "rate(rdma_stat_roce_slow_restart{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} slow_restart"},
+        {"expr": "rate(rdma_stat_roce_slow_restart_trans{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} slow_restart_trans"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "id": 60,
+      "type": "row",
+      "title": "Congestion Control - PFC (Priority Flow Control)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 40},
+      "collapsed": false
+    },
+    {
+      "id": 61,
+      "type": "timeseries",
+      "title": "PFC TX Pause Frames (Sent)",
+      "description": "PFC pause frames transmitted - indicates local buffer pressure. High values indicate congestion at this node. Metrics: tx_pause, tx_pause_prio*, tx_pfc_frames_prio*",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 41},
+      "targets": [
+        {"expr": "rate(rdma_stat_tx_pause{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} tx_pause"},
+        {"expr": "rate(rdma_stat_tx_pause_ctrl{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} tx_pause_ctrl"},
+        {"expr": "rate(rdma_stat_tx_pfc_frames_prio3{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} tx_pfc_prio3"},
+        {"expr": "rate(rdma_stat_tx_prio3_pause{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} tx_prio3_pause"},
+        {"expr": "rate(rdma_stat_tx_pause_duration_us{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} tx_pause_dur"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 2, "fillOpacity": 15}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 10}, {"color": "red", "value": 100}]}}}
+    },
+    {
+      "id": 62,
+      "type": "timeseries",
+      "title": "PFC RX Pause Frames (Received)",
+      "description": "PFC pause frames received from switch - indicates upstream congestion. High values indicate congestion in the network. Metrics: rx_pause, rx_pause_prio*, rx_pfc_frames_prio*",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 41},
+      "targets": [
+        {"expr": "rate(rdma_stat_rx_pause{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rx_pause"},
+        {"expr": "rate(rdma_stat_rx_pause_ctrl{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rx_pause_ctrl"},
+        {"expr": "rate(rdma_stat_rx_pfc_frames_prio3{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rx_pfc_prio3"},
+        {"expr": "rate(rdma_stat_rx_prio3_pause{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rx_prio3_pause"},
+        {"expr": "rate(rdma_stat_rx_pause_duration_us{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rx_pause_dur"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 2, "fillOpacity": 15}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 10}, {"color": "red", "value": 100}]}}}
+    },
+    {
+      "id": 63,
+      "type": "timeseries",
+      "title": "PFC Pause Per Priority (TX)",
+      "description": "PFC pause frames sent per traffic class/priority. RoCE typically uses priority 3.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 49},
+      "targets": [
+        {"expr": "rate(rdma_stat_tx_pfc_frames_prio0{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio0"},
+        {"expr": "rate(rdma_stat_tx_pfc_frames_prio1{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio1"},
+        {"expr": "rate(rdma_stat_tx_pfc_frames_prio2{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio2"},
+        {"expr": "rate(rdma_stat_tx_pfc_frames_prio3{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio3 (RoCE)"},
+        {"expr": "rate(rdma_stat_tx_pfc_frames_prio4{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio4"},
+        {"expr": "rate(rdma_stat_tx_pfc_frames_prio5{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio5"},
+        {"expr": "rate(rdma_stat_tx_pfc_frames_prio6{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio6"},
+        {"expr": "rate(rdma_stat_tx_pfc_frames_prio7{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio7 (CNP)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 1, "fillOpacity": 5}}}
+    },
+    {
+      "id": 64,
+      "type": "timeseries",
+      "title": "PFC Pause Per Priority (RX)",
+      "description": "PFC pause frames received per traffic class/priority. RoCE typically uses priority 3.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 49},
+      "targets": [
+        {"expr": "rate(rdma_stat_rx_pfc_frames_prio0{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio0"},
+        {"expr": "rate(rdma_stat_rx_pfc_frames_prio1{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio1"},
+        {"expr": "rate(rdma_stat_rx_pfc_frames_prio2{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio2"},
+        {"expr": "rate(rdma_stat_rx_pfc_frames_prio3{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio3 (RoCE)"},
+        {"expr": "rate(rdma_stat_rx_pfc_frames_prio4{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio4"},
+        {"expr": "rate(rdma_stat_rx_pfc_frames_prio5{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio5"},
+        {"expr": "rate(rdma_stat_rx_pfc_frames_prio6{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio6"},
+        {"expr": "rate(rdma_stat_rx_pfc_frames_prio7{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio7 (CNP)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 1, "fillOpacity": 5}}}
+    },
+    {
+      "id": 65,
+      "type": "timeseries",
+      "title": "PFC Pause Duration",
+      "description": "Total time spent in PFC pause state. Broadcom: pfc_pri*_rx_duration_us, pfc_pri*_rx_transitions",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 57},
+      "targets": [
+        {"expr": "rate(rdma_stat_pfc_pri3_rx_duration_us{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio3_dur_us"},
+        {"expr": "rate(rdma_stat_pfc_pri3_rx_transitions{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} prio3_trans"},
+        {"expr": "rate(rdma_stat_tx_pause_storm_warning_events{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} pause_storm"},
+        {"expr": "rate(rdma_stat_tx_pause_storm_error_events{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} pause_storm_err"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "id": 66,
+      "type": "timeseries",
+      "title": "Out of Buffer / Discards",
+      "description": "Packets dropped due to buffer exhaustion. Indicates severe congestion.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 57},
+      "targets": [
+        {"expr": "rate(rdma_stat_out_of_buffer{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} out_of_buffer"},
+        {"expr": "rate(rdma_stat_rx_out_of_buffer{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rx_out_of_buffer"},
+        {"expr": "rate(rdma_stat_rx_discards{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rx_discards"},
+        {"expr": "rate(rdma_stat_tx_discards{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} tx_discards"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 2}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}}
+    },
+    {
+      "id": 70,
+      "type": "row",
+      "title": "Error Statistics",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 65}
+    },
+    {
+      "id": 71,
+      "type": "timeseries",
+      "title": "Packet Sequence Errors",
+      "description": "Out of sequence packets, duplicates, and sequence errors",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 66},
+      "targets": [
+        {"expr": "rate(rdma_stat_packet_seq_err{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} seq_err"},
+        {"expr": "rate(rdma_stat_out_of_sequence{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} out_of_seq"},
+        {"expr": "rate(rdma_stat_duplicate_request{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} dup_req"},
+        {"expr": "rate(rdma_stat_implied_nak_seq_err{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} implied_nak"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 2}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 1}]}}}
+    },
+    {
+      "id": 72,
+      "type": "timeseries",
+      "title": "Retry & NAK Errors",
+      "description": "Retransmission and negative acknowledgment errors",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 66},
+      "targets": [
+        {"expr": "rate(rdma_stat_rnr_nak_retry_err{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rnr_nak"},
+        {"expr": "rate(rdma_stat_local_ack_timeout_err{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} ack_timeout"},
+        {"expr": "rate(rdma_stat_resp_local_length_error{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} local_len_err"},
+        {"expr": "rate(rdma_stat_resp_cqe_error{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} cqe_err"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "id": 73,
+      "type": "timeseries",
+      "title": "ICRC & Link Errors",
+      "description": "CRC and link-level errors",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 74},
+      "targets": [
+        {"expr": "rate(rdma_stat_rx_icrc_errors{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} rx_icrc_err"},
+        {"expr": "rate(rdma_stat_rx_icrc_encapsulated{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} icrc_encap"},
+        {"expr": "rate(rdma_stat_lifespan_errors{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} lifespan"},
+        {"expr": "rate(rdma_stat_link_downed{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} link_down"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 2}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}}
+    },
+    {
+      "id": 74,
+      "type": "timeseries",
+      "title": "QP State Errors",
+      "description": "Queue Pair state transition errors",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 74},
+      "targets": [
+        {"expr": "rate(rdma_stat_req_cqe_error{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} req_cqe_err"},
+        {"expr": "rate(rdma_stat_req_cqe_flush_error{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} req_flush"},
+        {"expr": "rate(rdma_stat_resp_cqe_flush_error{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} resp_flush"},
+        {"expr": "rate(rdma_stat_req_remote_access_errors{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])", "legendFormat": "{{hostname}} {{device}} remote_access"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "pps", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "id": 80,
+      "type": "row",
+      "title": "Resources",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 82}
+    },
+    {
+      "id": 81,
+      "type": "bargauge",
+      "title": "Queue Pairs (QP) by Host",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 83},
+      "targets": [{"expr": "rdma_resource_qp_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}},
+      "options": {"orientation": "horizontal", "displayMode": "gradient"}
+    },
+    {
+      "id": 82,
+      "type": "bargauge",
+      "title": "Completion Queues (CQ) by Host",
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 83},
+      "targets": [{"expr": "rdma_resource_cq_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}},
+      "options": {"orientation": "horizontal", "displayMode": "gradient"}
+    },
+    {
+      "id": 83,
+      "type": "bargauge",
+      "title": "Memory Regions (MR) by Host",
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 83},
+      "targets": [{"expr": "rdma_resource_mr_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]}}},
+      "options": {"orientation": "horizontal", "displayMode": "gradient"}
+    },
+    {
+      "id": 90,
+      "type": "row",
+      "title": "Top 10 - Congestion Hotspots",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 89}
+    },
+    {
+      "id": 91,
+      "type": "barchart",
+      "title": "Top 10 Nodes by CNP Rate",
+      "description": "Nodes generating/receiving most congestion notifications",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 90},
+      "targets": [{"expr": "topk(10, sum by (hostname) (rate(rdma_stat_np_cnp_sent{node_group=~\"$nodegroup\"}[5m]) + rate(rdma_stat_cnp_sent{node_group=~\"$nodegroup\"}[5m])))", "legendFormat": "{{hostname}}", "instant": true}],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {"defaults": {"unit": "pps", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 10}, {"color": "red", "value": 100}]}}}
+    },
+    {
+      "id": 92,
+      "type": "barchart",
+      "title": "Top 10 Nodes by PFC Pause Rate",
+      "description": "Nodes with most PFC pause activity",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 90},
+      "targets": [{"expr": "topk(10, sum by (hostname) (rate(rdma_stat_tx_pause{node_group=~\"$nodegroup\"}[5m]) + rate(rdma_stat_rx_pause{node_group=~\"$nodegroup\"}[5m]) + rate(rdma_stat_tx_pfc_frames_prio3{node_group=~\"$nodegroup\"}[5m]) + rate(rdma_stat_rx_pfc_frames_prio3{node_group=~\"$nodegroup\"}[5m])))", "legendFormat": "{{hostname}}", "instant": true}],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {"defaults": {"unit": "pps", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]}}}
+    },
+    {
+      "id": 93,
+      "type": "barchart",
+      "title": "Top 10 Nodes by Error Rate",
+      "description": "Nodes with most packet errors",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 90},
+      "targets": [{"expr": "topk(10, sum by (hostname) (rate(rdma_stat_packet_seq_err{node_group=~\"$nodegroup\"}[5m]) + rate(rdma_stat_out_of_sequence{node_group=~\"$nodegroup\"}[5m]) + rate(rdma_stat_rx_icrc_errors{node_group=~\"$nodegroup\"}[5m])))", "legendFormat": "{{hostname}}", "instant": true}],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 1}]}}}
+    }
+  ]
+}

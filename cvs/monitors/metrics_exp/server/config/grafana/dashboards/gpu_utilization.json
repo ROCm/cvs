@@ -1,0 +1,341 @@
+{
+  "uid": "gpu-utilization",
+  "title": "GPU Utilization",
+  "description": "GPU compute and memory utilization metrics",
+  "tags": ["gpu-fleet", "utilization"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "nodegroup",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(gpu_gfx_activity, node_group)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "hostname",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(gpu_gfx_activity{node_group=~\"$nodegroup\"}, hostname)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Overview",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "Avg GPU Utilization",
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 1},
+      "targets": [
+        {
+          "expr": "avg(gpu_gfx_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Avg"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "blue", "value": null},
+              {"color": "green", "value": 20},
+              {"color": "yellow", "value": 80},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "gauge",
+      "title": "Avg Memory Controller Activity",
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 1},
+      "targets": [
+        {
+          "expr": "avg(gpu_umc_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Avg"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "blue", "value": null},
+              {"color": "green", "value": 20},
+              {"color": "yellow", "value": 80}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "gauge",
+      "title": "Avg MMA Activity",
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 1},
+      "targets": [
+        {
+          "expr": "avg(gpu_mma_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Avg"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 80},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Total VRAM",
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 1},
+      "targets": [
+        {
+          "expr": "sum(gpu_total_vram{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "bytes", "decimals": 1}
+      }
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "GPU Compute",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "GPU GFX Activity",
+      "description": "Graphics/Compute engine utilization",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 7},
+      "targets": [
+        {
+          "expr": "gpu_gfx_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 15}
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Memory Controller Activity (UMC)",
+      "description": "Memory controller utilization",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 7},
+      "targets": [
+        {
+          "expr": "gpu_umc_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 15}
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Specialized Engines",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Matrix Math Accelerator Activity (MMA)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "gpu_mma_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 20}
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Video Codec (VCN) & JPEG Activity",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "gpu_vcn_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}} VCN"
+        },
+        {
+          "expr": "gpu_jpeg_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}} JPEG"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 20}
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Top 10 Nodes",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}
+    },
+    {
+      "id": 13,
+      "type": "barchart",
+      "title": "Top 10 Nodes by GPU Utilization",
+      "description": "Nodes with highest average GPU utilization",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 25},
+      "targets": [
+        {
+          "expr": "topk(10, avg by (hostname) (gpu_gfx_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "barchart",
+      "title": "Top 10 Nodes by Memory Controller Activity",
+      "description": "Nodes with highest average UMC activity",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 25},
+      "targets": [
+        {
+          "expr": "topk(10, avg by (hostname) (gpu_umc_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Per-Node Summary",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 33}
+    },
+    {
+      "id": 16,
+      "type": "bargauge",
+      "title": "GPU Utilization by Host",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 34},
+      "targets": [
+        {
+          "expr": "avg by (hostname) (gpu_gfx_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "{{hostname}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "blue", "value": null},
+              {"color": "green", "value": 20},
+              {"color": "yellow", "value": 80}
+            ]
+          }
+        }
+      },
+      "options": {"orientation": "horizontal", "displayMode": "gradient"}
+    },
+    {
+      "id": 17,
+      "type": "bargauge",
+      "title": "Memory Controller Activity by Host",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 34},
+      "targets": [
+        {
+          "expr": "avg by (hostname) (gpu_umc_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "{{hostname}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 80},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      },
+      "options": {"orientation": "horizontal", "displayMode": "gradient"}
+    }
+  ]
+}
