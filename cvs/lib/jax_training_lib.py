@@ -245,7 +245,7 @@ class JaxTrainingJob:
                     sleep 2;ibv_devinfo;sleep 2;"'
                 )
                 for node in out_dict.keys():
-                    if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
+                    if not re.search(r'hca_id:\s+(bnxt_|rocep)', out_dict[node], re.I):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
@@ -407,6 +407,7 @@ class JaxTrainingJob:
                       export HSA_FORCE_FINE_GRAIN_PCIE=1
                       export NVTE_CK_BWD_V3={self.tc_dict['nvte_ck_bwd_v3']}
                       export NVTE_CK_V3_BF16_CVT={self.tc_dict['nvte_ck_v3_bf16_cvt']}' >> /workspace/maxtext/maxtext_env.sh"'''
+
                 formatted_cmd = textwrap_for_yml(cmd)
                 cmd_list.append(formatted_cmd)
         log.info("%s", cmd_list)
@@ -562,7 +563,8 @@ class JaxTrainingJob:
         for i in range(0, self.training_steps):
             training_results_dict[i] = {}
 
-            pattern = f'completed step:\s+{i},\s+seconds:\s+([0-9\.]+),\s+TFLOP\/s\/device:\s+([0-9\.]+),\s+Tokens\/s\/device:\s+([0-9\.]+),\s+total_weights:\s+([0-9\\.]+),\s+loss:\s([0-9\.]+)'
+            ## pattern = f'completed step:\s+{i},\s+seconds:\s+([0-9\.]+),\s+TFLOP\/s\/device:\s+([0-9\.]+),\s+Tokens\/s\/device:\s+([0-9\.]+),\s+total_weights:\s+([0-9\\.]+),\s+loss:\s([0-9\.]+)'
+            pattern = f'completed step:\s+{i},\s+seconds:\s+([0-9\.]+),\s+TFLOP\/s\/device:\s+([0-9\.]+),\s+Tokens\/s\/device:\s+([0-9\.]+),\s+total_weights:\s+([0-9\\.]+),\s+loss:\s+([0-9\.]+|nan|inf|-inf)'
             match = re.search(pattern, output, re.I)
 
             # Guard against missing or malformed lines to avoid AttributeError on match.group(...)
