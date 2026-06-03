@@ -9,14 +9,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from typing import List, Union, Optional
+from typing import List, Optional
 import os
 import time
 from pathlib import Path
 
 from app.core.simple_config import config as settings
-from app.core.cvs_parallel_ssh_reliable import Pssh
-from app.core.jump_host_pssh import JumpHostPssh
+from app.core.cluster_ssh_manager import ClusterSshManager
 from app.collectors.gpu_collector import GPUMetricsCollector
 from app.collectors.nic_collector import NICMetricsCollector
 from app.api import router as api_router
@@ -61,7 +60,7 @@ class AppState:
     """Global application state."""
 
     def __init__(self):
-        self.ssh_manager: Optional[Union[Pssh, JumpHostPssh]] = None
+        self.ssh_manager: Optional[ClusterSshManager] = None
         self.gpu_collector: GPUMetricsCollector = None
         self.nic_collector: NICMetricsCollector = None
         self.latest_metrics: dict = {}
@@ -189,40 +188,34 @@ async def reload_configuration():
         # 7. Reinitialize SSH manager with new configuration
         try:
             if new_config.ssh.jump_host.enabled and new_config.ssh.jump_host.host:
-                num_nodes = len(nodes)
-                min(num_nodes, 5)
-
                 logger.info(f"Reinitializing with jump host: {new_config.ssh.jump_host.host}")
                 logger.info(f"Jump Host Username: {new_config.ssh.jump_host.username}")
                 logger.info(f"Cluster Nodes: {len(nodes)} nodes")
                 logger.info(f"Cluster Username: {new_config.node_username_via_jumphost}")
 
-                # Use JumpHostPssh - working approach from test_auth_script.py
-                app_state.ssh_manager = JumpHostPssh(
+                # Jump host uses the lib's native libssh2 proxy tunnel (proxy_*).
+                app_state.ssh_manager = ClusterSshManager(
+                    host_list=nodes,
+                    user=new_config.node_username_via_jumphost,
+                    pkey=new_config.node_key_file_on_jumphost,
+                    timeout=new_config.ssh.timeout,
                     jump_host=new_config.ssh.jump_host.host,
                     jump_user=new_config.ssh.jump_host.username,
                     jump_password=new_config.ssh.jump_host.password,
                     jump_pkey=new_config.ssh.jump_host.key_file if not new_config.ssh.jump_host.password else None,
-                    target_hosts=nodes,
-                    target_user=new_config.node_username_via_jumphost,
-                    target_pkey=new_config.node_key_file_on_jumphost,
-                    max_parallel=min(len(nodes), 5),  # Limit to 5 to avoid exhausting paramiko channels (conservative)
-                    timeout=new_config.ssh.timeout,
                 )
-                logger.info("JumpHostPssh initialized successfully")
+                logger.info("Jump-host SSH manager initialized successfully")
             else:
                 logger.info("Reinitializing with direct SSH (no jump host)")
                 logger.info(f"Username: {new_config.ssh.username}")
                 logger.info(f"Nodes: {len(nodes)} nodes")
 
-                app_state.ssh_manager = Pssh(
-                    log=logger,
+                app_state.ssh_manager = ClusterSshManager(
                     host_list=nodes,
                     user=new_config.ssh.username,
                     password=app_state.ssh_password,  # Use in-memory password
                     pkey=new_config.ssh.key_file,
                     timeout=new_config.ssh.timeout,
-                    stop_on_errors=False,
                 )
                 logger.info("Direct SSH manager reinitialized")
         except Exception as e:
@@ -481,31 +474,28 @@ async def lifespan(app: FastAPI):
                 logger.info(f"Cluster Nodes: {len(nodes)} nodes")
                 logger.info(f"Cluster Username: {settings.node_username_via_jumphost}")
 
-                app_state.ssh_manager = JumpHostPssh(
+                app_state.ssh_manager = ClusterSshManager(
+                    host_list=nodes,
+                    user=settings.node_username_via_jumphost,
+                    pkey=settings.node_key_file_on_jumphost,
+                    timeout=settings.ssh.timeout,
                     jump_host=settings.ssh.jump_host.host,
                     jump_user=settings.ssh.jump_host.username,
                     jump_password=settings.ssh.jump_host.password,
                     jump_pkey=settings.ssh.jump_host.key_file if not settings.ssh.jump_host.password else None,
-                    target_hosts=nodes,
-                    target_user=settings.node_username_via_jumphost,
-                    target_pkey=settings.node_key_file_on_jumphost,
-                    max_parallel=min(len(nodes), 5),
-                    timeout=settings.ssh.timeout,
                 )
-                logger.info("✅ JumpHostPssh initialized successfully")
+                logger.info("✅ Jump-host SSH manager initialized successfully")
             else:
                 logger.info("Initializing with direct SSH (no jump host)")
                 logger.info(f"Username: {settings.ssh.username}")
                 logger.info(f"Nodes: {len(nodes)} nodes")
 
-                app_state.ssh_manager = Pssh(
-                    log=logger,
+                app_state.ssh_manager = ClusterSshManager(
                     host_list=nodes,
                     user=settings.ssh.username,
                     password=settings.ssh.password,
                     pkey=settings.ssh.key_file,
                     timeout=settings.ssh.timeout,
-                    stop_on_errors=False,
                 )
                 logger.info("✅ Direct SSH manager initialized")
 

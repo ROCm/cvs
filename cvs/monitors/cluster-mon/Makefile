@@ -15,6 +15,11 @@ ut:
 	$(PYTHON) -m venv $(VENV)
 	$(VENV)/bin/pip install -q --upgrade pip
 	$(VENV)/bin/pip install -q -r backend/requirements.txt
+	# cluster-mon now imports cvs.lib.parallel.multiprocess_pssh via the SSH adapter.
+	# Install the cvs package with --no-deps so it does NOT pull the repo-root
+	# requirements (which pin a different parallel-ssh); the SSH libs the adapter
+	# needs are already provided by backend/requirements.txt above.
+	$(VENV)/bin/pip install -q --no-deps -e ../../..
 	@echo "Running cluster-mon unit tests..."
 	cd backend && ../$(VENV)/bin/python run_all_unittests.py
 

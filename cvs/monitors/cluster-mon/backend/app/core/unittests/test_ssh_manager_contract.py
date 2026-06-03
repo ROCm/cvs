@@ -1,12 +1,18 @@
 """
 SSH-manager contract test.
 
-Characterizes the behavior cluster-mon relies on, run against the CURRENT
-implementation (cvs_parallel_ssh_reliable.Pssh). The same assertions are meant
-to be re-run against the future ClusterSshManager adapter to prove parity.
+Characterizes the behavior cluster-mon relies on from its SSH manager. The
+assertions live in ``SshManagerContractMixin`` and are run against BOTH:
 
-No network: parallel-ssh's ParallelSSHClient and the TCP probe
-(discover_reachable_hosts) are mocked.
+- the legacy ``cvs_parallel_ssh_reliable.Pssh`` (the original behavior), and
+- the new ``cluster_ssh_manager.ClusterSshManager`` adapter (the migration
+  target), proving parity.
+
+Each concrete TestCase supplies the impl-specific mocking via the hook methods
+(``make_manager`` / ``seed_exec_output`` / ``seed_cmd_list_output`` /
+``set_refresh_probe`` / ``assert_recreate_rebuilds``). No network: parallel-ssh's
+``ParallelSSHClient`` / ``MultiProcessPssh`` and the TCP probe
+(``discover_reachable_hosts``) are mocked.
 """
 
 import asyncio
@@ -15,8 +21,12 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.core.cvs_parallel_ssh_reliable import Pssh
+from app.core.cluster_ssh_manager import ClusterSshManager
 
-MODULE = "app.core.cvs_parallel_ssh_reliable"
+PSSH_MODULE = "app.core.cvs_parallel_ssh_reliable"
+ADAPTER_MODULE = "app.core.cluster_ssh_manager"
+
+ABORT = "ABORT: Host Unreachable Error"
 
 
 def make_item(host, stdout=None, stderr=None, exception=None):
@@ -28,128 +38,114 @@ def make_item(host, stdout=None, stderr=None, exception=None):
     return item
 
 
-class TestPsshContract(unittest.TestCase):
-    @patch(f"{MODULE}.ParallelSSHClient")
-    @patch(f"{MODULE}.discover_reachable_hosts")
-    def test_exec_returns_host_to_str_map(self, mock_discover, mock_cls):
-        mock_discover.return_value = (["h1", "h2"], [])
-        client = MagicMock()
-        mock_cls.return_value = client
-        pssh = Pssh(MagicMock(), ["h1", "h2"], user="u", password="p", stop_on_errors=False)
+class SshManagerContractMixin:
+    """Behavioral contract every cluster-mon SSH manager must satisfy.
 
-        client.run_command.return_value = [
-            make_item("h1", stdout=["ok-one"]),
-            make_item("h2", stdout=["ok-two"]),
-        ]
+    Subclasses must implement the hook methods below; the ``test_*`` methods are
+    shared and run for each concrete implementation.
+    """
 
-        result = pssh.exec("echo hi")
+    # ------------------------------------------------------------------ hooks
+    def make_manager(self, reachable, unreachable):
+        """Build a manager whose pre-probe yields (reachable, unreachable).
+
+        The full original host_list is ``reachable + unreachable``. The
+        underlying SSH client is mocked; store handles for the seed_* hooks.
+        """
+        raise NotImplementedError
+
+    def seed_exec_output(self, mapping):
+        """Arrange the next ``manager.exec(...)`` to yield ``{host: text}``
+        for the reachable hosts (before any ABORT merge)."""
+        raise NotImplementedError
+
+    def seed_cmd_list_output(self, mapping):
+        """Same as ``seed_exec_output`` but for ``exec_cmd_list``."""
+        raise NotImplementedError
+
+    def set_refresh_probe(self, reachable, unreachable):
+        """Arrange the next reachability re-probe to yield (reachable, unreachable)."""
+        raise NotImplementedError
+
+    def assert_recreate_rebuilds(self, manager):
+        """Call ``manager.recreate_client()`` and assert the underlying client
+        was rebuilt."""
+        raise NotImplementedError
+
+    # ------------------------------------------------------------- assertions
+    def test_exec_returns_host_to_str_map(self):
+        mgr = self.make_manager(["h1", "h2"], [])
+        self.seed_exec_output({"h1": "ok-one", "h2": "ok-two"})
+
+        result = mgr.exec("echo hi")
 
         self.assertEqual(set(result), {"h1", "h2"})
         self.assertIsInstance(result["h1"], str)
         self.assertIn("ok-one", result["h1"])
         self.assertIn("ok-two", result["h2"])
 
-    @patch(f"{MODULE}.ParallelSSHClient")
-    @patch(f"{MODULE}.discover_reachable_hosts")
-    def test_unreachable_hosts_get_abort_marker(self, mock_discover, mock_cls):
-        mock_discover.return_value = (["h1"], ["h2"])
-        client = MagicMock()
-        mock_cls.return_value = client
-        pssh = Pssh(MagicMock(), ["h1", "h2"], user="u", password="p", stop_on_errors=False)
+    def test_unreachable_hosts_get_abort_marker(self):
+        mgr = self.make_manager(["h1"], ["h2"])
+        self.seed_exec_output({"h1": "ok"})
 
-        client.run_command.return_value = [make_item("h1", stdout=["ok"])]
+        result = mgr.exec("echo hi")
 
-        result = pssh.exec("echo hi")
-
-        self.assertIn("ABORT: Host Unreachable Error", result["h2"])
+        self.assertIn(ABORT, result["h2"])
         self.assertNotIn("ABORT", result["h1"])
 
-    @patch(f"{MODULE}.ParallelSSHClient")
-    @patch(f"{MODULE}.discover_reachable_hosts")
-    def test_no_reachable_hosts_returns_all_abort(self, mock_discover, mock_cls):
-        mock_discover.return_value = ([], ["h1", "h2"])
-        pssh = Pssh(MagicMock(), ["h1", "h2"], user="u", password="p", stop_on_errors=False)
+    def test_no_reachable_hosts_returns_all_abort(self):
+        mgr = self.make_manager([], ["h1", "h2"])
 
-        result = pssh.exec("echo hi")
+        result = mgr.exec("echo hi")
 
-        self.assertEqual(
-            result,
-            {"h1": "ABORT: Host Unreachable Error", "h2": "ABORT: Host Unreachable Error"},
-        )
+        self.assertEqual(result, {"h1": ABORT, "h2": ABORT})
 
-    @patch(f"{MODULE}.ParallelSSHClient")
-    @patch(f"{MODULE}.discover_reachable_hosts")
-    def test_exec_cmd_list_returns_host_to_str_map(self, mock_discover, mock_cls):
-        mock_discover.return_value = (["h1", "h2"], [])
-        client = MagicMock()
-        mock_cls.return_value = client
-        pssh = Pssh(MagicMock(), ["h1", "h2"], user="u", password="p", stop_on_errors=False)
+    def test_exec_cmd_list_returns_host_to_str_map(self):
+        mgr = self.make_manager(["h1", "h2"], [])
+        self.seed_cmd_list_output({"h1": "out-a", "h2": "out-b"})
 
-        client.run_command.return_value = [
-            make_item("h1", stdout=["out-a"]),
-            make_item("h2", stdout=["out-b"]),
-        ]
-
-        result = pssh.exec_cmd_list(["echo a", "echo b"])
+        result = mgr.exec_cmd_list(["echo a", "echo b"])
 
         self.assertEqual(set(result), {"h1", "h2"})
         self.assertIsInstance(result["h1"], str)
         self.assertIn("out-a", result["h1"])
 
-    @patch(f"{MODULE}.ParallelSSHClient")
-    @patch(f"{MODULE}.discover_reachable_hosts")
-    def test_attributes_reflect_probe_result(self, mock_discover, mock_cls):
-        mock_discover.return_value = (["h1"], ["h2"])
-        pssh = Pssh(MagicMock(), ["h1", "h2"], user="u", password="p", stop_on_errors=False)
+    def test_attributes_reflect_probe_result(self):
+        mgr = self.make_manager(["h1"], ["h2"])
 
         # host_list keeps the original full list; reachable/unreachable reflect the probe.
-        self.assertEqual(pssh.host_list, ["h1", "h2"])
-        self.assertEqual(pssh.reachable_hosts, ["h1"])
-        self.assertEqual(pssh.unreachable_hosts, ["h2"])
+        self.assertEqual(mgr.host_list, ["h1", "h2"])
+        self.assertEqual(mgr.reachable_hosts, ["h1"])
+        self.assertEqual(mgr.unreachable_hosts, ["h2"])
 
-    @patch(f"{MODULE}.ParallelSSHClient")
-    @patch(f"{MODULE}.discover_reachable_hosts")
-    def test_get_hosts_return_copies(self, mock_discover, mock_cls):
-        mock_discover.return_value = (["h1"], ["h2"])
-        pssh = Pssh(MagicMock(), ["h1", "h2"], user="u", password="p", stop_on_errors=False)
+    def test_get_hosts_return_copies(self):
+        mgr = self.make_manager(["h1"], ["h2"])
 
-        reachable = pssh.get_reachable_hosts()
+        reachable = mgr.get_reachable_hosts()
         reachable.append("mutated")
 
-        self.assertEqual(pssh.get_reachable_hosts(), ["h1"])
-        self.assertEqual(pssh.get_unreachable_hosts(), ["h2"])
+        self.assertEqual(mgr.get_reachable_hosts(), ["h1"])
+        self.assertEqual(mgr.get_unreachable_hosts(), ["h2"])
 
-    @patch(f"{MODULE}.ParallelSSHClient")
-    @patch(f"{MODULE}.discover_reachable_hosts")
-    def test_refresh_host_reachability_returns_bool_and_updates(self, mock_discover, mock_cls):
-        mock_discover.return_value = (["h1", "h2"], [])
-        pssh = Pssh(MagicMock(), ["h1", "h2"], user="u", password="p", stop_on_errors=False)
+    def test_refresh_host_reachability_returns_bool_and_updates(self):
+        mgr = self.make_manager(["h1", "h2"], [])
 
         # h2 went offline -> change expected.
-        mock_discover.return_value = (["h1"], ["h2"])
-        changed = pssh.refresh_host_reachability()
+        self.set_refresh_probe(["h1"], ["h2"])
+        changed = mgr.refresh_host_reachability()
         self.assertTrue(changed)
-        self.assertEqual(pssh.get_reachable_hosts(), ["h1"])
-        self.assertIn("h2", pssh.get_unreachable_hosts())
+        self.assertEqual(mgr.get_reachable_hosts(), ["h1"])
+        self.assertIn("h2", mgr.get_unreachable_hosts())
 
         # Same probe result again -> no change.
-        self.assertFalse(pssh.refresh_host_reachability())
+        self.assertFalse(mgr.refresh_host_reachability())
 
-    @patch(f"{MODULE}.ParallelSSHClient")
-    @patch(f"{MODULE}.discover_reachable_hosts")
-    def test_recreate_client_rebuilds(self, mock_discover, mock_cls):
-        mock_discover.return_value = (["h1", "h2"], [])
-        pssh = Pssh(MagicMock(), ["h1", "h2"], user="u", password="p", stop_on_errors=False)
+    def test_recreate_client_rebuilds(self):
+        mgr = self.make_manager(["h1", "h2"], [])
+        self.assert_recreate_rebuilds(mgr)
 
-        mock_cls.reset_mock()
-        pssh.recreate_client()
-        mock_cls.assert_called_once()
-
-    @patch(f"{MODULE}.ParallelSSHClient")
-    @patch(f"{MODULE}.discover_reachable_hosts")
-    def test_exec_async_does_not_block_event_loop(self, mock_discover, mock_cls):
-        mock_discover.return_value = (["h1"], [])
-        pssh = Pssh(MagicMock(), ["h1"], user="u", password="p", stop_on_errors=False)
+    def test_exec_async_does_not_block_event_loop(self):
+        mgr = self.make_manager(["h1"], [])
 
         ticks = {"n": 0}
 
@@ -163,8 +159,8 @@ class TestPsshContract(unittest.TestCase):
                 ticks["n"] += 1
 
         async def run():
-            with patch.object(pssh, "exec", side_effect=slow_exec):
-                result, _ = await asyncio.gather(pssh.exec_async("cmd"), ticker())
+            with patch.object(mgr, "exec", side_effect=slow_exec):
+                result, _ = await asyncio.gather(mgr.exec_async("cmd"), ticker())
             return result
 
         result = asyncio.run(run())
@@ -172,6 +168,64 @@ class TestPsshContract(unittest.TestCase):
         self.assertEqual(result, {"h1": "ok"})
         # The event loop kept ticking while exec() blocked in a worker thread.
         self.assertEqual(ticks["n"], 5)
+
+
+class TestPsshContract(SshManagerContractMixin, unittest.TestCase):
+    """Run the contract against the legacy Pssh (mock ParallelSSHClient + probe)."""
+
+    def make_manager(self, reachable, unreachable):
+        disc = patch(f"{PSSH_MODULE}.discover_reachable_hosts", return_value=(list(reachable), list(unreachable)))
+        cls = patch(f"{PSSH_MODULE}.ParallelSSHClient")
+        self._mock_discover = disc.start()
+        self.addCleanup(disc.stop)
+        self._mock_cls = cls.start()
+        self.addCleanup(cls.stop)
+        self._client = MagicMock()
+        self._mock_cls.return_value = self._client
+        return Pssh(MagicMock(), list(reachable) + list(unreachable), user="u", password="p", stop_on_errors=False)
+
+    def seed_exec_output(self, mapping):
+        self._client.run_command.return_value = [make_item(host, stdout=[text]) for host, text in mapping.items()]
+
+    def seed_cmd_list_output(self, mapping):
+        self.seed_exec_output(mapping)
+
+    def set_refresh_probe(self, reachable, unreachable):
+        self._mock_discover.return_value = (list(reachable), list(unreachable))
+
+    def assert_recreate_rebuilds(self, manager):
+        self._mock_cls.reset_mock()
+        manager.recreate_client()
+        self._mock_cls.assert_called_once()
+
+
+class TestClusterSshManagerContract(SshManagerContractMixin, unittest.TestCase):
+    """Run the same contract against the new ClusterSshManager (mock MultiProcessPssh + probe)."""
+
+    def make_manager(self, reachable, unreachable):
+        disc = patch(f"{ADAPTER_MODULE}.discover_reachable_hosts", return_value=(list(reachable), list(unreachable)))
+        mp = patch(f"{ADAPTER_MODULE}.MultiProcessPssh")
+        self._mock_discover = disc.start()
+        self.addCleanup(disc.stop)
+        self._mock_mp_cls = mp.start()
+        self.addCleanup(mp.stop)
+        self._mp = MagicMock()
+        self._mock_mp_cls.return_value = self._mp
+        return ClusterSshManager(list(reachable) + list(unreachable), user="u", password="p")
+
+    def seed_exec_output(self, mapping):
+        self._mp.exec.return_value = dict(mapping)
+
+    def seed_cmd_list_output(self, mapping):
+        self._mp.exec_cmd_list.return_value = dict(mapping)
+
+    def set_refresh_probe(self, reachable, unreachable):
+        self._mock_discover.return_value = (list(reachable), list(unreachable))
+
+    def assert_recreate_rebuilds(self, manager):
+        self._mock_mp_cls.reset_mock()
+        manager.recreate_client()
+        self._mock_mp_cls.assert_called_once()
 
 
 if __name__ == "__main__":
