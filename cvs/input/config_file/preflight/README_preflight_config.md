@@ -12,6 +12,10 @@ The preflight checks system validates essential cluster health before running pe
 4. **Interface Name Consistency** - Validates RDMA interface naming patterns
 5. **IFoE L2 Connectivity (AIMVT-180; opt-in)** - Runs `afmctl test ping`
    on each node and enforces per-port and Summary pass/fail accounting
+6. **IFoE TransferBench Smoketest (AIMVT-181; opt-in)** - Runs the
+   TransferBench candidate-branch `smoketest` preset to validate IFoE
+   scale-up data-path one layer above L2 (after a single-vPod precondition
+   check via `amd-smi fabric --topology --json`)
 
 ## Configuration File Structure
 
@@ -58,7 +62,8 @@ preflight/
 ├── node_check/           # Individual node validation parameters
 ├── connectivity_check/   # Inter-node connectivity tests
 │   ├── rdma/             # RDMA-specific parameters (including nodes_per_full_mesh_group)
-│   └── ifoe/             # IFoE L2 ping parameters (AIMVT-180; opt-in)
+│   ├── ifoe/             # IFoE L2 ping parameters (AIMVT-180; opt-in)
+│   └── transferbench/    # IFoE TransferBench smoketest parameters (AIMVT-181; opt-in)
 └── reporting/           # Output and report generation
 ```
 
@@ -198,6 +203,78 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - Maximum tolerated loss percentage per traffic type (Summary line)
 - **`ssh_timeout`** (default: `180`)
   - Per-invocation SSH timeout (seconds); raise for high `pings_per_port`
+
+#### TransferBench Settings (`connectivity_check.transferbench`) — opt-in (AIMVT-181)
+
+Runs the TransferBench candidate-branch **`smoketest`** preset on every reachable
+node to validate IFoE scale-up data-path connectivity (one layer above the
+AIMVT-180 L2 ping). Enforces a single-vPod precondition by parsing
+`amd-smi fabric --topology --json` before invoking TransferBench, and reconciles
+the binary's exit code with per-cell `[PASS]/[FAIL]/[SKIP]` markers.
+
+> **PATH / LD_LIBRARY_PATH.** This check resolves `TransferBench` and `amd-smi`
+> from each node's `PATH`. Cluster-wide tool location (e.g. a non-default ROCm
+> install root) should be set via the cluster file's top-level `env_vars` block
+> (see [`cvs/input/cluster_file/README.md`](../../cluster_file/README.md)), not
+> duplicated here.
+
+- **`connectivity_mode`** (default: `"skip"`)
+  - `"run"` — execute the smoketest on every reachable node
+  - `"skip"` — preflight records a SKIPPED result and does not invoke TransferBench
+- **`tb_binary`** (default: `"TransferBench"`)
+  - TransferBench binary name; PATH-resolved on each node. Override with an
+    absolute path here only when this single preflight check needs to point at
+    a different binary than the rest of the cluster's tooling. The
+    pod-membership precondition uses `amd-smi` resolved from `PATH` and has no
+    per-check override (use cluster file `env_vars` to point at a non-default
+    install).
+- **`use_sudo`** (default: `true`)
+  - Prepend `sudo` to TransferBench and amd-smi calls (typically required
+    on production cluster images for IFoE access and the fabric topology query)
+- **`preset`** (default: `"smoketest"`)
+  - TransferBench preset name. Change only when a TransferBench build ships
+    a renamed preset with the same semantics.
+- **`size_list`** (default: `["1K", "16M"]`)
+  - Transfer sizes passed positionally to TransferBench. Kept short for
+    preflight; default covers both small/latency and large/bandwidth regimes.
+- **`num_iterations`** (default: `2`)
+  - `NUM_ITERATIONS` env var. Two iterations is enough to surface intermittent
+    failures without blowing up runtime.
+- **`num_warmups`** (default: `0`)
+  - `NUM_WARMUPS` env var. Preflight is a connectivity gate, not a benchmark.
+- **`always_validate`** (default: `true`)
+  - `ALWAYS_VALIDATE=1` so every iteration is data-validated. Required for
+    silent-corruption detection.
+- **`run_parallel`** (default: `true`)
+  - `RUN_PARALLEL=1` so tests with disjoint executors run concurrently.
+- **`use_bdma`** (default: `false`)
+  - `USE_BDMA=1` to prefer the BDMA path on supported hardware.
+- **`force_single_pod`** (default: `true`)
+  - `FORCE_SINGLE_POD=1` — defense in depth alongside the amd-smi
+    vPod precondition.
+- **`rank_mode`** (default: `"per_node"`)
+  - `"per_node"` — each reachable node runs an independent single-rank
+    TransferBench (exercises intra-node AID↔MID IFoE only)
+  - `"multi_rank"` — every reachable node is wired into one socket-comm
+    cluster (`TB_NUM_RANKS=N`, `TB_RANK=0..N-1`, `TB_MASTER_ADDR=<rank0>`)
+    so the smoketest traverses the rack IFoE switch end-to-end. Requires
+    bidirectional IP reachability on `socket_master_port` between every pair
+    of nodes.
+- **`socket_master_port`** (default: `31337`)
+  - `TB_MASTER_PORT` used in `multi_rank` mode. Must be free and open in
+    the firewall on every node.
+- **`master_node`** (default: `""`)
+  - Optional hostname / IP forced to rank 0; defaults to the lexicographically
+    smallest reachable host.
+- **`max_skip_pct`** (default: `25.0`)
+  - Maximum percentage of smoketest cells allowed to be `SKIP` before the
+    node is downgraded to `WARNING`. Set to `0.0` for the strictest gate.
+- **`ssh_timeout`** (default: `600`)
+  - Per-invocation SSH timeout (seconds) for each TransferBench run
+- **`skip_pod_check`** (default: `false`)
+  - Bypass the amd-smi pod-membership precondition. Only enable for
+    environments where amd-smi is not yet available; you lose the early
+    failure signal.
 
 ### Reporting Settings (`reporting`)
 
