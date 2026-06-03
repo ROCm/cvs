@@ -1,0 +1,33 @@
+# Canonical v1 mega-config used by the G2.2 gate command:
+#   cvs migrate-config tests/fixtures/legacy_mega.yaml -o /tmp/v2.yaml
+# Mirrors _v1_single_model_mega() from
+# cvs/cli_plugins/unittests/test_migrate_config_plugin.py so the round-trip
+# is deterministic. mean_* metrics are the C5 trip-wire (must survive verbatim).
+config:
+  nnodes: '1'
+  container_image: 'img:tag'
+benchmark_params:
+  gpt-oss-120b:
+    backend: vllm
+    model: openai/gpt-oss-120b
+    concurrency_levels:
+      - 16
+      - 32
+    sequence_combinations:
+      - isl: '1024'
+        osl: '1024'
+        name: balanced
+    tensor_parallelism: '1'
+    num_prompts: '3200'
+    max_model_length: '9216'
+    percentile_metrics: 'ttft,tpot,itl,e2el'
+    server_script: gpt.sh
+    result_dict:
+      'ISL=1024,OSL=1024,TP=1,CONC=16':
+        total_throughput_per_sec: '4651'
+        mean_ttft_ms: '70'
+        mean_tpot_ms: '8'
+      'ISL=1024,OSL=1024,TP=1,CONC=32':
+        total_throughput_per_sec: '4200'
+        mean_ttft_ms: '95'
+        mean_tpot_ms: '11'
