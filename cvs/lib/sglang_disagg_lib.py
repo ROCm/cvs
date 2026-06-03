@@ -845,7 +845,7 @@ class SglangDisaggPD:
                       --random-output {i_dict['output_length']} \
                       --random-range-ratio {i_dict['random_range_ratio']} \
                       --host 0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']} \
-                      > {self.log_dir}/benchmark_node/benchmark_results.log" '''
+                      > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1" '''
         formatted_cmd = textwrap_for_yml(cmd)
         self.b_phdl.exec(formatted_cmd, timeout=500)
         time.sleep(5)
@@ -1048,6 +1048,7 @@ class SglangDisaggPD:
                     inference_pass = False
 
         # Scan all decode nodes
+        cmd_list = []
         for j in range(0, int(self.decode_nnodes)):
             cmd = f"sudo cat {self.log_dir}/decode_node{j}/decode_server.log"
             cmd_list.append(cmd)
