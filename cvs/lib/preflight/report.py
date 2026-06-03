@@ -308,9 +308,9 @@ class PreflightReportGenerator(PreflightCheck):
 
         node_results = ifoe_results.get('node_results') or {}
         total_nodes = len(node_results)
-        failed_nodes = list(ifoe_results.get('failed_nodes') or [
-            n for n, r in node_results.items() if r.get('status') == 'FAIL'
-        ])
+        failed_nodes = list(
+            ifoe_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+        )
         passing_nodes = total_nodes - len(failed_nodes)
         total_invocations = int(ifoe_results.get('total_invocations', 0))
         failed_invocations = int(ifoe_results.get('failed_invocations', 0))
@@ -318,8 +318,7 @@ class PreflightReportGenerator(PreflightCheck):
         summary_text = f"{passing_nodes}/{total_nodes} nodes passed IFoE L2 ping"
         if total_invocations:
             summary_text += (
-                f"; {total_invocations - failed_invocations}/{total_invocations} "
-                f"afmctl invocations succeeded"
+                f"; {total_invocations - failed_invocations}/{total_invocations} afmctl invocations succeeded"
             )
         return {
             'status': status,
@@ -880,10 +879,13 @@ class PreflightReportGenerator(PreflightCheck):
         """
 
         if not failed_nodes:
-            return header + """
+            return (
+                header
+                + """
             <p class="status-pass">All reachable nodes passed IFoE L2 ping.</p>
         </section>
         """
+            )
 
         rows = []
         for node in failed_nodes:
@@ -919,9 +921,7 @@ class PreflightReportGenerator(PreflightCheck):
                             if isinstance(port_result.get(k), dict) and port_result[k].get('status') == 'FAIL'
                         ]
                         if bad:
-                            parts = ", ".join(
-                                f"{lbl}={rr['pass']}/{rr['total']}" for lbl, rr in bad
-                            )
+                            parts = ", ".join(f"{lbl}={rr['pass']}/{rr['total']}" for lbl, rr in bad)
                             failed_ports.append(f"port {html.escape(str(port))} ({parts})")
 
                     detail_html = ""
@@ -958,9 +958,11 @@ class PreflightReportGenerator(PreflightCheck):
                 </tr>
                 """)
             if not (node_block.get('accelerators') or {}) and node_errors:
-                node_err_html = "<ul style='margin:6px 0;color:#721c24;'>" + "".join(
-                    f"<li>{html.escape(str(e))}</li>" for e in node_errors
-                ) + "</ul>"
+                node_err_html = (
+                    "<ul style='margin:6px 0;color:#721c24;'>"
+                    + "".join(f"<li>{html.escape(str(e))}</li>" for e in node_errors)
+                    + "</ul>"
+                )
                 rows.append(f"""
                 <tr>
                     <td><code>{html.escape(str(node))}</code></td>
@@ -969,7 +971,8 @@ class PreflightReportGenerator(PreflightCheck):
                 </tr>
                 """)
 
-        table = """
+        table = (
+            """
             <p class="error-summary">The following IFoE L2 ping invocations failed:</p>
             <table>
                 <thead>
@@ -982,11 +985,14 @@ class PreflightReportGenerator(PreflightCheck):
                     </tr>
                 </thead>
                 <tbody>
-        """ + "".join(rows) + """
+        """
+            + "".join(rows)
+            + """
                 </tbody>
             </table>
         </section>
         """
+        )
 
         return header + table
 

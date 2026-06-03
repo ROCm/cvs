@@ -490,9 +490,7 @@ def test_ifoe_l2_connectivity(phdl, config_dict):
         return
 
     if not phdl.reachable_hosts:
-        log.warning(
-            "IFoE L2 connectivity skipped: no reachable hosts remain after earlier preflight pruning"
-        )
+        log.warning("IFoE L2 connectivity skipped: no reachable hosts remain after earlier preflight pruning")
         preflight_results['ifoe_l2_connectivity'] = {
             'mode': mode_normalized,
             'skipped': True,
@@ -512,9 +510,7 @@ def test_ifoe_l2_connectivity(phdl, config_dict):
     traffic_types = get_nested_config(
         config_dict, 'connectivity_check.ifoe', 'traffic_types', ['ifoe_req', 'ifoe_resp', 'non_ifoe']
     )
-    loss_threshold_pct = get_nested_config(
-        config_dict, 'connectivity_check.ifoe', 'loss_threshold_pct', 0.0
-    )
+    loss_threshold_pct = get_nested_config(config_dict, 'connectivity_check.ifoe', 'loss_threshold_pct', 0.0)
     ssh_timeout = get_nested_config(config_dict, 'connectivity_check.ifoe', 'ssh_timeout', 180)
     use_sudo = _config_flag_enabled(
         get_nested_config(config_dict, 'connectivity_check.ifoe', 'use_sudo', False), default=False
