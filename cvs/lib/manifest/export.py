@@ -8,8 +8,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pandas as pd
 from pydantic import ValidationError
@@ -63,9 +64,36 @@ def _flatten_manifest(manifest: Manifest) -> Dict[str, object]:
     return row
 
 
-def collect_manifests(root) -> List[Manifest]:
-    """Walk a run-directory tree and load every ``manifest.json`` found."""
+def _within_window(started_at: Optional[str], cutoff: datetime, run_id: str) -> bool:
+    """True iff started_at parses and is >= cutoff. Logs a visible WARNING on skip.
+
+    A None or unparseable started_at is a legitimate schema state (Identity.started_at
+    is Optional[str]); skipping silently would mask data; aborting would let one bad
+    timestamp poison a fleet-wide export. So: warn + drop.
+    """
+    if started_at is None:
+        logger.warning("skipping run %s: started_at is null", run_id)
+        return False
+    try:
+        ts = datetime.fromisoformat(started_at)
+    except (ValueError, TypeError) as exc:
+        logger.warning("skipping run %s: unparseable started_at %r (%s)", run_id, started_at, exc)
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts >= cutoff
+
+
+def collect_manifests(root, since: Optional[timedelta] = None) -> List[Manifest]:
+    """Walk a run-directory tree and load every ``manifest.json`` found.
+
+    If `since` is provided, only manifests whose Identity.started_at is within
+    `since` of now (UTC) are returned. Manifests with a null or unparseable
+    started_at are dropped with a visible WARNING (matching the corrupt-manifest
+    visible-skip discipline). Default `since=None` preserves prior behavior.
+    """
     root_path = Path(root)
+    cutoff = datetime.now(timezone.utc) - since if since is not None else None
     manifests: List[Manifest] = []
     for manifest_path in sorted(root_path.rglob(RunLayout.MANIFEST)):
         # Skip unreadable/partial/invalid manifests: OSError (I/O), ValueError
@@ -73,20 +101,26 @@ def collect_manifests(root) -> List[Manifest]:
         # (schema mismatch). Make the skip VISIBLE -- a silent drop masks schema
         # regressions and fleet-wide data loss.
         try:
-            manifests.append(Manifest.read(manifest_path))
+            manifest = Manifest.read(manifest_path)
         except (OSError, ValueError, ValidationError) as exc:
             logger.warning("skipping unreadable manifest %s: %s", manifest_path, exc)
             continue
+        if cutoff is not None and not _within_window(manifest.identity.started_at, cutoff, manifest.identity.run_id):
+            continue
+        manifests.append(manifest)
     return manifests
 
 
-def export_runs(root, out_path) -> Path:
+def export_runs(root, out_path, since: Optional[timedelta] = None) -> Path:
     """Flatten N run directories into one Parquet fact table.
 
     The result opens directly in pandas / polars / duckdb -- no service. Joining
     sidecar rows is left to the analyst (the manifest carries sidecar pointers).
+
+    `since` (optional timedelta) restricts the export to runs whose
+    Identity.started_at is within the window; default None preserves prior behavior.
     """
-    manifests = collect_manifests(root)
+    manifests = collect_manifests(root, since=since)
     rows = [_flatten_manifest(m) for m in manifests]
     # Empty input must still produce the fixed-schema fact table, not a
     # column-less Parquet (which KeyErrors any downstream column access).
