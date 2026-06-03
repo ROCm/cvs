@@ -8,7 +8,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from __future__ import annotations
 
 import argparse
-import os
 import tempfile
 import unittest
 from pathlib import Path
