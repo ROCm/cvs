@@ -1,0 +1,15 @@
+# Grafana Dashboard Provisioning
+apiVersion: 1
+
+providers:
+  - name: 'AMD GPU Fleet Monitoring'
+    orgId: 1
+    folder: 'GPU Fleet Monitoring'
+    folderUid: 'gpu-fleet'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -1,0 +1,32 @@
+# Grafana Datasource Provisioning
+apiVersion: 1
+
+datasources:
+  # Prometheus - Metrics
+  # Uses localhost for host-mode networking compatibility
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://localhost:30090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "30s"
+      queryTimeout: "60s"
+      httpMethod: "POST"
+
+  # Loki - Logs
+  # Uses localhost for host-mode networking compatibility
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://localhost:30100
+    editable: false
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - name: "hostname"
+          matcherRegex: 'host="([^"]+)"'
+          url: ""

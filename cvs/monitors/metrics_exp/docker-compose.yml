@@ -1,0 +1,172 @@
+services:
+  # AMD GPU Metrics Exporter - for the monitoring server node (if it has GPUs)
+  # This is optional - only needed if the monitoring server is also a GPU node
+  gpu-exporter:
+    image: docker.io/rocm/device-metrics-exporter:v1.5.0
+    container_name: device-metrics-exporter
+    restart: unless-stopped
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd
+    volumes:
+      - /sys:/sys:ro
+    ports:
+      - "0.0.0.0:5000:5000"
+    networks:
+      - monitoring
+    profiles:
+      - gpu  # Only start with: docker compose --profile gpu up -d
+
+  # PostgreSQL - Configuration database
+  postgres:
+    image: postgres:15-alpine
+    container_name: fleet-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fleet_monitor}
+      POSTGRES_USER: ${POSTGRES_USER:-fleet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fleet_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fleet}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Prometheus - Metrics collection and storage
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: fleet-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d}'
+      - '--storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-50GB}'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    volumes:
+      - ./server/config/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+      - ./server/config/prometheus/targets:/etc/prometheus/targets
+    ports:
+      - "0.0.0.0:30090:9090"
+    networks:
+      - monitoring
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+  # Loki - Log aggregation
+  loki:
+    image: grafana/loki:2.9.5
+    container_name: fleet-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./server/config/loki:/etc/loki
+      - loki_data:/loki
+    ports:
+      - "0.0.0.0:30100:3100"
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+  # Grafana - Visualization and dashboards
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: fleet-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:30030}
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+      GF_UNIFIED_ALERTING_ENABLED: 'true'
+      GF_ALERTING_ENABLED: 'false'
+    volumes:
+      - ./server/config/grafana/provisioning:/etc/grafana/provisioning
+      - ./server/config/grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "0.0.0.0:30030:3000"
+    networks:
+      - monitoring
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+  # Fleet Manager API - Node management and orchestration
+  fleet-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile.fleet-manager
+    container_name: fleet-manager
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fleet}:${POSTGRES_PASSWORD:-fleet_secret}@postgres:5432/${POSTGRES_DB:-fleet_monitor}
+      PROMETHEUS_URL: http://prometheus:9090
+      GRAFANA_URL: http://grafana:3000
+      GRAFANA_API_KEY: ${GRAFANA_API_KEY:-}
+      GRAFANA_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      LOKI_URL: http://loki:3100
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      SSH_KEY_PATH: /app/ssh_keys
+      PROMETHEUS_CONFIG_PATH: /prometheus-config
+      PROMETHEUS_TARGETS_PATH: /prometheus-targets
+      # Set to "true" to drop and recreate all database tables on startup (WARNING: destroys all data!)
+      RESET_DATABASE: ${RESET_DATABASE:-false}
+    volumes:
+      - ssh_keys:/app/ssh_keys
+      - ./server/config/prometheus:/prometheus-config
+      - ./server/config/prometheus/targets:/prometheus-targets
+      - ./scripts:/app/scripts:ro
+      - ./templates:/app/templates:ro
+    ports:
+      - "0.0.0.0:30080:8080"
+    networks:
+      - monitoring
+    depends_on:
+      postgres:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+      grafana:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+  ssh_keys:
+
+networks:
+  monitoring:
+    driver: bridge
