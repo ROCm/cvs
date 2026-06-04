@@ -121,9 +121,9 @@ class TestVllmAdapterBenchCommandConsumesSweepAxes(unittest.TestCase):
                 request_rate="inf",
                 burstiness=1.0,
                 tokenizer_mode="auto",
-                percentile_metrics=["ttft", "tpot", "itl", "e2el"],
-                metric_percentiles=99,
+                extra_percentile_metrics=[],
             ),
+            thresholds=[],
             sweep=types.SimpleNamespace(
                 tensor_parallelism=[8],
                 concurrency=[42],
@@ -163,6 +163,96 @@ class TestVllmAdapterBenchCommandConsumesSweepAxes(unittest.TestCase):
         # Seed and detached-exec shape also asserted as regression guards.
         self.assertIn("--seed 7", cmd)
         self.assertIn("docker exec -d vllm_test", cmd)
+
+
+class TestVllmAdapterDerivesPercentileMetricsFromThresholds(unittest.TestCase):
+    """B1 regression: ``--percentile-metrics`` / ``--metric-percentiles`` must
+    come from ``thresholds[]`` (single source of truth), not from removed
+    ``params.percentile_metrics`` / ``params.metric_percentiles`` fields.
+    ``extra_percentile_metrics`` is union'd in for measure-only debug metrics.
+    A config with no PercentileThreshold falls back to the legacy default
+    set."""
+
+    def _make_ctx(self, thresholds, extra_metrics=None):
+        from cvs.lib.adapters.vllm_adapter import VllmAdapter  # noqa: F401
+
+        tmp = Path(tempfile.mkdtemp())
+        cfg = types.SimpleNamespace(
+            params=types.SimpleNamespace(
+                bench_serv_script="benchmark_serving.py",
+                backend="vllm",
+                base_url="http://0.0.0.0",
+                port_no=8888,
+                dataset_name="random",
+                num_prompts=3200,
+                request_rate="inf",
+                burstiness=1.0,
+                tokenizer_mode="auto",
+                extra_percentile_metrics=extra_metrics or [],
+            ),
+            thresholds=thresholds,
+            sweep=types.SimpleNamespace(
+                tensor_parallelism=[8],
+                concurrency=[16],
+                sequence_combinations=[types.SimpleNamespace(isl=1024, osl=1024, name="x")],
+            ),
+            model="meta-llama/Llama-3.1-70B-Instruct",
+            seed=0,
+        )
+        ctx = types.SimpleNamespace(
+            config=cfg,
+            cell=None,
+            layout=types.SimpleNamespace(logs_dir=str(tmp)),
+        )
+
+        def _param(name, default=None):
+            cell_params = getattr(ctx.cell, "params", None)
+            if isinstance(cell_params, dict) and name in cell_params:
+                return cell_params[name]
+            params = getattr(cfg, "params", None)
+            if params is not None and hasattr(params, name):
+                return getattr(params, name)
+            return default
+
+        ctx.param = _param
+        return ctx, tmp
+
+    def test_derives_from_percentile_thresholds(self):
+        from cvs.lib.adapters.vllm_adapter import VllmAdapter
+        from cvs.lib.config.thresholds import PercentileThreshold, RateThreshold
+
+        thresholds = [
+            RateThreshold(metric="total_throughput", op=">=", value=1200),
+            PercentileThreshold(metric="ttft_ms", percentile=99, op="<=", value=200),
+            PercentileThreshold(metric="tpot_ms", percentile=99, op="<=", value=30),
+        ]
+        ctx, tmp = self._make_ctx(thresholds)
+        cmd = VllmAdapter()._bench_command(ctx, Path(tmp) / "b.json", "c")
+        # Derived from threshold metrics with _ms stripped, in declaration order.
+        self.assertIn("--percentile-metrics ttft,tpot", cmd)
+        self.assertIn("--metric-percentiles 99", cmd)
+        # Rate threshold metric must NOT leak into the percentile-metrics flag.
+        self.assertNotIn("total_throughput", cmd.split("--percentile-metrics ")[1].split(" ")[0])
+
+    def test_extra_percentile_metrics_union(self):
+        from cvs.lib.adapters.vllm_adapter import VllmAdapter
+        from cvs.lib.config.thresholds import PercentileThreshold
+
+        thresholds = [
+            PercentileThreshold(metric="ttft_ms", percentile=99, op="<=", value=200),
+        ]
+        ctx, tmp = self._make_ctx(thresholds, extra_metrics=["itl", "e2el"])
+        cmd = VllmAdapter()._bench_command(ctx, Path(tmp) / "b.json", "c")
+        # ttft (from threshold) + itl, e2el (from extra), preserving order.
+        self.assertIn("--percentile-metrics ttft,itl,e2el", cmd)
+
+    def test_no_thresholds_falls_back_to_default_set(self):
+        from cvs.lib.adapters.vllm_adapter import VllmAdapter
+
+        ctx, tmp = self._make_ctx([])
+        cmd = VllmAdapter()._bench_command(ctx, Path(tmp) / "b.json", "c")
+        self.assertIn("--percentile-metrics ttft,tpot,itl,e2el", cmd)
+        self.assertIn("--metric-percentiles 99", cmd)
 
 
 if __name__ == "__main__":

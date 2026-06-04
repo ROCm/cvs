@@ -49,6 +49,7 @@ from typing import Dict, List, Optional, Tuple
 
 from cvs.lib.adapter_protocol import Progress
 from cvs.lib.base_adapter import BaseWorkloadAdapter
+from cvs.lib.config.thresholds import PercentileThreshold
 from cvs.lib.config.thresholds import ResultView
 from cvs.lib.failure_taxonomy import LivenessFailure, SetupFailure
 from cvs.lib.registry import register_adapter
@@ -271,7 +272,32 @@ class VllmAdapter(BaseWorkloadAdapter):
         concurrency = ctx.param("concurrency", default_concurrency)
         isl = ctx.param("isl", int(seq_isl))
         osl = ctx.param("osl", int(seq_osl))
-        percentile_metrics = ",".join(params.percentile_metrics)
+        # Derive the bench flags from thresholds (single source of truth),
+        # union'd with any measure-only ``extra_percentile_metrics``. The
+        # metric-root is the threshold ``metric`` with the trailing ``_ms``
+        # stripped -- bench flags speak in roots (``ttft``), threshold
+        # metrics in units (``ttft_ms``). A no-percentile-threshold config
+        # falls back to the legacy default set so single-cell barebones
+        # without explicit thresholds still emits sensible flags.
+        pct_thresholds = [t for t in ctx.config.thresholds if isinstance(t, PercentileThreshold)]
+        metric_roots = []
+        seen = set()
+        for t in pct_thresholds:
+            root = t.metric[:-3] if t.metric.endswith("_ms") else t.metric
+            if root not in seen:
+                seen.add(root)
+                metric_roots.append(root)
+        for extra in params.extra_percentile_metrics:
+            if extra not in seen:
+                seen.add(extra)
+                metric_roots.append(extra)
+        if not metric_roots:
+            metric_roots = ["ttft", "tpot", "itl", "e2el"]
+        percentile_metrics = ",".join(metric_roots)
+        # ``--metric-percentiles`` accepts CSV; emit the unique set across
+        # configured percentile thresholds (almost always one value, e.g. 99).
+        metric_percentiles_values = sorted({int(t.percentile) for t in pct_thresholds}) or [99]
+        metric_percentiles = ",".join(str(v) for v in metric_percentiles_values)
         # ``docker exec -d`` returns immediately; the bench runs in the
         # container's background and writes the result file when done.
         # Redirect stdout/stderr inside the container so the bench log is
@@ -292,7 +318,7 @@ class VllmAdapter(BaseWorkloadAdapter):
             f"--seed {ctx.config.seed} "
             f"--tokenizer-mode {params.tokenizer_mode} "
             f"--percentile-metrics {percentile_metrics} "
-            f"--metric-percentiles {params.metric_percentiles} "
+            f"--metric-percentiles {metric_percentiles} "
             f"--save-result --result-filename {results_path} "
             f"> {bench_log} 2>&1\""
         )

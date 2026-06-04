@@ -20,7 +20,6 @@
 # closed/internal clusters.
 schema_version: "2"
 framework: vllm
-target_gpu: mi300
 model: meta-llama/Llama-3.1-70B-Instruct
 cluster_ref: cluster_file/mi300_pool_example.yaml
 seed: 0
@@ -48,17 +47,10 @@ params:
   request_rate: inf
   burstiness: 1.0
   tokenizer_mode: auto
-  percentile_metrics: [ttft, tpot, itl, e2el]
-  metric_percentiles: 99
   base_url: http://0.0.0.0
   port_no: 8888
 
-topology:
-  roles:
-    server:
-      count: 1
-      gpus_per_node: 8
-      selector: mi300
+topology: { nnodes: 1, gpus_per_node: 8, selector: mi300 }
 
 # Single-cell barebones: one value per axis. ``tensor_parallelism: [8]``
 # must equal a role's ``gpus_per_node`` (VllmConfig._tp_consistent_with_topology

@@ -44,8 +44,11 @@ class VllmParams(BaseModel):
     max_model_length: int = Field(default=9216, gt=0)
     request_rate: str = "inf"
     tokenizer_mode: str = "auto"
-    percentile_metrics: List[str] = Field(default_factory=lambda: ["ttft", "tpot", "itl", "e2el"])
-    metric_percentiles: int = 99
+    # Measure-only debug metrics: union'd in alongside the (metric, percentile)
+    # pairs derived from ``thresholds`` so the bench emits them without
+    # requiring a no-op threshold. Empty by default -- the typical config
+    # drives ``--percentile-metrics`` entirely from its thresholds list.
+    extra_percentile_metrics: List[str] = Field(default_factory=list)
     base_url: str = "http://0.0.0.0"
     port_no: int = 8888
     burstiness: float = 1.0
