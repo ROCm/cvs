@@ -1264,3 +1264,29 @@ class SglangDisaggPD:
         verify_dmesg_for_errors(self.r_phdl, self.inference_start_time, self.inference_end_time)
         verify_dmesg_for_errors(self.b_phdl, self.inference_start_time, self.inference_end_time)
         log.info("%s", self.inference_results_dict)
+
+
+    def sglang_disagg_gpu_counts(self):
+        """
+        GPUs used per prefill/decode node and per cluster.
+
+        Matches launch_prefill_servers / launch_decode_servers:
+          NNODES and --tp from self.inf_dict / self.bp_dict.
+        """
+        tp = int(self.bp_dict["tensor_parallelism"])
+        if tp <= 0:
+            raise ValueError(f"tensor_parallelism must be > 0, got {tp}")
+
+        def _phase(name, nnodes):
+            if nnodes <= 0:
+                raise ValueError(f"{name} must have at least one node")
+            if tp % nnodes != 0:
+                raise ValueError(
+                    f"{name}: tensor_parallelism {tp} not divisible by nnodes {nnodes}"
+                )
+            return {"nnodes": nnodes, "total_gpus": tp, "gpus_per_node": tp // nnodes}
+
+        return {
+            "prefill": _phase("prefill", self.prefill_nnodes),
+            "decode": _phase("decode", self.decode_nnodes),
+        }
