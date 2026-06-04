@@ -184,5 +184,60 @@ class TestNodeDevicesAndNetworkRoundtrip(unittest.TestCase):
         self.assertEqual(n.network.extra_env["NCCL_IB_TC"], "106")
 
 
+class TestNodePathsWekaSubpaths(unittest.TestCase):
+    """B4: NodePaths exposes typed weka subpaths (shared_root + hf_cache +
+    models + datasets + benchmarks + run_artifacts + logs). G5b will fold these
+    into ContainerSpec.volumes at launch; here we prove the cluster file shape
+    round-trips intact."""
+
+    def test_weka_subpaths_default_to_none(self):
+        path = Path(tempfile.mkdtemp()) / "cluster.json"
+        path.write_text(json.dumps({"nodes": {"n0": {"ip": "1", "user": "u", "gpus": 8, "labels": ["mi300"]}}}))
+        pool = load_cluster_file(path)
+        n = pool.nodes["n0"]
+        self.assertIsNone(n.paths.shared_root)
+        self.assertIsNone(n.paths.hf_cache)
+        self.assertIsNone(n.paths.models)
+        self.assertIsNone(n.paths.datasets)
+        self.assertIsNone(n.paths.benchmarks)
+        self.assertIsNone(n.paths.run_artifacts)
+        self.assertIsNone(n.paths.logs)
+
+    def test_weka_subpaths_roundtrip(self):
+        path = Path(tempfile.mkdtemp()) / "cluster.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "nodes": {
+                        "n0": {
+                            "ip": "1",
+                            "user": "u",
+                            "gpus": 8,
+                            "labels": ["mi300"],
+                            "paths": {
+                                "shared_root": "/mnt/dtni",
+                                "hf_cache": "/mnt/dtni/atnair/hf_cache",
+                                "models": "/mnt/dtni/atnair/models",
+                                "datasets": "/mnt/dtni/atnair/datasets",
+                                "benchmarks": "/mnt/dtni/atnair/benchmarks",
+                                "run_artifacts": "/mnt/dtni/atnair/runs",
+                                "logs": "/mnt/dtni/atnair/logs",
+                            },
+                        }
+                    }
+                }
+            )
+        )
+        pool = load_cluster_file(path)
+        n = pool.nodes["n0"]
+        self.assertEqual(n.paths.shared_root, "/mnt/dtni")
+        self.assertEqual(n.paths.hf_cache, "/mnt/dtni/atnair/hf_cache")
+        self.assertEqual(n.paths.models, "/mnt/dtni/atnair/models")
+        self.assertEqual(n.paths.datasets, "/mnt/dtni/atnair/datasets")
+        self.assertEqual(n.paths.benchmarks, "/mnt/dtni/atnair/benchmarks")
+        self.assertEqual(n.paths.run_artifacts, "/mnt/dtni/atnair/runs")
+        self.assertEqual(n.paths.logs, "/mnt/dtni/atnair/logs")
+
+
 if __name__ == "__main__":
     unittest.main()

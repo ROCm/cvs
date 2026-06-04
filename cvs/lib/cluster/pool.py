@@ -19,17 +19,32 @@ class NodePaths(BaseModel):
     """Site host-paths exposed by a node, addressable by A3 ContainerSpec.
 
     The cluster file is where *site* knowledge lives (e.g. the local HF model
-    cache, dataset roots), not the per-framework config. ContainerSpec mounts
-    these by name. extra=forbid is load-bearing so a typo (``model-cache``)
-    fails at load instead of silently resolving to None at launch time. All
-    fields are typed Optional[str] -- G2's str-contract discipline applied at
-    the cluster layer.
+    cache, dataset roots, weka subdirs), not the per-framework config.
+    ContainerSpec mounts these by name. extra=forbid is load-bearing so a typo
+    (``model-cache``) fails at load instead of silently resolving to None at
+    launch time. All fields are typed Optional[str] -- G2's str-contract
+    discipline applied at the cluster layer.
+
+    Weka-style multi-tenant clusters mount one shared root (``shared_root``,
+    typically ``/mnt/dtni`` or ``/mnt/weka``) and expose typed subdirs for the
+    common content kinds. Per-site naming is otherwise unconstrained: the
+    cluster file declares the concrete paths and the launcher (G5b) mounts
+    them into the container at the same paths -- adapters/configs reference by
+    field name, never by hardcoded host path.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     model_cache: Optional[str] = None
     dataset_root: Optional[str] = None
+    # Weka / shared-fs surface (G5b will fold these into ContainerSpec.volumes).
+    shared_root: Optional[str] = None
+    hf_cache: Optional[str] = None
+    models: Optional[str] = None
+    datasets: Optional[str] = None
+    benchmarks: Optional[str] = None
+    run_artifacts: Optional[str] = None
+    logs: Optional[str] = None
 
 
 class NodeDevices(BaseModel):
