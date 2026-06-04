@@ -232,6 +232,14 @@ def _run_one_side_once(phdl, shdl, cluster_dict, config_dict, side_cfg, collecti
     base_cvs['verify_bw_dip'] = 'False'
     base_cvs['verify_lat_dip'] = 'False'
 
+    # Clean, reproducible per-run log (MPI launch command + rccl-tests output),
+    # separate from the verbose parallel-ssh logging. Defaults to a single
+    # appended file under the A/B output dir; honour an explicit override.
+    if not base_cvs.get('rccl_command_log'):
+        ab_cfg = config_dict.get('ab_regression', {})
+        out_dir = ab_cfg.get('output_dir') or os.getenv('CVS_OUTPUT_BASE_DIR') or '/tmp'
+        base_cvs['rccl_command_log'] = os.path.join(out_dir, 'rccl_runs.log')
+
     env_overrides = {k: str(v) for k, v in env_overrides.items()}
 
     # Reset the global failure accumulator so we can detect this sweep's own

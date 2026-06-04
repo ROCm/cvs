@@ -368,6 +368,25 @@ class TestRcclLib(unittest.TestCase):
         rccl_lib.check_lat_dip(test_name, output, ref)
         mock_fail_test.assert_not_called()
 
+    def test_format_run_command_log_entry(self):
+        """Clean run record: command collapsed to one line; output + headers present."""
+        command = (
+            "/opt/ompi/bin/mpirun \\\n"
+            "    --allow-run-as-root \\\n"
+            "    -np 32 \\\n"
+            "    all_reduce_perf -b 1K -e 4G"
+        )
+        output = "#  size  busbw\n  1024  0.02\n# Avg bus bandwidth : 100.0\n"
+        entry = rccl_lib.format_run_command_log_entry("all_reduce_perf [NCCL_ALGO=Ring] -> ref_float_r0.json",
+                                                      command, output)
+        # Command is collapsed to a single copy/paste-able line (no backslashes/newlines).
+        self.assertIn("mpirun --allow-run-as-root -np 32 all_reduce_perf -b 1K -e 4G", entry)
+        self.assertNotIn("\\\n", entry)
+        # Labels + raw output preserved.
+        self.assertIn("# RUN : all_reduce_perf [NCCL_ALGO=Ring] -> ref_float_r0.json", entry)
+        self.assertIn("MPI launch command", entry)
+        self.assertIn("# Avg bus bandwidth : 100.0", entry)
+
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_check_bus_bw_multi_dtype_each_compared(self, mock_fail_test):
         """Both data types are compared against the size-keyed reference."""

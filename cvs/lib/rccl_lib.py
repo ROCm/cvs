@@ -81,6 +81,72 @@ def _shell_single_quote(s):
     return "'" + s.replace("'", "'\"'\"'") + "'"
 
 
+def format_run_command_log_entry(label, command, output):
+    """
+    Build one clean, reproducible log section for a single rccl-tests run.
+
+    The MPI launch command is normalized to a single copy/paste-able line and
+    placed at the top, followed by the raw rccl-tests output (the perf table, and
+    NCCL INFO lines when NCCL_DEBUG=INFO). This is the high-signal content people
+    actually want, separated from the verbose per-line parallel-ssh logging.
+
+    Args:
+      label: short description of the run (collective / env / result file).
+      command: the mpirun launch command (may contain shell line continuations).
+      output: the raw rccl-tests stdout/stderr captured from the head node.
+
+    Returns:
+      str: a formatted section (begins with a blank line + separator).
+    """
+    from datetime import datetime
+
+    # Collapse shell line-continuations and runs of whitespace into a single line
+    # so the command can be copied and re-run as-is.
+    one_line = re.sub(r'\\\s*\n', ' ', command or '')
+    one_line = re.sub(r'\s+', ' ', one_line).strip()
+
+    sep = '=' * 100
+    parts = [
+        '',
+        sep,
+        f'# RUN : {label}',
+        f'# TIME: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
+        sep,
+        '# ---- MPI launch command (copy/paste to reproduce) ----',
+        one_line,
+        '',
+        '# ---- rccl-tests output (perf table; NCCL INFO when NCCL_DEBUG=INFO) ----',
+        (output or '').rstrip(),
+        '',
+    ]
+    return '\n'.join(parts)
+
+
+def _maybe_write_run_command_log(cvs_params, test_name, env_overrides, rccl_result_file, command, output):
+    """
+    Append a clean run record (launch command + rccl-tests output) to the file at
+    ``cvs_params['rccl_command_log']`` if configured. Best-effort: never raises.
+
+    This is intentionally separate from (and in addition to) the verbose parallel-ssh
+    logging, which is preserved unchanged.
+    """
+    log_path = cvs_params.get('rccl_command_log')
+    if not log_path:
+        return
+    params_summary = ' '.join(f'{k}={v}' for k, v in (env_overrides or {}).items())
+    label = test_name
+    if params_summary:
+        label += f' [{params_summary}]'
+    label += f' -> {os.path.basename(rccl_result_file)}'
+    try:
+        entry = format_run_command_log_entry(label, command, output)
+        with open(log_path, 'a', encoding='utf-8') as fp:
+            fp.write(entry)
+        log.info('Appended reproducible run record to %s', log_path)
+    except Exception as e:
+        log.warning('Failed to write rccl command log %s: %r', log_path, e)
+
+
 rccl_err_dict = {
     'orte': 'ORTE does not know how to route|ORTE was unable to reliably start',
     'nccl': 'NCCL ERROR|Test failure',
@@ -814,6 +880,9 @@ def rccl_regression(
         out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
         output = out_dict[head_node]
         scan_rccl_logs(output)
+        # Write a clean, reproducible record (launch command + rccl-tests output)
+        # to a dedicated log file, separate from the verbose parallel-ssh logging.
+        _maybe_write_run_command_log(cvs_params, test_name, env_overrides, rccl_result_file, cmd, output)
     except Exception as e:
         log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
         fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
