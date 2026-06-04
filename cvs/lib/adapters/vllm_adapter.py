@@ -208,7 +208,7 @@ class VllmAdapter(BaseWorkloadAdapter):
         )
         ctx.containers.append(handle)
         handle.__enter__()
-        ctx.events.emit("launch.container_up", run_id=ctx.run_id, name=handle.name)
+        ctx.events.emit("launch.container_up", run_id=ctx.run_id, container=handle.name)
 
         # C1 readiness gate -- bounded poll of HTTP /health before bench.
         self._wait_for_server_ready(ctx)
@@ -308,7 +308,7 @@ class VllmAdapter(BaseWorkloadAdapter):
             f"\"python {params.bench_serv_script} "
             f"--backend {params.backend} "
             f"--model {ctx.config.model} "
-            f"--base-url {params.base_url} --port {params.port_no} "
+            f"--base-url {params.base_url}:{params.port_no} "
             f"--dataset-name {params.dataset_name} "
             f"--num-prompts {params.num_prompts} "
             f"--max-concurrency {concurrency} "

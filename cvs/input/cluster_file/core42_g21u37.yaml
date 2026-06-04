@@ -1,0 +1,35 @@
+# Core42 single-node cluster file: g21u37 (10.245.135.13).
+#
+# - Labels include "mi300" so the workload topology selector
+#   ``selector: mi300`` (or the shorthand form) binds here.
+# - paths: shared_root + 6 typed weka subdirs under /mnt/dtni/atnair so
+#   the launcher (G5b) can fold them into ContainerSpec.volumes without
+#   the workload config knowing host paths.
+# - network: NCCL_IB_HCA = "rocep158s0,rocep159s0,rocep190s0,rocep206s0,
+#   rocep222s0,..." -- the eight 400G RoCE HCAs ibstat surfaced (the two
+#   2.5-rate roceo12* are mgmt, excluded). Socket ifname stays unset
+#   (out-of-band collective bootstrap on RoCE is HCA-direct).
+# - devices: GPU + ib uverbs[0..7] + rdma_cm so the container has
+#   --device passthrough for RoCE collectives. G5b will fold these into
+#   ContainerSpec.devices at launch.
+nodes:
+  g21u37:
+    ip: "10.245.135.13"
+    user: atnair
+    ssh_key: /data/atnair/.ssh/id_ed25519
+    gpus: 8
+    labels: [mi300, core42]
+    paths:
+      shared_root: /mnt/dtni
+      hf_cache: /mnt/dtni/atnair/hf_cache
+      models: /mnt/dtni/atnair/models
+      datasets: /mnt/dtni/atnair/datasets
+      benchmarks: /mnt/dtni/atnair/benchmarks
+      run_artifacts: /mnt/dtni/atnair/runs
+      logs: /mnt/dtni/atnair/logs
+    devices:
+      gpu: [/dev/kfd, /dev/dri/renderD128, /dev/dri/renderD129, /dev/dri/renderD130, /dev/dri/renderD131, /dev/dri/renderD132, /dev/dri/renderD133, /dev/dri/renderD134, /dev/dri/renderD135]
+      ib: [/dev/infiniband/uverbs0, /dev/infiniband/uverbs1, /dev/infiniband/uverbs2, /dev/infiniband/uverbs3, /dev/infiniband/uverbs4, /dev/infiniband/uverbs5, /dev/infiniband/uverbs6, /dev/infiniband/uverbs7, /dev/infiniband/rdma_cm]
+    network:
+      nccl_ib_hca: "rocep158s0,rocep159s0,rocep190s0,rocep206s0,rocep222s0"
+      nccl_ib_gid_index: "3"
