@@ -29,31 +29,63 @@ class SeqCombo(BaseModel):
 class VllmParams(BaseModel):
     """Static (non-swept) vLLM parameters.
 
-    Framework-specific knobs that used to be hardcoded in the shared inference
-    base (the AITER env flags) belong in the top-level ``knobs`` of the config,
-    not here; ``params`` is the invariant per-run configuration.
+    The adapter COMPOSES ``vllm serve`` / ``vllm bench serve`` argv from the
+    typed knobs below -- the YAML declares values, the adapter owns the CLI
+    shape. ``server_script`` / ``bench_serv_script`` are legacy escape
+    hatches: when set, the adapter passes the string through verbatim
+    (server) or shells out to it as-is (bench), bypassing composition. The
+    canonical config leaves them ``None`` so a vLLM CLI rename does not
+    cascade into every workload YAML in the tree.
+
+    ``server_extra_args`` / ``bench_extra_args`` are pass-through argv
+    lists appended after the composed flags -- the operator escape hatch
+    that does not require giving up composition (typo guards, sweep
+    integration, deprecation tracking).
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    server_script: str
-    bench_serv_script: str = "benchmark_serving.py"
+    # Composition mode (default). When ``server_script`` is None the adapter
+    # composes ``vllm serve <model> --tensor-parallel-size N ...``; when
+    # ``bench_serv_script`` is None the adapter composes
+    # ``vllm bench serve --backend vllm --base-url ... --save-result ...``.
+    server_script: Optional[str] = None
+    bench_serv_script: Optional[str] = None
+
+    # Server typed knobs (adapter lowers each into a vllm-serve flag).
+    max_model_len: int = Field(default=9216, gt=0)
+    gpu_memory_utilization: float = Field(default=0.9, gt=0.0, le=1.0)
+    quantization: Optional[str] = None  # e.g. "fp8", "awq"; emits --quantization
+    dtype: Optional[str] = None  # "auto"/"bfloat16"/...; emits --dtype
+    trust_remote_code: bool = False  # emits --trust-remote-code
+    download_dir: Optional[str] = None  # HF download directory; emits --download-dir
+
+    # Bench typed knobs.
     backend: str = "vllm"
     dataset_name: str = "random"
     num_prompts: int = Field(default=3200, gt=0)
-    max_model_length: int = Field(default=9216, gt=0)
     request_rate: str = "inf"
+    burstiness: float = 1.0
     tokenizer_mode: str = "auto"
+    random_range_ratio: float = 0.8
+    random_prefix_len: int = 0
     # Measure-only debug metrics: union'd in alongside the (metric, percentile)
     # pairs derived from ``thresholds`` so the bench emits them without
     # requiring a no-op threshold. Empty by default -- the typical config
     # drives ``--percentile-metrics`` entirely from its thresholds list.
     extra_percentile_metrics: List[str] = Field(default_factory=list)
+
+    # Endpoint (composed): adapter emits ``--base-url <base_url>:<port_no>``
+    # as a single URL (the new ``vllm bench serve`` CLI shape).
     base_url: str = "http://0.0.0.0"
     port_no: int = 8888
-    burstiness: float = 1.0
-    random_range_ratio: float = 0.8
-    random_prefix_len: int = 0
+
+    # Operator escape hatches: appended verbatim after composed flags.
+    # Use these for one-off knobs the adapter does not type yet; raise a
+    # follow-up to promote anything that recurs across configs.
+    server_extra_args: List[str] = Field(default_factory=list)
+    bench_extra_args: List[str] = Field(default_factory=list)
+
     container_image: Optional[str] = None
 
 

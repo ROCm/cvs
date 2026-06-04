@@ -36,14 +36,21 @@ container:
   ipc: host
   network: host
 
+# ``params`` declares VALUES; the adapter composes ``vllm serve`` /
+# ``vllm bench serve`` argv from them. server_script / bench_serv_script
+# are escape hatches -- set them only when you need to bypass composition
+# (custom in-image launcher; bench-serving wrapper); leave them out and
+# the adapter owns the CLI shape end-to-end.
 params:
-  server_script: llama3_1_70b_fp8_mi300_vllm_docker.sh
-  bench_serv_script: benchmark_serving.py
-  backend: vllm
   container_image: rocm/vllm-dev:nightly
+  # Server-side typed knobs (adapter -> ``vllm serve`` flags).
+  max_model_len: 9216
+  gpu_memory_utilization: 0.9
+  quantization: fp8
+  # Bench-side typed knobs (adapter -> ``vllm bench serve`` flags).
+  backend: vllm
   dataset_name: random
   num_prompts: 3200
-  max_model_length: 9216
   request_rate: inf
   burstiness: 1.0
   tokenizer_mode: auto

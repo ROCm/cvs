@@ -43,6 +43,7 @@ cluster.
 from __future__ import annotations
 
 import json
+import shlex
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -121,6 +122,98 @@ class VllmAdapter(BaseWorkloadAdapter):
     def _bench_results_local_path(self, ctx) -> Path:
         return Path(ctx.layout.logs_dir) / _BENCH_RESULT_FILENAME
 
+    # ---- argv composition ------------------------------------------------
+
+    def _server_command(self, ctx, tp: int) -> str:
+        """Compose ``vllm serve`` argv from typed params (default mode).
+
+        The adapter owns the CLI shape so a vLLM CLI rename / flag change
+        is a one-line patch here, not a tree-wide YAML migration. The
+        legacy escape hatch (``params.server_script``) wins when set --
+        operators with a custom in-image launcher still work.
+        """
+        p = ctx.config.params
+        parts = [
+            "vllm",
+            "serve",
+            ctx.config.model,
+            "--tensor-parallel-size",
+            str(tp),
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(p.port_no),
+            "--max-model-len",
+            str(p.max_model_len),
+            "--gpu-memory-utilization",
+            str(p.gpu_memory_utilization),
+        ]
+        if p.quantization:
+            parts += ["--quantization", p.quantization]
+        if p.dtype:
+            parts += ["--dtype", p.dtype]
+        if p.trust_remote_code:
+            parts.append("--trust-remote-code")
+        if p.download_dir:
+            parts += ["--download-dir", p.download_dir]
+        parts += list(p.server_extra_args)
+        return shlex.join(parts)
+
+    def _bench_argv(
+        self,
+        ctx,
+        results_path: Path,
+        percentile_metrics: str,
+        metric_percentiles: str,
+        concurrency: int,
+        isl: int,
+        osl: int,
+    ) -> List[str]:
+        """Compose ``vllm bench serve`` argv from typed params (default mode).
+
+        Returns a list of argv tokens; the caller wraps the argv into a
+        ``docker exec -d <name> sh -c "python -m vllm.entrypoints.cli.main
+        bench serve <argv> > <log> 2>&1"`` invocation. ``--base-url``
+        carries the port (the new CLI shape -- the old ``--port`` flag is
+        silently ignored).
+        """
+        p = ctx.config.params
+        argv = [
+            "--backend",
+            p.backend,
+            "--model",
+            ctx.config.model,
+            "--base-url",
+            f"{p.base_url}:{p.port_no}",
+            "--dataset-name",
+            p.dataset_name,
+            "--num-prompts",
+            str(p.num_prompts),
+            "--max-concurrency",
+            str(concurrency),
+            "--random-input-len",
+            str(isl),
+            "--random-output-len",
+            str(osl),
+            "--request-rate",
+            str(p.request_rate),
+            "--burstiness",
+            str(p.burstiness),
+            "--seed",
+            str(ctx.config.seed),
+            "--tokenizer-mode",
+            p.tokenizer_mode,
+            "--percentile-metrics",
+            percentile_metrics,
+            "--metric-percentiles",
+            metric_percentiles,
+            "--save-result",
+            "--result-filename",
+            str(results_path),
+        ]
+        argv += list(p.bench_extra_args)
+        return argv
+
     # ---- lifecycle -------------------------------------------------------
 
     def launch(self, ctx) -> None:
@@ -198,12 +291,13 @@ class VllmAdapter(BaseWorkloadAdapter):
         if not image:
             raise SetupFailure("no container image: set params.container_image")
 
+        server_command = params.server_script or self._server_command(ctx, tp)
         handle = ContainerHandle(
             image=image,
             run_id=ctx.run_id,
             runner=ctx.executor,
             name=f"vllm_{ctx.run_id}",
-            command=params.server_script,
+            command=server_command,
             **spec_kwargs,
         )
         ctx.containers.append(handle)
@@ -303,25 +397,42 @@ class VllmAdapter(BaseWorkloadAdapter):
         # Redirect stdout/stderr inside the container so the bench log is
         # captured under the shared-FS logs_dir for post-mortem.
         bench_log = Path(ctx.layout.logs_dir) / "bench.log"
-        return (
-            f"docker exec -d {container_name} sh -c "
-            f"\"python {params.bench_serv_script} "
-            f"--backend {params.backend} "
-            f"--model {ctx.config.model} "
-            f"--base-url {params.base_url}:{params.port_no} "
-            f"--dataset-name {params.dataset_name} "
-            f"--num-prompts {params.num_prompts} "
-            f"--max-concurrency {concurrency} "
-            f"--random-input-len {isl} --random-output-len {osl} "
-            f"--request-rate {params.request_rate} "
-            f"--burstiness {params.burstiness} "
-            f"--seed {ctx.config.seed} "
-            f"--tokenizer-mode {params.tokenizer_mode} "
-            f"--percentile-metrics {percentile_metrics} "
-            f"--metric-percentiles {metric_percentiles} "
-            f"--save-result --result-filename {results_path} "
-            f"> {bench_log} 2>&1\""
-        )
+        if params.bench_serv_script:
+            # Legacy escape hatch: pass the operator string through as-is to
+            # the container shell. No ``python`` prefix, no flag injection --
+            # the operator owns the full command shape.
+            inner = (
+                f"{params.bench_serv_script} "
+                f"--backend {params.backend} "
+                f"--model {ctx.config.model} "
+                f"--base-url {params.base_url}:{params.port_no} "
+                f"--dataset-name {params.dataset_name} "
+                f"--num-prompts {params.num_prompts} "
+                f"--max-concurrency {concurrency} "
+                f"--random-input-len {isl} --random-output-len {osl} "
+                f"--request-rate {params.request_rate} "
+                f"--burstiness {params.burstiness} "
+                f"--seed {ctx.config.seed} "
+                f"--tokenizer-mode {params.tokenizer_mode} "
+                f"--percentile-metrics {percentile_metrics} "
+                f"--metric-percentiles {metric_percentiles} "
+                f"--save-result --result-filename {results_path}"
+            )
+        else:
+            argv = self._bench_argv(
+                ctx,
+                results_path,
+                percentile_metrics,
+                metric_percentiles,
+                concurrency,
+                isl,
+                osl,
+            )
+            inner = "python -m vllm.entrypoints.cli.main bench serve " + shlex.join(argv)
+        # The shell wrapper redirects to the log file; the inner command is
+        # carefully composed via shlex.join above so embedded spaces or
+        # quotes in argv tokens (e.g. extra-args) survive intact.
+        return f'docker exec -d {container_name} sh -c "{inner} > {bench_log} 2>&1"'
 
     def progress_predicate(self, ctx) -> Progress:
         """RUNNING / DONE, observed via the bench's result file on the bound node.

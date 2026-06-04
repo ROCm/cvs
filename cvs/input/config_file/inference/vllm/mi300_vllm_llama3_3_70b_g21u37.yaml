@@ -28,19 +28,20 @@ container:
   ipc: host
   network: host
 
-# vLLM v1 serve launched directly; model + TP inlined because pre-G5b the
-# adapter does not lower sweep.tensor_parallelism into command argv.
+# ``params`` declares VALUES; the adapter composes ``vllm serve`` /
+# ``vllm bench serve`` argv. No server_script / bench_serv_script set --
+# adapter owns the CLI shape (caught the new-vLLM-CLI base-url-with-port
+# regression once; will not happen again on a CLI rename).
 params:
-  server_script: >-
-    vllm serve meta-llama/Llama-3.3-70B-Instruct
-    --tensor-parallel-size 8 --port 8888 --host 0.0.0.0
-    --max-model-len 9216 --gpu-memory-utilization 0.9 --download-dir /models
-  bench_serv_script: "-m vllm.entrypoints.cli.main bench serve"
-  backend: vllm
   container_image: rocm/utd-private:vllm-0.21.0-ubuntu24.04-py3.13-nightlies-device-all-cdna-rocm7.14.0a20260603-ad7125a43
+  # Server typed knobs.
+  max_model_len: 9216
+  gpu_memory_utilization: 0.9
+  download_dir: /models
+  # Bench typed knobs (smoke shape: 128 prompts at 16 concurrency).
+  backend: vllm
   dataset_name: random
   num_prompts: 128
-  max_model_length: 9216
   request_rate: inf
   burstiness: 1.0
   tokenizer_mode: auto

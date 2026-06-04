@@ -112,7 +112,13 @@ class TestVllmAdapterBenchCommandConsumesSweepAxes(unittest.TestCase):
         # _single_axis. Avoids spinning up a full RunContext / Pssh.
         cfg = types.SimpleNamespace(
             params=types.SimpleNamespace(
+                # Legacy escape-hatch mode: ``bench_serv_script`` is set so
+                # _bench_command takes the pass-through path. The composed
+                # path is exercised in
+                # ``TestVllmAdapterComposesBenchArgv`` below.
+                server_script=None,
                 bench_serv_script="benchmark_serving.py",
+                bench_extra_args=[],
                 backend="vllm",
                 base_url="http://0.0.0.0",
                 port_no=8888,
@@ -179,7 +185,9 @@ class TestVllmAdapterDerivesPercentileMetricsFromThresholds(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp())
         cfg = types.SimpleNamespace(
             params=types.SimpleNamespace(
+                server_script=None,
                 bench_serv_script="benchmark_serving.py",
+                bench_extra_args=[],
                 backend="vllm",
                 base_url="http://0.0.0.0",
                 port_no=8888,
@@ -253,6 +261,190 @@ class TestVllmAdapterDerivesPercentileMetricsFromThresholds(unittest.TestCase):
         cmd = VllmAdapter()._bench_command(ctx, Path(tmp) / "b.json", "c")
         self.assertIn("--percentile-metrics ttft,tpot,itl,e2el", cmd)
         self.assertIn("--metric-percentiles 99", cmd)
+
+
+class TestVllmAdapterComposesServerCommand(unittest.TestCase):
+    """Adapter composes ``vllm serve`` argv from typed params when
+    ``params.server_script`` is None. The legacy escape hatch (set the
+    string) is the WHEN-NOT path -- here we exercise the default."""
+
+    def test_server_command_baseline(self):
+        from cvs.lib.adapters.vllm_adapter import VllmAdapter
+
+        cfg = types.SimpleNamespace(
+            params=types.SimpleNamespace(
+                server_script=None,
+                max_model_len=9216,
+                gpu_memory_utilization=0.9,
+                quantization=None,
+                dtype=None,
+                trust_remote_code=False,
+                download_dir=None,
+                port_no=8888,
+                server_extra_args=[],
+            ),
+            model="meta-llama/Llama-3.3-70B-Instruct",
+        )
+        ctx = types.SimpleNamespace(config=cfg)
+        cmd = VllmAdapter()._server_command(ctx, tp=8)
+        # Mandatory shape: ``vllm serve <model> --tensor-parallel-size N ...``
+        self.assertIn("vllm serve meta-llama/Llama-3.3-70B-Instruct", cmd)
+        self.assertIn("--tensor-parallel-size 8", cmd)
+        self.assertIn("--host 0.0.0.0", cmd)
+        self.assertIn("--port 8888", cmd)
+        self.assertIn("--max-model-len 9216", cmd)
+        self.assertIn("--gpu-memory-utilization 0.9", cmd)
+        # Optional knobs default-absent.
+        self.assertNotIn("--quantization", cmd)
+        self.assertNotIn("--dtype", cmd)
+        self.assertNotIn("--trust-remote-code", cmd)
+        self.assertNotIn("--download-dir", cmd)
+
+    def test_server_command_optionals_emitted_when_set(self):
+        from cvs.lib.adapters.vllm_adapter import VllmAdapter
+
+        cfg = types.SimpleNamespace(
+            params=types.SimpleNamespace(
+                server_script=None,
+                max_model_len=4096,
+                gpu_memory_utilization=0.85,
+                quantization="fp8",
+                dtype="bfloat16",
+                trust_remote_code=True,
+                download_dir="/models",
+                port_no=8888,
+                server_extra_args=["--enable-prefix-caching", "--enforce-eager"],
+            ),
+            model="meta-llama/Llama-3.3-70B-Instruct",
+        )
+        ctx = types.SimpleNamespace(config=cfg)
+        cmd = VllmAdapter()._server_command(ctx, tp=4)
+        self.assertIn("--quantization fp8", cmd)
+        self.assertIn("--dtype bfloat16", cmd)
+        self.assertIn("--trust-remote-code", cmd)
+        self.assertIn("--download-dir /models", cmd)
+        self.assertIn("--enable-prefix-caching", cmd)
+        self.assertIn("--enforce-eager", cmd)
+        # Order guard: extra-args land AFTER the composed flags so an
+        # operator override actually wins (last-write-wins on argparse).
+        self.assertGreater(cmd.index("--enforce-eager"), cmd.index("--gpu-memory-utilization"))
+
+
+class TestVllmAdapterComposesBenchArgv(unittest.TestCase):
+    """Composed-mode ``_bench_command`` builds the ``vllm bench serve`` argv
+    via shlex-joined arguments routed through
+    ``python -m vllm.entrypoints.cli.main bench serve``. The base-url
+    carries the port (new vLLM CLI shape -- ``--port`` is silently
+    ignored by the new CLI, so we MUST inline)."""
+
+    def _ctx(self, **overrides):
+        from pathlib import Path as _Path
+
+        tmp = _Path(tempfile.mkdtemp())
+        cfg = types.SimpleNamespace(
+            params=types.SimpleNamespace(
+                # Composed mode: bench_serv_script intentionally None.
+                server_script=None,
+                bench_serv_script=None,
+                bench_extra_args=[],
+                backend="vllm",
+                base_url="http://0.0.0.0",
+                port_no=8888,
+                dataset_name="random",
+                num_prompts=64,
+                request_rate="inf",
+                burstiness=1.0,
+                tokenizer_mode="auto",
+                extra_percentile_metrics=[],
+            ),
+            thresholds=[],
+            sweep=types.SimpleNamespace(
+                tensor_parallelism=[8],
+                concurrency=[16],
+                sequence_combinations=[types.SimpleNamespace(isl=1024, osl=1024, name="x")],
+            ),
+            model="meta-llama/Llama-3.3-70B-Instruct",
+            seed=0,
+        )
+        for k, v in overrides.items():
+            setattr(cfg.params, k, v)
+        ctx = types.SimpleNamespace(config=cfg, cell=None, layout=types.SimpleNamespace(logs_dir=str(tmp)))
+        ctx.param = lambda name, default=None: getattr(cfg.params, name, default)
+        return ctx, tmp
+
+    def test_bench_command_composed_uses_module_invocation(self):
+        from cvs.lib.adapters.vllm_adapter import VllmAdapter
+
+        ctx, tmp = self._ctx()
+        cmd = VllmAdapter()._bench_command(ctx, Path(tmp) / "bench.json", "vllm_test")
+        # New-CLI module invocation, not bare benchmark_serving.py.
+        self.assertIn("python -m vllm.entrypoints.cli.main bench serve", cmd)
+        # Base-url carries port (the new-CLI shape the old --port could not).
+        self.assertIn("--base-url http://0.0.0.0:8888", cmd)
+        # Critical: bare ``--port 8888`` flag must NOT appear -- the new CLI
+        # silently ignores it and tries 0.0.0.0:80, the bug that bit us.
+        # (Use a word-boundary guard so the port inside --base-url passes.)
+        import re
+
+        self.assertIsNone(
+            re.search(r"(?<!:)\b--port\s+8888\b", cmd),
+            f"bare --port flag must not appear in composed bench cmd: {cmd}",
+        )
+        self.assertIn("--save-result", cmd)
+        self.assertIn("--result-filename ", cmd)
+
+    def test_bench_extra_args_appended(self):
+        from cvs.lib.adapters.vllm_adapter import VllmAdapter
+
+        ctx, tmp = self._ctx(bench_extra_args=["--ignore-eos", "--debug"])
+        cmd = VllmAdapter()._bench_command(ctx, Path(tmp) / "bench.json", "c")
+        self.assertIn("--ignore-eos", cmd)
+        self.assertIn("--debug", cmd)
+        self.assertGreater(cmd.index("--debug"), cmd.index("--save-result"))
+
+
+class TestPercentileThresholdSamplesFallback(unittest.TestCase):
+    """When per-request samples are absent (e.g. the new ``vllm bench serve``
+    CLI dropped the arrays), fall back to the matching scalar
+    ``p{int(percentile)}_{metric}``. The verdict ``detail`` annotates
+    which path produced the value."""
+
+    def test_uses_samples_when_present(self):
+        from cvs.lib.config.thresholds import PercentileThreshold, ResultView
+
+        view = ResultView(
+            samples=[{"ttft_ms": v} for v in [100.0, 110.0, 120.0, 5000.0]],
+            scalars={"p99_ttft_ms": 999.0},
+        )
+        verdict = PercentileThreshold(metric="ttft_ms", percentile=99, op="<=", value=10000).evaluate(view)
+        # Computed from samples (not the 999 scalar): not the framework fallback.
+        self.assertTrue(verdict.passed)
+        self.assertIsNone(verdict.detail)
+        self.assertNotEqual(verdict.actual, 999.0)
+
+    def test_falls_back_to_scalar_when_samples_empty(self):
+        from cvs.lib.config.thresholds import PercentileThreshold, ResultView
+
+        view = ResultView(
+            samples=[],
+            scalars={"p99_ttft_ms": 150.0},
+        )
+        verdict = PercentileThreshold(metric="ttft_ms", percentile=99, op="<=", value=200).evaluate(view)
+        self.assertTrue(verdict.passed)
+        self.assertEqual(verdict.actual, 150.0)
+        # Detail must name the scalar so a manifest reader can tell which
+        # path produced the verdict.
+        self.assertIn("p99_ttft_ms", verdict.detail)
+        self.assertIn("from framework scalar", verdict.detail)
+
+    def test_no_samples_no_scalar_returns_null_actual(self):
+        from cvs.lib.config.thresholds import PercentileThreshold, ResultView
+
+        view = ResultView(samples=[], scalars={})
+        verdict = PercentileThreshold(metric="ttft_ms", percentile=99, op="<=", value=200).evaluate(view)
+        self.assertFalse(verdict.passed)
+        self.assertIsNone(verdict.actual)
+        self.assertIn("no fallback scalar", verdict.detail)
 
 
 if __name__ == "__main__":
