@@ -11,7 +11,7 @@ from pathlib import Path
 
 from cvs.lib.adapter_protocol import Progress
 from cvs.lib.base_adapter import BaseWorkloadAdapter
-from cvs.lib.config import expand_sweep, parse_config
+from cvs.lib.config import SweepCell, parse_config
 from cvs.lib.config.thresholds import ResultView
 from cvs.lib.failure_pattern_scanner import FailurePattern, PatternHit
 from cvs.lib.failure_taxonomy import FailureCategory
@@ -21,17 +21,11 @@ from cvs.lib.manifest.layout import RunLayout
 from cvs.lib.run_context import RunContext
 
 BASE = {
-    "schema_version": "2",
     "framework": "vllm",
-    "target_gpu": "mi300",
     "model": "m",
-    "topology": {"roles": {"server": {"count": 1, "gpus_per_node": 8}}},
+    "topology": {"nnodes": 1},
     "params": {"server_script": "s.sh"},
-    "sweep": {
-        "concurrency": [16],
-        "sequence_combinations": [{"isl": 1024, "osl": 1024, "name": "balanced"}],
-    },
-    "container": {"env": {"HF_TOKEN": "secret-xyz", "DEBUG": "1"}},
+    "container": {"image": "rocm/vllm-dev:nightly", "env": {"HF_TOKEN": "secret-xyz", "DEBUG": "1"}},
 }
 
 
@@ -65,7 +59,10 @@ class _Adapter(BaseWorkloadAdapter):
 
 
 def _ctx(cfg, tmp, rid):
-    cell = expand_sweep(cfg.sweep)[0]
+    # Single-cell shape: VllmConfig no longer carries a `sweep` block (the
+    # YAML scalars under params are the cell). Build a stub SweepCell so
+    # RunContext + Job's manifest path see the same shape PR-Z will lower.
+    cell = SweepCell(id="single", params={})
     layout = RunLayout(tmp, "t", cell.id, "h", rid)
     return RunContext(cfg, cell, {"server": ["node-a"]}, layout, EventWriter(layout.events_path), rid)
 

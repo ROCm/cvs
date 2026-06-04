@@ -1,0 +1,83 @@
+# CVS DTNI v2 example -- vLLM single-node inference.
+#
+# Workload YAML owns container, fabric, and topology shape. The cluster
+# file is just "what hosts I can reach + how to log in"; GPU count is
+# discovered at runtime via rocm-smi in the adapter's prepare().
+#
+# Single-cell today: ``params`` declares scalars for tensor_parallelism /
+# concurrency / isl / osl. The multi-cell sweep machinery exists in
+# ``cvs/lib/config/sweep.py`` but is not yet wired into the conftest's
+# cell-parametrize hook -- PR-Z lifts those four params to sweep axes.
+#
+# This is a template: copy and replace the ``<changeme>`` values for your
+# site (image, fabric NICs, HF token). The adapter validates required
+# fields at load; missing/wrong values fail closed with a clear message.
+framework: vllm
+model: meta-llama/Llama-3.1-70B-Instruct
+seed: 0
+
+knobs:
+  attention: aiter_unified
+
+# Workload container: image + device passthrough + env.
+container:
+  # Replace with the vLLM image you want to validate against (rocm/vllm-dev:nightly,
+  # rocm/utd-private:..., or your internal release image).
+  image: <changeme>
+  device_list: [/dev/kfd, /dev/dri]
+  env:
+    HF_TOKEN: ${env:HF_TOKEN}
+  shm_size: 16G
+  ipc: host
+  network: host
+
+# Fabric: NCCL/UCX/Gloo knobs. Folded into container.env at launch via
+# Fabric.to_env(); workload container.env wins on conflict. Single-node
+# inference does not exercise inter-node NCCL but the HCA selection still
+# affects intra-node GPU<->GPU collectives. Replace with your site's NICs.
+fabric:
+  nic_type: <changeme>            # e.g. ainic | thor2 | cx7
+  nccl_ib_hca: <changeme>         # e.g. "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3"
+  nccl_socket_ifname: <changeme>  # e.g. ens51f1np1
+  nccl_ib_gid_index: "3"
+
+# Single-role single-node inference: shorthand expands to
+# ``{server: {count: nnodes}}``. Multi-role workloads use the explicit
+# ``roles: {name: {count}}`` form.
+topology: { nnodes: 1 }
+
+# ``params`` declares VALUES; the adapter composes ``vllm serve`` /
+# ``vllm bench serve`` argv. server_script / bench_serv_script left
+# unset -- adapter owns the CLI shape.
+params:
+  # Server-side typed knobs.
+  max_model_len: 9216
+  gpu_memory_utilization: 0.9
+  quantization: fp8              # null / "fp8" / "awq"
+  # Cell-shape scalars (PR-Z promotes these to sweep axes).
+  tensor_parallelism: 8
+  concurrency: 16
+  isl: 1024
+  osl: 1024
+  # Bench-side typed knobs. ``backend`` is the bench client's --backend
+  # flag (the server API shape to speak: "vllm" tells the bench to use
+  # vLLM's OpenAI-compat HTTP API; alternatives: "sglang", "tgi",
+  # "openai"). ``dataset_name`` "random" generates synthetic prompts
+  # in-process via --random-input-len/--random-output-len (no external
+  # dataset); "sharegpt" / "hf" / "sonnet" pull real datasets from HF.
+  backend: vllm
+  dataset_name: random
+  num_prompts: 3200
+  request_rate: inf
+  burstiness: 1.0
+  tokenizer_mode: auto
+  base_url: http://0.0.0.0
+  port_no: 8888
+
+# Placeholders to be calibrated from a baseline run on your hardware.
+thresholds:
+  - { type: rate,       metric: total_throughput, op: ">=", value: 1200, unit: tok/s }
+  - { type: percentile, metric: ttft_ms, percentile: 99, op: "<=", value: 200, unit: ms }
+  - { type: percentile, metric: tpot_ms, percentile: 99, op: "<=", value: 30,  unit: ms }
+
+benchmarks: [throughput, ttft_p99]

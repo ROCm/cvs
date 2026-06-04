@@ -12,8 +12,9 @@ import json
 from pathlib import Path
 from typing import ClassVar, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cvs.lib.config.fabric import Fabric
 from cvs.lib.config.thresholds import ThresholdUnion
 
 
@@ -36,25 +37,61 @@ def _coerce_token(value: object) -> str:
 
 
 class Role(BaseModel):
-    """A workload role's hardware requirement, satisfied by the binder (W5).
+    """A workload role's host-count requirement.
 
-    Roles live in the *config* (the workload), not the cluster file (the
-    hardware pool). ``selector`` is a label query against ``node.labels``.
+    Pre-DTNI shape: just ``count``. GPU-count gating moved to runtime
+    rocm-smi discovery in ``BaseWorkloadAdapter.prepare`` (the cluster file
+    no longer declares static gpus per node); label-selector gating dropped
+    entirely (the cluster file is "what hosts I can reach", and the user
+    picks subsets by which cluster file they pass). The binder now claims
+    the first ``sum(role.count for role in roles)`` hostnames in
+    lexicographic order and partitions them into role buckets.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     count: int = Field(ge=0)
-    gpus_per_node: int = Field(default=0, ge=0)
-    selector: Optional[str] = None
 
 
 class Topology(BaseModel):
+    """Workload-role placement requirements.
+
+    Two YAML shapes accepted; both load to the same in-memory ``Topology``:
+
+    1. Full form (multi-role / disagg / training): explicit
+       ``roles: {name: {count}}``. Required when a workload has more than
+       one role (sglang-disagg's prefill/decode/router, megatron's
+       master/worker) -- the role names carry framework semantics the
+       adapter interprets.
+    2. Shorthand (single-role): flat ``{nnodes}`` expands to
+       ``roles: {server: {count: nnodes}}``. The literal role name
+       ``"server"`` is the convention for single-role adapters
+       (VllmAdapter.required_roles = ("server",)); multi-role adapters
+       MUST use the explicit form so each adapter-specific role name
+       reaches the YAML.
+
+    Mixing the two -- providing ``roles`` AND ``nnodes`` -- is rejected at
+    load: nearly always a typo, never useful.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     # A workload with zero roles has nothing for the binder to place; reject it
     # at load rather than producing an unschedulable config.
     roles: Dict[str, Role] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _expand_shorthand(cls, value):
+        if not isinstance(value, dict):
+            return value
+        if "nnodes" not in value:
+            return value
+        if "roles" in value:
+            raise ValueError("topology cannot mix explicit 'roles' with shorthand key 'nnodes'")
+        nnodes = value.pop("nnodes")
+        value["roles"] = {"server": {"count": nnodes}}
+        return value
 
 
 class ContainerSpec(BaseModel):
@@ -81,22 +118,29 @@ class ContainerSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    volumes: Dict[str, str] = Field(default_factory=dict)
-    devices: List[str] = Field(default_factory=list)
+    # Workload container image. Pre-DTNI lived under per-framework ``params``
+    # as ``container_image``; promoted to the container block so switching
+    # images is a container concern, not a framework concern.
+    image: Optional[str] = None
+    # Pre-DTNI field names: ``volume_dict`` (host_path -> container_path) and
+    # ``device_list`` (docker --device tokens). Match the v1 container_config
+    # block shape so a pre-DTNI YAML reads naturally.
+    volume_dict: Dict[str, str] = Field(default_factory=dict)
+    device_list: List[str] = Field(default_factory=list)
     ports: Dict[str, str] = Field(default_factory=dict)
     env: Dict[str, str] = Field(default_factory=dict)
     shm_size: Optional[str] = None
     ipc: Optional[str] = None
     network: Optional[str] = None
 
-    @field_validator("volumes", "ports", "env", mode="before")
+    @field_validator("volume_dict", "ports", "env", mode="before")
     @classmethod
     def _stringify_mapping(cls, value):
         if isinstance(value, dict):
             return {_coerce_token(k): _coerce_token(v) for k, v in value.items()}
         return value
 
-    @field_validator("devices", mode="before")
+    @field_validator("device_list", mode="before")
     @classmethod
     def _stringify_list(cls, value):
         if isinstance(value, list):
@@ -110,8 +154,8 @@ class ContainerSpec(BaseModel):
         apply when the spec leaves them unset.
         """
         kwargs: Dict[str, object] = {
-            "volumes": dict(self.volumes),
-            "devices": list(self.devices),
+            "volumes": dict(self.volume_dict),
+            "devices": list(self.device_list),
             "ports": dict(self.ports),
             "env": dict(self.env),
         }
@@ -147,14 +191,15 @@ class BaseTestConfig(BaseModel):
     # Subclasses narrow ``framework`` to a Literal used as the dispatch key.
     WORKLOAD_KIND: ClassVar[str] = "unknown"
 
-    schema_version: str = "2"
     framework: str
-    target_gpu: str
     model: str
-    cluster_ref: Optional[str] = None
     seed: int = 0
     knobs: Dict[str, str] = Field(default_factory=dict)
     container: ContainerSpec = Field(default_factory=ContainerSpec)
+    # Workload-side NCCL/UCX/Gloo fabric knobs (pre-DTNI shape). Optional --
+    # single-node workloads with no collectives leave it None and no fabric
+    # env is folded into the container.
+    fabric: Optional[Fabric] = None
     topology: Topology
     thresholds: List[ThresholdUnion] = Field(default_factory=list)
     benchmarks: List[str] = Field(default_factory=list)
@@ -169,25 +214,36 @@ class BaseTestConfig(BaseModel):
         return self.model_dump(mode="json")
 
     def workload_hash(self) -> str:
-        """Hash of workload-defining inputs (framework, model, target_gpu, seed, knobs, params, topology).
+        """Hash of workload-defining inputs (framework, model, seed, knobs,
+        params, sweep, topology, container, fabric).
 
         ``seed`` is included: a different seed produces different numerical
         results, so two otherwise-identical configs are *not* the same workload
         for result-comparison/caching purposes and must hash differently.
 
-        Deliberately excludes ``container`` (volumes/devices/env) so workload
-        identity is stable across sites and independent of the token value.
+        ``container`` and ``fabric`` are included: they describe how the
+        workload runs (image, devices, NCCL knobs) and materially change
+        the result. The pre-DTNI assumption that container.env contains
+        secrets is no longer load-bearing -- W7 removed the secret layer,
+        and the HF token / similar values are part of run identity (a run
+        with a different token is a different run for cache purposes).
         """
         dump = self._dump()
         payload = {
             "framework": dump.get("framework"),
             "model": dump.get("model"),
-            "target_gpu": dump.get("target_gpu"),
             "seed": dump.get("seed"),
             "knobs": dump.get("knobs"),
             "params": dump.get("params"),
             "sweep": dump.get("sweep"),
             "topology": dump.get("topology"),
+            # Pre-DTNI: container + fabric ARE workload-defining (they
+            # describe how the workload runs, not site config). Image
+            # version, device set, NCCL fabric tuning all materially
+            # change the run -- two configs that differ here must hash
+            # differently for reuse-manifest soundness.
+            "container": dump.get("container"),
+            "fabric": dump.get("fabric"),
         }
         return _stable_hash(payload)
 

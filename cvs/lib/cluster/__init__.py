@@ -7,6 +7,5 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from cvs.lib.cluster.binder import BindResult, bind
 from cvs.lib.cluster.pool import ClusterPool, Node, load_cluster_file
-from cvs.lib.cluster.topology import node_matches
 
-__all__ = ["BindResult", "ClusterPool", "Node", "bind", "load_cluster_file", "node_matches"]
+__all__ = ["BindResult", "ClusterPool", "Node", "bind", "load_cluster_file"]

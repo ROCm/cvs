@@ -20,14 +20,11 @@ import copy
 
 BASES = {
     "vllm": {
-        "schema_version": "2",
         "framework": "vllm",
-        "target_gpu": "mi300",
         "model": "meta-llama/Llama-3.1-70B",
-        "topology": {"roles": {"server": {"count": 1, "gpus_per_node": 8}}},
-        "container": {"env": {"HF_TOKEN": "hf_secret_abc"}},
-        "params": {"server_script": "s.sh"},
-        "sweep": {"concurrency": [16, 64], "sequence_combinations": [{"isl": 1024, "osl": 1024, "name": "balanced"}]},
+        "topology": {"nnodes": 1},
+        "container": {"image": "rocm/vllm-dev:nightly", "env": {"HF_TOKEN": "hf_secret_abc"}},
+        "params": {},
     },
 }
 
