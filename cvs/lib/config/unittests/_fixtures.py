@@ -22,7 +22,6 @@ BASES = {
     "vllm": {
         "schema_version": "2",
         "framework": "vllm",
-        "target_gpu": "mi300",
         "model": "meta-llama/Llama-3.1-70B",
         "topology": {"roles": {"server": {"count": 1, "gpus_per_node": 8}}},
         "container": {"env": {"HF_TOKEN": "hf_secret_abc"}},

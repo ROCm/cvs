@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import ClassVar, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cvs.lib.config.thresholds import ThresholdUnion
 
@@ -50,11 +50,50 @@ class Role(BaseModel):
 
 
 class Topology(BaseModel):
+    """Workload-role placement requirements.
+
+    Two YAML shapes accepted; both load to the same in-memory ``Topology``:
+
+    1. Full form (multi-role / disagg / training): explicit
+       ``roles: {name: {count, gpus_per_node, selector}}``.
+    2. Shorthand (single-role inference): flat ``{nnodes, gpus_per_node,
+       selector}`` expands to ``roles: {server: {count: nnodes, ...}}``.
+
+    Shorthand keeps single-node vLLM configs out of 5-line topology blocks
+    while leaving the explicit ``roles`` form mandatory for any workload that
+    has more than one role (where implicit single-role would be wrong).
+    Mixing the two -- providing ``roles`` AND any shorthand key -- is rejected
+    at load: it's almost always a typo, never useful.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     # A workload with zero roles has nothing for the binder to place; reject it
     # at load rather than producing an unschedulable config.
     roles: Dict[str, Role] = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _expand_shorthand(cls, value):
+        if not isinstance(value, dict):
+            return value
+        shorthand_keys = {"nnodes", "gpus_per_node", "selector"}
+        present = shorthand_keys.intersection(value)
+        if not present:
+            return value
+        if "roles" in value:
+            raise ValueError(f"topology cannot mix explicit 'roles' with shorthand keys {sorted(present)}")
+        nnodes = value.pop("nnodes", 1)
+        gpus_per_node = value.pop("gpus_per_node", 0)
+        selector = value.pop("selector", None)
+        value["roles"] = {
+            "server": {
+                "count": nnodes,
+                "gpus_per_node": gpus_per_node,
+                "selector": selector,
+            }
+        }
+        return value
 
 
 class ContainerSpec(BaseModel):
@@ -149,7 +188,6 @@ class BaseTestConfig(BaseModel):
 
     schema_version: str = "2"
     framework: str
-    target_gpu: str
     model: str
     cluster_ref: Optional[str] = None
     seed: int = 0
@@ -169,7 +207,7 @@ class BaseTestConfig(BaseModel):
         return self.model_dump(mode="json")
 
     def workload_hash(self) -> str:
-        """Hash of workload-defining inputs (framework, model, target_gpu, seed, knobs, params, topology).
+        """Hash of workload-defining inputs (framework, model, seed, knobs, params, topology).
 
         ``seed`` is included: a different seed produces different numerical
         results, so two otherwise-identical configs are *not* the same workload
@@ -182,11 +220,13 @@ class BaseTestConfig(BaseModel):
         payload = {
             "framework": dump.get("framework"),
             "model": dump.get("model"),
-            "target_gpu": dump.get("target_gpu"),
             "seed": dump.get("seed"),
             "knobs": dump.get("knobs"),
             "params": dump.get("params"),
             "sweep": dump.get("sweep"),
+            # Selector tokens on each role encode the GPU class (e.g. "mi300"),
+            # so the GPU dimension survives in the hash without a separate
+            # target_gpu field.
             "topology": dump.get("topology"),
         }
         return _stable_hash(payload)
