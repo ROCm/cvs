@@ -1,0 +1,16 @@
+{
+    "username": "{user-id}",
+    "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+    "env_vars": {},
+    "head_node": "{xx.xx.xx.xx|hostname-1}",
+    "nodes": {
+        "{xx.xx.xx.xx|hostname-1}": {
+            "vpc_ip": "{xx.xx.xx.xx|hostname-1}",
+            "bmc_ip": "NA"
+        },
+        "{xx.xx.xx.xx|hostname-2}": {
+            "vpc_ip": "{xx.xx.xx.xx|hostname-2}",
+            "bmc_ip": "NA"
+        }
+    }
+}

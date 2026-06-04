@@ -33,8 +33,8 @@ class TestLoadClusterFileRejectsUnknownKeys(unittest.TestCase):
 
     def _base(self):
         return {
-            "username": "atnair",
-            "priv_key_file": "/home/atnair/.ssh/id_ed25519",
+            "username": "test_user",
+            "priv_key_file": "/home/test_user/.ssh/id_rsa",
             "nodes": {"n0": {"vpc_ip": "10.0.0.1"}},
         }
 
@@ -59,14 +59,14 @@ class TestClusterPoolRoundtrip(unittest.TestCase):
         pool = load_cluster_file(
             _write(
                 {
-                    "username": "atnair",
-                    "priv_key_file": "/home/atnair/.ssh/id_ed25519",
+                    "username": "test_user",
+                    "priv_key_file": "/home/test_user/.ssh/id_rsa",
                     "nodes": {"n0": {"vpc_ip": "10.0.0.1"}},
                 }
             )
         )
-        self.assertEqual(pool.username, "atnair")
-        self.assertEqual(pool.priv_key_file, "/home/atnair/.ssh/id_ed25519")
+        self.assertEqual(pool.username, "test_user")
+        self.assertEqual(pool.priv_key_file, "/home/test_user/.ssh/id_rsa")
         self.assertEqual(pool.env_vars, {})
         self.assertIsNone(pool.head_node)
         self.assertIsNone(pool.container)
@@ -77,8 +77,8 @@ class TestClusterPoolRoundtrip(unittest.TestCase):
         pool = load_cluster_file(
             _write(
                 {
-                    "username": "atnair",
-                    "priv_key_file": "/home/atnair/.ssh/id_ed25519",
+                    "username": "test_user",
+                    "priv_key_file": "/home/test_user/.ssh/id_rsa",
                     "env_vars": {"PATH": "/opt/rocm/bin:$PATH"},
                     "head_node": "n0",
                     "nodes": {
