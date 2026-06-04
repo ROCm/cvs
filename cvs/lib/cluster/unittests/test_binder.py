@@ -1,8 +1,13 @@
 """
 Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
-The year included in the foregoing notice is the year of creation of the work.
-All code contained here is Property of Advanced Micro Devices, Inc.
+All rights reserved.
+
+Binder: deterministic first-N lexicographic claim across roles.
+
+Pre-DTNI revert: no selector, no gpus_per_node gate. The cluster file is
+"what hosts I can reach", and the binder just partitions the first
+``sum(role.count)`` hostnames in lexicographic order across roles in
+declaration order.
 """
 
 import random
@@ -12,25 +17,23 @@ from cvs.lib.cluster import ClusterPool, bind
 from cvs.lib.config.base import Role, Topology
 
 
-def _pool_from_order(hostnames):
+def _pool(hostnames):
     return ClusterPool.model_validate(
         {
-            "nodes": {
-                h: {"ip": f"10.0.0.{i}", "user": "u", "gpus": 8, "labels": ["mi300"]} for i, h in enumerate(hostnames)
-            }
+            "username": "u",
+            "priv_key_file": "/k",
+            "nodes": {h: {"vpc_ip": f"10.0.0.{i}"} for i, h in enumerate(hostnames)},
         }
     )
 
 
 class TestBinderDeterminism(unittest.TestCase):
-    """G4 surface: same pool contents -> same BindResult regardless of how the
-    caller assembled the node dict. Three shuffled orderings is the minimal
-    proof per addendum gate row (the spike-blob x100 paranoia is dropped per
-    addendum 6.1)."""
+    """Same pool contents -> same BindResult regardless of dict assembly
+    order. Three shuffled orderings is the minimal proof per addendum gate."""
 
     def test_deterministic_across_3_randomized_orderings(self):
         base = ["n0", "n1", "n2", "n3"]
-        topo = Topology(roles={"server": Role(count=2, gpus_per_node=8, selector="mi300")})
+        topo = Topology(roles={"server": Role(count=2)})
 
         rng = random.Random(0)
         orderings = []
@@ -40,62 +43,61 @@ class TestBinderDeterminism(unittest.TestCase):
             if shuffled not in orderings:
                 orderings.append(shuffled)
 
-        results = {repr(bind(topo, _pool_from_order(order)).bindings) for order in orderings}
+        results = {repr(bind(topo, _pool(order)).bindings) for order in orderings}
         self.assertEqual(len(results), 1, f"non-deterministic bindings across orderings: {results}")
 
 
-class TestBinderSkipWithReason(unittest.TestCase):
-    """G4 surface: an under-resourced cell is reported skipped with a concrete
-    insufficient_nodes reason (not a hard error -- small dev clusters get
-    partial coverage)."""
+class TestBinderClaimsLexicographicFirstN(unittest.TestCase):
+    """First N hostnames (sorted) go to the first role, next M to the
+    second, etc."""
 
-    def test_under_resourced_skipped_with_insufficient_nodes_reason(self):
-        pool = ClusterPool.model_validate(
-            {"nodes": {f"n{i}": {"ip": f"10.0.0.{i}", "user": "u", "gpus": 8, "labels": ["mi300"]} for i in range(3)}}
-        )
-        topo = Topology(roles={"d": Role(count=8, gpus_per_node=8, selector="mi300")})
+    def test_single_role_picks_lex_first_n(self):
+        pool = _pool(["n3", "n0", "n2", "n1"])  # insertion order shuffled
+        topo = Topology(roles={"server": Role(count=2)})
         res = bind(topo, pool)
-        self.assertEqual(res.status, "skipped")
-        self.assertIsNotNone(res.reason)
-        self.assertIn("insufficient_nodes", res.reason)
+        self.assertEqual(res.status, "bound")
+        # Lex-sorted: n0, n1, n2, n3 -> first 2 = [n0, n1].
+        self.assertEqual(res.bindings["server"], ["n0", "n1"])
 
-
-class TestBinderSelectorMismatchSkips(unittest.TestCase):
-    """G4 surface: a role whose selector matches no node yields skipped (the
-    binder-driven complement to test_topology.test_node_matches)."""
-
-    def test_selector_mismatch_skips(self):
-        pool = ClusterPool.model_validate(
-            {"nodes": {"n0": {"ip": "10.0.0.0", "user": "u", "gpus": 8, "labels": ["mi300"]}}}
-        )
-        topo = Topology(roles={"s": Role(count=1, gpus_per_node=8, selector="mi355x")})
-        res = bind(topo, pool)
-        self.assertEqual(res.status, "skipped")
-
-
-class TestBinderMultiRoleNoOverlap(unittest.TestCase):
-    """G4 surface: the binder's actual non-trivial logic is claim-tracking
-    across roles -- two roles bound from the same pool must not share a
-    hostname. This is the test that catches a regression in claimed.update()
-    or the ``if hostname in claimed: continue`` guard."""
-
-    def test_multi_role_no_overlap(self):
-        pool = ClusterPool.model_validate(
-            {"nodes": {f"n{i}": {"ip": f"10.0.0.{i}", "user": "u", "gpus": 8, "labels": ["mi300"]} for i in range(4)}}
-        )
+    def test_multi_role_partitions_in_declaration_order(self):
+        pool = _pool([f"n{i}" for i in range(4)])
         topo = Topology(
             roles={
-                "prefill": Role(count=2, gpus_per_node=8, selector="mi300"),
-                "decode": Role(count=2, gpus_per_node=8, selector="mi300"),
+                "prefill": Role(count=2),
+                "decode": Role(count=2),
             }
         )
         res = bind(topo, pool)
         self.assertEqual(res.status, "bound")
+        self.assertEqual(res.bindings["prefill"], ["n0", "n1"])
+        self.assertEqual(res.bindings["decode"], ["n2", "n3"])
+
+
+class TestBinderMultiRoleNoOverlap(unittest.TestCase):
+    """The binder's load-bearing logic is no-overlap across roles."""
+
+    def test_multi_role_no_overlap(self):
+        pool = _pool([f"n{i}" for i in range(4)])
+        topo = Topology(roles={"prefill": Role(count=2), "decode": Role(count=2)})
+        res = bind(topo, pool)
         prefill = set(res.bindings["prefill"])
         decode = set(res.bindings["decode"])
-        self.assertEqual(len(prefill), 2)
-        self.assertEqual(len(decode), 2)
         self.assertEqual(prefill & decode, set(), f"role overlap: {prefill & decode}")
+
+
+class TestBinderSkipsWhenUnderResourced(unittest.TestCase):
+    """When the pool has fewer hosts than ``sum(role.count)``, the binding
+    is skipped with a concrete insufficient_nodes reason -- not raised,
+    so small dev clusters get useful partial coverage."""
+
+    def test_under_resourced_skipped_with_reason(self):
+        pool = _pool([f"n{i}" for i in range(3)])
+        topo = Topology(roles={"worker": Role(count=8)})
+        res = bind(topo, pool)
+        self.assertEqual(res.status, "skipped")
+        self.assertIn("insufficient_nodes", res.reason)
+        self.assertIn("need 8", res.reason)
+        self.assertIn("pool has 3", res.reason)
 
 
 if __name__ == "__main__":

@@ -135,6 +135,7 @@ class TestVllmAdapterBenchCommandConsumesSweepAxes(unittest.TestCase):
                 concurrency=[42],
                 sequence_combinations=[types.SimpleNamespace(isl=2048, osl=4096, name="ynot")],
             ),
+            fabric=None,
             model="meta-llama/Llama-3.1-70B-Instruct",
             seed=7,
         )
@@ -363,6 +364,7 @@ class TestVllmAdapterComposesBenchArgv(unittest.TestCase):
                 concurrency=[16],
                 sequence_combinations=[types.SimpleNamespace(isl=1024, osl=1024, name="x")],
             ),
+            fabric=None,
             model="meta-llama/Llama-3.3-70B-Instruct",
             seed=0,
         )

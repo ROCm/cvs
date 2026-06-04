@@ -30,18 +30,43 @@ from ._fixtures import iter_bases
 
 
 class TestConfigHashing(unittest.TestCase):
-    def test_workload_hash_excludes_container_env(self):
-        # Security removed: the token lives in container.env (plaintext). It must
-        # NOT be workload-defining, so workload_hash ignores `container`...
+    def test_workload_hash_includes_container(self):
+        # Pre-DTNI revert: container IS workload-defining (image, devices,
+        # env all materially change the run). Two configs differing only in
+        # container.env (e.g. a different HF_TOKEN, a different VLLM_USE_V1)
+        # must hash differently for reuse-manifest soundness.
+        for framework, base in iter_bases():
+            with self.subTest(framework=framework):
+                base_with_image = {
+                    **base,
+                    "container": {**base.get("container", {}), "image": "rocm/vllm-dev:nightly"},
+                }
+                a = parse_config(base_with_image)
+                b = parse_config(
+                    {
+                        **base_with_image,
+                        "container": {
+                            **base_with_image["container"],
+                            "env": {"HF_TOKEN": "different"},
+                        },
+                    }
+                )
+                self.assertNotEqual(a.workload_hash(), b.workload_hash())
+                # config_hash still distinguishes (it always did); verification
+                # is unaffected because thresholds/benchmarks did not change.
+                self.assertNotEqual(a.config_hash(), b.config_hash())
+                self.assertEqual(a.verification_hash(), b.verification_hash())
+
+    def test_workload_hash_includes_fabric(self):
+        # Pre-DTNI: fabric (NCCL/UCX/Gloo) is workload-defining. A different
+        # NCCL_IB_HCA selection is materially a different workload (different
+        # collective performance, potentially different correctness on
+        # heterogeneous fabrics).
         for framework, base in iter_bases():
             with self.subTest(framework=framework):
                 a = parse_config(base)
-                b = parse_config({**base, "container": {"env": {"HF_TOKEN": "different"}}})
-                self.assertEqual(a.workload_hash(), b.workload_hash())
-                # ...but it IS retained (config_hash distinguishes it), proving the
-                # env is not simply dropped everywhere; verification is unaffected.
-                self.assertNotEqual(a.config_hash(), b.config_hash())
-                self.assertEqual(a.verification_hash(), b.verification_hash())
+                b = parse_config({**base, "fabric": {"nccl_ib_hca": "bnxt_re0"}})
+                self.assertNotEqual(a.workload_hash(), b.workload_hash())
 
     def test_seed_is_workload_defining(self):
         # A different seed yields different numerical results, so it must change
@@ -56,10 +81,10 @@ class TestConfigHashing(unittest.TestCase):
 
 class TestContainerSpec(unittest.TestCase):
     def test_stringifies_non_str_values(self):
-        spec = ContainerSpec(ports={8888: 8888}, volumes={Path("/weights"): "/models"}, devices=[0, 1])
+        spec = ContainerSpec(ports={8888: 8888}, volume_dict={Path("/weights"): "/models"}, device_list=[0, 1])
         self.assertEqual(spec.ports, {"8888": "8888"})
-        self.assertEqual(spec.volumes, {"/weights": "/models"})
-        self.assertEqual(spec.devices, ["0", "1"])
+        self.assertEqual(spec.volume_dict, {"/weights": "/models"})
+        self.assertEqual(spec.device_list, ["0", "1"])
 
     def test_rejects_non_token_values(self):
         # Fail-closed: None/bool/list must error at load, never become
@@ -68,7 +93,7 @@ class TestContainerSpec(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 ContainerSpec(env=bad)
         with self.assertRaises(ValidationError):
-            ContainerSpec(devices=[None])
+            ContainerSpec(device_list=[None])
 
     def test_float_token_rejected(self):
         # A float port (8888.0) would stringify to a malformed "-p 8888.0:..".
@@ -77,7 +102,7 @@ class TestContainerSpec(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ContainerSpec(env={"RATIO": 0.8})
         with self.assertRaises(ValidationError):
-            ContainerSpec(devices=[0.5])
+            ContainerSpec(device_list=[0.5])
 
 
 class TestTopology(unittest.TestCase):

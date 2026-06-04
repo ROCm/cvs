@@ -76,6 +76,11 @@ class VllmAdapter(BaseWorkloadAdapter):
     """Single-node vLLM online-serving benchmark adapter."""
 
     framework = "vllm"
+    # Single-role single-node inference: one ``server`` host. Matches the
+    # ``Topology.nnodes: N`` shorthand which expands to {server: {count: N}}.
+    # A future multi-server variant (data-parallel servers behind a router)
+    # would override this.
+    required_roles = ("server",)
     completion_timeout_s = 5400.0
     poll_interval_s = 15.0
     # Server-readiness budget inside launch(): bounded poll of HTTP /health
@@ -252,14 +257,22 @@ class VllmAdapter(BaseWorkloadAdapter):
             raise SetupFailure("vLLM launch requires an executor (Pssh) bound to the server node")
         params = ctx.config.params
 
-        # ContainerSpec -> handle kwargs (A3); merge AITER knob-env on top.
-        # Workload env (container.env, including HF_TOKEN) wins over knob env
-        # on conflict -- this is the standard precedence already documented in
-        # G4 NodeNetwork's merge-order contract.
+        # ContainerSpec -> handle kwargs (A3). Merge order, last write wins:
+        #   1. fabric.to_env()    -- NCCL/UCX/Gloo site-fabric defaults
+        #   2. _knob_env(ctx)     -- AITER / vLLM tunables from cfg.knobs
+        #   3. container.env      -- workload-authored env, including secrets
+        # ``setdefault`` from least-to-most-authoritative means container.env
+        # always wins on conflict, which is the documented precedence.
         spec_kwargs = ctx.config.container.to_handle_kwargs()
-        env = dict(spec_kwargs.get("env", {}))
+        workload_env = dict(spec_kwargs.get("env", {}))
+        env: dict = {}
+        fabric = getattr(ctx.config, "fabric", None)
+        if fabric is not None:
+            env.update(fabric.to_env())
         for key, value in self._knob_env(ctx).items():
             env.setdefault(key, value)
+        for key, value in workload_env.items():
+            env[key] = value
         spec_kwargs["env"] = env
 
         # Shared-FS bind mount: logs_dir at the same path on both sides so
@@ -287,9 +300,9 @@ class VllmAdapter(BaseWorkloadAdapter):
         # lowers the swept value as an argv when the matrix layer ships.
         spec_kwargs["env"]["CVS_TP"] = str(tp)
 
-        image = getattr(params, "container_image", None)
+        image = ctx.config.container.image
         if not image:
-            raise SetupFailure("no container image: set params.container_image")
+            raise SetupFailure("no container image: set container.image on the workload config")
 
         server_command = params.server_script or self._server_command(ctx, tp)
         handle = ContainerHandle(

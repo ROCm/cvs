@@ -101,13 +101,19 @@ class _SingleHostExecutor:
 
 
 def _build_executor(bind_result, pool):
+    """Build a single-host executor from pool-level credentials.
+
+    Pre-DTNI shape: credentials are pool-level (one SSH key per cluster),
+    addressing is per-node. ``Node`` carries only ``vpc_ip`` + ``bmc_ip``;
+    ``username`` and ``priv_key_file`` come off ``ClusterPool``.
+    """
     if os.environ.get("CVS_DTNI_DRY"):
         return None
     for hosts in bind_result.bindings.values():
         if hosts:
             node = pool.nodes[hosts[0]]
             try:
-                return _SingleHostExecutor(node.ip, node.user, node.ssh_key)
+                return _SingleHostExecutor(node.vpc_ip, pool.username, pool.priv_key_file)
             except Exception:
                 return None
     return None

@@ -24,13 +24,13 @@ BASE = {
     "schema_version": "2",
     "framework": "vllm",
     "model": "m",
-    "topology": {"roles": {"server": {"count": 1, "gpus_per_node": 8}}},
+    "topology": {"nnodes": 1},
     "params": {"server_script": "s.sh"},
     "sweep": {
         "concurrency": [16],
         "sequence_combinations": [{"isl": 1024, "osl": 1024, "name": "balanced"}],
     },
-    "container": {"env": {"HF_TOKEN": "secret-xyz", "DEBUG": "1"}},
+    "container": {"image": "rocm/vllm-dev:nightly", "env": {"HF_TOKEN": "secret-xyz", "DEBUG": "1"}},
 }
 
 

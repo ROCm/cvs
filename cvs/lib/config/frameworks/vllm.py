@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cvs.lib.config.inference import InferenceTestConfig
 from cvs.lib.config.loader import register_config
@@ -86,8 +86,6 @@ class VllmParams(BaseModel):
     server_extra_args: List[str] = Field(default_factory=list)
     bench_extra_args: List[str] = Field(default_factory=list)
 
-    container_image: Optional[str] = None
-
 
 class VllmSweepParams(SweepParams):
     """vLLM sweep axes.
@@ -115,25 +113,3 @@ class VllmConfig(InferenceTestConfig):
     framework: Literal["vllm"] = "vllm"
     params: VllmParams
     sweep: VllmSweepParams
-
-    @model_validator(mode="after")
-    def _tp_consistent_with_topology(self) -> "VllmConfig":
-        """Reject a TP sweep that the fixed topology cannot satisfy.
-
-        For single-node vLLM serving, tensor parallelism *is* the number of GPUs
-        the server occupies, i.e. a role's ``gpus_per_node``. Since the topology
-        is fixed at bind time, every swept ``tensor_parallelism`` value must
-        equal some role's ``gpus_per_node``; otherwise the cells would demand a
-        GPU count the binder never allocates -- a silent mismatch.
-        """
-        tps = self.sweep.tensor_parallelism
-        if tps:
-            gpus = {role.gpus_per_node for role in self.topology.roles.values()}
-            mismatched = sorted({t for t in tps if t not in gpus})
-            if mismatched:
-                raise ValueError(
-                    f"sweep.tensor_parallelism {mismatched} matches no role gpus_per_node "
-                    f"{sorted(gpus)}; topology is fixed, so TP cannot be swept independently "
-                    f"of GPU allocation"
-                )
-        return self

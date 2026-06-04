@@ -40,23 +40,6 @@ class TestVllmConfig(unittest.TestCase):
         self.assertEqual({c.id for c in cells}, {"concurrency16-balanced", "concurrency64-balanced"})
 
 
-class TestVllmTpConsistency(unittest.TestCase):
-    def test_tp_matching_gpus_per_node_accepted(self):
-        # The base server role has gpus_per_node=8, so a TP sweep of [8] is valid.
-        base = make_base("vllm")
-        base["sweep"]["tensor_parallelism"] = [8]
-        cfg = parse_config(base)
-        self.assertEqual(cfg.sweep.tensor_parallelism, [8])
-
-    def test_tp_diverging_from_topology_rejected(self):
-        # TP=4 matches no role's gpus_per_node (8); the fixed topology cannot
-        # satisfy it, so the config is rejected at load.
-        base = make_base("vllm")
-        base["sweep"]["tensor_parallelism"] = [4]
-        with self.assertRaises(ConfigError):
-            parse_config(base)
-
-
 class TestVllmSweepAxes(unittest.TestCase):
     def test_concurrency_must_be_positive(self):
         for bad in ([0], [-1], [16, -4]):

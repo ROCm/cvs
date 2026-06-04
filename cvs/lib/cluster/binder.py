@@ -7,20 +7,19 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional, Set
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from cvs.lib.cluster.pool import ClusterPool
-from cvs.lib.cluster.topology import node_matches
 from cvs.lib.config.base import Topology
 
 
 class BindResult(BaseModel):
     """Outcome of binding a config's roles to a cluster pool for one cell.
 
-    Downstream (G5b executor) reads ``bindings`` (role -> hostnames) to pick
-    SSH targets when ``status == "bound"``. ``skipped`` cells carry a concrete
+    Downstream reads ``bindings`` (role -> hostnames) to pick SSH targets
+    when ``status == "bound"``. ``skipped`` cells carry a concrete
     ``reason`` so small dev clusters get useful partial coverage instead of
     hard failure.
     """
@@ -33,43 +32,37 @@ class BindResult(BaseModel):
 
 
 def bind(topology: Topology, pool: ClusterPool) -> BindResult:
-    """Deterministic first-fit binder.
+    """Deterministic first-N lexicographic claim, partitioned across roles.
 
-    Determinism is content-based, not insertion-order-based: callers may
-    assemble the node dict in any order and the same pool contents must yield
-    the same BindResult.bindings (this is what makes v2.A reuse-manifests
-    sound). We achieve this by iterating candidate hostnames in lexicographic
-    order. Within that order each role greedily claims the first ``count``
-    nodes that (a) match the selector, (b) have at least ``gpus_per_node`` GPUs,
-    and (c) are not already claimed by an earlier role.
+    Pre-DTNI semantics: the cluster file is just "what hosts I can reach";
+    role placement is "give me N hosts" with no GPU floor (runtime
+    rocm-smi probe in ``prepare`` validates the actual GPU count) and no
+    label selector (workload portability is the test author's problem,
+    not the schema's). Determinism is content-based: callers may assemble
+    the node dict in any order and the same pool contents yield the same
+    BindResult.bindings -- this is what makes v2.A reuse-manifests sound.
+    We achieve this by iterating candidate hostnames in lexicographic order
+    and partitioning the first ``sum(role.count for role in roles)`` hosts
+    into role buckets in declaration order.
+
+    A binding is skipped (not raised) when the pool has fewer hosts than
+    ``sum(role.count)``; downstream tier tests treat skipped as a
+    skip-with-reason, mirroring the old behavior.
     """
-    claimed: Set[str] = set()
+    needed = sum(role.count for role in topology.roles.values())
+    candidates = sorted(pool.nodes.keys())
+    if len(candidates) < needed:
+        return BindResult(
+            status="skipped",
+            bindings={},
+            reason=(f"insufficient_nodes: need {needed} (sum of role counts), pool has {len(candidates)}"),
+        )
+
     bindings: Dict[str, List[str]] = {}
-    candidate_order = sorted(pool.nodes.keys())
-
+    cursor = 0
     for role_name, role in topology.roles.items():
-        chosen: List[str] = []
-        for hostname in candidate_order:
-            if len(chosen) >= role.count:
-                break
-            if hostname in claimed:
-                continue
-            node = pool.nodes[hostname]
-            if not node_matches(node, role.selector):
-                continue
-            if node.gpus < role.gpus_per_node:
-                continue
-            chosen.append(hostname)
-
-        if len(chosen) < role.count:
-            reason = (
-                f"insufficient_nodes for role {role_name!r} "
-                f"(need {role.count} matching selector={role.selector!r} "
-                f"with >= {role.gpus_per_node} gpus, have {len(chosen)})"
-            )
-            return BindResult(status="skipped", bindings={}, reason=reason)
-
-        claimed.update(chosen)
+        chosen = candidates[cursor : cursor + role.count]
         bindings[role_name] = chosen
+        cursor += role.count
 
     return BindResult(status="bound", bindings=bindings)

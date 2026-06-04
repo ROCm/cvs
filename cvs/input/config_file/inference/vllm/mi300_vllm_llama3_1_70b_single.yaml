@@ -1,18 +1,14 @@
 # CVS DTNI v2 config -- vLLM Llama-3.1-70B single-node inference.
 #
+# Pre-DTNI revert: workload YAML owns container, fabric, and topology shape.
+# The cluster file is just "what hosts I can reach + how to log in"; GPU
+# count is discovered at runtime via rocm-smi in the adapter's prepare().
+#
 # PR-Y barebones milestone (addendum §9 "G6 re-split"): SINGLE CELL.
 # ``sweep`` declares one TP / one concurrency / one sequence combo so the
 # expansion produces exactly one ``SweepCell``. PR-Z (matrix layer) lowers
 # real swept values into the launch command (real C3); until then C3
 # collapses to "adapter consumes the single configured TP value".
-#
-# A1 staging deferred (G5b): the bench result reaches devbox via the
-# SHARED-FS path -- ``logs_dir`` is mounted into the container at the
-# same path it has on the devbox/host so a single write lands at a path
-# both sides see. The cluster used here is expected to mount Weka/NFS at
-# the same path on devbox + nodes; on a no-shared-FS cluster the
-# operator would either move to one or follow the adapter-local SFTP
-# fallback documented in cvs/lib/adapters/AGENTS.md.
 #
 # C4 descoped (security removed, addendum §4 B7 / §5 C4): HF token rides
 # in ``container.env`` and is recorded verbatim in pssh logs / manifest
@@ -21,7 +17,6 @@
 schema_version: "2"
 framework: vllm
 model: meta-llama/Llama-3.1-70B-Instruct
-cluster_ref: cluster_file/mi300_pool_example.yaml
 seed: 0
 
 knobs:
@@ -29,25 +24,48 @@ knobs:
   quant: fp8
   backend: vllm
 
+# Workload container: image + device passthrough + env.
 container:
+  image: rocm/vllm-dev:nightly
+  device_list: [/dev/kfd, /dev/dri]
   env:
     HF_TOKEN: ${env:HF_TOKEN}
   shm_size: 16G
   ipc: host
   network: host
 
+# Fabric: NCCL/UCX/Gloo knobs. Folded into container.env at launch via
+# Fabric.to_env(); workload container.env wins on conflict. Single-node
+# inference does not exercise inter-node NCCL but the HCA selection still
+# affects intra-node GPU<->GPU collectives.
+fabric:
+  nic_type: thor2
+  nccl_ib_hca: "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7"
+  nccl_socket_ifname: ens51f1np1
+  nccl_ib_gid_index: "3"
+
+# Single-role single-node inference: shorthand ``nnodes`` expands to
+# ``{server: {count: nnodes}}``. Multi-role workloads use explicit
+# ``roles: {name: {count}}`` (sglang-disagg: prefill+decode+router;
+# megatron: master+worker).
+topology: { nnodes: 1 }
+
+# Single-cell barebones: one value per axis. The adapter validates
+# ``tp <= discovered_gpu_count`` at prepare() time (no static
+# gpus_per_node on the topology -- pre-DTNI revert).
+sweep:
+  tensor_parallelism: [8]
+  concurrency: [16]
+  sequence_combinations:
+    - { isl: 1024, osl: 1024, name: single }
+
 # ``params`` declares VALUES; the adapter composes ``vllm serve`` /
 # ``vllm bench serve`` argv from them. server_script / bench_serv_script
-# are escape hatches -- set them only when you need to bypass composition
-# (custom in-image launcher; bench-serving wrapper); leave them out and
-# the adapter owns the CLI shape end-to-end.
+# left unset -- adapter owns the CLI shape.
 params:
-  container_image: rocm/vllm-dev:nightly
-  # Server-side typed knobs (adapter -> ``vllm serve`` flags).
   max_model_len: 9216
   gpu_memory_utilization: 0.9
   quantization: fp8
-  # Bench-side typed knobs (adapter -> ``vllm bench serve`` flags).
   backend: vllm
   dataset_name: random
   num_prompts: 3200
@@ -56,17 +74,6 @@ params:
   tokenizer_mode: auto
   base_url: http://0.0.0.0
   port_no: 8888
-
-topology: { nnodes: 1, gpus_per_node: 8, selector: mi300 }
-
-# Single-cell barebones: one value per axis. ``tensor_parallelism: [8]``
-# must equal a role's ``gpus_per_node`` (VllmConfig._tp_consistent_with_topology
-# enforces this at load). PR-Z grows real cartesian sweeps.
-sweep:
-  tensor_parallelism: [8]
-  concurrency: [16]
-  sequence_combinations:
-    - { isl: 1024, osl: 1024, name: single }
 
 # Placeholders to be calibrated from a baseline Llama-70B run.
 thresholds:

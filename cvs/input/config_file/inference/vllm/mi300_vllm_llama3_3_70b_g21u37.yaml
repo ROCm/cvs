@@ -1,8 +1,6 @@
 # Real-HW test config for g21u37 -- Llama-3.3-70B prefetched on /mnt/dtni/models.
-# Mirrors mi300_vllm_llama3_1_70b_single.yaml in shape (same B1-B4 ergonomic
-# fixes applied), but uses the prefetched cluster model so the run does not
-# depend on HF auth or a network fetch. HF_HUB_CACHE points at the cache
-# directly; HF_HUB_OFFLINE keeps vllm from hitting the hub at all.
+# Pre-DTNI revert: workload owns container + fabric; cluster file is
+# minimal. GPU count discovered at runtime via rocm-smi.
 schema_version: "2"
 framework: vllm
 model: meta-llama/Llama-3.3-70B-Instruct
@@ -13,32 +11,41 @@ knobs:
   backend: vllm
 
 container:
+  image: rocm/utd-private:vllm-0.21.0-ubuntu24.04-py3.13-nightlies-device-all-cdna-rocm7.14.0a20260603-ad7125a43
+  device_list: [/dev/kfd, /dev/dri]
+  volume_dict:
+    /mnt/dtni/models: /models
   env:
     HF_HUB_CACHE: /models
     HF_HOME: /tmp/hf_home
     HF_HUB_OFFLINE: "1"
     TRANSFORMERS_OFFLINE: "1"
     VLLM_USE_V1: "1"
-  volumes:
-    /mnt/dtni/models: /models
-  devices:
-    - /dev/kfd
-    - /dev/dri
   shm_size: 16G
   ipc: host
   network: host
 
-# ``params`` declares VALUES; the adapter composes ``vllm serve`` /
-# ``vllm bench serve`` argv. No server_script / bench_serv_script set --
-# adapter owns the CLI shape (caught the new-vLLM-CLI base-url-with-port
-# regression once; will not happen again on a CLI rename).
+# Core42 fabric: five 400G RoCE HCAs per node (rocep158s0..rocep222s0;
+# the two 2.5-rate roceo12* are mgmt, excluded). Adapter lowers these into
+# NCCL_IB_HCA / NCCL_IB_GID_INDEX env vars.
+fabric:
+  nic_type: ainic
+  nccl_ib_hca: "rocep158s0,rocep159s0,rocep190s0,rocep206s0,rocep222s0"
+  nccl_ib_gid_index: "3"
+
+topology: { nnodes: 1 }
+
+sweep:
+  tensor_parallelism: [8]
+  concurrency: [16]
+  sequence_combinations:
+    - { isl: 1024, osl: 1024, name: single }
+
+# Adapter composes ``vllm serve`` / ``vllm bench serve`` argv from these.
 params:
-  container_image: rocm/utd-private:vllm-0.21.0-ubuntu24.04-py3.13-nightlies-device-all-cdna-rocm7.14.0a20260603-ad7125a43
-  # Server typed knobs.
   max_model_len: 9216
   gpu_memory_utilization: 0.9
   download_dir: /models
-  # Bench typed knobs (smoke shape: 128 prompts at 16 concurrency).
   backend: vllm
   dataset_name: random
   num_prompts: 128
@@ -48,14 +55,8 @@ params:
   base_url: http://0.0.0.0
   port_no: 8888
 
-topology: { nnodes: 1, gpus_per_node: 8, selector: mi300 }
-
-sweep:
-  tensor_parallelism: [8]
-  concurrency: [16]
-  sequence_combinations:
-    - { isl: 1024, osl: 1024, name: single }
-
+# Smoke-thresholds -- intentionally loose; the point of the test run is to
+# exercise the spine end-to-end, not to grade Llama-3.3 perf.
 thresholds:
   - { type: rate,       metric: total_throughput, op: ">=", value: 1,     unit: tok/s }
   - { type: percentile, metric: ttft_ms, percentile: 99, op: "<=", value: 60000, unit: ms }

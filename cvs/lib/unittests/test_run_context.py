@@ -18,7 +18,7 @@ BASE = {
     "schema_version": "2",
     "framework": "vllm",
     "model": "m",
-    "topology": {"roles": {"server": {"count": 1, "gpus_per_node": 8}}},
+    "topology": {"nnodes": 1},
     "params": {"server_script": "s.sh", "base_url": "http://localhost"},
     "sweep": {
         "concurrency": [16],
