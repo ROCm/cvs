@@ -126,7 +126,35 @@ class PercentileThreshold(Threshold):
     unit: Optional[str] = None
 
     def evaluate(self, view: ResultView) -> ThresholdVerdict:
-        actual = _percentile(view.sample_values(self.metric), self.percentile)
+        """Evaluate the percentile threshold against samples, with a
+        framework-scalar fallback.
+
+        Preferred path: compute the percentile from per-request samples in
+        ``view.samples`` (lets CVS ask any percentile from one run and gets
+        cross-framework consistency since the computation is ours, not the
+        framework's).
+
+        Fallback path: when ``view.samples`` is empty for this metric --
+        e.g. the new ``vllm bench serve`` CLI dropped per-request arrays
+        from --save-result -- and a matching pre-computed percentile
+        scalar exists under the conventional name ``p{int(percentile)}_{metric}``
+        (which vLLM/sglang/TGI all populate), use it. The verdict's
+        ``detail`` annotates which path produced the value so a manifest
+        reader can tell at a glance whether percentile semantics are
+        framework-native or CVS-computed.
+        """
+        samples = view.sample_values(self.metric)
+        if samples:
+            actual = _percentile(samples, self.percentile)
+            detail = None
+        else:
+            scalar_name = f"p{int(self.percentile)}_{self.metric}"
+            actual = view.scalar(scalar_name)
+            detail = (
+                f"from framework scalar '{scalar_name}' (no per-request samples)"
+                if actual is not None
+                else f"no samples for metric '{self.metric}' and no fallback scalar '{scalar_name}'"
+            )
         passed = actual is not None and _OPS[self.op](actual, self.value)
         return ThresholdVerdict(
             threshold_type=self.type,
@@ -136,7 +164,7 @@ class PercentileThreshold(Threshold):
             actual=actual,
             margin=None if actual is None else actual - self.value,
             passed=passed,
-            detail=None if actual is not None else f"no samples for metric '{self.metric}'",
+            detail=detail,
         )
 
 
