@@ -126,26 +126,60 @@ class BaseWorkloadAdapter(abc.ABC):
     def _discover_gpu_count(self, ctx: Any) -> Dict[str, int]:
         """Probe each bound host once; return ``{hostname: n_gpus}``.
 
-        Today's ``ctx.executor`` is bound to a single host (the first host
-        in the first role); for that case the probe runs once and the result
-        keys every bound host with the same count. When per-role executors
-        land (A2), this loop becomes per-host and each ``exec`` targets the
-        correct node.
+        If ``ctx.executor`` exposes ``executor_for(host)`` (the A2
+        ``_MultiHostExecutor``), probe each bound host through its own
+        per-host executor and report the real per-host count. A failure on
+        any single host raises ``SetupFailure`` naming the host; a 0-GPU
+        result on any host likewise raises naming the host. Hosts that
+        appear in multiple roles are probed once.
+
+        Fallback (executor has no ``executor_for``): the old single-shot
+        probe whose result is replicated across every bound host. Kept so
+        unit tests can pass a bare duck-typed executor.
         """
-        all_hosts = [h for hosts in ctx.bindings.values() for h in hosts]
+        all_hosts: list[str] = []
+        seen: set[str] = set()
+        for hosts in ctx.bindings.values():
+            for h in hosts:
+                if h not in seen:
+                    seen.add(h)
+                    all_hosts.append(h)
         if not all_hosts:
             return {}
-        try:
-            out = ctx.executor.exec(self.gpu_probe_cmd, timeout=self.gpu_probe_timeout_s)
-        except Exception as exc:  # noqa: BLE001 - boundary classification
-            raise SetupFailure(f"{self.framework}: rocm-smi probe failed on bound host(s) {all_hosts}: {exc}") from exc
-        text = out if isinstance(out, str) else "\n".join(str(v) for v in out.values())
-        count = len(_GPU_LINE_RE.findall(text))
-        if count == 0:
-            raise SetupFailure(
-                f"{self.framework}: rocm-smi reported 0 GPUs on bound host(s) {all_hosts}; raw output:\n{text[:500]}"
-            )
-        return {host: count for host in all_hosts}
+
+        per_host_exec = getattr(ctx.executor, "executor_for", None)
+        if per_host_exec is None:
+            try:
+                out = ctx.executor.exec(self.gpu_probe_cmd, timeout=self.gpu_probe_timeout_s)
+            except Exception as exc:  # noqa: BLE001 - boundary classification
+                raise SetupFailure(
+                    f"{self.framework}: rocm-smi probe failed on bound host(s) {all_hosts}: {exc}"
+                ) from exc
+            text = out if isinstance(out, str) else "\n".join(str(v) for v in out.values())
+            count = len(_GPU_LINE_RE.findall(text))
+            if count == 0:
+                raise SetupFailure(
+                    f"{self.framework}: rocm-smi reported 0 GPUs on bound host(s) {all_hosts}; raw output:\n{text[:500]}"
+                )
+            return {host: count for host in all_hosts}
+
+        result: Dict[str, int] = {}
+        for host in all_hosts:
+            host_exec = per_host_exec(host)
+            try:
+                out = host_exec.exec(self.gpu_probe_cmd, timeout=self.gpu_probe_timeout_s)
+            except Exception as exc:  # noqa: BLE001 - boundary classification
+                raise SetupFailure(
+                    f"{self.framework}: rocm-smi probe failed on host {host}: {exc}"
+                ) from exc
+            text = out if isinstance(out, str) else "\n".join(str(v) for v in out.values())
+            count = len(_GPU_LINE_RE.findall(text))
+            if count == 0:
+                raise SetupFailure(
+                    f"{self.framework}: rocm-smi reported 0 GPUs on host {host}; raw output:\n{text[:500]}"
+                )
+            result[host] = count
+        return result
 
     # ---- lifecycle (subclasses) ----------------------------------------
 
