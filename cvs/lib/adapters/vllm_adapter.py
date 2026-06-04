@@ -298,10 +298,16 @@ class VllmAdapter(BaseWorkloadAdapter):
         )
 
     def progress_predicate(self, ctx) -> Progress:
-        """RUNNING / DONE tri-state, observed via shared-FS result file.
+        """RUNNING / DONE, observed via the bench's result file on the bound node.
+
+        Polls the local path first (shared-FS case: zero round-trip). When
+        the run is on a no-shared-FS cluster the result lives on the node
+        only, so we fall back to ``ssh test -f`` via the executor. ``parse``
+        is what actually SFTP-fetches the bytes once we know the file
+        exists -- the predicate stays cheap.
 
         Note: this adapter never returns ``Progress.BROKEN`` today --
-        single-cell vLLM relies on the ``await_completion`` 5400s timeout
+        single-cell vLLM relies on ``await_completion`` 's 5400s timeout
         to surface a dead/hung server as ``LivenessFailure``. The bench's
         own exit-code path is the canonical "dead-server" signal in C2
         docker-exec mode (the result file never appears when the bench
@@ -312,13 +318,39 @@ class VllmAdapter(BaseWorkloadAdapter):
         the first adapter that genuinely needs it.
         """
         results_path = ctx.scratch.get("results_path")
-        if results_path and Path(results_path).exists():
+        if not results_path:
+            return Progress.RUNNING
+        if Path(results_path).exists():
             return Progress.DONE
+        if ctx.executor is not None:
+            try:
+                out = ctx.executor.exec(f"test -f {results_path} && echo Y || true")
+            except Exception:  # noqa: BLE001 - transient probe miss
+                return Progress.RUNNING
+            if "Y" in (out or ""):
+                return Progress.DONE
         return Progress.RUNNING
 
     def parse(self, ctx) -> None:
-        """Populate scalars + long-format samples from bench_serving JSON."""
+        """Populate scalars + long-format samples from bench_serving JSON.
+
+        When the result file is not already on the local FS (no shared FS
+        between devbox and the bound node), SFTP-fetch it via the
+        executor's ``download`` passthrough to ``Pssh.download_file``.
+        ``ctx.executor`` is the single-host executor the conftest builds;
+        adapters never construct their own Pssh.
+
+        A1 staging seam DEFERRED: when a *second* adapter needs the same
+        fetch shape, promote this two-line call into a
+        ``RunContext.fetch(remote) -> local`` helper. Until then, keeping
+        it inline avoids adding generic plumbing for one consumer.
+        """
         results_path = ctx.scratch.get("results_path")
+        if results_path and not Path(results_path).exists() and ctx.executor is not None:
+            try:
+                ctx.executor.download(results_path, results_path)
+            except Exception as exc:  # noqa: BLE001 - parser tolerates missing
+                ctx.events.emit("parse.fetch_failed", path=results_path, error=str(exc))
         scalars, samples = self.read_bench_result(results_path)
         ctx.result = ResultView(scalars=scalars, samples=samples)
         self._write_sidecars(ctx, samples)

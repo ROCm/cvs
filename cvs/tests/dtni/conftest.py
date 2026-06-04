@@ -77,6 +77,28 @@ class _SingleHostExecutor:
             return "\n".join(str(v) for v in out.values())
         return str(out)
 
+    def download(self, remote, local):
+        """SFTP-fetch ``remote`` from the bound node into ``local`` on devbox.
+
+        Thin passthrough to ``Pssh.download_file`` for adapters that need
+        to pull a small result artifact back without standing up a shared
+        filesystem. ``Pssh.download_file`` suffixes the local path with
+        the host name to avoid multi-host collisions; we copy that
+        suffixed file into ``local`` so callers see the exact path they
+        asked for.
+        """
+        import shutil
+        from pathlib import Path
+
+        local_p = Path(local)
+        local_p.parent.mkdir(parents=True, exist_ok=True)
+        result = self._pssh.download_file(str(remote), str(local_p))
+        # download_file returns {host: actual_local_path}; collapse to local.
+        actual = next(iter(result.values()))
+        if actual != str(local_p):
+            shutil.move(actual, str(local_p))
+        return str(local_p)
+
 
 def _build_executor(bind_result, pool):
     if os.environ.get("CVS_DTNI_DRY"):

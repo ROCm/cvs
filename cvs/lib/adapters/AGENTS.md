@@ -113,15 +113,18 @@ vertical.
   is bind-mounted into the container at the same path it has on
   devbox, so the bench writes `bench_result.json` once at a path both
   sides see -- no SFTP fetch in the adapter.
-  - **A1 staging seam DEFERRED in G5b (#209).** When the first
-    no-shared-FS cluster lands, take one of two paths:
-    1. Move to a shared FS (Weka/NFS) at the same path on devbox +
-       nodes. Adapter unchanged.
-    2. Adapter-local SFTP fallback: in `parse`, call
-       `Pssh([ctx.bindings[first_role][0]]).download_file(remote, local)`
-       directly, using `RunLayout.to_remote(local)` to derive `remote`.
-       Promote to a `RunContext.fetch(remote) -> local` helper only
-       when a *second* real adapter needs it.
+  - **A1 staging seam DEFERRED in G5b (#209).** Result delivery
+    works under either site shape:
+    1. Shared FS (Weka/NFS at the same path on devbox + nodes): the
+       local-existence check in `progress_predicate` succeeds with no
+       round-trip and `parse` reads the file in place.
+    2. No shared FS: `progress_predicate` falls back to `ssh test -f`
+       on the bound node; `parse` SFTP-fetches the result file via
+       `ctx.executor.download(remote, local)` (thin passthrough to
+       `Pssh.download_file`, on `_SingleHostExecutor` in the dtni
+       conftest). When a *second* adapter needs the same fetch
+       shape, promote into a `RunContext.fetch(remote) -> local`
+       helper.
 - **C3-barebones -- single TP value (no sweep yet).** The PR-Y YAML
   ships a degenerate one-cell sweep so expansion produces exactly one
   `SweepCell`. The adapter pulls the configured `tensor_parallelism`
