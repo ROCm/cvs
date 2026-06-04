@@ -100,8 +100,44 @@ class _SingleHostExecutor:
         return str(local_p)
 
 
+class _MultiHostExecutor:
+    """Per-host fan-out wrapper over ``_SingleHostExecutor``.
+
+    Holds one ``_SingleHostExecutor`` per bound hostname (deduped across
+    roles). Forwards ``.exec`` and ``.download`` to the first role's first
+    host so legacy single-host adapter call sites (``VllmAdapter.launch``,
+    ``_bench_command``, readiness curl, ``progress_predicate``, ``parse``)
+    keep working UNCHANGED. New code (e.g. ``BaseWorkloadAdapter`` per-host
+    rocm-smi probing) uses ``executor_for(host)`` to target a specific
+    bound host.
+    """
+
+    def __init__(self, per_host, primary_host):
+        self._per_host = per_host
+        self._primary_host = primary_host
+
+    def executor_for(self, host):
+        return self._per_host[host]
+
+    @property
+    def hosts(self):
+        return list(self._per_host)
+
+    def exec(self, cmd, timeout=None):
+        return self._per_host[self._primary_host].exec(cmd, timeout=timeout)
+
+    def download(self, remote, local):
+        return self._per_host[self._primary_host].download(remote, local)
+
+
 def _build_executor(bind_result, pool):
-    """Build a single-host executor from pool-level credentials.
+    """Build a multi-host executor over every bound host.
+
+    A2: one ``_SingleHostExecutor`` per bound hostname (deduped across
+    roles), wrapped in ``_MultiHostExecutor``. The wrapper forwards
+    ``.exec`` / ``.download`` to the first role's first host so single-host
+    adapters keep working UNCHANGED, and exposes ``executor_for(host)`` for
+    per-host probing in the base adapter.
 
     Pre-DTNI shape: credentials are pool-level (one SSH key per cluster),
     addressing is per-node. ``Node`` carries only ``vpc_ip`` + ``bmc_ip``;
@@ -109,14 +145,22 @@ def _build_executor(bind_result, pool):
     """
     if os.environ.get("CVS_DTNI_DRY"):
         return None
+    per_host = {}
+    primary = None
     for hosts in bind_result.bindings.values():
-        if hosts:
-            node = pool.nodes[hosts[0]]
+        for h in hosts:
+            if primary is None:
+                primary = h
+            if h in per_host:
+                continue
+            node = pool.nodes[h]
             try:
-                return _SingleHostExecutor(node.vpc_ip, pool.username, pool.priv_key_file)
+                per_host[h] = _SingleHostExecutor(node.vpc_ip, pool.username, pool.priv_key_file)
             except Exception:
                 return None
-    return None
+    if not per_host:
+        return None
+    return _MultiHostExecutor(per_host, primary)
 
 
 def _execute_single_cell(config) -> Manifest:

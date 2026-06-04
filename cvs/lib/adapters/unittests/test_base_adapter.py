@@ -68,6 +68,36 @@ class _FakeExecutor:
         return self.output
 
 
+class _FakeMultiExecutor:
+    """A2 ``_MultiHostExecutor`` test double.
+
+    ``per_host_outputs`` maps host -> canned rocm-smi output (or callable
+    raising on exec). Records (host, cmd, timeout) for every per-host exec
+    call so tests can assert the probe ran exactly once per host.
+    """
+
+    def __init__(self, per_host_outputs):
+        self._per_host = per_host_outputs
+        self.calls = []  # list[(host, cmd, timeout)]
+
+    def executor_for(self, host):
+        outer = self
+
+        class _One:
+            def exec(_self, cmd, timeout=None):
+                outer.calls.append((host, cmd, timeout))
+                out = outer._per_host[host]
+                if callable(out):
+                    return out()
+                return out
+
+        return _One()
+
+    def exec(self, cmd, timeout=None):  # back-compat forward (unused here)
+        first = next(iter(self._per_host))
+        return self.executor_for(first).exec(cmd, timeout=timeout)
+
+
 def _ctx(bindings, executor=None):
     return types.SimpleNamespace(
         bindings=bindings,
@@ -141,15 +171,54 @@ class TestRocmSmiProbe(unittest.TestCase):
         self.assertEqual(ctx.scratch["host_gpus"], {"n0": 8})
 
     def test_multi_host_keys_every_bound_host(self):
+        # A2: per-host probe via _MultiHostExecutor.executor_for(host).
+        # Each host returns its own rocm-smi output and is probed exactly
+        # once (hosts that appear in multiple roles are deduped).
+        n0_out = _ROCM_SMI_8_GPU
+        n1_out = "\n".join(f"GPU[{i}]\t: stub" for i in range(4))
+        n2_out = "\n".join(f"GPU[{i}]\t: stub" for i in range(2))
+        executor = _FakeMultiExecutor({"n0": n0_out, "n1": n1_out, "n2": n2_out})
         ctx = _ctx(
             bindings={"prefill": ["n0"], "decode": ["n1", "n2"]},
-            executor=_FakeExecutor(_ROCM_SMI_8_GPU),
+            executor=executor,
         )
         _MultiRoleAdapter().prepare(ctx)
-        # Single executor today targets the first bound host; the cached
-        # count is replicated across every host until per-role executors
-        # land (A2). Documented behavior.
-        self.assertEqual(ctx.scratch["host_gpus"], {"n0": 8, "n1": 8, "n2": 8})
+        self.assertEqual(ctx.scratch["host_gpus"], {"n0": 8, "n1": 4, "n2": 2})
+        probed_hosts = [host for host, _cmd, _to in executor.calls]
+        self.assertEqual(sorted(probed_hosts), ["n0", "n1", "n2"])
+        self.assertEqual(len(probed_hosts), 3)  # one probe per host, no replication
+
+    def test_multi_host_probe_failure_names_host(self):
+        def _boom():
+            raise RuntimeError("ssh timeout")
+
+        executor = _FakeMultiExecutor({
+            "n0": _ROCM_SMI_8_GPU,
+            "n1": _boom,
+            "n2": _ROCM_SMI_8_GPU,
+        })
+        ctx = _ctx(
+            bindings={"prefill": ["n0"], "decode": ["n1", "n2"]},
+            executor=executor,
+        )
+        with self.assertRaises(SetupFailure) as exc:
+            _MultiRoleAdapter().prepare(ctx)
+        msg = str(exc.exception)
+        self.assertIn("rocm-smi probe failed on host n1", msg)
+        self.assertIn("ssh timeout", msg)
+
+    def test_multi_host_zero_gpus_names_host(self):
+        executor = _FakeMultiExecutor({
+            "n0": _ROCM_SMI_8_GPU,
+            "n1": "No ROCm devices found",
+        })
+        ctx = _ctx(
+            bindings={"prefill": ["n0"], "decode": ["n1"]},
+            executor=executor,
+        )
+        with self.assertRaises(SetupFailure) as exc:
+            _MultiRoleAdapter().prepare(ctx)
+        self.assertIn("0 GPUs on host n1", str(exc.exception))
 
     def test_probe_failure_raises_setup_failure_with_hosts(self):
         class _Boom:
