@@ -9,27 +9,22 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cvs.lib.config import expand_sweep, parse_config
+from cvs.lib.config import SweepCell, parse_config
 from cvs.lib.manifest.events import EventWriter
 from cvs.lib.manifest.layout import RunLayout
 from cvs.lib.run_context import RunContext
 
 BASE = {
-    "schema_version": "2",
     "framework": "vllm",
     "model": "m",
     "topology": {"nnodes": 1},
     "params": {"server_script": "s.sh", "base_url": "http://localhost"},
-    "sweep": {
-        "concurrency": [16],
-        "sequence_combinations": [{"isl": 1024, "osl": 1024, "name": "balanced"}],
-    },
 }
 
 
 def _ctx(tmp):
     cfg = parse_config(BASE)
-    cell = expand_sweep(cfg.sweep)[0]
+    cell = SweepCell(id="single", params={})
     layout = RunLayout(tmp, "t", cell.id, "h", "r")
     layout.ensure()
     return cfg, RunContext(

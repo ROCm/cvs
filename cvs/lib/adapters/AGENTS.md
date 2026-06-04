@@ -83,13 +83,18 @@ table.**
 
 ### Per-framework column vocabularies
 
-- **vLLM** (`vllm_adapter.py`): `samples.parquet` columns are
+- **vLLM** (`vllm_adapter.py`): `samples.parquet` schema is
   `request_id`, `ttft_ms`, `tpot_ms`, `itl_ms`, `e2el_ms`,
   `output_tokens`, `role` (always `"server"` in single-role configs).
-  Population comes from `benchmark_serving --save-result` JSON
-  (`ttfts` / `tpots` / `itls` / `e2els` / `output_lens`) zipped per
-  request. Scalars promoted to `Verdicts.scalars` (public):
-  `elapsed_s`, `request_throughput`, `output_throughput`,
+  Population would come from per-request arrays in the bench result
+  JSON (`ttfts`/`tpots`/`itls`/`e2els`/`output_lens`); the new
+  `vllm bench serve` CLI dropped those arrays from its
+  `--save-result` output, so `samples.parquet` is empty today and
+  percentile thresholds resolve via the framework-scalar fallback in
+  `PercentileThreshold.evaluate` (`p99_ttft_ms` etc., always present
+  in the JSON). The `verdict.detail` field annotates which path
+  produced each verdict. Scalars promoted to `Verdicts.scalars`
+  (public): `elapsed_s`, `request_throughput`, `output_throughput`,
   `total_throughput`, `mean_ttft_ms`, `p99_ttft_ms`, `mean_tpot_ms`,
   `p99_tpot_ms`. No `trajectory.parquet` (vLLM is request-batch, not
   step-trajectory).
@@ -104,33 +109,31 @@ vertical.
   `curl -s -o /dev/null -w "%{http_code}"` against
   `params.base_url:params.port_no`. Do not hardcode `:8888`; do not
   treat "any non-empty output" as ready.
-- **C2 -- benchmark via `docker exec`.** The bench client runs inside
-  the launched container (`docker exec <name> python <bench>.py ...`)
-  with the full benchmark_serving flag set (`--base-url`, `--port`,
-  `--request-rate`, `--burstiness`, `--seed`, `--tokenizer-mode`,
-  `--percentile-metrics`, `--metric-percentiles`, ...). Result
-  delivery for PR-Y uses the **shared-FS path**: the run's `logs_dir`
-  is bind-mounted into the container at the same path it has on
-  devbox, so the bench writes `bench_result.json` once at a path both
-  sides see -- no SFTP fetch in the adapter.
-  - **A1 staging seam DEFERRED in G5b (#209).** Result delivery
-    works under either site shape:
-    1. Shared FS (Weka/NFS at the same path on devbox + nodes): the
-       local-existence check in `progress_predicate` succeeds with no
-       round-trip and `parse` reads the file in place.
-    2. No shared FS: `progress_predicate` falls back to `ssh test -f`
-       on the bound node; `parse` SFTP-fetches the result file via
-       `ctx.executor.download(remote, local)` (thin passthrough to
-       `Pssh.download_file`, on `_SingleHostExecutor` in the dtni
-       conftest). When a *second* adapter needs the same fetch
-       shape, promote into a `RunContext.fetch(remote) -> local`
-       helper.
-- **C3-barebones -- single TP value (no sweep yet).** The PR-Y YAML
-  ships a degenerate one-cell sweep so expansion produces exactly one
-  `SweepCell`. The adapter pulls the configured `tensor_parallelism`
-  value (fail-closed if absent or multi-valued) and exposes it to the
-  container via `CVS_TP` env var. PR-Z (matrix layer) lowers the
-  real swept value per cell -- the adapter contract does not change.
+- **C2 -- bench via `docker exec`, dual-site result delivery.** The
+  bench client runs inside the launched container via
+  `docker exec -d <name> sh -c "<bench-argv> > bench.log 2>&1"`. Result
+  delivery works under either site shape:
+  1. **Shared FS** (Weka/NFS at the same path on devbox + nodes): the
+     local-existence check in `progress_predicate` succeeds with no
+     round-trip and `parse` reads the file in place. The run's
+     `logs_dir` is bind-mounted into the container at the same path
+     it has on devbox; the bench's `--save-result` lands at a path
+     both sides see.
+  2. **No shared FS**: `progress_predicate` falls back to `ssh test -f`
+     on the bound node; `parse` SFTP-fetches via
+     `ctx.executor.download(remote, local)` (thin passthrough to
+     `Pssh.download_file` on `_SingleHostExecutor` in the dtni
+     conftest). Both paths are wired today; when a *second* adapter
+     needs the same fetch shape, promote into a
+     `RunContext.fetch(remote) -> local` helper.
+- **C3 -- single-cell params scalars (sweep deferred).** The adapter
+  reads `params.tensor_parallelism` / `params.concurrency` /
+  `params.isl` / `params.osl` as scalars and exposes `CVS_TP` to the
+  container env. The multi-cell sweep machinery in
+  `cvs/lib/config/sweep.py` exists and is unit-tested but is not
+  wired into the conftest's cell-parametrize hook -- PR-Z lifts
+  these scalars to swept axes (list-typed `sweep:` block on the
+  workload YAML) without changing the adapter contract.
 - **C4 descoped (security removed, W7, addendum §4 B7 / §5 C4).** The
   HF token rides in `cfg.container.env['HF_TOKEN']` and is recorded
   verbatim in pssh logs / manifest commands / container.log / docker

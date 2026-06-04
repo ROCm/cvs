@@ -15,18 +15,18 @@ Bake-ins (addendum §5, "Integration Milestone" decisions):
 - C2: benchmark runs inside the launched container via ``docker exec -d``
   (DETACHED) so ``launch`` returns promptly and
   ``await_completion``/``progress_predicate`` actually observe the
-  bench finishing via the shared-FS result file. Full
-  ``benchmark_serving`` flag set. Result delivery uses the SHARED-FS
-  path: the run's ``logs_dir`` is bind-mounted into the container at
-  the same path it has on devbox, so the bench writes
-  ``bench_result.json`` once and devbox reads it with no SFTP fetch.
-  (A1 staging was deferred in G5b; see addendum §9 Integration Milestone
-  for the chosen path.)
-- C3-barebones: consume the typed ``sweep.tensor_parallelism`` /
-  ``sweep.concurrency`` / ``sweep.sequence_combinations`` values
-  directly (fail-closed when absent or multi-valued). Single-cell
-  barebones -- PR-Z lowers swept values per cell when the matrix
-  layer ships.
+  bench finishing via the result file. Result delivery works under
+  either site shape: on a shared FS (Weka/NFS at the same path on
+  devbox + nodes) the local-existence check in ``progress_predicate``
+  succeeds with no round-trip; otherwise ``progress_predicate`` falls
+  back to ``ssh test -f`` and ``parse`` SFTP-fetches via
+  ``ctx.executor.download``.
+- C3: the adapter reads ``params.tensor_parallelism`` /
+  ``params.concurrency`` / ``params.isl`` / ``params.osl`` as
+  scalars (single-cell shape). The multi-cell sweep machinery in
+  ``cvs/lib/config/sweep.py`` exists but is not wired into the
+  conftest's cell-parametrize hook today; PR-Z lifts these scalars to
+  swept axes.
 - C4: descoped (security removed). HF token rides in
   ``cfg.container.env['HF_TOKEN']`` and is passed to the container via
   ``-e HF_TOKEN=<value>`` -- recorded verbatim in pssh logs / manifest
@@ -97,32 +97,6 @@ class VllmAdapter(BaseWorkloadAdapter):
         env.update(_AITER_ENV.get(knobs.get("attention", ""), {}))
         env.update(_FUSED_MOE_ENV.get(knobs.get("fused_moe", ""), {}))
         return env
-
-    def _single_axis(self, ctx, attr: str):
-        """Pull a barebones single-cell value off ``sweep.<attr>``.
-
-        PR-Y ships a single-cell sweep: every axis is a one-element list.
-        We read it directly off the typed sweep so the YAML is honored
-        even when ``cell.params`` is empty (the conftest passes
-        ``cell=None`` in barebones). Fail-closed on absent or multi-valued
-        to match ``_tensor_parallelism`` and to keep the silent-coincidence
-        bug (axis declared but ignored) impossible. PR-Z lowers
-        ``cell.params`` per cell; this helper is only the single-cell
-        default, not the production sweep machinery.
-        """
-        sweep = getattr(ctx.config, "sweep", None)
-        values = getattr(sweep, attr, None) if sweep is not None else None
-        if not values:
-            raise SetupFailure(f"vLLM: sweep.{attr} must declare exactly one value in barebones mode")
-        if len(values) != 1:
-            raise SetupFailure(
-                f"vLLM barebones expects a single sweep.{attr} value, got {values!r}; the sweep layer lands in PR-Z"
-            )
-        return values[0]
-
-    def _tensor_parallelism(self, ctx) -> int:
-        """C3-barebones: pick the single configured TP value."""
-        return int(self._single_axis(ctx, "tensor_parallelism"))
 
     def _bench_results_local_path(self, ctx) -> Path:
         return Path(ctx.layout.logs_dir) / _BENCH_RESULT_FILENAME
@@ -196,10 +170,19 @@ class VllmAdapter(BaseWorkloadAdapter):
             str(p.num_prompts),
             "--max-concurrency",
             str(concurrency),
-            "--random-input-len",
-            str(isl),
-            "--random-output-len",
-            str(osl),
+        ]
+        # ``--random-input-len`` / ``--random-output-len`` are only
+        # meaningful for the synthetic ``random`` dataset; emitting them
+        # for ``sharegpt`` / ``hf`` / ``sonnet`` would shadow the real
+        # prompts. Gate the emission on dataset_name.
+        if p.dataset_name == "random":
+            argv += [
+                "--random-input-len",
+                str(isl),
+                "--random-output-len",
+                str(osl),
+            ]
+        argv += [
             "--request-rate",
             str(p.request_rate),
             "--burstiness",
@@ -294,10 +277,10 @@ class VllmAdapter(BaseWorkloadAdapter):
             ports.setdefault(port, port)
             spec_kwargs["ports"] = ports
 
-        tp = self._tensor_parallelism(ctx)
-        # C3-barebones: the server script receives the TP as an env var so the
-        # in-container launcher can pass `--tensor-parallel-size $TP`. PR-Z
-        # lowers the swept value as an argv when the matrix layer ships.
+        tp = int(params.tensor_parallelism)
+        # The in-container launcher (used only when params.server_script is
+        # set; otherwise the adapter composes vllm-serve argv directly) can
+        # read CVS_TP to pass --tensor-parallel-size.
         spec_kwargs["env"]["CVS_TP"] = str(tp)
 
         image = ctx.config.container.image
@@ -362,23 +345,17 @@ class VllmAdapter(BaseWorkloadAdapter):
             time.sleep(self.server_ready_interval_s)
 
     def _bench_command(self, ctx, results_path: Path, container_name: str) -> str:
-        """C2: full benchmark_serving flag set, run detached inside the container.
+        """C2: full bench-serve flag set, run detached inside the container.
 
-        Single-cell barebones reads concurrency / isl / osl from the
-        typed ``sweep`` block (fail-closed via ``_single_axis``);
-        ``ctx.param`` still wins when PR-Z lowers ``cell.params``.
+        Reads ``params.tensor_parallelism`` / ``concurrency`` / ``isl`` /
+        ``osl`` as scalars (single-cell shape). PR-Z lifts these to sweep
+        axes; until then the YAML declares one value per knob and the
+        adapter consumes them directly.
         """
         params = ctx.config.params
-        seq = self._single_axis(ctx, "sequence_combinations")
-        # ``seq`` is a SeqCombo pydantic model in the typed path.
-        seq_isl = getattr(seq, "isl", None) if not isinstance(seq, dict) else seq.get("isl")
-        seq_osl = getattr(seq, "osl", None) if not isinstance(seq, dict) else seq.get("osl")
-        if seq_isl is None or seq_osl is None:
-            raise SetupFailure(f"vLLM: sweep.sequence_combinations[0] missing isl/osl: {seq!r}")
-        default_concurrency = int(self._single_axis(ctx, "concurrency"))
-        concurrency = ctx.param("concurrency", default_concurrency)
-        isl = ctx.param("isl", int(seq_isl))
-        osl = ctx.param("osl", int(seq_osl))
+        concurrency = int(params.concurrency)
+        isl = int(params.isl)
+        osl = int(params.osl)
         # Derive the bench flags from thresholds (single source of truth),
         # union'd with any measure-only ``extra_percentile_metrics``. The
         # metric-root is the threshold ``metric`` with the trailing ``_ms``
@@ -414,6 +391,9 @@ class VllmAdapter(BaseWorkloadAdapter):
             # Legacy escape hatch: pass the operator string through as-is to
             # the container shell. No ``python`` prefix, no flag injection --
             # the operator owns the full command shape.
+            random_flags = (
+                f"--random-input-len {isl} --random-output-len {osl} " if params.dataset_name == "random" else ""
+            )
             inner = (
                 f"{params.bench_serv_script} "
                 f"--backend {params.backend} "
@@ -422,7 +402,7 @@ class VllmAdapter(BaseWorkloadAdapter):
                 f"--dataset-name {params.dataset_name} "
                 f"--num-prompts {params.num_prompts} "
                 f"--max-concurrency {concurrency} "
-                f"--random-input-len {isl} --random-output-len {osl} "
+                f"{random_flags}"
                 f"--request-rate {params.request_rate} "
                 f"--burstiness {params.burstiness} "
                 f"--seed {ctx.config.seed} "

@@ -128,13 +128,12 @@ class TestVllmAdapterBenchCommandConsumesSweepAxes(unittest.TestCase):
                 burstiness=1.0,
                 tokenizer_mode="auto",
                 extra_percentile_metrics=[],
+                tensor_parallelism=8,
+                concurrency=42,
+                isl=2048,
+                osl=4096,
             ),
             thresholds=[],
-            sweep=types.SimpleNamespace(
-                tensor_parallelism=[8],
-                concurrency=[42],
-                sequence_combinations=[types.SimpleNamespace(isl=2048, osl=4096, name="ynot")],
-            ),
             fabric=None,
             model="meta-llama/Llama-3.1-70B-Instruct",
             seed=7,
@@ -144,19 +143,6 @@ class TestVllmAdapterBenchCommandConsumesSweepAxes(unittest.TestCase):
             cell=None,
             layout=types.SimpleNamespace(logs_dir=str(tmp)),
         )
-
-        # _bench_command consults ctx.param; emulate the param() fallback
-        # rule from RunContext (cell.params first, then config.params).
-        def _param(name, default=None):
-            cell_params = getattr(ctx.cell, "params", None)
-            if isinstance(cell_params, dict) and name in cell_params:
-                return cell_params[name]
-            params = getattr(cfg, "params", None)
-            if params is not None and hasattr(params, name):
-                return getattr(params, name)
-            return default
-
-        ctx.param = _param
 
         cmd = VllmAdapter()._bench_command(ctx, Path(tmp) / "bench.json", "vllm_test")
 
@@ -198,13 +184,13 @@ class TestVllmAdapterDerivesPercentileMetricsFromThresholds(unittest.TestCase):
                 burstiness=1.0,
                 tokenizer_mode="auto",
                 extra_percentile_metrics=extra_metrics or [],
+                tensor_parallelism=8,
+                concurrency=16,
+                isl=1024,
+                osl=1024,
             ),
             thresholds=thresholds,
-            sweep=types.SimpleNamespace(
-                tensor_parallelism=[8],
-                concurrency=[16],
-                sequence_combinations=[types.SimpleNamespace(isl=1024, osl=1024, name="x")],
-            ),
+            fabric=None,
             model="meta-llama/Llama-3.1-70B-Instruct",
             seed=0,
         )
@@ -213,17 +199,6 @@ class TestVllmAdapterDerivesPercentileMetricsFromThresholds(unittest.TestCase):
             cell=None,
             layout=types.SimpleNamespace(logs_dir=str(tmp)),
         )
-
-        def _param(name, default=None):
-            cell_params = getattr(ctx.cell, "params", None)
-            if isinstance(cell_params, dict) and name in cell_params:
-                return cell_params[name]
-            params = getattr(cfg, "params", None)
-            if params is not None and hasattr(params, name):
-                return getattr(params, name)
-            return default
-
-        ctx.param = _param
         return ctx, tmp
 
     def test_derives_from_percentile_thresholds(self):
@@ -357,13 +332,12 @@ class TestVllmAdapterComposesBenchArgv(unittest.TestCase):
                 burstiness=1.0,
                 tokenizer_mode="auto",
                 extra_percentile_metrics=[],
+                tensor_parallelism=8,
+                concurrency=16,
+                isl=1024,
+                osl=1024,
             ),
             thresholds=[],
-            sweep=types.SimpleNamespace(
-                tensor_parallelism=[8],
-                concurrency=[16],
-                sequence_combinations=[types.SimpleNamespace(isl=1024, osl=1024, name="x")],
-            ),
             fabric=None,
             model="meta-llama/Llama-3.3-70B-Instruct",
             seed=0,
@@ -371,7 +345,6 @@ class TestVllmAdapterComposesBenchArgv(unittest.TestCase):
         for k, v in overrides.items():
             setattr(cfg.params, k, v)
         ctx = types.SimpleNamespace(config=cfg, cell=None, layout=types.SimpleNamespace(logs_dir=str(tmp)))
-        ctx.param = lambda name, default=None: getattr(cfg.params, name, default)
         return ctx, tmp
 
     def test_bench_command_composed_uses_module_invocation(self):

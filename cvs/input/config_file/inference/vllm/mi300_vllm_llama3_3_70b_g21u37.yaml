@@ -1,14 +1,12 @@
 # Real-HW test config for g21u37 -- Llama-3.3-70B prefetched on /mnt/dtni/models.
-# Pre-DTNI revert: workload owns container + fabric; cluster file is
+# Pre-DTNI shape: workload owns container + fabric; cluster file is
 # minimal. GPU count discovered at runtime via rocm-smi.
-schema_version: "2"
 framework: vllm
 model: meta-llama/Llama-3.3-70B-Instruct
 seed: 0
 
 knobs:
   attention: aiter_unified
-  backend: vllm
 
 container:
   image: rocm/utd-private:vllm-0.21.0-ubuntu24.04-py3.13-nightlies-device-all-cdna-rocm7.14.0a20260603-ad7125a43
@@ -25,9 +23,7 @@ container:
   ipc: host
   network: host
 
-# Core42 fabric: five 400G RoCE HCAs per node (rocep158s0..rocep222s0;
-# the two 2.5-rate roceo12* are mgmt, excluded). Adapter lowers these into
-# NCCL_IB_HCA / NCCL_IB_GID_INDEX env vars.
+# Core42 fabric: five 400G RoCE HCAs per node.
 fabric:
   nic_type: ainic
   nccl_ib_hca: "rocep158s0,rocep159s0,rocep190s0,rocep206s0,rocep222s0"
@@ -35,17 +31,15 @@ fabric:
 
 topology: { nnodes: 1 }
 
-sweep:
-  tensor_parallelism: [8]
-  concurrency: [16]
-  sequence_combinations:
-    - { isl: 1024, osl: 1024, name: single }
-
 # Adapter composes ``vllm serve`` / ``vllm bench serve`` argv from these.
 params:
   max_model_len: 9216
   gpu_memory_utilization: 0.9
   download_dir: /models
+  tensor_parallelism: 8
+  concurrency: 16
+  isl: 1024
+  osl: 1024
   backend: vllm
   dataset_name: random
   num_prompts: 128

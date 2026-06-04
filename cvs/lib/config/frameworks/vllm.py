@@ -9,21 +9,10 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from cvs.lib.config.inference import InferenceTestConfig
 from cvs.lib.config.loader import register_config
-from cvs.lib.config.sweep import SweepParams
-
-
-class SeqCombo(BaseModel):
-    """One input/output sequence-length pairing. ``name`` becomes a cell ID token."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    isl: int = Field(gt=0)
-    osl: int = Field(gt=0)
-    name: Optional[str] = None
 
 
 class VllmParams(BaseModel):
@@ -41,6 +30,13 @@ class VllmParams(BaseModel):
     lists appended after the composed flags -- the operator escape hatch
     that does not require giving up composition (typo guards, sweep
     integration, deprecation tracking).
+
+    Single-cell shape: ``tensor_parallelism`` / ``concurrency`` / ``isl`` /
+    ``osl`` are scalar values the adapter consumes directly. The multi-cell
+    sweep machinery (``cvs/lib/config/sweep.py``) exists and is tested but
+    is not yet wired into the conftest's cell-parametrize hook -- PR-Z will
+    promote these scalars to list-typed sweep axes; until then the YAML
+    reflects what the runtime actually exercises (one cell per run).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -60,9 +56,20 @@ class VllmParams(BaseModel):
     trust_remote_code: bool = False  # emits --trust-remote-code
     download_dir: Optional[str] = None  # HF download directory; emits --download-dir
 
+    # Cell shape (single-cell today; PR-Z will lift these to sweep axes).
+    tensor_parallelism: int = Field(default=1, gt=0)
+    concurrency: int = Field(default=16, gt=0)
+    isl: int = Field(default=1024, gt=0)
+    osl: int = Field(default=1024, gt=0)
+
     # Bench typed knobs.
-    backend: str = "vllm"
-    dataset_name: str = "random"
+    backend: str = "vllm"  # vllm bench --backend: the API shape the client speaks
+    # (vllm | sglang | tgi | openai | ...). For a vLLM
+    # server we point at, this is always "vllm".
+    dataset_name: str = "random"  # vllm bench --dataset-name: "random" generates
+    # synthetic prompts in-process via --random-*-len
+    # (no external dataset); "sharegpt"/"hf"/"sonnet"
+    # pull real datasets from HF Hub.
     num_prompts: int = Field(default=3200, gt=0)
     request_rate: str = "inf"
     burstiness: float = 1.0
@@ -87,29 +94,9 @@ class VllmParams(BaseModel):
     bench_extra_args: List[str] = Field(default_factory=list)
 
 
-class VllmSweepParams(SweepParams):
-    """vLLM sweep axes.
-
-    ``concurrency`` is an inference-only axis; a training config that tried to
-    set it would be rejected by its own ``SweepParams`` (extra="forbid").
-    """
-
-    concurrency: List[int] = Field(min_length=1)
-    sequence_combinations: List[SeqCombo] = Field(min_length=1)
-    tensor_parallelism: Optional[List[int]] = None
-
-    @field_validator("concurrency")
-    @classmethod
-    def _positive_concurrency(cls, values: List[int]) -> List[int]:
-        if any(v <= 0 for v in values):
-            raise ValueError("concurrency levels must be positive")
-        return values
-
-
 @register_config("vllm")
 class VllmConfig(InferenceTestConfig):
     """A single (vLLM, model) workload config."""
 
     framework: Literal["vllm"] = "vllm"
     params: VllmParams
-    sweep: VllmSweepParams

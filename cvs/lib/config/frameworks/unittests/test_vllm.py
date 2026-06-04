@@ -20,8 +20,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import unittest
 
-from cvs.lib.config import expand_sweep, parse_config
-from cvs.lib.config.loader import ConfigError
+from cvs.lib.config import parse_config
 from cvs.lib.config.unittests._fixtures import make_base
 
 
@@ -30,29 +29,6 @@ class TestVllmConfig(unittest.TestCase):
         cfg = parse_config(make_base("vllm"))
         self.assertEqual(cfg.framework, "vllm")
         self.assertEqual(cfg.workload_kind, "inference")
-
-    def test_sweep_cell_ids(self):
-        # End-to-end through VllmSweepParams: the concurrency cartesian axis x the
-        # named sequence_combinations bundle yields one cell per concurrency.
-        cfg = parse_config(make_base("vllm"))
-        cells = expand_sweep(cfg.sweep)
-        self.assertEqual(len(cells), 2)
-        self.assertEqual({c.id for c in cells}, {"concurrency16-balanced", "concurrency64-balanced"})
-
-
-class TestVllmSweepAxes(unittest.TestCase):
-    def test_concurrency_must_be_positive(self):
-        for bad in ([0], [-1], [16, -4]):
-            base = make_base("vllm")
-            base["sweep"]["concurrency"] = bad
-            with self.assertRaises(ConfigError):
-                parse_config(base)
-
-    def test_sequence_combinations_required_nonempty(self):
-        base = make_base("vllm")
-        base["sweep"]["sequence_combinations"] = []
-        with self.assertRaises(ConfigError):
-            parse_config(base)
 
 
 if __name__ == "__main__":

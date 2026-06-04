@@ -20,13 +20,11 @@ import copy
 
 BASES = {
     "vllm": {
-        "schema_version": "2",
         "framework": "vllm",
         "model": "meta-llama/Llama-3.1-70B",
         "topology": {"nnodes": 1},
         "container": {"image": "rocm/vllm-dev:nightly", "env": {"HF_TOKEN": "hf_secret_abc"}},
         "params": {},
-        "sweep": {"concurrency": [16, 64], "sequence_combinations": [{"isl": 1024, "osl": 1024, "name": "balanced"}]},
     },
 }
 

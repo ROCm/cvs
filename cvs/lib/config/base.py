@@ -191,10 +191,8 @@ class BaseTestConfig(BaseModel):
     # Subclasses narrow ``framework`` to a Literal used as the dispatch key.
     WORKLOAD_KIND: ClassVar[str] = "unknown"
 
-    schema_version: str = "2"
     framework: str
     model: str
-    cluster_ref: Optional[str] = None
     seed: int = 0
     knobs: Dict[str, str] = Field(default_factory=dict)
     container: ContainerSpec = Field(default_factory=ContainerSpec)
