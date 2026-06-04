@@ -18,11 +18,67 @@ import pandas as pd
 from pydantic import ValidationError
 
 from cvs.lib import globals
+from cvs.lib import ci_robustness_lib
 from cvs.schema.rccl import RcclTests, RcclTestsAggregated, RcclTestsMultinodeRaw
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
 log = globals.log
+
+
+def cleanup_gpus_on_nodes(
+    phdl,
+    process_patterns=None,
+    kill_gpu_pids=True,
+    kill_containers=False,
+    use_sudo=False,
+    timeout=120,
+):
+    """
+    Kill stale RCCL/MPI processes (and optionally GPU-holding PIDs / containers)
+    on every node reachable through ``phdl`` before launching a test.
+
+    Intended to be run on exclusively-allocated compute nodes, where any leftover
+    rccl-tests/mpirun/orted process is stale from a prior or cancelled job and can
+    otherwise hold GPUs / NIC state and make the next run flaky.
+
+    Best-effort: failures are logged but never raise (cleanup must not break a run).
+
+    Returns:
+      dict[node] -> command output (for logging/auditing).
+    """
+    # Log what is currently holding the GPUs (audit trail), best-effort.
+    try:
+        discover = phdl.exec('rocm-smi --showpids 2>/dev/null || true')
+        for node, out in (discover or {}).items():
+            pids = ci_robustness_lib.parse_gpu_pids(out)
+            if pids:
+                log.warning('Pre-clean GPU PIDs on %s: %s', node, pids)
+            else:
+                log.info('No GPU PIDs reported on %s before cleanup', node)
+    except Exception as e:
+        log.warning('GPU PID discovery failed (ignored): %r', e)
+
+    script = ci_robustness_lib.build_gpu_cleanup_script(
+        process_patterns=process_patterns,
+        kill_gpu_pids=kill_gpu_pids,
+        kill_containers=kill_containers,
+        use_sudo=use_sudo,
+    )
+    # Wrap in bash -c so the multi-line script runs as one command per node.
+    cmd = "bash -c " + _shell_single_quote(script)
+    try:
+        out_dict = phdl.exec(cmd, timeout=timeout)
+        log.info('Stale-GPU cleanup completed on %d node(s)', len(out_dict or {}))
+        return out_dict
+    except Exception as e:
+        log.warning('Stale-GPU cleanup exec failed (ignored): %r', e)
+        return {}
+
+
+def _shell_single_quote(s):
+    """Single-quote a string for safe embedding in a bash -c argument."""
+    return "'" + s.replace("'", "'\"'\"'") + "'"
 
 
 rccl_err_dict = {

@@ -35,12 +35,39 @@ import pytest
 
 from cvs.lib import rccl_lib
 from cvs.lib import regression_lib
+from cvs.lib import ci_robustness_lib
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import globals
 
 log = globals.log
+
+
+def _gpu_cleanup_cfg(config_dict):
+    """Return the gpu_cleanup config block with sane defaults."""
+    cfg = dict(config_dict.get('gpu_cleanup', {}))
+    cfg.setdefault('enabled', True)
+    cfg.setdefault('kill_gpu_pids', True)
+    cfg.setdefault('kill_containers', False)
+    cfg.setdefault('use_sudo', False)
+    cfg.setdefault('process_patterns', None)  # None -> library defaults
+    return cfg
+
+
+def _do_gpu_cleanup(phdl, config_dict, reason=""):
+    """Run stale-GPU cleanup across all nodes if enabled in config."""
+    cfg = _gpu_cleanup_cfg(config_dict)
+    if not cfg.get('enabled', True):
+        return
+    log.info("Running stale-GPU cleanup%s", f" ({reason})" if reason else "")
+    rccl_lib.cleanup_gpus_on_nodes(
+        phdl,
+        process_patterns=cfg.get('process_patterns'),
+        kill_gpu_pids=cfg.get('kill_gpu_pids', True),
+        kill_containers=cfg.get('kill_containers', False),
+        use_sudo=cfg.get('use_sudo', False),
+    )
 
 
 # Accumulates per-(collective, dtype, env-combo) A and B run samples across the
@@ -179,9 +206,15 @@ def _side_params(base_rccl_test_params, side_cfg, data_type=None):
     return params
 
 
-def _run_one_side(phdl, shdl, cluster_dict, config_dict, side_cfg, collective, env_overrides, repeat_idx,
-                  data_type=None):
-    """Run a single sweep for one build side and return the parsed result rows."""
+def _run_one_side_once(phdl, shdl, cluster_dict, config_dict, side_cfg, collective, env_overrides, repeat_idx,
+                       data_type=None):
+    """
+    Run a single sweep for one build side and return the parsed result rows.
+
+    Raises on failure so the retry wrapper can act: a sweep "fails" if
+    rccl_regression raises, if it recorded errors via fail_test (error_list), or
+    if it produced no result rows.
+    """
     node_list = list(cluster_dict['node_dict'].keys())
     vpc_node_list = [cluster_dict['node_dict'][n]['vpc_ip'] for n in node_list]
 
@@ -201,7 +234,10 @@ def _run_one_side(phdl, shdl, cluster_dict, config_dict, side_cfg, collective, e
 
     env_overrides = {k: str(v) for k, v in env_overrides.items()}
 
-    return rccl_lib.rccl_regression(
+    # Reset the global failure accumulator so we can detect this sweep's own
+    # failures (rccl_regression records via fail_test rather than always raising).
+    globals.error_list = []
+    rows = rccl_lib.rccl_regression(
         phdl,
         shdl,
         collective,
@@ -213,11 +249,58 @@ def _run_one_side(phdl, shdl, cluster_dict, config_dict, side_cfg, collective, e
         vpc_node_list,
         env_overrides,
     )
+    if globals.error_list:
+        errs = list(globals.error_list)
+        globals.error_list = []
+        raise RuntimeError(f"sweep reported failures: {errs}")
+    if not rows:
+        raise RuntimeError("sweep returned no result rows")
+    return rows
+
+
+def _run_one_side(phdl, shdl, cluster_dict, config_dict, side_cfg, collective, env_overrides, repeat_idx,
+                  data_type=None):
+    """Run one sweep with retry on transient failures; clean stale GPU state between attempts."""
+    retry_cfg = config_dict.get('retry', {})
+    max_retries = int(retry_cfg.get('max_retries', 2))
+    backoff_sec = float(retry_cfg.get('backoff_sec', 15))
+
+    def attempt():
+        return _run_one_side_once(
+            phdl, shdl, cluster_dict, config_dict, side_cfg, collective, env_overrides, repeat_idx, data_type
+        )
+
+    def on_before_retry(next_attempt):
+        # A flaky run can leave orphaned ranks/orted holding GPUs; clear them first.
+        _do_gpu_cleanup(phdl, config_dict, reason=f"before retry {next_attempt} of {side_cfg.get('label')}")
+
+    result = ci_robustness_lib.run_with_retries(
+        attempt,
+        max_retries=max_retries,
+        on_before_retry=on_before_retry,
+        backoff_sec=backoff_sec,
+        log=log,
+        label=f"{collective}/{side_cfg.get('label')}/d={data_type}/r{repeat_idx}",
+    )
+    # Ensure no stale errors leak into the test's final pass/fail check.
+    globals.error_list = []
+    return result
 
 
 # --------------------------------------------------------------------------- #
 # Tests
 # --------------------------------------------------------------------------- #
+def test_00_cleanup_stale_gpu_state(phdl, config_dict):
+    """
+    Kill stale RCCL/MPI processes (and optionally GPU PIDs / containers) left on
+    the allocated nodes by prior or cancelled jobs, before any benchmark runs.
+    Runs first by virtue of its position in this module. Best-effort: never fails.
+    """
+    globals.error_list = []
+    _do_gpu_cleanup(phdl, config_dict, reason="pre-run")
+    update_test_result()
+
+
 def test_ab_pair(phdl, shdl, cluster_dict, config_dict, rccl_collective, regression_params, data_type):
     """Run reference (A) and candidate (B) interleaved for R repeats and stash samples."""
     globals.error_list = []
