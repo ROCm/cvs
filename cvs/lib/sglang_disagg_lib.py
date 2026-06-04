@@ -889,10 +889,11 @@ class SglangDisaggPD:
                 out_dict = self.p_phdl.exec(
                     f'grep -B 20 -A 20 "200 OK" {self.log_dir}/prefill_node{node_no}/prefill_server.log'
                 )
-                if re.search('GET|POST', out_dict[head_node], re.I):
+                target_pnode = self.prefill_node_list[node_no]
+                if re.search('GET|POST', out_dict[target_pnode], re.I):
                     log.info('Wait 60 secs to start serving traffic')
                     time.sleep(60)
-                    # if re.search('fired up and ready to roll', out_dict[head_node], re.I ):
+                    # if re.search('fired up and ready to roll', out_dict[target_pnode], re.I ):
                     #    print('Prefill server {node_no} ready to serve')
                     return
                 else:
@@ -911,10 +912,11 @@ class SglangDisaggPD:
                 out_dict = self.d_phdl.exec(
                     f'grep -B 20 -A 20 "200 OK" {self.log_dir}/decode_node{node_no}/decode_server.log'
                 )
-                if re.search('GET|POST', out_dict[head_node]):
+                target_dnode = self.decode_node_list[node_no]
+                if re.search('GET|POST', out_dict[target_dnode]):
                     log.info('Wait 60 secs to start serving traffic')
                     time.sleep(60)
-                    # if re.search('fired up and ready to roll', out_dict[head_node], re.I ):
+                    # if re.search('fired up and ready to roll', out_dict[target_dnode], re.I ):
                     #    print('Decode server {node_no} ready to serve')
                     return
                 else:
