@@ -314,17 +314,17 @@ def test_rms_norm(im_obj):
     im_obj.run_test_rmsnorm()
     update_test_result()
 
-# def test_upgrade_sglang(im_obj):
-#     """
-#     Upgrade SGLang inside all inference containers from the bundled git repo.
+# Test to upgrade SGLang inside all inference containers from the bundled git repo
+def test_upgrade_sglang(im_obj):
+    """
+    Upgrade SGLang inside all inference containers from the bundled git repo.
 
-#     Runs after container launch and sanity checks, and before Prefill/Decode
-#     servers start, so every node uses the same updated sglang package.
-#     """
-#     globals.error_list = []
-#     im_obj.upgrade_sglang_from_source()
-#     update_test_result()
-
+    Runs after container launch and sanity checks, and before Prefill/Decode
+    servers start, so every node uses the same updated sglang package.
+    """
+    globals.error_list = []
+    im_obj.upgrade_sglang_from_source()
+    update_test_result()
 
 
 # Test to start the prefill servers using sglang.launch_server

@@ -838,7 +838,6 @@ class SglangDisaggPD:
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
                       source /tmp/benchmark_env_script.sh && \
-                      pip install --upgrade --no-deps 'sglang[all]' --quiet && \
                       python3 -m sglang.bench_serving --backend {i_dict['backend']} \
                       --dataset-name random \
                       --num-prompts {i_dict['num_prompts']} \
@@ -1273,7 +1272,7 @@ class SglangDisaggPD:
         cmd = f'''docker exec {self.container_name} /bin/bash -c "
             cd /sgl-workspace/sglang && \
             git pull --no-rebase origin {git_branch} && \
-            pip install --upgrade -e 'python/[all]'" '''
+            pip install --no-deps -e 'python/[all]'" '''
 
         verify_cmd = f'docker exec {self.container_name} pip list | grep -i sglang'
 
