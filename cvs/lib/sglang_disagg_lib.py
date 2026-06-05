@@ -1268,72 +1268,63 @@ class SglangDisaggPD:
     
     def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
         """
-        After model load, count occupied GPUs on prefill/decode nodes via amd-smi
-        and compare against configured tensor_parallelism (--tp).
+        After model load, count occupied GPUs per prefill/decode node via amd-smi.
         """
         tp = int(self.bp_dict["tensor_parallelism"])
 
-        def _count_occupied(phdl):
-            occupied = 0
+        def _count_per_node(phdl):
+            per_node = {}
             for node, payload in phdl.exec("sudo amd-smi metric --json").items():
+                count = 0
                 try:
                     entries = json.loads(payload.strip())
                 except (json.JSONDecodeError, AttributeError):
                     log.warning("Failed to parse amd-smi JSON on node %s", node)
+                    per_node[node] = 0
                     continue
                 if isinstance(entries, dict) and "gpu_data" in entries:
                     entries = entries["gpu_data"]
                 if not isinstance(entries, list):
+                    per_node[node] = 0
                     continue
                 for g in entries:
                     used_mb = g.get("mem_usage", {}).get("used_vram", {}).get("value", 0)
                     if used_mb > mem_threshold_mb:
-                        occupied += 1
-            return occupied
+                        count += 1
+                per_node[node] = count
+            return per_node
 
-        occupied_prefill = _count_occupied(self.p_phdl)
-        occupied_decode = _count_occupied(self.d_phdl)
-        prefill_matches = occupied_prefill == tp
-        decode_matches = occupied_decode == tp
+        prefill_per_node = _count_per_node(self.p_phdl)
+        decode_per_node = _count_per_node(self.d_phdl)
+        occupied_prefill = sum(prefill_per_node.values())
+        occupied_decode = sum(decode_per_node.values())
 
         result = {
             "configured_tp": tp,
+            "prefill_per_node": prefill_per_node,
+            "decode_per_node": decode_per_node,
             "prefill_occupied_gpus": occupied_prefill,
             "decode_occupied_gpus": occupied_decode,
-            "prefill_matches_tp": prefill_matches,
-            "decode_matches_tp": decode_matches,
+            "total_occupied_gpus": occupied_prefill + occupied_decode,
         }
 
-        def _status(ok):
-            return "OK" if ok else "MISMATCH"
+        lines = [
+            "",
+            f"Configured TP: {tp}",
+            "",
+            "Prefill:",
+        ]
+        for node, count in prefill_per_node.items():
+            lines.append(f"  {node}: {count} occupied GPUs")
+        lines.append(f"  Total: {occupied_prefill} occupied GPUs")
+        lines.append("")
+        lines.append("Decode:")
+        for node, count in decode_per_node.items():
+            lines.append(f"  {node}: {count} occupied GPUs")
+        lines.append(f"  Total: {occupied_decode} occupied GPUs")
+        lines.append("")
+        lines.append("Total hardware GPUs consumed:")
+        lines.append(f"  {occupied_prefill + occupied_decode}")
 
-        log.info(
-            "\n"
-            "Configured TP: %s\n"
-            "\n"
-            "Prefill:\n"
-            "  Occupied GPUs: %s\n"
-            "  Expected TP GPUs: %s\n"
-            "  Status: %s\n"
-            "\n"
-            "Decode:\n"
-            "  Occupied GPUs: %s\n"
-            "  Expected TP GPUs: %s\n"
-            "  Status: %s\n"
-            "\n"
-            "Total hardware GPUs consumed:\n"
-            "  %s\n"
-            "\n"
-            "Model shard width:\n"
-            "  %s GPUs",
-            tp,
-            occupied_prefill,
-            tp,
-            _status(prefill_matches),
-            occupied_decode,
-            tp,
-            _status(decode_matches),
-            occupied_prefill + occupied_decode,
-            tp,
-        )
+        log.info("\n".join(lines))
         return result
