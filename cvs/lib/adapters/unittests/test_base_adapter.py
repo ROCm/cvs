@@ -13,6 +13,7 @@ lands on ctx.scratch where subclasses can read it.
 
 from __future__ import annotations
 
+import time
 import types
 import unittest
 
@@ -240,6 +241,182 @@ class TestRocmSmiProbe(unittest.TestCase):
         with self.assertRaises(SetupFailure) as exc:
             _ConcreteAdapter().prepare(ctx)
         self.assertIn("rocm-smi reported 0 GPUs", str(exc.exception))
+
+
+# ---- _launch_role / _wait_http_pool ------------------------------------
+
+
+
+class _FakeRunner:
+    """Per-host runner double: records every exec() and answers HTTP probes
+    according to a per-host script."""
+
+    def __init__(self, host, http_script=None):
+        self.host = host
+        self.calls = []  # list[str]
+        # http_script: list of strings each exec returns, popped in order.
+        # When exhausted, returns "200" (steady-state ready). A callable
+        # is invoked instead of returned.
+        self._script = list(http_script or [])
+
+    def exec(self, cmd, timeout=None):
+        self.calls.append(cmd)
+        if self._script:
+            item = self._script.pop(0)
+            if callable(item):
+                return item()
+            return item
+        return "200"
+
+
+class _FakeMultiHostRunner:
+    """Multi-host executor double: hands out a ``_FakeRunner`` per host."""
+
+    def __init__(self, runners):
+        # runners: dict[host -> _FakeRunner]
+        self._runners = runners
+        self.executor_for_calls = []
+
+    def executor_for(self, host):
+        self.executor_for_calls.append(host)
+        return self._runners[host]
+
+    def exec(self, cmd, timeout=None):
+        # primary forward (unused here)
+        first = next(iter(self._runners))
+        return self._runners[first].exec(cmd, timeout=timeout)
+
+
+class _EventSink:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, name, **kwargs):
+        self.events.append((name, kwargs))
+
+
+def _launch_ctx(bindings, runners):
+    return types.SimpleNamespace(
+        run_id="testrun",
+        bindings=bindings,
+        executor=_FakeMultiHostRunner(runners),
+        containers=[],
+        events=_EventSink(),
+        scratch={},
+    )
+
+
+def _stub_handle_enter(monkey_self):
+    """Make ContainerHandle.__enter__ a no-op for tests (no real docker run)."""
+    from cvs.lib.runtime import container_handle as ch_mod
+
+    original = ch_mod.ContainerHandle.__enter__
+
+    def _noop(self):
+        self.started = True
+        return self
+
+    ch_mod.ContainerHandle.__enter__ = _noop
+    monkey_self.addCleanup(setattr, ch_mod.ContainerHandle, "__enter__", original)
+
+
+class _MultiServerAdapter(BaseWorkloadAdapter):
+    framework = "fakefw"
+    required_roles = ("server",)
+
+    def launch(self, ctx):
+        pass
+
+    def progress_predicate(self, ctx):
+        from cvs.lib.adapter_protocol import Progress
+
+        return Progress.DONE
+
+    def parse(self, ctx):
+        pass
+
+
+class TestLaunchRoleFansOutAcrossBoundHosts(unittest.TestCase):
+    def test_launch_role_fans_out_across_bound_hosts(self):
+        _stub_handle_enter(self)
+        runners = {h: _FakeRunner(h) for h in ("h0", "h1", "h2")}
+        ctx = _launch_ctx({"server": ["h0", "h1", "h2"]}, runners)
+        adapter = _MultiServerAdapter()
+        handles = adapter._launch_role(
+            ctx, "server", image="img:latest", command="vllm serve",
+        )
+        self.assertEqual(len(handles), 3)
+        for h in handles:
+            self.assertTrue(h.started)
+        # One executor_for() per bound host, in bound-host order.
+        self.assertEqual(ctx.executor.executor_for_calls, ["h0", "h1", "h2"])
+        # Each runner saw its own docker run command (handle.__enter__ is
+        # stubbed, so no exec was issued during enter -- but the runner is
+        # bound on the handle for later wait/teardown).
+        for host, h in zip(("h0", "h1", "h2"), handles):
+            self.assertIs(h.runner, runners[host])
+            self.assertEqual(h.name, f"fakefw_server_{host}_testrun")
+
+
+class TestLaunchRoleRecordsHandlesByRole(unittest.TestCase):
+    def test_launch_role_records_handles_by_role(self):
+        _stub_handle_enter(self)
+        runners = {h: _FakeRunner(h) for h in ("h0", "h1")}
+        ctx = _launch_ctx({"server": ["h0", "h1"]}, runners)
+        adapter = _MultiServerAdapter()
+        handles = adapter._launch_role(
+            ctx, "server", image="img", command="cmd",
+        )
+        # ctx.containers carries the same handles, in the same order:
+        # the canonical list teardown iterates is unchanged.
+        self.assertEqual(ctx.containers, handles)
+        # And the per-role parallel is populated.
+        self.assertIn("server", adapter.handles_by_role)
+        self.assertEqual(adapter.handles_by_role["server"], handles)
+
+
+class TestWaitHttpPoolPollsEveryHandleConcurrently(unittest.TestCase):
+    def test_wait_http_pool_polls_every_handle_concurrently(self):
+        _stub_handle_enter(self)
+
+        # Two slow hosts each block their probe for SLOW_S; the fast host
+        # returns immediately. Wall-clock should be ~SLOW_S, not 3*SLOW_S.
+        SLOW_S = 0.4
+
+        def _slow():
+            time.sleep(SLOW_S)
+            return "200"
+
+        runners = {
+            "h0": _FakeRunner("h0", http_script=[_slow]),
+            "h1": _FakeRunner("h1", http_script=[_slow]),
+            "h2": _FakeRunner("h2"),  # ready immediately
+        }
+        ctx = _launch_ctx({"server": ["h0", "h1", "h2"]}, runners)
+        adapter = _MultiServerAdapter()
+        adapter.http_pool_interval_s = 0.01
+        adapter._launch_role(ctx, "server", image="img", command="cmd")
+
+        start = time.monotonic()
+        adapter._wait_http_pool("server", "/health", 8888, timeout_s=5.0)
+        elapsed = time.monotonic() - start
+
+        # Concurrent: bounded by the slow host (~SLOW_S + scheduling slack),
+        # NOT serial sum (2*SLOW_S = 0.8s). Generous upper bound (1.5*SLOW
+        # = 0.6) keeps it from flapping under load.
+        self.assertLess(elapsed, SLOW_S * 1.5,
+                        f"wait_http_pool ran serially: {elapsed:.2f}s for SLOW_S={SLOW_S}s")
+        # Every host saw the probe at least once.
+        for host, runner in runners.items():
+            self.assertTrue(
+                any("/health" in c for c in runner.calls),
+                f"host {host} was not probed; calls={runner.calls}",
+            )
+        # Sanity: probes target localhost on the per-host runner, not a
+        # shared base-url (the multi-host generalization invariant).
+        for runner in runners.values():
+            self.assertTrue(any("localhost:8888/health" in c for c in runner.calls))
+
 
 
 if __name__ == "__main__":

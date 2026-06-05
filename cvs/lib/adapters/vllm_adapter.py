@@ -44,7 +44,6 @@ from __future__ import annotations
 
 import json
 import shlex
-import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -52,9 +51,8 @@ from cvs.lib.adapter_protocol import Progress
 from cvs.lib.base_adapter import BaseWorkloadAdapter
 from cvs.lib.config.thresholds import PercentileThreshold
 from cvs.lib.config.thresholds import ResultView
-from cvs.lib.failure_taxonomy import LivenessFailure, SetupFailure
+from cvs.lib.failure_taxonomy import SetupFailure
 from cvs.lib.registry import register_adapter
-from cvs.lib.runtime.container_handle import ContainerHandle
 
 # Maps the typed top-level ``knobs`` (in the YAML config) to vLLM/AITER env
 # vars. Lifting these out of the shared v1 inference base (where they were
@@ -288,20 +286,24 @@ class VllmAdapter(BaseWorkloadAdapter):
             raise SetupFailure("no container image: set container.image on the workload config")
 
         server_command = params.server_script or self._server_command(ctx, tp)
-        handle = ContainerHandle(
+        # bindings["server"] is single-host today; the loop in _launch_role
+        # runs once. Future data-parallel / disagg adapters that need >1
+        # server reuse the same helper without forking the launch path.
+        handles = self._launch_role(
+            ctx,
+            "server",
             image=image,
-            run_id=ctx.run_id,
-            runner=ctx.executor,
-            name=f"vllm_{ctx.run_id}",
             command=server_command,
             **spec_kwargs,
         )
-        ctx.containers.append(handle)
-        handle.__enter__()
-        ctx.events.emit("launch.container_up", run_id=ctx.run_id, container=handle.name)
+        handle = handles[0]
 
-        # C1 readiness gate -- bounded poll of HTTP /health before bench.
-        self._wait_for_server_ready(ctx)
+        # C1 readiness gate -- bounded poll of HTTP /health on every
+        # registered server handle (pool-of-one today). Hits localhost
+        # inside the per-host runner, not params.base_url -- the runner
+        # is already scoped to the right host, so a node-local probe is
+        # the correct shape for the multi-host generalization.
+        self._wait_http_pool("server", "/health", int(params.port_no), self.server_ready_timeout_s)
         ctx.events.emit("launch.role_ready", role="server")
 
         # C2: dispatch the bench DETACHED inside the container so launch()
@@ -312,37 +314,6 @@ class VllmAdapter(BaseWorkloadAdapter):
         bench_cmd = self._bench_command(ctx, results_path, handle.name)
         ctx.scratch.setdefault("commands", []).append(bench_cmd)
         ctx.executor.exec(bench_cmd)
-
-    def _readiness_curl(self, ctx) -> str:
-        """C1 probe command. Hits ``/health`` -- vLLM's readiness endpoint.
-
-        Frameworks with a different readiness endpoint should subclass
-        and override; see ``cvs/lib/adapters/AGENTS.md`` Standing
-        bake-ins C1 for the convention.
-        """
-        params = ctx.config.params
-        base = params.base_url.rstrip("/")
-        return f"curl -s -o /dev/null -w '%{{http_code}}' {base}:{params.port_no}/health"
-
-    def _server_ready(self, ctx) -> bool:
-        try:
-            out = ctx.executor.exec(self._readiness_curl(ctx))
-        except Exception:  # noqa: BLE001 - probe failure handled by the poller
-            return False
-        text = out if isinstance(out, str) else "\n".join(str(v) for v in out.values())
-        return "200" in text
-
-    def _wait_for_server_ready(self, ctx) -> None:
-        """Bounded poll for HTTP 200 -- raises LivenessFailure on timeout."""
-        deadline = time.monotonic() + self.server_ready_timeout_s
-        while True:
-            if self._server_ready(ctx):
-                return
-            if time.monotonic() >= deadline:
-                raise LivenessFailure(
-                    f"vLLM server did not return HTTP 200 from /health within {self.server_ready_timeout_s}s"
-                )
-            time.sleep(self.server_ready_interval_s)
 
     def _bench_command(self, ctx, results_path: Path, container_name: str) -> str:
         """C2: full bench-serve flag set, run detached inside the container.

@@ -8,13 +8,15 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from __future__ import annotations
 
 import abc
+import concurrent.futures
 import re
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from cvs.lib.adapter_protocol import Progress
 from cvs.lib.config.thresholds import ThresholdVerdict
 from cvs.lib.failure_taxonomy import LivenessFailure, SafetyViolation, SetupFailure, VerificationFailure
+from cvs.lib.runtime.container_handle import ContainerHandle
 
 
 # rocm-smi line marker pattern (matches "GPU[0]", "GPU[1]", ...). One match per
@@ -44,6 +46,14 @@ class BaseWorkloadAdapter(abc.ABC):
     (e.g. VllmAdapter checks ``tp <= min(host_gpus.values())``); failures
     raise ``SetupFailure`` naming the offending host.
 
+    Multi-role launching: subclasses use ``_launch_role`` to fan out one
+    ``ContainerHandle`` per host bound to a role (via
+    ``ctx.executor.executor_for(host)``) and ``_wait_http_pool`` to
+    concurrently gate readiness across every handle of a role. Both
+    populate ``self.handles_by_role`` -- a role-indexed parallel of
+    ``ctx.containers`` -- so role-specific teardown / wait stays cheap
+    without changing the canonical container list teardown iterates.
+
     The ``ctx`` parameter is the ``RunContext`` introduced by G5b; it is
     typed as ``Any`` here for back-compat with adapters that pre-date the
     typed seam.
@@ -64,6 +74,17 @@ class BaseWorkloadAdapter(abc.ABC):
     # rocm-smi probe shape (overridable for sites with custom paths).
     gpu_probe_cmd: str = "rocm-smi --showproductname 2>/dev/null"
     gpu_probe_timeout_s: float = 30.0
+
+    # _wait_http_pool tuning.
+    http_pool_interval_s: float = 5.0
+
+    def __init__(self) -> None:
+        # Role-indexed parallel of ``ctx.containers``: populated by
+        # ``_register`` / ``_launch_role`` so subclasses can teardown or
+        # wait per role without scanning the global list. Stays empty for
+        # adapters that bypass the helpers (e.g. unit tests that only
+        # exercise ``prepare``).
+        self.handles_by_role: Dict[str, List[ContainerHandle]] = {}
 
     # ---- prepare -------------------------------------------------------
 
@@ -180,6 +201,151 @@ class BaseWorkloadAdapter(abc.ABC):
                 )
             result[host] = count
         return result
+
+    # ---- multi-role launch helpers -------------------------------------
+
+    def _register(self, role: str, handle: ContainerHandle, ctx: Any) -> None:
+        """Append ``handle`` to both ``ctx.containers`` (the canonical list
+        ``teardown`` iterates) and ``self.handles_by_role[role]`` (a role-
+        indexed parallel for role-aware waits / per-role teardown).
+        """
+        ctx.containers.append(handle)
+        self.handles_by_role.setdefault(role, []).append(handle)
+
+    def _launch_role(
+        self,
+        ctx: Any,
+        role: str,
+        *,
+        image: str,
+        env: Optional[Dict[str, str]] = None,
+        command: Optional[str] = None,
+        per_host_kwargs_fn: Optional[Callable[[str], Dict[str, Any]]] = None,
+        **spec_kwargs: Any,
+    ) -> List[ContainerHandle]:
+        """Fan out one ``ContainerHandle`` per host bound to ``role``.
+
+        For each host in ``ctx.bindings[role]``:
+
+        - Build a ``ContainerHandle`` whose ``runner`` is scoped to that
+          host via ``ctx.executor.executor_for(host)`` (PR-1's
+          ``_MultiHostExecutor``). Without ``executor_for``, falls back
+          to the shared ``ctx.executor`` -- preserves single-host shape
+          for fakes / single-host clusters where the same executor is
+          the right runner for the one bound host.
+        - Apply ``per_host_kwargs_fn(host)`` overrides on top of the
+          shared ``spec_kwargs`` (used by future disagg adapters to
+          differ ports / env per host).
+        - Name the container ``{framework}_{role}_{host}_{run_id}`` so
+          forensics from multiple containers on the same node don't
+          collide.
+        - Enter the handle (``docker run -d``) and register it.
+
+        Returns the list of started handles in bound-host order so the
+        caller can wire endpoints (router config etc).
+
+        Caller composes ``env`` / ``command`` / ``volumes`` / ``ports`` /
+        ``network`` etc. Helper only owns the per-host loop, the per-host
+        executor binding, and the registration -- it does NOT make
+        framework-specific decisions about the env-merge precedence or
+        the command shape.
+        """
+        per_host_exec = getattr(ctx.executor, "executor_for", None)
+        hosts: List[str] = list(ctx.bindings.get(role) or [])
+        if not hosts:
+            raise SetupFailure(
+                f"{self.framework}: _launch_role({role!r}) called with empty bindings; "
+                f"prepare() should have caught this"
+            )
+        handles: List[ContainerHandle] = []
+        for host in hosts:
+            runner = per_host_exec(host) if per_host_exec is not None else ctx.executor
+            kwargs: Dict[str, Any] = dict(spec_kwargs)
+            host_env: Dict[str, str] = dict(env or {})
+            if per_host_kwargs_fn is not None:
+                overrides = per_host_kwargs_fn(host) or {}
+                # ``env`` from per-host overrides merges INTO the shared env
+                # (host-specific keys win); other kwargs replace wholesale
+                # so the override can swap a port mapping etc.
+                host_env.update(overrides.pop("env", {}) or {})
+                kwargs.update(overrides)
+            kwargs["env"] = host_env
+            handle = ContainerHandle(
+                image=image,
+                run_id=ctx.run_id,
+                runner=runner,
+                name=f"{self.framework}_{role}_{host}_{ctx.run_id}",
+                command=command,
+                **kwargs,
+            )
+            handle.__enter__()
+            self._register(role, handle, ctx)
+            ctx.events.emit(
+                "launch.container_up",
+                run_id=ctx.run_id,
+                container=handle.name,
+                role=role,
+                host=host,
+            )
+            handles.append(handle)
+        return handles
+
+    def _wait_http_pool(self, role: str, path: str, port: int, timeout_s: float) -> None:
+        """Concurrently poll HTTP ``{path}`` on every handle of ``role``.
+
+        Each handle's runner issues
+        ``curl -s -o /dev/null -w '%{http_code}' http://localhost:{port}{path}``
+        in its own thread so a slow host doesn't serialize the rest of the
+        pool -- wall-clock is bounded by the slowest single host's
+        readiness time, not the sum. On ``timeout_s`` elapsing without
+        every handle returning HTTP 200, raises ``LivenessFailure`` naming
+        the host(s) that did not come ready.
+
+        Used by single-role adapters too (vLLM's server is one handle in
+        a pool of one); the migration to this helper is the load-bearing
+        bit of PR-A2.
+        """
+        handles = list(self.handles_by_role.get(role) or [])
+        if not handles:
+            raise LivenessFailure(
+                f"{self.framework}: _wait_http_pool({role!r}) called with no registered handles"
+            )
+        url = f"http://localhost:{port}{path}"
+        probe_cmd = f"curl -s -o /dev/null -w '%{{http_code}}' {url}"
+
+        def _ready(handle: ContainerHandle) -> bool:
+            try:
+                out = handle.runner.exec(probe_cmd)
+            except Exception:  # noqa: BLE001 - probe failure handled by the poller
+                return False
+            text = out if isinstance(out, str) else "\n".join(str(v) for v in out.values())
+            return "200" in text
+
+        deadline = time.monotonic() + timeout_s
+        ready: set = set()
+        # max_workers caps at the pool size so each handle gets its own
+        # thread (no head-of-line blocking on a small fixed worker count).
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(handles)))
+        try:
+            while True:
+                pending = [h for h in handles if id(h) not in ready]
+                if not pending:
+                    return
+                futures = {executor.submit(_ready, h): h for h in pending}
+                for fut in concurrent.futures.as_completed(futures):
+                    if fut.result():
+                        ready.add(id(futures[fut]))
+                if all(id(h) in ready for h in handles):
+                    return
+                if time.monotonic() >= deadline:
+                    missing = [h.name for h in handles if id(h) not in ready]
+                    raise LivenessFailure(
+                        f"{self.framework}: _wait_http_pool({role!r}) timed out after "
+                        f"{timeout_s}s; host(s) not ready: {missing}"
+                    )
+                time.sleep(self.http_pool_interval_s)
+        finally:
+            executor.shutdown(wait=False)
 
     # ---- lifecycle (subclasses) ----------------------------------------
 
