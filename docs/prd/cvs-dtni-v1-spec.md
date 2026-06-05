@@ -14,11 +14,12 @@ Centralize the prepare → launch → await → parse → verify → teardown li
 
 **Deliverables**
 
-- `cvs/lib/adapter_protocol.py` — `WorkloadAdapter` Protocol with seven methods: `prepare`, `launch`, `await_completion`, `progress_predicate`, `parse`, `verify`, `teardown`. The Protocol shape is v1's commitment; it is not claimed to be a closed contract that handles every conceivable future workload.
+- `cvs/lib/adapter_protocol.py` — `WorkloadAdapter` Protocol with seven methods: `prepare`, `launch`, `progress_predicate`, `await_completion`, `parse`, `verify`, `teardown`. Every method takes the same `ctx` (the `RunContext`) and communicates through it; there is no separate run object threaded between methods. The Protocol shape is v1's commitment; it is not claimed to be a closed contract that handles every conceivable future workload.
 - `cvs/lib/base_adapter.py` — `BaseWorkloadAdapter` (`abc.ABC`) providing concrete defaults that most adapters inherit:
   - `teardown` always captures container logs, dmesg snapshots, and GPU state, then removes containers by `run_id` label.
   - `await_completion` polls `progress_predicate` at a configurable interval and raises on timeout.
   - `prepare` is a no-op by default.
+  - `_launch_role` / `_wait_http_pool` provide the shared multi-role launch + readiness plumbing (fan out one container per host bound to a role via the per-host runner; concurrent HTTP readiness across every handle of a role), so single-role and multi-role disagg adapters share one launch path.
 - `cvs/lib/job.py` — `Job` driver running the six-step lifecycle. Mode-blind body: no `if mode == "training"` anywhere in the driver. Failures are classified at the boundary where they originate, not by post-hoc inspection of a stack trace. `teardown` always runs in `finally`.
 - `cvs/lib/failure_taxonomy.py` — five disjoint failure categories, evaluated in priority order:
   - `setup_failure` — `prepare` or `launch` raised before the workload started.
