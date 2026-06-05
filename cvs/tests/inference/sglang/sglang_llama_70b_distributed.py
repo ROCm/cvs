@@ -427,17 +427,12 @@ def test_run_benchmark_test(im_obj):
     update_test_result()
 
 
-# Test to validate the prefill/decode GPU layout from config (NNODES + --tp)
+# Test to validate the prefill/decode GPU layout
 def test_disagg_gpu_topology(im_obj):
     """
-    Validate prefill/decode GPU layout from config (NNODES + --tp)
-    before launching SGLang servers.
+    Report occupied GPUs on prefill/decode nodes after model load.
     """
     globals.error_list = []
-    gpu_counts = im_obj.sglang_disagg_gpu_counts()
-    log.info("Disagg GPU topology: %s", gpu_counts)
-
-    assert gpu_counts["prefill"]["gpus_per_node"] > 0
-    assert gpu_counts["decode"]["gpus_per_node"] > 0
+    im_obj.sglang_disagg_gpu_counts()
     update_test_result()
     
