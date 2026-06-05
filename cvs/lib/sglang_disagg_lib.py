@@ -1268,18 +1268,13 @@ class SglangDisaggPD:
     
     def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
         """
-        Query prefill/decode nodes after model load and log GPU occupancy.
-
-        Occupied: used_vram > mem_threshold_mb (from amd-smi on host).
-        Weight % (cluster): share of that phase's model weights per occupied GPU.
-          = 100 / occupied_gpus_in_phase  (must sum to 100% within each phase)
-        Config --tp is logged for comparison; weight % uses actual occupied count.
+        After model load, count occupied GPUs on prefill/decode nodes via amd-smi
+        and compare against configured tensor_parallelism (--tp).
         """
         tp = int(self.bp_dict["tensor_parallelism"])
-        config_weight_pct = round(100 / tp, 2) if tp > 0 else 0
 
-        def _query(phdl):
-            per_node, nnodes, total, occupied = {}, 0, 0, 0
+        def _count_occupied(phdl):
+            occupied = 0
             for node, payload in phdl.exec("sudo amd-smi metric --json").items():
                 try:
                     entries = json.loads(payload.strip())
@@ -1290,121 +1285,55 @@ class SglangDisaggPD:
                     entries = entries["gpu_data"]
                 if not isinstance(entries, list):
                     continue
-
-                per_gpu = []
-                ids = []
                 for g in entries:
-                    gpu_id = g.get("gpu")
                     used_mb = g.get("mem_usage", {}).get("used_vram", {}).get("value", 0)
-                    total_mb = g.get("mem_usage", {}).get("total_vram", {}).get("value", 0)
-                    is_occupied = used_mb > mem_threshold_mb
-                    vram_pct = round(100 * used_mb / total_mb, 1) if total_mb else 0
-                    if is_occupied and gpu_id is not None:
-                        ids.append(gpu_id)
-                    per_gpu.append({
-                        "gpu": gpu_id,
-                        "used_mb": used_mb,
-                        "total_mb": total_mb,
-                        "vram_pct": vram_pct,
-                        "weight_pct": 0,
-                        "occupied": is_occupied,
-                    })
+                    if used_mb > mem_threshold_mb:
+                        occupied += 1
+            return occupied
 
-                per_node[node] = {
-                    "total_gpus": len(entries),
-                    "occupied_gpus": len(ids),
-                    "occupied_gpu_ids": ids,
-                    "per_gpu": per_gpu,
-                }
-                nnodes += 1
-                total += len(entries)
-                occupied += len(ids)
-
-            weight_pct_per_gpu = round(100 / occupied, 2) if occupied else 0
-            for node_info in per_node.values():
-                for gpu_info in node_info["per_gpu"]:
-                    if gpu_info["occupied"]:
-                        gpu_info["weight_pct"] = weight_pct_per_gpu
-
-            return {
-                "nnodes": nnodes,
-                "total_gpus": total,
-                "occupied_gpus": occupied,
-                "gpus_per_node": total // nnodes if nnodes else 0,
-                "weight_pct_per_gpu": weight_pct_per_gpu,
-                "cluster_weight_total_pct": round(weight_pct_per_gpu * occupied, 2),
-                "per_node": per_node,
-            }
-
-        prefill = _query(self.p_phdl)
-        decode = _query(self.d_phdl)
-
-        if prefill["occupied_gpus"] != tp:
-            log.warning(
-                "Prefill: config --tp=%s but %s GPUs occupied; "
-                "weight%% based on actual occupied count",
-                tp, prefill["occupied_gpus"],
-            )
-        if decode["occupied_gpus"] != tp:
-            log.warning(
-                "Decode: config --tp=%s but %s GPUs occupied; "
-                "weight%% based on actual occupied count",
-                tp, decode["occupied_gpus"],
-            )
+        occupied_prefill = _count_occupied(self.p_phdl)
+        occupied_decode = _count_occupied(self.d_phdl)
+        prefill_matches = occupied_prefill == tp
+        decode_matches = occupied_decode == tp
 
         result = {
-            "tensor_parallelism": tp,
-            "config_weight_pct_per_gpu": config_weight_pct,
-            "prefill": prefill,
-            "decode": decode,
-            "total_hardware_gpus": prefill["total_gpus"] + decode["total_gpus"],
-            "total_occupied_gpus": prefill["occupied_gpus"] + decode["occupied_gpus"],
+            "configured_tp": tp,
+            "prefill_occupied_gpus": occupied_prefill,
+            "decode_occupied_gpus": occupied_decode,
+            "prefill_matches_tp": prefill_matches,
+            "decode_matches_tp": decode_matches,
         }
 
-        headers = ("Phase", "Node", "GPU", "VRAM %", "Weight % (cluster)", "Occupied")
-        rows = []
-        for phase in ("prefill", "decode"):
-            for node, info in result[phase]["per_node"].items():
-                for gpu in info["per_gpu"]:
-                    rows.append((
-                        phase,
-                        node,
-                        gpu["gpu"],
-                        gpu["vram_pct"],
-                        gpu["weight_pct"],
-                        "yes" if gpu["occupied"] else "no",
-                    ))
+        def _status(ok):
+            return "OK" if ok else "MISMATCH"
 
-        rows.append((
-            "prefill", "CLUSTER", "-", "-",
-            f"{prefill['cluster_weight_total_pct']}% on {prefill['occupied_gpus']} GPUs",
-            prefill["occupied_gpus"],
-        ))
-        rows.append((
-            "decode", "CLUSTER", "-", "-",
-            f"{decode['cluster_weight_total_pct']}% on {decode['occupied_gpus']} GPUs",
-            decode["occupied_gpus"],
-        ))
-
-        widths = [max(len(str(x)) for x in col) for col in zip(headers, *rows)]
-        fmt = "  ".join(f"{{:{w}}}" for w in widths)
-        log.info("\n".join([
-            "",
-            "Disaggregated GPU occupancy (after model load)",
-            f"Config --tp: {tp} (expected {config_weight_pct}%/GPU if {tp} GPUs used)",
-            (
-                f"Prefill: {prefill['nnodes']} nodes | "
-                f"{prefill['occupied_gpus']}/{prefill['total_gpus']} GPUs occupied | "
-                f"{prefill['weight_pct_per_gpu']}% weights/GPU"
-            ),
-            (
-                f"Decode:  {decode['nnodes']} nodes | "
-                f"{decode['occupied_gpus']}/{decode['total_gpus']} GPUs occupied | "
-                f"{decode['weight_pct_per_gpu']}% weights/GPU"
-            ),
-            "",
-            fmt.format(*headers),
-            fmt.format(*["-" * w for w in widths]),
-            *[fmt.format(*r) for r in rows],
-        ]))
+        log.info(
+            "\n"
+            "Configured TP: %s\n"
+            "\n"
+            "Prefill:\n"
+            "  Occupied GPUs: %s\n"
+            "  Expected TP GPUs: %s\n"
+            "  Status: %s\n"
+            "\n"
+            "Decode:\n"
+            "  Occupied GPUs: %s\n"
+            "  Expected TP GPUs: %s\n"
+            "  Status: %s\n"
+            "\n"
+            "Total hardware GPUs consumed:\n"
+            "  %s\n"
+            "\n"
+            "Model shard width:\n"
+            "  %s GPUs",
+            tp,
+            occupied_prefill,
+            tp,
+            _status(prefill_matches),
+            occupied_decode,
+            tp,
+            _status(decode_matches),
+            occupied_prefill + occupied_decode,
+            tp,
+        )
         return result
