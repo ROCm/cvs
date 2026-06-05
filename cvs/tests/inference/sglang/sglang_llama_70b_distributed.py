@@ -300,20 +300,6 @@ def im_obj(p_phdl, d_phdl, r_phdl, b_phdl, gpu_type, inference_dict, benchmark_p
     )
     return im_obj
 
-# Test to validate the prefill/decode GPU layout from config (NNODES + --tp)
-def test_disagg_gpu_topology(im_obj):
-    """
-    Validate prefill/decode GPU layout from config (NNODES + --tp)
-    before launching SGLang servers.
-    """
-    globals.error_list = []
-    gpu_counts = im_obj.sglang_disagg_gpu_counts()
-    log.info("Disagg GPU topology: %s", gpu_counts)
-
-    assert gpu_counts["prefill"]["gpus_per_node"] > 0
-    assert gpu_counts["decode"]["gpus_per_node"] > 0
-    update_test_result()
-
 def test_rms_norm(im_obj):
     """
     Run RMSNorm operator tests to validate:
@@ -379,6 +365,21 @@ def test_poll_for_server_ready(im_obj):
     im_obj.poll_and_check_server_ready()
     update_test_result()
 
+
+# Test to validate the prefill/decode GPU layout from config (NNODES + --tp)
+def test_disagg_gpu_topology(im_obj):
+    """
+    Validate prefill/decode GPU layout from config (NNODES + --tp)
+    before launching SGLang servers.
+    """
+    globals.error_list = []
+    gpu_counts = im_obj.sglang_disagg_gpu_counts()
+    log.info("Disagg GPU topology: %s", gpu_counts)
+
+    assert gpu_counts["prefill"]["gpus_per_node"] > 0
+    assert gpu_counts["decode"]["gpus_per_node"] > 0
+    update_test_result()
+    
 
 # Start the proxy router serving using sglang_router.launch_router
 def test_launch_proxy_router(im_obj):
