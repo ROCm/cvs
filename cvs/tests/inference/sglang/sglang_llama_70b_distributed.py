@@ -366,21 +366,6 @@ def test_poll_for_server_ready(im_obj):
     update_test_result()
 
 
-# Test to validate the prefill/decode GPU layout from config (NNODES + --tp)
-def test_disagg_gpu_topology(im_obj):
-    """
-    Validate prefill/decode GPU layout from config (NNODES + --tp)
-    before launching SGLang servers.
-    """
-    globals.error_list = []
-    gpu_counts = im_obj.sglang_disagg_gpu_counts()
-    log.info("Disagg GPU topology: %s", gpu_counts)
-
-    assert gpu_counts["prefill"]["gpus_per_node"] > 0
-    assert gpu_counts["decode"]["gpus_per_node"] > 0
-    update_test_result()
-    
-
 # Start the proxy router serving using sglang_router.launch_router
 def test_launch_proxy_router(im_obj):
     """
@@ -440,3 +425,19 @@ def test_run_benchmark_test(im_obj):
     im_obj.setup_benchmark_serv_container_env()
     im_obj.benchserv_test_random(d_type='auto')
     update_test_result()
+
+
+# Test to validate the prefill/decode GPU layout from config (NNODES + --tp)
+def test_disagg_gpu_topology(im_obj):
+    """
+    Validate prefill/decode GPU layout from config (NNODES + --tp)
+    before launching SGLang servers.
+    """
+    globals.error_list = []
+    gpu_counts = im_obj.sglang_disagg_gpu_counts()
+    log.info("Disagg GPU topology: %s", gpu_counts)
+
+    assert gpu_counts["prefill"]["gpus_per_node"] > 0
+    assert gpu_counts["decode"]["gpus_per_node"] > 0
+    update_test_result()
+    
