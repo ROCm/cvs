@@ -5,6 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import datetime
 import os
 import re
 
@@ -48,6 +49,92 @@ def use_node_scraper_dmesg():
     if choice in ('legacy', 'cvs', '0', 'false', 'off', 'no'):
         return False
     return True
+
+
+# Map CVS's historical dmesg categories (err_patterns_dict) to node-scraper
+# event categories, so the legacy patterns can be preserved as analyzer
+# extensions on top of node-scraper's built-in pattern table.
+_CVS_DMESG_CATEGORY_MAP = {
+    'gpu_reset': 'RAS',
+    'crash': 'SW_DRIVER',
+    'test_fail': 'APPLICATION',
+    'fault': 'SW_DRIVER',
+    'driver': 'SW_DRIVER',
+    'hardware': 'RAS',
+    'network': 'NETWORK',
+}
+
+
+def cvs_dmesg_error_regex():
+    """Return CVS's err_patterns_dict as node-scraper error_regex extensions.
+
+    Each legacy pattern is wrapped as a case-insensitive node-scraper ErrorRegex
+    dict so the node-scraper path still flags everything the historical regex
+    caught, in addition to node-scraper's built-in pattern table.
+    """
+    return [
+        {
+            'regex': f'(?i){pattern}',
+            'message': f'CVS {name} pattern',
+            'event_category': _CVS_DMESG_CATEGORY_MAP.get(name, 'UNKNOWN'),
+        }
+        for name, pattern in err_patterns_dict.items()
+    ]
+
+
+def _parse_cvs_time(time_str):
+    """Convert a `date +"%a %b %e %H:%M"` string to a tz-aware datetime.
+
+    Returns None if the string cannot be parsed. The year is assumed to be the
+    current year and the timezone the local timezone (CVS already assumes the
+    cluster is NTP-synced with the head node).
+    """
+    if not time_str:
+        return None
+    match = re.search(
+        r'([A-Za-z]{3})\s+([A-Za-z]{3})\s+(\d+)\s+(\d{1,2}):(\d{2})',
+        time_str.strip(),
+    )
+    if not match:
+        return None
+    try:
+        month = datetime.datetime.strptime(match.group(2), '%b').month
+    except ValueError:
+        return None
+    now_local = datetime.datetime.now().astimezone()
+    return datetime.datetime(
+        now_local.year,
+        month,
+        int(match.group(3)),
+        int(match.group(4)),
+        int(match.group(5)),
+        tzinfo=now_local.tzinfo,
+    )
+
+
+def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
+    """Scan per-node log text with node-scraper and report each detected error.
+
+    Args:
+        output_dict: {node: raw_log_text} as returned by phdl.exec.
+        analysis_args: optional dict of DmesgAnalyzerArgs fields (e.g.
+            error_regex, analysis_range_start/analysis_range_end).
+        source_label: label used in the failure message (e.g. 'Dmesg').
+
+    Returns:
+        {node: [matched lines]}; calls fail_test for each detected error.
+    """
+    err_dict = {}
+    for node in output_dict.keys():
+        err_dict[node] = []
+        events = node_scraper_adapter.parse_dmesg(
+            output_dict[node], node_name=node, analysis_args=analysis_args
+        )
+        for line in node_scraper_adapter.event_match_lines(events):
+            msg = f'ERROR - Failure pattern *** {line} *** seen in {source_label} on node {node}'
+            fail_test(msg)
+            err_dict[node].append(line)
+    return err_dict
 
 
 def verify_gpu_pcie_bus_width(phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pcie_width=16):
@@ -222,6 +309,24 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     """
 
     log.info('scan dmesg')
+
+    if use_node_scraper_dmesg():
+        # node-scraper path: collect full dmesg with ISO timestamps and let the
+        # analyzer filter by time range, instead of sed/awk slicing on the
+        # human-readable timestamps. CVS's historical patterns are added too.
+        node0 = list(start_time_dict.keys())[0]
+        analysis_args = {'error_regex': cvs_dmesg_error_regex()}
+        start_dt = _parse_cvs_time(start_time_dict[node0])
+        if start_dt:
+            analysis_args['analysis_range_start'] = start_dt
+        if not till_end_flag:
+            end_dt = _parse_cvs_time(end_time_dict[node0])
+            if end_dt:
+                analysis_args['analysis_range_end'] = end_dt
+        output_dict = phdl.exec(
+            "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never"
+        )
+        return _node_scraper_scan(output_dict, analysis_args=analysis_args, source_label='Dmesg')
 
     err_dict = {}
 
@@ -444,6 +549,17 @@ def full_journalctl_scan(phdl):
         not containing those keywords if broader scanning is desired.
     """
 
+    if use_node_scraper_dmesg():
+        # node-scraper path: scan the full kernel journal (ISO timestamps) with
+        # the node-scraper analyzer plus CVS's historical patterns, instead of
+        # the lossy egrep prefilter + per-line regex.
+        output_dict = phdl.exec('sudo journalctl -k -o short-iso')
+        return _node_scraper_scan(
+            output_dict,
+            analysis_args={'error_regex': cvs_dmesg_error_regex()},
+            source_label='journalctl',
+        )
+
     err_dict = {}
     # Fetch kernel logs filtered for likely error indicators across nodes
     out_dict = phdl.exec('sudo journalctl -k | egrep "amdgpu|interrupt|error|fail|timeout|fault"')
@@ -507,19 +623,16 @@ def full_dmesg_scan(
     if use_node_scraper_dmesg():
         # node-scraper path: collect with ISO timestamps + decoded level prefix
         # ('--time-format iso -x') so the analyzer's full pattern set and
-        # timestamp extraction apply, then flag every detected error.
-        err_dict = {}
+        # timestamp extraction apply, then flag every detected error. CVS's
+        # historical patterns are added as analyzer extensions.
         output_dict = phdl.exec(
             "sudo dmesg --time-format iso -x | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
         )
-        for node in output_dict.keys():
-            err_dict[node] = []
-            events = node_scraper_adapter.parse_dmesg(output_dict[node], node_name=node)
-            for line in node_scraper_adapter.event_match_lines(events):
-                msg = f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}'
-                fail_test(msg)
-                err_dict[node].append(line)
-        return err_dict
+        return _node_scraper_scan(
+            output_dict,
+            analysis_args={'error_regex': cvs_dmesg_error_regex()},
+            source_label='Dmesg',
+        )
 
     # Legacy path: historical err_patterns_dict regex over human-readable dmesg.
     err_dict = {}
@@ -575,6 +688,35 @@ def verify_driver_errors(phdl):
     """
 
     log.info('Scan for AMD GPU driver errors')
+
+    if use_node_scraper_dmesg():
+        # node-scraper path: parse full dmesg, then report driver-related events
+        # (amdgpu match or SW_DRIVER category) to preserve this check's
+        # driver-error focus while reusing node-scraper's pattern table.
+        err_dict = {}
+        output_dict = phdl.exec(
+            "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never"
+        )
+        for node in output_dict.keys():
+            err_dict[node] = []
+            events = node_scraper_adapter.parse_dmesg(
+                output_dict[node],
+                node_name=node,
+                analysis_args={'error_regex': cvs_dmesg_error_regex()},
+            )
+            for event in events:
+                match = event.get('match_content')
+                if isinstance(match, (list, tuple)):
+                    text = ' '.join(str(part) for part in match if part)
+                else:
+                    text = str(match or '')
+                if 'amdgpu' in text.lower() or event.get('category') == 'SW_DRIVER':
+                    lines = node_scraper_adapter.event_match_lines([event])
+                    line = lines[0] if lines else (event.get('description') or '')
+                    msg = f'ERROR !! amdgpu driver errors detected in dmesg on node {node}: {line}'
+                    fail_test(msg)
+                    err_dict[node].append(line)
+        return err_dict
 
     err_dict = {}
     # Collect AMDGPU-related kernel messages filtered for likely error terms

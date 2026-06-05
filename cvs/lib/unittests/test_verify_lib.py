@@ -123,6 +123,110 @@ class TestFullDmesgScan(unittest.TestCase):
         mock_fail_test.assert_called()
 
 
+class TestDmesgMigrations(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
+
+    def test_parse_cvs_time(self):
+        dt = verify_lib._parse_cvs_time("Mon Jun  5 08:53")
+        self.assertIsNotNone(dt)
+        self.assertEqual((dt.month, dt.day, dt.hour, dt.minute), (6, 5, 8, 53))
+        self.assertIsNotNone(dt.tzinfo)
+        self.assertIsNone(verify_lib._parse_cvs_time(""))
+        self.assertIsNone(verify_lib._parse_cvs_time("garbage"))
+
+    def test_cvs_dmesg_error_regex_shape(self):
+        regexes = verify_lib.cvs_dmesg_error_regex()
+        self.assertTrue(regexes)
+        for item in regexes:
+            self.assertIn("regex", item)
+            self.assertIn("message", item)
+            self.assertIn("event_category", item)
+            self.assertTrue(item["regex"].startswith("(?i)"))
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    @patch.object(verify_lib.node_scraper_adapter, "is_available", return_value=True)
+    def test_verify_dmesg_for_errors_uses_time_range(self, mock_avail, mock_parse, mock_fail):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [
+            {"description": "GPU Reset", "match_content": "GPU reset begin", "category": "RAS"}
+        ]
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw"}
+        start = {"node1": "Mon Jun  5 08:00"}
+        end = {"node1": "Mon Jun  5 09:00"}
+
+        result = verify_lib.verify_dmesg_for_errors(phdl, start, end, till_end_flag=False)
+
+        self.assertIn("--time-format iso -x", phdl.exec.call_args[0][0])
+        passed_args = mock_parse.call_args.kwargs["analysis_args"]
+        self.assertIn("analysis_range_start", passed_args)
+        self.assertIn("analysis_range_end", passed_args)
+        self.assertTrue(result["node1"])
+        mock_fail.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    @patch.object(verify_lib.node_scraper_adapter, "is_available", return_value=True)
+    def test_verify_dmesg_for_errors_till_end_omits_end(self, mock_avail, mock_parse, mock_fail):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = []
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw"}
+        start = {"node1": "Mon Jun  5 08:00"}
+        end = {"node1": "Mon Jun  5 09:00"}
+
+        verify_lib.verify_dmesg_for_errors(phdl, start, end, till_end_flag=True)
+
+        passed_args = mock_parse.call_args.kwargs["analysis_args"]
+        self.assertIn("analysis_range_start", passed_args)
+        self.assertNotIn("analysis_range_end", passed_args)
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    @patch.object(verify_lib.node_scraper_adapter, "is_available", return_value=True)
+    def test_full_journalctl_scan_node_scraper(self, mock_avail, mock_parse, mock_fail):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [
+            {"description": "Out of memory error", "match_content": "Out of memory: killed", "category": "OS"}
+        ]
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw"}
+
+        result = verify_lib.full_journalctl_scan(phdl)
+
+        self.assertIn("journalctl -k -o short-iso", phdl.exec.call_args[0][0])
+        self.assertTrue(result["node1"])
+        mock_fail.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    @patch.object(verify_lib.node_scraper_adapter, "is_available", return_value=True)
+    def test_verify_driver_errors_filters_to_driver(self, mock_avail, mock_parse, mock_fail):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [
+            {
+                "description": "amdgpu Page Fault",
+                "match_content": "amdgpu 0000:01:00.0 page fault",
+                "category": "SW_DRIVER",
+            },
+            {
+                "description": "Filesystem corrupted!",
+                "match_content": "EXT4-fs error (device sda1):",
+                "category": "OS",
+            },
+        ]
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw"}
+
+        result = verify_lib.verify_driver_errors(phdl)
+
+        self.assertEqual(len(result["node1"]), 1)
+        self.assertIn("amdgpu", result["node1"][0].lower())
+        mock_fail.assert_called_once()
+
+
 class TestVerifyHostLspci(unittest.TestCase):
     def setUp(self):
         self.mock_phdl = MagicMock()
