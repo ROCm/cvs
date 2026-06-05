@@ -288,10 +288,22 @@ class _FakeMultiHostRunner:
 
 
 class _EventSink:
+    """Test double for EventWriter. Validates names against the closed
+    EVENT_VOCAB so a helper that emits an unknown name fails offline
+    instead of escaping to a real-HW SetupFailure -- the gap that hid
+    the launch.role_started bug from PR-A2's offline gate."""
+
     def __init__(self):
+        from cvs.lib.manifest.events import EVENT_VOCAB
+        self._vocab = EVENT_VOCAB
         self.events = []
 
     def emit(self, name, **kwargs):
+        if name not in self._vocab:
+            from cvs.lib.manifest.events import UnknownEventError
+            raise UnknownEventError(
+                f"_EventSink: event name {name!r} not in EVENT_VOCAB"
+            )
         self.events.append((name, kwargs))
 
 
@@ -417,6 +429,101 @@ class TestWaitHttpPoolPollsEveryHandleConcurrently(unittest.TestCase):
         for runner in runners.values():
             self.assertTrue(any("localhost:8888/health" in c for c in runner.calls))
 
+
+
+class TestEventSinkRejectsUnknownNames(unittest.TestCase):
+    """Regression test for the PR-A2 launch.role_started escape: any helper
+    that emits an event name outside EVENT_VOCAB must fail offline."""
+
+    def test_event_sink_rejects_unknown_event_name(self):
+        from cvs.lib.manifest.events import UnknownEventError
+        sink = _EventSink()
+        with self.assertRaises(UnknownEventError):
+            sink.emit("launch.role_started", role="server")
+
+    def test_event_sink_accepts_known_event_names(self):
+        sink = _EventSink()
+        sink.emit("launch.container_up", role="server", host="h0")
+        sink.emit("launch.role_ready", role="server")
+        self.assertEqual(len(sink.events), 2)
+
+
+class TestWaitHttpPoolHonorsDeadlineWithHungProbe(unittest.TestCase):
+    """Regression test for the unbounded as_completed bug: a probe that
+    blocks longer than timeout_s must NOT pin the role wait past the
+    deadline. The old code would block forever on a hung future."""
+
+    def test_wait_http_pool_raises_liveness_failure_when_probe_hangs(self):
+        from cvs.lib.failure_taxonomy import LivenessFailure
+        _stub_handle_enter(self)
+
+        # Probe blocks much longer than the role's timeout. With unbounded
+        # as_completed this would never raise; with the deadline-bounded
+        # version it raises LivenessFailure within ~timeout_s.
+        HANG_S = 5.0
+        TIMEOUT_S = 0.3
+
+        def _hang():
+            time.sleep(HANG_S)
+            return "200"
+
+        runners = {"h0": _FakeRunner("h0", http_script=[_hang])}
+        ctx = _launch_ctx({"server": ["h0"]}, runners)
+        adapter = _MultiServerAdapter()
+        adapter.http_pool_interval_s = 0.01
+        adapter._launch_role(ctx, "server", image="img", command="cmd")
+
+        start = time.monotonic()
+        with self.assertRaises(LivenessFailure) as exc:
+            adapter._wait_http_pool("server", "/health", 8888, timeout_s=TIMEOUT_S)
+        elapsed = time.monotonic() - start
+
+        # Must exit close to TIMEOUT_S, not HANG_S. Bound generously to
+        # account for scheduler jitter under load while still proving the
+        # deadline -- not the hung probe -- bounds the wait.
+        self.assertLess(elapsed, HANG_S * 0.5,
+                        f"_wait_http_pool blocked on hung probe: {elapsed:.2f}s")
+        self.assertIn("timed out", str(exc.exception))
+        self.assertIn("h0", str(exc.exception))
+
+
+class TestWaitHttpPoolCancelsOrphanProbesOnTimeout(unittest.TestCase):
+    """Regression test for the orphan-thread leak: on LivenessFailure, the
+    thread pool must cancel queued futures so probes don't keep curl'ing
+    through SSH sessions that teardown is about to reuse."""
+
+    def test_wait_http_pool_cancels_pending_on_timeout(self):
+        from cvs.lib.failure_taxonomy import LivenessFailure
+        _stub_handle_enter(self)
+
+        HANG_S = 3.0
+        TIMEOUT_S = 0.2
+
+        def _hang():
+            time.sleep(HANG_S)
+            return "200"
+
+        runners = {f"h{i}": _FakeRunner(f"h{i}", http_script=[_hang])
+                   for i in range(3)}
+        ctx = _launch_ctx({"server": ["h0", "h1", "h2"]}, runners)
+        adapter = _MultiServerAdapter()
+        adapter.http_pool_interval_s = 0.01
+        adapter._launch_role(ctx, "server", image="img", command="cmd")
+
+        start = time.monotonic()
+        with self.assertRaises(LivenessFailure):
+            adapter._wait_http_pool("server", "/health", 8888, timeout_s=TIMEOUT_S)
+        elapsed = time.monotonic() - start
+
+        # If shutdown(wait=False, cancel_futures=False) -- the old buggy
+        # behavior -- this assertion would still pass since shutdown
+        # didn't wait. The point of the test is to LOCK IN the new
+        # contract: shutdown either waited (because we're tearing down
+        # cleanly) or cancelled (so we don't pay HANG_S of wall-clock
+        # blocking the test process on the lingering ThreadPoolExecutor).
+        # Either way, total elapsed stays under HANG_S.
+        self.assertLess(elapsed, HANG_S * 0.5,
+                        f"shutdown leaked probe threads past timeout: {elapsed:.2f}s")
 
 
 if __name__ == "__main__":

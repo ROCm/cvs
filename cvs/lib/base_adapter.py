@@ -326,26 +326,44 @@ class BaseWorkloadAdapter(abc.ABC):
         # max_workers caps at the pool size so each handle gets its own
         # thread (no head-of-line blocking on a small fixed worker count).
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(handles)))
+        timed_out = False
         try:
             while True:
                 pending = [h for h in handles if id(h) not in ready]
                 if not pending:
                     return
                 futures = {executor.submit(_ready, h): h for h in pending}
-                for fut in concurrent.futures.as_completed(futures):
-                    if fut.result():
-                        ready.add(id(futures[fut]))
+                # Bound as_completed by the remaining deadline so a single
+                # hung probe (dead SSH, half-open TCP) can't pin the wait
+                # past timeout_s -- the old unbounded as_completed would
+                # block forever on an unresolved future regardless of the
+                # deadline check below.
+                remaining = max(0.0, deadline - time.monotonic())
+                try:
+                    for fut in concurrent.futures.as_completed(futures, timeout=remaining):
+                        if fut.result():
+                            ready.add(id(futures[fut]))
+                except concurrent.futures.TimeoutError:
+                    # Fall through to the deadline branch below; any still
+                    # in-flight probes are cancelled in the finally block
+                    # via shutdown(cancel_futures=True).
+                    pass
                 if all(id(h) in ready for h in handles):
                     return
                 if time.monotonic() >= deadline:
                     missing = [h.name for h in handles if id(h) not in ready]
+                    timed_out = True
                     raise LivenessFailure(
                         f"{self.framework}: _wait_http_pool({role!r}) timed out after "
                         f"{timeout_s}s; host(s) not ready: {missing}"
                     )
                 time.sleep(self.http_pool_interval_s)
         finally:
-            executor.shutdown(wait=False)
+            # On timeout, cancel queued probes so orphaned threads don't
+            # keep curl'ing through Pssh sessions that teardown is about
+            # to reuse. On success, futures have already resolved so
+            # cancel_futures is a no-op but wait=True ensures clean exit.
+            executor.shutdown(wait=not timed_out, cancel_futures=True)
 
     # ---- lifecycle (subclasses) ----------------------------------------
 

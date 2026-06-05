@@ -85,7 +85,6 @@ class VllmAdapter(BaseWorkloadAdapter):
     # before the bench fires. Default 10 minutes is enough to cold-load a
     # 70B FP8 checkpoint on MI300; tunable for larger models.
     server_ready_timeout_s: float = 600.0
-    server_ready_interval_s: float = 5.0
 
     # ---- helpers ---------------------------------------------------------
 
