@@ -72,6 +72,8 @@ installtest: test-venv build
 ut: installtest
 	@echo "Unit Testing cvs..."
 	$(TEST_VENV_DIR)/bin/python run_all_unittests.py
+	@echo "Unit Testing cluster-mon..."
+	$(MAKE) -C cvs/monitors/cluster-mon ut
 
 test: ut
 	@echo "Testing cvs commands..."

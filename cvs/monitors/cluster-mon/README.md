@@ -243,7 +243,7 @@ node2.cluster.local
 The system automatically initializes monitoring when the container starts:
 1. Loads configuration from `config/cluster.yaml` and `config/nodes.txt`
 2. Runs TCP probe to detect reachable hosts (~5-10 seconds)
-3. Initializes SSH connections (Pssh or JumpHostPssh based on config)
+3. Initializes SSH connections (ClusterSshManager; direct or jump-host based on config)
 4. Starts metrics collection loop (every 60 seconds by default)
 5. Starts periodic probe task (every 5 minutes)
 
@@ -341,7 +341,7 @@ sudo docker exec cvs-cluster-monitor tail -100 /app/backend.log
 **Cause:** Concurrent SSH operations causing thread-safety issues
 
 **Fix:** System now has global lock to prevent this. If still occurs, reduce:
-- `pool_size: 50 → 30` in cvs_parallel_ssh_reliable.py
+- the parallel-ssh pool/shard size via `ParallelConfig` (consumed by `cluster_ssh_manager.py`)
 - `max_workers: 100 → 50` in host_probe.py
 
 ### SSH connection failures
@@ -429,7 +429,7 @@ project-clustermon/
 │   ├── app/
 │   │   ├── api/          # API endpoints
 │   │   ├── collectors/   # Metrics collectors
-│   │   ├── core/         # SSH managers (cvs_parallel_ssh_reliable.py, jump_host_pssh.py)
+│   │   ├── core/         # SSH manager (cluster_ssh_manager.py, backed by cvs.lib.parallel)
 │   │   └── main.py       # FastAPI app
 │   └── requirements.txt
 ├── frontend/

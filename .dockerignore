@@ -1,0 +1,37 @@
+# Docker build context excludes.
+# The cluster-mon image builds from the repo root (see
+# cvs/monitors/cluster-mon/docker-compose.yml), so keep the context lean by
+# excluding VCS metadata, virtualenvs, build artifacts, caches, and node_modules.
+# NOTE: the cvs/ package itself is intentionally NOT excluded - it is built into
+# the image as a wheel.
+
+.git/
+.github/
+
+# Python caches / bytecode
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtualenvs
+.cvs_venv/
+.test_venv/
+.ruff_venv/
+**/.ut_venv/
+**/.venv/
+**/venv/
+
+# Build / packaging artifacts
+build/
+dist/
+**/dist/
+*.egg-info/
+**/*.egg-info/
+
+# Node
+**/node_modules/
+
+# Logs
+*.log
+*.log.*

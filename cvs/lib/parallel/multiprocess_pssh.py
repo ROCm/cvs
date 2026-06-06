@@ -9,6 +9,7 @@ from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.parallel.pssh import Pssh
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.pssh_sharder import PsshSharder
+from cvs.lib.parallel.persistent_pssh_sharder import PersistentPsshSharder
 from cvs.lib.parallel.interfaces import ShardableSshInterface
 from cvs.lib import globals
 
@@ -58,10 +59,26 @@ class MultiProcessPssh(ShardableSshInterface):
                 log, host_list, user, password, pkey, host_key_check, stop_on_errors, env_vars, **ssh_client_kwargs
             )
 
-            self.sharder = PsshSharder(self.config)
+            if self.config.persistent_shards:
+                self.sharder = PersistentPsshSharder(self.config)
+            else:
+                self.sharder = PsshSharder(self.config)
+            self.sharder.initialize_workers(self.reachable_hosts, self._shard_init_kwargs())
             self.pssh = None  # No Pssh instance needed for sharded mode
         else:
             # No sharding - create Pssh instance for delegation
+            jump_host_kwargs = {}
+            if self.config.uses_jump_host:
+                jump_host_kwargs.update(
+                    {
+                        'jump_host': self.config.jump_host,
+                        'jump_user': self.config.jump_user,
+                        'jump_password': self.config.jump_password,
+                        'jump_pkey': self.config.jump_pkey,
+                        'jump_port': self.config.jump_port,
+                    }
+                )
+
             self.pssh = Pssh(
                 log,
                 host_list,
@@ -72,6 +89,7 @@ class MultiProcessPssh(ShardableSshInterface):
                 stop_on_errors,
                 env_vars,
                 process_output=True,  # Default to True for compatibility
+                **jump_host_kwargs,
                 **ssh_client_kwargs,
             )
             # Ensure attributes needed by _shard_init_kwargs are available
@@ -115,7 +133,7 @@ class MultiProcessPssh(ShardableSshInterface):
 
         Note: No logger parameter needed - child processes use module-level globals.log automatically.
         """
-        return {
+        kwargs = {
             'log': None,  # Backward compatibility - child processes use module-level log
             'user': self.user,
             'password': self.password,
@@ -126,6 +144,20 @@ class MultiProcessPssh(ShardableSshInterface):
             **self.ssh_client_kwargs,  # Forward all ssh client kwargs to shard workers
         }
 
+        # Forward jump host parameters to shard workers when configured.
+        if self.config.uses_jump_host:
+            kwargs.update(
+                {
+                    'jump_host': self.config.jump_host,
+                    'jump_user': self.config.jump_user,
+                    'jump_password': self.config.jump_password,
+                    'jump_pkey': self.config.jump_pkey,
+                    'jump_port': self.config.jump_port,
+                }
+            )
+
+        return kwargs
+
     def _sync_pssh_state(self):
         """Sync wrapper reachability state from Single-process Pssh (non-sharded mode)."""
         if self.pssh is None:
@@ -133,22 +165,30 @@ class MultiProcessPssh(ShardableSshInterface):
         self.reachable_hosts = list(self.pssh.reachable_hosts)
         self.unreachable_hosts = list(self.pssh.unreachable_hosts)
 
+    def sync_reachability_from_workers(self):
+        """Sync wrapper reachability from sharder worker table."""
+        if self.pssh is not None:
+            return
+
+        worker_table = self.sharder.get_worker_table()
+        reachable_set = set()
+        unreachable_set = set()
+        for worker in worker_table:
+            reachable_set.update(worker.reachable_hosts)
+            unreachable_set.update(worker.unreachable_hosts)
+
+        self.reachable_hosts = [h for h in self.host_list if h in reachable_set]
+        self.unreachable_hosts = [h for h in self.host_list if h in unreachable_set and h not in reachable_set]
+
     def _merge_shard_returns(self, shard_returns, merge_unreachable=True):
         """
         Update reachable/unreachable host lists from shard workers and merge results to cmd_output dict.
 
         Returns cmd_output dict ready for _print_merged_outputs.
         """
-        # 1. Update host lists (existing logic)
-        reachable_set = set()
-        for r in shard_returns:
-            reachable_set.update(r['reachable_hosts'])
-        self.reachable_hosts = [h for h in self.host_list if h in reachable_set]
-        if merge_unreachable:
-            for r in shard_returns:
-                for u in r['unreachable_hosts']:
-                    if u not in self.unreachable_hosts:
-                        self.unreachable_hosts.append(u)
+        # 1. Update sharder worker table and sync wrapper reachability.
+        self.sharder.update_worker_table(shard_returns, merge_unreachable=merge_unreachable)
+        self.sync_reachability_from_workers()
 
         # 2. Merge results from shard workers (always dict format)
         merged = {}
@@ -206,12 +246,11 @@ class MultiProcessPssh(ShardableSshInterface):
             else:
                 self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
 
-        # Use sharder for sharded execution
-        host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
-        payloads = self.sharder.create_payloads(
-            'exec', host_chunks, self._shard_init_kwargs(), cmd=cmd, timeout=timeout, detailed=detailed
+        # Use sharder for sharded execution with worker routing
+        routing_map = self.sharder.create_payloads(
+            'exec', self._shard_init_kwargs(), cmd=cmd, timeout=timeout, detailed=detailed
         )
-        shard_returns = self.sharder.execute_sharded(payloads)
+        shard_returns = self.sharder.execute_sharded(routing_map)
 
         # Merge results, update state, and convert to cmd_output dict
         cmd_output = self._merge_shard_returns(shard_returns)
@@ -253,11 +292,9 @@ class MultiProcessPssh(ShardableSshInterface):
         else:
             expanded = list(raw_commands)
 
-        # Align commands to current reachable_hosts ordering for shard payloads.
+        # Build host->command mapping used by worker-table routing.
         command_by_host = dict(zip(cmd_hosts, raw_commands))
-        filtered_commands = [command_by_host[h] for h in self.reachable_hosts if h in command_by_host]
-
-        self.log.info("%s", filtered_commands)
+        self.log.info("%s", [command_by_host[h] for h in self.reachable_hosts if h in command_by_host])
 
         # Log command list execution
         if self.log:
@@ -266,22 +303,26 @@ class MultiProcessPssh(ShardableSshInterface):
             else:
                 self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s)")
 
-        # Prepare payloads for sharded execution
-        payloads = []
-        offset = 0
-        chunk_size = self.config.hosts_per_shard
-        for i in range(0, len(self.reachable_hosts), chunk_size):
-            shard_hosts = self.reachable_hosts[i : i + chunk_size]
-            k = len(shard_hosts)
-            shard_commands = filtered_commands[offset : offset + k]
-            offset += k
-            payloads.append(
-                self.sharder.create_payloads(
-                    'exec_cmd_list', [shard_hosts], self._shard_init_kwargs(), cmd_list=shard_commands, timeout=timeout
-                )[0]
-            )
+        # Prepare payloads for exec_cmd_list (manual routing due to per-host commands)
+        routing_map = {}
+        for worker in self.sharder.get_worker_table():
+            if not worker.reachable_hosts:
+                continue
 
-        shard_returns = self.sharder.execute_sharded(payloads)
+            shard_hosts = list(worker.reachable_hosts)
+            shard_commands = [command_by_host[h] for h in shard_hosts if h in command_by_host]
+
+            # Create payload manually for this worker
+            payload = {
+                'operation': 'exec_cmd_list',
+                'init': {**self._shard_init_kwargs(), 'host_list': shard_hosts},
+                'cmd_list': shard_commands,
+                'timeout': timeout,
+            }
+
+            routing_map[worker.worker_id] = payload
+
+        shard_returns = self.sharder.execute_sharded(routing_map)
 
         # Merge results, update state, and convert to cmd_output dict
         cmd_output = self._merge_shard_returns(shard_returns)
@@ -315,16 +356,14 @@ class MultiProcessPssh(ShardableSshInterface):
 
         self.log.info('SFTP upload %s -> %s on %s', local_file, remote_file, self.reachable_hosts)
 
-        host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
-        payloads = self.sharder.create_payloads(
+        routing_map = self.sharder.create_payloads(
             'upload_file',
-            host_chunks,
             self._shard_init_kwargs(),
             local_file=local_file,
             remote_file=remote_file,
             recurse=recurse,
         )
-        shard_returns = self.sharder.execute_sharded(payloads)
+        shard_returns = self.sharder.execute_sharded(routing_map)
         return self._merge_shard_returns(shard_returns)
 
     def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_'):
@@ -334,17 +373,15 @@ class MultiProcessPssh(ShardableSshInterface):
 
         self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts)
 
-        host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
-        payloads = self.sharder.create_payloads(
+        routing_map = self.sharder.create_payloads(
             'download_file',
-            host_chunks,
             self._shard_init_kwargs(),
             remote_file=remote_file,
             local_file=local_file,
             recurse=recurse,
             suffix_separator=suffix_separator,
         )
-        shard_returns = self.sharder.execute_sharded(payloads)
+        shard_returns = self.sharder.execute_sharded(routing_map)
         return self._merge_shard_returns(shard_returns)
 
     def reboot_connections(self):
@@ -354,9 +391,8 @@ class MultiProcessPssh(ShardableSshInterface):
 
         self.log.info('Rebooting Connections')
 
-        host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
-        payloads = self.sharder.create_payloads('reboot_connections', host_chunks, self._shard_init_kwargs())
-        shard_returns = self.sharder.execute_sharded(payloads)
+        routing_map = self.sharder.create_payloads('reboot_connections', self._shard_init_kwargs())
+        shard_returns = self.sharder.execute_sharded(routing_map)
         return self._merge_shard_returns(shard_returns, merge_unreachable=False)
 
     def upload_file_list(self, node_path_map):
@@ -369,31 +405,35 @@ class MultiProcessPssh(ShardableSshInterface):
 
         self.log.info(f"Uploading files to hosts with sharding: {len(node_path_map)} file mappings")
 
-        # Shard the file operations across hosts
-        host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
-        payloads = []
+        # Prepare routing map for upload_file_list (manual routing due to per-host file mappings)
+        routing_map = {}
+        for worker in self.sharder.get_worker_table():
+            if not worker.reachable_hosts:
+                continue
 
-        for shard_hosts in host_chunks:
-            # Create subset of node_path_map for this shard
+            shard_hosts = list(worker.reachable_hosts)
+            # Create subset of node_path_map for this worker
             shard_node_path_map = {h: node_path_map[h] for h in shard_hosts if h in node_path_map}
+
             if shard_node_path_map:
                 # Worker host_list must match node_path_map keys for upload_file_list.
                 # Pssh.upload_file_list delegates to ParallelSSHClient.copy_file(copy_args=...),
                 # which requires one copy_args entry per worker host in order.
                 target_hosts = [h for h in shard_hosts if h in shard_node_path_map]
-                payloads.append(
-                    self.sharder.create_payloads(
-                        'upload_file_list',
-                        [target_hosts],
-                        self._shard_init_kwargs(),
-                        node_path_map=shard_node_path_map,
-                    )[0]
-                )
 
-        if not payloads:
+                # Create payload manually for this worker
+                payload = {
+                    'operation': 'upload_file_list',
+                    'init': {**self._shard_init_kwargs(), 'host_list': target_hosts},
+                    'node_path_map': shard_node_path_map,
+                }
+
+                routing_map[worker.worker_id] = payload
+
+        if not routing_map:
             return {}
 
-        shard_returns = self.sharder.execute_sharded(payloads)
+        shard_returns = self.sharder.execute_sharded(routing_map)
 
         # Merge results from all shards
         merged_results = {}
@@ -425,19 +465,17 @@ class MultiProcessPssh(ShardableSshInterface):
             self._sync_pssh_state()
             return removed
 
-        # Sharded mode: workers create per-call Pssh instances from payload host lists, so
-        # pruning only needs to update wrapper host state used for future shard construction.
-        self.reachable_hosts = [h for h in self.reachable_hosts if h not in remove_set]
-        for host in removed:
-            if host not in self.unreachable_hosts:
-                self.unreachable_hosts.append(host)
+        # Sharded mode: prune sharder source-of-truth, then sync wrapper cache.
+        self.sharder.prune_worker_nodes(set(removed))
+        self.sync_reachability_from_workers()
         return removed
 
     def destroy_clients(self):
         """Destroy clients - handle both sharded and non-sharded modes."""
         if self.pssh is None:
             self.log.info('Cleaning up sharded mode state ..')
-            # In sharded mode, no persistent connections to destroy
+            if hasattr(self, 'sharder') and self.sharder is not None:
+                self.sharder.destroy_clients()
             self.client = None
         else:
             self.log.info('Destroying Current phdl connections ..')

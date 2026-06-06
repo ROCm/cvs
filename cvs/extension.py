@@ -42,7 +42,9 @@ class ExtensionConfig:
         """
         # Check for extension packages specified via environment variable (comma-separated)
         config_file = None
-        extension_pkg_names = os.environ.get("CVS_EXTENSION_PKG_NAMES")
+        from cvs.lib.env_vars import get
+
+        extension_pkg_names = get("CVS_EXTENSION_PKG_NAMES")
         if extension_pkg_names:
             # Try each package in order
             for pkg_name in extension_pkg_names.split(","):
