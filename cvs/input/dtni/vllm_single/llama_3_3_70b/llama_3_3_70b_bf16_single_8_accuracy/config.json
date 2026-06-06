@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "framework": "vllm_single",
+  "gpu_arch": "mi300x",
+  "paths": {
+    "shared_fs":     "/mnt/dtni/{user-id}/cvs",
+    "models_dir":    "/mnt/dtni/{user-id}/models",
+    "datasets_dir":  "{shared_fs}/datasets",
+    "artifacts_dir": "{shared_fs}/artifacts",
+    "images_dir":    "{shared_fs}/images"
+  },
+  "model": {
+    "id": "llama-3.3-70b-instruct",
+    "remote": 0,
+    "precision": "bf16"
+  },
+  "benchmarks": ["mmlu", "gsm8k"],
+  "benchmark_datasets_remote": 1,
+  "image": {
+    "tag": "rocm/vllm:latest",
+    "remote": 1
+  },
+  "topology": {
+    "roles": {
+      "server": {"count": 1, "gpus_per_node": 8}
+    }
+  },
+  "roles": {
+    "server": {
+      "shm_size": "64G",
+      "devices": ["/dev/dri", "/dev/kfd"],
+      "seccomp_unconfined": true,
+      "extra_args": ["--group-add", "video", "--group-add", "render"],
+      "volumes": {},
+      "env": {
+        "VLLM_USE_TRITON_FLASH_ATTN": "0"
+      },
+      "port": 8000,
+      "health_path": "/health",
+      "command": "vllm serve {model.path} --tensor-parallel-size {params.tensor_parallelism} --max-model-len 8192 --gpu-memory-utilization 0.9 --trust-remote-code --served-model-name {model.id}"
+    }
+  },
+  "params": {
+    "tensor_parallelism": 8,
+    "input_len": 16,
+    "output_len": 32,
+    "concurrency": 1
+  }
+}
