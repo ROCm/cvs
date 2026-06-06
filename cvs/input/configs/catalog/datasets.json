@@ -1,0 +1,5 @@
+{
+  "mmlu": {"hf_repo": "cais/mmlu"},
+  "gsm8k": {"hf_repo": "openai/gsm8k"},
+  "sharegpt": {"hf_repo": "anon8231489123/ShareGPT_Vicuna_unfiltered"}
+}

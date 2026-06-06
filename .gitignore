@@ -12,3 +12,7 @@ __pycache__/
 
 # Build distributions
 dist/
+
+# DTNI v1
+.venv/
+cvs_artifacts/
