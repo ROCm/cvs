@@ -1,0 +1,54 @@
+{
+  "smoke_request_latency_ms": {
+    "kind": "max_ms",
+    "value": 600000
+  },
+  "smoke_completion_tokens": {
+    "kind": "min",
+    "value": 1
+  },
+  "serve_synth_short.completed": {
+    "kind": "min",
+    "value": 200
+  },
+  "serve_synth_short.request_throughput": {
+    "kind": "min",
+    "value": 0.5
+  },
+  "serve_synth_short.output_throughput": {
+    "kind": "min",
+    "value": 50.0
+  },
+  "serve_synth_short.request_goodput": {
+    "kind": "min",
+    "value": 0.5
+  },
+  "serve_synth_short.ttft_p95_ms": {
+    "kind": "max_ms",
+    "value": 60000
+  },
+  "serve_synth_short.tpot_p95_ms": {
+    "kind": "max_ms",
+    "value": 5000
+  },
+  "serve_synth_short.e2el_p95_ms": {
+    "kind": "max_ms",
+    "value": 300000
+  },
+  "serve_synth_long.completed": {
+    "kind": "min",
+    "value": 64
+  },
+  "serve_synth_long.output_throughput": {
+    "kind": "min",
+    "value": 25.0
+  },
+  "serve_synth_long.ttft_p95_ms": {
+    "kind": "max_ms",
+    "value": 600000
+  },
+  "serve_synth_long.e2el_p95_ms": {
+    "kind": "max_ms",
+    "value": 1200000
+  }
+}

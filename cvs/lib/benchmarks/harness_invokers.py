@@ -1,6 +1,10 @@
-"""Build the in-container command for a benchmark harness.
+"""Build the in-container command for each benchmark harness.
 
-One invoker in v1: ``lm-eval-harness`` against an OpenAI-compatible endpoint.
+Two invokers in v1:
+- ``lm-eval-harness``: accuracy (MMLU, GSM8K).
+- ``vllm-bench-serve``: the perf families from the DTNI Validation Tracker
+  (TTFT/TPOT/ITL/E2EL percentiles, throughput, goodput, ShareGPT trace).
+
 Pure (no I/O) so unit-testable.
 """
 
@@ -11,6 +15,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from cvs.lib.benchmarks.registry import BenchmarkSpec
+from cvs.lib.errors import ConfigError
 
 
 # Well-known in-container path where the adapter bind-mounts the run's host
@@ -24,12 +29,13 @@ class HarnessCtx:
     """Inputs the harness needs to construct its command line.
 
     - ``base_url``: where the server is reachable from inside the harness's
-      container. For v1 single-node, harness shares ``network=host`` with the
-      server, so ``http://localhost:<port>`` is correct.
-    - ``model_id``: vLLM's ``--served-model-name`` — what we POST as ``model``.
+      container. For v1 single-node, harness shares ``network=host`` with
+      the server, so ``http://localhost:<port>`` is correct.
+    - ``model_id``: vLLM's ``--served-model-name`` — what we POST as
+      ``model``.
     - ``output_dir``: in-container path where the harness drops its JSON
-      (bind-mounted to the host artifacts dir). Each benchmark writes into a
-      ``<output_dir>/<benchmark_id>/`` subdir to keep results isolated.
+      (bind-mounted to the host artifacts dir). Each benchmark writes into
+      a ``<output_dir>/<benchmark_id>/`` subdir to keep results isolated.
     """
 
     base_url: str
@@ -59,8 +65,87 @@ def _lm_eval(spec: BenchmarkSpec, hctx: HarnessCtx) -> str:
     return " ".join(shlex.quote(p) for p in parts)
 
 
+def _vllm_bench_serve(spec: BenchmarkSpec, hctx: HarnessCtx) -> str:
+    """Build the ``vllm bench serve`` command line.
+
+    Writes a single ``result.json`` under ``<output_dir>/<spec.id>/`` so the
+    runner can locate it deterministically. The required extras are:
+
+    - ``dataset_name``: ``random`` | ``sharegpt`` | etc.
+    - ``num_prompts``: int.
+    For ``random``: ``random_input_len``, ``random_output_len``.
+    For ``sharegpt``: ``dataset_path`` (in-container path to the JSON).
+
+    Optional extras:
+    - ``max_concurrency``, ``request_rate``, ``percentiles``,
+      ``goodput_slo`` (passed verbatim to ``--goodput`` — space-separated
+      ``KEY:VALUE_ms`` pairs).
+    """
+    e = spec.extra
+    if "dataset_name" not in e or "num_prompts" not in e:
+        raise ConfigError(
+            f"benchmark {spec.id!r}: vllm-bench-serve needs "
+            f"extra.dataset_name and extra.num_prompts"
+        )
+    out_dir = f"{hctx.output_dir}/{spec.id}"
+    parts: list[str] = [
+        "mkdir", "-p", out_dir, "&&",
+        "vllm", "bench", "serve",
+        "--backend", "vllm",
+        "--base-url", hctx.base_url,
+        "--model", hctx.model_id,
+        "--dataset-name", str(e["dataset_name"]),
+        "--num-prompts", str(int(e["num_prompts"])),
+        "--save-result",
+        "--result-dir", out_dir,
+        "--result-filename", "result.json",
+    ]
+
+    if e["dataset_name"] == "random":
+        if "random_input_len" not in e or "random_output_len" not in e:
+            raise ConfigError(
+                f"benchmark {spec.id!r}: dataset_name=random needs "
+                f"random_input_len and random_output_len in extra"
+            )
+        parts += [
+            "--random-input-len", str(int(e["random_input_len"])),
+            "--random-output-len", str(int(e["random_output_len"])),
+        ]
+    elif e["dataset_name"] == "sharegpt":
+        if "dataset_path" not in e:
+            raise ConfigError(
+                f"benchmark {spec.id!r}: dataset_name=sharegpt needs "
+                f"extra.dataset_path (in-container path to the JSON)"
+            )
+        parts += ["--dataset-path", str(e["dataset_path"])]
+
+    if "max_concurrency" in e:
+        parts += ["--max-concurrency", str(int(e["max_concurrency"]))]
+    if "request_rate" in e:
+        parts += ["--request-rate", str(e["request_rate"])]
+    if "percentiles" in e:
+        parts += ["--metric-percentiles", str(e["percentiles"])]
+    if "goodput_slo" in e:
+        # vllm splits goodput SLO strings on whitespace itself; pass each
+        # KEY:VALUE pair as a separate token after --goodput per its CLI.
+        slo_parts = str(e["goodput_slo"]).split()
+        if slo_parts:
+            parts += ["--goodput", *slo_parts]
+
+    # quote argv tokens, leave the shell operators (`&&`, `mkdir -p ...`)
+    # intact — the docker exec wrapper runs this under `bash -c`.
+    quoted: list[str] = []
+    for p in parts:
+        if p in ("&&",):
+            quoted.append(p)
+        else:
+            quoted.append(shlex.quote(p))
+    return " ".join(quoted)
+
+
 HARNESS_INVOKERS: dict[str, Callable[[BenchmarkSpec, HarnessCtx], str]] = {
     "lm-eval-harness": _lm_eval,
+    "vllm-bench-serve": _vllm_bench_serve,
 }
 
 

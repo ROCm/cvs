@@ -12,19 +12,20 @@ from cvs.lib.benchmarks.registry import (
 )
 
 
-def test_registry_contains_v1_accuracy_set():
-    assert set(BENCHMARK_REGISTRY) == {"mmlu", "gsm8k"}
+def test_registry_contains_accuracy_and_perf_sets():
+    keys = set(BENCHMARK_REGISTRY)
+    # accuracy
+    assert {"mmlu", "gsm8k"} <= keys
+    # perf (vllm-bench-serve harness)
+    assert {"serve_synth_short", "serve_synth_long"} <= keys
 
 
 def test_specs_are_well_formed():
     for bid, spec in BENCHMARK_REGISTRY.items():
         assert isinstance(spec, BenchmarkSpec)
         assert spec.id == bid
-        assert spec.harness == "lm-eval-harness"
-        assert spec.dataset_id
-        assert spec.score_metric
+        assert spec.harness in {"lm-eval-harness", "vllm-bench-serve"}
         assert spec.shots >= 0
-        # frozen dataclass: extra is a dict but immutable spec
         assert isinstance(spec.extra, dict)
 
 
@@ -33,6 +34,14 @@ def test_lookup_returns_spec():
     assert spec.score_metric == "acc"
     assert spec.shots == 5
     assert spec.extra["task"] == "mmlu"
+
+
+def test_perf_spec_has_no_score_metric():
+    # Perf benchmarks don't use the lm-eval scoring fields.
+    spec = lookup("serve_synth_short")
+    assert spec.score_metric is None
+    assert spec.extra["dataset_name"] == "random"
+    assert spec.extra["num_prompts"] == 200
 
 
 def test_lookup_unknown_raises_with_known_list():
