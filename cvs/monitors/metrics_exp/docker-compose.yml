@@ -141,7 +141,7 @@ services:
       - ./server/config/prometheus:/prometheus-config
       - ./server/config/prometheus/targets:/prometheus-targets
       - ./scripts:/app/scripts:ro
-      - ./templates:/app/templates:ro
+      - ./server/fleet_manager/templates:/app/templates:ro
     ports:
       - "0.0.0.0:30080:8080"
     networks:

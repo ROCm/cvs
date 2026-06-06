@@ -257,6 +257,44 @@ class SSHManager:
                 exit_code=-1,
             )
 
+    async def execute_with_input(self, command: str, stdin_input: str, timeout: int = 60) -> SSHResult:
+        """Execute a command on the remote host, feeding stdin_input to its stdin.
+
+        Used for commands like ``sudo -S`` that read a password from stdin.
+        """
+        if not self._conn and not self._use_jump_exec:
+            connected = await self.connect()
+            if not connected:
+                return SSHResult(success=False, stdout="", stderr="Connection failed", exit_code=-1)
+
+        try:
+            if self._use_jump_exec and self._jump_conn and self._remote_ssh_cmd:
+                escaped_cmd = command.replace("'", "'\\''")
+                full_cmd = f"{self._remote_ssh_cmd} '{escaped_cmd}'"
+                result = await asyncio.wait_for(
+                    self._jump_conn.run(full_cmd, check=False, input=stdin_input),
+                    timeout=timeout,
+                )
+            else:
+                result = await asyncio.wait_for(
+                    self._conn.run(command, check=False, input=stdin_input),
+                    timeout=timeout,
+                )
+
+            return SSHResult(
+                success=result.exit_status == 0,
+                stdout=result.stdout or "",
+                stderr=result.stderr or "",
+                exit_code=result.exit_status or 0,
+            )
+
+        except asyncio.TimeoutError:
+            logger.error(f"Command timed out on {self.host}: {command[:50]}...")
+            return SSHResult(success=False, stdout="", stderr="Command timed out", exit_code=-2)
+        except Exception as e:
+            logger.error(f"Command failed on {self.host}: {e}")
+            return SSHResult(success=False, stdout="", stderr=str(e), exit_code=-1)
+
     async def upload_file(self, local_path: str, remote_path: str) -> bool:
         """Upload a file to the remote host."""
         if self._use_jump_exec:

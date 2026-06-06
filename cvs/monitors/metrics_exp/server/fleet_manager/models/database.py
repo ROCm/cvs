@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     JSON,
     Index,
+    text,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
@@ -60,6 +61,9 @@ class MonitoringServer(Base):
     prometheus_retention_time = Column(String(20), default="15d")
     prometheus_retention_size = Column(String(20), default="50GB")
     prometheus_scrape_interval = Column(String(10), default="15s")
+    prometheus_storage_path = Column(
+        String(512), nullable=True
+    )  # Host path for TSDB data; defaults to ./data/prometheus
 
     # Loki configuration
     loki_retention_days = Column(Integer, default=7)
@@ -376,6 +380,21 @@ def init_db():
     # Create all tables
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created/verified")
+
+    # Apply schema migrations for columns added after initial table creation.
+    # ALTER TABLE ... ADD COLUMN IF NOT EXISTS is idempotent and safe to run on every startup.
+    with engine.connect() as conn:
+        migrations = [
+            "ALTER TABLE monitoring_servers ADD COLUMN IF NOT EXISTS prometheus_storage_path VARCHAR(512)",
+        ]
+        for stmt in migrations:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"Migration skipped ({stmt!r}): {e}")
+
+    logger.info("Schema migrations applied")
 
     # Create default metric group if not exists
     db = SessionLocal()

@@ -35,6 +35,7 @@ class MonitoringServerCreate(BaseModel):
     prometheus_retention_time: str = "15d"
     prometheus_retention_size: str = "50GB"
     prometheus_scrape_interval: str = "15s"
+    prometheus_storage_path: Optional[str] = None
     loki_retention_days: int = 7
     grafana_admin_user: str = "admin"
     grafana_admin_password: str = "admin"
@@ -67,6 +68,7 @@ class MonitoringServerUpdate(BaseModel):
     prometheus_retention_time: Optional[str] = None
     prometheus_retention_size: Optional[str] = None
     prometheus_scrape_interval: Optional[str] = None
+    prometheus_storage_path: Optional[str] = None
     loki_retention_days: Optional[int] = None
     grafana_admin_user: Optional[str] = None
     grafana_admin_password: Optional[str] = None
@@ -100,6 +102,7 @@ class MonitoringServerResponse(BaseModel):
     prometheus_retention_time: str
     prometheus_retention_size: str
     prometheus_scrape_interval: str
+    prometheus_storage_path: Optional[str]
     loki_retention_days: int
     grafana_admin_user: str
     setup_monitoring_stack: bool
@@ -144,6 +147,7 @@ def server_to_response(server: MonitoringServer) -> MonitoringServerResponse:
         prometheus_retention_time=server.prometheus_retention_time,
         prometheus_retention_size=server.prometheus_retention_size,
         prometheus_scrape_interval=server.prometheus_scrape_interval,
+        prometheus_storage_path=server.prometheus_storage_path,
         loki_retention_days=server.loki_retention_days,
         grafana_admin_user=server.grafana_admin_user or "admin",
         setup_monitoring_stack=server.setup_monitoring_stack,
@@ -201,6 +205,7 @@ def create_monitoring_server(
         prometheus_retention_time=server.prometheus_retention_time,
         prometheus_retention_size=server.prometheus_retention_size,
         prometheus_scrape_interval=server.prometheus_scrape_interval,
+        prometheus_storage_path=server.prometheus_storage_path,
         loki_retention_days=server.loki_retention_days,
         grafana_admin_user=server.grafana_admin_user,
         grafana_admin_password=server.grafana_admin_password,
@@ -783,7 +788,8 @@ async def sync_targets(server_id: int, db: Session = Depends(get_db)):
                 logger.info(f"Synced {len(ng_nodes)} nodes for group '{ng_name}'")
 
             # Reload Prometheus configuration
-            reload_result = await ssh.execute("docker exec fleet-prometheus kill -HUP 1 2>/dev/null || true")
+            prom_container = _get_container_prefix(server) + "-prometheus"
+            reload_result = await ssh.execute(f"docker exec {prom_container} kill -HUP 1 2>/dev/null || true")
             logger.info(f"Prometheus reload: {reload_result.stdout}")
 
             return {
@@ -874,24 +880,47 @@ async def run_stack_installation(job_id: str, server_id: int):
                 await ssh.execute("sudo systemctl start docker")
                 await ssh.execute("sudo systemctl enable docker")
 
-            # Check docker access
+            # Check docker access - rely on exit code only; stdout capture is unreliable
+            # over non-interactive SSH sessions for compound shell commands.
             _update_install_step(job_id, "Checking Docker access...")
-            result = await ssh.execute("docker ps >/dev/null 2>&1 && echo 'ok' || echo 'no_access'")
-            docker_accessible = result.success and "ok" in result.stdout
+            result = await ssh.execute("docker ps > /dev/null 2>&1")
+            docker_accessible = result.success
 
             if not docker_accessible:
+                # Ensure the docker group exists.
                 result = await ssh.execute("getent group docker")
                 if not result.success:
-                    await ssh.execute("sudo groupadd docker")
+                    await ssh.execute("sudo -n groupadd docker 2>/dev/null || true")
+                    if server.ssh_password:
+                        await ssh.execute_with_input(
+                            "sudo -S groupadd docker 2>/dev/null || true",
+                            server.ssh_password + "\n",
+                        )
 
+                # Try to add the user to the docker group.
+                # Attempt 1: passwordless sudo (-n exits immediately if password needed).
                 _update_install_step(job_id, "Adding user to docker group...")
-                result = await ssh.execute(f"sudo usermod -aG docker {server.ssh_user}")
-                if not result.success:
-                    _add_install_log(job_id, f"Failed to add user to docker group: {result.stderr}", "error")
-                    _installation_jobs[job_id]["status"] = "failed"
-                    _installation_jobs[job_id]["error"] = "Failed to add user to docker group"
-                    _installation_jobs[job_id]["completed"] = True
-                    return
+                result = await ssh.execute(f"sudo -n usermod -aG docker {server.ssh_user}")
+
+                if not result.success and server.ssh_password:
+                    # Attempt 2: pipe the SSH password to sudo -S (works when the
+                    # SSH login password is the same as the sudo password, which is
+                    # the common case on standard Linux installs).
+                    _add_install_log(job_id, "Passwordless sudo unavailable, retrying with SSH password...")
+                    result = await ssh.execute_with_input(
+                        f"sudo -S usermod -aG docker {server.ssh_user}",
+                        server.ssh_password + "\n",
+                    )
+
+                if result.success:
+                    _add_install_log(job_id, f"User '{server.ssh_user}' added to docker group")
+                else:
+                    _add_install_log(
+                        job_id,
+                        f"Could not add user to docker group: {result.stderr.strip()}. "
+                        "Will attempt installation using 'sudo docker' as a fallback.",
+                        "warning",
+                    )
 
             # Create installation directory
             _update_install_step(job_id, "Creating installation directory...")
@@ -973,11 +1002,10 @@ async def run_stack_installation(job_id: str, server_id: int):
 
             # Create data directories
             _update_install_step(job_id, "Setting up data directories...")
+            prometheus_data_path = server.prometheus_storage_path or f"{install_dir}/data/prometheus"
+            await ssh.execute(f"mkdir -p {prometheus_data_path} {install_dir}/data/loki {install_dir}/data/grafana")
             await ssh.execute(
-                f"mkdir -p {install_dir}/data/prometheus {install_dir}/data/loki {install_dir}/data/grafana"
-            )
-            await ssh.execute(
-                f"sudo chown -R 65534:65534 {install_dir}/data/prometheus 2>/dev/null || chmod -R 777 {install_dir}/data/prometheus"
+                f"sudo chown -R 65534:65534 {prometheus_data_path} 2>/dev/null || chmod -R 777 {prometheus_data_path}"
             )
             await ssh.execute(
                 f"sudo chown -R 10001:10001 {install_dir}/data/loki 2>/dev/null || chmod -R 777 {install_dir}/data/loki"
@@ -986,25 +1014,50 @@ async def run_stack_installation(job_id: str, server_id: int):
                 f"sudo chown -R 472:472 {install_dir}/data/grafana 2>/dev/null || chmod -R 777 {install_dir}/data/grafana"
             )
 
-            docker_cmd = "sg docker -c" if not docker_accessible else ""
-
-            # Pull images
-            _update_install_step(job_id, "Pulling Docker images...")
-            if docker_cmd:
-                result = await ssh.execute(f"cd {install_dir} && {docker_cmd} 'docker compose pull'", timeout=300)
+            # Choose the docker invocation prefix for this session:
+            #   - direct:        user was already in docker group before install
+            #   - sg docker -c:  user was just added to the group via usermod
+            #   - sudo docker:   usermod failed; fall back to sudo
+            if docker_accessible:
+                docker_cmd = ""
+            elif result.success:  # usermod succeeded
+                docker_cmd = "sg docker -c"
+            elif server.ssh_password:
+                # usermod failed but we have a password — use sudo -S docker
+                docker_cmd = f"echo {server.ssh_password!r} | sudo -S"
             else:
-                result = await ssh.execute(f"cd {install_dir} && docker compose pull", timeout=300)
+                docker_cmd = "sudo -n"
+
+            # Pull images - allow up to 10 minutes for large images on slow links
+            _update_install_step(job_id, "Pulling Docker images (this may take several minutes)...")
+            if docker_cmd:
+                result = await ssh.execute(f"cd {install_dir} && {docker_cmd} 'docker compose pull'", timeout=600)
+            else:
+                result = await ssh.execute(f"cd {install_dir} && docker compose pull", timeout=600)
             if not result.success:
-                _add_install_log(job_id, f"Image pull warning: {result.stderr}", "warning")
+                _add_install_log(job_id, f"Image pull warning (will retry on up): {result.stderr}", "warning")
             else:
                 _add_install_log(job_id, "Docker images pulled successfully")
 
-            # Start the stack
+            # Stop and remove any containers left over from a previous install
+            # attempt before starting fresh. This is idempotent — safe to run
+            # even when nothing is running.
+            _update_install_step(job_id, "Stopping any existing stack containers...")
+            if docker_cmd:
+                await ssh.execute(
+                    f"cd {install_dir} && {docker_cmd} 'docker compose down --remove-orphans'", timeout=60
+                )
+            else:
+                await ssh.execute(f"cd {install_dir} && docker compose down --remove-orphans", timeout=60)
+            _add_install_log(job_id, "Existing containers removed (if any)")
+
+            # Start the stack - allow up to 5 minutes; compose up -d pulls any
+            # missing images and waits for containers to start.
             _update_install_step(job_id, "Starting monitoring stack...")
             if docker_cmd:
-                result = await ssh.execute(f"cd {install_dir} && {docker_cmd} 'docker compose up -d'", timeout=120)
+                result = await ssh.execute(f"cd {install_dir} && {docker_cmd} 'docker compose up -d'", timeout=300)
             else:
-                result = await ssh.execute(f"cd {install_dir} && docker compose up -d", timeout=120)
+                result = await ssh.execute(f"cd {install_dir} && docker compose up -d", timeout=300)
             if not result.success:
                 _add_install_log(job_id, f"Failed to start monitoring stack: {result.stderr}", "error")
                 _installation_jobs[job_id]["status"] = "failed"
@@ -1016,12 +1069,14 @@ async def run_stack_installation(job_id: str, server_id: int):
 
             # Wait and verify
             _update_install_step(job_id, "Verifying services...")
-            await asyncio.sleep(10)
+            await asyncio.sleep(15)
 
             if docker_cmd:
-                result = await ssh.execute(f"{docker_cmd} \"docker ps --format '{{{{.Names}}}}: {{{{.Status}}}}'\"")
+                result = await ssh.execute(
+                    f"{docker_cmd} \"docker ps --format '{{{{.Names}}}}: {{{{.Status}}}}'\"", timeout=30
+                )
             else:
-                result = await ssh.execute("docker ps --format '{{.Names}}: {{.Status}}'")
+                result = await ssh.execute("docker ps --format '{{.Names}}: {{.Status}}'", timeout=30)
 
             _add_install_log(job_id, f"Running containers:\n{result.stdout}")
 
@@ -1045,16 +1100,29 @@ async def run_stack_installation(job_id: str, server_id: int):
         db.close()
 
 
+def _get_container_prefix(server) -> str:
+    """Return a safe container name prefix derived from the monitoring server name.
+
+    Using a per-server prefix ensures container names are unique even when the
+    monitoring stack is deployed on the same host as the fleet-manager management
+    stack (which uses the 'fleet-' prefix internally).
+    """
+    safe = "".join(c if c.isalnum() or c == "-" else "-" for c in server.name.lower()).strip("-")
+    return safe or f"mon-{server.id}"
+
+
 def _get_monitoring_compose(server) -> str:
     """Generate docker-compose.yml for monitoring stack.
 
     All services use network_mode: host for simplicity and to avoid Docker
     networking issues with GPU node metrics collection.
     """
+    prometheus_data_path = server.prometheus_storage_path or "./data/prometheus"
+    prefix = _get_container_prefix(server)
     return f"""services:
   prometheus:
     image: prom/prometheus:v2.51.0
-    container_name: fleet-prometheus
+    container_name: {prefix}-prometheus
     restart: unless-stopped
     network_mode: host
     command:
@@ -1068,11 +1136,11 @@ def _get_monitoring_compose(server) -> str:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/targets:/etc/prometheus/targets:ro
-      - ./data/prometheus:/prometheus
+      - {prometheus_data_path}:/prometheus
 
   loki:
     image: grafana/loki:2.9.5
-    container_name: fleet-loki
+    container_name: {prefix}-loki
     restart: unless-stopped
     network_mode: host
     command:
@@ -1084,7 +1152,7 @@ def _get_monitoring_compose(server) -> str:
 
   grafana:
     image: grafana/grafana:10.4.1
-    container_name: fleet-grafana
+    container_name: {prefix}-grafana
     restart: unless-stopped
     network_mode: host
     environment:
