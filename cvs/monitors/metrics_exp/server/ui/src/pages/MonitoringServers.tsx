@@ -25,6 +25,7 @@ interface MonitoringServer {
   prometheus_retention_time: string
   prometheus_retention_size: string
   prometheus_scrape_interval: string
+  prometheus_storage_path?: string
   loki_retention_days: number
   grafana_admin_user: string
   setup_monitoring_stack: boolean
@@ -67,6 +68,7 @@ function MonitoringServers() {
     prometheus_retention_time: '15d',
     prometheus_retention_size: '50GB',
     prometheus_scrape_interval: '15s',
+    prometheus_storage_path: '',
     loki_retention_days: 7,
     grafana_admin_user: 'admin',
     grafana_admin_password: 'admin',
@@ -181,6 +183,7 @@ function MonitoringServers() {
       prometheus_retention_time: '15d',
       prometheus_retention_size: '50GB',
       prometheus_scrape_interval: '15s',
+      prometheus_storage_path: '',
       loki_retention_days: 7,
       grafana_admin_user: 'admin',
       grafana_admin_password: 'admin',
@@ -390,6 +393,25 @@ function MonitoringServers() {
                       onChange={e => setFormData(prev => ({ ...prev, grafana_port: parseInt(e.target.value) }))}
                     />
                   </div>
+                </div>
+              </div>
+
+              <div className="border-t pt-4 mt-4">
+                <h3 className="font-semibold mb-3">Prometheus Storage</h3>
+                <div>
+                  <label className="label">
+                    Data Directory (host path)
+                    <span className="ml-2 text-xs font-normal text-amd-gray-500">
+                      Leave blank to use default: ./data/prometheus
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    className="input"
+                    value={formData.prometheus_storage_path}
+                    onChange={e => setFormData(prev => ({ ...prev, prometheus_storage_path: e.target.value }))}
+                    placeholder="/mnt/fast-nvme/prometheus-data"
+                  />
                 </div>
               </div>
 
@@ -720,6 +742,12 @@ function MonitoringServers() {
                       <p className="text-sm text-amd-gray-500">Retention</p>
                       <p className="font-medium">{server.prometheus_retention_time}</p>
                     </div>
+                  </div>
+                  <div className="mb-4">
+                    <p className="text-sm text-amd-gray-500">Prometheus Storage Path</p>
+                    <p className="font-medium font-mono text-sm">
+                      {server.prometheus_storage_path || './data/prometheus (default)'}
+                    </p>
                   </div>
 
                   {/* SSH Credentials Section */}
