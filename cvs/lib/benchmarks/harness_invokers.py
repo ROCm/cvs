@@ -57,6 +57,7 @@ def _lm_eval(spec: BenchmarkSpec, hctx: HarnessCtx) -> str:
     task = spec.extra.get("task", spec.id)
     out_path = f"{hctx.output_dir}/{spec.id}"
     parts = [
+        "pip", "install", "-q", "lm-eval[api]>=0.4.4", "&&",
         "lm_eval",
         "--model", "local-completions",
         "--model_args",
@@ -66,7 +67,13 @@ def _lm_eval(spec: BenchmarkSpec, hctx: HarnessCtx) -> str:
         "--output_path", out_path,
         "--log_samples",
     ]
-    return " ".join(shlex.quote(p) for p in parts)
+    quoted = []
+    for tok in parts:
+        if tok == "&&":
+            quoted.append(tok)
+        else:
+            quoted.append(shlex.quote(tok))
+    return " ".join(quoted)
 
 
 def _vllm_bench_serve(spec: BenchmarkSpec, hctx: HarnessCtx) -> str:
