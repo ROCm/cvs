@@ -183,37 +183,10 @@ class GPUSoftwareCollector:
 
         return lib_info
 
-    async def collect_all_software_info(self, ssh_manager) -> Dict[str, Any]:
-        """
-        Collect all GPU software information.
-
-        OPTIMIZATION: Use minimal commands:
-        - amd-smi version --json (for ROCm, AMDSMI, and amdgpu driver versions)
-        - amd-smi firmware --json (for firmware versions per GPU)
-
-        amd-smi version --json output format:
-        [{
-            "tool": "AMDSMI Tool",
-            "version": "26.2.0+021c61fc",
-            "amdsmi_library_version": "26.2.0",
-            "rocm_version": "7.0.2",
-            "amdgpu_version": "6.16.6",
-            "amd_hsmp_driver_version": "N/A"
-        }]
-
-        Returns consolidated software info for all nodes.
-        """
-
-        logger.info("Collecting all GPU software information (optimized)")
-
-        # IMPORTANT: Run commands SEQUENTIALLY to avoid parallel-ssh thread safety issues
-        # asyncio.gather() was causing "munmap_chunk(): invalid pointer" crashes
-        version_output = await ssh_manager.exec_async("amd-smi version --json", timeout=60)
-        firmware_output = await ssh_manager.exec_async("amd-smi firmware --json", timeout=120)
-
-        # Parse amd-smi version --json output
+    def _parse_version_output(self, version_output: Dict[str, str]) -> Dict[str, Any]:
+        """Parse amd-smi version --json output into rocm_version_info dict."""
         rocm_version_info = {}
-        for host, out_str in (version_output if isinstance(version_output, dict) else {}).items():
+        for host, out_str in version_output.items():
             if not out_str.startswith("ERROR") and not out_str.startswith("ABORT"):
                 try:
                     version_data = json.loads(out_str.strip())
@@ -233,14 +206,40 @@ class GPUSoftwareCollector:
                     rocm_version_info[host] = {'rocm_version': 'N/A', 'amdgpu_version': 'N/A'}
             else:
                 rocm_version_info[host] = {'rocm_version': 'N/A', 'amdgpu_version': 'N/A'}
+        return rocm_version_info
 
-        # Parse firmware
-        gpu_firmware = self.parse_json_output(firmware_output) if isinstance(firmware_output, dict) else {}
+    async def collect_all_software_info(self, ssh_manager) -> Dict[str, Any]:
+        """
+        Collect all GPU software information.
 
-        software_info = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "rocm_version": rocm_version_info,
-            "gpu_firmware": gpu_firmware,
+        Fast path: Go binary collects amd-smi version + firmware from all nodes
+        simultaneously in parallel.
+
+        Fallback: sequential parallel-ssh calls.
+        """
+        import asyncio
+        from app.core.go_collector import collect_parallel
+
+        logger.info("Collecting all GPU software information (optimized)")
+
+        commands = {
+            "version": "amd-smi version --json",
+            "firmware": "amd-smi firmware --json",
         }
 
-        return software_info
+        go_results = await asyncio.to_thread(collect_parallel, ssh_manager, commands, 60)
+
+        if go_results is not None:
+            logger.info("GPU software collected via Go binary")
+            version_output = go_results.get("version", {})
+            firmware_output = go_results.get("firmware", {})
+        else:
+            logger.info("Falling back to sequential parallel-ssh for GPU software")
+            version_output = await ssh_manager.exec_async("amd-smi version --json", timeout=60)
+            firmware_output = await ssh_manager.exec_async("amd-smi firmware --json", timeout=120)
+
+        return {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "rocm_version": self._parse_version_output(version_output),
+            "gpu_firmware": self.parse_json_output(firmware_output),
+        }

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class LogsCollector:
     """Collects system error logs from dmesg."""
 
-    async def collect_dmesg_errors(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_dmesg_errors(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect critical system errors from dmesg.
 
@@ -29,7 +29,7 @@ class LogsCollector:
 
         cmd = "bash -c 'sudo dmesg --decode -T -l emerg,alert,crit,err 2>/dev/null || echo \"\"'"
         logger.info(f"Running command: {cmd}")
-        output = await ssh_manager.exec_async(cmd, timeout=60)
+        output = preloaded_output if preloaded_output is not None else await ssh_manager.exec_async(cmd, timeout=60)
 
         logger.info(f"Received output from {len(output)} nodes")
 
@@ -58,7 +58,7 @@ class LogsCollector:
         )
         return logs
 
-    async def collect_amd_logs(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_amd_logs(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect AMD-specific hardware and driver error logs from dmesg.
 
@@ -82,7 +82,7 @@ class LogsCollector:
         # cmd = """bash -c 'sudo dmesg --decode -T -l emerg,alert,crit,err,warn 2>/dev/null | grep -iE "PCIe|XGMI|amdgpu|epyc|cpu|ionic|bnxt|mlnx|mellanox|Link" 2>/dev/null || echo ""'"""
         cmd = """bash -c 'sudo dmesg --decode -T -l emerg,alert,crit,err,warn 2>/dev/null | grep -iE "PCIe|XGMI|amdgpu|epyc|cpu|ionic|bnxt|mlnx|mellanox|Link|error|fail" 2>/dev/null | grep -iv "vital buffer"  2>/dev/null || echo ""'"""
         logger.info(f"Running command: {cmd[:150]}...")
-        output = await ssh_manager.exec_async(cmd, timeout=60)
+        output = preloaded_output if preloaded_output is not None else await ssh_manager.exec_async(cmd, timeout=60)
 
         logger.info(f"Received output from {len(output)} nodes")
 
@@ -111,7 +111,7 @@ class LogsCollector:
         )
         return logs
 
-    async def collect_userspace_errors(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_userspace_errors(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect userspace errors including OOM, segfaults, crashes, and ML framework errors.
 
@@ -134,7 +134,7 @@ class LogsCollector:
         # Use -l to filter levels first, then egrep for userspace patterns
         cmd = """bash -c 'sudo dmesg --decode -T -l emerg,alert,crit,err,warn 2>/dev/null | egrep -i "oom|out of memory|killed process|segfault|general protection|call trace|bug:|hardware error|mce|stack trace|pytorch|torch|tensorflow|megatron|jax|vllm|sglang|triton.*error|triton.*exception|triton.*failed" 2>/dev/null || echo ""'"""
         logger.info(f"Running command: {cmd[:150]}...")
-        output = await ssh_manager.exec_async(cmd, timeout=60)
+        output = preloaded_output if preloaded_output is not None else await ssh_manager.exec_async(cmd, timeout=60)
 
         logger.info(f"Received output from {len(output)} nodes")
 
@@ -167,11 +167,29 @@ class LogsCollector:
         """
         Collect all system logs including AMD-specific hardware/driver logs.
         """
+        import asyncio
+        from app.core.go_collector import collect_parallel
+
         logger.info("Collecting all system logs")
 
-        amd_logs = await self.collect_amd_logs(ssh_manager)
-        dmesg_logs = await self.collect_dmesg_errors(ssh_manager)
-        userspace_logs = await self.collect_userspace_errors(ssh_manager)
+        commands = {
+            "amd_logs": """bash -c 'sudo dmesg --decode -T -l emerg,alert,crit,err,warn 2>/dev/null | grep -iE "PCIe|XGMI|amdgpu|epyc|cpu|ionic|bnxt|mlnx|mellanox|Link|error|fail" 2>/dev/null | grep -iv "vital buffer" 2>/dev/null || echo ""'""",
+            "dmesg_errors": "bash -c 'sudo dmesg --decode -T -l emerg,alert,crit,err 2>/dev/null || echo \"\"'",
+            "userspace_logs": """bash -c 'sudo dmesg --decode -T -l emerg,alert,crit,err,warn 2>/dev/null | egrep -i "oom|out of memory|killed process|segfault|general protection|call trace|bug:|hardware error|mce|stack trace|pytorch|torch|tensorflow|megatron|jax|vllm|sglang|triton.*error|triton.*exception|triton.*failed" 2>/dev/null || echo ""'""",
+        }
+
+        go_results = await asyncio.to_thread(collect_parallel, ssh_manager, commands, 60)
+
+        if go_results is not None:
+            logger.info("System logs collected via Go binary")
+            amd_logs = await self.collect_amd_logs(preloaded_output=go_results.get("amd_logs", {}))
+            dmesg_logs = await self.collect_dmesg_errors(preloaded_output=go_results.get("dmesg_errors", {}))
+            userspace_logs = await self.collect_userspace_errors(preloaded_output=go_results.get("userspace_logs", {}))
+        else:
+            logger.info("Falling back to sequential parallel-ssh for system logs")
+            amd_logs = await self.collect_amd_logs(ssh_manager)
+            dmesg_logs = await self.collect_dmesg_errors(ssh_manager)
+            userspace_logs = await self.collect_userspace_errors(ssh_manager)
 
         return {
             "timestamp": datetime.utcnow().isoformat() + "Z",

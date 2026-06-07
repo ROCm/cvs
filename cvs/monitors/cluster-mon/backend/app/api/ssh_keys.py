@@ -20,12 +20,20 @@ async def upload_ssh_key(file: UploadFile = File(...)) -> Dict[str, Any]:
     try:
         # Validate file
         if not file.filename:
+            logger.error("SSH key upload rejected: no filename provided")
             raise HTTPException(status_code=400, detail="No filename provided")
 
-        # Only allow common SSH key filenames for security
-        allowed_names = ["id_rsa", "id_ed25519", "id_ecdsa", "cluster_id_ed25519", "known_hosts", "config"]
-        if file.filename not in allowed_names:
-            raise HTTPException(status_code=400, detail=f"Invalid key filename. Allowed: {', '.join(allowed_names)}")
+        # Only allow safe SSH key filenames (alphanumeric, underscore, hyphen, dot)
+        import re
+
+        if not re.match(r'^[a-zA-Z0-9._-]+$', file.filename) or '/' in file.filename or '..' in file.filename:
+            logger.error(
+                f"SSH key upload rejected: invalid filename '{file.filename}'. Use only alphanumeric characters, underscores, hyphens, and dots."
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid key filename. Use only alphanumeric characters, underscores, hyphens, and dots.",
+            )
 
         # Create .ssh directory if it doesn't exist
         ssh_dir = Path("/root/.ssh")
@@ -77,6 +85,8 @@ async def upload_ssh_key(file: UploadFile = File(...)) -> Dict[str, Any]:
             "path": str(key_path),
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to upload SSH key: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to upload SSH key: {str(e)}")
@@ -118,9 +128,11 @@ async def delete_ssh_key(filename: str) -> Dict[str, Any]:
     Delete an SSH key from the container.
     """
     try:
-        # Security: only allow deleting SSH key files
-        allowed_names = ["id_rsa", "id_ed25519", "id_ecdsa", "cluster_id_ed25519", "known_hosts", "config"]
-        if filename not in allowed_names:
+        # Security: only allow deleting SSH key files with safe filenames
+        import re
+
+        if not re.match(r'^[a-zA-Z0-9._-]+$', filename) or '/' in filename or '..' in filename:
+            logger.error(f"SSH key delete rejected: invalid filename '{filename}'")
             raise HTTPException(status_code=400, detail="Invalid key filename")
 
         key_path = Path(f"/root/.ssh/{filename}")

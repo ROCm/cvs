@@ -1,5 +1,15 @@
 # Multi-stage build for CVS Cluster Monitor
-# Stage 1: Build React frontend
+
+# Stage 1: Build Go GPU collector binary
+FROM golang:1.22-alpine AS go-builder
+WORKDIR /go-src
+COPY go-collector/go.mod ./
+RUN go mod download golang.org/x/crypto
+COPY go-collector/ ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-s -w" -o /gpu-collector ./cmd/gpu-collector/
+
+# Stage 2: Build React frontend
 FROM node:18-slim AS frontend-builder
 
 WORKDIR /app/frontend
@@ -17,7 +27,7 @@ COPY frontend/ ./
 RUN npm run build
 
 
-# Stage 2: Main application image
+# Stage 3: Main application image
 FROM python:3.10-slim
 
 # Install system dependencies
@@ -42,6 +52,9 @@ COPY backend/app/ ./app/
 
 # Copy frontend build from builder stage
 COPY --from=frontend-builder /app/frontend/dist ./static
+
+# Copy Go binary from go-builder stage
+COPY --from=go-builder /gpu-collector /usr/local/bin/gpu-collector
 
 # Create config directory
 RUN mkdir -p /app/config

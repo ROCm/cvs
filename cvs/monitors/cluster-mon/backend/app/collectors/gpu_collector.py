@@ -5,7 +5,7 @@ Adapted from CVS rocm_plib.py
 
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -311,40 +311,75 @@ class GPUMetricsCollector:
 
         return pcie_info
 
+    _GPU_COMMANDS = {
+        "metric": "amd-smi metric --json",
+        "pcie": "amd-smi metric --pcie --json",
+        "xgmi": "amd-smi metric --xgmi-err --json",
+        "ecc": "amd-smi metric --ecc --json",
+    }
+
+    def _collect_via_go_binary(self, ssh_manager) -> Optional[Dict[str, Any]]:
+        """
+        Collect all GPU metrics via the Go binary (all nodes + all commands in parallel).
+        Returns the metrics dict or None if unavailable (falls back to parallel-ssh).
+        """
+        from app.core.go_collector import collect_parallel
+
+        results = collect_parallel(ssh_manager, self._GPU_COMMANDS, timeout=90)
+        if results is None:
+            return None
+
+        amd_smi_data = self.parse_json_output(results.get("metric", {}))
+        utilization = self._parse_utilization_from_amd_smi(amd_smi_data)
+        memory = self._parse_memory_from_amd_smi(amd_smi_data)
+        temperature = self._parse_temperature_from_amd_smi(amd_smi_data)
+        pcie_data = self.parse_json_output(results.get("pcie", {}))
+        xgmi_data = self.parse_json_output(results.get("xgmi", {}))
+        ecc_data = self.parse_json_output(results.get("ecc", {}))
+        pcie_info = self._parse_pcie_metrics_from_amd_smi(pcie_data)
+
+        return {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "utilization": utilization,
+            "memory": memory,
+            "temperature": temperature,
+            "power": amd_smi_data,
+            "pcie": pcie_info,
+            "xgmi": xgmi_data,
+            "ras_errors": ecc_data,
+            "pcie_link_status": pcie_info,
+            "info": amd_smi_data,
+        }
+
     async def collect_all_metrics(self, ssh_manager) -> Dict[str, Any]:
         """
         Collect all GPU metrics.
-        Optimized to call amd-smi metric --json once and parse all data from it.
 
-        Returns:
-            {
-                "timestamp": "2025-02-11T12:00:00Z",
-                "utilization": {...},
-                "memory": {...},
-                "temperature": {...},
-                "power": {...},
-                "pcie": {...},
-                "xgmi": {...},
-                "ras_errors": {...},
-                "info": {...}
-            }
+        Fast path: Go binary SSHes all nodes simultaneously, all commands
+        in parallel per node (~60-90s for 165 nodes).
+
+        Fallback: sequential parallel-ssh calls if binary unavailable.
         """
         import asyncio
 
         logger.info("Collecting all GPU metrics")
 
-        # OPTIMIZATION: Call amd-smi metric --json ONCE to get ALL data
-        # This single command includes: utilization, memory, temperature, PCIe, XGMI, and ECC metrics
+        # Fast path via Go binary
+        result = await asyncio.to_thread(self._collect_via_go_binary, ssh_manager)
+        if result is not None:
+            logger.info("GPU metrics collected via Go binary")
+            return result
+
+        # Fallback: original parallel-ssh sequential path
+        logger.info("Falling back to parallel-ssh for GPU metrics collection")
         logger.info("Calling amd-smi metric --json for comprehensive GPU data")
         amd_smi_output = await asyncio.to_thread(ssh_manager.exec, "amd-smi metric --json")
         amd_smi_data = self.parse_json_output(amd_smi_output)
 
-        # Parse all metrics from single amd-smi output
         utilization = self._parse_utilization_from_amd_smi(amd_smi_data)
         memory = self._parse_memory_from_amd_smi(amd_smi_data)
         temperature = self._parse_temperature_from_amd_smi(amd_smi_data)
 
-        # Call dedicated commands for PCIe and ECC for cleaner data
         logger.info("Collecting PCIe metrics with dedicated command")
         pcie_output = await asyncio.to_thread(ssh_manager.exec, "amd-smi metric --pcie --json")
         pcie_data = self.parse_json_output(pcie_output)
@@ -357,27 +392,23 @@ class GPUMetricsCollector:
         ecc_output = await asyncio.to_thread(ssh_manager.exec, "amd-smi metric --ecc --json")
         ecc_data = self.parse_json_output(ecc_output)
 
-        # Parse for frontend display
         pcie_info = self._parse_pcie_metrics_from_amd_smi(pcie_data)
 
         logger.info(f"Parsed PCIE data: {len(pcie_info)} nodes")
         logger.info(f"ECC data (raw): {len(ecc_data)} nodes")
 
-        # Package results
-        metrics = {
+        return {
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "utilization": utilization,
             "memory": memory,
             "temperature": temperature,
-            "power": amd_smi_data,  # Power is in the main amd-smi output
-            "pcie": pcie_info,  # Parsed PCIE data
+            "power": amd_smi_data,
+            "pcie": pcie_info,
             "xgmi": xgmi_data,
-            "ras_errors": ecc_data,  # Raw ECC data from dedicated command
-            "pcie_link_status": pcie_info,  # For backward compatibility
-            "info": amd_smi_data,  # GPU info also in amd-smi output
+            "ras_errors": ecc_data,
+            "pcie_link_status": pcie_info,
+            "info": amd_smi_data,
         }
-
-        return metrics
 
     def _parse_utilization_from_amd_smi(self, amd_smi_data: Dict) -> Dict:
         """Parse utilization from amd-smi metric output."""

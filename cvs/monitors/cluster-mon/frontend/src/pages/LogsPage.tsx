@@ -3,6 +3,16 @@ import { RefreshCw, FileText, AlertCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { CustomDataTable } from '@/components/ui/DataTable'
 
+// Module-level cache — survives React Router navigation (component unmount/remount)
+const LOGS_CACHE_TTL_MS = 180_000  // 3 minutes, matches backend TTL
+let _logsCache: {
+  amdLogs: any[]
+  systemLogs: any[]
+  userspaceLogs: any[]
+  lastUpdate: string
+  fetchedAt: number
+} | null = null
+
 export function LogsPage() {
   const [amdLogs, setAmdLogs] = useState<any[]>([])
   const [systemLogs, setSystemLogs] = useState<any[]>([])
@@ -17,56 +27,56 @@ export function LogsPage() {
   const [isSearching, setIsSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
 
-  const fetchLogs = async () => {
+  const applyCache = (cache: NonNullable<typeof _logsCache>) => {
+    setAmdLogs(cache.amdLogs)
+    setSystemLogs(cache.systemLogs)
+    setUserspaceLogs(cache.userspaceLogs)
+    setLastUpdate(cache.lastUpdate)
+  }
+
+  const fetchLogs = async (forceRefresh = false) => {
+    // Return immediately from module-level cache if still fresh
+    if (!forceRefresh && _logsCache && (Date.now() - _logsCache.fetchedAt) < LOGS_CACHE_TTL_MS) {
+      applyCache(_logsCache)
+      return
+    }
+
     setLoading(true)
     setError(null)
     try {
       const response = await fetch('/api/logs/dmesg')
       const data = await response.json()
 
-      // Transform AMD logs data into table format
-      const amdLogsArray: any[] = []
-      if (data.amd_logs) {
-        Object.entries(data.amd_logs).forEach(([node, logOutput]: [string, any]) => {
-          if (typeof logOutput === 'string' && logOutput.trim()) {
-            amdLogsArray.push({
-              node,
-              logs: logOutput,
-            })
-          }
-        })
+      const toRows = (section: any) => {
+        const rows: any[] = []
+        if (section) {
+          Object.entries(section).forEach(([node, logOutput]: [string, any]) => {
+            if (typeof logOutput === 'string' && logOutput.trim()) {
+              rows.push({ node, logs: logOutput })
+            }
+          })
+        }
+        return rows
       }
 
-      // Transform system errors data into table format
-      const systemLogsArray: any[] = []
-      if (data.dmesg_errors) {
-        Object.entries(data.dmesg_errors).forEach(([node, logOutput]: [string, any]) => {
-          if (typeof logOutput === 'string' && logOutput.trim()) {
-            systemLogsArray.push({
-              node,
-              logs: logOutput,
-            })
-          }
-        })
-      }
+      const amdLogsArray      = toRows(data.amd_logs)
+      const systemLogsArray   = toRows(data.dmesg_errors)
+      const userspaceLogsArray = toRows(data.userspace_errors)
+      const update = new Date().toLocaleString()
 
-      // Transform userspace errors data into table format
-      const userspaceLogsArray: any[] = []
-      if (data.userspace_errors) {
-        Object.entries(data.userspace_errors).forEach(([node, logOutput]: [string, any]) => {
-          if (typeof logOutput === 'string' && logOutput.trim()) {
-            userspaceLogsArray.push({
-              node,
-              logs: logOutput,
-            })
-          }
-        })
+      // Store in module-level cache
+      _logsCache = {
+        amdLogs:      amdLogsArray,
+        systemLogs:   systemLogsArray,
+        userspaceLogs: userspaceLogsArray,
+        lastUpdate:   update,
+        fetchedAt:    Date.now(),
       }
 
       setAmdLogs(amdLogsArray)
       setSystemLogs(systemLogsArray)
       setUserspaceLogs(userspaceLogsArray)
-      setLastUpdate(new Date().toLocaleString())
+      setLastUpdate(update)
     } catch (err: any) {
       console.error('Failed to fetch logs:', err)
       setError(err.message || 'Failed to fetch logs')
@@ -129,12 +139,10 @@ export function LogsPage() {
   }
 
   useEffect(() => {
-    // Clear search results when page loads
     setGrepCommand('')
     setSearchResults([])
     setSearchError(null)
-
-    fetchLogs()
+    fetchLogs()  // uses cache if fresh, fetches otherwise
   }, [])
 
   return (
@@ -146,7 +154,7 @@ export function LogsPage() {
           <p className="text-gray-600">Critical system errors from dmesg (emerg, alert, crit, err)</p>
         </div>
         <button
-          onClick={fetchLogs}
+          onClick={() => fetchLogs(true)}
           disabled={loading}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
         >

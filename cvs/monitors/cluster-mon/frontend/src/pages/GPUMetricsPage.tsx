@@ -33,7 +33,20 @@ export function GPUMetricsPage() {
     const powerData = latestMetrics.gpu.power || {}
 
     Object.entries(utilData).forEach(([node, gpuData]: [string, any]) => {
-      if (typeof gpuData === 'object' && !gpuData.error) {
+      if (typeof gpuData === 'object' && gpuData.error) {
+        // Node had a collection error — show one row with dashes so it's visible in the table
+        data.push({
+          node,
+          gpu: '-',
+          utilization: null,
+          memUsed: null,
+          memTotal: null,
+          memPercent: null,
+          temperature: null,
+          power: null,
+          error: gpuData.error,
+        })
+      } else if (typeof gpuData === 'object' && !gpuData.error) {
         Object.entries(gpuData).forEach(([gpuId, metrics]: [string, any]) => {
           if (typeof metrics === 'object') {
             const memMetrics = memData[node]?.[gpuId] || {}
@@ -55,6 +68,7 @@ export function GPUMetricsPage() {
               memPercent,
               temperature: temp,
               power: 0,
+              error: null,
             })
           }
         })
@@ -90,16 +104,15 @@ export function GPUMetricsPage() {
 
     // Use pcie_link_status for actual link info, pcie for error counters
     Object.entries(pcieLinkData).forEach(([node, gpuData]: [string, any]) => {
-      if (typeof gpuData === 'object') {
+      if (typeof gpuData === 'object' && gpuData.error) {
+        data.push({
+          node, gpu: '-', width: '-', speed: '-', bandwidth: '-',
+          replay_count: '-', l0_to_recovery_count: '-', nak_sent: '-', nak_received: '-',
+          error: gpuData.error,
+        })
+      } else if (typeof gpuData === 'object') {
         Object.entries(gpuData).forEach(([gpuId, linkInfo]: [string, any]) => {
-          // Get error metrics from pcie data
-          const pcieErrors = pcieMetricData[node]?.gpu_data?.find((g: any) =>
-            `card${g.gpu}` === gpuId
-          )?.pcie || {}
-
-          // Use pcie data directly (has all fields)
           const pcieData = pcieMetricData[node]?.[gpuId] || linkInfo
-
           data.push({
             node,
             gpu: gpuId,
@@ -110,6 +123,7 @@ export function GPUMetricsPage() {
             l0_to_recovery_count: pcieData.l0_to_recovery_count || 0,
             nak_sent: pcieData.nak_sent_count || 0,
             nak_received: pcieData.nak_received_count || 0,
+            error: null,
           })
         })
       }
@@ -138,26 +152,18 @@ export function GPUMetricsPage() {
     })
 
     Object.entries(latestMetrics.gpu.xgmi).forEach(([node, nodeData]: [string, any]) => {
-      // Handle both formats: direct array or wrapped in gpu_data
+      if (typeof nodeData === 'object' && nodeData.error) {
+        data.push({ node, gpu: '-', error_count: '-', status: '⚠ Error', error: nodeData.error })
+        return
+      }
       const gpuArray = Array.isArray(nodeData) ? nodeData : (nodeData.gpu_data || [])
-
       if (Array.isArray(gpuArray)) {
         gpuArray.forEach((gpu: any) => {
           const xgmi = gpu.xgmi_err || gpu.xgmi
           if (xgmi && xgmi !== 'N/A' && typeof xgmi === 'object') {
-            data.push({
-              node,
-              gpu: `card${gpu.gpu || 0}`,
-              error_count: xgmi.error_count || 0,
-              status: xgmi.status || 'N/A',
-            })
+            data.push({ node, gpu: `card${gpu.gpu || 0}`, error_count: xgmi.error_count || 0, status: xgmi.status || 'N/A', error: null })
           } else {
-            data.push({
-              node,
-              gpu: `card${gpu.gpu || 0}`,
-              error_count: 0,
-              status: xgmi === 'N/A' ? 'N/A' : 'No errors',
-            })
+            data.push({ node, gpu: `card${gpu.gpu || 0}`, error_count: 0, status: xgmi === 'N/A' ? 'N/A' : 'No errors', error: null })
           }
         })
       }
@@ -171,14 +177,22 @@ export function GPUMetricsPage() {
     if (!latestMetrics?.gpu?.ras_errors) return data
 
     Object.entries(latestMetrics.gpu.ras_errors).forEach(([node, nodeData]: [string, any]) => {
-      // Handle both formats: direct array or wrapped in gpu_data
+      if (typeof nodeData === 'object' && nodeData.error) {
+        data.push({
+          node, gpu: '-',
+          total_correctable: '-', total_uncorrectable: '-',
+          cache_correctable: '-', cache_uncorrectable: '-',
+          umc_correctable: '-', umc_uncorrectable: '-',
+          gfx_correctable: '-', gfx_uncorrectable: '-',
+          error: nodeData.error,
+        })
+        return
+      }
       const gpuArray = Array.isArray(nodeData) ? nodeData : (nodeData.gpu_data || [])
-
       if (Array.isArray(gpuArray)) {
         gpuArray.forEach((gpu: any) => {
           const ecc = gpu.ecc || {}
           const ecc_blocks = gpu.ecc_blocks || {}
-
           data.push({
             node,
             gpu: `card${gpu.gpu || 0}`,
@@ -190,6 +204,7 @@ export function GPUMetricsPage() {
             umc_uncorrectable: ecc_blocks.UMC?.uncorrectable_count || 0,
             gfx_correctable: ecc_blocks.GFX?.correctable_count || 0,
             gfx_uncorrectable: ecc_blocks.GFX?.uncorrectable_count || 0,
+            error: null,
           })
         })
       }
@@ -211,7 +226,8 @@ export function GPUMetricsPage() {
       title: 'Utilization',
       data: 'utilization',
       className: 'dt-right',
-      render: (data: number) => {
+      render: (data: number | null) => {
+        if (data === null) return '<span class="text-gray-400">-</span>'
         const color = data > 90 ? 'text-red-600' : data > 70 ? 'text-yellow-600' : 'text-green-600'
         return `<span class="${color} font-medium">${formatPercentage(data)}</span>`
       },
@@ -220,25 +236,26 @@ export function GPUMetricsPage() {
       title: 'Memory Used',
       data: 'memUsed',
       className: 'dt-right',
-      render: (data: number) => `<span class="font-mono text-xs">${formatBytes(data)}</span>`,
+      render: (data: number | null) => data === null ? '<span class="text-gray-400">-</span>' : `<span class="font-mono text-xs">${formatBytes(data)}</span>`,
     },
     {
       title: 'Memory Total',
       data: 'memTotal',
       className: 'dt-right',
-      render: (data: number) => `<span class="font-mono text-xs">${formatBytes(data)}</span>`,
+      render: (data: number | null) => data === null ? '<span class="text-gray-400">-</span>' : `<span class="font-mono text-xs">${formatBytes(data)}</span>`,
     },
     {
       title: 'Memory %',
       data: 'memPercent',
       className: 'dt-right',
-      render: (data: number) => formatPercentage(data),
+      render: (data: number | null) => data === null ? '<span class="text-gray-400">-</span>' : formatPercentage(data),
     },
     {
       title: 'Temperature',
       data: 'temperature',
       className: 'dt-right',
-      render: (data: number) => {
+      render: (data: number | null) => {
+        if (data === null) return '<span class="text-gray-400">-</span>'
         const color = data > 85 ? 'text-red-600 font-medium' : data > 70 ? 'text-yellow-600' : 'text-gray-900'
         return `<span class="${color}">${formatTemperature(data)}</span>`
       },
@@ -247,7 +264,15 @@ export function GPUMetricsPage() {
       title: 'Power',
       data: 'power',
       className: 'dt-right',
-      render: (data: number) => data > 0 ? formatPower(data) : '-',
+      render: (data: number | null) => (data === null || data === 0) ? '<span class="text-gray-400">-</span>' : formatPower(data),
+    },
+    {
+      title: 'Status',
+      data: 'error',
+      className: 'dt-left',
+      render: (data: string | null) => data
+        ? `<span class="text-red-600 text-xs" title="${data.replace(/"/g, '&quot;')}">⚠ Error</span>`
+        : '<span class="text-green-600 text-xs">OK</span>',
     },
   ]
 
@@ -406,9 +431,12 @@ export function GPUMetricsPage() {
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold">
-                {formatPercentage(
-                  gpuData.reduce((sum, g) => sum + g.utilization, 0) / gpuData.length
-                )}
+                {(() => {
+                  const valid = gpuData.filter(g => typeof g.utilization === 'number')
+                  return valid.length > 0
+                    ? formatPercentage(valid.reduce((sum, g) => sum + g.utilization, 0) / valid.length)
+                    : '-'
+                })()}
               </div>
               <p className="text-xs text-gray-600">Avg Utilization</p>
             </CardContent>
@@ -416,9 +444,12 @@ export function GPUMetricsPage() {
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold">
-                {formatTemperature(
-                  gpuData.reduce((sum, g) => sum + g.temperature, 0) / gpuData.length
-                )}
+                {(() => {
+                  const valid = gpuData.filter(g => typeof g.temperature === 'number' && g.temperature > 0)
+                  return valid.length > 0
+                    ? formatTemperature(valid.reduce((sum, g) => sum + g.temperature, 0) / valid.length)
+                    : '-'
+                })()}
               </div>
               <p className="text-xs text-gray-600">Avg Temperature</p>
             </CardContent>
@@ -426,7 +457,7 @@ export function GPUMetricsPage() {
           <Card>
             <CardContent className="pt-6">
               <div className="text-2xl font-bold">
-                {eccData.reduce((sum, e) => sum + e.total_uncorrectable, 0)}
+                {eccData.reduce((sum, e) => sum + (typeof e.total_uncorrectable === 'number' ? e.total_uncorrectable : 0), 0)}
               </div>
               <p className="text-xs text-gray-600">Total ECC Errors</p>
             </CardContent>
