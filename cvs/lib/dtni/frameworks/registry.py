@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cvs.frameworks.vllm_single_adapter import VllmAdapter
+from cvs.lib.dtni.frameworks.vllm_single_adapter import VllmAdapter
 from cvs.lib.dtni.base_adapter import BaseWorkloadAdapter
 
 FRAMEWORK_REGISTRY: dict[str, type[BaseWorkloadAdapter]] = {

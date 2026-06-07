@@ -17,7 +17,7 @@ from typing import Any
 
 import pandas as pd
 
-from cvs.frameworks.registry import FRAMEWORK_REGISTRY
+from cvs.lib.dtni.frameworks.registry import FRAMEWORK_REGISTRY
 from cvs.lib.dtni.arch_detect import detect_arch_via
 from cvs.lib.dtni.artifact_writer import artifact_basename, utc_compact_ts, write_artifacts
 from cvs.lib.dtni.catalog import load_catalog
