@@ -1,3 +1,4 @@
+# Adapter contract: see cvs/lib/dtni/docs/framework/01_adapter_contract.md
 """DTNI v1 BaseWorkloadAdapter — trimmed from dev/dtni.
 
 Differences vs dev/dtni:

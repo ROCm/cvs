@@ -1,4 +1,4 @@
-"""DTNI v1 Job — 7-phase driver, slim verdict.json output.
+"""DTNI v1 Job — 5 adapter phases (prepare, launch, await_completion, parse, teardown) plus inline verify; slim verdict.json output.
 
 Phases: prepare, launch, await, parse, verify, teardown (always).
 On failure: WorkloadError raised, phase tagged, verdict.json records

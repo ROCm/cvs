@@ -1,3 +1,4 @@
+# New harness: see cvs/lib/dtni/docs/add_harness.md  |  New benchmark in existing harness: see cvs/lib/dtni/docs/add_benchmark.md
 """Build the in-container command for each benchmark harness.
 
 Two invokers in v1:

@@ -1,3 +1,4 @@
+# Framework registration: see cvs/lib/dtni/docs/framework/04_registry_and_test_entrypoint.md
 """Framework registry. Maps framework name -> adapter class."""
 
 from __future__ import annotations

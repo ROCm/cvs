@@ -1,3 +1,4 @@
+# Benchmark recipe: see cvs/lib/dtni/docs/add_benchmark.md
 """BENCHMARK_REGISTRY — accuracy + perf in v1.
 
 Per ``cvs-dtni-v1-spec.md`` and the DTNI Validation Tracker §"PERFORMANCE
