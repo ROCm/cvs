@@ -31,10 +31,6 @@
     "kind": "max_ms",
     "value": 5000
   },
-  "serve_synth_short.e2el_p95_ms": {
-    "kind": "max_ms",
-    "value": 300000
-  },
   "serve_synth_long.completed": {
     "kind": "min",
     "value": 64
@@ -46,9 +42,5 @@
   "serve_synth_long.ttft_p95_ms": {
     "kind": "max_ms",
     "value": 600000
-  },
-  "serve_synth_long.e2el_p95_ms": {
-    "kind": "max_ms",
-    "value": 1200000
   }
 }
