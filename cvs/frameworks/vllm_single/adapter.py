@@ -116,7 +116,7 @@ class VllmAdapter(BaseWorkloadAdapter):
             f"curl -s -X POST http://localhost:{port}/v1/completions "
             f"-H 'Content-Type: application/json' "
             f"-d {shlex.quote(body)}; "
-            f"t1=$(date +%s.%N); "
+            f"echo; t1=$(date +%s.%N); "
             f"echo \"ELAPSED=$(echo $t1 - $t0 | bc)\""
         )
         out = executor.exec(cmd, timeout=300)
