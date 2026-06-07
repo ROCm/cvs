@@ -181,8 +181,29 @@ def load_workload(
         sugg = catalog.suggest("dataset", wl.dataset.id)
         hint = f" did you mean {sugg!r}?" if sugg else ""
         raise CatalogError(f"{path}: unknown dataset.id {wl.dataset.id!r}.{hint}")
-    # benchmark check deferred to whoever imports BENCHMARK_REGISTRY
+    _validate_benchmarks(path, wl.benchmarks)
     return wl
+
+
+def _validate_benchmarks(path: Path, benchmarks: list[str]) -> None:
+    """Reject unknown benchmark ids at load with a did-you-mean hint.
+
+    Imported lazily to avoid a config_loader -> benchmarks import cycle if
+    a benchmark module ever needs config types.
+    """
+    if not benchmarks:
+        return
+    import difflib
+
+    from cvs.lib.benchmarks.registry import BENCHMARK_REGISTRY
+
+    known = sorted(BENCHMARK_REGISTRY)
+    for bid in benchmarks:
+        if bid in BENCHMARK_REGISTRY:
+            continue
+        sugg = difflib.get_close_matches(bid, known, n=1, cutoff=0.6)
+        hint = f" did you mean {sugg[0]!r}?" if sugg else f" known: {known}"
+        raise CatalogError(f"{path}: unknown benchmark id {bid!r}.{hint}")
 
 
 # ---------- thresholds ----------
