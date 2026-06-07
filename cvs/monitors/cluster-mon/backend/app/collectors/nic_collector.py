@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class NICMetricsCollector:
     """Collects NIC metrics via rdma, ethtool, and ip commands."""
 
-    async def collect_rdma_links(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_rdma_links(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect RDMA link information.
 
@@ -33,7 +33,7 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting RDMA link info")
-        output = ssh_manager.exec("rdma link", timeout=60)
+        output = preloaded_output if preloaded_output is not None else ssh_manager.exec("rdma link", timeout=60)
 
         rdma_dict = {}
         for node, out_str in output.items():
@@ -59,7 +59,7 @@ class NICMetricsCollector:
 
         return rdma_dict
 
-    async def collect_rdma_stats(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_rdma_stats(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect RDMA statistics including congestion control metrics.
 
@@ -81,8 +81,11 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting RDMA statistics (includes congestion control metrics)")
-        # Use bash -c to properly handle shell redirection and || operator
-        output = ssh_manager.exec("bash -c 'rdma statistic show --json 2>/dev/null || echo \"{}\"'", timeout=60)
+        output = (
+            preloaded_output
+            if preloaded_output is not None
+            else ssh_manager.exec("bash -c 'rdma statistic show --json 2>/dev/null || echo \"{}\"'", timeout=60)
+        )
 
         logger.info(f"RDMA stats output received from {len(output)} nodes")
 
@@ -135,7 +138,9 @@ class NICMetricsCollector:
         logger.info(f"RDMA stats collection complete: {len(rdma_stats)} nodes with data")
         return rdma_stats
 
-    async def collect_ethtool_stats(self, ssh_manager, interfaces: Dict[str, list] = None) -> Dict[str, Any]:
+    async def collect_ethtool_stats(
+        self, ssh_manager=None, interfaces: Dict[str, list] = None, preloaded_output=None
+    ) -> Dict[str, Any]:
         """
         Collect network interface statistics using 'ip -s link' (optimized).
 
@@ -162,10 +167,7 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting network statistics via 'ip -s link' (optimized)")
-
-        # Run 'ip -s link' once per node to get all interface stats
-        cmd = "ip -s link show"
-        output = ssh_manager.exec(cmd, timeout=60)
+        output = preloaded_output if preloaded_output is not None else ssh_manager.exec("ip -s link show", timeout=60)
 
         eth_stats = {}
 
@@ -243,7 +245,7 @@ class NICMetricsCollector:
 
         return eth_stats
 
-    async def collect_ip_addr(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_ip_addr(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect IP address information.
 
@@ -263,7 +265,11 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting IP address info")
-        output = ssh_manager.exec("bash -c 'ip addr show | grep -A 5 mtu --color=never'", timeout=60)
+        output = (
+            preloaded_output
+            if preloaded_output is not None
+            else ssh_manager.exec("bash -c 'ip addr show | grep -A 5 mtu --color=never'", timeout=60)
+        )
 
         ip_dict = {}
 
@@ -320,7 +326,7 @@ class NICMetricsCollector:
 
         return ip_dict
 
-    async def collect_lldp(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_lldp(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect LLDP neighbor information (if lldpctl is available).
 
@@ -338,8 +344,11 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting LLDP info")
-        # Use bash -c to properly handle shell redirection and || operator
-        output = ssh_manager.exec("bash -c 'sudo lldpctl -f json 2>/dev/null || echo \"{}\"'", timeout=60)
+        output = (
+            preloaded_output
+            if preloaded_output is not None
+            else ssh_manager.exec("bash -c 'sudo lldpctl -f json 2>/dev/null || echo \"{}\"'", timeout=60)
+        )
 
         lldp_dict = {}
         for node, out_str in output.items():
@@ -435,48 +444,57 @@ class NICMetricsCollector:
             }
         """
 
+        import asyncio
+        from app.core.go_collector import collect_parallel
+
         logger.info("Collecting all NIC metrics")
 
-        # Collect SEQUENTIALLY (one command completes before next starts)
-        rdma_links = await self.collect_rdma_links(ssh_manager)
-        rdma_stats = await self.collect_rdma_stats(ssh_manager)
-        ip_addr = await self.collect_ip_addr(ssh_manager)
-        lldp = await self.collect_lldp(ssh_manager)
-        results = [rdma_links, rdma_stats, ip_addr, lldp]
+        commands = {
+            "rdma_links": "rdma link",
+            "rdma_stats": "bash -c 'rdma statistic show --json 2>/dev/null || echo \"{}\"'",
+            "ip_addr": "bash -c 'ip addr show | grep -A 5 mtu --color=never'",
+            "lldp": "bash -c 'sudo lldpctl -f json 2>/dev/null || echo \"{}\"'",
+            "ip_stats": "ip -s link show",
+            "rdma_res": "rdma res",
+        }
 
-        # Get interface info first for ethtool
-        ip_data = results[2] if not isinstance(results[2], Exception) else {}
+        go_results = await asyncio.to_thread(collect_parallel, ssh_manager, commands, 60)
 
-        # Build interface list for ethtool
-        interfaces = {}
-        for node, iface_data in ip_data.items():
-            if isinstance(iface_data, dict) and "error" not in iface_data:
-                interfaces[node] = list(iface_data.keys())
+        if go_results is not None:
+            logger.info("NIC metrics collected via Go binary")
+            rdma_links = await self.collect_rdma_links(preloaded_output=go_results.get("rdma_links", {}))
+            rdma_stats = await self.collect_rdma_stats(preloaded_output=go_results.get("rdma_stats", {}))
+            ip_addr = await self.collect_ip_addr(preloaded_output=go_results.get("ip_addr", {}))
+            lldp = await self.collect_lldp(preloaded_output=go_results.get("lldp", {}))
+            ethtool_stats = await self.collect_ethtool_stats(preloaded_output=go_results.get("ip_stats", {}))
+            rdma_res = await self.collect_rdma_resources(preloaded_output=go_results.get("rdma_res", {}))
+        else:
+            logger.info("Falling back to sequential parallel-ssh for NIC metrics")
+            rdma_links = await self.collect_rdma_links(ssh_manager)
+            rdma_stats = await self.collect_rdma_stats(ssh_manager)
+            ip_addr = await self.collect_ip_addr(ssh_manager)
+            lldp = await self.collect_lldp(ssh_manager)
+            interfaces = {
+                node: list(iface_data.keys())
+                for node, iface_data in ip_addr.items()
+                if isinstance(iface_data, dict) and "error" not in iface_data
+            }
+            ethtool_stats = await self.collect_ethtool_stats(ssh_manager, interfaces)
+            rdma_res = await self.collect_rdma_resources(ssh_manager)
 
-        # Collect ethtool stats with interface list
-        ethtool_stats = await self.collect_ethtool_stats(ssh_manager, interfaces)
+        filtered_lldp = self._filter_lldp_by_rdma(lldp, rdma_links)
 
-        # Collect RDMA resources
-        rdma_res = await self.collect_rdma_resources(ssh_manager)
-
-        # Filter LLDP data to only include RDMA interfaces
-        rdma_links_data = results[0] if not isinstance(results[0], Exception) else {}
-        lldp_data = results[3] if not isinstance(results[3], Exception) else {}
-        filtered_lldp = self._filter_lldp_by_rdma(lldp_data, rdma_links_data)
-
-        metrics = {
+        return {
             "timestamp": datetime.utcnow().isoformat() + "Z",
-            "rdma_links": rdma_links_data,
-            "rdma_stats": results[1] if not isinstance(results[1], Exception) else {},
+            "rdma_links": rdma_links,
+            "rdma_stats": rdma_stats,
             "rdma_resources": rdma_res,
-            "ip_addr": ip_data,
+            "ip_addr": ip_addr,
             "lldp": filtered_lldp,
             "ethtool_stats": ethtool_stats,
         }
 
-        return metrics
-
-    async def collect_rdma_resources(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_rdma_resources(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect RDMA resources (pd, cq, qp, mr, etc.).
 
@@ -490,7 +508,7 @@ class NICMetricsCollector:
             }
         """
         logger.info("Collecting RDMA resources")
-        output = ssh_manager.exec("rdma res", timeout=60)
+        output = preloaded_output if preloaded_output is not None else ssh_manager.exec("rdma res", timeout=60)
 
         rdma_res = {}
         for node, out_str in output.items():

@@ -38,8 +38,8 @@ export function CustomDataTable({
         pageLength: defaultPageLength,
         lengthMenu: pageLengthOptions,
         order: [[0, 'asc']], // Default sort by first column
-        responsive: true,
-        autoWidth: false,
+        scrollX: true,       // Enable horizontal scrolling
+        autoWidth: true,     // Let DataTables size columns to content
         language: {
           search: 'Search:',
           lengthMenu: 'Show _MENU_ entries per page',
@@ -69,8 +69,8 @@ export function CustomDataTable({
   }, [data, columns, defaultPageLength, pageLengthOptions])
 
   return (
-    <div className={`datatable-wrapper ${className}`}>
-      <table ref={tableRef} className="display stripe hover" style={{ width: '100%' }}>
+    <div className={`datatable-wrapper overflow-x-auto ${className}`}>
+      <table ref={tableRef} className="display stripe hover" style={{ width: '100%', minWidth: 'max-content' }}>
         <thead>
           <tr>
             {columns.map((col, idx) => (
@@ -175,13 +175,29 @@ export function CustomDataTable({
           font-size: 0.875rem;
         }
 
+        /* Horizontal scroll */
+        .datatable-wrapper .dataTables_wrapper .dataTables_scroll {
+          overflow-x: auto;
+        }
+
+        .datatable-wrapper .dataTables_wrapper .dataTables_scrollBody {
+          overflow-x: auto !important;
+        }
+
         /* Text alignment classes */
-        .datatable-wrapper table.dataTable td.dt-right {
+        .datatable-wrapper table.dataTable td.dt-right,
+        .datatable-wrapper table.dataTable th.dt-right {
           text-align: right;
         }
 
-        .datatable-wrapper table.dataTable td.dt-center {
+        .datatable-wrapper table.dataTable td.dt-center,
+        .datatable-wrapper table.dataTable th.dt-center {
           text-align: center;
+        }
+
+        .datatable-wrapper table.dataTable td.dt-left,
+        .datatable-wrapper table.dataTable th.dt-left {
+          text-align: left;
         }
       `}</style>
     </div>

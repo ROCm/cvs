@@ -16,7 +16,49 @@ logger = logging.getLogger(__name__)
 class NICSoftwareCollector:
     """Collects NIC software, firmware, and detailed statistics."""
 
-    async def collect_nic_firmware_version(self, ssh_manager) -> Dict[str, Any]:
+    # Combined single-command versions of each collection (used by Go binary fast path)
+    _CMD_FIRMWARE = (
+        r"bash -c '"
+        r"for iface in $(ip -o link show | awk -F\": \" \"{print \$2}\" | grep -v lo | grep -v @ | head -10); do "
+        r"printf \"===IFACE:%s===\n\" \"$iface\"; "
+        r"sudo ethtool -i \"$iface\" 2>/dev/null; "
+        r"done'"
+    )
+    _CMD_DRIVERS = (
+        r"bash -c '"
+        r"printf \"===DRIVER:mlx5_core===\n\"; modinfo mlx5_core 2>/dev/null | grep -E \"^version|^firmware\" | head -3; "
+        r"printf \"===DRIVER:bnxt_en===\n\"; modinfo bnxt_en 2>/dev/null | grep -E \"^version|^firmware\" | head -3; "
+        r"printf \"===DRIVER:amd-ainic===\n\"; modinfo amd-ainic 2>/dev/null | grep -E \"^version|^firmware\" | head -3 || printf \"not loaded\n\"'"
+    )
+    _CMD_RDMA = "bash -c 'rdma statistic show --json 2>/dev/null || echo \"[]\"'"
+    _CMD_ETHTOOL = (
+        r"bash -c '"
+        r"for iface in $(ip -o link show | awk -F\": \" \"{print \$2}\" | grep -v lo | grep -v @ | head -10); do "
+        r"printf \"===IFACE:%s===\n\" \"$iface\"; "
+        r"sudo ethtool -S \"$iface\" 2>/dev/null; "
+        r"done'"
+    )
+    _CMD_PCI = "bash -c \"lspci -nn | grep -i 'network\\|ethernet'\""
+
+    @staticmethod
+    def _parse_iface_sections(output_str: str) -> Dict[str, str]:
+        """Split combined per-interface output into {iface: raw_block} dict."""
+        sections: Dict[str, str] = {}
+        current: str | None = None
+        lines: list = []
+        for line in output_str.split('\n'):
+            if line.startswith('===IFACE:') and line.endswith('==='):
+                if current is not None:
+                    sections[current] = '\n'.join(lines)
+                current = line[9:-3]
+                lines = []
+            elif current is not None:
+                lines.append(line)
+        if current is not None:
+            sections[current] = '\n'.join(lines)
+        return sections
+
+    async def collect_nic_firmware_version(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect NIC firmware versions.
 
@@ -24,25 +66,39 @@ class NICSoftwareCollector:
         """
         logger.info("Collecting NIC firmware versions")
 
-        # First get list of interfaces
+        if preloaded_output is not None:
+            # Combined output: one string per host containing all interfaces
+            firmware_info = {}
+            for host, combined_str in preloaded_output.items():
+                if not combined_str or combined_str.startswith("ERROR") or combined_str.startswith("ABORT"):
+                    firmware_info[host] = {"error": combined_str}
+                    continue
+                firmware_info[host] = {}
+                for iface, block in self._parse_iface_sections(combined_str).items():
+                    info = {}
+                    for line in block.split("\n"):
+                        if ":" in line:
+                            key, value = line.split(":", 1)
+                            key = key.strip().lower().replace(" ", "_")
+                            info[key] = value.strip()
+                    if info:
+                        firmware_info[host][iface] = info
+            return firmware_info
+
+        # Fallback: original sequential parallel-ssh approach
         ip_output = await ssh_manager.exec_async(
             "bash -c \"ip -o link show | awk -F': ' '{print \\$2}' | grep -v lo\"", timeout=60
         )
-
         firmware_info = {}
-
         for host, ifaces_str in ip_output.items():
             if ifaces_str.startswith("ERROR") or ifaces_str.startswith("ABORT"):
                 firmware_info[host] = {"error": ifaces_str}
                 continue
-
             firmware_info[host] = {}
             interfaces = [i.strip() for i in ifaces_str.split("\n") if i.strip() and "@" not in i]
-
-            for iface in interfaces[:10]:  # Limit to first 10 interfaces
+            for iface in interfaces[:10]:
                 cmd = f"sudo ethtool -i {iface} 2>/dev/null"
                 output = await ssh_manager.exec_async(cmd, timeout=60)
-
                 if host in output and output[host]:
                     info = {}
                     for line in output[host].split("\n"):
@@ -50,13 +106,11 @@ class NICSoftwareCollector:
                             key, value = line.split(":", 1)
                             key = key.strip().lower().replace(" ", "_")
                             info[key] = value.strip()
-
                     if info:
                         firmware_info[host][iface] = info
-
         return firmware_info
 
-    async def collect_nic_driver_version(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_nic_driver_version(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect NIC driver versions for different vendors.
 
@@ -67,61 +121,79 @@ class NICSoftwareCollector:
         """
         logger.info("Collecting NIC driver versions")
 
+        def _parse_driver_block(block: str, driver_name: str) -> dict:
+            info = {}
+            for line in block.split("\n"):
+                if ":" in line and "modinfo" not in line and "not loaded" not in line.lower():
+                    key, value = line.split(":", 1)
+                    info[key.strip()] = value.strip()
+            return info
+
+        if preloaded_output is not None:
+            driver_info = {}
+            for host, combined_str in preloaded_output.items():
+                if not combined_str or combined_str.startswith("ERROR") or combined_str.startswith("ABORT"):
+                    driver_info[host] = {"error": combined_str}
+                    continue
+                driver_info[host] = {}
+                # Split on ===DRIVER:name=== markers
+                current_driver = None
+                lines = []
+                for line in combined_str.split("\n"):
+                    if line.startswith("===DRIVER:") and line.endswith("==="):
+                        if current_driver and lines:
+                            info = _parse_driver_block("\n".join(lines), current_driver)
+                            if info:
+                                driver_info[host][current_driver] = info
+                        current_driver = line[10:-3]
+                        lines = []
+                    elif current_driver is not None:
+                        lines.append(line)
+                if current_driver and lines:
+                    info = _parse_driver_block("\n".join(lines), current_driver)
+                    if info:
+                        driver_info[host][current_driver] = info
+            return driver_info
+
+        # Fallback: original sequential parallel-ssh approach
         commands = [
             "modinfo mlx5_core 2>/dev/null | grep -E '^version|^firmware' | head -3",
             "modinfo bnxt_en 2>/dev/null | grep -E '^version|^firmware' | head -3",
             "modinfo amd-ainic 2>/dev/null | grep -E '^version|^firmware' | head -3 || echo 'Not loaded'",
         ]
-
         driver_info = {}
-
         for host in ssh_manager.reachable_hosts:
             driver_info[host] = {}
-
-            # Check Mellanox (NVIDIA CX7)
-            output = await ssh_manager.exec_async(commands[0], timeout=60)
-            if host in output and output[host] and "modinfo" not in output[host]:
-                mlx_info = {}
-                for line in output[host].split("\n"):
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        mlx_info[key.strip()] = value.strip()
-                if mlx_info:
-                    driver_info[host]["mlx5_core"] = mlx_info
-
-            # Check Broadcom (Thor2)
-            output = await ssh_manager.exec_async(commands[1], timeout=60)
-            if host in output and output[host] and "modinfo" not in output[host]:
-                bnxt_info = {}
-                for line in output[host].split("\n"):
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        bnxt_info[key.strip()] = value.strip()
-                if bnxt_info:
-                    driver_info[host]["bnxt_en"] = bnxt_info
-
-            # Check AMD AINIC
-            output = await ssh_manager.exec_async(commands[2], timeout=60)
-            if host in output and output[host] and "Not loaded" not in output[host]:
-                amd_info = {}
-                for line in output[host].split("\n"):
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        amd_info[key.strip()] = value.strip()
-                if amd_info:
-                    driver_info[host]["amd-ainic"] = amd_info
-
+            for driver_name, cmd in zip(["mlx5_core", "bnxt_en", "amd-ainic"], commands):
+                output = await ssh_manager.exec_async(cmd, timeout=60)
+                if (
+                    host in output
+                    and output[host]
+                    and "Not loaded" not in output[host]
+                    and "modinfo" not in output[host]
+                ):
+                    info = {}
+                    for line in output[host].split("\n"):
+                        if ":" in line:
+                            key, value = line.split(":", 1)
+                            info[key.strip()] = value.strip()
+                    if info:
+                        driver_info[host][driver_name] = info
         return driver_info
 
-    async def collect_rdma_statistics_detailed(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_rdma_statistics_detailed(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect detailed RDMA statistics from 'rdma statistic show --json'.
 
         Returns comprehensive RDMA counter statistics.
         """
         logger.info("Collecting detailed RDMA statistics")
-        output = await ssh_manager.exec_async(
-            "bash -c 'rdma statistic show --json 2>/dev/null || echo \"[]\"'", timeout=60
+        output = (
+            preloaded_output
+            if preloaded_output is not None
+            else await ssh_manager.exec_async(
+                "bash -c 'rdma statistic show --json 2>/dev/null || echo \"[]\"'", timeout=60
+            )
         )
 
         rdma_stats = {}
@@ -165,7 +237,7 @@ class NICSoftwareCollector:
 
         return rdma_stats
 
-    async def collect_ethtool_statistics_detailed(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_ethtool_statistics_detailed(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect detailed ethtool statistics for all interfaces.
 
@@ -174,46 +246,59 @@ class NICSoftwareCollector:
         """
         logger.info("Collecting detailed ethtool statistics")
 
-        # Get list of interfaces first
+        if preloaded_output is not None:
+            eth_stats = {}
+            for host, combined_str in preloaded_output.items():
+                if not combined_str or combined_str.startswith("ERROR") or combined_str.startswith("ABORT"):
+                    eth_stats[host] = {"error": combined_str}
+                    continue
+                eth_stats[host] = {}
+                for iface, block in self._parse_iface_sections(combined_str).items():
+                    stats = {}
+                    for line in block.split("\n"):
+                        match = re.search(r"^\s+([\w_]+):\s+(\d+)", line)
+                        if match:
+                            stats[match.group(1)] = int(match.group(2))
+                    if stats:
+                        eth_stats[host][iface] = stats
+            return eth_stats
+
+        # Fallback: original sequential parallel-ssh approach
         ip_output = await ssh_manager.exec_async(
             "bash -c \"ip -o link show | awk -F': ' '{print \\$2}' | grep -v lo\"", timeout=60
         )
-
         eth_stats = {}
-
         for host, ifaces_str in ip_output.items():
             if ifaces_str.startswith("ERROR") or ifaces_str.startswith("ABORT"):
                 eth_stats[host] = {"error": ifaces_str}
                 continue
-
             eth_stats[host] = {}
             interfaces = [i.strip() for i in ifaces_str.split("\n") if i.strip() and "@" not in i]
-
-            for iface in interfaces[:10]:  # Limit to first 10
+            for iface in interfaces[:10]:
                 cmd = f"sudo ethtool -S {iface} 2>/dev/null"
                 output = await ssh_manager.exec_async(cmd, timeout=60)
-
                 if host in output and output[host] and "NOT_AVAILABLE" not in output[host]:
                     stats = {}
                     for line in output[host].split("\n"):
-                        # Parse "     stat_name: value"
                         match = re.search(r"^\s+([\w_]+):\s+(\d+)", line)
                         if match:
                             stats[match.group(1)] = int(match.group(2))
-
                     if stats:
                         eth_stats[host][iface] = stats
-
         return eth_stats
 
-    async def collect_pci_device_info(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_pci_device_info(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect PCI device information for NICs.
 
         Command: lspci -nn | grep -i network
         """
         logger.info("Collecting PCI device info for NICs")
-        output = await ssh_manager.exec_async("bash -c \"lspci -nn | grep -i 'network\\|ethernet'\"", timeout=60)
+        output = (
+            preloaded_output
+            if preloaded_output is not None
+            else await ssh_manager.exec_async("bash -c \"lspci -nn | grep -i 'network\\|ethernet'\"", timeout=60)
+        )
 
         pci_info = {}
         for host, out_str in output.items():
@@ -240,15 +325,37 @@ class NICSoftwareCollector:
         Returns consolidated NIC software info.
         """
 
+        import asyncio
+        from app.core.go_collector import collect_parallel
+
         logger.info("Collecting all NIC software information")
 
-        # IMPORTANT: Run commands SEQUENTIALLY to avoid parallel-ssh thread safety issues
-        # asyncio.gather() was causing "munmap_chunk(): invalid pointer" crashes
-        nic_firmware = await self.collect_nic_firmware_version(ssh_manager)
-        nic_drivers = await self.collect_nic_driver_version(ssh_manager)
-        rdma_statistics = await self.collect_rdma_statistics_detailed(ssh_manager)
-        ethtool_statistics = await self.collect_ethtool_statistics_detailed(ssh_manager)
-        pci_devices = await self.collect_pci_device_info(ssh_manager)
+        commands = {
+            "firmware": self._CMD_FIRMWARE,
+            "drivers": self._CMD_DRIVERS,
+            "rdma": self._CMD_RDMA,
+            "ethtool": self._CMD_ETHTOOL,
+            "pci": self._CMD_PCI,
+        }
+
+        go_results = await asyncio.to_thread(collect_parallel, ssh_manager, commands, 60)
+
+        if go_results is not None:
+            logger.info("NIC software collected via Go binary")
+            nic_firmware = await self.collect_nic_firmware_version(preloaded_output=go_results.get("firmware", {}))
+            nic_drivers = await self.collect_nic_driver_version(preloaded_output=go_results.get("drivers", {}))
+            rdma_statistics = await self.collect_rdma_statistics_detailed(preloaded_output=go_results.get("rdma", {}))
+            ethtool_statistics = await self.collect_ethtool_statistics_detailed(
+                preloaded_output=go_results.get("ethtool", {})
+            )
+            pci_devices = await self.collect_pci_device_info(preloaded_output=go_results.get("pci", {}))
+        else:
+            logger.info("Falling back to sequential parallel-ssh for NIC software")
+            nic_firmware = await self.collect_nic_firmware_version(ssh_manager)
+            nic_drivers = await self.collect_nic_driver_version(ssh_manager)
+            rdma_statistics = await self.collect_rdma_statistics_detailed(ssh_manager)
+            ethtool_statistics = await self.collect_ethtool_statistics_detailed(ssh_manager)
+            pci_devices = await self.collect_pci_device_info(ssh_manager)
 
         software_info = {
             "timestamp": datetime.utcnow().isoformat() + "Z",

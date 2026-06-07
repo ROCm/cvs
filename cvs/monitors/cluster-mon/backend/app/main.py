@@ -79,6 +79,9 @@ class AppState:
         self.nic_software_cache_time: float = 0
         self.nic_advanced_cache_time: float = 0
         self.software_cache_ttl: int = 180  # 3 minutes
+        # Logs cache (TTL: 180 seconds — logs change slowly and collection is expensive)
+        self.cached_logs: dict = {}
+        self.logs_cache_time: float = 0
         # SECURITY: Passwords stored in memory only (never persisted to disk)
         self.ssh_password: str = None  # Direct SSH password
         self.jump_host_password: str = None  # Jump host password
@@ -132,9 +135,11 @@ async def reload_configuration():
         app_state.cached_gpu_software = {}
         app_state.cached_nic_software = {}
         app_state.cached_nic_advanced = {}
+        app_state.cached_logs = {}
         app_state.gpu_software_cache_time = 0
         app_state.nic_software_cache_time = 0
         app_state.nic_advanced_cache_time = 0
+        app_state.logs_cache_time = 0
 
         # 4. Reload configuration from files
         logger.info("Reloading configuration from cluster.yaml and nodes.txt...")

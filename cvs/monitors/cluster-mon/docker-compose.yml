@@ -30,6 +30,10 @@ services:
       - POLLING__FAILURE_THRESHOLD=${POLLING__FAILURE_THRESHOLD:-5}
       # Debug mode
       - DEBUG=${DEBUG:-false}
+      # SSH output logging: set to true via --debug flag in full-rebuild.sh
+      # When false (default): no SSH command output in logs (faster, cleaner)
+      # When true: first 5 lines of each host's output logged (for debugging)
+      - DEBUG_SSH_OUTPUT=${DEBUG_SSH_OUTPUT:-false}
       # Cluster monitor home
       - CLUSTER_MONITOR_HOME=/app
     restart: unless-stopped

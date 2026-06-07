@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class NICDevlinkCollector:
     """Collects NIC information via devlink."""
 
-    async def collect_devlink_info(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_devlink_info(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect NIC device information using 'devlink dev info --json'.
 
@@ -46,9 +46,12 @@ class NICDevlinkCollector:
             }
         """
         logger.info("Collecting NIC devlink information")
-        output = await ssh_manager.exec_async(
-            "bash -c 'devlink dev info --json 2>/dev/null || echo \"{}\"'", timeout=60
-        )
+        if preloaded_output is not None:
+            output = preloaded_output
+        else:
+            output = await ssh_manager.exec_async(
+                "bash -c 'devlink dev info --json 2>/dev/null || echo \"{}\"'", timeout=60
+            )
 
         devlink_info = {}
 
@@ -141,9 +144,23 @@ class NICDevlinkCollector:
         """
         Collect all NIC devlink information.
         """
+        import asyncio
+        from app.core.go_collector import collect_parallel
+
         logger.info("Collecting all NIC devlink information")
 
-        devlink_info = await self.collect_devlink_info(ssh_manager)
+        commands = {
+            "devlink": "bash -c 'devlink dev info --json 2>/dev/null || echo \"{}\"'",
+        }
+
+        go_results = await asyncio.to_thread(collect_parallel, ssh_manager, commands, 60)
+
+        if go_results is not None:
+            logger.info("NIC devlink info collected via Go binary")
+            devlink_info = await self.collect_devlink_info(preloaded_output=go_results.get("devlink", {}))
+        else:
+            logger.info("Falling back to sequential parallel-ssh for NIC devlink info")
+            devlink_info = await self.collect_devlink_info(ssh_manager)
 
         return {
             "timestamp": datetime.utcnow().isoformat() + "Z",

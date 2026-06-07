@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class NICAdvancedCollector:
     """Collects vendor-specific NIC information and congestion metrics."""
 
-    async def collect_nic_pcie_info(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_nic_pcie_info(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect PCIe information for all NICs using lspci.
         Optimized: single lspci call per node instead of per NIC.
@@ -24,8 +24,11 @@ class NICAdvancedCollector:
 
         # Get ALL NIC PCIe info in one command per node
         # cmd = "sudo lspci -vvv 2>/dev/null | grep -A 30 -i 'ethernet\\|network' | grep -E '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:'"
-        cmd = "sudo lspci -vvv 2>/dev/null | egrep -A 30 -i 'ethernet\\|network' | egrep '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:'"
-        result = await ssh_manager.exec_async(cmd, timeout=120)
+        if preloaded_output is not None:
+            result = preloaded_output
+        else:
+            cmd = "sudo lspci -vvv 2>/dev/null | egrep -A 30 -i 'ethernet\\|network' | egrep '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:'"
+            result = await ssh_manager.exec_async(cmd, timeout=120)
 
         logger.info(f"NIC PCIe lspci returned results from {len(result)} nodes")
 
@@ -134,7 +137,7 @@ class NICAdvancedCollector:
         )
         return pcie_info
 
-    async def collect_congestion_info(self, ssh_manager) -> Dict[str, Any]:
+    async def collect_congestion_info(self, ssh_manager=None, preloaded_output=None) -> Dict[str, Any]:
         """
         Collect congestion control information (PFC, ECN, CNP).
 
@@ -153,11 +156,12 @@ class NICAdvancedCollector:
         Looks for fields matching patterns: pfc, pause, ecn, cnp, drop, err, timeout
         """
         logger.info("Collecting congestion control information from rdma statistic (optimized)")
-
-        # Use rdma statistic show with JSON for reliable parsing
-        output = await ssh_manager.exec_async(
-            "bash -c 'rdma statistic show --json 2>/dev/null || echo \"[]\"'", timeout=60
-        )
+        if preloaded_output is not None:
+            output = preloaded_output
+        else:
+            output = await ssh_manager.exec_async(
+                "bash -c 'rdma statistic show --json 2>/dev/null || echo \"[]\"'", timeout=60
+            )
 
         congestion_info = {}
 
@@ -234,12 +238,27 @@ class NICAdvancedCollector:
         Collect all advanced NIC information.
         """
 
+        import asyncio
+        from app.core.go_collector import collect_parallel
+
         logger.info("Collecting all advanced NIC information")
 
-        # IMPORTANT: Run commands SEQUENTIALLY to avoid parallel-ssh thread safety issues
-        # asyncio.gather() was causing "munmap_chunk(): invalid pointer" crashes
-        nic_pcie = await self.collect_nic_pcie_info(ssh_manager)
-        congestion = await self.collect_congestion_info(ssh_manager)
+        commands = {
+            "nic_pcie": "sudo lspci -vvv 2>/dev/null | egrep -A 30 -i 'ethernet\\|network' | egrep '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:'",
+            "congestion": "bash -c 'rdma statistic show --json 2>/dev/null || echo \"[]\"'",
+        }
+
+        go_results = await asyncio.to_thread(collect_parallel, ssh_manager, commands, 90)
+
+        if go_results is not None:
+            logger.info("NIC advanced info collected via Go binary")
+            nic_pcie = await self.collect_nic_pcie_info(preloaded_output=go_results.get("nic_pcie", {}))
+            congestion = await self.collect_congestion_info(preloaded_output=go_results.get("congestion", {}))
+        else:
+            logger.info("Falling back to sequential parallel-ssh for NIC advanced info")
+            nic_pcie = await self.collect_nic_pcie_info(ssh_manager)
+            congestion = await self.collect_congestion_info(ssh_manager)
+
         mellanox = await self.collect_mellanox_info(ssh_manager)
         broadcom = await self.collect_broadcom_info(ssh_manager)
 

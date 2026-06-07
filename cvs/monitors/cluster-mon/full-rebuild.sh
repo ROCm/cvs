@@ -1,7 +1,26 @@
 #!/bin/bash
 # Complete rebuild and setup for CVS Cluster Monitor
+#
+# Usage:
+#   sudo bash full-rebuild.sh           # Normal mode (no SSH output logging)
+#   sudo bash full-rebuild.sh --debug   # Debug mode (logs first 5 lines of every SSH command output)
 
 set -e
+
+# Parse flags
+DEBUG_MODE=false
+for arg in "$@"; do
+    case "$arg" in
+        --debug) DEBUG_MODE=true ;;
+    esac
+done
+
+if [ "$DEBUG_MODE" = "true" ]; then
+    export DEBUG_SSH_OUTPUT=true
+    echo "⚠️  DEBUG MODE ENABLED — SSH command output will be logged (first 5 lines per host)"
+else
+    export DEBUG_SSH_OUTPUT=false
+fi
 
 echo "========================================="
 echo "CVS Cluster Monitor - Full Rebuild"
@@ -19,6 +38,7 @@ ACTUAL_USER="${SUDO_USER:-$USER}"
 
 echo "Project directory: $SCRIPT_DIR"
 echo "Running as user: $ACTUAL_USER"
+echo "Debug mode: $DEBUG_MODE"
 echo ""
 
 # Step 1: Stop and clean up all containers

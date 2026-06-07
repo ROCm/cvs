@@ -5,11 +5,43 @@ System logs API endpoints.
 from fastapi import APIRouter, HTTPException, Query
 from typing import Dict, Any
 import logging
+import re
+import time
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Matches bracketed timestamps: [Thu Jun  6 01:23:45 2026] or [123456.789]
+_TIMESTAMP_RE = re.compile(r'\[[\d\s\w:\.]+\]')
+
+
+def _deduplicate_log_section(section: Dict[str, Any], max_occurrences: int = 2) -> Dict[str, Any]:
+    """
+    For each node's log string, strip timestamps and keep at most
+    max_occurrences of each unique message. Timestamps are preserved
+    in the output lines — only used for grouping, not removed.
+    """
+    result = {}
+    for node, log_output in section.items():
+        if not isinstance(log_output, str) or not log_output.strip():
+            result[node] = log_output
+            continue
+
+        seen: Dict[str, int] = {}
+        kept: list = []
+        for line in log_output.split('\n'):
+            if not line.strip():
+                continue
+            normalized = _TIMESTAMP_RE.sub('', line).strip()
+            count = seen.get(normalized, 0)
+            if count < max_occurrences:
+                seen[normalized] = count + 1
+                kept.append(line)
+
+        result[node] = '\n'.join(kept)
+    return result
 
 
 def validate_grep_command(grep_cmd: str) -> tuple[bool, str]:
@@ -87,12 +119,31 @@ async def get_dmesg_errors() -> Dict[str, Any]:
         raise HTTPException(status_code=503, detail="SSH manager not initialized")
 
     try:
+        current_time = time.time()
+        cache_age = current_time - app_state.logs_cache_time
+
+        # Return cached data if still fresh (180s TTL, same as software caches)
+        if cache_age < app_state.software_cache_ttl and app_state.cached_logs:
+            logger.info(f"API: Returning cached logs (age: {cache_age:.0f}s)")
+            return app_state.cached_logs
+
         from app.collectors.logs_collector import LogsCollector
 
         collector = LogsCollector()
         logs_data = await collector.collect_all_logs(app_state.ssh_manager)
 
-        # Count nodes with actual data
+        # Deduplicate recurring lines (strip timestamps, keep max 2 per unique message)
+        logs_data = {
+            **logs_data,
+            "amd_logs": _deduplicate_log_section(logs_data.get("amd_logs", {})),
+            "dmesg_errors": _deduplicate_log_section(logs_data.get("dmesg_errors", {})),
+            "userspace_errors": _deduplicate_log_section(logs_data.get("userspace_errors", {})),
+        }
+
+        # Update cache
+        app_state.cached_logs = logs_data
+        app_state.logs_cache_time = current_time
+
         amd_with_data = sum(1 for v in logs_data.get("amd_logs", {}).values() if isinstance(v, str) and v.strip())
         dmesg_with_data = sum(1 for v in logs_data.get("dmesg_errors", {}).values() if isinstance(v, str) and v.strip())
         userspace_with_data = sum(
@@ -100,12 +151,17 @@ async def get_dmesg_errors() -> Dict[str, Any]:
         )
 
         logger.info(
-            f"API: Returning logs - {amd_with_data} nodes with AMD logs, {dmesg_with_data} with dmesg errors, {userspace_with_data} with userspace errors"
+            f"API: Returning fresh logs - {amd_with_data} nodes with AMD logs, "
+            f"{dmesg_with_data} with dmesg errors, {userspace_with_data} with userspace errors"
         )
 
         return logs_data
 
     except Exception as e:
+        # If collection fails but we have cached data, return it
+        if app_state.cached_logs:
+            logger.warning(f"API: Log collection failed, returning stale cache: {e}")
+            return app_state.cached_logs
         logger.error(f"API: Failed to collect logs: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to collect logs: {str(e)}")
 
@@ -155,24 +211,31 @@ async def search_dmesg_logs(
     logger.info(f"Grep command validated successfully: {grep_command}")
 
     try:
-        # Build safe command: sudo dmesg -T | <validated_grep_command> | head -5
-        # Add head -5 to limit output per node
-        # IMPORTANT: Use single quotes for outer bash -c, escape single quotes in grep_command
-        # Bash single quote escaping: replace ' with '\'' (end quote, escaped quote, start quote)
+        import asyncio
+        from app.core.go_collector import collect_parallel
+
+        # Build safe command
         escaped_grep_cmd = grep_command.replace("'", "'\\''")
         cmd = f"bash -c 'sudo dmesg -T 2>/dev/null | {escaped_grep_cmd} | head -5 || echo \"\"'"
 
-        logger.info(f"Executing search on {len(app_state.ssh_manager.get_reachable_hosts())} nodes")
+        logger.info(f"Executing search on {len(app_state.ssh_manager.get_reachable_hosts())} nodes via Go binary")
         logger.info(f"Command: {cmd[:200]}...")
 
-        # Execute with 60 second timeout
-        results = await app_state.ssh_manager.exec_async(cmd, timeout=60)
+        # Run via Go binary (all nodes simultaneously)
+        go_results = await asyncio.to_thread(collect_parallel, app_state.ssh_manager, {"search": cmd}, 60)
+
+        if go_results is None:
+            # Fallback to parallel-ssh
+            logger.info("Go binary unavailable, falling back to parallel-ssh for search")
+            raw = await app_state.ssh_manager.exec_async(cmd, timeout=60)
+        else:
+            raw = go_results.get("search", {})
 
         # Filter out empty results and errors
         search_results = {}
         nodes_with_results = 0
 
-        for node, output in results.items():
+        for node, output in raw.items():
             if output and not output.startswith("ERROR") and not output.startswith("ABORT") and output.strip():
                 search_results[node] = output.strip()
                 nodes_with_results += 1
@@ -183,7 +246,7 @@ async def search_dmesg_logs(
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "grep_command": grep_command,
             "results": search_results,
-            "total_nodes_searched": len(results),
+            "total_nodes_searched": len(raw),
             "nodes_with_results": nodes_with_results,
         }
 

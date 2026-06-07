@@ -9,6 +9,7 @@ from __future__ import print_function
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError
 
+import os
 import time
 import logging
 import threading
@@ -20,6 +21,13 @@ from scp import SCPClient
 
 # TCP probe for fast reachability detection
 from app.core.host_probe import discover_reachable_hosts
+
+# Read once at module load time.
+# true  → log first 5 lines of each host's output (set via --debug in full-rebuild.sh)
+# false → log nothing (default, much faster for large clusters)
+_DEBUG_SSH_OUTPUT = os.environ.get("DEBUG_SSH_OUTPUT", "false").lower() == "true"
+_DEBUG_MAX_LINES = 5  # lines to show per host in debug mode
+
 
 # Module-level logger
 logger = logging.getLogger(__name__)
@@ -305,13 +313,23 @@ class Pssh:
             else:
                 logger.debug(cmd)
             try:
+                log_line_count = 0
+                do_log = print_console and _DEBUG_SSH_OUTPUT
                 for line in item.stdout or []:
-                    if print_console:
+                    if do_log and log_line_count < _DEBUG_MAX_LINES:
                         logger.info(line)
+                        log_line_count += 1
+                    elif do_log and log_line_count == _DEBUG_MAX_LINES:
+                        logger.info(f"... (truncated, showing first {_DEBUG_MAX_LINES} lines only)")
+                        log_line_count += 1
                     cmd_out_str += line.replace('\t', '   ') + '\n'
                 for line in item.stderr or []:
-                    if print_console:
+                    if do_log and log_line_count < _DEBUG_MAX_LINES:
                         logger.info(line)
+                        log_line_count += 1
+                    elif do_log and log_line_count == _DEBUG_MAX_LINES:
+                        logger.info(f"... (truncated, showing first {_DEBUG_MAX_LINES} lines only)")
+                        log_line_count += 1
                     cmd_out_str += line.replace('\t', '   ') + '\n'
             except Timeout as e:
                 if not self.stop_on_errors:
