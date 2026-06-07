@@ -2,7 +2,7 @@
 
 import pytest
 
-from cvs.lib.substitution import build_context, resolve_paths_block, substitute
+from cvs.lib.dtni.substitution import build_context, resolve_paths_block, substitute
 
 
 def test_simple_token():

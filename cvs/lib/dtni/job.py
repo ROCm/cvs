@@ -10,9 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from cvs.lib.errors import WorkloadError
-from cvs.lib.run_context import RunContext
-from cvs.lib.verdict import all_passed, evaluate_all
+from cvs.lib.dtni.errors import WorkloadError
+from cvs.lib.dtni.run_context import RunContext
+from cvs.lib.dtni.verdict import all_passed, evaluate_all
 
 
 @dataclass

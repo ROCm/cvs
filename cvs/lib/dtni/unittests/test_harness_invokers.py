@@ -1,17 +1,17 @@
-"""Unit tests for cvs.lib.benchmarks.harness_invokers."""
+"""Unit tests for cvs.lib.dtni.benchmarks.harness_invokers."""
 
 from __future__ import annotations
 
 import pytest
 
-from cvs.lib.benchmarks.harness_invokers import (
+from cvs.lib.dtni.benchmarks.harness_invokers import (
     HARNESS_INVOKERS,
     OUTPUT_DIR_IN_CONTAINER,
     HarnessCtx,
     build_command,
 )
-from cvs.lib.benchmarks.registry import BenchmarkSpec, lookup
-from cvs.lib.errors import ConfigError
+from cvs.lib.dtni.benchmarks.registry import BenchmarkSpec, lookup
+from cvs.lib.dtni.errors import ConfigError
 
 
 def _hctx() -> HarnessCtx:

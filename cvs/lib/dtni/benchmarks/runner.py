@@ -18,10 +18,10 @@ import json
 import shlex
 from pathlib import Path
 
-from cvs.lib.benchmarks.harness_invokers import HarnessCtx, build_command
-from cvs.lib.benchmarks.projectors import project
-from cvs.lib.benchmarks.registry import lookup
-from cvs.lib.errors import WorkloadError
+from cvs.lib.dtni.benchmarks.harness_invokers import HarnessCtx, build_command
+from cvs.lib.dtni.benchmarks.projectors import project
+from cvs.lib.dtni.benchmarks.registry import lookup
+from cvs.lib.dtni.errors import WorkloadError
 
 
 # Per-benchmark wall-clock ceiling. MMLU on a smaller model can take ~2h;

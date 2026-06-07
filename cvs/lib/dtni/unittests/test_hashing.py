@@ -2,7 +2,7 @@
 
 import pytest
 
-from cvs.lib.hashing import canonical_json, workload_hash
+from cvs.lib.dtni.hashing import canonical_json, workload_hash
 
 
 def test_key_order_independent():

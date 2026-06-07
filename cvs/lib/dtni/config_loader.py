@@ -14,11 +14,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from cvs.lib.arch_detect import VALID_ARCHES
-from cvs.lib.catalog import Catalog
-from cvs.lib.errors import CatalogError, ConfigError
-from cvs.lib.substitution import resolve_paths_block
-from cvs.lib.verdict import VALID_KINDS
+from cvs.lib.dtni.arch_detect import VALID_ARCHES
+from cvs.lib.dtni.catalog import Catalog
+from cvs.lib.dtni.errors import CatalogError, ConfigError
+from cvs.lib.dtni.substitution import resolve_paths_block
+from cvs.lib.dtni.verdict import VALID_KINDS
 
 
 # ---------- cluster ----------
@@ -195,7 +195,7 @@ def _validate_benchmarks(path: Path, benchmarks: list[str]) -> None:
         return
     import difflib
 
-    from cvs.lib.benchmarks.registry import BENCHMARK_REGISTRY
+    from cvs.lib.dtni.benchmarks.registry import BENCHMARK_REGISTRY
 
     known = sorted(BENCHMARK_REGISTRY)
     for bid in benchmarks:

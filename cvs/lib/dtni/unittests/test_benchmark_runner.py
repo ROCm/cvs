@@ -1,4 +1,4 @@
-"""Unit tests for cvs.lib.benchmarks.runner orchestration.
+"""Unit tests for cvs.lib.dtni.benchmarks.runner orchestration.
 
 Projector behavior is covered separately in test_projectors.py — this
 file only exercises the runner's docker-exec / file-discovery loop.
@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from cvs.lib.benchmarks.runner import run_benchmarks
-from cvs.lib.errors import WorkloadError
+from cvs.lib.dtni.benchmarks.runner import run_benchmarks
+from cvs.lib.dtni.errors import WorkloadError
 
 
 @dataclass

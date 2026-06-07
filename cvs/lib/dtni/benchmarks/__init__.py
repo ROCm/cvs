@@ -6,7 +6,7 @@ and the multi-lifecycle driver are deferred to v2 — see
 ``jobs/ec849125/tmp/cvs-dtni-v2-harness-plan.md``.
 """
 
-from cvs.lib.benchmarks.registry import (  # noqa: F401
+from cvs.lib.dtni.benchmarks.registry import (  # noqa: F401
     BENCHMARK_REGISTRY,
     BenchmarkSpec,
     list_benchmarks,

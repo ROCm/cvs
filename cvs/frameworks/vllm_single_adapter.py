@@ -11,11 +11,11 @@ from __future__ import annotations
 import json
 import shlex
 
-from cvs.lib.base_adapter import BaseWorkloadAdapter
-from cvs.lib.benchmarks.harness_invokers import OUTPUT_DIR_IN_CONTAINER
-from cvs.lib.benchmarks.runner import run_benchmarks
-from cvs.lib.errors import WorkloadError
-from cvs.lib.substitution import substitute
+from cvs.lib.dtni.base_adapter import BaseWorkloadAdapter
+from cvs.lib.dtni.benchmarks.harness_invokers import OUTPUT_DIR_IN_CONTAINER
+from cvs.lib.dtni.benchmarks.runner import run_benchmarks
+from cvs.lib.dtni.errors import WorkloadError
+from cvs.lib.dtni.substitution import substitute
 
 
 class VllmAdapter(BaseWorkloadAdapter):

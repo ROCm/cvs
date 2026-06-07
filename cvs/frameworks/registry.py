@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from cvs.frameworks.vllm_single.adapter import VllmAdapter
-from cvs.lib.base_adapter import BaseWorkloadAdapter
+from cvs.frameworks.vllm_single_adapter import VllmAdapter
+from cvs.lib.dtni.base_adapter import BaseWorkloadAdapter
 
 FRAMEWORK_REGISTRY: dict[str, type[BaseWorkloadAdapter]] = {
     "vllm_single": VllmAdapter,

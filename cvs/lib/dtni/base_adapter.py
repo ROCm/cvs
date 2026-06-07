@@ -2,7 +2,7 @@
 
 Differences vs dev/dtni:
 - Single WorkloadError (no SetupFailure / LivenessFailure / SafetyViolation / VerificationFailure).
-- verify() moved out (Job calls cvs.lib.verdict.evaluate_all directly).
+- verify() moved out (Job calls cvs.lib.dtni.verdict.evaluate_all directly).
 - teardown captures into ctx.logs[name] -> str (no FS write here; artifact_writer owns FS).
 - No events.emit hard dep — uses ctx.events which is a no-op by default.
 """
@@ -16,8 +16,8 @@ import shlex
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from cvs.lib.errors import WorkloadError
-from cvs.lib.runtime.container_handle import ContainerHandle
+from cvs.lib.dtni.errors import WorkloadError
+from cvs.lib.dtni.container_handle import ContainerHandle
 
 _GPU_LINE_RE = re.compile(r"^GPU\[(\d+)\]", re.MULTILINE)
 

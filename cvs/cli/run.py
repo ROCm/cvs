@@ -17,22 +17,22 @@ from pathlib import Path
 import pandas as pd
 
 from cvs.frameworks.registry import FRAMEWORK_REGISTRY
-from cvs.lib.arch_detect import detect_arch_via
-from cvs.lib.artifact_writer import artifact_basename, utc_compact_ts, write_artifacts
-from cvs.lib.catalog import load_catalog
-from cvs.lib.config_loader import load_cluster, load_thresholds, load_workload, resolve_paths
-from cvs.lib.errors import WorkloadError
-from cvs.lib.executor import MultiHostExecutor
-from cvs.lib.hashing import workload_hash
-from cvs.lib.job import Job
-from cvs.lib.resource_resolver import (
+from cvs.lib.dtni.arch_detect import detect_arch_via
+from cvs.lib.dtni.artifact_writer import artifact_basename, utc_compact_ts, write_artifacts
+from cvs.lib.dtni.catalog import load_catalog
+from cvs.lib.dtni.config_loader import load_cluster, load_thresholds, load_workload, resolve_paths
+from cvs.lib.dtni.errors import WorkloadError
+from cvs.lib.dtni.executor import MultiHostExecutor
+from cvs.lib.dtni.hashing import workload_hash
+from cvs.lib.dtni.job import Job
+from cvs.lib.dtni.resource_resolver import (
     resolve_dataset_path,
     resolve_image_on_host,
     resolve_model_path,
 )
-from cvs.lib.run_context import RunContext
-from cvs.lib.substitution import build_context, substitute
-from cvs.lib.topology import resolve_bindings
+from cvs.lib.dtni.run_context import RunContext
+from cvs.lib.dtni.substitution import build_context, substitute
+from cvs.lib.dtni.topology import resolve_bindings
 
 DEFAULT_INPUT_DIR = Path(os.environ.get("CVS_INPUT_DIR", "cvs/input"))
 

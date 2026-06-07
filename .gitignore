@@ -16,3 +16,4 @@ dist/
 # DTNI v1
 .venv/
 cvs_artifacts/
+.last-gate-pass

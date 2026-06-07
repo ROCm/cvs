@@ -1,4 +1,4 @@
-"""Unit tests for cvs.lib.config_loader benchmark validation.
+"""Unit tests for cvs.lib.dtni.config_loader benchmark validation.
 
 Scope is narrow on purpose: this file exists to lock in the v1 behavior that
 load_workload rejects unknown benchmark ids at load time with a did-you-mean
@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from cvs.lib.catalog import Catalog, ModelEntry
-from cvs.lib.config_loader import load_workload
-from cvs.lib.errors import CatalogError
+from cvs.lib.dtni.catalog import Catalog, ModelEntry
+from cvs.lib.dtni.config_loader import load_workload
+from cvs.lib.dtni.errors import CatalogError
 
 
 def _minimal_workload(benchmarks: list[str]) -> dict:
