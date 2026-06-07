@@ -73,17 +73,26 @@ def run_benchmarks(
             raise WorkloadError(f"benchmark {bid!r} harness failed: {exc}") from exc
 
         glob_pat = _RESULT_GLOBS.get(spec.harness, "*.json")
-        result_json = _find_result(output_dir_on_host / bid, glob_pat)
-        if result_json is None:
+        host_dir = output_dir_on_host / bid
+        # Read via the same remote executor that ran the harness -- the
+        # artifacts directory is on the host where the container ran, not
+        # necessarily on the runner's local filesystem.
+        find_cmd = (
+            f"find {shlex.quote(str(host_dir))} -type f -name {shlex.quote(glob_pat)} "
+            f"-printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | awk '{{print $2}}'"
+        )
+        latest = server_handle.runner.exec(find_cmd, timeout=30).strip()
+        if not latest:
             raise WorkloadError(
                 f"benchmark {bid!r}: harness ran but produced no result JSON "
-                f"({glob_pat}) under {output_dir_on_host / bid}"
+                f"({glob_pat}) under {host_dir}"
             )
+        raw = server_handle.runner.exec(f"cat {shlex.quote(latest)}", timeout=30)
         try:
-            payload = json.loads(result_json.read_text(encoding="utf-8"))
+            payload = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise WorkloadError(
-                f"benchmark {bid!r}: harness output {result_json} is not "
+                f"benchmark {bid!r}: harness output {latest} is not "
                 f"valid JSON: {exc}"
             ) from exc
 

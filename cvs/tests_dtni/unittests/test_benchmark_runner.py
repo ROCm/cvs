@@ -7,6 +7,7 @@ file only exercises the runner's docker-exec / file-discovery loop.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,10 +26,32 @@ class _FakeRunner:
     last_cmd: str = ""
 
     def exec(self, cmd: str, timeout: int = 0) -> str:
+        # The runner now issues three command shapes per benchmark:
+        # 1) docker exec ... (the harness) -- drop the JSON payload on local
+        #    disk to simulate the bind-mount.
+        # 2) find <bid_dir> ... | sort -nr | head -1 | awk '{print $2}'
+        #    -- return the newest matching file path under <out_dir>/<bid>/.
+        # 3) cat <path> -- return the file contents.
         self.last_cmd = cmd
+        if cmd.startswith("cat "):
+            path = cmd[len("cat "):].strip().strip("'")
+            return Path(path).read_text(encoding="utf-8")
+        if cmd.startswith("find "):
+            # Path is the 2nd token; may be shlex-quoted or bare.
+            import shlex as _sh
+            try:
+                tokens = _sh.split(cmd)
+            except ValueError:
+                return ""
+            sub = Path(tokens[1]) if len(tokens) > 1 else None
+            if sub is None or not sub.is_dir():
+                return ""
+            candidates = sorted(sub.rglob("*.json"),
+                                key=lambda p: p.stat().st_mtime,
+                                reverse=True)
+            return f"{candidates[0]}\n" if candidates else ""
+        # Default: treat as the docker exec / harness invocation.
         for bid, payload in self.payloads.items():
-            # Match either lm-eval's "/<bid>" (--output_path is the dir) or
-            # vllm bench serve's "--result-dir .../<bid>" prefix path.
             if f"/{bid}" in cmd:
                 sub = self.out_dir / bid
                 sub.mkdir(parents=True, exist_ok=True)
