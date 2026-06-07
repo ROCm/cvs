@@ -1,0 +1,18 @@
+{
+  "smoke_request_latency_ms": {
+    "kind": "max_ms",
+    "value": 600000
+  },
+  "smoke_completion_tokens": {
+    "kind": "min",
+    "value": 1
+  },
+  "mmlu": {
+    "kind": "min",
+    "value": 0.65
+  },
+  "gsm8k": {
+    "kind": "min",
+    "value": 0.55
+  }
+}
