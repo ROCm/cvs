@@ -1,18 +1,19 @@
-"""`cvs-dtni run <fw>/<wl> --cluster=<name>` entrypoint.
+"""DTNI workload runner — library entrypoint.
 
-Loads cluster + workload + threshold, builds RunContext, drives Job, writes
-artifacts. Returns 0 on pass, 1 on fail (any phase or threshold).
+`execute_workload(cluster_path, workload_config_path)` runs one DTNI workload
+end-to-end and returns the `JobResult`. Consumed by the pytest wrapper at
+`cvs/tests/dtni/vllm_single.py`, which powers `cvs run vllm_single ...`.
 """
 
 from __future__ import annotations
 
-import argparse
 import os
 import secrets
-import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -24,7 +25,7 @@ from cvs.lib.dtni.config_loader import load_cluster, load_thresholds, load_workl
 from cvs.lib.dtni.errors import WorkloadError
 from cvs.lib.dtni.executor import MultiHostExecutor
 from cvs.lib.dtni.hashing import workload_hash
-from cvs.lib.dtni.job import Job
+from cvs.lib.dtni.job import Job, JobResult
 from cvs.lib.dtni.resource_resolver import (
     resolve_dataset_path,
     resolve_image_on_host,
@@ -37,13 +38,27 @@ from cvs.lib.dtni.topology import resolve_bindings
 DEFAULT_INPUT_DIR = Path(os.environ.get("CVS_INPUT_DIR", "cvs/input"))
 
 
+@dataclass
+class RunOutcome:
+    """What `execute_workload` returns: the JobResult plus paths to artifacts.
+
+    `job_result` carries `.passed`, `.failed_phase`, `.verdicts`, etc.
+    `artifacts_dir` is the local directory under `./cvs_artifacts/<run_id>/`.
+    `run_id` is the unique tag for this invocation.
+    """
+
+    job_result: JobResult
+    artifacts_dir: Path
+    run_id: str
+
+
 def _gen_run_id() -> str:
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"r_{ts}_{secrets.token_hex(2)}"
 
 
-def _read_hf_token_from_file(path: str) -> None:
-    """Read HF token from a file and export to env if HF_TOKEN unset."""
+def _read_hf_token_from_file(path: str | os.PathLike[str]) -> None:
+    """Export HF_TOKEN from file if env unset. No-op if file missing."""
     if os.environ.get("HF_TOKEN"):
         return
     p = Path(path).expanduser()
@@ -51,63 +66,70 @@ def _read_hf_token_from_file(path: str) -> None:
         os.environ["HF_TOKEN"] = p.read_text().strip()
 
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="cvs-dtni run")
-    ap.add_argument(
-        "workload_selector",
-        help="<framework>/<model>/<workload>, e.g. vllm_single/qwen3_next_80b/qwen3_next_80b_bf16_single_8",
-    )
-    ap.add_argument("--cluster", required=True,
-                    help="cluster file name (under input/clusters/) OR absolute path to a cluster JSON")
-    ap.add_argument("--input-dir", default=str(DEFAULT_INPUT_DIR),
-                    help=f"CVS input dir (default {DEFAULT_INPUT_DIR})")
-    ap.add_argument(
-        "--hf-token-file",
-        default=os.environ.get("HF_TOKEN_FILE", str(Path.home() / ".hf_token")),
-        help="path to file containing HF_TOKEN (used if env not set)",
-    )
-    args = ap.parse_args(argv)
-
-    _read_hf_token_from_file(args.hf_token_file)
-
-    input_dir = Path(args.input_dir).resolve()
-    sel_parts = args.workload_selector.split("/")
-    if len(sel_parts) != 3:
-        print(
-            f"ERROR: workload selector must be <framework>/<model>/<workload>; "
-            f"got {args.workload_selector!r}",
-            file=sys.stderr,
+def _resolve_workload_paths(workload_config_path: Path) -> tuple[str, str, Path, Path]:
+    """Given a path to .../<framework>/<model>/<workload>/config.json,
+    return (framework, wl_name, config_path, threshold_path).
+    Framework and workload names come from the directory layout so a single
+    positional `--config_file` is enough.
+    """
+    cfg = workload_config_path.resolve()
+    if cfg.name != "config.json":
+        raise WorkloadError(
+            f"workload config must be a config.json file; got {cfg}"
         )
-        return 2
-    framework, model_folder, wl_name = sel_parts
+    wl_dir = cfg.parent
+    framework_dir = wl_dir.parent.parent
+    threshold_path = wl_dir / "threshold.json"
+    if not threshold_path.exists():
+        raise WorkloadError(
+            f"expected sibling threshold.json next to {cfg} (looked at {threshold_path})"
+        )
+    return framework_dir.name, wl_dir.name, cfg, threshold_path
 
-    cluster_arg = Path(args.cluster)
-    if cluster_arg.is_absolute() or cluster_arg.suffix == ".json":
-        cluster_path = cluster_arg
-    else:
-        cluster_path = input_dir / "clusters" / f"{args.cluster}.json"
-    cluster = load_cluster(cluster_path)
-    catalog = load_catalog(input_dir)
 
-    # Pre-arch executor (just to probe arch on head node)
+def execute_workload(
+    cluster_path: str | os.PathLike[str],
+    workload_config_path: str | os.PathLike[str],
+    input_dir: str | os.PathLike[str] | None = None,
+    hf_token_file: str | os.PathLike[str] | None = None,
+    log: Any = None,
+) -> RunOutcome:
+    """Run one DTNI workload end-to-end. Returns the JobResult + artifact paths.
+
+    `cluster_path` and `workload_config_path` are both filesystem paths.
+    `input_dir` defaults to `$CVS_INPUT_DIR` or `cvs/input/`.
+    `log` is an optional logger; falls back to `print()` for back-compat.
+    """
+    say = log.info if log is not None else (lambda msg, *a: print(f"[cvs-dtni] {msg % a if a else msg}", flush=True))
+
+    if hf_token_file is None:
+        hf_token_file = os.environ.get("HF_TOKEN_FILE", str(Path.home() / ".hf_token"))
+    _read_hf_token_from_file(hf_token_file)
+
+    in_dir = Path(input_dir).resolve() if input_dir else DEFAULT_INPUT_DIR.resolve()
+
+    wl_config = Path(workload_config_path)
+    framework, wl_name, wl_path, thr_path = _resolve_workload_paths(wl_config)
+
+    cluster = load_cluster(Path(cluster_path))
+    catalog = load_catalog(in_dir)
+
+    # Probe arch on head node.
     pre_exec = MultiHostExecutor(
         hosts=[cluster.head_node],
         user=cluster.username,
         priv_key=cluster.priv_key_file or None,
         env_vars=cluster.env_vars or None,
     )
-    print(f"[cvs-dtni] probing arch on head node {cluster.head_node} ...", flush=True)
+    say("probing arch on head node %s ...", cluster.head_node)
     arch = detect_arch_via(pre_exec.executor_for(cluster.head_node))
-    print(f"[cvs-dtni] arch={arch}", flush=True)
+    say("arch=%s", arch)
 
-    wl_dir = input_dir / "dtni" / framework / model_folder / wl_name
-    wl_path = wl_dir / "config.json"
-    thr_path = wl_dir / "threshold.json"
     workload = load_workload(wl_path, catalog=catalog)
     thresholds = load_thresholds(thr_path)
     if workload.framework != framework:
         raise WorkloadError(
-            f"selector framework={framework} but {wl_path}.framework={workload.framework}"
+            f"path framework={framework} but {wl_path}.framework={workload.framework}"
         )
     if workload.gpu_arch != arch:
         raise WorkloadError(
@@ -115,12 +137,9 @@ def main(argv: list[str] | None = None) -> int:
             f"on {cluster.head_node}; wrong workload for this node"
         )
 
-    # Path resolution (cross-references inside paths block first;
-    # {user-id} comes from the cluster file).
     paths = resolve_paths(workload, user_id=cluster.username)
     run_id = _gen_run_id()
 
-    # Topology bindings
     bindings = resolve_bindings(
         node_dict=cluster.node_dict,
         roles={r: {"count": v.count, "gpus_per_node": v.gpus_per_node}
@@ -131,9 +150,6 @@ def main(argv: list[str] | None = None) -> int:
         for h in hs:
             if h not in all_hosts:
                 all_hosts.append(h)
-    # Always include head_node in the executor pool — model/dataset probes and
-    # mkdir of artifacts_dir run on head_exec even when head_node isn't bound
-    # to a role.
     if cluster.head_node not in all_hosts:
         all_hosts.append(cluster.head_node)
     executor = MultiHostExecutor(
@@ -142,9 +158,6 @@ def main(argv: list[str] | None = None) -> int:
         env_vars=cluster.env_vars or None,
     )
 
-    # Resolve image (on each host) — use first host's digest for the hash.
-    # For per-role-only images (e.g. disagg), iterate role specs; for v1
-    # single-image workloads the top-level image is the source of truth.
     if workload.image is not None:
         image_targets = {h: workload.image for h in all_hosts}
     else:
@@ -158,32 +171,28 @@ def main(argv: list[str] | None = None) -> int:
             for h in hosts:
                 image_targets.setdefault(h, role_img)
     tags = sorted({img.tag for img in image_targets.values()})
-    print(f"[cvs-dtni] resolving images {tags} on {list(image_targets)} ...", flush=True)
+    say("resolving images %s on %s ...", tags, list(image_targets))
     first_digest = None
     for host, img in image_targets.items():
         digest = resolve_image_on_host(executor.executor_for(host), img)
         first_digest = first_digest or digest
 
-    # Compute workload_hash
     wl_dict = workload.model_dump(mode="json")
     wh = workload_hash(image_digest=first_digest, workload=wl_dict, thresholds=thresholds)
-    print(f"[cvs-dtni] workload_hash={wh}", flush=True)
+    say("workload_hash=%s", wh)
 
-    # Resolve model/dataset paths on head node (assume shared FS)
     head_exec = executor.executor_for(cluster.head_node)
-    print(f"[cvs-dtni] resolving model {workload.model.id} ...", flush=True)
+    say("resolving model %s ...", workload.model.id)
     model_host_path = resolve_model_path(
         executor=head_exec, catalog=catalog, workload=workload, paths=paths,
     )
-    print(f"[cvs-dtni] model on host: {model_host_path}", flush=True)
+    say("model on host: %s", model_host_path)
     dataset_host_path = None
     if workload.dataset is not None:
         dataset_host_path = resolve_dataset_path(
             executor=head_exec, catalog=catalog, workload=workload, paths=paths,
         )
 
-    # Build substitution context. model.path is the IN-CONTAINER path; we map
-    # the model dir as a volume below.
     sub_ctx = build_context(
         paths=paths,
         run_id=run_id,
@@ -194,23 +203,16 @@ def main(argv: list[str] | None = None) -> int:
         params=workload.params,
     )
 
-    # Volumes need {models_dir} -> model_host_path's PARENT, so the resolved
-    # in-container model path matches. Easier: bind-mount the model_host_path
-    # directly to /models/<basename>.
     role_spec = workload.roles["server"]
     role_spec_dict = role_spec.model_dump()
-    # Force volume entry for model directory.
     vols = dict(role_spec_dict.get("volumes", {}))
     vols[model_host_path] = f"/models/{Path(model_host_path).name}"
-    # Resolve artifacts_dir token and ensure dir
     artifacts_root = Path(substitute(paths["artifacts_dir"], sub_ctx)) / run_id
     artifacts_root_remote = str(artifacts_root)
-    # Don't try to mkdir locally — head node may differ. Adapter container creates /output via mount.
     vols[artifacts_root_remote] = "/output"
     head_exec.exec(f"mkdir -p {artifacts_root_remote}", timeout=10)
     role_spec_dict["volumes"] = vols
 
-    # Stash resolved values back into a mutable workload dict for the adapter
     wl_for_ctx = wl_dict
     wl_for_ctx["roles"]["server"] = role_spec_dict
 
@@ -233,15 +235,13 @@ def main(argv: list[str] | None = None) -> int:
     adapter_cls = FRAMEWORK_REGISTRY[framework]
     adapter = adapter_cls()
 
-    print(f"[cvs-dtni] starting Job run_id={run_id}", flush=True)
+    say("starting Job run_id=%s", run_id)
     t_start = time.time()
     result = Job(adapter, ctx).run()
     elapsed = time.time() - t_start
-    print(f"[cvs-dtni] Job done in {elapsed:.1f}s; passed={result.passed} "
-          f"failed_phase={result.failed_phase}", flush=True)
+    say("Job done in %.1fs; passed=%s failed_phase=%s",
+        elapsed, result.passed, result.failed_phase)
 
-    # Write artifacts locally (on whoever runs cvs-dtni). For Step 1 we keep
-    # log_text from ctx.logs concatenated.
     log_text = ""
     for k, v in ctx.logs.items():
         log_text += f"\n===== {k} =====\n{v}\n"
@@ -257,12 +257,8 @@ def main(argv: list[str] | None = None) -> int:
         out_dir=local_out_dir, basename=base,
         samples_df=samples_df, log_text=log_text, verdict=result.verdict_dict,
     )
-    print(f"[cvs-dtni] artifacts at {local_out_dir}/:", flush=True)
+    say("artifacts at %s/:", local_out_dir)
     for k, p in paths_written.items():
-        print(f"  {k}: {p.name}", flush=True)
+        say("  %s: %s", k, p.name)
 
-    return 0 if result.passed else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    return RunOutcome(job_result=result, artifacts_dir=local_out_dir, run_id=run_id)
