@@ -102,6 +102,18 @@ _VLLM_SERVE_SCALAR_FIELDS: tuple[str, ...] = (
 )
 
 # Percentile arrays we explode into named scalars (P50/P90/P95/P99 typical).
+
+# Metric stems whose flat "p<NN>_<metric>_ms" keys we recognize from
+# current vllm bench serve output. Kept aligned with
+# _VLLM_SERVE_PCTL_FIELDS (the legacy nested form) so both shapes project
+# to the same scalar names.
+_VLLM_SERVE_PCTL_METRICS: tuple[str, ...] = ("ttft", "tpot", "itl", "e2el")
+
+
+def _vllm_pctl_re():
+    import re as _re
+    return _re.compile(r"^p(\d{1,3})_(ttft|tpot|itl|e2el)_ms$")
+
 _VLLM_SERVE_PCTL_FIELDS: tuple[str, ...] = (
     "percentiles_ttft_ms",
     "percentiles_tpot_ms",
@@ -126,12 +138,10 @@ def _project_vllm_bench_serve(spec: BenchmarkSpec, payload: dict[str, Any]) -> d
             out[f"{spec.id}.{field}"] = float(v)
 
     for pkey in _VLLM_SERVE_PCTL_FIELDS:
-        # vllm writes percentiles as list[(percentile, value)].
+        # Legacy shape: list[(percentile, value)].
         raw = payload.get(pkey)
         if not isinstance(raw, list):
             continue
-        # Field naming: "percentiles_ttft_ms" -> metric "ttft"
-        # ("percentiles_" prefix and "_ms" suffix stripped).
         metric = pkey[len("percentiles_"):-len("_ms")]
         for entry in raw:
             if not (isinstance(entry, (list, tuple)) and len(entry) == 2):
@@ -144,6 +154,19 @@ def _project_vllm_bench_serve(spec: BenchmarkSpec, payload: dict[str, Any]) -> d
             except (TypeError, ValueError):
                 continue
             out[f"{spec.id}.{metric}_p{pct_int:02d}_ms"] = float(val)
+
+    # Current vllm shape: flat keys "p<NN>_<metric>_ms" -> float.
+    # Normalize to the same "<spec.id>.<metric>_p<NN>_ms" namespace so
+    # threshold names stay stable across the two emission shapes.
+    _PCT_KEY_RE = _vllm_pctl_re()
+    for k, v in payload.items():
+        m = _PCT_KEY_RE.match(k)
+        if not m or not _is_real_number(v):
+            continue
+        pct_int, metric = int(m.group(1)), m.group(2)
+        if metric not in _VLLM_SERVE_PCTL_METRICS:
+            continue
+        out[f"{spec.id}.{metric}_p{pct_int:02d}_ms"] = float(v)
 
     return out
 

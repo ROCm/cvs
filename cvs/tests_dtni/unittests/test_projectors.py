@@ -132,6 +132,27 @@ def test_lm_eval_bool_field_is_not_coerced_to_scalar():
     assert out == {}
 
 
+def test_vllm_serve_flat_pNN_metric_ms_keys_are_unrolled():
+    # Current vllm bench serve writes percentiles as flat keys, not lists.
+    # Both p50_ttft_ms and p95_ttft_ms should land in the namespaced form.
+    payload = {
+        "p50_ttft_ms": 138.0,
+        "p95_ttft_ms": 226.1,
+        "p99_tpot_ms": 7.94,
+        "p95_e2el_ms": 2400.0,
+        # red herrings -- must be ignored
+        "p50_unknown_ms": 999.0,        # metric not in known set
+        "p1000_ttft_ms": True,           # bool value, must be skipped
+    }
+    out = _project_vllm_bench_serve(_serve_spec("svc"), payload)
+    assert out == {
+        "svc.ttft_p50_ms": 138.0,
+        "svc.ttft_p95_ms": 226.1,
+        "svc.tpot_p99_ms": 7.94,
+        "svc.e2el_p95_ms": 2400.0,
+    }
+
+
 # ---- dispatch -------------------------------------------------------------
 
 
