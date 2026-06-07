@@ -18,6 +18,7 @@ def _hctx() -> HarnessCtx:
     return HarnessCtx(
         base_url="http://localhost:8000",
         model_id="llama-3.1-8b",
+        model_path="/models/llama-3.1-8b",
         output_dir="/output",
     )
 
@@ -43,6 +44,10 @@ def test_lm_eval_command_includes_required_flags():
     assert "--model local-completions" in cmd
     assert "base_url=http://localhost:8000/v1/completions" in cmd
     assert "model=llama-3.1-8b" in cmd
+    # tokenizer must be the on-disk path so HF does not try to fetch
+    # the served-model-name as a repo id.
+    assert "tokenizer=/models/llama-3.1-8b" in cmd
+    assert "tokenizer_backend=huggingface" in cmd
     assert "--tasks mmlu" in cmd
     assert "--num_fewshot 5" in cmd
     assert "--output_path /output/mmlu" in cmd
@@ -72,6 +77,7 @@ def test_serve_random_includes_required_flags():
     assert "--backend vllm" in cmd
     assert "--base-url http://localhost:8000" in cmd
     assert "--model llama-3.1-8b" in cmd
+    assert "--tokenizer /models/llama-3.1-8b" in cmd
     assert "--dataset-name random" in cmd
     assert "--num-prompts 200" in cmd
     assert "--random-input-len 128" in cmd

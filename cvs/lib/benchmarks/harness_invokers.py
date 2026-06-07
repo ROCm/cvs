@@ -33,6 +33,9 @@ class HarnessCtx:
       the server, so ``http://localhost:<port>`` is correct.
     - ``model_id``: vLLM's ``--served-model-name`` — what we POST as
       ``model``.
+    - ``model_path``: in-container filesystem path to the model directory.
+      Used as the tokenizer source so the harness does not try to fetch
+      ``<model_id>`` from the HF hub (the id is just the API alias).
     - ``output_dir``: in-container path where the harness drops its JSON
       (bind-mounted to the host artifacts dir). Each benchmark writes into
       a ``<output_dir>/<benchmark_id>/`` subdir to keep results isolated.
@@ -40,6 +43,7 @@ class HarnessCtx:
 
     base_url: str
     model_id: str
+    model_path: str
     output_dir: str
 
 
@@ -56,7 +60,7 @@ def _lm_eval(spec: BenchmarkSpec, hctx: HarnessCtx) -> str:
         "lm_eval",
         "--model", "local-completions",
         "--model_args",
-        f"base_url={hctx.base_url}/v1/completions,model={hctx.model_id},num_concurrent=8,max_retries=3",
+        f"base_url={hctx.base_url}/v1/completions,model={hctx.model_id},tokenizer={hctx.model_path},tokenizer_backend=huggingface,num_concurrent=8,max_retries=3",
         "--tasks", task,
         "--num_fewshot", str(spec.shots),
         "--output_path", out_path,
@@ -94,6 +98,7 @@ def _vllm_bench_serve(spec: BenchmarkSpec, hctx: HarnessCtx) -> str:
         "--backend", "vllm",
         "--base-url", hctx.base_url,
         "--model", hctx.model_id,
+        "--tokenizer", hctx.model_path,
         "--dataset-name", str(e["dataset_name"]),
         "--num-prompts", str(int(e["num_prompts"])),
         "--save-result",

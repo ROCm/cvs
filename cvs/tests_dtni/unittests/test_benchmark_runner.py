@@ -63,6 +63,7 @@ def test_run_benchmarks_lm_eval_then_vllm_serve_in_one_pass(tmp_path: Path):
         server_handle=handle,
         base_url="http://localhost:8000",
         model_id="llama-3.1-8b",
+        model_path="/models/foo",
         output_dir_in_container=str(tmp_path),
         output_dir_on_host=tmp_path,
     )
@@ -85,6 +86,7 @@ def test_run_benchmarks_unknown_id_raises_before_exec(tmp_path: Path):
             server_handle=handle,
             base_url="http://localhost:8000",
             model_id="x",
+            model_path="/models/foo",
             output_dir_in_container=str(tmp_path),
             output_dir_on_host=tmp_path,
         )
@@ -100,6 +102,7 @@ def test_run_benchmarks_missing_output_raises(tmp_path: Path):
             server_handle=handle,
             base_url="http://localhost:8000",
             model_id="x",
+            model_path="/models/foo",
             output_dir_in_container=str(tmp_path),
             output_dir_on_host=tmp_path,
         )
@@ -120,6 +123,7 @@ def test_run_benchmarks_invalid_json_raises(tmp_path: Path):
             server_handle=handle,
             base_url="http://localhost:8000",
             model_id="x",
+            model_path="/models/foo",
             output_dir_in_container=str(tmp_path),
             output_dir_on_host=tmp_path,
         )

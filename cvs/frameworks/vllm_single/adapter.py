@@ -90,6 +90,7 @@ class VllmAdapter(BaseWorkloadAdapter):
             server_handle=server_handle,
             base_url=f"http://localhost:{port}",
             model_id=ctx.workload["model"]["id"],
+            model_path=ctx.scratch["sub_ctx"]["model.path"],
             output_dir_in_container=OUTPUT_DIR_IN_CONTAINER,
             output_dir_on_host=ctx.artifacts_dir,
         )

@@ -43,6 +43,7 @@ def run_benchmarks(
     server_handle,
     base_url: str,
     model_id: str,
+    model_path: str,
     output_dir_in_container: str,
     output_dir_on_host: Path,
 ) -> dict[str, float]:
@@ -58,6 +59,7 @@ def run_benchmarks(
         hctx = HarnessCtx(
             base_url=base_url,
             model_id=model_id,
+            model_path=model_path,
             output_dir=output_dir_in_container,
         )
         harness_cmd = build_command(spec, hctx)
