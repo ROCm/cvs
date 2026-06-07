@@ -5,7 +5,7 @@ Exposes:
 - `Catalog.model_literal()` / `.dataset_literal()` -> typing.Literal[...] of known ids
 - `Catalog.suggest(kind, bad_id)` -> str | None ("did you mean ...")
 
-Benchmarks come from cvs.lib.benchmarks.registry (code, not JSON).
+Benchmarks come from cvs.lib.dtni.benchmarks.registry (code, not JSON).
 """
 
 from __future__ import annotations

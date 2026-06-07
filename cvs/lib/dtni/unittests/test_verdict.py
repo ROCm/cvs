@@ -2,7 +2,7 @@
 
 import pytest
 
-from cvs.lib.verdict import all_passed, evaluate_all, evaluate_threshold
+from cvs.lib.dtni.verdict import all_passed, evaluate_all, evaluate_threshold
 
 
 def test_min_passes_at_equality():

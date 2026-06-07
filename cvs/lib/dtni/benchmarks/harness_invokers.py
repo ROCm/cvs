@@ -14,8 +14,8 @@ import shlex
 from dataclasses import dataclass
 from typing import Callable
 
-from cvs.lib.benchmarks.registry import BenchmarkSpec
-from cvs.lib.errors import ConfigError
+from cvs.lib.dtni.benchmarks.registry import BenchmarkSpec
+from cvs.lib.dtni.errors import ConfigError
 
 
 # Well-known in-container path where the adapter bind-mounts the run's host

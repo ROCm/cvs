@@ -19,9 +19,9 @@ import os
 import shlex
 from pathlib import Path
 
-from cvs.lib.catalog import Catalog
-from cvs.lib.config_loader import ImageBlock, WorkloadConfig
-from cvs.lib.errors import WorkloadError
+from cvs.lib.dtni.catalog import Catalog
+from cvs.lib.dtni.config_loader import ImageBlock, WorkloadConfig
+from cvs.lib.dtni.errors import WorkloadError
 
 
 def resolve_image_on_host(executor, image: ImageBlock) -> str:

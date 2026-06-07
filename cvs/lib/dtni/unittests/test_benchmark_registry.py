@@ -1,10 +1,10 @@
-"""Unit tests for cvs.lib.benchmarks.registry."""
+"""Unit tests for cvs.lib.dtni.benchmarks.registry."""
 
 from __future__ import annotations
 
 import pytest
 
-from cvs.lib.benchmarks.registry import (
+from cvs.lib.dtni.benchmarks.registry import (
     BENCHMARK_REGISTRY,
     BenchmarkSpec,
     list_benchmarks,

@@ -1,11 +1,11 @@
-"""Unit tests for cvs.lib.benchmarks.projectors."""
+"""Unit tests for cvs.lib.dtni.benchmarks.projectors."""
 
 from __future__ import annotations
 
 import pytest
 
-from cvs.lib.benchmarks.projectors import _project_lm_eval, _project_vllm_bench_serve, project
-from cvs.lib.benchmarks.registry import BenchmarkSpec, lookup
+from cvs.lib.dtni.benchmarks.projectors import _project_lm_eval, _project_vllm_bench_serve, project
+from cvs.lib.dtni.benchmarks.registry import BenchmarkSpec, lookup
 
 
 # ---- lm-eval --------------------------------------------------------------

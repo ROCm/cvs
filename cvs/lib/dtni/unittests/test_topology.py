@@ -2,7 +2,7 @@
 
 import pytest
 
-from cvs.lib.topology import resolve_bindings
+from cvs.lib.dtni.topology import resolve_bindings
 
 
 def test_single_role_single_host():

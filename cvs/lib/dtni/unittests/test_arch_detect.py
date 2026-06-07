@@ -2,7 +2,7 @@
 
 import pytest
 
-from cvs.lib.arch_detect import detect_arch
+from cvs.lib.dtni.arch_detect import detect_arch
 
 
 def test_detect_mi300x():

@@ -2,7 +2,7 @@
 
 import json
 
-from cvs.lib.catalog import Catalog, ModelEntry, load_catalog
+from cvs.lib.dtni.catalog import Catalog, ModelEntry, load_catalog
 
 
 def test_suggest_close_match():

@@ -4,7 +4,7 @@ import json
 
 import pandas as pd
 
-from cvs.lib.artifact_writer import artifact_basename, sanitize_for_filename, write_artifacts
+from cvs.lib.dtni.artifact_writer import artifact_basename, sanitize_for_filename, write_artifacts
 
 
 def test_sanitize_strips_slashes_and_lowercases():
