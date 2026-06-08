@@ -6,6 +6,7 @@ DeTermINistic Inference — CVS workload runner for LLM inference validation.
 
 | Goal | Doc |
 |---|---|
+| Architecture walkthrough (start here) | [docs/README.md](docs/README.md) |
 | Get oriented | [docs/overview.md](docs/overview.md) |
 | Add a workload variant | [docs/add_workload.md](docs/add_workload.md) |
 | Add a benchmark | [docs/add_benchmark.md](docs/add_benchmark.md) |
