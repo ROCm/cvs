@@ -1,7 +1,6 @@
 """Tests for reload_configuration topology-diff logic."""
 
 
-
 def test_settings_model_dump_comparison():
     """Verify that Settings.model_dump() can detect config changes."""
     from app.core.config import Settings

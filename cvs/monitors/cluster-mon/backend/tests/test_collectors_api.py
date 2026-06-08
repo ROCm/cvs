@@ -2,7 +2,6 @@
 Tests for GET /api/collectors/status endpoint logic.
 """
 
-
 from app.api.collectors import _compute_overall_status
 from app.collectors.base import CollectorResult, CollectorState
 
