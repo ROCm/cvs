@@ -11,6 +11,9 @@
        "gpu_count": "8",
        "gpu_pcie_speed": "32",
        "gpu_pcie_width": "16",
+       "nic_pcie_speed": "32",
+       "nic_pcie_width": "16",
+       "be_nic_type": "ionic",
        "fw_dict":
        {
            "CP_MEC1": "32945",

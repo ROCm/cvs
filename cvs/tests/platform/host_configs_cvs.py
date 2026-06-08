@@ -465,11 +465,85 @@ def test_check_pci_accelerators(phdl, config_dict):
     update_test_result()
 
 
+# -------------------------------------------------------------------- #
+#  User provides nic_type in configuration file.
+#  That is used as a key to this dictionary to find devices via sysfs  #
+# -------------------------------------------------------------------- #
+BE_NIC_SYSFS_PREFIX_MAP = {
+    "ionic": "ionic",
+    "thor": "thor",
+    "thor2": "thor2",
+    "mellanox": "mlx5",
+    "cx7": "mlx5",
+    "bnxt": "bnxt_re",
+}
+
+
+def _extract_pcie_field(lspci_line, field):
+    """
+    Extract a PCIe field value from a single lspci output line.
+
+    Examples:
+        Input line : "LnkSta: Speed 32GT/s (ok), Width x16 (ok)"
+        field='Speed' -> "32GT/s"
+        field='Width' -> "x16"
+
+    Args:
+        lspci_line : A single line string from lspci output.
+        field      : "Speed" or "Width"
+
+    Returns:
+        str: Extracted value with trailing comma stripped.
+             "N/A" if field is not found in the line.
+    """
+    match = re.search(rf'{field}\s+(\S+?)(?:,|\s|$)', lspci_line)
+    if match:
+        return match.group(1).rstrip(',')
+    return "N/A"
+
+
+def get_be_nic_pcie_bus_dict(phdl, nic_type):
+    if nic_type not in BE_NIC_SYSFS_PREFIX_MAP:
+        raise ValueError(f"Unknown BE NIC type '{nic_type}'. Valid options: {list(BE_NIC_SYSFS_PREFIX_MAP.keys())}")
+
+    sysfs_prefix = BE_NIC_SYSFS_PREFIX_MAP[nic_type]
+
+    nodes = list(phdl.reachable_hosts)  # use reachable_hosts directly — guaranteed to match exec_cmd_list order
+
+    be_nic_dict = {node: {} for node in nodes}
+
+    for i in range(8):
+        device = f"{sysfs_prefix}_{i}"
+        sysfs_path = f"/sys/class/infiniband/{device}/device"
+
+        cmd_list = []
+        for node in nodes:  # same order as reachable_hosts
+            cmd_list.append(
+                f"test -e {sysfs_path} && "
+                f"cat {sysfs_path}/uevent 2>/dev/null | grep PCI_SLOT_NAME | cut -d= -f2 || "
+                f"echo MISSING"
+            )
+
+        bdf_dict = phdl.exec_cmd_list(cmd_list)
+
+        nic_key = f"nic{i}"
+        for node, output in bdf_dict.items():
+            bdf = output.strip()
+            if bdf == "MISSING" or not bdf:
+                log.warning(f"Node {node}: {device} not found at {sysfs_path} — skipping")
+                continue
+
+            be_nic_dict[node][nic_key] = {"PCI Bus": bdf}
+            log.info(f"Node {node}: found {nic_type} NIC [{nic_key}] device={device}  BDF={bdf}")
+
+    return be_nic_dict
+
+
 def test_check_pci_speed_width(phdl, config_dict):
     """
-    Verify PCIe link speed and width for each GPU on all nodes.
+    Verify PCIe link speed and width for each GPU and BE NIC on all nodes.
 
-    This test:
+    GPU Checks:
       - Reads expected PCIe speed and width from config_dict:
           - gpu_pcie_speed (e.g., "32" for 32 GT/s)
           - gpu_pcie_width (e.g., "16" for x16)
@@ -483,25 +557,45 @@ def test_check_pci_speed_width(phdl, config_dict):
           - Not in a ?downgrade? state
       - Calls update_test_result() at the end to record pass/fail.
 
+    BE NIC Checks:
+      - Reads be_nic_type, nic_pcie_speed, nic_pcie_width from config_dict.
+      - Uses get_be_nic_pcie_bus_dict(phdl, nic_type) to collect NIC BDFs per node.
+        Discovery uses sysfs path:
+            /sys/class/infiniband/<prefix>_<i>/device   (i = 0..7)
+        where prefix comes from BE_NIC_SYSFS_PREFIX_MAP[be_nic_type].
+      - For each NIC index builds one lspci command per node, runs them in
+        parallel via phdl.exec_cmd_list(), and checks LnkSta speed/width/downgrade.
+      - Nodes where a given NIC index is MISSING are skipped with a warning.
+
     Args:
       phdl: Remote execution handle; must provide:
             - exec_cmd_list(list[str]) -> dict[node, str]
       config_dict: Must include:
             - 'gpu_pcie_speed': expected GT/s as string (e.g., "32")
             - 'gpu_pcie_width': expected width as string (e.g., "16")
+            - 'be_nic_type'    : NIC type key in
+                                 BE_NIC_SYSFS_PREFIX_MAP (e.g. "ionic")
+            - 'nic_pcie_speed' : expected NIC LnkSta speed (e.g. "32GT/s")
+            - 'nic_pcie_width' : expected NIC LnkSta width (e.g. "x16")
 
     Notes:
-      - globals.error_list is reset at test start; fail_test() should accumulate failures.
-      - Assumes get_gpu_pcie_bus_dict returns:
-          { node: { card_index: {"PCI Bus": "<domain:bus:slot.func>"} } }
-      - The variable bus_no is taken from the earlier loop; in failure messages it may
-        not correspond to the specific p_node when iterating pci_dict (kept as-is).
+      - globals.error_list is reset at test start.
+      - fail_test() accumulates failures; update_test_result() records final result.
+      - Speed/width strings for NICs must match lspci LnkSta output exactly,
+        e.g. "32GT/s" and "x16".
     """
 
     globals.error_list = []
-    log.info('Testcase check online GPUs in pcie')
+    log.info('Testcase: check online GPUs and BE NICs in pcie')
+
     gpu_pcie_speed = config_dict['gpu_pcie_speed']
     gpu_pcie_width = config_dict['gpu_pcie_width']
+    be_nic_type = config_dict['be_nic_type']
+    nic_pcie_speed = config_dict['nic_pcie_speed']
+    nic_pcie_width = config_dict['nic_pcie_width']
+
+    log.info('--- Checking GPU PCIe speed and width ---')
+
     out_dict = get_gpu_pcie_bus_dict(phdl)
     cmd_list = []
     node_0 = list(out_dict.keys())[0]
@@ -526,6 +620,78 @@ def test_check_pci_speed_width(phdl, config_dict):
                 )
             if re.search('downgrade', pci_dict[p_node]):
                 fail_test(f'PCIe in downgraded state for bus {bus_no} on node {p_node}')
+
+    log.info(f'--- Checking BE NIC ({be_nic_type}) PCIe speed and width ---')
+
+    nic_out_dict = get_be_nic_pcie_bus_dict(phdl, be_nic_type)
+
+    # Validate at least one NIC was found somewhere in the cluster
+    total_nics = sum(len(v) for v in nic_out_dict.values())
+    if total_nics == 0:
+        fail_test(
+            f'No {be_nic_type} BE NICs discovered on any node. '
+            f'Verify be_nic_type in config and that the driver is loaded.'
+        )
+        update_test_result()
+        return
+
+    # Use node_0 of nic_out_dict as the reference for which nic keys exist
+    nic_list = sorted(set(k for v in nic_out_dict.values() for k in v.keys()))
+
+    for nic_no in nic_list:
+        cmd_list = []
+        nodes_for_this_nic = []
+
+        for node in nic_out_dict.keys():
+            if nic_no not in nic_out_dict[node]:
+                # NIC absent on this node — skip it for this index
+                log.warning(f'Node {node}: {nic_no} not present — skipping')
+                continue
+
+            nic_bus_no = nic_out_dict[node][nic_no]['PCI Bus']
+            cmd_list.append(f'sudo lspci -s {nic_bus_no} -vv 2>/dev/null | grep -E "LnkSta:" | head -1')
+            nodes_for_this_nic.append(node)
+
+        if not cmd_list:
+            continue
+
+        nic_pci_dict = phdl.exec_cmd_list(cmd_list)  # {node: lnksta_line}
+
+        for p_node in nic_pci_dict.keys():
+            lnksta_line = nic_pci_dict[p_node].strip()
+            nic_bus_no = nic_out_dict[p_node][nic_no]['PCI Bus']
+
+            if not lnksta_line or 'LnkSta' not in lnksta_line:
+                fail_test(
+                    f'[{be_nic_type.upper()} NIC] No LnkSta output for '
+                    f'{nic_no} BDF={nic_bus_no} on node {p_node} — BDF may be stale'
+                )
+                continue
+
+            act_speed = _extract_pcie_field(lnksta_line, 'Speed')
+            act_width = _extract_pcie_field(lnksta_line, 'Width')
+
+            if act_speed != nic_pcie_speed:
+                fail_test(
+                    f'[{be_nic_type.upper()} NIC] PCIe speed mismatch '
+                    f'for {nic_no} BDF={nic_bus_no} on node {p_node}: '
+                    f'expected={nic_pcie_speed}  actual={act_speed}'
+                )
+
+            if act_width != nic_pcie_width:
+                fail_test(
+                    f'[{be_nic_type.upper()} NIC] PCIe width mismatch '
+                    f'for {nic_no} BDF={nic_bus_no} on node {p_node}: '
+                    f'expected={nic_pcie_width}  actual={act_width} '
+                    f'(possible downgrade)'
+                )
+
+            if re.search('downgrade', lnksta_line, re.IGNORECASE):
+                fail_test(
+                    f'[{be_nic_type.upper()} NIC] PCIe in downgraded state '
+                    f'for {nic_no} BDF={nic_bus_no} on node {p_node}'
+                )
+
     update_test_result()
 
 
