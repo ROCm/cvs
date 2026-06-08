@@ -501,6 +501,10 @@ class SglangDisaggPD:
         cmd_list = []
         prefill_node_list = self.inf_dict['prefill_node_list']
         log.info('%%%% self.prefill_nnodes {}'.format(self.prefill_nnodes))
+        dist_init_addr = (
+            f"{self.inf_dict['prefill_coordinator_addr']}:"
+            f"{self.inf_dict['prefill_coordinator_port']}"
+        )
         for i in range(0, int(self.prefill_nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.prefill_nnodes}
@@ -515,6 +519,9 @@ class SglangDisaggPD:
                               --kv-cache-dtype {kv_cache_dtype} \
                               --trust-remote-code \
                               --tp {self.bp_dict['tensor_parallelism']} \
+                              --nnodes {self.prefill_nnodes} \
+                              --node-rank {i} \
+                              --dist-init-addr {dist_init_addr} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
@@ -569,25 +576,11 @@ class SglangDisaggPD:
         cmd_list = []
         decode_node_list = self.inf_dict['decode_node_list']
         log.info('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
+        dist_init_addr = (
+            f"{self.inf_dict['decode_coordinator_addr']}:"
+            f"{self.inf_dict['decode_coordinator_port']}"
+        )
         for i in range(0, int(self.decode_nnodes)):
-            # ------------------------------------------------------------------
-            # Construct a command that writes a Decode server launch script
-            # into /tmp/decode_launch_script.sh inside the container
-            #
-            # Key configuration details:
-            #   - NNODES / NODE_RANK: Distributed topology for SGLang
-            #   - disaggregation-mode decode: Run in Decode-only mode
-            #   - disaggregation-ib-device: RDMA device used for KV transfers
-            #   - host / port: Network endpoint for this Decode server
-            #   - dtype / kv-cache-dtype: Compute and KV precision
-            #   - tensor parallelism: Model sharding across GPUs
-            #   - aiter backend: Optimized attention backend for AMD GPUs
-            #   - memory fraction: Static GPU memory reservation
-            #
-            # NOTE:
-            #   The script is written (echo > file), not executed here.
-            #   Execution is handled by a separate orchestration step.
-            # ------------------------------------------------------------------
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.decode_nnodes}
                       export NODE_RANK={i}
@@ -601,6 +594,9 @@ class SglangDisaggPD:
                               --dtype {dtype} \
                               --kv-cache-dtype {kv_cache_dtype} \
                               --tp {self.bp_dict['tensor_parallelism']} \
+                              --nnodes {self.decode_nnodes} \
+                              --node-rank {i} \
+                              --dist-init-addr {dist_init_addr} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
@@ -648,10 +644,12 @@ class SglangDisaggPD:
         """
         log.info('Waiting 120 secs after launching decode script')
         time.sleep(120)
-        for node_no in range(0, self.prefill_nnodes):
-            self.poll_for_server_ready(node_no, 'prefill')
-        for node_no in range(0, self.decode_nnodes):
-            self.poll_for_server_ready(node_no, 'decode')
+        # for node_no in range(0, self.prefill_nnodes):
+        #     self.poll_for_server_ready(node_no, 'prefill')
+        # for node_no in range(0, self.decode_nnodes):
+        #     self.poll_for_server_ready(node_no, 'decode')
+        self.poll_for_server_ready(0, 'prefill')
+        self.poll_for_server_ready(0, 'decode')
 
     def launch_proxy_router(
         self,
@@ -683,18 +681,26 @@ class SglangDisaggPD:
         # Each Prefill server is specified as:
         #   --prefill http://<host>:<port>
         # ------------------------------------------------------------------
-        prefill_str = ''
-        for prefill_node in self.prefill_node_list:
-            prefill_str = prefill_str + f"--prefill http://{prefill_node}:{self.inf_dict['prefill_serv_port']} "
+        # prefill_str = ''
+        # for prefill_node in self.prefill_node_list:
+        #     prefill_str = prefill_str + f"--prefill http://{prefill_node}:{self.inf_dict['prefill_serv_port']} "
+        prefill_str = (
+            f"--prefill http://{self.inf_dict['prefill_coordinator_addr']}:"
+            f"{self.inf_dict['prefill_serv_port']} "
+        )
         # ------------------------------------------------------------------
         # Build Decode endpoint arguments for the router
         #
         # Each Decode server is specified as:
         #   --decode http://<host>:<port>
         # ------------------------------------------------------------------
-        decode_str = ''
-        for decode_node in self.decode_node_list:
-            decode_str = decode_str + f"--decode http://{decode_node}:{self.inf_dict['decode_serv_port']} "
+        # decode_str = ''
+        # for decode_node in self.decode_node_list:
+        #     decode_str = decode_str + f"--decode http://{decode_node}:{self.inf_dict['decode_serv_port']} "
+        decode_str = (
+            f"--decode http://{self.inf_dict['decode_coordinator_addr']}:"
+            f"{self.inf_dict['decode_serv_port']} "
+        )
         log.info('#================ * * * =========================#')
         log.info('Create Proxy Router launch script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
