@@ -465,7 +465,7 @@ def test_check_pci_accelerators(phdl, config_dict):
     update_test_result()
 
 
-def test_check_pci_speed_width(phdl, config_dict):
+def test_check_gpu_pcie_speed_width(phdl, config_dict):
     """
     Verify PCIe link speed and width for each GPU on all nodes.
 
@@ -526,6 +526,48 @@ def test_check_pci_speed_width(phdl, config_dict):
                 )
             if re.search('downgrade', pci_dict[p_node]):
                 fail_test(f'PCIe in downgraded state for bus {bus_no} on node {p_node}')
+    update_test_result()
+
+
+def test_check_be_nic_pcie_speed_width(phdl, config_dict):
+    """
+    Verify PCIe link speed and width for each Backend NIC on all nodes.
+
+    Reads 'nic_pcie_speed' and 'nic_pcie_width' from config_dict.
+    Uses get_gpu_nic_mapping_dict(phdl) to get NIC BDF per card per node.
+    Runs 'sudo lspci -vvv -s <nic_bdf> | grep LnkSta:' across nodes in parallel.
+    Checks Speed, Width, and absence of 'downgrade' in the output.
+    """
+    globals.error_list = []
+    log.info('Testcase check backend NIC PCIe speed and width')
+
+    nic_pcie_speed = config_dict['nic_pcie_speed']
+    nic_pcie_width = config_dict['nic_pcie_width']
+
+    out_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
+    node_0 = list(out_dict.keys())[0]
+    card_list = list(out_dict[node_0].keys())
+
+    for card_no in card_list:
+        cmd_list = []
+        for node in out_dict:
+            nic_bdf = out_dict[node][card_no]['nic_bdf']
+            cmd_list.append(f'sudo lspci -vvv -s {nic_bdf} | grep "LnkSta:" --color=never')
+        pci_dict = phdl.exec_cmd_list(cmd_list)
+        for p_node in pci_dict:
+            output = pci_dict[p_node]
+            nic_bdf = out_dict[p_node][card_no]['nic_bdf']
+            if not re.search(f'Speed {nic_pcie_speed}GT', output):
+                fail_test(
+                    f'NIC PCIe speed mismatch for {nic_bdf} on {p_node}: expected {nic_pcie_speed}GT/s, got {output}'
+                )
+            if not re.search(f'Width x{nic_pcie_width}', output):
+                fail_test(
+                    f'NIC PCIe width mismatch for {nic_bdf} on {p_node}: expected x{nic_pcie_width}, got {output}'
+                )
+            if re.search('downgrade', output):
+                fail_test(f'NIC PCIe in downgraded state for {nic_bdf} on {p_node}')
+
     update_test_result()
 
 

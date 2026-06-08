@@ -11,6 +11,8 @@
        "gpu_count": "8",
        "gpu_pcie_speed": "32",
        "gpu_pcie_width": "16",
+       "nic_pcie_speed": "32",
+       "nic_pcie_width": "16",
        "fw_dict":
        {
            "CP_MEC1": "32945",
