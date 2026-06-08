@@ -28,7 +28,7 @@ class ProtocolVersionError(ProtocolError):
 
 
 class ProtocolVersion:
-    TEXT_ONLY = 2    # v2.28.3: STATUS, VERBOSE STATUS, TIMEOUT only
+    TEXT_ONLY = 2  # v2.28.3: STATUS, VERBOSE STATUS, TIMEOUT only
     JSON_FORMAT = 3  # v2.28.7+: adds SET FORMAT json
     MONITOR_MODE = 4  # v2.29.2+: adds MONITOR [groups] (ASSUMPTION — verify)
 
@@ -86,8 +86,7 @@ class RCCLRasClient:
         """
         if self.server_protocol < ProtocolVersion.JSON_FORMAT:
             raise ProtocolVersionError(
-                f"SET FORMAT requires protocol {ProtocolVersion.JSON_FORMAT}+, "
-                f"server is {self.server_protocol}"
+                f"SET FORMAT requires protocol {ProtocolVersion.JSON_FORMAT}+, server is {self.server_protocol}"
             )
         self._writer.write(f"SET FORMAT {fmt}\n".encode())
         await self._writer.drain()
@@ -136,8 +135,7 @@ class RCCLRasClient:
         """
         if self.server_protocol < ProtocolVersion.MONITOR_MODE:
             raise ProtocolVersionError(
-                f"MONITOR requires protocol {ProtocolVersion.MONITOR_MODE}+, "
-                f"server is {self.server_protocol}"
+                f"MONITOR requires protocol {ProtocolVersion.MONITOR_MODE}+, server is {self.server_protocol}"
             )
         self._writer.write(f"MONITOR {groups}\n".encode())
         await self._writer.drain()

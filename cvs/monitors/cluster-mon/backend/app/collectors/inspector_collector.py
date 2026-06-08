@@ -14,14 +14,13 @@ runs `tail -n <max_records>` on each compute node (ssh mode).
 critical = False — Inspector failure never affects overall cluster health status.
 """
 
-import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Optional
 
 from app.collectors.base import BaseCollector, CollectorResult, CollectorState
 from app.collectors.inspector_parser import InspectorParser, aggregate_snapshot
-from app.models.rccl_models import InspectorCollPerf, InspectorSnapshot
+from app.core.config import settings as _settings
+from app.models.rccl_models import InspectorCollPerf
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +41,7 @@ class InspectorCollector(BaseCollector):
 
     name = "inspector"
     poll_interval: int = 30
-    collect_timeout: float = 25.0   # overridden at module level from settings
+    collect_timeout: float = 25.0  # overridden at module level from settings
     critical = False
 
     def __init__(self):
@@ -81,6 +80,7 @@ class InspectorCollector(BaseCollector):
 
         # Push to data store if available
         from app.main import app_state
+
         data_store = getattr(app_state, 'rccl_data_store', None)
         if data_store is not None:
             await data_store.push_inspector_snapshot(snapshot_dict)
@@ -166,6 +166,7 @@ class InspectorCollector(BaseCollector):
         Returns an empty set when no job is running or rcclras hasn't connected yet.
         """
         from app.main import app_state
+
         snapshot = getattr(app_state, 'latest_rccl_snapshot', None)
         if not snapshot:
             return set()
@@ -237,8 +238,7 @@ class InspectorCollector(BaseCollector):
             # Strip sentinel and tail's multi-file headers (==> filename <==)
             # before parsing — neither is a JSONL record.
             clean = "\n".join(
-                line for line in output.splitlines()
-                if line.strip() != _SENTINEL and not line.startswith("==>")
+                line for line in output.splitlines() if line.strip() != _SENTINEL and not line.startswith("==>")
             )
             if not clean.strip():
                 continue
@@ -257,8 +257,5 @@ class InspectorCollector(BaseCollector):
 # collect_timeout = max(15s, poll_interval * 0.8): allows most of the poll window
 # for SSH exec to complete. Minimum 15s — SSH tail across 2+ nodes needs headroom.
 # NOTE: poll_interval < 20s is not recommended for SSH mode; file mode can go lower.
-from app.core.config import settings as _settings
 InspectorCollector.poll_interval = _settings.rccl.inspector.poll_interval
-InspectorCollector.collect_timeout = max(
-    15.0, _settings.rccl.inspector.poll_interval * 0.8
-)
+InspectorCollector.collect_timeout = max(15.0, _settings.rccl.inspector.poll_interval * 0.8)

@@ -2,9 +2,10 @@
 Tests for BaseCollector ABC, CollectorResult, CollectorState.
 Uses TDD - written before/alongside implementation.
 """
+
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from app.collectors.base import (
     BaseCollector,
@@ -134,8 +135,7 @@ async def test_run_times_out_and_produces_error_result():
                 pass
 
     # The collector_results should have an ERROR entry from timeout
-    assert "hanging" in app_state.collector_results, \
-        "Expected collector_results to have 'hanging' entry after timeout"
+    assert "hanging" in app_state.collector_results, "Expected collector_results to have 'hanging' entry after timeout"
     result = app_state.collector_results["hanging"]
     assert result.state == CollectorState.ERROR
     assert "timed out" in result.error.lower()
@@ -188,6 +188,7 @@ async def test_run_connection_error_sets_probe_requested():
 
 def test_settings_defaults():
     from app.core.config import Settings
+
     s = Settings()
     assert s.polling.interval == 60
     assert s.polling.failure_threshold == 5
@@ -197,6 +198,7 @@ def test_settings_defaults():
 
 def test_settings_backward_compat_properties():
     from app.core.config import Settings
+
     s = Settings()
     # These properties must exist for the existing main.py to keep working
     assert hasattr(s, 'node_username_via_jumphost')

@@ -6,6 +6,7 @@ Covers:
 - push_event / get_events_in_range
 - Version-as-timeline-event: software_upgrade emitted on rccl_version change
 """
+
 import time
 import pytest
 
@@ -28,6 +29,7 @@ def _snapshot(version: str = "2.28.3", ts: float | None = None) -> dict:
 # ---------------------------------------------------------------------------
 # Basic push / get
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_push_and_get_current_snapshot():
@@ -81,6 +83,7 @@ async def test_get_events_out_of_range_returns_empty():
 # ---------------------------------------------------------------------------
 # Version-as-timeline-event
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_no_upgrade_event_on_first_push():

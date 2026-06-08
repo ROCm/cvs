@@ -11,11 +11,11 @@ from pydantic import BaseModel
 
 
 class RCCLJobState(str, Enum):
-    NO_JOB = "no_job"          # Connection refused — no RCCL job running
+    NO_JOB = "no_job"  # Connection refused — no RCCL job running
     UNREACHABLE = "unreachable"  # SSH/TCP timeout — node down
-    HEALTHY = "healthy"          # Job running, all communicators healthy
-    DEGRADED = "degraded"        # Job running, some ranks missing or async errors
-    ERROR = "error"              # Unexpected protocol error
+    HEALTHY = "healthy"  # Job running, all communicators healthy
+    DEGRADED = "degraded"  # Job running, some ranks missing or async errors
+    ERROR = "error"  # Unexpected protocol error
 
 
 class NCCLFunction(str, Enum):
@@ -25,6 +25,7 @@ class NCCLFunction(str, Enum):
     lines like 'AllReduce=N AllGather=N ...'. Enum order does NOT affect correctness —
     parsing is by string name, not by index.
     """
+
     BROADCAST = "Broadcast"
     REDUCE = "Reduce"
     ALL_GATHER = "AllGather"
@@ -40,8 +41,8 @@ class NCCLFunction(str, Enum):
 
 
 class RCCLRankStatus(BaseModel):
-    init_state: int        # ncclResult_t value (0 = ncclSuccess)
-    async_error: int       # ncclResult_t value
+    init_state: int  # ncclResult_t value (0 = ncclSuccess)
+    async_error: int  # ncclResult_t value
     finalize_called: bool
     destroy_flag: bool
     abort_flag: bool
@@ -49,28 +50,28 @@ class RCCLRankStatus(BaseModel):
 
 class RCCLRank(BaseModel):
     comm_rank: int
-    node_addr: str         # IP address of the node
+    node_addr: str  # IP address of the node
     pid: int
-    cuda_dev: int          # CUDA device index (CUDA_VISIBLE_DEVICES-aware)
-    nvml_dev: int          # NVML device index (raw hardware index)
+    cuda_dev: int  # CUDA device index (CUDA_VISIBLE_DEVICES-aware)
+    nvml_dev: int  # NVML device index (raw hardware index)
     coll_op_counts: dict[NCCLFunction, int]  # Keyed by NCCLFunction string enum
     status: RCCLRankStatus
 
 
 class RCCLCommunicator(BaseModel):
-    comm_hash: str         # Hex string of the 3-component commId hash
-    total_ranks: int       # commNRanks from RAS collective
+    comm_hash: str  # Hex string of the 3-component commId hash
+    total_ranks: int  # commNRanks from RAS collective
     responding_ranks: int  # nRanks — ranks we received data from
-    missing_ranks: int     # nMissingRanks — declared missing by other ranks
+    missing_ranks: int  # nMissingRanks — declared missing by other ranks
     ranks: list[RCCLRank]
-    health: RCCLJobState   # Derived: HEALTHY/DEGRADED/ERROR
+    health: RCCLJobState  # Derived: HEALTHY/DEGRADED/ERROR
 
 
 class RCCLPeer(BaseModel):
     addr: str
     pid: int
-    cuda_devs: int   # Bitmask
-    nvml_devs: int   # Bitmask
+    cuda_devs: int  # Bitmask
+    nvml_devs: int  # Bitmask
     is_dead: bool
 
 
@@ -109,7 +110,7 @@ class RCCLSnapshot(BaseModel):
     communicators: list[RCCLCommunicator] = []
     peers: list[RCCLPeer] = []
     dead_peers: list[str] = []  # IP:port strings of declared-dead peers
-    errors: list[str] = []     # Raw error lines from the Errors section
+    errors: list[str] = []  # Raw error lines from the Errors section
 
     @classmethod
     def empty(cls, state: RCCLJobState = RCCLJobState.NO_JOB) -> "RCCLSnapshot":
@@ -128,17 +129,18 @@ class NodeRCCLCapability:
     TTL: refresh after `ttl` seconds. Stale data is served rather than None
     on transient probe failure so monitoring continues during node hiccups.
     """
-    json_ras: bool                         # SET FORMAT json → OK
-    detected_rccl_version: Optional[str]   # from JSON nccl_version field if available
+
+    json_ras: bool  # SET FORMAT json → OK
+    detected_rccl_version: Optional[str]  # from JSON nccl_version field if available
     detection_method: Literal["probe", "heuristic"]
     probed_at: float = field(default_factory=time.time)
-    ttl: float = 300.0                     # 5-minute default; 3600 after first success
-    inspector_v5: bool = False             # Inspector JSONL format v5.0+ detected (graphCaptured present)
+    ttl: float = 300.0  # 5-minute default; 3600 after first success
+    inspector_v5: bool = False  # Inspector JSONL format v5.0+ detected (graphCaptured present)
 
 
 class RCCLEvent(BaseModel):
     timestamp: float
-    event_type: str    # "lifecycle" or "trace" (Phase 3+)
+    event_type: str  # "lifecycle" or "trace" (Phase 3+)
     source_node: str
     details: str
     peer_addr: Optional[str] = None
@@ -146,19 +148,22 @@ class RCCLEvent(BaseModel):
 
 class RCCLMarker(BaseModel):
     """Posted by the PyTorch callback via POST /api/rccl/markers."""
-    type: str              # e.g., "training_step"
+
+    type: str  # e.g., "training_step"
     step: int
     loss: Optional[float] = None
     rank: int
-    timestamp: str         # ISO 8601
+    timestamp: str  # ISO 8601
 
 
 # ---------------------------------------------------------------------------
 # Inspector plugin models
 # ---------------------------------------------------------------------------
 
+
 class InspectorKernelChannel(BaseModel):
     """Per-channel kernel timing from NCCL_INSPECTOR_DUMP_VERBOSE=1."""
+
     channel_id: int
     # Sequence numbers — monotonic counters across all profiler events
     kernel_start_sn: Optional[int] = None
@@ -174,6 +179,7 @@ class InspectorKernelChannel(BaseModel):
 
 class InspectorEventTrace(BaseModel):
     """Verbose event trace from coll_perf.event_trace_sn / event_trace_ts."""
+
     coll_start_sn: Optional[int] = None
     coll_stop_sn: Optional[int] = None
     coll_start_ts: Optional[int] = None
@@ -183,28 +189,30 @@ class InspectorEventTrace(BaseModel):
 
 class InspectorCollPerf(BaseModel):
     """Single completed collective record from one Inspector JSONL line."""
-    timestamp: float            # dump_timestamp_us / 1e6 (Unix seconds)
-    comm_hash: str              # header.id — communicator identity
-    rank: int                   # header.rank
-    nranks: int                 # header.n_ranks
-    nnodes: int                 # header.nnodes
-    hostname: str               # metadata.hostname
-    pid: int                    # metadata.pid
-    collective: str             # coll_perf.coll (e.g. "AllReduce")
-    sequence_num: int           # coll_perf.coll_sn — monotonic counter per comm
-    msg_size_bytes: int         # coll_perf.coll_msg_size_bytes
-    exec_time_us: int           # coll_perf.coll_exec_time_us
-    timing_source: str          # coll_perf.coll_timing_source
-    algo_bw_gbps: float         # coll_perf.coll_algobw_gbs
-    bus_bw_gbps: float          # coll_perf.coll_busbw_gbs
+
+    timestamp: float  # dump_timestamp_us / 1e6 (Unix seconds)
+    comm_hash: str  # header.id — communicator identity
+    rank: int  # header.rank
+    nranks: int  # header.n_ranks
+    nnodes: int  # header.nnodes
+    hostname: str  # metadata.hostname
+    pid: int  # metadata.pid
+    collective: str  # coll_perf.coll (e.g. "AllReduce")
+    sequence_num: int  # coll_perf.coll_sn — monotonic counter per comm
+    msg_size_bytes: int  # coll_perf.coll_msg_size_bytes
+    exec_time_us: int  # coll_perf.coll_exec_time_us
+    timing_source: str  # coll_perf.coll_timing_source
+    algo_bw_gbps: float  # coll_perf.coll_algobw_gbs
+    bus_bw_gbps: float  # coll_perf.coll_busbw_gbs
     event_trace: Optional[InspectorEventTrace] = None  # present only with NCCL_INSPECTOR_DUMP_VERBOSE=1
     # v5.0+ fields (exact RCCL version boundary TBD — not confirmed in NCCL sync diff)
-    inspector_format_version: str = "v4.0"   # metadata.inspector_output_format_version
-    graph_captured: Optional[bool] = None    # coll_perf.graphCaptured; None on v4 records
+    inspector_format_version: str = "v4.0"  # metadata.inspector_output_format_version
+    graph_captured: Optional[bool] = None  # coll_perf.graphCaptured; None on v4 records
 
 
 class InspectorSnapshot(BaseModel):
     """Aggregated Inspector data across all ranks collected in one poll cycle."""
+
     timestamp: float
     records: list[InspectorCollPerf]
     avg_bus_bw_gbps: Optional[float] = None

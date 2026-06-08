@@ -2,6 +2,7 @@
 Tests for RCCL RAS JSON output parser (RCCL v2.28.7+ with -f json).
 Fixtures are synthetic but schema-faithful to client_support.cc jsonWrite* output.
 """
+
 import pytest
 from pathlib import Path
 
@@ -27,6 +28,7 @@ def degraded_json():
 
 
 # -- Basic parse ---------------------------------------------------------------
+
 
 def test_parse_healthy_state(parser, healthy_json):
     snap = parser.parse(healthy_json)
@@ -67,6 +69,7 @@ def test_parse_healthy_total_processes(parser, healthy_json):
 
 # -- Communicator fields -------------------------------------------------------
 
+
 def test_parse_healthy_communicator_count(parser, healthy_json):
     snap = parser.parse(healthy_json)
     assert len(snap.communicators) == 1
@@ -91,6 +94,7 @@ def test_parse_healthy_communicator_health(parser, healthy_json):
 
 
 # -- Per-rank details (only available from JSON parser) ------------------------
+
 
 def test_parse_healthy_ranks_populated(parser, healthy_json):
     snap = parser.parse(healthy_json)
@@ -126,6 +130,7 @@ def test_parse_healthy_rank_collective_counts(parser, healthy_json):
 
 
 # -- Degraded fixture ----------------------------------------------------------
+
 
 def test_parse_degraded_state(parser, degraded_json):
     snap = parser.parse(degraded_json)
@@ -170,6 +175,7 @@ def test_parse_degraded_no_raw_errors(parser, degraded_json):
 
 
 # -- Edge / error cases --------------------------------------------------------
+
 
 def test_parse_empty_string_returns_no_job(parser):
     snap = parser.parse("")

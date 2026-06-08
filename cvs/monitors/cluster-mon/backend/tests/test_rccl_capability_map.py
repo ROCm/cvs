@@ -9,6 +9,7 @@ Covers:
 - _parse_response: routes to text parser when json_ras=False
 - NodeRCCLCapability fields: detected_rccl_version back-filled after first JSON parse
 """
+
 import asyncio
 import time
 import pytest
@@ -22,6 +23,7 @@ from app.models.rccl_models import NodeRCCLCapability, RCCLJobState
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_app_state(node_capabilities=None):
     app_state = MagicMock()
@@ -44,6 +46,7 @@ def _make_client(set_format_ok=True):
 # ---------------------------------------------------------------------------
 # _ensure_capability: probe path
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_probe_json_supported_stores_capability():
@@ -95,6 +98,7 @@ async def test_probe_ttl_shorter_for_text_only():
 # ---------------------------------------------------------------------------
 # _ensure_capability: cache hit / miss
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_cache_hit_skips_probe():
@@ -151,6 +155,7 @@ async def test_probe_error_falls_back_to_text_only():
 # ---------------------------------------------------------------------------
 # _parse_response: routing
 # ---------------------------------------------------------------------------
+
 
 def test_parse_response_uses_json_parser_when_json_ras():
     collector = RCCLCollector()
@@ -216,6 +221,7 @@ def test_parse_response_does_not_overwrite_existing_version():
 # ---------------------------------------------------------------------------
 # NodeRCCLCapability dataclass
 # ---------------------------------------------------------------------------
+
 
 def test_node_rccl_capability_defaults():
     cap = NodeRCCLCapability(

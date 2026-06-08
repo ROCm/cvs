@@ -21,7 +21,7 @@ from app.collectors.gpu_collector import GPUMetricsCollector
 from app.collectors.nic_collector import NICMetricsCollector
 from app.collectors.rccl_collector import RCCLCollector
 from app.collectors.inspector_collector import InspectorCollector
-from app.collectors.base import BaseCollector, CollectorResult, CollectorState
+from app.collectors.base import BaseCollector, CollectorResult
 from app.api import router as api_router
 
 import redis.asyncio as aioredis
@@ -115,7 +115,7 @@ class AppState:
         self.redis: Optional[object] = None
 
         # RCCL state
-        self.rccl_data_store = None   # RCCLDataStore, set in lifespan
+        self.rccl_data_store = None  # RCCLDataStore, set in lifespan
         self.latest_rccl_snapshot: Optional[dict] = None
         self.rccl_websocket_clients: List[WebSocket] = []
         # Per-node capability map: populated on first successful RAS connection.
@@ -204,19 +204,12 @@ async def _reload_configuration_inner():
         new_config = Settings()  # re-reads YAML and env vars
 
         # 2. Determine which config sections changed
-        ssh_changed = (
-            old_settings.ssh.model_dump() != new_config.ssh.model_dump()
-        )
-        rccl_changed = (
-            old_settings.rccl.model_dump() != new_config.rccl.model_dump()
-        )
-        polling_changed = (
-            old_settings.polling.model_dump() != new_config.polling.model_dump()
-        )
+        ssh_changed = old_settings.ssh.model_dump() != new_config.ssh.model_dump()
+        rccl_changed = old_settings.rccl.model_dump() != new_config.rccl.model_dump()
+        polling_changed = old_settings.polling.model_dump() != new_config.polling.model_dump()
 
         logger.info(
-            f"Config diff: ssh_changed={ssh_changed}, rccl_changed={rccl_changed}, "
-            f"polling_changed={polling_changed}"
+            f"Config diff: ssh_changed={ssh_changed}, rccl_changed={rccl_changed}, polling_changed={polling_changed}"
         )
 
         # 3. Update the global settings reference
@@ -351,7 +344,9 @@ async def _reload_configuration_inner():
                         target_hosts=nodes,
                         target_user=new_config.ssh.jump_host.node_username,
                         target_pkey=new_config.ssh.jump_host.node_key_file,
-                        max_parallel=min(len(nodes), 5),  # Limit to 5 to avoid exhausting paramiko channels (conservative)
+                        max_parallel=min(
+                            len(nodes), 5
+                        ),  # Limit to 5 to avoid exhausting paramiko channels (conservative)
                         timeout=new_config.ssh.timeout,
                     )
                     logger.info("JumpHostPssh initialized successfully")
@@ -372,7 +367,11 @@ async def _reload_configuration_inner():
                     logger.info("Direct SSH manager reinitialized")
             except Exception as e:
                 logger.error(f"Failed to reinitialize SSH manager: {e}")
-                return {"success": False, "error": f"Failed to initialize SSH manager: {str(e)}", "nodes_count": len(nodes)}
+                return {
+                    "success": False,
+                    "error": f"Failed to initialize SSH manager: {str(e)}",
+                    "nodes_count": len(nodes),
+                }
 
             # Restart probe task with new SSH manager
             app_state.probe_requested = asyncio.Event()
@@ -454,6 +453,7 @@ class ConnectionManager:
     WebSocket connection manager with per-client bounded queues.
     Slow clients are disconnected instead of blocking the broadcast loop.
     """
+
     def __init__(self, max_queue_size: int = 64):
         self._clients: dict[int, WebSocket] = {}
         self._queues: dict[int, asyncio.Queue] = {}
@@ -467,9 +467,7 @@ class ConnectionManager:
         self._clients[client_id] = websocket
         q: asyncio.Queue = asyncio.Queue(maxsize=self._max_queue_size)
         self._queues[client_id] = q
-        self._send_tasks[client_id] = asyncio.create_task(
-            self._sender(client_id, websocket, q)
-        )
+        self._send_tasks[client_id] = asyncio.create_task(self._sender(client_id, websocket, q))
 
     async def _sender(self, client_id: int, ws: WebSocket, queue: asyncio.Queue):
         try:
@@ -696,6 +694,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize RCCL data store (uses app_state.redis, degrades if None)
     from app.collectors.rccl_data_store import RCCLDataStore
+
     app_state.rccl_data_store = RCCLDataStore(
         app_state.redis,
         snapshot_max=settings.storage.redis.snapshot_max_entries,

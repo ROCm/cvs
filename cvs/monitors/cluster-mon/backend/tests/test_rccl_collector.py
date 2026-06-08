@@ -1,7 +1,7 @@
 """Tests for RCCLCollector."""
-import asyncio
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from app.collectors.base import CollectorState
 from app.collectors.rccl_collector import RCCLCollector
@@ -79,7 +79,8 @@ async def test_collect_returns_error_when_app_state_not_set():
 
 
 def test_health_from_snapshot_healthy():
-    from app.models.rccl_models import RCCLSnapshot, RCCLCommunicator, RCCLJobState
+    from app.models.rccl_models import RCCLSnapshot, RCCLJobState
+
     collector = RCCLCollector()
     snapshot = RCCLSnapshot(
         timestamp=1.0,
@@ -101,9 +102,7 @@ async def test_state_change_event_emitted_on_job_start():
     app_state = MagicMock()
     app_state.rccl_data_store = data_store
 
-    await collector._push_state_event(
-        RCCLJobState.NO_JOB, RCCLJobState.HEALTHY, app_state, leader="node1"
-    )
+    await collector._push_state_event(RCCLJobState.NO_JOB, RCCLJobState.HEALTHY, app_state, leader="node1")
 
     data_store.push_event.assert_called_once()
     event = data_store.push_event.call_args[0][0]
@@ -122,14 +121,13 @@ async def test_no_event_when_state_unchanged():
     app_state = MagicMock()
     app_state.rccl_data_store = data_store
 
-    await collector._push_state_event(
-        RCCLJobState.HEALTHY, RCCLJobState.HEALTHY, app_state
-    )
+    await collector._push_state_event(RCCLJobState.HEALTHY, RCCLJobState.HEALTHY, app_state)
     data_store.push_event.assert_not_called()
 
 
 def test_rccl_endpoints_importable():
     from app.api.rccl_endpoints import router
+
     routes = [r.path for r in router.routes]
     assert any("status" in r for r in routes)
     assert any("markers" in r for r in routes)

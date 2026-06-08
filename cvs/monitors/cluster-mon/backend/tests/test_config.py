@@ -1,5 +1,5 @@
 """Tests for the new pydantic Settings config."""
-import pytest
+
 from app.core.config import (
     Settings,
     JumpHostConfig,
@@ -7,7 +7,6 @@ from app.core.config import (
     PollingConfig,
     RCCLConfig,
     StorageConfig,
-    RedisConfig,
 )
 
 
@@ -58,6 +57,7 @@ def test_settings_has_all_sections():
 def test_settings_env_nested_delimiter(monkeypatch):
     """Verify env_nested_delimiter is set so POLLING__INTERVAL=30 works."""
     from app.core.config import Settings
+
     monkeypatch.setenv('POLLING__INTERVAL', '45')
     s = Settings()
     assert s.polling.interval == 45
@@ -67,6 +67,7 @@ def test_settings_env_nested_delimiter(monkeypatch):
 def test_settings_load_nodes_from_file_missing():
     """load_nodes_from_file returns [] when no file exists."""
     from app.core.config import Settings
+
     s = Settings()
     # In test environment, no nodes.txt at the expected paths
     # Result should be [] (not an exception)

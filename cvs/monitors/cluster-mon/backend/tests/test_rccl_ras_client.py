@@ -1,14 +1,13 @@
 """
 Tests for RCCLRasClient against MockRcclRasServer.
 """
+
 import asyncio
 import pytest
 
 from app.collectors.rccl_ras_client import (
     RCCLRasClient,
-    ProtocolError,
     ProtocolVersionError,
-    ProtocolVersion,
 )
 from tests.mock_rcclras_server import MockRcclRasServer
 
@@ -93,9 +92,8 @@ def test_rccl_models_import():
     from app.models.rccl_models import (
         RCCLSnapshot,
         RCCLJobState,
-        NCCLFunction,
-        RCCLMarker,
     )
+
     snapshot = RCCLSnapshot.empty()
     assert snapshot.state == RCCLJobState.NO_JOB
     assert snapshot.communicators == []
@@ -105,6 +103,7 @@ def test_rccl_models_import():
 async def test_rccl_data_store_degrades_without_redis():
     """Without Redis, in-memory fallback buffers are used."""
     from app.collectors.rccl_data_store import RCCLDataStore
+
     store = RCCLDataStore(redis_client=None)
     await store.push_snapshot({"timestamp": 1.0})
     await store.push_event({"timestamp": 1.0})
@@ -118,6 +117,7 @@ async def test_rccl_data_store_degrades_without_redis():
 
 def test_ncclfunction_enum_str_values():
     from app.models.rccl_models import NCCLFunction
+
     assert NCCLFunction.ALL_REDUCE == "AllReduce"
     assert NCCLFunction.ALL_GATHER == "AllGather"
     assert NCCLFunction.SEND == "Send"
@@ -125,6 +125,7 @@ def test_ncclfunction_enum_str_values():
 
 def test_rccl_job_state_values():
     from app.models.rccl_models import RCCLJobState
+
     assert RCCLJobState.NO_JOB == "no_job"
     assert RCCLJobState.HEALTHY == "healthy"
     assert RCCLJobState.DEGRADED == "degraded"

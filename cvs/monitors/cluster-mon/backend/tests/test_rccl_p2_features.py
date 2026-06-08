@@ -5,9 +5,10 @@ Tests for P2 features:
 - Text-path version back-fill in _parse_response
 - /api/rccl/status augmentation (version strings + mismatch flag)
 """
+
 import time
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from app.models.rccl_models import NodeRCCLCapability, hip_version_str
 from app.collectors.rccl_collector import RCCLCollector
@@ -17,6 +18,7 @@ from app.collectors.rccl_data_store import RCCLDataStore
 # ---------------------------------------------------------------------------
 # hip_version_str
 # ---------------------------------------------------------------------------
+
 
 def test_hip_version_str_known_value():
     # ROCm 6.5.0 → 60500000
@@ -46,6 +48,7 @@ def test_hip_version_str_round_trip():
 # Text-path version back-fill in _parse_response
 # ---------------------------------------------------------------------------
 
+
 def _text_cap() -> NodeRCCLCapability:
     return NodeRCCLCapability(
         json_ras=False,
@@ -57,6 +60,7 @@ def _text_cap() -> NodeRCCLCapability:
 def test_text_path_backfills_version(tmp_path):
     """After parsing text output, detected_rccl_version must be filled in."""
     from pathlib import Path
+
     fixtures = Path(__file__).parent / "fixtures"
     healthy_text = (fixtures / "rccl_v2283_text_healthy.txt").read_text()
 
@@ -69,6 +73,7 @@ def test_text_path_backfills_version(tmp_path):
 
 def test_text_path_does_not_overwrite_existing_version():
     from pathlib import Path
+
     fixtures = Path(__file__).parent / "fixtures"
     healthy_text = (fixtures / "rccl_v2283_text_healthy.txt").read_text()
 
@@ -96,6 +101,7 @@ def test_connection_refused_text_does_not_backfill():
 # _check_and_emit_skew
 # ---------------------------------------------------------------------------
 
+
 def _cap_with_version(v: str) -> NodeRCCLCapability:
     return NodeRCCLCapability(
         json_ras=False,
@@ -106,6 +112,7 @@ def _cap_with_version(v: str) -> NodeRCCLCapability:
 
 def _make_snapshot(inconsistent: bool = False):
     from app.models.rccl_models import RCCLSnapshot, RCCLJobState, RCCLJobSummary
+
     return RCCLSnapshot(
         timestamp=time.time(),
         state=RCCLJobState.HEALTHY,
@@ -204,9 +211,7 @@ async def test_skew_skips_nodes_without_version():
     app_state = MagicMock()
     app_state.node_capabilities = {
         "node1": _cap_with_version("2.28.3"),
-        "node2": NodeRCCLCapability(
-            json_ras=False, detected_rccl_version=None, detection_method="probe"
-        ),
+        "node2": NodeRCCLCapability(json_ras=False, detected_rccl_version=None, detection_method="probe"),
     }
     app_state.rccl_data_store = store
 
@@ -238,6 +243,7 @@ async def test_skew_no_crash_without_data_store():
 # /api/rccl/status augmentation
 # ---------------------------------------------------------------------------
 
+
 def _make_raw_snapshot(hip: int = 70226015, drv: int = 70226015) -> dict:
     return {
         "timestamp": time.time(),
@@ -261,9 +267,7 @@ async def test_status_endpoint_adds_version_strings():
 
     app_state.latest_rccl_snapshot = _make_raw_snapshot()
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/rccl/status")
     assert resp.status_code == 200
     summary = resp.json()["job_summary"]
@@ -278,9 +282,7 @@ async def test_status_endpoint_mismatch_false_when_equal():
 
     app_state.latest_rccl_snapshot = _make_raw_snapshot(hip=70226015, drv=70226015)
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/rccl/status")
     assert resp.json()["job_summary"]["driver_runtime_mismatch"] is False
 
@@ -292,9 +294,7 @@ async def test_status_endpoint_mismatch_true_when_differ():
 
     app_state.latest_rccl_snapshot = _make_raw_snapshot(hip=70226015, drv=60500000)
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/rccl/status")
     assert resp.json()["job_summary"]["driver_runtime_mismatch"] is True
 
@@ -306,9 +306,7 @@ async def test_status_endpoint_no_job_no_summary():
 
     app_state.latest_rccl_snapshot = {"state": "no_job"}
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/api/rccl/status")
     data = resp.json()
     assert "job_summary" not in data or data.get("job_summary") is None

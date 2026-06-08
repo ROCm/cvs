@@ -15,13 +15,10 @@ class MockRcclRasServer:
         self.protocol_version = protocol_version
         self._server: Optional[asyncio.Server] = None
 
-    async def handle(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             line = await asyncio.wait_for(reader.readline(), timeout=2.0)
-            assert line.lower().startswith(b"client protocol"), \
-                f"Expected CLIENT PROTOCOL, got: {line!r}"
+            assert line.lower().startswith(b"client protocol"), f"Expected CLIENT PROTOCOL, got: {line!r}"
 
             writer.write(f"SERVER PROTOCOL {self.protocol_version}\n".encode())
             await writer.drain()
@@ -34,8 +31,7 @@ class MockRcclRasServer:
                 line = await asyncio.wait_for(reader.readline(), timeout=2.0)
 
             # Expect STATUS or VERBOSE STATUS
-            assert b"status" in line.lower(), \
-                f"Expected STATUS command, got: {line!r}"
+            assert b"status" in line.lower(), f"Expected STATUS command, got: {line!r}"
 
             writer.write(self.fixture_data)
             await writer.drain()

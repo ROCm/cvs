@@ -87,8 +87,8 @@ class JumpHostPssh:
 
         self._create_parallel_client()
 
-        self._exec_lock = threading.Lock()    # serializes concurrent exec() calls
-        self._hosts_lock = threading.Lock()   # protects unreachable_hosts/reachable_hosts mutations
+        self._exec_lock = threading.Lock()  # serializes concurrent exec() calls
+        self._hosts_lock = threading.Lock()  # protects unreachable_hosts/reachable_hosts mutations
 
     def _is_jump_host_alive(self):
         """Check if jump host connection is still active."""
@@ -125,9 +125,7 @@ class JumpHostPssh:
         """Connect to jump host using paramiko."""
         logger.info(f"Connecting to jump host: {self.jump_host}")
         logger.info(f"  Jump user: {self.jump_user}")
-        logger.info(
-            f"  Jump password: {'***SET***' if self.jump_password else 'NOT SET'}"
-        )
+        logger.info(f"  Jump password: {'***SET***' if self.jump_password else 'NOT SET'}")
         logger.info(f"  Jump pkey: {self.jump_pkey if self.jump_pkey else 'NOT SET'}")
 
         self.jump_client = paramiko.SSHClient()
@@ -260,7 +258,8 @@ class JumpHostPssh:
                 with ThreadPoolExecutor(max_workers=self.max_parallel) as executor:
                     # Submit tasks only for reachable nodes
                     future_to_node = {
-                        executor.submit(self._execute_on_node, node, cmd, timeout): node for node in self.reachable_hosts
+                        executor.submit(self._execute_on_node, node, cmd, timeout): node
+                        for node in self.reachable_hosts
                     }
 
                     # Collect results as they complete
@@ -391,9 +390,7 @@ class JumpHostPssh:
             logger.info("No reachability changes detected")
 
     @asynccontextmanager
-    async def open_port_forward(
-        self, node: str, remote_port: int
-    ) -> AsyncIterator[tuple]:
+    async def open_port_forward(self, node: str, remote_port: int) -> AsyncIterator[tuple]:
         """
         Open a two-hop SSH tunnel: monitoring_host -> jump_host -> node:remote_port.
 

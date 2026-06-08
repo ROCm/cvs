@@ -491,9 +491,7 @@ class Pssh:
             return self._pf_clients[node].get_transport()
 
     @asynccontextmanager
-    async def open_port_forward(
-        self, node: str, remote_port: int
-    ) -> AsyncIterator[tuple]:
+    async def open_port_forward(self, node: str, remote_port: int) -> AsyncIterator[tuple]:
         """
         Open a single-hop SSH tunnel: monitoring_host -> node:remote_port.
 

@@ -90,7 +90,9 @@ class NICMetricsCollector(BaseCollector):
         """
         logger.info("Collecting RDMA statistics (includes congestion control metrics)")
         # Use bash -c to properly handle shell redirection and || operator
-        output = await ssh_manager.exec_async("bash -c 'rdma statistic show --json 2>/dev/null || echo \"{}\"'", timeout=60)
+        output = await ssh_manager.exec_async(
+            "bash -c 'rdma statistic show --json 2>/dev/null || echo \"{}\"'", timeout=60
+        )
 
         logger.info(f"RDMA stats output received from {len(output)} nodes")
 

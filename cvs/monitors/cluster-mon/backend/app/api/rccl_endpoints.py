@@ -101,8 +101,6 @@ async def get_rccl_performance() -> dict:
     Returns 503 when Inspector collector is disabled or has not run yet.
     """
     from app.main import app_state
-    from fastapi import Response
-    import time
 
     data_store = getattr(app_state, 'rccl_data_store', None)
     if data_store is None:

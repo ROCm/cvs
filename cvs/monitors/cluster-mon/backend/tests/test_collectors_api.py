@@ -1,8 +1,7 @@
 """
 Tests for GET /api/collectors/status endpoint logic.
 """
-import pytest
-from unittest.mock import MagicMock
+
 
 from app.api.collectors import _compute_overall_status
 from app.collectors.base import CollectorResult, CollectorState

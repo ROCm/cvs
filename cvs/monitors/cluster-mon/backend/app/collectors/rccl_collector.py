@@ -17,6 +17,7 @@ from paramiko.ssh_exception import ChannelException
 
 from app.collectors.base import BaseCollector, CollectorResult, CollectorState
 from app.collectors.rccl_ras_client import RCCLRasClient, ProtocolError, ProtocolVersionError
+from app.core.config import settings as _settings
 from app.models.rccl_models import NodeRCCLCapability, RCCLJobState, RCCLSnapshot
 
 logger = logging.getLogger(__name__)
@@ -33,8 +34,8 @@ class RCCLCollector(BaseCollector):
     """
 
     name = "rccl"
-    poll_interval: int = 30         # overridden at module level from settings
-    collect_timeout: float = 20.0   # overridden at module level from settings
+    poll_interval: int = 30  # overridden at module level from settings
+    collect_timeout: float = 20.0  # overridden at module level from settings
     critical = False
 
     def __init__(self):
@@ -49,11 +50,7 @@ class RCCLCollector(BaseCollector):
         only runs on nodes that are part of an active RCCL job, which may be any
         subset of the configured nodes — so we must try each one.
         """
-        return [
-            node
-            for node, status in app_state.node_health_status.items()
-            if status == "healthy"
-        ]
+        return [node for node, status in app_state.node_health_status.items() if status == "healthy"]
 
     def _health_from_snapshot(self, snapshot: RCCLSnapshot) -> RCCLJobState:
         """Return the job state already computed by the parser (covers missing ranks,
@@ -174,6 +171,7 @@ class RCCLCollector(BaseCollector):
 
                 try:
                     from app.main import broadcast_rccl
+
                     await broadcast_rccl(snapshot_dict)
                 except Exception as e:
                     logger.warning(f"broadcast_rccl failed (snapshot not sent to WebSocket clients): {e}")
@@ -289,7 +287,7 @@ class RCCLCollector(BaseCollector):
 
         cap = NodeRCCLCapability(
             json_ras=json_supported,
-            detected_rccl_version=None,    # filled in after first successful JSON parse
+            detected_rccl_version=None,  # filled in after first successful JSON parse
             detection_method="probe",
             probed_at=time.time(),
             ttl=3600.0 if json_supported else 300.0,
@@ -297,9 +295,7 @@ class RCCLCollector(BaseCollector):
         caps[node] = cap
         return cap
 
-    def _parse_response(
-        self, raw_text: str, leader: str, cap: NodeRCCLCapability
-    ) -> RCCLSnapshot:
+    def _parse_response(self, raw_text: str, leader: str, cap: NodeRCCLCapability) -> RCCLSnapshot:
         """Route raw RAS output to the correct parser based on `cap`.
 
         Back-fills detected_rccl_version into the capability record from
@@ -308,9 +304,11 @@ class RCCLCollector(BaseCollector):
         """
         if cap.json_ras:
             from app.collectors.rccl_json_parser import RCCLJsonParser
+
             snapshot = RCCLJsonParser().parse(raw_text)
         else:
             from app.collectors.rccl_text_parser import RCCLTextParser
+
             snapshot = RCCLTextParser().parse(raw_text)
 
         # Back-fill version regardless of parser path (first non-unknown value wins)
@@ -337,9 +335,7 @@ class RCCLCollector(BaseCollector):
         """
         caps: dict = getattr(app_state, 'node_capabilities', {})
         versions: dict[str, str] = {
-            node: cap.detected_rccl_version
-            for node, cap in caps.items()
-            if cap.detected_rccl_version is not None
+            node: cap.detected_rccl_version for node, cap in caps.items() if cap.detected_rccl_version is not None
         }
         unique = set(versions.values())
         if len(unique) <= 1:
@@ -354,15 +350,16 @@ class RCCLCollector(BaseCollector):
             return
 
         logger.warning(
-            f"RCCL version skew detected across nodes: "
-            + ", ".join(f"{n}={v}" for n, v in sorted(versions.items()))
+            "RCCL version skew detected across nodes: " + ", ".join(f"{n}={v}" for n, v in sorted(versions.items()))
         )
-        await data_store.push_event({
-            "event_type": "version_skew",
-            "timestamp": time.time(),
-            "versions_by_node": versions,
-            "unique_versions": sorted(unique),
-        })
+        await data_store.push_event(
+            {
+                "event_type": "version_skew",
+                "timestamp": time.time(),
+                "versions_by_node": versions,
+                "unique_versions": sorted(unique),
+            }
+        )
 
     async def _push_state_event(
         self,
@@ -379,40 +376,41 @@ class RCCLCollector(BaseCollector):
             return
 
         _TYPE_MAP = {
-            (RCCLJobState.NO_JOB,         RCCLJobState.HEALTHY):      "job_start",
-            (RCCLJobState.NO_JOB,         RCCLJobState.DEGRADED):     "job_start_degraded",
-            (RCCLJobState.NO_JOB,         RCCLJobState.UNREACHABLE):  "nodes_unreachable",
-            (RCCLJobState.NO_JOB,         RCCLJobState.ERROR):        "collector_error",
-            (RCCLJobState.HEALTHY,        RCCLJobState.DEGRADED):     "job_degraded",
-            (RCCLJobState.HEALTHY,        RCCLJobState.NO_JOB):       "job_end",
-            (RCCLJobState.HEALTHY,        RCCLJobState.UNREACHABLE):  "node_unreachable",
-            (RCCLJobState.HEALTHY,        RCCLJobState.ERROR):        "collector_error",
-            (RCCLJobState.DEGRADED,       RCCLJobState.HEALTHY):      "job_recovered",
-            (RCCLJobState.DEGRADED,       RCCLJobState.NO_JOB):       "job_end",
-            (RCCLJobState.DEGRADED,       RCCLJobState.UNREACHABLE):  "node_unreachable",
-            (RCCLJobState.DEGRADED,       RCCLJobState.ERROR):        "collector_error",
-            (RCCLJobState.UNREACHABLE,    RCCLJobState.HEALTHY):      "node_recovered",
-            (RCCLJobState.UNREACHABLE,    RCCLJobState.DEGRADED):     "node_recovered_degraded",
-            (RCCLJobState.UNREACHABLE,    RCCLJobState.NO_JOB):       "job_end",
-            (RCCLJobState.UNREACHABLE,    RCCLJobState.ERROR):        "collector_error",
-            (RCCLJobState.ERROR,          RCCLJobState.HEALTHY):      "job_start",
-            (RCCLJobState.ERROR,          RCCLJobState.DEGRADED):     "job_start_degraded",
-            (RCCLJobState.ERROR,          RCCLJobState.NO_JOB):       "job_end",
-            (RCCLJobState.ERROR,          RCCLJobState.UNREACHABLE):  "node_unreachable",
+            (RCCLJobState.NO_JOB, RCCLJobState.HEALTHY): "job_start",
+            (RCCLJobState.NO_JOB, RCCLJobState.DEGRADED): "job_start_degraded",
+            (RCCLJobState.NO_JOB, RCCLJobState.UNREACHABLE): "nodes_unreachable",
+            (RCCLJobState.NO_JOB, RCCLJobState.ERROR): "collector_error",
+            (RCCLJobState.HEALTHY, RCCLJobState.DEGRADED): "job_degraded",
+            (RCCLJobState.HEALTHY, RCCLJobState.NO_JOB): "job_end",
+            (RCCLJobState.HEALTHY, RCCLJobState.UNREACHABLE): "node_unreachable",
+            (RCCLJobState.HEALTHY, RCCLJobState.ERROR): "collector_error",
+            (RCCLJobState.DEGRADED, RCCLJobState.HEALTHY): "job_recovered",
+            (RCCLJobState.DEGRADED, RCCLJobState.NO_JOB): "job_end",
+            (RCCLJobState.DEGRADED, RCCLJobState.UNREACHABLE): "node_unreachable",
+            (RCCLJobState.DEGRADED, RCCLJobState.ERROR): "collector_error",
+            (RCCLJobState.UNREACHABLE, RCCLJobState.HEALTHY): "node_recovered",
+            (RCCLJobState.UNREACHABLE, RCCLJobState.DEGRADED): "node_recovered_degraded",
+            (RCCLJobState.UNREACHABLE, RCCLJobState.NO_JOB): "job_end",
+            (RCCLJobState.UNREACHABLE, RCCLJobState.ERROR): "collector_error",
+            (RCCLJobState.ERROR, RCCLJobState.HEALTHY): "job_start",
+            (RCCLJobState.ERROR, RCCLJobState.DEGRADED): "job_start_degraded",
+            (RCCLJobState.ERROR, RCCLJobState.NO_JOB): "job_end",
+            (RCCLJobState.ERROR, RCCLJobState.UNREACHABLE): "node_unreachable",
         }
         event_type = _TYPE_MAP.get((prev, curr), "state_change")
 
-        await data_store.push_event({
-            "event_type": event_type,
-            "timestamp": time.time(),
-            "from_state": prev,
-            "to_state": curr,
-            "leader_node": leader,
-        })
+        await data_store.push_event(
+            {
+                "event_type": event_type,
+                "timestamp": time.time(),
+                "from_state": prev,
+                "to_state": curr,
+                "leader_node": leader,
+            }
+        )
         logger.info(f"RCCL state transition: {prev} → {curr} (event: {event_type})")
 
 
 # Fail loudly if settings cannot be loaded — consistent with GPU/NIC collectors.
-from app.core.config import settings as _settings
 RCCLCollector.poll_interval = _settings.rccl.poll_interval
 RCCLCollector.collect_timeout = _settings.rccl.collective_timeout_secs + 10

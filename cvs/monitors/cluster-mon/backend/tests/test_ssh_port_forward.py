@@ -2,12 +2,9 @@
 Tests for SSH port-forwarding bridge (_run_bridge).
 Tests use real socketpairs and mock paramiko channels.
 """
-import asyncio
+
 import socket
 import threading
-import time
-import pytest
-from unittest.mock import MagicMock, patch
 
 from app.core.ssh_port_forward import _run_bridge
 

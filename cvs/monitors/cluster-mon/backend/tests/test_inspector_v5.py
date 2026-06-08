@@ -12,9 +12,8 @@ import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
-from app.collectors.inspector_parser import InspectorParser, aggregate_snapshot
+from app.collectors.inspector_parser import InspectorParser
 from app.collectors.inspector_collector import InspectorCollector
 from app.models.rccl_models import NodeRCCLCapability
 
@@ -30,55 +29,60 @@ def _make_v5_line(
     pid: int = 12345,
     fmt_version: str = "v5.0",
 ) -> str:
-    return json.dumps({
-        "header": {"id": "0xabc123", "rank": rank, "n_ranks": 8, "nnodes": 1},
-        "metadata": {
-            "inspector_output_format_version": fmt_version,
-            "git_rev": "def456",
-            "rec_mechanism": "nccl_profiler_interface",
-            "dump_timestamp_us": 1_716_700_000_000_000,
-            "hostname": hostname,
-            "pid": pid,
-        },
-        "coll_perf": {
-            "coll": "AllReduce",
-            "coll_sn": 100,
-            "coll_msg_size_bytes": 2097152,
-            "coll_exec_time_us": 400,
-            "coll_timing_source": "kernel_gpu",
-            "coll_algobw_gbs": 200.0,
-            "coll_busbw_gbs": 400.0,
-            "graphCaptured": graph_captured,
-        },
-    })
+    return json.dumps(
+        {
+            "header": {"id": "0xabc123", "rank": rank, "n_ranks": 8, "nnodes": 1},
+            "metadata": {
+                "inspector_output_format_version": fmt_version,
+                "git_rev": "def456",
+                "rec_mechanism": "nccl_profiler_interface",
+                "dump_timestamp_us": 1_716_700_000_000_000,
+                "hostname": hostname,
+                "pid": pid,
+            },
+            "coll_perf": {
+                "coll": "AllReduce",
+                "coll_sn": 100,
+                "coll_msg_size_bytes": 2097152,
+                "coll_exec_time_us": 400,
+                "coll_timing_source": "kernel_gpu",
+                "coll_algobw_gbs": 200.0,
+                "coll_busbw_gbs": 400.0,
+                "graphCaptured": graph_captured,
+            },
+        }
+    )
 
 
 def _make_v4_line(rank: int = 0, hostname: str = "gpu-node-01") -> str:
-    return json.dumps({
-        "header": {"id": "0xabc123", "rank": rank, "n_ranks": 8, "nnodes": 1},
-        "metadata": {
-            "inspector_output_format_version": "v4.0",
-            "git_rev": "abc123",
-            "rec_mechanism": "nccl_profiler_interface",
-            "dump_timestamp_us": 1_711_800_000_000_000,
-            "hostname": hostname,
-            "pid": 9999,
-        },
-        "coll_perf": {
-            "coll": "AllReduce",
-            "coll_sn": 50,
-            "coll_msg_size_bytes": 1048576,
-            "coll_exec_time_us": 200,
-            "coll_timing_source": "kernel_gpu",
-            "coll_algobw_gbs": 100.0,
-            "coll_busbw_gbs": 200.0,
-        },
-    })
+    return json.dumps(
+        {
+            "header": {"id": "0xabc123", "rank": rank, "n_ranks": 8, "nnodes": 1},
+            "metadata": {
+                "inspector_output_format_version": "v4.0",
+                "git_rev": "abc123",
+                "rec_mechanism": "nccl_profiler_interface",
+                "dump_timestamp_us": 1_711_800_000_000_000,
+                "hostname": hostname,
+                "pid": 9999,
+            },
+            "coll_perf": {
+                "coll": "AllReduce",
+                "coll_sn": 50,
+                "coll_msg_size_bytes": 1048576,
+                "coll_exec_time_us": 200,
+                "coll_timing_source": "kernel_gpu",
+                "coll_algobw_gbs": 100.0,
+                "coll_busbw_gbs": 200.0,
+            },
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Parser field extraction
 # ---------------------------------------------------------------------------
+
 
 class TestV5FieldParsing:
     def setup_method(self):
@@ -135,6 +139,7 @@ class TestV5FieldParsing:
 # ---------------------------------------------------------------------------
 # Secondary oracle: _apply_inspector_v5_oracle
 # ---------------------------------------------------------------------------
+
 
 def _cap(json_ras: bool = True, inspector_v5: bool = False) -> NodeRCCLCapability:
     return NodeRCCLCapability(

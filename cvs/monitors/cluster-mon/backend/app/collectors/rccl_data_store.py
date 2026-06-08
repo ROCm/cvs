@@ -24,9 +24,9 @@ _MEMORY_INSPECTOR_MAX = 100
 
 class RCCLDataStore:
     # Redis Streams — atomic append+cap in one command
-    SNAPSHOT_STREAM = "rccl:snapshots"            # Stream, capped at 1000 entries
-    EVENT_STREAM = "rccl:events"                  # Stream, capped at 10000 entries
-    CURRENT_KEY = "rccl:current"                  # Hash, latest snapshot only
+    SNAPSHOT_STREAM = "rccl:snapshots"  # Stream, capped at 1000 entries
+    EVENT_STREAM = "rccl:events"  # Stream, capped at 10000 entries
+    CURRENT_KEY = "rccl:current"  # Hash, latest snapshot only
     INSPECTOR_STREAM = "rccl:inspector:snapshots"  # Stream, capped at 1000 entries
     INSPECTOR_CURRENT_KEY = "rccl:inspector:current"  # Hash, latest Inspector snapshot
 
@@ -84,6 +84,7 @@ class RCCLDataStore:
     async def _maybe_emit_version_event(self, snapshot: dict) -> None:
         """Emit a software_upgrade event if rccl_version changed since last push."""
         import time as _time
+
         summary = snapshot.get("job_summary") or {}
         new_version = summary.get("rccl_version") if isinstance(summary, dict) else None
         if not new_version or new_version == "unknown":
@@ -198,10 +199,7 @@ class RCCLDataStore:
         """Return events within a UTC timestamp range using stream entry IDs.
         In-memory results are sorted by timestamp to handle NTP clock adjustments."""
         if self._r is None:
-            results = [
-                e for e in self._mem_events
-                if start_ts <= e.get("timestamp", 0) <= end_ts
-            ]
+            results = [e for e in self._mem_events if start_ts <= e.get("timestamp", 0) <= end_ts]
             return sorted(results, key=lambda e: e.get("timestamp", 0))
         try:
             start_id = f"{int(start_ts * 1000)}-0"

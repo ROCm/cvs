@@ -18,7 +18,7 @@ class GPUMetricsCollector(BaseCollector):
     """Collects GPU metrics via rocm-smi and amd-smi commands."""
 
     name = "gpu"
-    poll_interval: int = 60   # will be set after class definition
+    poll_interval: int = 60  # will be set after class definition
     collect_timeout: float = 48.0  # 80% of poll_interval default
     critical = True  # GPU collection failure is critical
 
@@ -403,7 +403,9 @@ class GPUMetricsCollector(BaseCollector):
 
         return CollectorResult(
             collector_name=self.name,
-            timestamp=metrics.get("timestamp", CollectorResult.now_iso()) if isinstance(metrics, dict) else CollectorResult.now_iso(),
+            timestamp=metrics.get("timestamp", CollectorResult.now_iso())
+            if isinstance(metrics, dict)
+            else CollectorResult.now_iso(),
             state=CollectorState.OK,
             data=metrics if isinstance(metrics, dict) else {},
             node_errors=node_errors,

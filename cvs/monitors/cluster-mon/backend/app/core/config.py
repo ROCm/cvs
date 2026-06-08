@@ -8,7 +8,6 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 from typing import Any, Optional, Tuple, Type, List
 import yaml
 from pathlib import Path
-import os
 
 
 class JumpHostConfig(BaseModel):
@@ -17,7 +16,7 @@ class JumpHostConfig(BaseModel):
     username: str = "root"
     password: Optional[str] = None
     key_file: str = "~/.ssh/id_rsa"
-    node_username: str = "root"       # replaces: node_username_via_jumphost
+    node_username: str = "root"  # replaces: node_username_via_jumphost
     node_key_file: str = "~/.ssh/id_rsa"  # replaces: node_key_file_on_jumphost
 
 
@@ -55,15 +54,17 @@ class StorageConfig(BaseModel):
 
 class InspectorConfig(BaseModel):
     """Configuration for the RCCL Inspector plugin collector."""
+
     enabled: bool = False
-    mode: str = "file"                  # "file" (NFS) or "ssh"
-    dump_dir: Optional[str] = None      # NFS path where Inspector writes .log files
-    poll_interval: int = 30             # seconds between collection cycles
-    max_records_per_file: int = 100     # tail last N lines per log file
+    mode: str = "file"  # "file" (NFS) or "ssh"
+    dump_dir: Optional[str] = None  # NFS path where Inspector writes .log files
+    poll_interval: int = 30  # seconds between collection cycles
+    max_records_per_file: int = 100  # tail last N lines per log file
 
 
 class RCCLConfig(BaseModel):
     """Forward-declaration for RCCL extension config. No runtime behaviour in base robustness spec."""
+
     ras_port: int = 28028
     poll_interval: int = 30
     collective_timeout_secs: int = 10
@@ -99,10 +100,12 @@ class _YamlSource(PydanticBaseSettingsSource):
 class Settings(BaseSettings):
     app_name: str = "CVS Cluster Monitor"
     api_prefix: str = "/api"
-    cors_origins: List[str] = Field(default_factory=lambda: [
-        "http://localhost:3000",
-        "http://localhost:5173",
-    ])
+    cors_origins: List[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:5173",
+        ]
+    )
     nodes_file: str = "config/nodes.txt"
     ssh: SSHConfig = Field(default_factory=SSHConfig)
     polling: PollingConfig = Field(default_factory=PollingConfig)
@@ -127,8 +130,8 @@ class Settings(BaseSettings):
             yaml_path = Path("../config/cluster.yaml")
         return (
             init_settings,
-            env_settings,                           # env vars override YAML
-            _YamlSource(settings_cls, yaml_path),   # YAML is primary source
+            env_settings,  # env vars override YAML
+            _YamlSource(settings_cls, yaml_path),  # YAML is primary source
             file_secret_settings,
         )
 
@@ -143,9 +146,7 @@ class Settings(BaseSettings):
             p = p.resolve()
             if p.exists():
                 nodes = [
-                    line.strip()
-                    for line in p.read_text().splitlines()
-                    if line.strip() and not line.startswith("#")
+                    line.strip() for line in p.read_text().splitlines() if line.strip() and not line.startswith("#")
                 ]
                 if nodes:
                     return nodes

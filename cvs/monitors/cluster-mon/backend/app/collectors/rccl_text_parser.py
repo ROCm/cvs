@@ -34,12 +34,8 @@ class RCCLTextParser:
     """
 
     # Regex patterns
-    _VERSION_RE = re.compile(
-        r"RCCL version (\S+)\s+compiled with ROCm"
-    )
-    _HIP_DRIVER_RE = re.compile(
-        r"HIP runtime version (\d+),\s*amdgpu driver version (\d+)"
-    )
+    _VERSION_RE = re.compile(r"RCCL version (\S+)\s+compiled with ROCm")
+    _HIP_DRIVER_RE = re.compile(r"HIP runtime version (\d+),\s*amdgpu driver version (\d+)")
     # Anchored to the "Job summary" section to avoid matching spurious 5-integer lines.
     # Lookahead stops at the next section header (word chars followed by a === underline)
     # or end-of-string.  We deliberately do NOT use (?=^\S|\Z) because the column header
@@ -104,7 +100,7 @@ class RCCLTextParser:
                 state=state,
                 job_summary=job_summary,
                 communicators=communicators,
-                peers=[],       # Not in v2.28.3 text output
+                peers=[],  # Not in v2.28.3 text output
                 dead_peers=dead_peers,
                 errors=errors,
             )
@@ -132,8 +128,6 @@ class RCCLTextParser:
             return None
 
         total_nodes = int(summary_match.group(1))
-        procs_per_node = int(summary_match.group(2))
-        gpus_per_proc = int(summary_match.group(3))
         total_procs = int(summary_match.group(4))
         total_gpus = int(summary_match.group(5))
 
@@ -171,8 +165,8 @@ class RCCLTextParser:
             group_num = int(match.group(1))
             comms_in_group = int(match.group(2))
             # ranks_per_node (group 4) may be a range like "7-8" on heterogeneous topologies
-            ranks_per_comm = int(match.group(5))   # expected ranks in ONE communicator
-            ranks_in_group = int(match.group(6))   # actual respondents across ALL comms in group
+            ranks_per_comm = int(match.group(5))  # expected ranks in ONE communicator
+            ranks_in_group = int(match.group(6))  # actual respondents across ALL comms in group
             status = match.group(7)
             errors = match.group(8)
 
@@ -191,14 +185,16 @@ class RCCLTextParser:
 
             # In v2.28.3, we don't get per-communicator hashes from the table,
             # so use group number as placeholder
-            comms.append(RCCLCommunicator(
-                comm_hash=f"group_{group_num}",
-                total_ranks=total_expected,
-                responding_ranks=ranks_in_group,
-                missing_ranks=missing,
-                ranks=[],         # Per-rank detail only in verbose with outliers
-                health=health,
-            ))
+            comms.append(
+                RCCLCommunicator(
+                    comm_hash=f"group_{group_num}",
+                    total_ranks=total_expected,
+                    responding_ranks=ranks_in_group,
+                    missing_ranks=missing,
+                    ranks=[],  # Per-rank detail only in verbose with outliers
+                    health=health,
+                )
+            )
         return comms
 
     def _parse_dead_peers(self, text: str) -> list[str]:

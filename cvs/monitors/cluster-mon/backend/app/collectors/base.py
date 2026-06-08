@@ -6,11 +6,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+
 try:
     from enum import StrEnum  # Python 3.11+
 except ImportError:
+
     class StrEnum(str, Enum):  # type: ignore[no-redef]
         """Backport for Python 3.10: str+Enum with correct f-string behavior."""
+
+
 from typing import Any, Optional
 import asyncio
 import logging
@@ -74,9 +78,7 @@ class BaseCollector(ABC):
                     timeout=self.collect_timeout,
                 )
             except asyncio.TimeoutError:
-                logger.warning(
-                    f"{self.name} collect() timed out after {self.collect_timeout}s"
-                )
+                logger.warning(f"{self.name} collect() timed out after {self.collect_timeout}s")
                 await self.on_collect_timeout(app_state)
                 result = CollectorResult(
                     collector_name=self.name,
@@ -99,9 +101,7 @@ class BaseCollector(ABC):
                     error=str(e),
                 )
             except Exception as e:
-                logger.error(
-                    f"{self.name} collector unexpected error: {e}", exc_info=True
-                )
+                logger.error(f"{self.name} collector unexpected error: {e}", exc_info=True)
                 result = CollectorResult(
                     collector_name=self.name,
                     timestamp=CollectorResult.now_iso(),
@@ -132,6 +132,7 @@ class BaseCollector(ABC):
             # Broadcast (imported lazily to avoid circular imports)
             try:
                 from app.main import broadcast_metrics
+
                 await broadcast_metrics(app_state.latest_metrics)
             except Exception as e:
                 logger.debug(f"broadcast_metrics not available: {e}")
@@ -143,6 +144,7 @@ def _update_node_status_via_app_state(app_state: Any, node: str, has_error: bool
     """Update node health status via app_state. Avoids circular import from main."""
     try:
         from app.main import update_node_status
+
         update_node_status(node, has_error, "unreachable")
     except Exception as e:
         logger.debug(f"update_node_status not available: {e}")

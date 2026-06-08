@@ -131,25 +131,22 @@ class RCCLJsonParser:
             ranks = [self._parse_rank(r) for r in comm_data.get("ranks", [])]
 
             # Degraded if any rank has a non-zero error flag
-            any_error = any(
-                r.status.async_error != 0
-                or r.status.abort_flag
-                or r.status.init_state != 0
-                for r in ranks
-            )
+            any_error = any(r.status.async_error != 0 or r.status.abort_flag or r.status.init_state != 0 for r in ranks)
             if missing > 0 or any_error:
                 health = RCCLJobState.DEGRADED
             else:
                 health = RCCLJobState.HEALTHY
 
-            comms.append(RCCLCommunicator(
-                comm_hash=comm_hash,
-                total_ranks=total_ranks,
-                responding_ranks=responding,
-                missing_ranks=missing,
-                ranks=ranks,
-                health=health,
-            ))
+            comms.append(
+                RCCLCommunicator(
+                    comm_hash=comm_hash,
+                    total_ranks=total_ranks,
+                    responding_ranks=responding,
+                    missing_ranks=missing,
+                    ranks=ranks,
+                    health=health,
+                )
+            )
         return comms
 
     def _parse_rank(self, rank_data: dict[str, Any]) -> RCCLRank:

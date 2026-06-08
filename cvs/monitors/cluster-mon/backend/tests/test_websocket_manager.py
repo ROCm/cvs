@@ -1,7 +1,8 @@
 """Tests for ConnectionManager WebSocket pattern."""
+
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 from app.main import ConnectionManager
 
@@ -41,6 +42,7 @@ async def test_slow_client_disconnected_on_full_queue(manager):
     ws = AsyncMock()
     ws.accept = AsyncMock()
     ws.close = AsyncMock()
+
     # Make send_json block forever to fill the queue
     async def _block(_msg):
         await asyncio.sleep(100)

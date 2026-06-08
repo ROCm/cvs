@@ -2,6 +2,7 @@
 Tests for RCCL RAS text output parser.
 Written test-first against real captured rcclras -v output from a live MI300X cluster.
 """
+
 import pytest
 from pathlib import Path
 
@@ -32,6 +33,7 @@ def parser():
 
 
 # -- Healthy fixture tests ---------------------------------------------------
+
 
 def test_parse_rccl_version(parser, healthy_output):
     snapshot = parser.parse(healthy_output)
@@ -92,6 +94,7 @@ def test_parse_healthy_no_errors(parser, healthy_output):
 
 # -- Degraded fixture tests --------------------------------------------------
 
+
 def test_parse_degraded_state(parser, degraded_output):
     snapshot = parser.parse(degraded_output)
     assert snapshot.state == RCCLJobState.DEGRADED
@@ -129,6 +132,7 @@ def test_parse_degraded_errors_section_not_empty(parser, degraded_output):
 
 # -- 2-node degraded fixture (ranks_per_node shown as range "7-8") ------------
 
+
 @pytest.fixture
 def degraded_2node_output():
     return (FIXTURES_DIR / "rccl_v2283_text_degraded_2node.txt").read_text()
@@ -159,6 +163,7 @@ def test_parse_degraded_2node_job_summary(parser, degraded_2node_output):
 
 # -- Connection reset / error tests ------------------------------------------
 
+
 def test_parse_connection_reset(parser, connection_reset_output):
     snapshot = parser.parse(connection_reset_output)
     assert snapshot.state in (RCCLJobState.NO_JOB, RCCLJobState.ERROR)
@@ -176,6 +181,7 @@ def test_parse_connection_refused(parser):
 
 
 # -- Edge cases ---------------------------------------------------------------
+
 
 def test_parse_inconsistent_topology_single_node(parser, healthy_output):
     snapshot = parser.parse(healthy_output)

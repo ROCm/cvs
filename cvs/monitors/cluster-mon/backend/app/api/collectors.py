@@ -52,17 +52,12 @@ async def get_collectors_status() -> dict[str, Any]:
     from app.main import app_state, REGISTERED_COLLECTORS
 
     # Build collectors metadata (critical flag) from REGISTERED_COLLECTORS
-    collectors_meta = {
-        cls.name: {"critical": getattr(cls, "critical", False)}
-        for cls in REGISTERED_COLLECTORS
-    }
+    collectors_meta = {cls.name: {"critical": getattr(cls, "critical", False)} for cls in REGISTERED_COLLECTORS}
 
     result: dict[str, Any] = {}
     for name, collector_result in app_state.collector_results.items():
         state_val = (
-            collector_result.state.value
-            if hasattr(collector_result.state, 'value')
-            else str(collector_result.state)
+            collector_result.state.value if hasattr(collector_result.state, 'value') else str(collector_result.state)
         )
         result[name] = {
             "state": state_val,
@@ -70,7 +65,5 @@ async def get_collectors_status() -> dict[str, Any]:
             "error": collector_result.error,
         }
 
-    result["overall_status"] = _compute_overall_status(
-        app_state.collector_results, collectors_meta
-    )
+    result["overall_status"] = _compute_overall_status(app_state.collector_results, collectors_meta)
     return result

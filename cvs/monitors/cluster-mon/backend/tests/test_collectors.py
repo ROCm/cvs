@@ -1,9 +1,9 @@
 """
 Tests for GPUMetricsCollector and NICMetricsCollector as BaseCollector subclasses.
 """
-import asyncio
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from app.collectors.base import CollectorState, CollectorResult
 from app.collectors.gpu_collector import GPUMetricsCollector
@@ -76,6 +76,7 @@ def test_registered_collectors_list():
     pytest.importorskip("fastapi")
     from app.main import REGISTERED_COLLECTORS
     from app.collectors.base import BaseCollector
+
     assert len(REGISTERED_COLLECTORS) >= 2
     for cls in REGISTERED_COLLECTORS:
         assert issubclass(cls, BaseCollector)

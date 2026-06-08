@@ -3,7 +3,19 @@ API router for CVS Cluster Monitor.
 """
 
 from fastapi import APIRouter
-from app.api import cluster, nodes, metrics, config, software, restart, packages, logs, ssh_keys, collectors, rccl_endpoints
+from app.api import (
+    cluster,
+    nodes,
+    metrics,
+    config,
+    software,
+    restart,
+    packages,
+    logs,
+    ssh_keys,
+    collectors,
+    rccl_endpoints,
+)
 
 router = APIRouter()
 

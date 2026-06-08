@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.collectors.inspector_parser import InspectorParser, aggregate_snapshot
-from app.models.rccl_models import InspectorCollPerf, InspectorEventTrace
+from app.models.rccl_models import InspectorCollPerf
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "inspector_sample.jsonl"
@@ -18,31 +18,34 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "inspector_sample.jsonl"
 # parse_lines
 # ---------------------------------------------------------------------------
 
+
 class TestParseLines:
     def setup_method(self):
         self.parser = InspectorParser()
 
     def test_parses_valid_allreduce_record(self):
-        line = json.dumps({
-            "header": {"id": "0xabc", "rank": 0, "n_ranks": 8, "nnodes": 1},
-            "metadata": {
-                "inspector_output_format_version": "v4.0",
-                "git_rev": "deadbeef",
-                "rec_mechanism": "nccl_profiler_interface",
-                "dump_timestamp_us": 1_711_800_000_000_000,
-                "hostname": "gpu-node-01",
-                "pid": 9999,
-            },
-            "coll_perf": {
-                "coll": "AllReduce",
-                "coll_sn": 1,
-                "coll_msg_size_bytes": 1048576,
-                "coll_exec_time_us": 200,
-                "coll_timing_source": "kernel_gpu",
-                "coll_algobw_gbs": 5.0,
-                "coll_busbw_gbs": 9.375,
-            },
-        })
+        line = json.dumps(
+            {
+                "header": {"id": "0xabc", "rank": 0, "n_ranks": 8, "nnodes": 1},
+                "metadata": {
+                    "inspector_output_format_version": "v4.0",
+                    "git_rev": "deadbeef",
+                    "rec_mechanism": "nccl_profiler_interface",
+                    "dump_timestamp_us": 1_711_800_000_000_000,
+                    "hostname": "gpu-node-01",
+                    "pid": 9999,
+                },
+                "coll_perf": {
+                    "coll": "AllReduce",
+                    "coll_sn": 1,
+                    "coll_msg_size_bytes": 1048576,
+                    "coll_exec_time_us": 200,
+                    "coll_timing_source": "kernel_gpu",
+                    "coll_algobw_gbs": 5.0,
+                    "coll_busbw_gbs": 9.375,
+                },
+            }
+        )
         records = self.parser.parse_lines(line)
         assert len(records) == 1
         r = records[0]
@@ -62,13 +65,21 @@ class TestParseLines:
         assert r.timestamp == pytest.approx(1_711_800_000.0)
 
     def test_skips_malformed_json_silently(self):
-        text = "not json at all\n" + json.dumps({
-            "header": {"id": "0x1", "rank": 0, "n_ranks": 2, "nnodes": 1},
-            "metadata": {"dump_timestamp_us": 1000000, "hostname": "h", "pid": 1},
-            "coll_perf": {"coll": "AllReduce", "coll_sn": 1, "coll_msg_size_bytes": 64,
-                          "coll_exec_time_us": 10, "coll_timing_source": "kernel_gpu",
-                          "coll_algobw_gbs": 1.0, "coll_busbw_gbs": 1.875},
-        })
+        text = "not json at all\n" + json.dumps(
+            {
+                "header": {"id": "0x1", "rank": 0, "n_ranks": 2, "nnodes": 1},
+                "metadata": {"dump_timestamp_us": 1000000, "hostname": "h", "pid": 1},
+                "coll_perf": {
+                    "coll": "AllReduce",
+                    "coll_sn": 1,
+                    "coll_msg_size_bytes": 64,
+                    "coll_exec_time_us": 10,
+                    "coll_timing_source": "kernel_gpu",
+                    "coll_algobw_gbs": 1.0,
+                    "coll_busbw_gbs": 1.875,
+                },
+            }
+        )
         records = self.parser.parse_lines(text)
         assert len(records) == 1
 
@@ -86,25 +97,41 @@ class TestParseLines:
 
     def test_timestamp_conversion(self):
         """dump_timestamp_us is microseconds; should convert to Unix seconds."""
-        line = json.dumps({
-            "header": {"id": "0x1", "rank": 0, "n_ranks": 1, "nnodes": 1},
-            "metadata": {"dump_timestamp_us": 2_000_000_000_000, "hostname": "h", "pid": 1},
-            "coll_perf": {"coll": "AllReduce", "coll_sn": 1, "coll_msg_size_bytes": 64,
-                          "coll_exec_time_us": 10, "coll_timing_source": "kernel_gpu",
-                          "coll_algobw_gbs": 1.0, "coll_busbw_gbs": 1.875},
-        })
+        line = json.dumps(
+            {
+                "header": {"id": "0x1", "rank": 0, "n_ranks": 1, "nnodes": 1},
+                "metadata": {"dump_timestamp_us": 2_000_000_000_000, "hostname": "h", "pid": 1},
+                "coll_perf": {
+                    "coll": "AllReduce",
+                    "coll_sn": 1,
+                    "coll_msg_size_bytes": 64,
+                    "coll_exec_time_us": 10,
+                    "coll_timing_source": "kernel_gpu",
+                    "coll_algobw_gbs": 1.0,
+                    "coll_busbw_gbs": 1.875,
+                },
+            }
+        )
         records = self.parser.parse_lines(line)
         assert records[0].timestamp == pytest.approx(2_000_000.0)
 
     def test_zero_exec_time_record_parsed(self):
         """Zero exec_time (timing fallback) should parse, not be skipped."""
-        line = json.dumps({
-            "header": {"id": "0x1", "rank": 0, "n_ranks": 1, "nnodes": 1},
-            "metadata": {"dump_timestamp_us": 1000000, "hostname": "h", "pid": 1},
-            "coll_perf": {"coll": "AllGather", "coll_sn": 5, "coll_msg_size_bytes": 128,
-                          "coll_exec_time_us": 0, "coll_timing_source": "collective_cpu",
-                          "coll_algobw_gbs": 0.0, "coll_busbw_gbs": 0.0},
-        })
+        line = json.dumps(
+            {
+                "header": {"id": "0x1", "rank": 0, "n_ranks": 1, "nnodes": 1},
+                "metadata": {"dump_timestamp_us": 1000000, "hostname": "h", "pid": 1},
+                "coll_perf": {
+                    "coll": "AllGather",
+                    "coll_sn": 5,
+                    "coll_msg_size_bytes": 128,
+                    "coll_exec_time_us": 0,
+                    "coll_timing_source": "collective_cpu",
+                    "coll_algobw_gbs": 0.0,
+                    "coll_busbw_gbs": 0.0,
+                },
+            }
+        )
         records = self.parser.parse_lines(line)
         assert len(records) == 1
         assert records[0].exec_time_us == 0
@@ -113,13 +140,27 @@ class TestParseLines:
     def test_multiple_valid_lines(self):
         lines = []
         for rank in range(4):
-            lines.append(json.dumps({
-                "header": {"id": "0xfeed", "rank": rank, "n_ranks": 4, "nnodes": 1},
-                "metadata": {"dump_timestamp_us": 5_000_000_000_000, "hostname": f"node{rank}", "pid": rank + 100},
-                "coll_perf": {"coll": "ReduceScatter", "coll_sn": 10, "coll_msg_size_bytes": 256,
-                              "coll_exec_time_us": 50 + rank * 5, "coll_timing_source": "kernel_gpu",
-                              "coll_algobw_gbs": 2.0, "coll_busbw_gbs": 1.875},
-            }))
+            lines.append(
+                json.dumps(
+                    {
+                        "header": {"id": "0xfeed", "rank": rank, "n_ranks": 4, "nnodes": 1},
+                        "metadata": {
+                            "dump_timestamp_us": 5_000_000_000_000,
+                            "hostname": f"node{rank}",
+                            "pid": rank + 100,
+                        },
+                        "coll_perf": {
+                            "coll": "ReduceScatter",
+                            "coll_sn": 10,
+                            "coll_msg_size_bytes": 256,
+                            "coll_exec_time_us": 50 + rank * 5,
+                            "coll_timing_source": "kernel_gpu",
+                            "coll_algobw_gbs": 2.0,
+                            "coll_busbw_gbs": 1.875,
+                        },
+                    }
+                )
+            )
         records = self.parser.parse_lines("\n".join(lines))
         assert len(records) == 4
         assert {r.rank for r in records} == {0, 1, 2, 3}
@@ -128,6 +169,7 @@ class TestParseLines:
 # ---------------------------------------------------------------------------
 # parse_file
 # ---------------------------------------------------------------------------
+
 
 class TestParseFile:
     def setup_method(self):
@@ -157,13 +199,23 @@ class TestParseFile:
         """tail=2 should only parse the last 2 lines."""
         lines = []
         for i in range(10):
-            lines.append(json.dumps({
-                "header": {"id": "0x1", "rank": i, "n_ranks": 10, "nnodes": 1},
-                "metadata": {"dump_timestamp_us": 1000000, "hostname": "h", "pid": i + 1},
-                "coll_perf": {"coll": "AllReduce", "coll_sn": i, "coll_msg_size_bytes": 128,
-                              "coll_exec_time_us": 10, "coll_timing_source": "kernel_gpu",
-                              "coll_algobw_gbs": 1.0, "coll_busbw_gbs": 1.875},
-            }))
+            lines.append(
+                json.dumps(
+                    {
+                        "header": {"id": "0x1", "rank": i, "n_ranks": 10, "nnodes": 1},
+                        "metadata": {"dump_timestamp_us": 1000000, "hostname": "h", "pid": i + 1},
+                        "coll_perf": {
+                            "coll": "AllReduce",
+                            "coll_sn": i,
+                            "coll_msg_size_bytes": 128,
+                            "coll_exec_time_us": 10,
+                            "coll_timing_source": "kernel_gpu",
+                            "coll_algobw_gbs": 1.0,
+                            "coll_busbw_gbs": 1.875,
+                        },
+                    }
+                )
+            )
         log_file = tmp_path / "test.log"
         log_file.write_text("\n".join(lines))
         records = self.parser.parse_file(log_file, tail=2)
@@ -175,6 +227,7 @@ class TestParseFile:
 # ---------------------------------------------------------------------------
 # aggregate_snapshot
 # ---------------------------------------------------------------------------
+
 
 def _make_record(rank: int, bus_bw: float, collective: str = "AllReduce") -> InspectorCollPerf:
     return InspectorCollPerf(
@@ -212,7 +265,7 @@ class TestAggregateSnapshot:
         """Zero-bw records (exec_time=0) should not affect bandwidth statistics."""
         records = [
             _make_record(0, 300.0),
-            _make_record(1, 0.0),   # timing fallback — excluded
+            _make_record(1, 0.0),  # timing fallback — excluded
             _make_record(2, 400.0),
         ]
         snap = aggregate_snapshot(records)
@@ -245,6 +298,7 @@ class TestAggregateSnapshot:
 
     def test_records_deduplicated_to_latest_per_rank(self):
         """records field should contain only the highest sequence_num per (rank, comm_hash)."""
+
         def _make_seq(rank: int, seq: int, bw: float) -> InspectorCollPerf:
             r = _make_record(rank, bw)
             return r.model_copy(update={"sequence_num": seq})
@@ -253,7 +307,7 @@ class TestAggregateSnapshot:
             _make_seq(0, 10, 300.0),
             _make_seq(0, 11, 320.0),  # newer — should win
             _make_seq(1, 10, 280.0),
-            _make_seq(1,  9, 260.0),  # older — should lose
+            _make_seq(1, 9, 260.0),  # older — should lose
         ]
         snap = aggregate_snapshot(records)
         # Only 2 display records (one per rank)
@@ -268,6 +322,7 @@ class TestAggregateSnapshot:
     # Verbose / event_trace tests
     # ------------------------------------------------------------------
 
+
 class TestVerboseParsing:
     def setup_method(self):
         self.parser = InspectorParser()
@@ -278,29 +333,48 @@ class TestVerboseParsing:
             for ch in range(n_channels)
         ]
         kernel_ts = [
-            {"channel_id": ch, "kernel_start_ts": 1000 + ch * 100, "kernel_stop_ts": 1050 + ch * 100, "kernel_record_ts": 1051 + ch * 100}
+            {
+                "channel_id": ch,
+                "kernel_start_ts": 1000 + ch * 100,
+                "kernel_stop_ts": 1050 + ch * 100,
+                "kernel_record_ts": 1051 + ch * 100,
+            }
             for ch in range(n_channels)
         ]
-        return json.dumps({
-            "header": {"id": "0xverb", "rank": rank, "n_ranks": 4, "nnodes": 1},
-            "metadata": {"dump_timestamp_us": 2_000_000_000_000, "hostname": f"node{rank}", "pid": rank + 1},
-            "coll_perf": {
-                "coll": "AllReduce", "coll_sn": 1, "coll_msg_size_bytes": 1048576,
-                "coll_exec_time_us": 200, "coll_timing_source": "kernel_gpu",
-                "coll_algobw_gbs": 5.0, "coll_busbw_gbs": 9.375,
-                "event_trace_sn": {"coll_start_sn": 99, "coll_stop_sn": 120, "kernel_events": kernel_sn},
-                "event_trace_ts": {"coll_start_ts": 900, "coll_stop_ts": 1200, "kernel_events": kernel_ts},
-            },
-        })
+        return json.dumps(
+            {
+                "header": {"id": "0xverb", "rank": rank, "n_ranks": 4, "nnodes": 1},
+                "metadata": {"dump_timestamp_us": 2_000_000_000_000, "hostname": f"node{rank}", "pid": rank + 1},
+                "coll_perf": {
+                    "coll": "AllReduce",
+                    "coll_sn": 1,
+                    "coll_msg_size_bytes": 1048576,
+                    "coll_exec_time_us": 200,
+                    "coll_timing_source": "kernel_gpu",
+                    "coll_algobw_gbs": 5.0,
+                    "coll_busbw_gbs": 9.375,
+                    "event_trace_sn": {"coll_start_sn": 99, "coll_stop_sn": 120, "kernel_events": kernel_sn},
+                    "event_trace_ts": {"coll_start_ts": 900, "coll_stop_ts": 1200, "kernel_events": kernel_ts},
+                },
+            }
+        )
 
     def test_non_verbose_record_has_no_event_trace(self):
-        line = json.dumps({
-            "header": {"id": "0x1", "rank": 0, "n_ranks": 1, "nnodes": 1},
-            "metadata": {"dump_timestamp_us": 1000000, "hostname": "h", "pid": 1},
-            "coll_perf": {"coll": "AllReduce", "coll_sn": 1, "coll_msg_size_bytes": 64,
-                          "coll_exec_time_us": 10, "coll_timing_source": "kernel_gpu",
-                          "coll_algobw_gbs": 1.0, "coll_busbw_gbs": 1.875},
-        })
+        line = json.dumps(
+            {
+                "header": {"id": "0x1", "rank": 0, "n_ranks": 1, "nnodes": 1},
+                "metadata": {"dump_timestamp_us": 1000000, "hostname": "h", "pid": 1},
+                "coll_perf": {
+                    "coll": "AllReduce",
+                    "coll_sn": 1,
+                    "coll_msg_size_bytes": 64,
+                    "coll_exec_time_us": 10,
+                    "coll_timing_source": "kernel_gpu",
+                    "coll_algobw_gbs": 1.0,
+                    "coll_busbw_gbs": 1.875,
+                },
+            }
+        )
         records = self.parser.parse_lines(line)
         assert records[0].event_trace is None
 
@@ -345,23 +419,29 @@ class TestVerboseParsing:
 
     def test_malformed_event_trace_falls_back_to_none(self):
         """Malformed event_trace content should not fail the whole record."""
-        line = json.dumps({
-            "header": {"id": "0x1", "rank": 0, "n_ranks": 1, "nnodes": 1},
-            "metadata": {"dump_timestamp_us": 1000000, "hostname": "h", "pid": 1},
-            "coll_perf": {
-                "coll": "AllReduce", "coll_sn": 1, "coll_msg_size_bytes": 64,
-                "coll_exec_time_us": 10, "coll_timing_source": "kernel_gpu",
-                "coll_algobw_gbs": 1.0, "coll_busbw_gbs": 1.875,
-                "event_trace_sn": "not_an_object",   # malformed
-            },
-        })
+        line = json.dumps(
+            {
+                "header": {"id": "0x1", "rank": 0, "n_ranks": 1, "nnodes": 1},
+                "metadata": {"dump_timestamp_us": 1000000, "hostname": "h", "pid": 1},
+                "coll_perf": {
+                    "coll": "AllReduce",
+                    "coll_sn": 1,
+                    "coll_msg_size_bytes": 64,
+                    "coll_exec_time_us": 10,
+                    "coll_timing_source": "kernel_gpu",
+                    "coll_algobw_gbs": 1.0,
+                    "coll_busbw_gbs": 1.875,
+                    "event_trace_sn": "not_an_object",  # malformed
+                },
+            }
+        )
         records = self.parser.parse_lines(line)
         assert len(records) == 1
         assert records[0].event_trace is None
 
-
     def test_collective_breakdown_uses_all_records(self):
         """collective_breakdown counts ALL records, not just deduplicated ones."""
+
         def _make_seq(rank: int, seq: int, coll: str) -> InspectorCollPerf:
             r = _make_record(rank, 300.0, coll)
             return r.model_copy(update={"sequence_num": seq})
