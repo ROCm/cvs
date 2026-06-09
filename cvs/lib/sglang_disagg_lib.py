@@ -875,7 +875,6 @@ class SglangDisaggPD:
         # Prefill server readiness check
         # ------------------------------------------------------------------
         if re.search('prefill', sglang_function):
-            head_node = self.prefill_node_list[0]
             for j in range(1, no_of_iterations):
                 log.info(f'Starting poll iteration {j}')
                 out_dict = self.p_phdl.exec(
@@ -891,14 +890,13 @@ class SglangDisaggPD:
                 else:
                     log.info('Wait for 120 secs and continue polling')
                     time.sleep(120)
-            head_node = self.prefill_node_list[0]
+
             log.warning(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
             fail_test(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
         # ------------------------------------------------------------------
         # Decode server readiness check
         # ------------------------------------------------------------------
         elif re.search('decode', sglang_function):
-            head_node = self.decode_node_list[0]
             for j in range(1, no_of_iterations):
                 log.info(f'Starting poll iteration {j}')
                 out_dict = self.d_phdl.exec(
