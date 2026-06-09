@@ -223,7 +223,7 @@ def test_cleanup_stale_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict
 
 
 def test_launch_inference_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict):
-    log.info('Testcase launch InferenceMax containers')
+    log.info('Testcase launch SGLang containers')
     globals.error_list = []
     container_name = inference_dict['container_name']
     # Launch the containers ..
