@@ -680,9 +680,7 @@ class SglangDisaggPD:
         # Each Prefill server is specified as:
         #   --prefill http://<host>:<port>
         # ------------------------------------------------------------------
-        # prefill_str = ''
-        # for prefill_node in self.prefill_node_list:
-        #     prefill_str = prefill_str + f"--prefill http://{prefill_node}:{self.inf_dict['prefill_serv_port']} "
+        
         prefill_str = (
             f"--prefill http://{self.inf_dict['prefill_coordinator_addr']}:"
             f"{self.inf_dict['prefill_serv_port']} "
@@ -693,9 +691,7 @@ class SglangDisaggPD:
         # Each Decode server is specified as:
         #   --decode http://<host>:<port>
         # ------------------------------------------------------------------
-        # decode_str = ''
-        # for decode_node in self.decode_node_list:
-        #     decode_str = decode_str + f"--decode http://{decode_node}:{self.inf_dict['decode_serv_port']} "
+        
         decode_str = (
             f"--decode http://{self.inf_dict['decode_coordinator_addr']}:"
             f"{self.inf_dict['decode_serv_port']} "

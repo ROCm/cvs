@@ -435,4 +435,3 @@ def test_disagg_gpu_topology(im_obj):
     globals.error_list = []
     im_obj.sglang_disagg_gpu_counts()
     update_test_result()
-    
