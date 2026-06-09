@@ -28,6 +28,7 @@ inference_err_dict = {
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
 
+
 def textwrap_for_yml(msg_string):
     return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
 
@@ -500,10 +501,7 @@ class SglangDisaggPD:
         cmd_list = []
         prefill_node_list = self.inf_dict['prefill_node_list']
         log.info('%%%% self.prefill_nnodes {}'.format(self.prefill_nnodes))
-        dist_init_addr = (
-            f"{self.inf_dict['prefill_coordinator_addr']}:"
-            f"{self.inf_dict['prefill_coordinator_port']}"
-        )
+        dist_init_addr = f"{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_coordinator_port']}"
         for i in range(0, int(self.prefill_nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.prefill_nnodes}
@@ -575,10 +573,7 @@ class SglangDisaggPD:
         cmd_list = []
         decode_node_list = self.inf_dict['decode_node_list']
         log.info('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
-        dist_init_addr = (
-            f"{self.inf_dict['decode_coordinator_addr']}:"
-            f"{self.inf_dict['decode_coordinator_port']}"
-        )
+        dist_init_addr = f"{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_coordinator_port']}"
         for i in range(0, int(self.decode_nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.decode_nnodes}
@@ -680,10 +675,9 @@ class SglangDisaggPD:
         # Each Prefill server is specified as:
         #   --prefill http://<host>:<port>
         # ------------------------------------------------------------------
-        
+
         prefill_str = (
-            f"--prefill http://{self.inf_dict['prefill_coordinator_addr']}:"
-            f"{self.inf_dict['prefill_serv_port']} "
+            f"--prefill http://{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_serv_port']} "
         )
         # ------------------------------------------------------------------
         # Build Decode endpoint arguments for the router
@@ -691,11 +685,8 @@ class SglangDisaggPD:
         # Each Decode server is specified as:
         #   --decode http://<host>:<port>
         # ------------------------------------------------------------------
-        
-        decode_str = (
-            f"--decode http://{self.inf_dict['decode_coordinator_addr']}:"
-            f"{self.inf_dict['decode_serv_port']} "
-        )
+
+        decode_str = f"--decode http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']} "
         log.info('#================ * * * =========================#')
         log.info('Create Proxy Router launch script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
@@ -1266,7 +1257,6 @@ class SglangDisaggPD:
         verify_dmesg_for_errors(self.b_phdl, self.inference_start_time, self.inference_end_time)
         log.info("%s", self.inference_results_dict)
 
-    
     def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
         """
         After model load, count occupied GPUs per prefill/decode node via amd-smi.

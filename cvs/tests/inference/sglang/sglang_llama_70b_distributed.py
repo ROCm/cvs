@@ -300,6 +300,7 @@ def im_obj(p_phdl, d_phdl, r_phdl, b_phdl, gpu_type, inference_dict, benchmark_p
     )
     return im_obj
 
+
 def test_rms_norm(im_obj):
     """
     Run RMSNorm operator tests to validate:
@@ -312,6 +313,7 @@ def test_rms_norm(im_obj):
     globals.error_list = []
     im_obj.run_test_rmsnorm()
     update_test_result()
+
 
 # Test to start the prefill servers using sglang.launch_server
 def test_launch_prefill_servers(im_obj):
