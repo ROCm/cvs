@@ -18,7 +18,7 @@ On every cluster node:
 - **Docker** installed, with passwordless ``sudo docker`` for the SSH user.
 - **Host driver** loaded so ``/dev/kfd``, ``/dev/dri/*``, and ``/dev/infiniband/*`` (when RDMA is in scope) are present for passthrough.
 - **SSH user home directory** reachable. The orchestrator mounts ``~/.ssh`` as ``/host_ssh`` inside the container so that the in-container ``sshd`` on port ``2224`` can authenticate.
-- **Container image** either pre-loaded on every node (``docker load``) or pullable from a reachable registry. The image must contain the workload binaries the suite invokes (for example ``/opt/rocm/bin/rvs``). It does **not** need ``openssh-server`` baked in -- CVS provisions it at launch via ``container.setup_script`` (the packaged default installs it; a non-apt base image needs a custom script).
+- **Container image** either pre-loaded on every node (``docker load``) or pullable from a reachable registry. The image must contain ``openssh-server`` and the workload binaries the suite invokes (for example ``/opt/rocm/bin/rvs``).
 
 On the head node where you launch ``cvs run``:
 
@@ -48,9 +48,8 @@ Open the copied file and edit:
 - ``{user-id}``: your SSH user (or leave it for runtime resolution).
 - ``priv_key_file``: absolute path to your SSH private key.
 - ``head_node_dict.mgmt_ip`` and the keys of ``node_dict``: real IPs or hostnames of your cluster nodes. ``mgmt_ip`` must equal one of the keys in ``node_dict``.
-- ``container.image``: an image present on every node or pullable from a reachable registry. The image must include the workload binary (for example ``rvs``); ``openssh-server`` is installed at launch by ``setup_script``, not required in the image.
+- ``container.image``: an image present on every node or pullable from a reachable registry. The image must include ``openssh-server`` and the workload binary (for example ``rvs``).
 - ``container.name``: container name on each host. For parallel runs make this per-iteration unique (for example ``cvs_iter_<run_id>``). Pin it explicitly when using ``lifetime: persistent``.
-- ``container.setup_script`` (optional): path to a shell script run inside each freshly-launched container before sshd setup, to install packages on top of the base image. Omit to use the packaged default that installs ``openssh-server``.
 - ``container.lifetime``: ``no_launch``, ``per_run``, or ``persistent``. See the lifecycle note below.
 
 For the full schema and runtime argument reference, see :doc:`/reference/configuration-files/cluster-file`.
@@ -74,8 +73,8 @@ Run ``rvs_cvs`` the same way you run any CVS test suite, but with the container 
 What happens during the run:
 
 - The ``orch`` fixture in ``rvs_cvs`` reads ``orchestrator: container`` from the cluster file and constructs a ``ContainerOrchestrator``.
-- With ``lifetime: per_run``, CVS removes any container with the same name on each host, runs the configured image with the merged ``runtime.args``, runs ``container.setup_script`` inside the new container (default: install ``openssh-server``), and starts an in-container ``sshd`` on port ``2224``.
-- With ``lifetime: persistent``, CVS attaches to a container already running on every host (skipping provisioning and ``sshd`` setup if it is already up), or starts one fresh -- provisioning it -- if none is running.
+- With ``lifetime: per_run``, CVS removes any container with the same name on each host, runs the configured image with the merged ``runtime.args``, and starts an in-container ``sshd`` on port ``2224``.
+- With ``lifetime: persistent``, CVS attaches to a container already running on every host, or starts one fresh if none is running.
 - With ``lifetime: no_launch``, CVS verifies that a container with the configured name is already running on every host and reuses it.
 - All ``rvs`` invocations are routed through the container via ``docker exec`` and the in-container ``sshd``.
 
@@ -122,7 +121,7 @@ Replace ``cvs_container`` with the actual ``container.name`` from your cluster f
 Common pitfalls
 ===============
 
-- **Base image cannot install ``openssh-server``.** The default ``setup_script`` runs ``apt-get install openssh-server`` inside the container so ``setup_sshd`` can start ``sshd`` on port ``2224``. If the base image has no apt or no network to a package mirror, that install fails and ``orch.exec`` cannot connect. Bake ``openssh-server`` into the image, or point ``container.setup_script`` at a script that installs it the way that image expects.
+- **Image without ``openssh-server``.** ``setup_sshd`` cannot start ``sshd`` on port ``2224`` and ``orch.exec`` fails to connect. Make sure the image installs ``openssh-server`` and exposes the binary at ``/usr/sbin/sshd``.
 - **Image without the workload binary.** ``cvs run rvs_cvs`` invokes ``rvs`` inside the container; if the image lacks ``/opt/rocm/bin/rvs`` the test fails with a "command not found" style error.
 - **``lifetime: persistent`` without a pinned ``name``.** The default container name is ``<user>_<sanitized_image>``, which shifts when you bump the image tag. A tag bump silently abandons the previous container's overlay (installs, clones) and starts fresh. Pin ``container.name`` when using ``persistent``.
 - **Port ``2224`` already bound on the host.** With ``network: host`` the in-container ``sshd`` binds to ``2224`` in the host's network namespace. If something else on the host already listens on ``2224`` the bind fails. Stop the conflicting service.

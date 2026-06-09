@@ -23,11 +23,6 @@ class EnrootRuntime:
         self.log.warning("Enroot runtime not yet implemented")
         return True
 
-    def image_sha_status(self, container_name, image_name):
-        """Compare image SHAs for Enroot containers - not yet implemented."""
-        self.log.error("Enroot runtime not yet implemented")
-        return {}
-
     def is_running(self, container_name):
         """Check Enroot container status - not yet implemented."""
         self.log.error("Enroot runtime not yet implemented")

@@ -44,9 +44,8 @@ Consumed by `ContainerOrchestrator` in [`cvs/core/orchestrators/container.py`](.
 | Key | Type | Default | Purpose |
 | --- | --- | --- | --- |
 | `lifetime` | str | `"per_run"` | Container lifecycle policy: `no_launch`, `per_run`, or `persistent`. See the truth table below. |
-| `image` | str | (required) | Image with the test dependencies (rvs, etc.) the suite invokes. Must be present locally on each node OR pullable from a reachable registry. An in-container sshd is **not** required up front -- `setup_script` installs it if missing. |
+| `image` | str | (required) | Image with the test dependencies (rvs, etc.) pre-installed and an sshd you can start on port 2224. Must be present locally on each node OR pullable from a reachable registry. |
 | `name` | str | (required) | Container name on each host. For parallel runs make this per-iteration unique (e.g. `cvs_iter_<run_id>`). |
-| `setup_script` | str | (packaged default) | Optional path to a shell script run inside each freshly-launched container (before sshd setup) to install packages on top of the base image. `null` or omitting the key both use the packaged default that installs `openssh-server` only (there is no value that disables provisioning). A non-existent path fails at config load. Delivered inline via `docker exec` (so the base image needs `bash` + `base64`, and the script must stay under ~16 KB); the default is apt-based and runs as the container's exec user (root) -- non-apt images need a custom script. |
 | `runtime.name` | str | `"docker"` | Container runtime. Supported: `docker` (concrete), `enroot` (stub). |
 | `runtime.args` | dict | `{}` | Backend-specific runtime arguments (see below). Defaults from `DEFAULT_CONTAINER_ARGS` in [`cvs/core/orchestrators/container.py`](../../core/orchestrators/container.py) apply for any key omitted here. |
 
@@ -78,14 +77,14 @@ RDMA-ready container; the keys below are only needed to extend or override.
 | --- | --- | --- |
 | `no_launch` | Verify the container is already running on every host; set `container_id`. Never starts anything. | No-op. CVS does not own a container it did not launch. |
 | `per_run` (default) | Start a fresh container on every host (force-removing any stale same-named container first). | Force-remove the container CVS started. |
-| `persistent` | Attach if the container is already running on every host (with a per-host image-SHA check; cross-host SHA skew or an unreadable SHA is a hard error). Start fresh only if it is running on no host. Running on some hosts but not all is a hard error (CVS will not force-remove the still-running hosts and destroy their overlay). Idempotent across runs. | No-op. The container is left running for the next run; remove it yourself when done. |
+| `persistent` | Attach if the container is already running on every host. Start fresh only if it is running on no host. Running on some hosts but not all is a hard error (CVS will not force-remove the still-running hosts and destroy their overlay). Idempotent across runs. | No-op. The container is left running for the next run; remove it yourself when done. |
 
 ## Prerequisites on each cluster node
 
 - **Docker** installed and the SSH user has passwordless `sudo docker`.
 - **Host driver** loaded so `/dev/kfd` and `/dev/dri/*` (and `/dev/infiniband/*` if RDMA is in scope) are present for passthrough.
 - **`~/.ssh/`** of the SSH user is reachable; the orchestrator mounts it as `/host_ssh` and copies keys into `/root/.ssh` inside the container so `setup_sshd` can start an in-container sshd on port 2224.
-- **The image** is either pre-loaded on every node (`docker load`) or pullable from a reachable registry. Inside the image you need: the workload binaries the suite invokes (e.g. `/opt/rocm/bin/rvs`) and any ROCm runtime libs the workload needs. `openssh-server` is **not** required in the image -- CVS provisions it at launch via `container.setup_script` (the packaged default installs it). On a non-apt base image, supply a custom `setup_script`.
+- **The image** is either pre-loaded on every node (`docker load`) or pullable from a reachable registry. Inside the image you need: `openssh-server` (for the in-container sshd), the workload binaries the suite invokes (e.g. `/opt/rocm/bin/rvs`), and any ROCm runtime libs the workload needs.
 
 ## What happens when you run a backend-blind suite
 
@@ -122,7 +121,7 @@ sequenceDiagram
     participant Sshd as container sshd:2224
 
     TestFix->>ContainerOrch: setup_containers()
-    ContainerOrch->>Docker: is_running(name)? yes -> attach, image-SHA check
+    ContainerOrch->>Docker: is_running(name)? yes -> attach
     TestFix->>ContainerOrch: setup_sshd()
     ContainerOrch->>Sshd: pgrep sshd:2224 already up -> skip start
     TestFix->>ContainerOrch: orch.exec("rvs -c ...")
@@ -137,7 +136,7 @@ file changes. The `orch` fixture in [`cvs/tests/health/rvs_cvs.py`](../../tests/
 
 ## Common pitfalls
 
-- **Base image cannot install `openssh-server`**. The default `setup_script` runs `apt-get install openssh-server` inside the container so `setup_sshd` can start sshd on port 2224. If the base image has no apt / no network to a package mirror, that install fails and `orch.exec` cannot connect. Fixes: bake `openssh-server` into the image, or point `container.setup_script` at a script that installs sshd the way that image expects (e.g. `dnf`/`microdnf`).
+- **Image without `openssh-server`**. `setup_sshd` cannot start sshd on port 2224; `orch.exec` then fails to connect. Make sure your image installs `openssh-server` and exposes the binary at `/usr/sbin/sshd`.
 - **Image without the workload binary**. `cvs run rvs_cvs` will execute `rvs` inside the container; if the image lacks `/opt/rocm/bin/rvs` the test fails with a `command not found` flavor error.
 - **`lifetime: persistent` without a pinned `name`**. The default container name is `<user>_<sanitized_image>`, which shifts when you bump the image tag. A tag bump silently abandons the previous container's overlay (installs, clones) and starts fresh. Pin `container.name` explicitly when using `persistent`.
 - **Port 2224 collision on the host**. With `network: host` the in-container sshd binds to 2224 in the host's network namespace. If something else on the host already listens on 2224 the bind fails. Stop the conflicting service or change the in-image sshd port (and update the orchestrator's port to match).

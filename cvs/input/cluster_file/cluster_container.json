@@ -34,14 +34,11 @@
         "_lifetime_comment": "Container lifecycle policy. 'no_launch' = CVS never launches the container (verify it is already running, never stopped). 'per_run' = CVS starts on setup and removes on teardown. 'persistent' = CVS starts if absent / attaches if present and leaves running on exit (unblocks install-then-run; pin 'name' explicitly).",
         "lifetime": "per_run",
 
-        "_image_comment": "Image with the test dependencies (rvs, etc.) the suite invokes. Must be present locally on each node OR pullable from a reachable registry. An in-container sshd is NOT required up front -- it is installed by setup_script (see below) if missing.",
+        "_image_comment": "Image with test dependencies (rvs, etc.) pre-installed and an sshd you can start on port 2224. Must be present locally on each node OR pullable from a reachable registry.",
         "image": "rocm/cvs:latest",
 
         "_name_comment": "Container name on each host. For parallel runs make this per-iteration unique (e.g. cvs_iter_<run_id>).",
         "name": "cvs_container",
-
-        "_setup_script_comment": "Optional path to a shell script run inside each freshly-launched container (before sshd setup) to install packages on top of the base image. null or omitting this key both use the packaged default that installs openssh-server (there is no 'disable provisioning' value). A non-existent path fails at config load. Delivered inline via docker exec, so the base image needs bash and base64; the default script is apt-based and runs as the container's exec user (root).",
-        "setup_script": null,
 
         "runtime": {
             "_name_comment": "Supported: 'docker' (concrete), 'enroot' (stub).",

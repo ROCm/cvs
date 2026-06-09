@@ -5,21 +5,11 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import os
-
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.container import ContainerOrchestrator
 
 
 VALID_CONTAINER_LIFETIMES = ("no_launch", "per_run", "persistent")
-
-# Packaged default provisioning script, run inside each freshly-launched
-# container when container.setup_script is not set. Installs openssh-server so
-# the in-container sshd can start on port 2224. Resolved __file__-relative so it
-# works in both editable and wheel installs.
-DEFAULT_CONTAINER_SETUP_SCRIPT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "scripts", "default_container_setup.sh"
-)
 
 
 def _resolve_container_lifetime(container):
@@ -64,46 +54,6 @@ def _resolve_container_lifetime(container):
     return container
 
 
-def _resolve_container_setup_script(container):
-    """Resolve ``container.setup_script`` to a concrete, existing file path.
-
-    The script is run inside each freshly-launched container (see
-    ``ContainerOrchestrator._provision_container``) to install packages on top
-    of the base image. Resolution rules:
-
-      - empty/absent container block (baremetal path) -> returned untouched.
-      - ``setup_script`` set                          -> validated to exist on
-        the control host; ``ValueError`` (fail fast at config load) if missing.
-      - ``setup_script`` absent                       -> defaults to the
-        packaged ``default_container_setup.sh`` (installs openssh-server).
-
-    Relative paths are resolved against the current working directory of the
-    process running ``cvs``. Mutates and returns the passed dict.
-    """
-    if not container:
-        return container
-
-    setup_script = container.get('setup_script')
-    if setup_script:
-        resolved = os.path.abspath(os.path.expanduser(setup_script))
-        if not os.path.isfile(resolved):
-            raise ValueError(f"container.setup_script not found: {setup_script!r} (resolved to {resolved!r})")
-        container['setup_script'] = resolved
-        return container
-
-    # No user-supplied script: fall back to the packaged default. Validate it
-    # exists here (same fail-fast as a user path) so a broken/incomplete install
-    # surfaces at config load rather than as an OSError mid-run inside
-    # _provision_container.
-    if not os.path.isfile(DEFAULT_CONTAINER_SETUP_SCRIPT):
-        raise ValueError(
-            f"packaged default container setup script is missing: "
-            f"{DEFAULT_CONTAINER_SETUP_SCRIPT!r} (broken CVS install?)"
-        )
-    container['setup_script'] = DEFAULT_CONTAINER_SETUP_SCRIPT
-    return container
-
-
 class OrchestratorConfig:
     """
     Configuration for orchestrator creation.
@@ -138,8 +88,7 @@ class OrchestratorConfig:
               }
             },
             "image": "rocm/cvs:latest",
-            "name": "myuser_rocm_cvs_latest",
-            "setup_script": "/path/to/setup.sh"
+            "name": "myuser_rocm_cvs_latest"
           }
           ```
           lifetime: Container lifecycle policy [default: 'per_run']
@@ -150,11 +99,6 @@ class OrchestratorConfig:
             - 'persistent' : start if absent / attach if present; never torn down
                              by the run. Pin container.name explicitly under this
                              mode (the default <user>_<image> name shifts on tag bumps).
-          setup_script: Optional path to a shell script run inside each freshly
-            launched container (per_run, and persistent when cold-started) before
-            sshd setup, to install packages on top of the base image. Omit to use
-            the packaged default that installs openssh-server. A non-existent path
-            fails at config load.
     """
 
     def __init__(self, **kwargs):
@@ -182,10 +126,8 @@ class OrchestratorConfig:
         # Normalize the container block. This is the single chokepoint:
         # from_configs constructs via cls(**required_config), so both file-driven
         # and direct programmatic construction hit the same normalization (and the
-        # same enabled-removed / launch-deprecated errors, and the same
-        # setup_script validation / default injection).
-        container = _resolve_container_lifetime(kwargs.get('container', {}))
-        self.container = _resolve_container_setup_script(container)
+        # same enabled-removed / launch-removed errors).
+        self.container = _resolve_container_lifetime(kwargs.get('container', {}))
 
     def get(self, key, default=None):
         """Get configuration value with default."""
@@ -210,7 +152,7 @@ class OrchestratorConfig:
                            Required keys: orchestrator, node_dict, username, priv_key_file
                            Optional keys: container,
                            head_node_dict, password (defaults provided for missing optional keys)
-                           Container structure: {lifetime: 'no_launch'|'per_run'|'persistent', runtime: {name: str, args: dict}, image: str, name: str, setup_script: str, ...}
+                           Container structure: {lifetime: 'no_launch'|'per_run'|'persistent', runtime: {name: str, args: dict}, image: str, name: str, ...}
             testsuite_config: Test suite specific configuration (dict or path to <testsuite>_config.json)
                             Can override any keys from cluster_config
 

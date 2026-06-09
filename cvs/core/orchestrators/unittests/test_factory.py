@@ -16,10 +16,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from cvs.core.orchestrators.factory import (
-    DEFAULT_CONTAINER_SETUP_SCRIPT,
     OrchestratorConfig,
     OrchestratorFactory,
-    _resolve_container_setup_script,
 )
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.container import ContainerOrchestrator
@@ -253,116 +251,6 @@ class TestOrchestratorConfig(unittest.TestCase):
         }
         cfg = OrchestratorConfig.from_configs(cluster, testsuite)
         self.assertEqual(cfg.username, "literal_user")
-
-
-class TestResolveContainerSetupScript(unittest.TestCase):
-    """container.setup_script default injection + path validation."""
-
-    def test_empty_block_untouched(self):
-        # Baremetal path: empty container block stays empty (no script injected).
-        self.assertEqual(_resolve_container_setup_script({}), {})
-
-    def test_falsy_setup_script_defaults(self):
-        # absent / None / "" are all falsy -> packaged default (no disable value).
-        for name, container in [
-            ("absent", {"image": "x"}),
-            ("none", {"image": "x", "setup_script": None}),
-            ("empty", {"image": "x", "setup_script": ""}),
-        ]:
-            with self.subTest(name):
-                out = _resolve_container_setup_script(dict(container))
-                self.assertEqual(out["setup_script"], DEFAULT_CONTAINER_SETUP_SCRIPT)
-
-    def test_packaged_default_script_exists_on_disk(self):
-        # The default must actually be present (packaged + __file__-relative),
-        # otherwise every container run with no setup_script would fail to read it.
-        self.assertTrue(os.path.isfile(DEFAULT_CONTAINER_SETUP_SCRIPT))
-
-    def test_existing_user_path_kept_as_absolute(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as f:
-            f.write("#!/bin/bash\ntrue\n")
-            path = f.name
-        try:
-            out = _resolve_container_setup_script({"image": "x", "setup_script": path})
-            self.assertEqual(out["setup_script"], os.path.abspath(path))
-        finally:
-            os.unlink(path)
-
-    def test_missing_user_path_raises(self):
-        with self.assertRaises(ValueError) as ctx:
-            _resolve_container_setup_script({"image": "x", "setup_script": "/no/such/setup_script.sh"})
-        self.assertIn("setup_script", str(ctx.exception))
-
-    def test_missing_packaged_default_raises(self):
-        # The F2 fix branch: a broken install whose packaged default is missing
-        # must fail fast at resolution (ValueError), not as an OSError mid-run.
-        with patch(
-            "cvs.core.orchestrators.factory.DEFAULT_CONTAINER_SETUP_SCRIPT",
-            "/nonexistent/default_container_setup.sh",
-        ):
-            with self.assertRaises(ValueError) as ctx:
-                _resolve_container_setup_script({"image": "x"})
-        self.assertIn("default", str(ctx.exception).lower())
-
-    def test_relative_user_path_resolved_to_abspath(self):
-        # A relative setup_script is resolved against the cwd and stored absolute.
-        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as f:
-            f.write("#!/bin/bash\ntrue\n")
-            path = f.name
-        try:
-            rel = os.path.relpath(path, os.getcwd())
-            out = _resolve_container_setup_script({"image": "x", "setup_script": rel})
-            self.assertTrue(os.path.isabs(out["setup_script"]))
-            self.assertEqual(out["setup_script"], os.path.abspath(path))
-        finally:
-            os.unlink(path)
-
-    def test_tilde_user_path_is_expanded(self):
-        # A ~ path is expanded before the existence check (proven via the resolved
-        # path in the error message since the file does not exist).
-        with self.assertRaises(ValueError) as ctx:
-            _resolve_container_setup_script({"image": "x", "setup_script": "~/__cvs_missing_setup__.sh"})
-        msg = str(ctx.exception)
-        self.assertIn(os.path.expanduser("~"), msg)
-        self.assertNotIn("~", msg.split("resolved to", 1)[-1])
-
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
-    def test_orchestratorconfig_init_injects_default_setup_script(self, _mock_pssh):
-        # Direct construction routes through __init__ -> the same resolver, so a
-        # container config with no setup_script gets the packaged default.
-        cfg = OrchestratorConfig(
-            orchestrator="container",
-            node_dict={"1.1.1.1": {}},
-            username="u",
-            priv_key_file="/dev/null",
-            container={"lifetime": "per_run", "image": "x"},
-        )
-        self.assertEqual(cfg.container["setup_script"], DEFAULT_CONTAINER_SETUP_SCRIPT)
-
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
-    def test_from_configs_null_setup_script_defaults(self, _mock_pssh):
-        # JSON null (Python None) for setup_script is treated like "absent" and
-        # resolves to the packaged default -- not "disable provisioning".
-        cluster = {
-            "orchestrator": "container",
-            "node_dict": {"1.1.1.1": {}},
-            "username": "u",
-            "priv_key_file": "/dev/null",
-            "container": {"lifetime": "per_run", "image": "x", "setup_script": None},
-        }
-        cfg = OrchestratorConfig.from_configs(cluster)
-        self.assertEqual(cfg.container["setup_script"], DEFAULT_CONTAINER_SETUP_SCRIPT)
-
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
-    def test_baremetal_init_does_not_inject_setup_script(self, _mock_pssh):
-        # Empty container block (baremetal) must not gain a setup_script key.
-        cfg = OrchestratorConfig(
-            orchestrator="baremetal",
-            node_dict={"1.1.1.1": {}},
-            username="u",
-            priv_key_file="/dev/null",
-        )
-        self.assertEqual(cfg.container, {})
 
 
 if __name__ == "__main__":

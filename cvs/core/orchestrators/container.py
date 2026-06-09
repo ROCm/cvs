@@ -6,7 +6,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
-import base64
 import getpass
 import re
 from cvs.core.runtimes import RuntimeFactory
@@ -42,14 +41,6 @@ DEFAULT_CONTAINER_ARGS = {
     "ipc_mode": "host",
     "privileged": True,
 }
-
-# Upper bound on a setup_script that can be delivered inline. _provision_container
-# ships the script base64-encoded inside the `docker exec ... bash -c` command
-# string, which rides the SSH exec channel (bounded to ~30 KB by libssh2 in
-# cvs/lib/parallel/pssh.py). base64 inflates by ~4/3, so cap the raw script well
-# under that so a too-large script fails with a clear message instead of an
-# opaque SSH/exec truncation error.
-MAX_INLINE_SETUP_SCRIPT_BYTES = 16384
 
 
 class ContainerOrchestrator(BaremetalOrchestrator):
@@ -260,6 +251,35 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         runtime_args = runtime_config.get('args', {})
         return runtime_args.get('privileged', DEFAULT_CONTAINER_ARGS['privileged'])
 
+    def _partition_by_status(self, status):
+        """Partition the expected hosts into (running, absent, probe_failed).
+
+        The single source of truth for interpreting a runtime is_running() result.
+        Both the persistent setup branch and verify_containers_running consume this
+        so they cannot drift apart on what counts as running vs unreachable.
+
+          running      : probe succeeded and the named container is up.
+          absent       : probe succeeded and no such container is running.
+          probe_failed : the probe cannot be trusted -- non-zero exit_code (an
+                         SSH/sudo/docker error or a timeout) OR the host is missing
+                         from status entirely (pruned as unreachable by an earlier
+                         command). Either way the container's true state is unknown.
+
+        Iterates the expected host set (self.hosts), not status.keys(), so a host
+        that dropped out of the probe is surfaced as probe_failed rather than
+        silently ignored.
+        """
+        running, absent, probe_failed = [], [], []
+        for host in self.hosts:
+            info = status.get(host)
+            if info is None or info.get('exit_code') != 0:
+                probe_failed.append(host)
+            elif info.get('running'):
+                running.append(host)
+            else:
+                absent.append(host)
+        return running, absent, probe_failed
+
     def setup_containers(
         self,
         volumes=None,
@@ -278,8 +298,8 @@ class ContainerOrchestrator(BaremetalOrchestrator):
           - 'no_launch'  : verify a container with the configured name is running
                            and set container_id; never starts anything.
           - 'per_run'    : start fresh containers on all hosts.
-          - 'persistent' : attach to a container already running on all hosts (with
-                           an image-SHA check), otherwise start fresh. Idempotent.
+          - 'persistent' : attach to a container already running on all hosts,
+                           otherwise start fresh. Idempotent.
 
         Args:
             volumes: Optional list of volume mounts (uses standards if not provided)
@@ -307,16 +327,29 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         if lifetime == 'persistent':
             status = self.runtime.is_running(container_name)
-            running_hosts = [h for h, info in status.items() if info.get('running')]
-            missing_hosts = [h for h, info in status.items() if not info.get('running')]
+            running_hosts, absent_hosts, probe_failed_hosts = self._partition_by_status(status)
 
-            if running_hosts and not missing_hosts:
-                # Running on every host: attach (with image-SHA check).
+            if probe_failed_hosts:
+                # The probe could not be trusted on these hosts (SSH/sudo/docker
+                # error, timeout, or the host dropped out). We cannot tell "absent"
+                # from "actually running but unreachable", and treating unreachable
+                # as absent would let the cold-start path below force-remove a
+                # container that is in fact running -- destroying its overlay. Refuse.
+                self.log.error(
+                    f"Cannot determine state of persistent container '{container_name}' on "
+                    f"{probe_failed_hosts} (probe failed: SSH/sudo/docker error, timeout, or "
+                    f"host unreachable). Refusing to act on an untrustworthy probe -- resolve "
+                    f"host/daemon health and rerun."
+                )
+                return False
+
+            if running_hosts and not absent_hosts:
+                # Running on every host: attach.
                 self.container_id = container_name
                 self.log.info(f"Attaching to running container '{container_name}'")
-                return self._verify_persistent_image(container_name, image)
+                return True
 
-            if running_hosts and missing_hosts:
+            if running_hosts and absent_hosts:
                 # Partial: refuse to auto-relaunch. _launch_containers force-removes
                 # the same-named container on ALL hosts before recreating, which would
                 # destroy the overlay (installs, clones) on the still-running hosts --
@@ -325,14 +358,14 @@ class ContainerOrchestrator(BaremetalOrchestrator):
                 # restart the container on the missing hosts to reattach.
                 self.log.error(
                     f"Persistent container '{container_name}' is running on {running_hosts} "
-                    f"but missing on {missing_hosts}. Refusing to auto-relaunch: that would "
+                    f"but missing on {absent_hosts}. Refusing to auto-relaunch: that would "
                     f"force-remove and rebuild the containers on the still-running hosts, "
                     f"destroying their overlay. Either remove '{container_name}' on all hosts "
-                    f"and rerun, or restart it on {missing_hosts} to reattach."
+                    f"and rerun, or restart it on {absent_hosts} to reattach."
                 )
                 return False
 
-            # Not running on any host: legitimate cold start, launch fresh on all.
+            # Genuinely absent on every host: legitimate cold start, launch fresh on all.
             self.log.info("Persistent container not running on any host, launching...")
             return self._launch_containers(volumes, devices, capabilities, security_opts, environment, groups, ulimits)
 
@@ -401,130 +434,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             ulimits=ulimits,
             device_expansion=ib_device_expansion,
         )
-        if not launched:
-            return False
-
-        # Provision the freshly-launched container (install packages on top of
-        # the base image, e.g. openssh-server). Runs only on this fresh-start
-        # path, so 'no_launch' and 'persistent'-attach skip it automatically.
-        return self._provision_container()
-
-    def _provision_container(self):
-        """Run the configured setup_script inside the freshly-launched container.
-
-        Reads the resolved ``container.setup_script`` on the control host,
-        base64-encodes it, and executes it inside the container on every host via
-        ``docker exec`` (``self.exec``), which works before sshd exists -- the same
-        mechanism ``setup_sshd`` uses. The default script installs
-        ``openssh-server`` so the subsequent ``setup_sshd`` can start sshd; a
-        user-supplied script can install anything else the base image lacks.
-
-        Returns:
-            bool: True if provisioning succeeded on all hosts (or no script is
-            configured), False otherwise.
-        """
-        setup_script = self.container_config.get('setup_script')
-        if not setup_script:
-            # Defensive: the factory always resolves a default for container
-            # configs, so this only triggers for a hand-built config dict.
-            return True
-
-        try:
-            with open(setup_script, 'rb') as f:
-                script_bytes = f.read()
-        except OSError as exc:
-            self.log.error(f"Cannot read container setup_script {setup_script!r}: {exc}")
-            return False
-
-        if len(script_bytes) > MAX_INLINE_SETUP_SCRIPT_BYTES:
-            # Delivered inline over the SSH exec channel; a too-large script would
-            # otherwise fail with an opaque truncation error mid-run.
-            self.log.error(
-                f"container.setup_script {setup_script!r} is too large for inline "
-                f"delivery ({len(script_bytes)} bytes > {MAX_INLINE_SETUP_SCRIPT_BYTES}). "
-                f"Slim the script, or bake the packages into the image."
-            )
-            return False
-
-        self.log.info(f"Provisioning containers via setup_script: {setup_script}")
-        encoded = base64.b64encode(script_bytes).decode('ascii')
-        # docker exec already wraps the command in `bash -c`, so decode the
-        # script and pipe it straight into bash. base64 sidesteps all quoting and
-        # newline issues with arbitrary script content over pssh. `set -o pipefail`
-        # is required: without it the pipeline's exit code is bash's (the last
-        # stage), so a missing/failing `base64` in the image would exit 0 and the
-        # provisioning would silently no-op, surfacing later as an opaque sshd
-        # failure. pipefail makes that fail here with a diagnosable error instead.
-        cmd = f"set -o pipefail; echo {encoded} | base64 -d | bash"
-        result = self.exec(cmd, timeout=600, detailed=True)
-
-        ok = True
-        for hostname, output in result.items():
-            if output.get('exit_code') != 0:
-                # Surface the in-container stderr/stdout so a failed apt/bash is
-                # diagnosable from the log without re-running by hand.
-                detail = (output.get('output') or '').strip()
-                self.log.error(
-                    f"Container provisioning failed on {hostname} "
-                    f"(setup_script: {setup_script}, exit_code: {output.get('exit_code')})"
-                    + (f": {detail}" if detail else "")
-                )
-                ok = False
-        if not ok:
-            return False
-        self.log.info("Container provisioning succeeded on all hosts")
-        return True
-
-    def _verify_persistent_image(self, container_name, image):
-        """Compare the running container's image SHA to the local image tag on
-        each host (persistent attach only).
-
-        This runs only after ``is_running`` confirmed the container is up on every
-        host, so every host MUST yield a readable container SHA.
-
-        - Unreadable SHA on any host (probe failed / container vanished): ERROR
-          and return False -- we cannot vouch for consistency, so do not silently
-          pass.
-        - Per-host mismatch (container created from an image older than the local
-          ``<image>`` tag): WARN and continue -- the overlay may be stale.
-        - Cross-host SHA skew (hosts running different image SHAs): ERROR and
-          return False -- a correctness problem, not mere staleness.
-
-        Returns:
-            bool: False on unreadable SHA or cross-host skew, True otherwise.
-        """
-        status = self.runtime.image_sha_status(container_name, image)
-        container_shas = set()
-        unreadable_hosts = []
-        for host, info in status.items():
-            container_sha = info.get('container_sha', '')
-            image_sha = info.get('image_sha', '')
-            if not container_sha:
-                unreadable_hosts.append(host)
-                continue
-            container_shas.add(container_sha)
-            if image_sha and container_sha != image_sha:
-                self.log.warning(
-                    f"Container '{container_name}' on {host} runs image "
-                    f"{container_sha[:19]} but local '{image}' is {image_sha[:19]}; "
-                    f"overlay may be stale"
-                )
-
-        if unreadable_hosts:
-            self.log.error(
-                f"Could not read the running image SHA for container "
-                f"'{container_name}' on {unreadable_hosts}; cannot verify image "
-                f"consistency across hosts"
-            )
-            return False
-
-        if len(container_shas) > 1:
-            self.log.error(
-                f"Cross-host image SHA skew for container '{container_name}': "
-                f"hosts are running different images {sorted(container_shas)}"
-            )
-            return False
-        return True
+        return launched
 
     def setup_sshd(self):
         """
@@ -547,19 +457,6 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         self.log.info(f"Setting up SSH daemon in containers: {self.container_id}")
 
-        # Idempotency precheck (required by lifetime: persistent): on a second
-        # `cvs run` the container's sshd is already bound to 2224, so re-running
-        # `/usr/sbin/sshd -p2224` would fail with "address already in use". Skip
-        # the setup commands on any host that already has sshd on 2224.
-        # Pattern uses the `[s]shd` trick so pgrep -f does not match its own
-        # parent shell (whose argv contains the pattern); a literal 'sshd.*2224'
-        # self-matches and makes this precheck always report "already running".
-        precheck = self.exec("pgrep -f '[s]shd.*2224' > /dev/null 2>&1", timeout=10, detailed=True)
-        hosts_needing_sshd = [host for host, output in precheck.items() if output['exit_code'] != 0]
-        if not hosts_needing_sshd:
-            self.log.info("SSH daemon already running on all hosts, skipping setup")
-            return True
-
         # Execute SSH setup commands
         # Note: Commands with shell operators must be wrapped in bash -c for proper execution inside container
         ssh_setup_commands = [
@@ -572,8 +469,8 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         ]
 
         for cmd in ssh_setup_commands:
-            result = self.exec(cmd, hosts=hosts_needing_sshd, timeout=10, detailed=True)
-            # Check if command succeeded on all targeted hosts
+            result = self.exec(cmd, timeout=10, detailed=True)
+            # Check if command succeeded on all hosts
             for hostname, output in result.items():
                 if output['exit_code'] != 0:
                     self.log.error(f"SSH setup command failed on {hostname}: {cmd}")
@@ -584,9 +481,8 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         time.sleep(2)
 
-        # Validate sshd is running by checking process. Same `[s]shd` trick as the
-        # precheck so this validates the real sshd, not pgrep's own parent shell.
-        check_cmd = "pgrep -f '[s]shd.*2224' > /dev/null 2>&1"
+        # Validate sshd is running by checking process
+        check_cmd = "pgrep -f 'sshd.*2224' > /dev/null 2>&1"
         result = self.exec(check_cmd, timeout=10, detailed=True)
 
         # Check if all hosts have sshd running
@@ -610,21 +506,14 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             bool: True if container is running on all hosts, False otherwise
         """
         self.log.debug(f"Checking if container '{container_name}' is running on all hosts")
-        result = self.runtime.is_running(container_name)
+        status = self.runtime.is_running(container_name)
+        _running, absent_hosts, probe_failed_hosts = self._partition_by_status(status)
 
-        # Verify container is running on all hosts
-        failed_hosts = []
-        for host, info in result.items():
-            exit_code = info.get('exit_code')
-            if exit_code != 0:
-                failed_hosts.append(f"{host} (exit code {exit_code})")
-                continue
-            if not info.get('running'):
-                running_name = info.get('name', '')
-                failed_hosts.append(f"{host} (container not running, found: '{running_name}')")
-
-        if failed_hosts:
-            self.log.error(f"Container '{container_name}' not running on hosts: {failed_hosts}")
+        if absent_hosts or probe_failed_hosts:
+            self.log.error(
+                f"Container '{container_name}' not running on all hosts: "
+                f"not running on {absent_hosts}, probe failed on {probe_failed_hosts}"
+            )
             return False
 
         self.container_id = container_name
