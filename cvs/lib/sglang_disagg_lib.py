@@ -1043,7 +1043,7 @@ class SglangDisaggPD:
 
         # Scan all prefill nodes
         for j in range(0, int(self.prefill_nnodes)):
-            cmd = f"sudo tail -1000 {self.log_dir}/prefill_node{j}/prefill_server.log"
+            cmd = f"sudo tail -500 {self.log_dir}/prefill_node{j}/prefill_server.log"
             cmd_list.append(cmd)
         out_dict = self.p_phdl.exec_cmd_list(cmd_list)
 
@@ -1058,7 +1058,7 @@ class SglangDisaggPD:
         # Scan all decode nodes
         cmd_list = []
         for j in range(0, int(self.decode_nnodes)):
-            cmd = f"sudo tail -1000 {self.log_dir}/decode_node{j}/decode_server.log"
+            cmd = f"sudo tail -500 {self.log_dir}/decode_node{j}/decode_server.log"
             cmd_list.append(cmd)
         out_dict = self.d_phdl.exec_cmd_list(cmd_list)
 
