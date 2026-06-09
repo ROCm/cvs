@@ -124,7 +124,7 @@
 		 "backend": "sglang",
 		 "max_concurrency": "64",
 		 "_comments_model": "If the model is local, specify the full path of the model",
-		 "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+		 "model": "/root/models/DeepSeek-R1-0528",
 		 "prefill_policy": "cache_aware",
 		 "decode_policy": "cache_aware",
 		 "tensor_parallelism": "8",
@@ -154,7 +154,6 @@
 			  "input_length": "1024",
 			  "output_length": "1024",
 			  "random_range_ratio": "0.5",
-			  "max-concurrency": "25",
                           "expected_results":
 		          {
 			       "auto":
