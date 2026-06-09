@@ -3,7 +3,7 @@
 
     "orchestrator": "container",
     "username": "{user-id}",
-    "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+    "priv_key_file": "/data/{user-id}/.ssh/id_ed25519",
 
     "head_node_dict": {
         "mgmt_ip": "10.245.135.13"
