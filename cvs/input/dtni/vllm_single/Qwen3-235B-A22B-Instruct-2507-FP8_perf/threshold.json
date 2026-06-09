@@ -1,0 +1,128 @@
+{
+  "ISL=1024,OSL=1024,TP=8,CONC=16": {
+    "total_throughput_per_sec": {
+      "kind": "min_tok_s",
+      "value": 666
+    },
+    "mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 4250
+    },
+    "mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 90
+    }
+  },
+  "ISL=1024,OSL=1024,TP=8,CONC=32": {
+    "total_throughput_per_sec": {
+      "kind": "min_tok_s",
+      "value": 1145
+    },
+    "mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 400
+    },
+    "mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 50
+    }
+  },
+  "ISL=1024,OSL=1024,TP=8,CONC=64": {
+    "total_throughput_per_sec": {
+      "kind": "min_tok_s",
+      "value": 1946
+    },
+    "mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 1300
+    },
+    "mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 50
+    }
+  },
+  "ISL=1024,OSL=8192,TP=8,CONC=16": {
+    "total_throughput_per_sec": {
+      "kind": "min_tok_s",
+      "value": 373
+    },
+    "mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 2075
+    },
+    "mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 125
+    }
+  },
+  "ISL=1024,OSL=8192,TP=8,CONC=32": {
+    "total_throughput_per_sec": {
+      "kind": "min_tok_s",
+      "value": 625
+    },
+    "mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 350
+    },
+    "mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 50
+    }
+  },
+  "ISL=1024,OSL=8192,TP=8,CONC=64": {
+    "total_throughput_per_sec": {
+      "kind": "min_tok_s",
+      "value": 1046
+    },
+    "mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 1550
+    },
+    "mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 70
+    }
+  },
+  "ISL=8192,OSL=1024,TP=8,CONC=16": {
+    "total_throughput_per_sec": {
+      "kind": "min_tok_s",
+      "value": 2492
+    },
+    "mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 1500
+    },
+    "mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 105
+    }
+  },
+  "ISL=8192,OSL=1024,TP=8,CONC=32": {
+    "total_throughput_per_sec": {
+      "kind": "min_tok_s",
+      "value": 3770
+    },
+    "mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 1775
+    },
+    "mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 135
+    }
+  },
+  "ISL=8192,OSL=1024,TP=8,CONC=64": {
+    "total_throughput_per_sec": {
+      "kind": "min_tok_s",
+      "value": 5360
+    },
+    "mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 2250
+    },
+    "mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 195
+    }
+  }
+}

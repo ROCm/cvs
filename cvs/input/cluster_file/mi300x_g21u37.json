@@ -1,0 +1,34 @@
+{
+    "_comment": "Single-node MI300X cluster for the vllm_single PoC verification. Container backend with launch:true so CVS owns the container lifecycle; the actual image+name come from the variant config.json (container block), with this file providing only the cluster portion (node/user/key).",
+
+    "orchestrator": "container",
+    "username": "{user-id}",
+    "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+
+    "head_node_dict": {
+        "mgmt_ip": "10.245.135.13"
+    },
+    "env_vars": {},
+    "node_dict": {
+        "10.245.135.13": {
+            "bmc_ip": "NA",
+            "vpc_ip": "10.245.135.13"
+        }
+    },
+
+    "_container_comment": "Stub container block; the testsuite config (variant config.json) overrides image/name/runtime.args via OrchestratorConfig.from_configs.",
+    "container": {
+        "enabled": true,
+        "launch": true,
+        "name": "cvs_vllm_single",
+        "image": "rocm/vllm-dev:nightly",
+        "runtime": {
+            "name": "docker",
+            "args": {
+                "network": "host",
+                "ipc": "host",
+                "privileged": true
+            }
+        }
+    }
+}
