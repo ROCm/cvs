@@ -2,9 +2,9 @@
     "_comment": "ANC test configuration",
     "anc": {
         "description": "Automated Network Connectivity checks",
-        "timeout": 60,
+        "test_timeout": 7200,
         "anc_release_url": "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.3.2/anc-release-helios-nda-1.3.2-tar-linux-x64.tar.gz",
-        "cvs_home": "/home/ashmishr/cvs",
+        "cvs_home": "{home}/cvs",
         "anc_root_dir": "anc"
     }
 }
