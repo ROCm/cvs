@@ -123,10 +123,7 @@ class OrchestratorConfig:
         self.priv_key_file = kwargs['priv_key_file']
         self.password = kwargs.get('password')
         self.head_node_dict = kwargs.get('head_node_dict', {})
-        # Normalize the container block. This is the single chokepoint:
-        # from_configs constructs via cls(**required_config), so both file-driven
-        # and direct programmatic construction hit the same normalization (and the
-        # same enabled-removed / launch-removed errors).
+        # Normalize here (not in from_configs) so direct construction is validated too.
         self.container = _resolve_container_lifetime(kwargs.get('container', {}))
 
     def get(self, key, default=None):

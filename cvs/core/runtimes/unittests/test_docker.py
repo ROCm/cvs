@@ -43,15 +43,18 @@ def _make_runtime(captured):
     return DockerRuntime(log, orchestrator)
 
 
-def _container_config(image="img:test", extra_runtime_args=None, **extra):
+def _container_config(image="img:test", lifetime="per_run", extra_runtime_args=None, **extra):
     """Minimal container config dict for setup_containers.
 
-    The runtime no longer reads enabled/launch -- lifetime resolution lives in
-    OrchestratorConfig -- so neither key is present here.
+    lifetime is carried for parity with a real config block, but the runtime never
+    reads it: lifecycle policy is resolved and branched on by the orchestrator,
+    which only calls runtime.setup_containers on start paths. The runtime is
+    policy-free, so the value here has no effect on its behavior.
     """
     cfg = {
         "image": image,
         "name": "cvs_iter_test",
+        "lifetime": lifetime,
         "runtime": {"name": "docker", "args": dict(extra_runtime_args or {})},
     }
     cfg.update(extra)
