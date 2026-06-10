@@ -14,6 +14,7 @@ import json
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib import docker_lib
+from cvs.lib import linux_utils
 from cvs.lib import sglang_disagg_lib
 from cvs.lib import globals
 
@@ -251,17 +252,48 @@ def test_launch_inference_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_d
         else:
             hdl_list.extend(b_phdl)
 
+    # When restrict_rdma_devices is set, expose ONLY the configured HCAs to an
+    # unprivileged container so RDMA discovery (ibv_devinfo) inside the
+    # container is limited to that set. Default keeps the historical privileged
+    # launch with the bulk /dev/infiniband mount.
+    restrict_rdma = str(inference_dict.get('restrict_rdma_devices', '')).lower() in ('1', 'true', 'yes')
+
     for a_phdl in hdl_list:
-        docker_lib.launch_docker_container(
-            a_phdl,
-            container_name,
-            inference_dict['container_image'],
-            inference_dict['container_config']['device_list'],
-            inference_dict['container_config']['volume_dict'],
-            inference_dict['container_config']['env_dict'],
-            shm_size='48G',
-            timeout=60 * 20,
-        )
+        if restrict_rdma:
+            uverbs_map = linux_utils.get_uverbs_devices_for_hcas(a_phdl, inference_dict['nccl_ib_hca'])
+            node_lists = list(uverbs_map.values())
+            if len({tuple(v) for v in node_lists}) > 1:
+                log.warning(
+                    f'uverbs device lists differ across nodes in handle: {uverbs_map}; '
+                    'restrict path supports one node per role - using first node list'
+                )
+            resolved = node_lists[0] if node_lists else []
+            # Preserve order, drop duplicates (e.g. rdma_cm in both base + resolved).
+            device_list = list(dict.fromkeys(list(inference_dict['container_config']['device_list']) + resolved))
+            log.info(f'restrict_rdma_devices on - device_list for {a_phdl.host_list}: {device_list}')
+            docker_lib.launch_docker_container(
+                a_phdl,
+                container_name,
+                inference_dict['container_image'],
+                device_list,
+                inference_dict['container_config']['volume_dict'],
+                inference_dict['container_config']['env_dict'],
+                shm_size='48G',
+                timeout=60 * 20,
+                privileged=False,
+                extra_run_args='--ulimit memlock=-1',
+            )
+        else:
+            docker_lib.launch_docker_container(
+                a_phdl,
+                container_name,
+                inference_dict['container_image'],
+                inference_dict['container_config']['device_list'],
+                inference_dict['container_config']['volume_dict'],
+                inference_dict['container_config']['env_dict'],
+                shm_size='48G',
+                timeout=60 * 20,
+            )
     # ADD verifications ..
     time.sleep(30)
     log.info('Verify if the containers have been launched properly')

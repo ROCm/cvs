@@ -5,6 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import json
 import os
 import re
 import time
@@ -31,6 +32,202 @@ err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_bu
 
 def textwrap_for_yml(msg_string):
     return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
+
+
+def _is_lower_better(metric_name):
+    """Return True if a smaller value is better for the given metric.
+
+    Latency-style metrics (anything ending in `_ms` or mentioning latency /
+    ttft / tpot / itl / e2el) are better when lower; throughput, count and
+    accuracy metrics are better when higher. This reproduces the historical
+    comparison direction used by verify_inference_results while being explicit.
+    """
+    return bool(re.search(r'_ms$|latency|ttft|tpot|itl|e2el', metric_name, re.I))
+
+
+def parse_gsm8k_metrics(text):
+    """Extract gsm8k bench_sglang.py metrics from one node's stdout.
+
+    The throughput is stored under `tokens_per_sec` so it lines up with the
+    gsm8k `expected_results` threshold key.
+
+    Returns a dict with any of: accuracy, invalid, latency_s, tokens_per_sec.
+    """
+    patterns = {
+        'accuracy': r'Accuracy:\s+([0-9.]+)',
+        'invalid': r'Invalid:\s+([0-9.]+)',
+        'latency_s': r'Latency:\s+([0-9.]+)\s*s',
+        'tokens_per_sec': r'Output throughput:\s+([0-9.]+)\s+token',
+    }
+    metrics = {}
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text, re.I)
+        if match:
+            metrics[key] = match.group(1)
+    return metrics
+
+
+def format_metrics_table(test_name, results_dict, expected_dict=None):
+    """Render a uniform, greppable per-node metrics block.
+
+    Args:
+        test_name: label for the block header (e.g. 'gsm8k').
+        results_dict: {node: {metric: value}}.
+        expected_dict: optional {metric: threshold}. When provided, each
+            metric that has a threshold gets a `[expected <op> <t>]  <verdict>`
+            suffix (PASS/FAIL, or UNPARSED if the value isn't numeric).
+
+    Returns a multi-line string (one block per node).
+    """
+    expected_dict = expected_dict or {}
+    lines = []
+    for node in results_dict.keys():
+        metrics = results_dict[node]
+        lines.append(f'================ METRICS [{test_name}] node={node} ================')
+        width = max((len(m) for m in metrics), default=0)
+        for metric in metrics:
+            value = metrics[metric]
+            line = f'  {metric:<{width}} = {value}'
+            if metric in expected_dict:
+                lower_better = _is_lower_better(metric)
+                op = '<=' if lower_better else '>='
+                try:
+                    actual_f = float(value)
+                    exp_f = float(expected_dict[metric])
+                    ok = actual_f <= exp_f if lower_better else actual_f >= exp_f
+                    verdict = 'PASS' if ok else 'FAIL'
+                except (TypeError, ValueError):
+                    verdict = 'UNPARSED'
+                line += f'   [expected {op} {expected_dict[metric]}]  {verdict}'
+            lines.append(line)
+        lines.append('=' * 66)
+    return '\n'.join(lines)
+
+
+# Ordered (label, key) pairs for the full sglang.bench_serving "Serving
+# Benchmark Result" block. Longer labels that are prefixes of shorter ones are
+# listed first so the generic `<label>:` match doesn't cross-match. Keys for
+# gated metrics (output_throughput_per_sec, mean_ttft_ms, mean_tpot_ms) are
+# preserved so threshold checks keep working.
+_BENCH_SERV_FIELDS = [
+    ('Successful requests', 'successful_requests'),
+    ('Benchmark duration (s)', 'benchmark_duration_s'),
+    ('Total input text tokens', 'total_input_text_tokens'),
+    ('Total input tokens', 'total_input_tokens'),
+    ('Total generated tokens (retokenized)', 'total_generated_tokens_retokenized'),
+    ('Total generated tokens', 'total_generated_tokens'),
+    ('Request throughput (req/s)', 'request_throughput_req_per_sec'),
+    ('Input token throughput (tok/s)', 'input_token_throughput_per_sec'),
+    ('Output token throughput (tok/s)', 'output_throughput_per_sec'),
+    ('Peak output token throughput (tok/s)', 'peak_output_throughput_per_sec'),
+    ('Peak concurrent requests', 'peak_concurrent_requests'),
+    ('Total token throughput (tok/s)', 'total_token_throughput_per_sec'),
+    ('Concurrency', 'concurrency'),
+    ('Mean E2E Latency (ms)', 'mean_e2e_ms'),
+    ('Median E2E Latency (ms)', 'median_e2e_ms'),
+    ('P90 E2E Latency (ms)', 'p90_e2e_ms'),
+    ('P99 E2E Latency (ms)', 'p99_e2e_ms'),
+    ('Mean TTFT (ms)', 'mean_ttft_ms'),
+    ('Median TTFT (ms)', 'median_ttft_ms'),
+    ('P99 TTFT (ms)', 'p99_ttft_ms'),
+    ('Mean TPOT (ms)', 'mean_tpot_ms'),
+    ('Median TPOT (ms)', 'median_tpot_ms'),
+    ('P99 TPOT (ms)', 'p99_tpot_ms'),
+    ('Mean ITL (ms)', 'mean_itl_ms'),
+    ('Median ITL (ms)', 'median_itl_ms'),
+    ('P95 ITL (ms)', 'p95_itl_ms'),
+    ('P99 ITL (ms)', 'p99_itl_ms'),
+    ('Max ITL (ms)', 'max_itl_ms'),
+]
+
+
+def parse_bench_serv_metrics(text):
+    """Parse the full sglang.bench_serving 'Serving Benchmark Result' block.
+
+    Uses a generic `<escaped label>:\\s+<number>` match for every known field,
+    which avoids the historical unescaped-paren bug (e.g. `Median TTFT (ms):`)
+    and the `E2EL`-vs-`E2E Latency` mismatch. Returns {key: value_str}.
+    """
+    metrics = {}
+    for label, key in _BENCH_SERV_FIELDS:
+        match = re.search(re.escape(label) + r':\s+([0-9.]+)', text)
+        if match:
+            metrics[key] = match.group(1)
+    return metrics
+
+
+def parse_bench_serv_per_request(jsonl_text):
+    """Parse the per-request arrays from a bench_serving --output-details JSONL.
+
+    The file (one JSON object per line) carries parallel arrays input_lens,
+    output_lens, ttfts, itls, errors. Returns a list of per-request dicts.
+    """
+    lines = [ln for ln in jsonl_text.strip().split('\n') if ln.strip().startswith('{')]
+    if not lines:
+        return []
+    data = json.loads(lines[-1])
+    input_lens = data.get('input_lens', [])
+    output_lens = data.get('output_lens', [])
+    ttfts = data.get('ttfts', [])
+    itls = data.get('itls', [])
+    errors = data.get('errors', [])
+    rows = []
+    for i in range(len(output_lens)):
+        ttft = ttfts[i] if i < len(ttfts) else None
+        err = errors[i] if i < len(errors) else ''
+        rows.append(
+            {
+                'req': i,
+                'input_len': input_lens[i] if i < len(input_lens) else '',
+                'output_len': output_lens[i],
+                'ttft_ms': round(ttft * 1000, 2) if isinstance(ttft, (int, float)) else '',
+                'gen_tokens': (len(itls[i]) + 1) if i < len(itls) and isinstance(itls[i], list) else '',
+                'error': (err or '')[:60],
+            }
+        )
+    return rows
+
+
+def parse_gsm8k_per_question(jsonl_text):
+    """Parse the gsm8k --raw-result-file dump (one {prompt_id,prompt,output,
+    correct} JSON per line). Returns a list of per-question dicts (the bulky
+    prompt/output text is dropped; a short output preview is kept)."""
+    rows = []
+    for line in jsonl_text.strip().split('\n'):
+        line = line.strip()
+        if not line.startswith('{'):
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        rows.append(
+            {
+                'q': d.get('prompt_id'),
+                'correct': d.get('correct'),
+                'output': (d.get('output') or '').replace('\n', ' ')[:60],
+            }
+        )
+    return rows
+
+
+def format_per_request_table(test_name, rows, columns, limit=None):
+    """Render a compact per-request / per-question table (one row per item).
+
+    limit caps the number of displayed rows (None = all); a trailing note shows
+    how many were elided.
+    """
+    total = len(rows)
+    shown = rows if limit in (None, 0) else rows[:limit]
+    lines = [f'================ PER-ITEM [{test_name}] ({total} items) ================']
+    widths = {c: max(len(c), *(len(str(r.get(c, ''))) for r in shown)) if shown else len(c) for c in columns}
+    lines.append('  ' + '  '.join(f'{c:<{widths[c]}}' for c in columns))
+    for r in shown:
+        lines.append('  ' + '  '.join(f'{str(r.get(c, "")):<{widths[c]}}' for c in columns))
+    if limit not in (None, 0) and total > limit:
+        lines.append(f'  ... ({total - limit} more; full detail in the run log / node artifact)')
+    lines.append('=' * 66)
+    return '\n'.join(lines)
 
 
 class SglangDisaggPD:
@@ -265,19 +462,23 @@ class SglangDisaggPD:
         if re.search('broadcom|thor', self.nic_type, re.I):
             # override the gid_index to 3 for broadcom
             self.nccl_ib_gid_index = 3
+            # Copy the host bnxt_re userspace driver into place, then run
+            # ibv_devinfo to confirm RDMA devices enumerate. HCA names are
+            # platform-dependent (e.g. bnxt_re0 or rocepXXs0), so verify that
+            # devices are present rather than matching a fixed name prefix.
             cmd = f'docker exec {self.container_name} /bin/bash -c "sudo \
                     cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
-                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so;" '
+                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
+                    ibv_devinfo;" '
             pout_dict = self.p_phdl.exec(cmd)
             dout_dict = self.d_phdl.exec(cmd)
-            for node in pout_dict.keys():
-                if not re.search('hca_id:\s+bnxt_', pout_dict[node], re.I):
-                    log.info("%s", pout_dict[node])
-                    fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
-            for node in dout_dict.keys():
-                if not re.search('hca_id:\s+bnxt_', dout_dict[node], re.I):
-                    log.info("%s", dout_dict[node])
-                    fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
+            for out_dict in (pout_dict, dout_dict):
+                for node in out_dict.keys():
+                    if re.search('No IB devices found', out_dict[node], re.I) or not re.search(
+                        'hca_id:', out_dict[node], re.I
+                    ):
+                        log.info("%s", out_dict[node])
+                        fail_test(f'RDMA devices not visible after bnxt driver copy on node {node}')
 
     def check_ibv_devices(
         self,
@@ -780,22 +981,27 @@ class SglangDisaggPD:
                       nohup python3 ./bench_sglang.py \
                       --num-questions {i_dict['num_questions']} \
                       --parallel {i_dict['max_concurrency']} \
-                      --host http://0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']}" '''
+                      --raw-result-file {self.log_dir}/benchmark_node/gsm8k_per_question.jsonl \
+                      --host http://{self.inf_dict['proxy_router_node']} --port {self.inf_dict['proxy_router_serv_port']}" '''
         formatted_cmd = textwrap_for_yml(cmd)
         out_dict = self.b_phdl.exec(formatted_cmd, timeout=800)
         time.sleep(5)
         for node in out_dict.keys():
             if not re.search('Output throughput', out_dict[node], re.I):
                 fail_test(f'Benchmark test did not complete properly on node {node}, no throughput pattern seen')
-            else:
-                match = re.search('Output throughput:\s+([0-9\.]+)\s+token', out_dict[node], re.I)
-                actual_tps = match.group(1)
-                if float(actual_tps) < float(i_dict['expected_results'][d_type]['tokens_per_sec']):
-                    fail_test(
-                        f"Test FAILED due to low performance, \
-                            expected tokens per sec = {i_dict['expected_results'][d_type]['tokens_per_sec']}, \
-                            actual tokens per sec = {actual_tps}"
-                    )
+        # Parse the gsm8k stdout into structured metrics, display them, then
+        # gate on the configured threshold (tokens_per_sec) via the shared
+        # verifier. dmesg is left to the bench_serv test at suite end.
+        self.get_gsm8k_results_dict(out_dict)
+        expected = i_dict['expected_results'][d_type]
+        self.verify_inference_results('gsm8k', expected, check_dmesg=False)
+        # Per-question detail (prompt_id, correct, output preview).
+        self.log_per_item_detail(
+            'gsm8k',
+            f'{self.log_dir}/benchmark_node/gsm8k_per_question.jsonl',
+            parse_gsm8k_per_question,
+            ['q', 'correct', 'output'],
+        )
 
     def benchserv_test_random(self, d_type='auto'):
         """
@@ -821,6 +1027,16 @@ class SglangDisaggPD:
         log.info('Benchmark Random Dataset')
         log.info('#================ * * * =========================#')
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
+        # Optional local dataset path (e.g. a pre-staged ShareGPT corpus) so the
+        # random dataset sampler doesn't try to download from HF Hub - required
+        # when the container runs with HF_HUB_OFFLINE.
+        dataset_path_arg = ''
+        if self.inf_dict.get('bench_dataset_path'):
+            dataset_path_arg = f"--dataset-path {self.inf_dict['bench_dataset_path']}"
+        # Bound in-flight requests so the benchmark does not flood the
+        # deployment (request_rate defaults to inf). Falls back to the model's
+        # top-level max_concurrency.
+        max_conc = i_dict.get('max_concurrency', self.bp_dict.get('max_concurrency', '64'))
         # ------------------------------------------------------------------
         # Construct command to run sglang.bench_serving with random dataset
         #
@@ -837,19 +1053,29 @@ class SglangDisaggPD:
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
                       source /tmp/benchmark_env_script.sh && \
-                      python3 -m sglang.bench_serving --backend {i_dict['backend']} \
+                      PYTHONPATH=/sgl-workspace/sglang/python python3 -m sglang.bench_serving --backend {i_dict['backend']} \
                       --dataset-name random \
+                      {dataset_path_arg} \
+                      --max-concurrency {max_conc} \
                       --num-prompts {i_dict['num_prompts']} \
                       --random-input {i_dict['input_length']} \
                       --random-output {i_dict['output_length']} \
                       --random-range-ratio {i_dict['random_range_ratio']} \
-                      --host 0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']} \
+                      --output-file {self.log_dir}/benchmark_node/bench_serv_details.jsonl --output-details \
+                      --host {self.inf_dict['proxy_router_node']} --port {self.inf_dict['proxy_router_serv_port']} \
                       > {self.log_dir}/benchmark_node/benchmark_results.log" '''
         formatted_cmd = textwrap_for_yml(cmd)
         self.b_phdl.exec(formatted_cmd, timeout=500)
         time.sleep(5)
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
         self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
+        # Per-request detail (input/output lengths, TTFT, generated tokens, errors).
+        self.log_per_item_detail(
+            'bench_serv',
+            f'{self.log_dir}/benchmark_node/bench_serv_details.jsonl',
+            parse_bench_serv_per_request,
+            ['req', 'input_len', 'output_len', 'ttft_ms', 'gen_tokens', 'error'],
+        )
 
     def poll_for_server_ready(self, node_no, sglang_function, no_of_iterations=16):
         """
@@ -921,6 +1147,56 @@ class SglangDisaggPD:
             log.warning(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
             fail_test(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
 
+    def get_gsm8k_results_dict(self, out_dict):
+        """
+        Parse gsm8k bench_sglang.py stdout into the structured results dict.
+
+        Fills self.inference_results_dict keyed per node with accuracy,
+        invalid, latency_s and tokens_per_sec (see parse_gsm8k_metrics).
+        """
+        self.inference_results_dict = {node: parse_gsm8k_metrics(out_dict[node]) for node in out_dict.keys()}
+        log.info("%s", self.inference_results_dict)
+        return self.inference_results_dict
+
+    def log_metrics(self, test_name, expected_result_dict=None):
+        """
+        Log a uniform, greppable metrics table for self.inference_results_dict,
+        annotating each thresholded metric with its expected bound and verdict.
+        """
+        table = format_metrics_table(test_name, self.inference_results_dict, expected_result_dict)
+        for line in table.split('\n'):
+            log.info("%s", line)
+
+    def log_per_item_detail(self, test_name, remote_path, parser_fn, columns):
+        """
+        Fetch a per-item detail file (gsm8k per-question or bench_serv
+        per-request) from the benchmark node, parse it, log a one-line summary
+        and a compact per-item table.
+
+        The number of displayed rows is capped by inf_dict['per_item_display_limit']
+        (unset/0 => show all). The full file remains on the benchmark node as an
+        artifact regardless of the display cap.
+        """
+        out_dict = self.b_phdl.exec(f'cat {remote_path} 2>/dev/null')
+        limit = self.inf_dict.get('per_item_display_limit')
+        limit = int(limit) if limit not in (None, '') else None
+        for node in out_dict.keys():
+            rows = parser_fn(out_dict[node])
+            if not rows:
+                log.warning(f'No per-item {test_name} detail parsed from {remote_path} on node {node}')
+                continue
+            # Summary line: correctness for gsm8k, error count for bench_serv.
+            if any('correct' in r for r in rows):
+                n_correct = sum(1 for r in rows if r.get('correct') is True)
+                log.info(f'{test_name} per-item summary [node={node}]: {n_correct}/{len(rows)} correct')
+            if any('error' in r for r in rows):
+                n_err = sum(1 for r in rows if r.get('error'))
+                log.info(
+                    f'{test_name} per-item summary [node={node}]: {len(rows) - n_err}/{len(rows)} succeeded ({n_err} errored)'
+                )
+            for line in format_per_request_table(test_name, rows, columns, limit=limit).split('\n'):
+                log.info("%s", line)
+
     def get_inference_results_dict(self, out_dict):
         """
         Parse inference benchmark output logs and extract key performance metrics
@@ -943,66 +1219,7 @@ class SglangDisaggPD:
             Dictionary keyed by node identifier, where each value is the
             raw stdout/stderr text produced by the benchmark on that node.
         """
-        self.inference_results_dict = {}
-        log.info('Inside get_inference_results_dict')
-        log.info("%s", out_dict)
-        for node in out_dict.keys():
-            self.inference_results_dict[node] = {}
-            if re.search('Successful requests:', out_dict[node], re.I):
-                match = re.search('Successful requests:\s+([0-9]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['successful_requests'] = match.group(1)
-            if re.search('Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I):
-                match = re.search('Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['benchmark_duration'] = match.group(1)
-            if re.search('Total input tokens:', out_dict[node], re.I):
-                match = re.search('Total input tokens:\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['total_input_tokens'] = match.group(1)
-            if re.search('Total generated tokens:', out_dict[node], re.I):
-                match = re.search('Total generated tokens:\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['Total generated tokens:'] = match.group(1)
-            if re.search('Request throughput \(req/s\):', out_dict[node], re.I):
-                match = re.search('Request throughput \(req/s\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['request_throughput_per_sec'] = match.group(1)
-            if re.search('Output token throughput \(tok/s\):', out_dict[node], re.I):
-                match = re.search('Output token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['output_throughput_per_sec'] = match.group(1)
-            if re.search('Mean TTFT \(ms\):', out_dict[node], re.I):
-                match = re.search('Mean TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_ttft_ms'] = match.group(1)
-            if re.search('Median TTFT (ms):', out_dict[node], re.I):
-                match = re.search('Median TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_ttft_ms'] = match.group(1)
-            if re.search('P99 TTFT (ms):', out_dict[node], re.I):
-                match = re.search('P99 TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_ttft_ms'] = match.group(1)
-            if re.search('Mean TPOT \(ms\)', out_dict[node], re.I):
-                match = re.search('Mean TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_tpot_ms'] = match.group(1)
-            if re.search('Median TPOT \(ms\):', out_dict[node], re.I):
-                match = re.search('Median TPOT \(ms\):\s+([0-9]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_tpot_ms'] = match.group(1)
-            if re.search('P99 TPOT (ms):', out_dict[node], re.I):
-                match = re.search('P99 TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_tpot_ms'] = match.group(1)
-            if re.search('Mean ITL \(ms\):', out_dict[node], re.I):
-                match = re.search('Mean ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_itl_ms'] = match.group(1)
-            if re.search('Median ITL \(ms\):', out_dict[node], re.I):
-                match = re.search('Median ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_itl_ms'] = match.group(1)
-            if re.search('P99 ITL \(ms\):', out_dict[node], re.I):
-                match = re.search('P99 ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_itl_ms'] = match.group(1)
-            if re.search('Mean E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('Mean E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_e2el_ms'] = match.group(1)
-            if re.search('Median E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('Median E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_e2el_ms'] = match.group(1)
-            if re.search('P99 E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('P99 E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_e2el_ms'] = match.group(1)
-
+        self.inference_results_dict = {node: parse_bench_serv_metrics(out_dict[node]) for node in out_dict.keys()}
         log.info("%s", self.inference_results_dict)
         return self.inference_results_dict
 
@@ -1184,67 +1401,55 @@ class SglangDisaggPD:
             log.warning("%s", msg)
             return {"status": "stuck_in_progress", "reason": msg}
 
-    def verify_inference_results(self, test_name, expected_result_dict):
+    def verify_inference_results(self, test_name, expected_result_dict, check_dmesg=True):
         """
         Validate inference benchmark results against expected performance
-        thresholds and check for system-level errors.
+        thresholds, display a structured metrics table, and optionally check
+        for system-level (dmesg) errors.
 
         Purpose:
         --------
         This method verifies that:
-        - Inference completed successfully on all nodes
         - Performance metrics meet or exceed expected baselines
         - Latency metrics stay below defined thresholds
-        - No kernel-level (dmesg) errors occurred during inference
+        - No kernel-level (dmesg) errors occurred during inference (when
+          check_dmesg is True)
 
         It acts as the final gate for inference validation.
+
+        Args:
+        test_name (str): label used in the metrics table header.
+        expected_result_dict (dict): {metric: threshold} to gate on.
+        check_dmesg (bool): run the per-node dmesg sweep when True.
         """
-        log.info('Verify Inference Completion Msg')
-        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-        log.info("%s", self.inference_results_dict)
-        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
         # ------------------------------------------------------------------
-        # Validate metrics on a per-node basis
+        # Display a uniform metrics table (with per-metric verdicts).
+        # ------------------------------------------------------------------
+        self.log_metrics(test_name, expected_result_dict)
+
+        # ------------------------------------------------------------------
+        # Validate thresholded metrics on a per-node basis. Direction is
+        # explicit: latency-style metrics fail when higher than expected,
+        # throughput/count metrics fail when lower than expected.
         # ------------------------------------------------------------------
         for node in self.inference_results_dict.keys():
-            log.info('%%%% node {}'.format(node))
             for metric_name in expected_result_dict.keys():
-                log.info('%%% metric_name {}'.format(metric_name))
-                if metric_name in self.inference_results_dict[node].keys():
-                    # latency metric, so actual should be lower than expected ..
-                    log.info('%% metric found in inference results ^^^')
-                    # ------------------------------------------------------
-                    # Latency metrics (e.g., TTFT, TPOT)
-                    #
-                    # For latency, lower values are better.
-                    # Fail if actual latency exceeds expected threshold.
-                    # ------------------------------------------------------
-                    if re.search('ms', metric_name, re.I):
-                        log.info("%s", self.inference_results_dict[node][metric_name])
-                        log.info("%s", expected_result_dict[metric_name])
-                        if float(self.inference_results_dict[node][metric_name]) > float(
-                            expected_result_dict[metric_name]
-                        ):
-                            fail_test(
-                                f"FAIL - The metric {metric_name} actual value higher than expected \
-                                Actual = {self.inference_results_dict[node][metric_name]},  \
-                                Expected = {expected_result_dict[metric_name]}"
-                            )
-                    # ------------------------------------------------------
-                    # Throughput and count metrics
-                    #
-                    # For throughput, higher values are better.
-                    # Fail if actual throughput is lower than expected.
-                    # ------------------------------------------------------
-                    else:
-                        if float(self.inference_results_dict[node][metric_name]) < float(
-                            expected_result_dict[metric_name]
-                        ):
-                            fail_test(
-                                f"FAIL - The metric {metric_name} actual value lower than expected \
-                                Actual = {self.inference_results_dict[node][metric_name]}, \
-                                Expected = {expected_result_dict[metric_name]}"
-                            )
+                if metric_name not in self.inference_results_dict[node]:
+                    log.warning(f'Expected metric {metric_name} not present in {test_name} results for node {node}')
+                    continue
+                actual = self.inference_results_dict[node][metric_name]
+                expected = expected_result_dict[metric_name]
+                lower_better = _is_lower_better(metric_name)
+                op = '<=' if lower_better else '>='
+                failed = float(actual) > float(expected) if lower_better else float(actual) < float(expected)
+                log.info(
+                    f'metric {metric_name}: actual={actual} expected {op} {expected} -> {"FAIL" if failed else "PASS"}'
+                )
+                if failed:
+                    fail_test(
+                        f"FAIL - metric {metric_name} actual={actual} violates expected {op} {expected} "
+                        f"on node {node} ({test_name})"
+                    )
 
         # ------------------------------------------------------------------
         # Perform kernel-level (dmesg) error checks
@@ -1252,10 +1457,11 @@ class SglangDisaggPD:
         # This ensures no silent hardware or driver errors occurred during
         # inference (e.g., GPU resets, RDMA failures, IOMMU errors).
         # ------------------------------------------------------------------
-        self.inference_end_time = self.p_phdl.exec('date +"%a %b %e %H:%M"')
-        time.sleep(2)
-        verify_dmesg_for_errors(self.p_phdl, self.inference_start_time, self.inference_end_time)
-        verify_dmesg_for_errors(self.d_phdl, self.inference_start_time, self.inference_end_time)
-        verify_dmesg_for_errors(self.r_phdl, self.inference_start_time, self.inference_end_time)
-        verify_dmesg_for_errors(self.b_phdl, self.inference_start_time, self.inference_end_time)
+        if check_dmesg:
+            self.inference_end_time = self.p_phdl.exec('date +"%a %b %e %H:%M"')
+            time.sleep(2)
+            verify_dmesg_for_errors(self.p_phdl, self.inference_start_time, self.inference_end_time)
+            verify_dmesg_for_errors(self.d_phdl, self.inference_start_time, self.inference_end_time)
+            verify_dmesg_for_errors(self.r_phdl, self.inference_start_time, self.inference_end_time)
+            verify_dmesg_for_errors(self.b_phdl, self.inference_start_time, self.inference_end_time)
         log.info("%s", self.inference_results_dict)
