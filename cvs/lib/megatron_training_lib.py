@@ -42,8 +42,7 @@ TRAINING_RESULT_PATTERNS = {
 }
 
 TRAINING_PROGRESS_PATTERNS = [
-    r'throughput per GPU(?:\s*\([^)]*\))?\s*:|tokens\/GPU\/s\s+[0-9]+',
-    r'throughput per GPU:|tokens\/GPU\/s\s+[0-9]+',
+    r'iteration\s+(\d+)\s*/\s*\1\s*\|',
 ]
 
 TRAINING_NAN_PATTERNS = [
@@ -384,7 +383,7 @@ class MegatronLlamaTrainingJob:
                 # override the gid_index to 3 for broadcom
                 self.nccl_ib_gid_index = 3
                 out_dict = self.phdl.exec(
-                    f'docker exec {self.container_name} /bin/bash -c "sudo \
+                    f'docker exec {self.container_name} /bin/bash -c " \
                     cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
                     /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
                     sleep 2;ibv_devinfo;sleep 2;"'
@@ -581,10 +580,17 @@ class MegatronLlamaTrainingJob:
         - re is imported in the module scope.
         """
 
-        # Read the training log output from the "last" node (assumed authoritative)
+        # Read the training log output from the "last" node (assumed authoritative).
+        # Filter to megatron iteration lines BEFORE tailing: post-training cleanup
+        # (aiter import spam, validation eval, NCCL teardown warnings) can otherwise
+        # push iteration lines out of a `tail -15` window, leaving the parser with
+        # nothing to match and silently emitting an empty results_dict.
         last_node = self.host_list[len(self.host_list) - 1]
         last_node_num = len(self.host_list) - 1
-        out_dict = self.phdl.exec(f'cat {self.log_dir}/megatron-logs/out-node{last_node_num}/training.log | tail -15')
+        out_dict = self.phdl.exec(
+            f"grep -E 'iteration[[:space:]]+[0-9]+[[:space:]]*/[[:space:]]*[0-9]+[[:space:]]*\\|' "
+            f"{self.log_dir}/megatron-logs/out-node{last_node_num}/training.log | tail -15"
+        )
 
         # Select the log content from the last node
         output = out_dict[last_node]
