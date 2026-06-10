@@ -44,8 +44,8 @@ class DockerRuntime:
 
         Args:
             container_config: Container configuration dictionary. Recognized
-                top-level keys include ``image``, ``launch``, ``runtime`` (with
-                nested ``args``), and ``env``.
+                top-level keys include ``image``, ``runtime`` (with nested
+                ``args``), and ``env``.
             container_name: Name to assign to the containers
             volumes: Optional list of volume mounts (overrides config)
             devices: Optional list of device passthroughs (overrides config)
@@ -59,11 +59,6 @@ class DockerRuntime:
         if not container_config or not container_config.get('image'):
             self.log.warning("No container config or image specified, skipping container start")
             return False
-
-        launch = container_config.get('launch', False)
-        if not launch:
-            self.log.info("Container launch disabled, assuming containers are already running")
-            return True
 
         image = container_config['image']
 

@@ -43,8 +43,7 @@ Consumed by `ContainerOrchestrator` in [`cvs/core/orchestrators/container.py`](.
 
 | Key | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `enabled` | bool | `false` | Master switch. Must be `true` for the container backend to do anything; if `false`, `setup_containers` and `teardown_containers` short-circuit to no-ops. |
-| `launch` | bool | `false` | `true` = CVS owns lifecycle (starts on `setup_containers`, stops on `teardown_containers`). `false` = containers are externally managed; CVS only verifies they are running and never stops them. |
+| `lifetime` | str | `"per_run"` | Container lifecycle policy: `no_launch`, `per_run`, or `persistent`. See the truth table below. |
 | `image` | str | (required) | Image with the test dependencies (rvs, etc.) pre-installed and an sshd you can start on port 2224. Must be present locally on each node OR pullable from a reachable registry. |
 | `name` | str | (required) | Container name on each host. For parallel runs make this per-iteration unique (e.g. `cvs_iter_<run_id>`). |
 | `runtime.name` | str | `"docker"` | Container runtime. Supported: `docker` (concrete), `enroot` (stub). |
@@ -70,16 +69,15 @@ RDMA-ready container; the keys below are only needed to extend or override.
 | `group_add` | list | `["video"]` (appended) | Supplementary groups inside the container. |
 | `ulimit` | list | `["memlock=-1"]` (appended) | Per-process resource limits. `memlock=-1` is required for RDMA. |
 
-## `launch` truth table (teardown semantics)
+## `lifetime` truth table (setup + teardown semantics)
 
-`teardown_containers()` short-circuits in three cases per [`cvs/core/orchestrators/container.py`](../../core/orchestrators/container.py) (around line 439). This is pinned by the test `test_teardown_containers_short_circuits_when_launch_true` in [`cvs/core/orchestrators/unittests/test_container.py`](../../core/orchestrators/unittests/test_container.py).
+`setup_containers()` and `teardown_containers()` in [`cvs/core/orchestrators/container.py`](../../core/orchestrators/container.py) branch on `container.lifetime`. This is pinned by the per-lifetime tests in [`cvs/core/orchestrators/unittests/test_container.py`](../../core/orchestrators/unittests/test_container.py).
 
-| `enabled` | `launch` | `container_id` | Behavior |
-| --- | --- | --- | --- |
-| `false` | * | * | Short-circuit (no-op, returns `True`). |
-| `true` | `true` | * | Short-circuit. The container is externally managed; CVS does not stop it. |
-| `true` | `false` | unset | Short-circuit. Nothing was started. |
-| `true` | `false` | set | Calls `runtime.teardown_containers(container_id)`. |
+| `lifetime` | `setup_containers` | `teardown_containers` |
+| --- | --- | --- |
+| `no_launch` | Verify the container is already running on every host; set `container_id`. Never starts anything. | No-op. CVS does not own a container it did not launch. |
+| `per_run` (default) | Start a fresh container on every host (force-removing any stale same-named container first). | Force-remove the container CVS started. |
+| `persistent` | Attach if the container is already running on every host. Start fresh only if it is running on no host. Running on some hosts but not all is a hard error (CVS will not force-remove the still-running hosts and destroy their overlay). Idempotent across runs. | No-op. The container is left running for the next run; remove it yourself when done. |
 
 ## Prerequisites on each cluster node
 
@@ -89,6 +87,8 @@ RDMA-ready container; the keys below are only needed to extend or override.
 - **The image** is either pre-loaded on every node (`docker load`) or pullable from a reachable registry. Inside the image you need: `openssh-server` (for the in-container sshd), the workload binaries the suite invokes (e.g. `/opt/rocm/bin/rvs`), and any ROCm runtime libs the workload needs.
 
 ## What happens when you run a backend-blind suite
+
+Default (`lifetime: per_run`) - start fresh, run, remove:
 
 ```mermaid
 sequenceDiagram
@@ -108,7 +108,27 @@ sequenceDiagram
     ContainerOrch->>Sshd: ssh root@host:2224 "rvs -c ..."
     Sshd-->>TestFix: stdout
     TestFix->>ContainerOrch: teardown_containers()
-    ContainerOrch->>Docker: docker stop and rm
+    ContainerOrch->>Docker: docker rm -f
+```
+
+Second `cvs run` with `lifetime: persistent` - attach to the surviving container, skip sshd, leave it running:
+
+```mermaid
+sequenceDiagram
+    participant TestFix as orch fixture
+    participant ContainerOrch as ContainerOrchestrator
+    participant Docker as docker daemon on host
+    participant Sshd as container sshd:2224
+
+    TestFix->>ContainerOrch: setup_containers()
+    ContainerOrch->>Docker: is_running(name)? yes -> attach
+    TestFix->>ContainerOrch: setup_sshd()
+    ContainerOrch->>Sshd: pgrep sshd:2224 already up -> skip start
+    TestFix->>ContainerOrch: orch.exec("rvs -c ...")
+    ContainerOrch->>Sshd: ssh root@host:2224 "rvs -c ..."
+    Sshd-->>TestFix: stdout
+    TestFix->>ContainerOrch: teardown_containers()
+    ContainerOrch-->>TestFix: no-op (container left running)
 ```
 
 The same `cvs run` command works against either backend; only the cluster
@@ -116,10 +136,9 @@ file changes. The `orch` fixture in [`cvs/tests/health/rvs_cvs.py`](../../tests/
 
 ## Common pitfalls
 
-- **Forgot `enabled: true`**. The container block exists but the orchestrator silently no-ops every lifecycle call. Symptom: `orch.exec` errors with "no container running".
 - **Image without `openssh-server`**. `setup_sshd` cannot start sshd on port 2224; `orch.exec` then fails to connect. Make sure your image installs `openssh-server` and exposes the binary at `/usr/sbin/sshd`.
 - **Image without the workload binary**. `cvs run rvs_cvs` will execute `rvs` inside the container; if the image lacks `/opt/rocm/bin/rvs` the test fails with a `command not found` flavor error.
-- **`launch: true` plus a stale container with the same `name`**. `docker run` refuses to start because the name is taken. Either pick a per-iteration unique name or stop the stale container first.
+- **`lifetime: persistent` without a pinned `name`**. The default container name is `<user>_<sanitized_image>`, which shifts when you bump the image tag. A tag bump silently abandons the previous container's overlay (installs, clones) and starts fresh. Pin `container.name` explicitly when using `persistent`.
 - **Port 2224 collision on the host**. With `network: host` the in-container sshd binds to 2224 in the host's network namespace. If something else on the host already listens on 2224 the bind fails. Stop the conflicting service or change the in-image sshd port (and update the orchestrator's port to match).
 
 ## See also
