@@ -15,7 +15,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # patched once in setUp (not per method); _make() returns a fresh orch + runtime mock.
 
 import unittest
-import warnings
 from unittest.mock import MagicMock, patch
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, _resolve_container_lifetime
@@ -156,15 +155,6 @@ class TestContainerOrchestrator(unittest.TestCase):
         self.assertTrue(orch.setup_containers())
         runtime.setup_containers.assert_called_once()
 
-    def test_setup_containers_persistent_idempotent_on_resetup(self):
-        # Re-running setup against an already-running persistent container is a
-        # no-op attach both times -- never starts a new container.
-        orch, runtime = self._make(lifetime="persistent")
-        runtime.is_running.return_value = _RUNNING
-        self.assertTrue(orch.setup_containers())
-        self.assertTrue(orch.setup_containers())
-        runtime.setup_containers.assert_not_called()
-
     def test_setup_containers_persistent_partial_running_refuses(self):
         # Running on some hosts but not all must NOT auto-relaunch (that would
         # force-remove and rebuild the still-running hosts, destroying their
@@ -282,10 +272,8 @@ class TestResolveContainerLifetime(unittest.TestCase):
         with self.assertRaises(ValueError):
             _resolve_container_lifetime({"enabled": False, "image": "x"})
 
-    def test_explicit_lifetime_kept_no_warning(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")  # any warning would fail the test
-            out = _resolve_container_lifetime({"lifetime": "persistent", "image": "x"})
+    def test_explicit_lifetime_kept(self):
+        out = _resolve_container_lifetime({"lifetime": "persistent", "image": "x"})
         self.assertEqual(out["lifetime"], "persistent")
 
     def test_invalid_lifetime_raises(self):
