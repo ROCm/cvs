@@ -710,11 +710,11 @@ class GrafanaProvisioner:
                     {
                         "id": 3,
                         "type": "timeseries",
-                        "title": "MMA Activity",
+                        "title": "VCN Activity",
                         "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
                         "targets": [
                             {
-                                "expr": "gpu_mm_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+                                "expr": "gpu_vcn_busy_instantaneous{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
                                 "legendFormat": "{{hostname}} GPU{{gpu}}",
                             }
                         ],
@@ -740,7 +740,7 @@ class GrafanaProvisioner:
                             "name": "nodegroup",
                             "type": "query",
                             "datasource": {"type": "prometheus", "uid": "prometheus"},
-                            "query": "label_values(gpu_temperature_celsius, node_group)",
+                            "query": "label_values(gpu_junction_temperature, node_group)",
                             "refresh": 2,
                             "multi": True,
                             "includeAll": True,
@@ -749,7 +749,7 @@ class GrafanaProvisioner:
                             "name": "hostname",
                             "type": "query",
                             "datasource": {"type": "prometheus", "uid": "prometheus"},
-                            "query": "label_values(gpu_temperature_celsius{node_group=~\"$nodegroup\"}, hostname)",
+                            "query": "label_values(gpu_junction_temperature{node_group=~\"$nodegroup\"}, hostname)",
                             "refresh": 2,
                             "multi": True,
                             "includeAll": True,
@@ -764,7 +764,7 @@ class GrafanaProvisioner:
                         "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
                         "targets": [
                             {
-                                "expr": "gpu_temperature_celsius{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+                                "expr": "gpu_junction_temperature{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
                                 "legendFormat": "{{hostname}} GPU{{gpu}}",
                             }
                         ],
@@ -789,7 +789,7 @@ class GrafanaProvisioner:
                         "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
                         "targets": [
                             {
-                                "expr": "gpu_power_watts{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+                                "expr": "gpu_power_usage{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
                                 "legendFormat": "{{hostname}} GPU{{gpu}}",
                             }
                         ],
@@ -830,7 +830,7 @@ class GrafanaProvisioner:
                         "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
                         "targets": [
                             {
-                                "expr": "sum(gpu_ecc_correctable_total{node_group=~\"$nodegroup\"}) or vector(0)",
+                                "expr": "sum(gpu_ecc_correct_total{node_group=~\"$nodegroup\"}) or vector(0)",
                                 "legendFormat": "Correctable",
                             }
                         ],
@@ -854,7 +854,7 @@ class GrafanaProvisioner:
                         "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
                         "targets": [
                             {
-                                "expr": "sum(gpu_ecc_uncorrectable_total{node_group=~\"$nodegroup\"}) or vector(0)",
+                                "expr": "sum(gpu_ecc_uncorrect_total{node_group=~\"$nodegroup\"}) or vector(0)",
                                 "legendFormat": "Uncorrectable",
                             }
                         ],
@@ -1080,16 +1080,12 @@ class GrafanaProvisioner:
                         "id": 51,
                         "type": "timeseries",
                         "title": "CNP Packets Sent",
-                        "description": "Congestion Notification Packets sent",
+                        "description": "Congestion Notification Packets sent (TX CNP)",
                         "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
                         "targets": [
                             {
-                                "expr": "rate(rdma_stat_np_cnp_sent{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} np_cnp_sent",
-                            },
-                            {
-                                "expr": "rate(rdma_stat_cnp_sent{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} cnp_sent",
+                                "expr": "rate(rdma_stat_tx_cnp_pkts{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
+                                "legendFormat": "{{hostname}} {{device}} tx_cnp",
                             },
                         ],
                         "fieldConfig": {"defaults": {"unit": "pps"}},
@@ -1097,16 +1093,16 @@ class GrafanaProvisioner:
                     {
                         "id": 52,
                         "type": "timeseries",
-                        "title": "CNP Packets Received",
+                        "title": "CNP Packets Received / ECN Marked",
                         "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
                         "targets": [
                             {
-                                "expr": "rate(rdma_stat_rp_cnp_handled{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} rp_handled",
+                                "expr": "rate(rdma_stat_rx_cnp_pkts{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
+                                "legendFormat": "{{hostname}} {{device}} rx_cnp",
                             },
                             {
-                                "expr": "rate(rdma_stat_cnp_received{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} cnp_rcvd",
+                                "expr": "rate(rdma_stat_rx_ecn_marked_pkts{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
+                                "legendFormat": "{{hostname}} {{device}} ecn_marked",
                             },
                         ],
                         "fieldConfig": {"defaults": {"unit": "pps"}},
@@ -1121,38 +1117,34 @@ class GrafanaProvisioner:
                     {
                         "id": 61,
                         "type": "timeseries",
-                        "title": "PFC TX Pause Frames",
-                        "description": "PFC pause frames transmitted",
+                        "title": "DCQCN Pacing Events",
+                        "description": "DCQCN rate adjustment pacing events (PFC counters not available via rdma statistic on Broadcom bnxt_re)",
                         "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
                         "targets": [
                             {
-                                "expr": "rate(rdma_stat_tx_pause{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} tx_pause",
+                                "expr": "rate(rdma_stat_pacing_alerts{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
+                                "legendFormat": "{{hostname}} {{device}} pacing_alerts",
                             },
                             {
-                                "expr": "rate(rdma_stat_tx_pfc_frames_prio3{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} tx_pfc_prio3",
+                                "expr": "rate(rdma_stat_pacing_reschedule{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
+                                "legendFormat": "{{hostname}} {{device}} pacing_reschedule",
                             },
                         ],
-                        "fieldConfig": {"defaults": {"unit": "pps"}},
+                        "fieldConfig": {"defaults": {"unit": "short"}},
                     },
                     {
                         "id": 62,
                         "type": "timeseries",
-                        "title": "PFC RX Pause Frames",
-                        "description": "PFC pause frames received",
+                        "title": "DCQCN Pacing Complete",
+                        "description": "DCQCN pacing completions",
                         "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
                         "targets": [
                             {
-                                "expr": "rate(rdma_stat_rx_pause{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} rx_pause",
-                            },
-                            {
-                                "expr": "rate(rdma_stat_rx_pfc_frames_prio3{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} rx_pfc_prio3",
+                                "expr": "rate(rdma_stat_pacing_complete{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
+                                "legendFormat": "{{hostname}} {{device}} pacing_complete",
                             },
                         ],
-                        "fieldConfig": {"defaults": {"unit": "pps"}},
+                        "fieldConfig": {"defaults": {"unit": "short"}},
                     },
                     # Error Statistics Row
                     {
@@ -1168,12 +1160,12 @@ class GrafanaProvisioner:
                         "gridPos": {"h": 8, "w": 12, "x": 0, "y": 33},
                         "targets": [
                             {
-                                "expr": "rate(rdma_stat_packet_seq_err{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} seq_err",
+                                "expr": "rate(rdma_stat_seq_err_naks_rcvd{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
+                                "legendFormat": "{{hostname}} {{device}} seq_err_naks",
                             },
                             {
-                                "expr": "rate(rdma_stat_out_of_sequence{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} out_of_seq",
+                                "expr": "rate(rdma_stat_oos_drop_count{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
+                                "legendFormat": "{{hostname}} {{device}} oos_drops",
                             },
                         ],
                         "fieldConfig": {"defaults": {"unit": "pps"}},
@@ -1185,12 +1177,16 @@ class GrafanaProvisioner:
                         "gridPos": {"h": 8, "w": 12, "x": 12, "y": 33},
                         "targets": [
                             {
-                                "expr": "rate(rdma_stat_rx_icrc_errors{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} icrc_err",
+                                "expr": "rate(rdma_stat_rx_roce_errors{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
+                                "legendFormat": "{{hostname}} {{device}} rx_roce_err",
                             },
                             {
-                                "expr": "rate(rdma_stat_rnr_nak_retry_err{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
-                                "legendFormat": "{{hostname}} {{device}} rnr_nak",
+                                "expr": "rate(rdma_stat_rnr_naks_rcvd{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
+                                "legendFormat": "{{hostname}} {{device}} rnr_naks",
+                            },
+                            {
+                                "expr": "rate(rdma_stat_to_retransmits{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}[1m])",
+                                "legendFormat": "{{hostname}} {{device}} timeout_retransmits",
                             },
                         ],
                         "fieldConfig": {"defaults": {"unit": "pps"}},

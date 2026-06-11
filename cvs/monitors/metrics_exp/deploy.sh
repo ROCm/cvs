@@ -107,8 +107,9 @@ fi
 # Step 3: Clean up Prometheus targets
 echo -e "${YELLOW}Step 3: Cleaning Prometheus targets...${NC}"
 rm -f server/config/prometheus/targets/*.json
-# Keep the .gitkeep file
+# Keep the .gitkeep file and ensure the fleet-manager container can write here
 touch server/config/prometheus/targets/.gitkeep
+chmod 777 server/config/prometheus/targets/
 
 # Step 4: Build UI
 echo -e "${YELLOW}Step 4: Building UI...${NC}"

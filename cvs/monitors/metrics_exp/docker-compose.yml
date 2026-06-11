@@ -51,7 +51,7 @@ services:
     volumes:
       - ./server/config/prometheus:/etc/prometheus
       - prometheus_data:/prometheus
-      - ./server/config/prometheus/targets:/etc/prometheus/targets
+      - prometheus_targets:/etc/prometheus/targets
     ports:
       - "0.0.0.0:30090:9090"
     networks:
@@ -139,7 +139,7 @@ services:
     volumes:
       - ssh_keys:/app/ssh_keys
       - ./server/config/prometheus:/prometheus-config
-      - ./server/config/prometheus/targets:/prometheus-targets
+      - prometheus_targets:/prometheus-targets
       - ./scripts:/app/scripts:ro
       - ./server/fleet_manager/templates:/app/templates:ro
     ports:
@@ -166,6 +166,7 @@ volumes:
   loki_data:
   grafana_data:
   ssh_keys:
+  prometheus_targets:
 
 networks:
   monitoring:
