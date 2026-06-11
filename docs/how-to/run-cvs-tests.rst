@@ -640,15 +640,17 @@ You can list all available Inferencemax test cases using the CLI:
 .. code:: text
 
   Available tests in inferencemax_single:
-    - test_cleanup_stale_containers
-    - test_gpt_oss_120_single_node
-    - test_launch_inference_containers
+    - test_aa_launch_container
+    - test_inferencemax_inference
+    - test_print_results_table
+    - test_zz_teardown
 
-Use these scripts to run the Inferencemax tests.
+Use these scripts to run the Inferencemax tests. Supply your own suite JSON
+(``config`` + ``benchmark_params``); see :doc:`../reference/configuration-files/inferencemax`.
 
 .. code:: bash
 
-  cvs run inferencemax_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencemax/mi300x_inferencemax_gpt_oss_120b_single.json --html=/var/www/html/cvs/inferencemax.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencemax.log -vvv -s
+  cvs run inferencemax_single --cluster_file input/cluster_file/cluster.json --config_file /path/to/inferencemax_config.json --html=/var/www/html/cvs/inferencemax.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencemax.log -vvv -s
 
 
 Pytorch xdit test scripts
