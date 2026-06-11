@@ -1,294 +1,106 @@
 '''
 Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
-The year included in the foregoing notice is the year of creation of the work.
-All code contained here is Property of Advanced Micro Devices, Inc.
+All rights reserved.
+
+InferenceMax GPT-OSS 120B single-node suite — layout aligned with ``vllm_single.py``.
 '''
+
+import copy
+import importlib.util as _ilu
+import pathlib as _pl
+import time
 
 import pytest
 
-import re
-import time
-import json
-
-from cvs.lib.parallel_ssh_lib import *
-from cvs.lib.utils_lib import *
-from cvs.lib import docker_lib
-from cvs.lib.inference.inference_max import InferenceMaxJob
 from cvs.lib import globals
+from cvs.lib.inference.inference_max import InferenceMaxJob
+from cvs.lib.verify_lib import update_test_result
+
+_spec = _ilu.spec_from_file_location("_inferencemax_shared", _pl.Path(__file__).with_name("_shared.py"))
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+test_print_results_table = _mod.test_print_results_table  # noqa: F841
 
 log = globals.log
 
 
-# Importing additional cmd line args to script ..
-@pytest.fixture(scope="module")
-def cluster_file(pytestconfig):
-    """
-    Retrieve the --cluster_file CLI option provided to pytest.
-
-    Args:
-      pytestconfig: Built-in pytest fixture exposing command-line options.
-
-    Returns:
-      str: Path to the cluster JSON file specified via --cluster_file.
-
-    Notes:
-      - Ensure your pytest.ini or CLI includes: --cluster_file=/path/to/cluster.json
-      - Use module scope so the value is resolved once per test module.
-    """
-    return pytestconfig.getoption("cluster_file")
+def test_aa_launch_container(orch, lifecycle, request):
+    """Stage 1: stale cleanup + ``docker run`` on hosts (same role as vLLM ``test_aa``)."""
+    t = time.monotonic()
+    ok = orch.setup_containers()
+    lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
+    if not ok:
+        lifecycle.failed = True
+        name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+        pytest.fail(f"setup_containers() returned False for {name}")
+    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+    if not orch.verify_containers_running(name):
+        lifecycle.failed = True
+        pytest.fail(f"container {name} not running after setup_containers()")
 
 
-@pytest.fixture(scope="module")
-def training_config_file(pytestconfig):
-    """
-    Retrieve the --config_file CLI option provided to pytest.
+def test_inferencemax_gpt_oss_inference(
+    orch,
+    hf_token,
+    gpu_type,
+    inference_dict,
+    benchmark_params_dict,
+    seq_combo,
+    concurrency,
+    inf_res_dict,
+    lifecycle,
+    request,
+):
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
 
-    Args:
-      pytestconfig: Built-in pytest fixture exposing command-line options.
+    bp_run = copy.deepcopy(benchmark_params_dict)
+    cell = bp_run["gpt-oss-120b"]
+    cell["input_sequence_length"] = str(seq_combo["isl"])
+    cell["output_sequence_length"] = str(seq_combo["osl"])
+    cell["max_concurrency"] = str(concurrency)
 
-    Returns:
-      str: Path to the training config JSON file specified via --config_file.
-
-    Notes:
-      - Ensure your pytest.ini or CLI includes: --config_file=/path/to/training_config.json
-      - Module scope avoids re-fetching the option across tests in this module.
-    """
-    return pytestconfig.getoption("config_file")
-
-
-# Importing the cluster and cofig files to script to access node, switch, test config params
-@pytest.fixture(scope="module")
-def cluster_dict(cluster_file):
-    """
-    Load the entire cluster configuration from the provided JSON file.
-
-    Args:
-      cluster_file (str): Path to the cluster JSON file.
-
-    Returns:
-      dict: Parsed JSON representing the cluster (nodes, credentials, etc.).
-
-    Notes:
-      - Logs the loaded structure for visibility; consider using log.debug if verbose.
-    """
-    with open(cluster_file) as json_file:
-        cluster_dict = json.load(json_file)
-
-    # Resolve path placeholders like {user-id} in cluster config
-    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info("%s", cluster_dict)
-    return cluster_dict
-
-
-@pytest.fixture(scope="module")
-def inference_dict(training_config_file, cluster_dict):
-    with open(training_config_file) as json_file:
-        inference_dict_t = json.load(json_file)
-    inference_dict = inference_dict_t['config']
-
-    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
-    inference_dict = resolve_test_config_placeholders(inference_dict, cluster_dict)
-    return inference_dict
-
-
-@pytest.fixture(scope="module")
-def benchmark_params_dict(training_config_file, cluster_dict):
-    with open(training_config_file) as json_file:
-        inference_dict_t = json.load(json_file)
-    benchmark_params_dict = inference_dict_t['benchmark_params']
-
-    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
-    benchmark_params_dict = resolve_test_config_placeholders(benchmark_params_dict, cluster_dict)
-
-    log.info("%s", benchmark_params_dict)
-    return benchmark_params_dict
-
-
-@pytest.fixture(scope="module")
-def hf_token(inference_dict):
-    """
-    Load the Hugging Face access token from the file path specified in the training config.
-
-    Args:
-      inference_dict (dict): Training configuration dict that includes:
-        - 'hf_token_file': Path to the file containing the HF token.
-
-    Returns:
-      str: The HF token string read from the file.
-
-    Behavior:
-      - Reads the token from inference_dict['hf_token_file'] (already resolved for placeholders).
-      - Strips the trailing newline from the token.
-    """
-    hf_token_file = inference_dict['hf_token_file']
-    try:
-        with open(hf_token_file, 'r') as fp:
-            hf_token = fp.read().rstrip("\n")
-    except FileNotFoundError:
-        log.error(f"Error: The file '{hf_token_file}' was not found.")
-    except Exception as e:
-        log.error(f"An error occurred: {e}")
-    return hf_token
-
-
-@pytest.fixture(scope="module")
-def s_phdl(cluster_dict):
-    """
-    Create and return a parallel SSH handle for all cluster nodes.
-
-    Args:
-      cluster_dict (dict): Cluster configuration loaded by another fixture. Expected keys:
-        - 'node_dict': dict of node_name -> node_details (used to derive the node list)
-        - 'username': SSH username for connecting to nodes
-        - 'priv_key_file': path to the SSH private key file
-
-    Returns:
-      Pssh: An initialized Pssh handle for issuing commands across all nodes.
-
-    Behavior:
-      - Prints the full cluster_dict for quick debugging (consider switching to log.debug to reduce noise).
-      - Collects all node names from cluster_dict['node_dict'] and constructs a Pssh handle.
-
-    Notes:
-      - This fixture has module scope, so a single connection handle is reused for all tests in the module.
-    """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    s_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return s_phdl
-
-
-@pytest.fixture(scope="module")
-def c_phdl(cluster_dict):
-    """
-    Create and return a parallel SSH handle for all cluster nodes.
-
-    Args:
-      cluster_dict (dict): Cluster configuration loaded by another fixture. Expected keys:
-        - 'node_dict': dict of node_name -> node_details (used to derive the node list)
-        - 'username': SSH username for connecting to nodes
-        - 'priv_key_file': path to the SSH private key file
-
-    Returns:
-      Pssh: An initialized Pssh handle for issuing commands across all nodes.
-
-    Behavior:
-      - Prints the full cluster_dict for quick debugging (consider switching to log.debug to reduce noise).
-      - Collects all node names from cluster_dict['node_dict'] and constructs a Pssh handle.
-
-    Notes:
-      - This fixture has module scope, so a single connection handle is reused for all tests in the module.
-    """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    c_phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return c_phdl
-
-
-@pytest.fixture(scope="module")
-def gpu_type(s_phdl, cluster_dict):
-    """
-    Provide the GPU type string for the test module.
-
-    Args:
-      cluster_dict (dict): Cluster configuration that includes the GPU type.
-
-    Returns:
-      str: The GPU type (e.g., 'mi300', 'mi300x') used to select model parameters and logic.
-
-    Notes:
-      - Module scope ensures this is evaluated once per test module.
-      - Consider validating this value against an expected set of GPU types to catch typos early.
-    """
-
-    log.info("%s", s_phdl)
-    log.info("%s", list(dir(s_phdl)))
-    head_node = s_phdl.host_list[0]
-    smi_out_dict = s_phdl.exec('rocm-smi -a | head -30')
-    smi_out = smi_out_dict[head_node]
-    gpu_type = get_model_from_rocm_smi_output(smi_out)
-    return gpu_type
-
-
-def test_cleanup_stale_containers(s_phdl, inference_dict):
-    """
-    Pytest: Clean up potentially stale Docker containers and volumes before tests.
-
-    Args:
-      s_phdl: Parallel SSH/process handle used by docker_lib to run commands on nodes.
-      inference_dict (dict): Training configuration dict that includes:
-        - 'container_name': Name of the container to be killed if running.
-
-    Behavior:
-      - Kills the specific container identified by inference_dict['container_name'].
-      - Deletes all containers and volumes on the target nodes (broad cleanup).
-
-    Notes:
-      - This performs a broad cleanup via delete_all_containers_and_volumes; ensure the
-        test environment is isolated so this doesn?t remove unrelated containers/volumes.
-      - Consider narrowing cleanup scope if other workloads may be present on the hosts.
-    """
-
-    container_name = inference_dict['container_name']
-    docker_lib.kill_docker_container(s_phdl, container_name)
-    docker_lib.delete_all_containers_and_volumes(s_phdl)
-
-
-def test_launch_inference_containers(s_phdl, inference_dict, benchmark_params_dict):
-    """
-    Launch InferenceMAX inference containers on all nodes.
-
-    Note: Container image can be model-specific or use global default.
-    """
-
-    log.info('Testcase launch InferenceMax containers')
-    globals.error_list = []
-    container_name = inference_dict['container_name']
-
-    # Get model-specific container image or use global default
-    container_image = benchmark_params_dict.get('gpt-oss-120b', {}).get(
-        'container_image', inference_dict['container_image']
-    )
-
-    # Launch the containers ..
-    docker_lib.launch_docker_container(
-        s_phdl,
-        container_name,
-        container_image,
-        inference_dict['container_config']['device_list'],
-        inference_dict['container_config']['volume_dict'],
-        inference_dict['container_config']['env_dict'],
-        shm_size='48G',
-        timeout=60 * 20,
-    )
-    # ADD verifications ..
-    time.sleep(30)
-    log.info('Verify if the containers have been launched properly')
-    out_dict = s_phdl.exec('docker ps')
-    for node in out_dict.keys():
-        if not re.search(f'{container_name}', out_dict[node], re.I):
-            fail_test(f'Failed to launch container on node {node}')
-    update_test_result()
-
-
-def test_gpt_oss_120_single_node(c_phdl, s_phdl, gpu_type, inference_dict, benchmark_params_dict, hf_token):
     globals.error_list = []
     im_obj = InferenceMaxJob(
-        c_phdl=c_phdl,
-        s_phdl=s_phdl,
-        model_name='gpt-oss-120b',
+        c_phdl=orch.c_phdl,
+        s_phdl=orch.s_phdl,
+        model_name="gpt-oss-120b",
         inference_config_dict=inference_dict,
-        benchmark_params_dict=benchmark_params_dict,
+        benchmark_params_dict=bp_run,
         hf_token=hf_token,
         gpu_type=gpu_type,
         distributed_inference=False,
     )
-    im_obj.build_server_inference_job_cmd()
-    im_obj.start_inference_server_job()
-    im_obj.start_inference_client_job()
-    im_obj.poll_for_inference_completion()
-    im_obj.verify_inference_results()
+    try:
+        t = time.monotonic()
+        im_obj.build_server_inference_job_cmd()
+        im_obj.start_inference_server_job()
+        lifecycle.record(request.node.nodeid, "server_start", time.monotonic() - t)
+        im_obj.start_inference_client_job()
+        im_obj.poll_for_inference_completion()
+        im_obj.verify_inference_results()
+    except Exception:
+        lifecycle.failed = True
+        raise
+
+    key = (
+        "gpt-oss-120b",
+        gpu_type,
+        str(seq_combo["isl"]),
+        str(seq_combo["osl"]),
+        seq_combo.get("name", "default"),
+        concurrency,
+    )
+    inf_res_dict[key] = getattr(im_obj, "inference_results_dict", {}) or {}
+    lifecycle.record(request.node.nodeid, "inference_wall", time.monotonic() - t)
     update_test_result()
+
+
+def test_zz_teardown(orch, lifecycle, request):
+    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+    t = time.monotonic()
+    orch.teardown_containers()
+    lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t)
+    lifecycle.torn_down = True
+    if orch.verify_containers_running(name):
+        pytest.fail(f"container {name} still running after teardown_containers()")
