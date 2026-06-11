@@ -2,7 +2,8 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-InferenceMax GPT-OSS 120B single-node suite — layout aligned with ``vllm_single.py``.
+InferenceMax single-node suite — layout aligned with ``vllm_single.py``.
+(GPT-OSS 120B workload; model id remains in JSON under ``benchmark_params``.)
 '''
 
 import copy
@@ -39,7 +40,7 @@ def test_aa_launch_container(orch, lifecycle, request):
         pytest.fail(f"container {name} not running after setup_containers()")
 
 
-def test_inferencemax_gpt_oss_inference(
+def test_inferencemax_inference(
     orch,
     hf_token,
     gpu_type,

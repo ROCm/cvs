@@ -42,7 +42,7 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
       • install_ibperf_tools
   
     cvs.tests.inference.inferencemax (1 test suite)
-      • inferencemax_gpt_oss_120b_single
+      • inferencemax_single
   
     cvs.tests.inference.pytorch_xdit (2 test suites)
       • pytorch_xdit_flux1_dev_single
@@ -635,11 +635,11 @@ You can list all available Inferencemax test cases using the CLI:
 
 .. code:: bash
 
-  cvs list inferencemax_gpt_oss_120b_single
+  cvs list inferencemax_single
 
 .. code:: text
 
-  Available tests in inferencemax_gpt_oss_120b_single:
+  Available tests in inferencemax_single:
     - test_cleanup_stale_containers
     - test_gpt_oss_120_single_node
     - test_launch_inference_containers
@@ -648,7 +648,7 @@ Use these scripts to run the Inferencemax tests.
 
 .. code:: bash
 
-  cvs run inferencemax_gpt_oss_120b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencemax/mi300x_inferencemax_gpt_oss_120b_single.json --html=/var/www/html/cvs/inferencemax.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencemax.log -vvv -s
+  cvs run inferencemax_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencemax/mi300x_inferencemax_gpt_oss_120b_single.json --html=/var/www/html/cvs/inferencemax.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencemax.log -vvv -s
 
 
 Pytorch xdit test scripts

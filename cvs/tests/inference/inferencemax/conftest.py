@@ -207,7 +207,7 @@ def pytest_generate_tests(metafunc):
 def pytest_collection_modifyitems(items):
     rank = {
         "test_aa_launch_container": 0,
-        "test_inferencemax_gpt_oss_inference": 1,
+        "test_inferencemax_inference": 1,
         "test_print_results_table": 2,
         "test_zz_teardown": 3,
     }
