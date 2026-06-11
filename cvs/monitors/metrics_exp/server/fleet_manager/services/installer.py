@@ -190,18 +190,18 @@ class NodeInstaller:
             self._log("amd_exporter", f"Failed to pull image: {result.stderr}", False)
             return False
 
-        # Run the container with required device access
-        # The official exporter uses these devices and mounts:
-        # --device=/dev/dri - GPU device access
-        # --device=/dev/kfd - AMD KFD kernel module
-        # -v /sys:/sys:ro - Read-only system information (required for RAS monitoring)
+        # Run the container with host networking and required device access.
+        # --network host: shares the host network stack directly — no NAT or port
+        #   forwarding needed, exporter is accessible at host_ip:5000.
+        # --device=/dev/dri, --device=/dev/kfd: AMD GPU device access
+        # -v /sys:/sys:ro: read-only system info (required for RAS monitoring)
         docker_run_cmd = f"""sudo {container_cmd} run -d \\
             --name device-metrics-exporter \\
             --restart=always \\
+            --network host \\
             --device=/dev/dri \\
             --device=/dev/kfd \\
             -v /sys:/sys:ro \\
-            -p {port}:5000 \\
             {image_name}"""
 
         self._log("amd_exporter", "Starting exporter container...")
@@ -221,12 +221,12 @@ class NodeInstaller:
                 # Check if metrics endpoint is responding
                 metrics_result = await self.ssh.execute(f"curl -s http://localhost:{port}/metrics | head -20")
                 if metrics_result.success and (
-                    "GPU_" in metrics_result.stdout or "rocm" in metrics_result.stdout.lower()
+                    "gpu_" in metrics_result.stdout.lower() or "rocm" in metrics_result.stdout.lower()
                 ):
                     self._log("amd_exporter", f"Successfully installed official exporter {version} on port {port}")
                     return True
                 elif metrics_result.success and metrics_result.stdout.strip():
-                    # Container is up and returning something
+                    # Container is up and returning something, metrics may still be initializing
                     self._log("amd_exporter", f"Exporter running on port {port} (metrics initializing)")
                     return True
             await asyncio.sleep(3)
@@ -411,7 +411,6 @@ scrape_configs:
   - job_name: journal
     journal:
       max_age: 12h
-      path: /var/log/journal
       labels:
         job: systemd-journal
         host: {self.hostname}
@@ -431,6 +430,7 @@ scrape_configs:
                 log_type: kernel
 
   # Scrape syslog for additional system messages
+  # Uses glob to handle both Debian (/var/log/syslog) and RHEL (/var/log/messages)
   - job_name: syslog
     static_configs:
       - targets:
@@ -439,7 +439,7 @@ scrape_configs:
           job: syslog
           host: {self.hostname}
           node_group: {self.node_group_name}
-          __path__: /var/log/syslog
+          __path__: /var/log/{{syslog,messages}}
     pipeline_stages:
       - regex:
           expression: '(?P<timestamp>\\w+ \\d+ \\d+:\\d+:\\d+) (?P<hostname>\\S+) (?P<process>\\S+): (?P<message>.*)'
@@ -453,7 +453,7 @@ scrape_configs:
           job: dmesg
           host: {self.hostname}
           node_group: {self.node_group_name}
-          __path__: /var/log/dmesg
+          __path__: /var/log/dmesg*
 """
 
         # Upload config using heredoc with base64 to avoid shell escaping issues
@@ -496,11 +496,26 @@ WantedBy=multi-user.target
             self._log("promtail", f"Failed to start service: {result.stderr}", False)
             return False
 
-        await asyncio.sleep(2)
+        for attempt in range(3):
+            await asyncio.sleep(5)
+            result = await self.ssh.execute("systemctl is-active promtail")
+            if result.success and "active" in result.stdout:
+                self._log("promtail", "Successfully installed and running")
+                return True
+            self._log("promtail", f"Service not active (attempt {attempt + 1}/3), waiting...")
+
+        # Final fallback check - if service is running, consider it a success
         result = await self.ssh.execute("systemctl is-active promtail")
         if result.success and "active" in result.stdout:
-            self._log("promtail", "Successfully installed and running")
+            self._log("promtail", "Service is running (metrics endpoint may need more time)")
             return True
+
+        # Capture service logs to help diagnose why promtail is failing to start
+        diag = await self.ssh.execute(
+            "journalctl -u promtail -n 30 --no-pager 2>&1 || systemctl status promtail --no-pager 2>&1"
+        )
+        if diag.stdout.strip():
+            self._log("promtail", f"Service crash diagnostics:\n{diag.stdout[:1000]}", False)
 
         self._log("promtail", "Installation completed but service not active", False)
         return False
