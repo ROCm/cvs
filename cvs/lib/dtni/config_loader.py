@@ -111,6 +111,11 @@ class Params(_Forbid):
     metric_percentiles: str = "99"
     bench_serv_script: str = "benchmark_serving.py"
     num_prompts: str = "3200"
+    # Completion-poll budget for the bench client = client_poll_count * 60s
+    # (plus a 120s initial wait). Large-output cells (high osl) need a bigger
+    # budget; the poll loop exits as soon as the client finishes, so raising
+    # this never slows down fast cells. See regressions REG-20260609-001.
+    client_poll_count: str = "20"
 
 
 class BenchmarkParams(_Allow):
@@ -138,6 +143,44 @@ class VariantConfig(_Forbid):
                 "model.remote=1 (remote model download) is not implemented in the PoC. "
                 "Port from cvs-dtni-v1/resource_resolver.py before enabling."
             )
+        return self
+
+    def cell_key(self, isl, osl, concurrency):
+        """The canonical threshold key for one sweep cell.
+
+        Single source of truth shared by the loader's coverage check and the
+        test's verdict lookup -- so the two can never drift on whitespace,
+        ordering, or field names.
+        """
+        return f"ISL={isl},OSL={osl},TP={self.params.tensor_parallelism},CONC={concurrency}"
+
+    def expected_cells(self):
+        """Every (isl, osl, conc) cell the sweep will parametrize."""
+        return [
+            self.cell_key(combo.isl, combo.osl, conc)
+            for combo in self.sweep.sequence_combinations
+            for conc in self.sweep.concurrency_levels
+        ]
+
+    @model_validator(mode="after")
+    def _check_thresholds_cover_sweep(self):
+        """Fail at load time if any sweep cell lacks a threshold entry.
+
+        Without this, a mistyped/whitespaced threshold key (or a new sweep
+        entry without a matching threshold) makes the test silently skip its
+        verdict and report a green PASS with zero assertions.
+        """
+        expected = set(self.expected_cells())
+        present = set(self.thresholds.keys())
+        missing = sorted(expected - present)
+        extra = sorted(present - expected)
+        problems = []
+        if missing:
+            problems.append(f"sweep cells with no threshold entry: {missing}")
+        if extra:
+            problems.append(f"threshold keys matching no sweep cell (typo?): {extra}")
+        if problems:
+            raise ValueError("threshold.json does not match the sweep matrix; " + "; ".join(problems))
         return self
 
 

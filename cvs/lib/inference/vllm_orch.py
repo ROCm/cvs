@@ -4,23 +4,31 @@ All rights reserved.
 
 Standalone vLLM single-node job driven by a ContainerOrchestrator.
 
-Lives next to (not subclasses) the legacy `cvs.lib.inference.vllm.VllmJob`
-because the legacy class is still consumed by other suites (sglang,
-inferencemax). This class talks only to `orch.exec` / `orch.exec_on_head`,
-which already route into the running container, and to a `VariantConfig`
-(see `cvs.lib.dtni.config_loader`).
+This class talks only to `orch.exec`, which already routes into the running
+container, and to a typed `VariantConfig` (see `cvs.lib.dtni.config_loader`).
+It is deliberately single-node and free of the `c_phdl`/`s_phdl` + manual
+`docker exec` plumbing that `cvs.lib.inference.base.InferenceBaseJob` carries.
 
-Drops, vs. the legacy class:
-  - the dead `self.port_no` distributed branch
-  - the `random_range_ration` typo
-  - the `globals.error_list` indirection
-  - the silent-skip in `verify_inference_results` (callers run `evaluate_all`
-    against the parsed actuals instead)
+It does NOT subclass `InferenceBaseJob`: the base runs against raw
+`c_phdl`/`s_phdl` handles and untyped `if_dict`/`bp_dict` config, while this
+job runs against an `orch` and a pydantic `VariantConfig`. Bridging the two
+is a base-layer refactor (out of scope for this PoC); see
+`plans/vllm-single-orch-poc.md`. The legacy `cvs.lib.inference.vllm.VllmJob`
+has no remaining importers and can be removed in that follow-up.
+
+Behavioural improvements over the base-class lifecycle it mirrors:
+  - no dead distributed/`nnodes` branch
+  - readiness is detected by scanning the whole server log, not `tail -30`
+    (the startup banner scrolls out of a fixed tail once vLLM gets chatty)
+  - completion is checked before failure, and only a nonzero failed-request
+    count is treated as a client failure (the summary always prints
+    "Failed requests: N")
 '''
 
 from __future__ import annotations
 
 import re
+import shlex
 import time
 from typing import Dict
 
@@ -52,10 +60,6 @@ _METRIC_RES = [
 ]
 
 
-def _shquote(s: str) -> str:
-    return "'" + s.replace("'", "'\"'\"'") + "'"
-
-
 class VllmJob:
     """Single-node vLLM benchmark job driven by an injected ContainerOrchestrator.
 
@@ -71,9 +75,18 @@ class VllmJob:
 
     READINESS_RE = re.compile(r"Application startup complete|Uvicorn running|Started server", re.I)
     COMPLETION_RE = re.compile(r"End-to-end Latency", re.I)
+    # bench_serving ALWAYS prints "Failed requests: N" in its summary, so a bare
+    # "Failed" match is a false positive on every successful run. Only a NONZERO
+    # count is a real failure.
+    FAILED_REQUESTS_RE = re.compile(r"Failed requests:\s+([0-9]+)", re.I)
+    # A client-side crash (no summary at all) shows up as a Python traceback.
+    CLIENT_CRASH_RE = re.compile(r"Traceback \(most recent call last\)", re.I)
+    # Narrow launch-failure markers only. Bare "error:"/"exception:"/"traceback" are
+    # NOT included: vLLM/ROCm startup routinely logs benign lines containing them
+    # (deprecation notes, ignored-exception handlers, optional-probe failures), and
+    # matching those aborts a server that would have come up fine.
     EARLY_FAILURE_RE = re.compile(
-        r"no such file or directory|command not found|cannot access|permission denied|"
-        r"error:|exception:|traceback|failed to start",
+        r"no such file or directory|command not found|cannot access|failed to start",
         re.I,
     )
 
@@ -89,7 +102,12 @@ class VllmJob:
         log_subdir="vllm",
         server_precheck_wait_s=30,
         server_warmup_wait_s=330,
-        server_poll_count=30,
+        # 60*60s = 60min readiness budget. A remote (online) model pull on cell 1
+        # downloads ~152GB into the HF cache before the server reports ready; the
+        # old 30*60s=30min cap raced that download. Free on the happy path: the
+        # loop returns as soon as is_ready(), so a bigger cap only lengthens the
+        # FAILURE path (how long a genuinely-stuck server waits before raising).
+        server_poll_count=60,
         server_poll_wait_s=60,
         client_initial_wait_s=120,
         client_poll_count=20,
@@ -125,6 +143,13 @@ class VllmJob:
         self.server_script = variant.roles.server.server_script
         self.log_dir = variant.paths.log_dir
         self.scripts_dir = variant.paths.benchmark_scripts_dir
+        # Pin the HF cache onto the mounted models dir. The container binds
+        # models_dir both at /models and (via the home bind mount) at its own
+        # host path, so this path is valid inside the container and the bytes
+        # survive teardown. Without it HF defaults to container-internal
+        # ~/.cache/huggingface, which is invisible to the host and re-downloads
+        # every run. Same value the model-fetch test polls with `du`.
+        self.models_dir = variant.paths.models_dir
 
         # Single-node: one output directory.
         self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0"
@@ -144,24 +169,25 @@ class VllmJob:
     def build_server_cmd(self):
         """Write the server-env script and create the per-node out-dir inside the container."""
         env_lines = [
-            f"export MODEL={self.model_id}",
-            f"export ISL={self.isl}",
-            f"export OSL={self.osl}",
-            f"export MAX_MODEL_LEN={self.max_model_length}",
-            f"export RANDOM_RANGE_RATIO={self.random_range_ratio}",
-            f"export TP={self.tp}",
-            f"export CONC={self.concurrency}",
-            f"export HF_TOKEN={self.hf_token}",
+            f"export MODEL={shlex.quote(self.model_id)}",
+            f"export ISL={shlex.quote(self.isl)}",
+            f"export OSL={shlex.quote(self.osl)}",
+            f"export MAX_MODEL_LEN={shlex.quote(self.max_model_length)}",
+            f"export RANDOM_RANGE_RATIO={shlex.quote(self.random_range_ratio)}",
+            f"export TP={shlex.quote(str(self.tp))}",
+            f"export CONC={shlex.quote(self.concurrency)}",
+            f"export HF_TOKEN={shlex.quote(self.hf_token)}",
+            f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
             "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
             "export VLLM_ROCM_USE_AITER_MHA=0",
             "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
             "export RESULT_FILENAME=results",
-            f"export PORT={self.port_no}",
+            f"export PORT={shlex.quote(str(self.port_no))}",
         ]
         env_script = "\n".join(env_lines) + "\n"
-        # Use printf with quoted body to avoid heredoc inside orch.exec layers.
-        self.orch.exec("bash -c " + _shquote(f"printf '%s' {_shquote(env_script)} > /tmp/server_env_script.sh"))
-        self.orch.exec(f"mkdir -p {self.out_dir}")
+        # printf the script body verbatim; shlex.quote protects the outer bash layer.
+        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
+        self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
 
     def start_server(self):
         cmd = (
@@ -174,14 +200,23 @@ class VllmJob:
                 raise RuntimeError(f"vllm server failed to launch on {host}: {output[-500:]}")
 
     def is_ready(self):
-        out = self.orch.exec(f"tail -30 {self.server_log}")
-        return bool(out) and all(bool(self.READINESS_RE.search(output or "")) for output in out.values())
+        # Evaluate readiness IN the container and ship back only an exit code.
+        # grep scans the whole log (the one-shot startup banner scrolls out of any
+        # tail once vLLM gets chatty) but `-q` stops at the first match and prints
+        # nothing -- no cat, no megabytes of log over the wire. Derive the pattern
+        # from the one regex so the two cannot drift.
+        pattern = self.READINESS_RE.pattern
+        out = self.orch.exec(
+            f"grep -qiE {shlex.quote(pattern)} {shlex.quote(self.server_log)}",
+            detailed=True,
+        )
+        return bool(out) and all(r["exit_code"] == 0 for r in out.values())
 
     def wait_ready(self):
         log.info("waiting %ds for server log to materialise", self._precheck_wait)
         time.sleep(self._precheck_wait)
 
-        out = self.orch.exec(f"tail -30 {self.server_log}")
+        out = self.orch.exec(f"tail -30 {shlex.quote(self.server_log)}")
         for host, output in out.items():
             if self.EARLY_FAILURE_RE.search(output or ""):
                 raise RuntimeError(f"vllm server early failure on {host}: {output[-500:]}")
@@ -237,20 +272,27 @@ class VllmJob:
             f"--result-dir {self.out_dir} --result-filename results "
             f"> {self.client_log} 2>&1 &"
         )
-        self.orch.exec("bash -c " + _shquote(client_cmd))
+        self.orch.exec("bash -c " + shlex.quote(client_cmd))
 
     def wait_client_complete(self):
         log.info("client initial wait %ds", self._client_initial_wait)
         time.sleep(self._client_initial_wait)
         for it in range(self._client_poll_count):
-            out = self.orch.exec(f"tail -2000 {self.client_log}")
+            out = self.orch.exec(f"tail -2000 {shlex.quote(self.client_log)}")
             failed = []
             done = []
             for host, output in out.items():
                 txt = output or ""
-                if re.search(r"Failed", txt, re.I):
-                    failed.append((host, txt[-500:]))
                 done.append(bool(self.COMPLETION_RE.search(txt)))
+                # A crash before the summary -> hard failure now.
+                if self.CLIENT_CRASH_RE.search(txt):
+                    failed.append((host, txt[-500:]))
+                else:
+                    # The summary always reports a failed-request count; only a
+                    # nonzero count is a real failure (NOT the literal word "Failed").
+                    fm = self.FAILED_REQUESTS_RE.search(txt)
+                    if fm and int(fm.group(1)) > 0:
+                        failed.append((host, f"Failed requests: {fm.group(1)} -- {txt[-500:]}"))
             if failed:
                 raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
             if done and all(done):
@@ -261,7 +303,7 @@ class VllmJob:
 
     def parse_results(self):
         """Return {host: {metric: str_value}} parsed from the client log."""
-        out = self.orch.exec(f"tail -2000 {self.client_log}")
+        out = self.orch.exec(f"tail -2000 {shlex.quote(self.client_log)}")
         results = {}
         for host, text in out.items():
             text = text or ""

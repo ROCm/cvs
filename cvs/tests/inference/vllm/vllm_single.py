@@ -5,6 +5,11 @@ All rights reserved.
 Parametrized vLLM single-node benchmark suite (replaces the 4 per-model wrappers).
 '''
 
+import shlex
+import time
+
+import pytest
+
 from cvs.lib import globals
 from cvs.lib.dtni.verdict import evaluate_all
 from cvs.lib.inference.vllm_orch import VllmJob
@@ -18,12 +23,115 @@ test_print_results_table = _mod.test_print_results_table  # exported as a siblin
 
 log = globals.log
 
+# Fetch-progress poll: du the cache dir until its size stops growing. The model
+# download streams in parallel shards, so size climbs then plateaus at the full
+# weight set; a stable size across two polls means the fetch settled.
+_FETCH_POLL_COUNT = 80
+_FETCH_POLL_WAIT_S = 30
+
 
 def _num_prompts_for(osl, concurrency):
     return str(concurrency * 20) if int(osl) >= 8192 else str(concurrency * 50)
 
 
-def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, inf_res_dict):
+def _du_bytes(orch, path):
+    """Total bytes under `path` inside the container, or 0 if it doesn't exist yet."""
+    out = orch.exec(f"bash -c {shlex.quote(f'du -sb {shlex.quote(path)} 2>/dev/null | cut -f1')}")
+    total = 0
+    for text in (out or {}).values():
+        for tok in (text or "").split():
+            if tok.isdigit():
+                total = max(total, int(tok))
+    return total
+
+
+def test_aa_launch_container(orch, variant_config, lifecycle, request):
+    """Stage 1: launch the container. Asserts it is independently observed running."""
+    t = time.monotonic()
+    ok = orch.setup_containers()
+    lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
+    if not ok:
+        lifecycle.failed = True
+        name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+        pytest.fail(f"setup_containers() returned False for {name}")
+    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+    if not orch.verify_containers_running(name):
+        lifecycle.failed = True
+        pytest.fail(f"container {name} not running after setup_containers()")
+
+
+def test_ab_setup_sshd(orch, lifecycle, request):
+    """Stage 2: start sshd in the container. Asserts the daemon is reachable on 2224."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    t = time.monotonic()
+    ok = orch.setup_sshd()
+    lifecycle.record(request.node.nodeid, "sshd_setup", time.monotonic() - t)
+    if not ok:
+        lifecycle.failed = True
+        pytest.fail("setup_sshd() returned False")
+    probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
+    if not any("OK" in (v or "") for v in (probe or {}).values()):
+        lifecycle.failed = True
+        pytest.fail("sshd not listening on 2224 after setup_sshd()")
+
+
+def test_ac_model_fetch(orch, variant_config, lifecycle, request):
+    """Stage 3: ensure the model is present in the HF cache (mounted models dir).
+
+    For a remote pull this is the ~152GB download; the row shows its real
+    duration and final size. For an offline/pre-staged model it returns near
+    instantly. Skips (never silently passes) if the cache dir is unconfigured
+    -- without it the fetch target is meaningless. Progress is polled via
+    `du -sb` (size on disk), the robust size-poll proven in the validation run.
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    models_dir = variant_config.paths.models_dir
+    if not models_dir:
+        pytest.skip("paths.models_dir unset; cannot locate/verify the HF cache")
+
+    remote = getattr(variant_config.model, "remote", 0)
+    t = time.monotonic()
+    orch.exec(f"mkdir -p {shlex.quote(models_dir)}")
+
+    if remote:
+        # Kick a background download into the pinned cache, then poll size.
+        fetch = (
+            f"HF_HUB_CACHE={shlex.quote(models_dir)} "
+            f"nohup hf download {shlex.quote(variant_config.model.id)} "
+            f"> /tmp/hf_fetch.log 2>&1 &"
+        )
+        orch.exec("bash -c " + shlex.quote(fetch))
+
+    prev = -1
+    stable = 0
+    final = _du_bytes(orch, models_dir)
+    for it in range(_FETCH_POLL_COUNT):
+        cur = _du_bytes(orch, models_dir)
+        final = cur
+        log.info("[fetch poll %d] size=%.1fGB", it, cur / 1e9)
+        if cur > 0 and cur == prev:
+            stable += 1
+            if stable >= 2 or not remote:
+                break
+        else:
+            stable = 0
+        prev = cur
+        if not remote:
+            break
+        time.sleep(_FETCH_POLL_WAIT_S)
+
+    lifecycle.record(request.node.nodeid, "model_fetch", time.monotonic() - t)
+    lifecycle.record(request.node.nodeid, "model_size", final / 1e9, "GB")
+    if final <= 0:
+        lifecycle.failed = True
+        pytest.fail(f"no model bytes under {models_dir} after fetch")
+
+
+def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, inf_res_dict, lifecycle, request):
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
     isl = seq_combo["isl"]
     osl = seq_combo["osl"]
     job = VllmJob(
@@ -34,15 +142,26 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         osl=osl,
         concurrency=concurrency,
         num_prompts=_num_prompts_for(osl, concurrency),
+        client_poll_count=int(variant_config.params.client_poll_count),
     )
 
-    job.stop_server()
-    job.build_server_cmd()
-    job.start_server()
-    job.wait_ready()
-    job.run_client()
-    job.wait_client_complete()
-    results = job.parse_results()
+    # A failure mid-sweep flips lifecycle.failed so the remaining cells skip
+    # cleanly (instead of each re-failing) AND the orch leak-guard finalizer
+    # still tears the container down. The explicit teardown row may not run on
+    # the failure path, which is exactly what the finalizer covers.
+    try:
+        job.stop_server()
+        job.build_server_cmd()
+        t = time.monotonic()
+        job.start_server()
+        job.wait_ready()
+        lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
+        job.run_client()
+        job.wait_client_complete()
+        results = job.parse_results()
+    except Exception:
+        lifecycle.failed = True
+        raise
 
     key = (
         variant_config.model.id,
@@ -54,11 +173,29 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
     )
     inf_res_dict[key] = results
 
-    # Per-cell thresholds: thresholds.json layout is `{"ISL=...,OSL=...,TP=...,CONC=...": {metric: spec}}`
-    cell = f"ISL={isl},OSL={osl},TP={variant_config.params.tensor_parallelism},CONC={concurrency}"
-    cell_thresholds = variant_config.thresholds.get(cell, {})
+    # Per-cell thresholds: thresholds.json layout is `{"ISL=...,OSL=...,TP=...,CONC=...": {metric: spec}}`.
+    # The key is built by VariantConfig.cell_key (the same builder the loader uses for its
+    # coverage check), so a present-at-load cell is always present here. A miss is a hard
+    # error -- never a silent skip that would report a green PASS with no assertions.
+    cell = variant_config.cell_key(isl, osl, concurrency)
+    cell_thresholds = variant_config.thresholds.get(cell)
     if not cell_thresholds:
-        log.warning("no thresholds for %s; skipping verdict assertion", cell)
-        return
+        raise AssertionError(f"no thresholds for cell {cell!r}; threshold.json is out of sync with the sweep")
     for host, actuals in results.items():
         evaluate_all(actuals, cell_thresholds)
+
+
+def test_zz_teardown(orch, lifecycle, request):
+    """Final stage: explicit container teardown, timed, asserting it is gone.
+
+    Sets lifecycle.torn_down so the orch fixture's leak-guard finalizer no-ops
+    (avoids a double teardown). Runs even if an earlier stage failed -- teardown
+    must happen regardless -- so it does NOT skip on lifecycle.failed.
+    """
+    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+    t = time.monotonic()
+    orch.teardown_containers()
+    lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t)
+    lifecycle.torn_down = True
+    if orch.verify_containers_running(name):
+        pytest.fail(f"container {name} still running after teardown_containers()")
