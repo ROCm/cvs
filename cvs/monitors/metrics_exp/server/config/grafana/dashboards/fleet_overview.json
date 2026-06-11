@@ -62,7 +62,7 @@
       "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
       "targets": [
         {
-          "expr": "count(count by (hostname) (gpu_power_usage{node_group=~\"$nodegroup\"}))",
+          "expr": "count(count by (hostname) (up{job=\"amd_gpu_metrics\", node_group=~\"$nodegroup\"}))",
           "legendFormat": "Nodes"
         }
       ],
@@ -84,7 +84,7 @@
       "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
       "targets": [
         {
-          "expr": "count(count by (hostname) (gpu_power_usage{node_group=~\"$nodegroup\"} > 0))",
+          "expr": "count(count by (hostname) (up{job=\"amd_gpu_metrics\", node_group=~\"$nodegroup\"} == 1))",
           "legendFormat": "Active"
         }
       ],
@@ -109,7 +109,7 @@
       "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
       "targets": [
         {
-          "expr": "count(count by (hostname) (up{job=\"amd_gpu_metrics\"} == 0)) or vector(0)",
+          "expr": "count(count by (hostname) (up{job=\"amd_gpu_metrics\", node_group=~\"$nodegroup\"} == 0)) or vector(0)",
           "legendFormat": "Down"
         }
       ],
