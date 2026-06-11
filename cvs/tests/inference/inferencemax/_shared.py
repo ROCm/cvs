@@ -2,7 +2,8 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Shared helpers for the InferenceMax suite (mirrors ``vllm/_shared.py`` layout).
+Shared helpers for the InferenceMax suite (DTNI-style results table; same role as
+``vllm/_shared.py``).
 '''
 
 from tabulate import tabulate

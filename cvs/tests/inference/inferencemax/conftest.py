@@ -4,17 +4,17 @@ All rights reserved.
 '''
 
 """
-InferenceMax suite scaffolding — aligned with ``cvs/tests/inference/vllm/conftest.py``.
+InferenceMax suite scaffolding — DTNI-style layout (lifecycle hooks, staged tests,
+``orch`` leak-guard, ``pytest_generate_tests`` / collection ordering) aligned with
+``cvs/tests/inference/vllm/conftest.py`` as a reference implementation.
 
 Differences (documented):
   * Workloads still use **host SSH + docker run/exec** (``InferenceMaxJob``), not
     ``ContainerOrchestrator.exec`` inside an sshd container. The ``orch`` fixture
     therefore yields an ``InferenceMaxHostContext`` with the same **stage method
-    names** as a real orchestrator where that keeps test code parallel to vLLM.
+    names** as a real orchestrator so tests stay structurally parallel to DTNI
+    container suites.
   * No ``test_ab_setup_sshd`` / ``test_ac_model_fetch`` rows (not applicable).
-
-Follow ``atnair/vllm-uplift`` for vLLM DTNI/orchestrator patterns; this branch stays
-based on ``main`` with InferenceMax-only uplift.
 """
 
 import json

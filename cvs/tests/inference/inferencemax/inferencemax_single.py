@@ -2,8 +2,9 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-InferenceMax single-node suite — layout aligned with ``vllm_single.py``.
-(GPT-OSS 120B workload; model id remains in JSON under ``benchmark_params``.)
+InferenceMax single-node suite — DTNI-style staged layout (see ``vllm_single.py``
+for the reference pattern). GPT-OSS 120B workload; model id remains in JSON under
+``benchmark_params``.
 '''
 
 import copy
