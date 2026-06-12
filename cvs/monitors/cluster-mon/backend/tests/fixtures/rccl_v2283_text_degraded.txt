@@ -1,0 +1,30 @@
+RCCL version 2.28.3 compiled with ROCm "7.2.0.0-43-fc0010cf6a"
+HIP runtime version 70226015, amdgpu driver version 70226015
+
+Job summary
+===========
+
+  Nodes  Processes         GPUs  Processes     GPUs
+(total)   per node  per process    (total)  (total)
+      1          8            1          8        8
+
+Communicators... (0.00s)
+=============
+
+Group     Comms     Nodes     Ranks     Ranks     Ranks    Status  Errors
+    #  in group  per comm  per node  per comm  in group
+    0         1         1         7         8         7   RUNNING  INCOMPLETE
+
+Errors
+======
+
+INCOMPLETE
+  Missing communicator data from 1 job process
+  Process 3467978 on node 10.194.132.77 managing GPU 6
+
+#0-0 (3b2fe521bf43bc04) INCOMPLETE
+  Missing communicator data from 1 rank
+  Rank 6 -- GPU 6 managed by process 3467978 on node 10.194.132.77
+
+Warnings
+========

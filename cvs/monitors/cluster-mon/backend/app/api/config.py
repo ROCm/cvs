@@ -184,9 +184,8 @@ async def update_configuration(config: ClusterConfigUpdate) -> Dict[str, Any]:
             if config.jump_host.auth_method == "password" and config.jump_host.password:
                 # Store in memory
                 app_state.jump_host_password = config.jump_host.password
-                # Also save to YAML for development/testing (WARNING: Not secure for production)
-                cluster_config["cluster"]["ssh"]["jump_host"]["password"] = config.jump_host.password
-                logger.warning("⚠️ Jump host password saved to cluster.yaml - NOT RECOMMENDED FOR PRODUCTION")
+                # SECURITY: Password is stored in memory only (app_state), never persisted to disk
+                # cluster_config["cluster"]["ssh"]["jump_host"]["password"] is intentionally omitted
             else:
                 app_state.jump_host_password = None
                 # Remove password from YAML if using key-based auth
@@ -251,7 +250,7 @@ async def get_current_configuration() -> Dict[str, Any]:
     """
     Get current configuration including all SSH and jump host settings.
     """
-    from app.core.simple_config import config as settings
+    from app.core.config import settings
 
     nodes = settings.load_nodes_from_file()
 
