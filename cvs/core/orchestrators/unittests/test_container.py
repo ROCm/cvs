@@ -223,6 +223,43 @@ class TestContainerOrchestrator(unittest.TestCase):
         self.assertEqual(probe_failed, ["h_gone"])
 
     # ------------------------------------------------------------------
+    # setup_sshd single-node guard
+    # ------------------------------------------------------------------
+
+    def test_setup_sshd_single_node_skips_and_returns_true(self):
+        # The in-container sshd is only needed for multinode MPI. On a single-host
+        # cluster setup_sshd must short-circuit: no exec into the container, no
+        # dependency on the image shipping /usr/sbin/sshd.
+        orch, runtime = self._make(lifetime="per_run")
+        orch.hosts = ["10.0.0.1"]
+        orch.container_id = "cvs_iter_test"
+        self.assertTrue(orch.setup_sshd())
+        runtime.exec.assert_not_called()
+
+    def test_setup_sshd_requires_container_even_single_node(self):
+        # The container_id precondition is checked BEFORE the single-node guard,
+        # so a single-node orch with no running container still raises rather than
+        # silently returning True.
+        orch, _ = self._make(lifetime="per_run")
+        orch.hosts = ["10.0.0.1"]
+        self.assertIsNone(orch.container_id)
+        with self.assertRaises(RuntimeError):
+            orch.setup_sshd()
+
+    @patch("time.sleep", lambda *_a, **_k: None)
+    def test_setup_sshd_multinode_attempts_setup(self):
+        # The guard must NOT skip a genuine multinode run: every setup command and
+        # the final validation probe are exec'd into the container.
+        orch, runtime = self._make(lifetime="per_run")
+        orch.container_id = "cvs_iter_test"
+        runtime.exec.return_value = {
+            "10.0.0.1": {"exit_code": 0},
+            "10.0.0.2": {"exit_code": 0},
+        }
+        self.assertTrue(orch.setup_sshd())
+        self.assertTrue(runtime.exec.called)
+
+    # ------------------------------------------------------------------
     # teardown_containers lifetime branching
     # ------------------------------------------------------------------
 
