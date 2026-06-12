@@ -169,6 +169,55 @@ WS   /ws/notifications                 # Global notifications (errors, completio
 3. Execute: `cvs run {suite} --cluster_file {cluster.json} --config_file {generated.json}`
 4. Return results in standardized format
 
+#### 4. Execution State Management (Job Store)
+
+**Purpose**: Track asynchronous test executions durably so that job state survives server restarts.
+
+**Context**: `POST /api/v1/tests/execute` is asynchronous — it returns `202 Accepted` with an `execution_id` before the test completes. The server must therefore remember each execution's state (status, timestamps, results) independently of the request that created it. Keeping this state only in memory means a crash, deploy, or restart loses all in-flight job records, leaving "ghost" jobs that clients can no longer track.
+
+**Decision (v1): File-backed in-memory key/value store ✅**
+
+The execution store keeps all records in an in-memory map for fast access and persists them to a local file so state is recovered on restart. This is chosen for v1 because it requires zero external infrastructure (no Redis/DB to deploy) and is sufficient for the expected low-to-moderate job volume of a single-instance deployment.
+
+**Interface-first design** (so the backend can be swapped without touching callers):
+
+```go
+type Execution struct {
+    ID          string                 `json:"id"`
+    Suite       string                 `json:"suite"`
+    Status      string                 `json:"status"`      // queued|running|passed|failed|interrupted
+    CreatedAt   time.Time              `json:"created_at"`
+    StartedAt   *time.Time             `json:"started_at,omitempty"`
+    CompletedAt *time.Time             `json:"completed_at,omitempty"`
+    Config      map[string]interface{} `json:"config"`
+    Results     map[string]interface{} `json:"results,omitempty"`
+    Error       string                 `json:"error,omitempty"`
+}
+
+type ExecutionStore interface {
+    Save(exec Execution) error
+    Get(id string) (Execution, bool)
+    List() []Execution
+}
+```
+
+`FileStore` implements this for v1. A future `RedisStore` (or `SQLiteStore`) can implement the same interface for multi-instance deployments with no changes to handlers or the executor.
+
+**Implementation requirements:**
+
+1. **Atomic writes** — never write the live file in place. Write to a temp file, `fsync`, then `rename` over the target (atomic on POSIX filesystems). This prevents a crash mid-write from corrupting the entire store.
+2. **Concurrency safety** — guard the in-memory map with a `sync.RWMutex` (or funnel all mutations through a single owning goroutine) to avoid races and lost updates from concurrent requests.
+3. **Persist on state changes, not every event** — only flush to disk on meaningful transitions (`queued → running → passed/failed`). High-frequency data (individual log lines, progress percentages) stays in memory / stream-only and is never persisted. This mirrors the "what to store vs. stream-only" rule in the client integration doc.
+4. **Startup reconciliation** — on startup, reload the file and mark any execution still in `running` state as `interrupted`. The CLI processes are children of the API server and do not survive a restart, so a persisted `running` status is stale and must not be reported as live.
+
+**Concurrency limiting (separate mechanism):**
+
+The job store records state but does **not** bound how many tests run simultaneously. A **worker pool / semaphore** caps concurrent CLI executions so that a burst of requests cannot overwhelm the host or the cluster. Requests beyond the limit remain in `queued` state until a slot frees up.
+
+**Known limitations (accepted for v1):**
+- **Single-instance only** — the file is local to one host, so running multiple API replicas is not supported with `FileStore`. Multi-instance requires swapping in a shared backend (Redis/SQLite) via the `ExecutionStore` interface.
+- For large job history or query-heavy needs, prefer **SQLite** over hand-rolled JSON persistence (single file, no server, with indexing and atomic writes built in).
+
 ### WebSocket Implementation
 
 #### Real-Time Communication Requirements
