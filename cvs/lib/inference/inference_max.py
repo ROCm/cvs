@@ -13,16 +13,27 @@ from cvs.lib.inference.base import InferenceBaseJob, _GIT_CLONE_FAIL_RE
 from cvs.lib.verify_lib import fail_test
 
 
+def _clone_dirname_from_git_url(repo_url: str) -> str:
+    """Last path segment of a git URL without ``.git`` (git's default clone directory)."""
+    part = (repo_url or "").rstrip("/").rsplit("/", 1)[-1]
+    return part.removesuffix(".git") if part.endswith(".git") else part or "InferenceX"
+
+
 class InferenceMaxJob(InferenceBaseJob):
     """InferenceMAX-specific implementation."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.if_dict.setdefault('inferencemax_repo', 'https://github.com/InferenceMAX/InferenceMAX.git')
+        # Upstream InferenceMAX org repo is a stub; real tree lives at SemiAnalysisAI/InferenceX (see that README).
+        self.if_dict.setdefault(
+            'inferencemax_repo',
+            'https://github.com/SemiAnalysisAI/InferenceX.git',
+        )
 
     def get_server_script_directory(self):
-        """InferenceMAX scripts are in the cloned repo."""
-        return '/app/InferenceX'
+        """InferenceMAX / InferenceX scripts live under ``/app/<clone-dir>/`` inside the container."""
+        name = _clone_dirname_from_git_url(self.if_dict.get('inferencemax_repo', ''))
+        return f'/app/{name}'
 
     def get_server_script_path(self):
         """InferenceMAX scripts are in the cloned repo."""
@@ -42,9 +53,15 @@ class InferenceMaxJob(InferenceBaseJob):
         return 'inference-max'
 
     def clone_inferencemax_repo(self):
-        """Clone InferenceMAX repository."""
+        """Clone InferenceX/InferenceMAX repo into ``/app`` inside the container (matches ``get_server_script_directory``)."""
         repo = self.if_dict["inferencemax_repo"]
-        inner = f"git clone {shlex.quote(repo)}"
+        clone_name = _clone_dirname_from_git_url(repo)
+        # Remove legacy stub checkout name; clone under /app so paths match get_server_script_directory().
+        inner = (
+            "set -e; mkdir -p /app; cd /app; "
+            "rm -rf InferenceMAX; "
+            f"if [ ! -d {shlex.quote(clone_name)} ]; then git clone {shlex.quote(repo)}; fi"
+        )
         cmd = f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(inner)}"
         out_dict = self.s_phdl.exec(cmd)
         for node in out_dict.keys():
@@ -54,7 +71,7 @@ class InferenceMaxJob(InferenceBaseJob):
             if _GIT_CLONE_FAIL_RE.search(out):
                 fail_test("Errors or failures seen in pulling InferenceMAX repo from Github, pls check")
         time.sleep(3)
-        ls_inner = "ls -ld /app/InferenceX"
+        ls_inner = f"ls -ld /app/{clone_name}"
         self.s_phdl.exec(
             f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(ls_inner)}"
         )
