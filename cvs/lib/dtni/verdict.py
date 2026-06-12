@@ -2,9 +2,8 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 '''
-from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
 
 
 class ThresholdViolation(Exception):

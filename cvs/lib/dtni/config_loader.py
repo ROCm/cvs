@@ -4,7 +4,7 @@ All rights reserved.
 
 Typed config loader for the dtni vllm_single PoC.
 
-Loads a per-variant `config.json` + sibling `threshold.json`, validates
+Loads a per-variant `config.json` + sibling `*_threshold.json`, validates
 shape with pydantic v2 (extra="forbid"), and runs a 3-pass placeholder
 substitution:
   1. cluster placeholders (`{user-id}`) anywhere
@@ -13,12 +13,22 @@ substitution:
 
 A loaded variant is returned as a `VariantConfig` instance whose `container`
 field matches the dict shape that `cvs.core.orchestrators.factory.OrchestratorConfig`
-already understands (`enabled`, `launch`, `name`, `image`, `runtime{name,args}`),
-plus a `thresholds` field carrying the parsed threshold.json contents.
+already understands (`lifetime`, `name`, `image`, `runtime{name,args}`),
+plus a `thresholds` field carrying the parsed threshold contents.
 
 `model.remote=1` raises NotImplementedError -- schema is present, but the
 download/resolve logic lives in cvs-dtni-v1's `resource_resolver.py` and
 is out of scope for this PoC.
+
+GENERALIZATION SEAM (do this on the SECOND consumer, not speculatively):
+`Paths`/`ModelSpec`/`ImageSpec`/`ContainerSpec`/`thresholds`, the placeholder
+substitution, the `enforce_thresholds` gate, and `load_variant` are
+framework-agnostic. `Params`, `Sweep`, `Roles`, and `cell_key`/`expected_cells`
+(the ISL/OSL/TP/CONC key shape) are vllm_single-specific. When the next
+framework lands (sglang-disagg, distributed, or a training suite), split this
+into a `BaseVariantConfig` (the generic half) + per-framework subclasses
+carrying their own `Params`/`Sweep`/`cell_key`. Extracting now -- with one
+consumer -- would be guessing the seam.
 '''
 
 from __future__ import annotations
@@ -26,14 +36,16 @@ from __future__ import annotations
 import getpass
 import json
 import re
+import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import Literal
 
 
 # ---------- pydantic models ----------
+
 
 class _Forbid(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -68,8 +80,7 @@ class RuntimeSpec(_Allow):
 
 
 class ContainerSpec(_Forbid):
-    enabled: bool
-    launch: bool
+    lifetime: Literal["no_launch", "per_run", "persistent"] = "per_run"
     name: str
     image: str
     runtime: RuntimeSpec
@@ -126,6 +137,12 @@ class VariantConfig(_Forbid):
     schema_version: Literal[1]
     framework: Literal["vllm_single"]
     gpu_arch: str
+    # When false, the threshold-coverage gate warns instead of raising and the
+    # test records metrics without asserting pass/fail (record-only). Use for
+    # un-calibrated shapes (e.g. a throughput characterization whose published
+    # numbers are curves, not tabulated values). Default true keeps the gate
+    # strict for calibrated configs -- no regression to the remediation work.
+    enforce_thresholds: bool = True
     paths: Paths
     model: ModelSpec
     image: ImageSpec
@@ -169,6 +186,10 @@ class VariantConfig(_Forbid):
         Without this, a mistyped/whitespaced threshold key (or a new sweep
         entry without a matching threshold) makes the test silently skip its
         verdict and report a green PASS with zero assertions.
+
+        When `enforce_thresholds` is false the same mismatch is reported as a
+        warning rather than an error -- the config loads as a record-only
+        scaffold (metrics captured, no assertions) instead of failing.
         """
         expected = set(self.expected_cells())
         present = set(self.thresholds.keys())
@@ -180,7 +201,10 @@ class VariantConfig(_Forbid):
         if extra:
             problems.append(f"threshold keys matching no sweep cell (typo?): {extra}")
         if problems:
-            raise ValueError("threshold.json does not match the sweep matrix; " + "; ".join(problems))
+            msg = "threshold.json does not match the sweep matrix; " + "; ".join(problems)
+            if self.enforce_thresholds:
+                raise ValueError(msg)
+            warnings.warn(f"{msg} (enforce_thresholds=false -> record-only)", stacklevel=2)
         return self
 
 
@@ -191,11 +215,13 @@ _PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z0-9_.\-]+)\}")
 
 def _walk_substitute(node, mapping):
     if isinstance(node, str):
+
         def repl(m):
             key = m.group(1)
             if key in mapping:
                 return str(mapping[key])
             return m.group(0)
+
         return _PLACEHOLDER_RE.sub(repl, node)
     if isinstance(node, list):
         return [_walk_substitute(x, mapping) for x in node]
@@ -224,16 +250,26 @@ def _resolve_cluster_mapping(cluster_dict):
 
 # ---------- public API ----------
 
+
 def load_variant(config_path, cluster_dict):
-    """Load and validate a single variant config + its sibling threshold.json."""
+    """Load and validate a single variant config + its sibling threshold file.
+
+    The threshold file is the sole `*threshold.json` next to the config (e.g.
+    `w1_..._threshold.json` beside `w1_..._config.json`), so config and
+    threshold can share a descriptive per-variant prefix.
+    """
     config_path = Path(config_path)
     if not config_path.is_file():
         raise AssertionError(f"variant config not found: {config_path}")
 
     raw = json.loads(config_path.read_text())
-    threshold_path = config_path.parent / "threshold.json"
-    if not threshold_path.is_file():
-        raise AssertionError(f"threshold.json missing next to config: {threshold_path}")
+
+    threshold_candidates = sorted(config_path.parent.glob("*threshold.json"))
+    if not threshold_candidates:
+        raise AssertionError(f"no *threshold.json next to config: {config_path.parent}")
+    if len(threshold_candidates) > 1:
+        raise AssertionError(f"multiple *threshold.json files next to config (ambiguous): {threshold_candidates}")
+    threshold_path = threshold_candidates[0]
     thresholds = json.loads(threshold_path.read_text())
 
     # Pass 1: cluster placeholders ({user-id}) everywhere.
@@ -257,14 +293,9 @@ def load_variant(config_path, cluster_dict):
     flat_map = _flatten_paths({"paths": raw.get("paths", {})})
     raw = _walk_substitute(raw, flat_map)
 
+    # Drop threshold-file comment keys (e.g. "_comment") before coverage check.
+    thresholds = {k: v for k, v in thresholds.items() if not k.startswith("_")}
+
     # Validate sibling thresholds, attach, build VariantConfig.
     raw["thresholds"] = thresholds
     return VariantConfig(**raw)
-
-
-def enumerate_variants(root_dir):
-    """Walk cvs/input/dtni/vllm_single/*/config.json and return sorted list of config paths."""
-    root = Path(root_dir)
-    if not root.is_dir():
-        return []
-    return sorted(p / "config.json" for p in root.iterdir() if p.is_dir() and (p / "config.json").is_file())

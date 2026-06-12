@@ -30,7 +30,6 @@ from __future__ import annotations
 import re
 import shlex
 import time
-from typing import Dict
 
 from cvs.lib import globals
 
@@ -245,7 +244,9 @@ class VllmJob:
         )
         out = self.orch.exec(cmd)
         for host, output in out.items():
-            if re.search(r"(error|fatal):", output or "", re.I) and not re.search(r"already exists", output or "", re.I):
+            if re.search(r"(error|fatal):", output or "", re.I) and not re.search(
+                r"already exists", output or "", re.I
+            ):
                 raise RuntimeError(f"bench_serving clone failed on {host}: {output[-500:]}")
 
     def run_client(self):

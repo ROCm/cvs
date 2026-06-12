@@ -81,10 +81,10 @@ def lifecycle():
 def orch(cluster_dict, variant_config, lifecycle):
     """Construct a ContainerOrchestrator and own ONLY its teardown safety net.
 
-    The actual launch/sshd happen in test_aa_launch_container / test_ab_setup_sshd
+    The actual launch/sshd happen in test_launch_container / test_setup_sshd
     so they appear as timed rows. This fixture builds the object and registers a
-    leak-guard finalizer: if a mid-sweep test fails before test_zz_teardown runs,
-    the container is still torn down here. When test_zz_teardown ran successfully
+    leak-guard finalizer: if a mid-sweep test fails before test_teardown runs,
+    the container is still torn down here. When test_teardown ran successfully
     it sets lifecycle.torn_down, so the finalizer no-ops (no double teardown).
     """
     # OrchestratorConfig.from_configs does a top-level dict.update, so a bare variant
@@ -123,27 +123,6 @@ def inf_res_dict():
     return {}
 
 
-def pytest_generate_tests(metafunc):
-    """Parametrize test_vllm_inference over sequence_combinations × concurrency_levels."""
-    config_file = metafunc.config.getoption("config_file")
-    if not config_file or not os.path.isfile(config_file):
-        return
-    with open(config_file) as fp:
-        raw = json.load(fp)
-    sweep = raw.get("sweep", {})
-    combos = sweep.get("sequence_combinations", [])
-    concs = sweep.get("concurrency_levels", [])
-    cases = []
-    ids = []
-    for combo in combos:
-        default_name = "isl" + combo["isl"] + "_osl" + combo["osl"]
-        for c in concs:
-            cases.append((combo, c))
-            ids.append(combo.get("name", default_name) + "-conc" + str(c))
-    if "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames and cases:
-        metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
-
-
 def pytest_collection_modifyitems(items):
     """Pin the lifecycle order explicitly instead of relying on definition order.
 
@@ -154,12 +133,12 @@ def pytest_collection_modifyitems(items):
     modules keep their relative order.
     """
     rank = {
-        "test_aa_launch_container": 0,
-        "test_ab_setup_sshd": 1,
-        "test_ac_model_fetch": 2,
+        "test_launch_container": 0,
+        "test_setup_sshd": 1,
+        "test_model_fetch": 2,
         "test_vllm_inference": 3,
         "test_print_results_table": 4,
-        "test_zz_teardown": 5,
+        "test_teardown": 5,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
@@ -186,10 +165,7 @@ def pytest_runtest_makereport(item, call):
         import pytest_html
     except ImportError:
         return
-    body = "".join(
-        f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>"
-        for label, value, unit in rows
-    )
+    body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
     html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
     extras = getattr(report, "extras", [])
     extras.append(pytest_html.extras.html(html))

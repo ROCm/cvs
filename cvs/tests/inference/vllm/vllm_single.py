@@ -5,6 +5,8 @@ All rights reserved.
 Parametrized vLLM single-node benchmark suite (replaces the 4 per-model wrappers).
 '''
 
+import json
+import os
 import shlex
 import time
 
@@ -16,6 +18,7 @@ from cvs.lib.inference.vllm_orch import VllmJob
 
 import importlib.util as _ilu
 import pathlib as _pl
+
 _spec = _ilu.spec_from_file_location("_dtni_vllm_shared", _pl.Path(__file__).with_name("_shared.py"))
 _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
@@ -28,6 +31,34 @@ log = globals.log
 # weight set; a stable size across two polls means the fetch settled.
 _FETCH_POLL_COUNT = 80
 _FETCH_POLL_WAIT_S = 30
+
+
+def pytest_generate_tests(metafunc):
+    """Parametrize test_vllm_inference over sequence_combinations × concurrency_levels.
+
+    Lives in the suite module (not conftest) because it parametrizes fixtures
+    only test_vllm_inference consumes -- co-locating the parametrization with
+    its sole consumer. It runs at collection time, before fixtures exist, so it
+    reads the raw config_file JSON directly (it cannot use the variant_config
+    fixture / the typed loader).
+    """
+    config_file = metafunc.config.getoption("config_file")
+    if not config_file or not os.path.isfile(config_file):
+        return
+    with open(config_file) as fp:
+        raw = json.load(fp)
+    sweep = raw.get("sweep", {})
+    combos = sweep.get("sequence_combinations", [])
+    concs = sweep.get("concurrency_levels", [])
+    cases = []
+    ids = []
+    for combo in combos:
+        default_name = "isl" + combo["isl"] + "_osl" + combo["osl"]
+        for c in concs:
+            cases.append((combo, c))
+            ids.append(combo.get("name", default_name) + "-conc" + str(c))
+    if "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames and cases:
+        metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
 
 
 def _num_prompts_for(osl, concurrency):
@@ -45,7 +76,7 @@ def _du_bytes(orch, path):
     return total
 
 
-def test_aa_launch_container(orch, variant_config, lifecycle, request):
+def test_launch_container(orch, variant_config, lifecycle, request):
     """Stage 1: launch the container. Asserts it is independently observed running."""
     t = time.monotonic()
     ok = orch.setup_containers()
@@ -60,7 +91,7 @@ def test_aa_launch_container(orch, variant_config, lifecycle, request):
         pytest.fail(f"container {name} not running after setup_containers()")
 
 
-def test_ab_setup_sshd(orch, lifecycle, request):
+def test_setup_sshd(orch, lifecycle, request):
     """Stage 2: start sshd in the container. Asserts the daemon is reachable on 2224."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -76,7 +107,7 @@ def test_ab_setup_sshd(orch, lifecycle, request):
         pytest.fail("sshd not listening on 2224 after setup_sshd()")
 
 
-def test_ac_model_fetch(orch, variant_config, lifecycle, request):
+def test_model_fetch(orch, variant_config, lifecycle, request):
     """Stage 3: ensure the model is present in the HF cache (mounted models dir).
 
     For a remote pull this is the ~152GB download; the row shows its real
@@ -173,19 +204,24 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
     )
     inf_res_dict[key] = results
 
-    # Per-cell thresholds: thresholds.json layout is `{"ISL=...,OSL=...,TP=...,CONC=...": {metric: spec}}`.
+    # Per-cell thresholds: thresholds layout is `{"ISL=...,OSL=...,TP=...,CONC=...": {metric: spec}}`.
     # The key is built by VariantConfig.cell_key (the same builder the loader uses for its
-    # coverage check), so a present-at-load cell is always present here. A miss is a hard
-    # error -- never a silent skip that would report a green PASS with no assertions.
+    # coverage check). When enforce_thresholds is true a missing cell is a hard error -- never
+    # a silent skip that would report a green PASS with no assertions. When it is false the
+    # config is a record-only scaffold (un-calibrated thresholds): capture the metrics and
+    # skip the verdict.
+    if not variant_config.enforce_thresholds:
+        log.info("enforce_thresholds=false; recorded metrics for cell, skipping verdict")
+        return
     cell = variant_config.cell_key(isl, osl, concurrency)
     cell_thresholds = variant_config.thresholds.get(cell)
     if not cell_thresholds:
-        raise AssertionError(f"no thresholds for cell {cell!r}; threshold.json is out of sync with the sweep")
+        raise AssertionError(f"no thresholds for cell {cell!r}; threshold file is out of sync with the sweep")
     for host, actuals in results.items():
         evaluate_all(actuals, cell_thresholds)
 
 
-def test_zz_teardown(orch, lifecycle, request):
+def test_teardown(orch, lifecycle, request):
     """Final stage: explicit container teardown, timed, asserting it is gone.
 
     Sets lifecycle.torn_down so the orch fixture's leak-guard finalizer no-ops
