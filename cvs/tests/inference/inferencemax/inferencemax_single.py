@@ -81,6 +81,11 @@ def test_inferencemax_inference(
         im_obj.start_inference_client_job()
         im_obj.poll_for_inference_completion()
         im_obj.verify_inference_results()
+        assert im_obj.inference_results_dict, (
+            "inference_results_dict empty after benchmark; log parsing or client run likely failed silently"
+        )
+        for _node, metrics in im_obj.inference_results_dict.items():
+            assert metrics, f"no per-metric rows parsed for node {_node}; check bench_serv_script.log"
     except Exception:
         lifecycle.failed = True
         raise

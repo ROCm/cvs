@@ -6,9 +6,10 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import re
+import shlex
 import time
 
-from cvs.lib.inference.base import InferenceBaseJob
+from cvs.lib.inference.base import InferenceBaseJob, _GIT_CLONE_FAIL_RE
 from cvs.lib.verify_lib import fail_test
 
 
@@ -42,13 +43,21 @@ class InferenceMaxJob(InferenceBaseJob):
 
     def clone_inferencemax_repo(self):
         """Clone InferenceMAX repository."""
-        cmd = f'''docker exec {self.container_name} /bin/bash -c "git clone {self.if_dict['inferencemax_repo']}" '''
+        repo = self.if_dict["inferencemax_repo"]
+        inner = f"git clone {shlex.quote(repo)}"
+        cmd = f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(inner)}"
         out_dict = self.s_phdl.exec(cmd)
         for node in out_dict.keys():
-            if re.search('error|fail', out_dict[node], re.I):
-                fail_test('Errors or failures seen in pulling InferenceMAX repo from Github, pls check')
+            out = out_dict[node] or ""
+            if re.search("already exists", out, re.I):
+                continue
+            if _GIT_CLONE_FAIL_RE.search(out):
+                fail_test("Errors or failures seen in pulling InferenceMAX repo from Github, pls check")
         time.sleep(3)
-        self.s_phdl.exec(f'''docker exec {self.container_name} /bin/bash -c "ls -ld /app/InferenceX" ''')
+        ls_inner = "ls -ld /app/InferenceX"
+        self.s_phdl.exec(
+            f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(ls_inner)}"
+        )
 
     def start_inference_server_job(self):
         """Start InferenceMAX server - clone repo, then call base implementation."""
