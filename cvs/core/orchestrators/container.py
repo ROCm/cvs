@@ -446,14 +446,26 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         - Starts sshd on port 2224
         - Validates SSH daemon started successfully
 
+        The in-container sshd exists solely so MPI (mpirun's ``plm_rsh_args -p
+        2224``) can reach peer ranks on other nodes. A single-node run never
+        distributes over MPI -- it execs directly via ``docker exec`` -- so sshd
+        is dead weight there. On a single-host cluster this is a no-op, which
+        also lets minimal images that ship no ``/usr/sbin/sshd`` run single-node
+        without tripping the start/validate steps below.
+
         Returns:
-            bool: True if SSH setup succeeded on all nodes, False otherwise
+            bool: True if SSH setup succeeded on all nodes (or was skipped as
+            unnecessary for a single-node run), False otherwise
 
         Raises:
             RuntimeError: If no containers are currently running
         """
         if not self.container_id:
             raise RuntimeError("No containers running. Call setup_containers() first.")
+
+        if len(self.hosts) <= 1:
+            self.log.info("Single-node run: skipping in-container sshd setup (no inter-node MPI/SSH needed)")
+            return True
 
         self.log.info(f"Setting up SSH daemon in containers: {self.container_id}")
 
