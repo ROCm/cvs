@@ -10,6 +10,18 @@ from .base import SubcommandPlugin
 from cvs.extension import ExtensionConfig, CORE_PKG_NAME, CORE_TESTS_DIR
 
 
+def _is_discoverable_test_module(filename: str) -> bool:
+    """Return False for pytest helpers and non-suite modules (not ``cvs run`` targets)."""
+    if not filename.endswith(".py") or filename == "__init__.py":
+        return False
+    base = filename[:-3]
+    if base == "conftest":
+        return False
+    if base.startswith("_"):
+        return False
+    return True
+
+
 class ListPlugin(SubcommandPlugin):
     @staticmethod
     def discover_tests():
@@ -44,13 +56,14 @@ class ListPlugin(SubcommandPlugin):
             test_map[pkg_name] = {}
             for root, dirs, files in os.walk(tests_dir):
                 for file in files:
-                    if file.endswith(".py") and file != "__init__.py":
-                        rel_path = os.path.relpath(os.path.join(root, file), tests_dir)
-                        module_parts = os.path.splitext(rel_path)[0].split(os.sep)
-                        # Module path: <tests_path>.<test_name>
-                        module_path = f"{tests_path}." + ".".join(module_parts)
-                        test_name = os.path.splitext(file)[0]
-                        test_map[pkg_name][test_name] = module_path
+                    if not _is_discoverable_test_module(file):
+                        continue
+                    rel_path = os.path.relpath(os.path.join(root, file), tests_dir)
+                    module_parts = os.path.splitext(rel_path)[0].split(os.sep)
+                    # Module path: <tests_path>.<test_name>
+                    module_path = f"{tests_path}." + ".".join(module_parts)
+                    test_name = os.path.splitext(file)[0]
+                    test_map[pkg_name][test_name] = module_path
 
         return test_map
 
