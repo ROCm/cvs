@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "framework": "vllm_single",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/it-share/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "benchmark_scripts_dir": "{shared_fs}/benchmark_server_scripts",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "amd/Llama-3.1-70B-Instruct-FP8-KV",
+    "remote": 0,
+    "precision": "fp8"
+  },
+  "image": {
+    "tag": "rocm/vllm-dev:nightly-sshd",
+    "remote": 1
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "w1_llama31_70b_fp8kv_perf_inference_rocm",
+    "image": "rocm/vllm-dev:nightly-sshd",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "{paths.models_dir}:/models"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "server_script": "llama31-70b-fp8kv_mi300x_vllm.sh"
+    }
+  },
+  "params": {
+    "backend": "vllm",
+    "base_url": "http://0.0.0.0",
+    "port_no": "8888",
+    "dataset_name": "random",
+    "burstiness": "1.0",
+    "seed": "0",
+    "request_rate": "inf",
+    "max_model_length": "2304",
+    "random_range_ratio": "0.8",
+    "random_prefix_len": "0",
+    "tensor_parallelism": "8",
+    "tokenizer_mode": "auto",
+    "percentile_metrics": "ttft,tpot,itl,e2el",
+    "metric_percentiles": "99",
+    "bench_serv_script": "benchmark_serving.py",
+    "num_prompts": "3200",
+    "client_poll_count": "90"
+  },
+  "benchmark_params": {},
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "isl": "128",
+        "osl": "2048",
+        "name": "throughput"
+      }
+    ],
+    "concurrency_levels": [
+      64,
+      128,
+      256
+    ]
+  }
+}
