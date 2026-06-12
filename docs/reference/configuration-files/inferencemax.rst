@@ -22,6 +22,7 @@ Change the parameters as needed in the InferenceMAX configuration file: ``mi300x
 
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
   - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
+  - ``server_script`` is interpreted relative to ``benchmarks/single_node/`` (or ``benchmarks/multi_node/`` when multi-node) inside the cloned ``inferencemax_repo``. It must exist at that path in the repo revision you use; upstream layouts change. On current ``SemiAnalysisAI/InferenceX`` ``main``, MI300X GPT-OSS-style server entrypoints live under subdirectories such as ``fixed_seq_len/`` (for example ``fixed_seq_len/gptoss_fp4_mi300x.sh``). If the path is wrong, the server log shows ``No such file or directory``.
 
 ``mi300x_singlenode_inferencemax.json``
 ========================================
@@ -76,7 +77,7 @@ Here's a code snippet of the ``mi300x_singlenode_inferencemax.json`` file for re
                 "tokenizer_mode": "auto",
                 "percentiles_metrics": "ttft,tpot,itl,e2el",
                 "metric_percentiles": "99",
-                "server_script": "gptoss_fp4_mi300x_docker.sh",
+                "server_script": "fixed_seq_len/gptoss_fp4_mi300x.sh",
                 "bench_serv_script": "benchmark_serving.py",
                 "result_dict": {
                     "output_throughput_per_sec": "4200",
@@ -113,8 +114,8 @@ Use the parameters in this table to configure the InferenceMAX configuration fil
      - 4
      - Number of nodes in the cluster
    * - ``inferencemax_repo``
-     - https://github.com/InferenceMAX/ |br| InferenceMAX.git
-     - Git repository URL for InferenceMAX framework
+     - https://github.com/ |br| SemiAnalysisAI/InferenceX.git
+     - Git repository URL for the InferenceX tree CVS clones into ``/app`` inside the container (the legacy ``InferenceMAX/InferenceMAX`` stub only redirects here; override in JSON if you use a fork or pin a tag)
    * - ``benchmark_script_repo``
      - https://github.com/kimbochen/ |br| bench_serving.git
      - Git repository URL for benchmarking scripts
@@ -194,8 +195,8 @@ Use the parameters in this table to configure the InferenceMAX configuration fil
      - 99
      - Percentile values to compute for metrics (e.g., 99 for 99th percentile)
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.server_script``
-     - gptoss_fp4_mi300x_docker.sh
-     - Script to launch the inference server
+     - fixed_seq_len/ |br| gptoss_fp4_mi300x.sh
+     - Path under ``benchmarks/<single_node|multi_node>/`` to the shell script that launches the inference server inside the clone (must exist in ``inferencemax_repo``)
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``bench_serv_script``
      - benchmark_serving.py
      - Script to run the benchmarking client

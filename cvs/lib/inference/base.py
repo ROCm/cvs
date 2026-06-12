@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import os
 import re
+import shlex
 import time
 
 from cvs.lib import globals
@@ -26,6 +27,17 @@ inference_err_dict = {
 }
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
+
+# bench_serving / vLLM-style client summary: do not treat bare "Failed" substrings as failure (PR #223).
+_BENCH_FAILED_REQUESTS_RE = re.compile(r"Failed\s+requests:\s*(\d+)", re.I)
+_BENCH_CLIENT_TRACEBACK_RE = re.compile(r"Traceback\s*\(most recent call last\):", re.I)
+
+# git clone failures only (avoid matching benign "error" / "failed" words in unrelated log lines).
+_GIT_CLONE_FAIL_RE = re.compile(
+    r"(?:^|\n)(?:fatal:\s|error:\s)|Could not resolve host|Repository not found|"
+    r"Permission denied \(publickey\)|SSL certificate problem",
+    re.I,
+)
 
 
 def textwrap_for_yml(msg_string):
@@ -299,12 +311,16 @@ class InferenceBaseJob:
 
     def clone_bench_serving_repo(self, clone_dir):
         """Clone bench_serving repository for client benchmarks."""
-        cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {clone_dir}; git clone {self.if_dict['benchmark_script_repo']}" '''
+        inner = f"cd {shlex.quote(clone_dir)} && git clone {shlex.quote(self.if_dict['benchmark_script_repo'])}"
+        cmd = f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(inner)}"
         out_dict = self.c_phdl.exec(cmd)
         for node in out_dict.keys():
-            # Ignore "already exists" error - repo was cloned in previous test
-            if re.search('error|fail', out_dict[node], re.I) and not re.search('already exists', out_dict[node], re.I):
-                fail_test('Errors or failures seen in pulling bench_serving repo from Github, pls check')
+            out = out_dict[node] or ""
+            # Ignore "already exists" — repo was cloned in a prior stage.
+            if re.search("already exists", out, re.I):
+                continue
+            if _GIT_CLONE_FAIL_RE.search(out):
+                fail_test("Errors or failures seen in pulling bench_serving repo from Github, pls check")
         time.sleep(3)
 
     def launch_server(self):
@@ -451,11 +467,22 @@ class InferenceBaseJob:
                 cmd_list.append(cmd)
             out_dict = self.c_phdl.exec_cmd_list(cmd_list)
             for node in out_dict.keys():
-                if re.search('Failed', out_dict[node], re.I):
-                    fail_test(f'Failed to run benchmark script on node {node}')
+                log_tail = out_dict[node] or ""
+                if _BENCH_CLIENT_TRACEBACK_RE.search(log_tail):
+                    fail_test(
+                        f"Benchmark client traceback on node {node} "
+                        f"(see bench_serv_script.log); aborting before completion."
+                    )
                     return
-                if not re.search('End-to-end Latency', out_dict[node], re.I):
-                    log.info(f'Waiting {self.default_client_poll_wait_time} secs for next poll')
+                m_fail = _BENCH_FAILED_REQUESTS_RE.search(log_tail)
+                if m_fail and int(m_fail.group(1)) > 0:
+                    fail_test(
+                        f"Benchmark client on node {node} reports "
+                        f"Failed requests: {m_fail.group(1)} (non-zero); see bench_serv_script.log."
+                    )
+                    return
+                if not re.search("End-to-end Latency", log_tail, re.I):
+                    log.info(f"Waiting {self.default_client_poll_wait_time} secs for next poll")
                     time.sleep(self.default_client_poll_wait_time)
 
     def start_inference_server_job(

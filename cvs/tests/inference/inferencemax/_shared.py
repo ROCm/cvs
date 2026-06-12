@@ -1,0 +1,54 @@
+'''
+Copyright 2025 Advanced Micro Devices, Inc.
+All rights reserved.
+
+Shared helpers for the InferenceMax suite (DTNI-style results table; same role as
+``vllm/_shared.py``).
+'''
+
+from tabulate import tabulate
+
+from cvs.lib import globals
+
+log = globals.log
+
+__all__ = ["test_print_results_table"]
+
+
+def test_print_results_table(inf_res_dict):
+    if not inf_res_dict:
+        log.info("inf_res_dict empty, nothing to print")
+        return
+    headers = [
+        "Model",
+        "GPU",
+        "ISL",
+        "OSL",
+        "Policy",
+        "Conc",
+        "Host",
+        "Req/s",
+        "Tok/s out",
+        "Mean TTFT (ms)",
+        "Mean TPOT (ms)",
+    ]
+    rows = []
+    for key, host_dict in inf_res_dict.items():
+        model, gpu, isl, osl, policy, conc = key
+        for host, m in host_dict.items():
+            rows.append(
+                [
+                    model,
+                    gpu,
+                    isl,
+                    osl,
+                    policy,
+                    conc,
+                    host,
+                    m.get("request_throughput_per_sec", "-"),
+                    m.get("output_throughput_per_sec", "-"),
+                    m.get("mean_ttft_ms", "-"),
+                    m.get("mean_tpot_ms", "-"),
+                ]
+            )
+    log.info("\n" + tabulate(rows, headers=headers, tablefmt="github"))
