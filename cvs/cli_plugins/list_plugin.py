@@ -44,7 +44,14 @@ class ListPlugin(SubcommandPlugin):
             test_map[pkg_name] = {}
             for root, dirs, files in os.walk(tests_dir):
                 for file in files:
-                    if file.endswith(".py") and file != "__init__.py":
+                    # Skip pytest infra (conftest.py) and private helpers
+                    # (e.g. _shared.py): they are not selectable suites.
+                    if (
+                        file.endswith(".py")
+                        and file != "__init__.py"
+                        and file != "conftest.py"
+                        and not file.startswith("_")
+                    ):
                         rel_path = os.path.relpath(os.path.join(root, file), tests_dir)
                         module_parts = os.path.splitext(rel_path)[0].split(os.sep)
                         # Module path: <tests_path>.<test_name>
