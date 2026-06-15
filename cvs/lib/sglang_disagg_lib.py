@@ -8,8 +8,10 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import os
 import re
 import time
+from typing import Any
 
 from cvs.lib import globals
+from cvs.lib.model_query_lib import OpenAICompatibleModelClient
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -1317,3 +1319,53 @@ class SglangDisaggPD:
 
         log.info("\n".join(lines))
         return result
+
+    def verify_openai_compatible_http_endpoints(
+        self,
+        *,
+        timeout_s: float = 120.0,
+        chat_max_tokens: int = 8,
+        completion_max_tokens: int = 8,
+    ) -> dict[str, tuple[int, Any]]:
+        """
+        Smoke-test OpenAI-compatible HTTP API on the proxy router:
+        GET /v1/health, GET /v1/models, POST /v1/chat/completions,
+        POST /v1/completions.
+
+        Uses ``proxy_router_serv_port`` and the first proxy host from
+        ``proxy_node``. The caller must run this after the proxy router is up.
+
+        On any non-200 response, calls ``fail_test`` (same pattern as other
+        checks in this class).
+
+        Returns:
+            dict mapping step name to ``(http_status, body)`` for logging.
+        """
+        host = self.proxy_node[0]
+        port = int(self.inf_dict['proxy_router_serv_port'])
+        model_name = self.bp_dict['model']
+        client = OpenAICompatibleModelClient(
+            model_name,
+            port,
+            host=host,
+            timeout_s=timeout_s,
+        )
+        results: dict[str, tuple[int, Any]] = {}
+        results['health'] = client.health()
+        results['models'] = client.list_models()
+        results['chat_completions'] = client.simple_chat(
+            'Reply with exactly one word: OK.',
+            max_tokens=chat_max_tokens,
+        )
+        results['completions'] = client.completions(
+            'The capital of France is',
+            max_tokens=completion_max_tokens,
+        )
+        for step, (code, body) in results.items():
+            if code != 200:
+                fail_test(
+                    f'OpenAI-compatible endpoint check failed step={step!r} '
+                    f'host={host!r} port={port!r} status={code} body={body!r}'
+                )
+        log.info('OpenAI-compatible HTTP endpoints passed: %s', list(results.keys()))
+        return results
