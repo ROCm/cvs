@@ -385,6 +385,11 @@ def test_launch_proxy_router(im_obj):
     im_obj.launch_proxy_router()
     update_test_result()
 
+# Test to validate the OpenAI compatible HTTP endpoints
+def test_openai_compatible_http_endpoints(im_obj):
+    globals.error_list = []
+    im_obj.verify_openai_compatible_http_endpoints()
+    update_test_result()
 
 # Test to run the canned gsm8k benchmark packaged with the container
 def test_run_gsm8k_benchmark_test(im_obj):
