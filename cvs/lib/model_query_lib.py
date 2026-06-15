@@ -20,7 +20,7 @@ class OpenAICompatibleModelClient:
     """
 
     def __init__(
-         self,
+        self,
         model_name: str,
         port: int,
         host: str = "127.0.0.1",
@@ -66,9 +66,7 @@ class OpenAICompatibleModelClient:
                 payload = raw
             return int(e.code), payload
 
-    def health(self) -> tuple[int, Any]:
-        return self._request("GET", "/v1/health")
-
+    
     def list_models(self) -> tuple[int, Any]:
         return self._request("GET", "/v1/models")
 
