@@ -147,7 +147,9 @@ class InferenceBaseJob:
             re.I,
         )
         self.default_server_error_pattern_poll = re.compile(
-            'failed to start|no such file or directory|command not found|cannot access', re.I
+            'failed to start|no such file or directory|command not found|cannot access|'
+            'engine core initialization failed|server died before becoming healthy|failed core proc',
+            re.I,
         )
         self.default_client_wait_time = 120
         self.default_client_poll_count = 20
