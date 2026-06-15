@@ -1344,12 +1344,6 @@ class SglangDisaggPD:
         GET /v1/models, POST /v1/chat/completions,
         POST /v1/completions.
 
-        Uses ``proxy_router_serv_port`` (same port as ``bench_serving``) and by
-        default the first **benchmark** host from ``benchmark_serv_node``, so
-        the request path aligns with loadgen on the benchmark node. Pass
-        ``host`` explicitly to probe another ingress (e.g. the proxy node) from
-        the pytest runner's network.
-
         The caller must run this after the proxy router is up.
 
         On any non-200 response, calls ``fail_test`` (same pattern as other
@@ -1359,7 +1353,7 @@ class SglangDisaggPD:
             dict mapping step name to ``(http_status, body)`` for logging.
         """
         if host is None:
-            host = self.benchmark_serv_node[0]
+            host = self.proxy_node[0]
         port = int(self.inf_dict['proxy_router_serv_port'])
         model_name = self.bp_dict['model']
         client = OpenAICompatibleModelClient(
