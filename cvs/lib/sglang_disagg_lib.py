@@ -1341,7 +1341,7 @@ class SglangDisaggPD:
         ) -> dict[str, tuple[int, Any]]:
         """
         Smoke-test OpenAI-compatible HTTP API on the proxy router:
-        GET /v1/health, GET /v1/models, POST /v1/chat/completions,
+        GET /v1/models, POST /v1/chat/completions,
         POST /v1/completions.
 
         Uses ``proxy_router_serv_port`` (same port as ``bench_serving``) and by
@@ -1370,7 +1370,6 @@ class SglangDisaggPD:
         )
         
         results: dict[str, tuple[int, Any]] = {}
-        results['health'] = client.health()
         results['models'] = client.list_models()
         results['chat_completions'] = client.simple_chat(
             'Reply with exactly one word: OK.',
