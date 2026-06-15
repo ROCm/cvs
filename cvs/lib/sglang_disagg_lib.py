@@ -1448,7 +1448,6 @@ class SglangDisaggPD:
             b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
-                      source /tmp/benchmark_env_script.sh && \
                       echo '{b64}' | base64 -d > /tmp/openai_mq_probe.py && \
                       python3 /tmp/openai_mq_probe.py && \
                       rm -f /tmp/openai_mq_probe.py" '''
