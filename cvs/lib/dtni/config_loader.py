@@ -12,9 +12,12 @@ substitution:
   3. cross-block (`{paths.models_dir}`, etc.) into the rest of the doc
 
 A loaded variant is returned as a `VariantConfig` instance whose `container`
-field matches the dict shape that `cvs.core.orchestrators.factory.OrchestratorConfig`
-already understands (`lifetime`, `name`, `image`, `runtime{name,args}`),
-plus a `thresholds` field carrying the parsed threshold contents.
+field (`lifetime`, `name`, `image`, `runtime`) matches the dict shape that
+`cvs.core.orchestrators.factory.OrchestratorConfig` already understands.
+`runtime` is a nested `RuntimeSpec`, not a flat dict; `container.model_dump()`
+serialises it to the `runtime: {name, args}` shape the factory consumes (the
+vllm conftest does exactly this before building the orchestrator). The result
+also carries a `thresholds` field with the parsed threshold contents.
 
 `model.remote=1` raises NotImplementedError -- schema is present, but the
 download/resolve logic lives in cvs-dtni-v1's `resource_resolver.py` and
@@ -129,10 +132,6 @@ class Params(_Forbid):
     client_poll_count: str = "20"
 
 
-class BenchmarkParams(_Allow):
-    pass
-
-
 class VariantConfig(_Forbid):
     schema_version: Literal[1]
     framework: Literal["vllm_single"]
@@ -149,10 +148,13 @@ class VariantConfig(_Forbid):
     container: ContainerSpec
     roles: Roles
     params: Params
-    benchmark_params: Dict[str, Any] = Field(default_factory=dict)
     sweep: Sweep
     thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
+    # pydantic runs @model_validator(mode="after") hooks in definition order.
+    # This remote check is intentionally first: an unimplemented remote config
+    # fails fast (NotImplementedError) before _check_thresholds_cover_sweep runs,
+    # which is meaningless for a config we are going to reject anyway.
     @model_validator(mode="after")
     def _check_remote_not_implemented(self):
         if self.model.remote == 1:
@@ -242,9 +244,8 @@ def _flatten_paths(d, prefix=""):
 
 
 def _resolve_cluster_mapping(cluster_dict):
-    user = cluster_dict.get("username") or getpass.getuser()
-    if user == "{user-id}":
-        user = getpass.getuser()
+    raw = cluster_dict.get("username") or "{user-id}"
+    user = getpass.getuser() if raw == "{user-id}" else raw
     return {"user-id": user}
 
 
@@ -260,15 +261,15 @@ def load_variant(config_path, cluster_dict):
     """
     config_path = Path(config_path)
     if not config_path.is_file():
-        raise AssertionError(f"variant config not found: {config_path}")
+        raise FileNotFoundError(f"variant config not found: {config_path}")
 
     raw = json.loads(config_path.read_text())
 
     threshold_candidates = sorted(config_path.parent.glob("*threshold.json"))
     if not threshold_candidates:
-        raise AssertionError(f"no *threshold.json next to config: {config_path.parent}")
+        raise FileNotFoundError(f"no *threshold.json next to config: {config_path.parent}")
     if len(threshold_candidates) > 1:
-        raise AssertionError(f"multiple *threshold.json files next to config (ambiguous): {threshold_candidates}")
+        raise ValueError(f"multiple *threshold.json files next to config (ambiguous): {threshold_candidates}")
     threshold_path = threshold_candidates[0]
     thresholds = json.loads(threshold_path.read_text())
 

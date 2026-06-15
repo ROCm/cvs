@@ -60,7 +60,6 @@
     "num_prompts": "3200",
     "client_poll_count": "90"
   },
-  "benchmark_params": {},
   "sweep": {
     "sequence_combinations": [
       {

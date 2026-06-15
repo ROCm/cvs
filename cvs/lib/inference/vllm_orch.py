@@ -251,27 +251,52 @@ class VllmJob:
 
     def run_client(self):
         self._clone_bench_serving("/app")
+        # Build as an arg list and shlex.quote each token: a model id or path
+        # containing a space or $ would otherwise break the inner bash layer
+        # silently. Mirrors the per-field quoting on the server side.
+        args = [
+            "python3",
+            f"bench_serving/{self.bench_serv_script}",
+            "--model",
+            self.model_id,
+            "--backend",
+            self.backend,
+            "--base-url",
+            f"{self.base_url}:{self.port_no}",
+            "--dataset-name",
+            self.dataset_name,
+            "--num-prompts",
+            self.num_prompts,
+            "--random-input-len",
+            self.isl,
+            "--random-output-len",
+            self.osl,
+            "--max-concurrency",
+            self.concurrency,
+            "--request-rate",
+            self.request_rate,
+            "--burstiness",
+            self.burstiness,
+            "--tokenizer-mode",
+            self.tokenizer_mode,
+            "--seed",
+            self.seed,
+            "--random-range-ratio",
+            self.random_range_ratio,
+            "--random-prefix-len",
+            self.random_prefix_len,
+            "--percentile-metrics",
+            self.percentile_metrics,
+            "--ignore-eos",
+            "--save-result",
+            "--result-dir",
+            self.out_dir,
+            "--result-filename",
+            "results",
+        ]
+        bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
         client_cmd = (
-            "source /tmp/server_env_script.sh && cd /app && "
-            f"python3 bench_serving/{self.bench_serv_script} "
-            f"--model {self.model_id} "
-            f"--backend {self.backend} "
-            f"--base-url {self.base_url}:{self.port_no} "
-            f"--dataset-name {self.dataset_name} "
-            f"--num-prompts {self.num_prompts} "
-            f"--random-input-len {self.isl} "
-            f"--random-output-len {self.osl} "
-            f"--max-concurrency {self.concurrency} "
-            f"--request-rate {self.request_rate} "
-            f"--burstiness {self.burstiness} "
-            f"--tokenizer-mode {self.tokenizer_mode} "
-            f"--seed {self.seed} "
-            f"--random-range-ratio {self.random_range_ratio} "
-            f"--random-prefix-len {self.random_prefix_len} "
-            f"--percentile-metrics {self.percentile_metrics} "
-            "--ignore-eos --save-result "
-            f"--result-dir {self.out_dir} --result-filename results "
-            f"> {self.client_log} 2>&1 &"
+            f"source /tmp/server_env_script.sh && cd /app && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
         )
         self.orch.exec("bash -c " + shlex.quote(client_cmd))
 
