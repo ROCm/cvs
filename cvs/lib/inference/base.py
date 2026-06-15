@@ -334,7 +334,10 @@ class InferenceBaseJob:
         # Start the server side inference job
         cmd_list = []
         for i in range(0, int(self.nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash {script_path} > {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file} 2>&1 &" '''
+            log_base = f'{self.log_dir}/{self.get_log_subdir()}/out-node{i}'
+            log_path = f'{log_base}/{log_file}'
+            log_parent = os.path.dirname(log_path).replace('\\', '/')
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {log_parent}; cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash {script_path} > {log_path} 2>&1 &" '''
             cmd_list.append(cmd)
         out_dict = self.s_phdl.exec_cmd_list(cmd_list)
 

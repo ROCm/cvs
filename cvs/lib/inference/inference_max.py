@@ -22,8 +22,8 @@ def _clone_dirname_from_git_url(repo_url: str) -> str:
 class InferenceMaxJob(InferenceBaseJob):
     """InferenceMAX-specific implementation."""
 
-    # Runner preflight: this CVS build supports host-mounted server scripts when
-    # ``benchmark_server_script_path`` is set (same pattern as ``VllmJob``).
+    # Runner preflight: this CVS build supports opt-in host-mounted server scripts
+    # (``use_host_mounted_server_script`` + ``benchmark_server_script_path``).
     uses_local_server_scripts = True
 
     def __init__(self, *args, **kwargs):
@@ -35,8 +35,20 @@ class InferenceMaxJob(InferenceBaseJob):
         )
 
     def _using_host_server_scripts(self) -> bool:
+        """Host-only server launch: opt-in so configs may keep ``benchmark_server_script_path`` for docs or mounts while still cloning InferenceX (e.g. ``cvs run`` without a prior script deploy)."""
+        if not self.if_dict.get('use_host_mounted_server_script'):
+            return False
         p = self.if_dict.get('benchmark_server_script_path')
         return bool(p and str(p).strip())
+
+    def _host_mount_relative_script(self) -> str:
+        """Path to pass to ``bash`` under ``benchmark_server_script_path`` (strip InferenceX-style prefixes if present)."""
+        ss = self.server_script.replace('\\', '/')
+        base = 'single_node' if int(self.nnodes) == 1 else 'multi_node'
+        for prefix in (f'benchmarks/{base}/', 'benchmarks/single_node/', 'benchmarks/multi_node/'):
+            if ss.startswith(prefix):
+                return ss[len(prefix) :]
+        return ss
 
     def get_server_script_directory(self):
         """Script directory: host mount (``benchmark_server_script_path``) or cloned InferenceX tree."""
@@ -46,9 +58,9 @@ class InferenceMaxJob(InferenceBaseJob):
         return f'/app/{name}'
 
     def get_server_script_path(self):
-        """Script path: basename on host mount, or ``benchmarks/<node_layout>/`` under the clone."""
+        """Script path under mount (host mode) or ``benchmarks/<node_layout>/`` under the clone."""
         if self._using_host_server_scripts():
-            return self.server_script
+            return self._host_mount_relative_script()
         base = "single_node" if int(self.nnodes) == 1 else "multi_node"
         return f'benchmarks/{base}/{self.server_script}'
 
