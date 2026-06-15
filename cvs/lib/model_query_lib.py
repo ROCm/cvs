@@ -20,10 +20,10 @@ class OpenAICompatibleModelClient:
     """
 
     def __init__(
-        self,
+         self,
         model_name: str,
         port: int,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         scheme: str = "http",
         timeout_s: float = 60.0,
     ) -> None:
