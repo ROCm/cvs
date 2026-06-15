@@ -23,6 +23,7 @@ Change the parameters as needed in the InferenceMAX configuration file: ``mi300x
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
   - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
   - ``server_script`` is interpreted relative to ``benchmarks/single_node/`` (or ``benchmarks/multi_node/`` when multi-node) inside the cloned ``inferencemax_repo``. It must exist at that path in the repo revision you use; upstream layouts change. On current ``SemiAnalysisAI/InferenceX`` ``main``, MI300X GPT-OSS-style server entrypoints live under subdirectories such as ``fixed_seq_len/`` (for example ``fixed_seq_len/gptoss_fp4_mi300x.sh``). If the path is wrong, the server log shows ``No such file or directory``.
+  - InferenceX single-node scripts typically write under ``/workspace`` (e.g. ``server.log``, ``gpu_metrics.csv``). CVS creates ``/workspace`` inside the container before launching the server; add a volume mapping for ``/workspace`` in ``container_config.volume_dict`` only if you need those files on the host after the run.
 
 ``mi300x_singlenode_inferencemax.json``
 ========================================

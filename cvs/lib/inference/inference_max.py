@@ -75,6 +75,11 @@ class InferenceMaxJob(InferenceBaseJob):
         self.s_phdl.exec(
             f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(ls_inner)}"
         )
+        # InferenceX benchmark scripts expect /workspace for server.log and gpu_metrics.csv
+        # (see benchmark_lib.sh); CVS host-docker runs do not mount it by default.
+        self.s_phdl.exec(
+            f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote('mkdir -p /workspace')}"
+        )
 
     def start_inference_server_job(self):
         """Start InferenceMAX server - clone repo, then call base implementation."""
