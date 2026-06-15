@@ -118,7 +118,7 @@ def hf_token(variant_config):
         return fp.read().strip()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def inf_res_dict():
     return {}
 

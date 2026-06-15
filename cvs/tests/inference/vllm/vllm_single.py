@@ -31,6 +31,7 @@ log = globals.log
 # weight set; a stable size across two polls means the fetch settled.
 _FETCH_POLL_COUNT = 80
 _FETCH_POLL_WAIT_S = 30
+_FETCH_PRESENCE_RETRIES = 5
 
 
 def pytest_generate_tests(metafunc):
@@ -126,8 +127,20 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
     t = time.monotonic()
     orch.exec(f"mkdir -p {shlex.quote(models_dir)}")
 
-    if remote:
-        # Kick a background download into the pinned cache, then poll size.
+    if not remote:
+        # Pre-staged model: nothing to download. Confirm bytes are present,
+        # retrying a few times so a cold/slow mount that reads 0 on the first
+        # du does not false-fail a model that is actually there.
+        final = 0
+        for it in range(_FETCH_PRESENCE_RETRIES):
+            final = _du_bytes(orch, models_dir)
+            log.info("[fetch presence %d] size=%.1fGB", it, final / 1e9)
+            if final > 0:
+                break
+            time.sleep(_FETCH_POLL_WAIT_S)
+    else:
+        # Kick a background download into the pinned cache, then poll size until
+        # it stops growing (two equal readings) or we exhaust the poll budget.
         fetch = (
             f"HF_HUB_CACHE={shlex.quote(models_dir)} "
             f"nohup hf download {shlex.quote(variant_config.model.id)} "
@@ -135,23 +148,21 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
         )
         orch.exec("bash -c " + shlex.quote(fetch))
 
-    prev = -1
-    stable = 0
-    final = _du_bytes(orch, models_dir)
-    for it in range(_FETCH_POLL_COUNT):
-        cur = _du_bytes(orch, models_dir)
-        final = cur
-        log.info("[fetch poll %d] size=%.1fGB", it, cur / 1e9)
-        if cur > 0 and cur == prev:
-            stable += 1
-            if stable >= 2 or not remote:
-                break
-        else:
-            stable = 0
-        prev = cur
-        if not remote:
-            break
-        time.sleep(_FETCH_POLL_WAIT_S)
+        prev = -1
+        stable = 0
+        final = _du_bytes(orch, models_dir)
+        for it in range(_FETCH_POLL_COUNT):
+            cur = _du_bytes(orch, models_dir)
+            final = cur
+            log.info("[fetch poll %d] size=%.1fGB", it, cur / 1e9)
+            if cur > 0 and cur == prev:
+                stable += 1
+                if stable >= 2:
+                    break
+            else:
+                stable = 0
+            prev = cur
+            time.sleep(_FETCH_POLL_WAIT_S)
 
     lifecycle.record(request.node.nodeid, "model_fetch", time.monotonic() - t)
     lifecycle.record(request.node.nodeid, "model_size", final / 1e9, "GB")
@@ -232,6 +243,7 @@ def test_teardown(orch, lifecycle, request):
     t = time.monotonic()
     orch.teardown_containers()
     lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t)
-    lifecycle.torn_down = True
     if orch.verify_containers_running(name):
+        # Leave torn_down False so the orch finalizer retries the teardown.
         pytest.fail(f"container {name} still running after teardown_containers()")
+    lifecycle.torn_down = True

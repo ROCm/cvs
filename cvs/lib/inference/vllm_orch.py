@@ -189,11 +189,11 @@ class VllmJob:
         self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
 
     def start_server(self):
-        cmd = (
-            f"bash -c 'cd {self.scripts_dir} && source /tmp/server_env_script.sh && "
-            f"nohup /bin/bash {self.server_script} > {self.server_log} 2>&1 &'"
+        inner = (
+            f"cd {shlex.quote(self.scripts_dir)} && source /tmp/server_env_script.sh && "
+            f"nohup /bin/bash {shlex.quote(self.server_script)} > {shlex.quote(self.server_log)} 2>&1 &"
         )
-        out = self.orch.exec(cmd)
+        out = self.orch.exec("bash -c " + shlex.quote(inner))
         for host, output in out.items():
             if self.EARLY_FAILURE_RE.search(output or ""):
                 raise RuntimeError(f"vllm server failed to launch on {host}: {output[-500:]}")
@@ -238,6 +238,11 @@ class VllmJob:
     # ---------- client side ----------
 
     def _clone_bench_serving(self, clone_dir="/app"):
+        # bench_serving is a calibration-bearing fork (kimbochen), NOT stock vLLM:
+        # it carries a warmup phase + redefined random range-ratio/seq-length that
+        # our thresholds are tuned against, so the in-image vLLM scripts won't do.
+        # Hardcoded for parity with the legacy path (base.py's benchmark_script_repo
+        # default); cloned at HEAD (unpinned) -- pin if upstream drift ever bites.
         cmd = (
             f"bash -c 'mkdir -p {clone_dir} && cd {clone_dir} && "
             f"(test -d bench_serving || git clone https://github.com/kimbochen/bench_serving.git)'"
