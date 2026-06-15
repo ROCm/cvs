@@ -39,6 +39,9 @@ _GIT_CLONE_FAIL_RE = re.compile(
     re.I,
 )
 
+# Log tail slice for server startup failures (avoid mid-line truncation hiding the real error).
+_SERVER_LOG_ERROR_SNIPPET_CHARS = 2500
+
 
 def textwrap_for_yml(msg_string):
     return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
@@ -143,12 +146,15 @@ class InferenceBaseJob:
         self.default_server_poll_wait_time = 60
         self.default_server_poll_count = server_launch_poll_count
         self.default_server_precheck_error_pattern = re.compile(
-            'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback|failed to start',
+            'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback|failed to start|'
+            'hiperrorlaunchoutofresources|too many resources requested for launch|distbackender',
             re.I,
         )
         self.default_server_error_pattern_poll = re.compile(
             'failed to start|no such file or directory|command not found|cannot access|'
-            'engine core initialization failed|server died before becoming healthy|failed core proc',
+            'engine core initialization failed|server died before becoming healthy|failed core proc|'
+            'hiperrorlaunchoutofresources|too many resources requested for launch|distbackender|'
+            'worker proc .+ died unexpectedly',
             re.I,
         )
         self.default_client_wait_time = 120
@@ -359,7 +365,7 @@ class InferenceBaseJob:
 
         for node, output in out_dict.items():
             if error_pattern.search(output or ''):
-                error_msg = f'Failed to start server on node {node}: {output[-500:]}'
+                error_msg = f'Failed to start server on node {node}: {output[-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
                 fail_test(error_msg)
                 raise Exception(error_msg)
 
@@ -391,7 +397,7 @@ class InferenceBaseJob:
         for node in out_dict.keys():
             log_content = out_dict[node].lower()
             if self.default_server_precheck_error_pattern.search(log_content):
-                error_msg = f'Failed to start server on node {node}: {out_dict[node][-500:]}'
+                error_msg = f'Failed to start server on node {node}: {out_dict[node][-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
                 fail_test(error_msg)
                 raise Exception(error_msg)
 
@@ -410,7 +416,7 @@ class InferenceBaseJob:
 
             for node in out_dict.keys():
                 if self.default_server_error_pattern_poll.search(out_dict[node] or ''):
-                    error_msg = f'Failed to start server on node {node}: {out_dict[node][-500:]}'
+                    error_msg = f'Failed to start server on node {node}: {out_dict[node][-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
                     fail_test(error_msg)
                     raise Exception(error_msg)
 

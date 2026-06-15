@@ -14,6 +14,9 @@ Differences (documented):
     therefore yields an ``InferenceMaxHostContext`` with the same **stage method
     names** as a real orchestrator so tests stay structurally parallel to DTNI
     container suites.
+  * Optional **host-mounted** vLLM server scripts live under
+    ``cvs/input/benchmark_server_scripts/``; see that directory's README for deploy
+    steps and ``use_host_mounted_server_script`` in the inference JSON.
   * No ``test_ab_setup_sshd`` / ``test_ac_model_fetch`` rows (not applicable).
 """
 

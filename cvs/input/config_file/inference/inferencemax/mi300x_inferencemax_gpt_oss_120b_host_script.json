@@ -1,0 +1,59 @@
+{
+    "_comment": "InferenceMax single-node example using CVS host-mounted vLLM server script (see cvs/input/benchmark_server_scripts/). Deploy scripts to GPU nodes before run.",
+    "config": {
+        "container_image": "rocm/utd-private:vllm-0.21.0-ubuntu24.04-py3.13-nightlies-device-all-cdna-rocm7.14.0a20260602-ad7125a43",
+        "container_name": "inference_max_rocm",
+        "nnodes": "1",
+        "use_host_mounted_server_script": true,
+        "benchmark_server_script_path": "/home/{user-id}/benchmark_server_scripts/",
+        "benchmark_script_repo": "https://github.com/kimbochen/bench_serving.git",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "shm_size": "128G",
+        "log_dir": "/home/{user-id}/LOGS",
+        "container_config": {
+            "device_list": ["/dev/dri", "/dev/kfd"],
+            "volume_dict": {
+                "/home/{user-id}": "/home/{user-id}"
+            },
+            "env_dict": {
+                "VLLM_ENFORCE_EAGER": "1"
+            }
+        },
+        "inferencemax_repo": "https://github.com/SemiAnalysisAI/InferenceX.git",
+        "distributed_inference": false,
+        "nic_type": "thor2",
+        "nccl_ib_hca_list": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+        "nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+        "nccl_socket_ifname": "ens51f1np1",
+        "gloo_socket_ifname": "ens51f1np1",
+        "nccl_ib_gid_index": "3",
+        "nccl_debug": "ERROR",
+        "data_cache_dir": "/home/{user-id}/cache"
+    },
+    "benchmark_params": {
+        "gpt-oss-120b": {
+            "backend": "vllm",
+            "base_url": "http://0.0.0.0",
+            "port_no": "8000",
+            "dataset_name": "random",
+            "max_concurrency": "64",
+            "model": "openai/gpt-oss-120b",
+            "num_prompts": "1000",
+            "input_sequence_length": "8192",
+            "output_sequence_length": "1024",
+            "burstiness": "1.0",
+            "seed": "0",
+            "max_model_length": "8192",
+            "random_range_ratio": "0.8",
+            "random_prefix_len": "0",
+            "tensor_parallelism": "8",
+            "tokenizer_mode": "auto",
+            "metric_percentiles": "99",
+            "server_script": "fixed_seq_len/gptoss_fp4_mi300x.sh",
+            "bench_serv_script": "benchmark_serving.py",
+            "percentile_metrics": "ttft,tpot,itl,e2el",
+            "request_rate": "inf",
+            "random_range_ration": "1.0"
+        }
+    }
+}
