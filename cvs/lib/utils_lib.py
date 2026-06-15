@@ -16,6 +16,41 @@ from cvs.lib import globals
 log = globals.log
 
 
+def redact_shell_log_text(text: str) -> str:
+    """
+    Redact secret-like shell assignments from a string for INFO/DEBUG logs only.
+    Remote execution still uses the original command; apply this to log copies.
+    """
+    if not isinstance(text, str) or not text:
+        return text
+    out = text
+    for name in (
+        'HF_TOKEN',
+        'HUGGINGFACE_HUB_TOKEN',
+        'HF_API_KEY',
+        'WANDB_API_KEY',
+        'AWS_SECRET_ACCESS_KEY',
+    ):
+        out = re.sub(
+            rf'(\b(?:export\s+)?{re.escape(name)}=)([^\n\r]+)',
+            r'\1<redacted>',
+            out,
+            flags=re.IGNORECASE,
+        )
+    return out
+
+
+def redact_shell_log_value(obj):
+    """Apply :func:`redact_shell_log_text` to a string or to each string in a list/tuple."""
+    if isinstance(obj, list):
+        return [redact_shell_log_text(x) if isinstance(x, str) else x for x in obj]
+    if isinstance(obj, tuple):
+        return tuple(redact_shell_log_text(x) if isinstance(x, str) else x for x in obj)
+    if isinstance(obj, str):
+        return redact_shell_log_text(obj)
+    return obj
+
+
 def fail_test(msg):
     """
     Record and report a test failure without immediately raising an exception.

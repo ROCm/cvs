@@ -11,6 +11,7 @@ from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.pssh_sharder import PsshSharder
 from cvs.lib.parallel.interfaces import ShardableSshInterface
 from cvs.lib import globals
+from cvs.lib.utils_lib import redact_shell_log_text, redact_shell_log_value
 
 global_log = globals.log
 
@@ -177,11 +178,11 @@ class MultiProcessPssh(ShardableSshInterface):
             self.log.info(f'Host == {host} ==')
             self.log.info('#----------------------------------------------------------#')
             if cmd_list is not None:
-                self.log.debug("%s", cmd_list[idx[host]])
+                self.log.debug("%s", redact_shell_log_text(cmd_list[idx[host]]))
             else:
-                self.log.debug("%s", cmd)
+                self.log.debug("%s", redact_shell_log_text(cmd))
             for line in cmd_output[host].splitlines():
-                self.log.info("%s", line)
+                self.log.info("%s", redact_shell_log_text(line))
 
     def exec(self, cmd, timeout=None, print_console=True, detailed=False):
         """Execute command with automatic sharding if needed."""
@@ -195,16 +196,17 @@ class MultiProcessPssh(ShardableSshInterface):
         else:
             full_cmd = cmd
 
-        self.log.info(f'cmd = {full_cmd}')
+        safe_full = redact_shell_log_text(full_cmd)
+        self.log.info('cmd = %s', safe_full)
 
         # Log command execution
         if self.log:
             if timeout is not None:
                 self.log.debug(
-                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
+                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {safe_full}"
                 )
             else:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {safe_full}")
 
         # Use sharder for sharded execution
         host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
@@ -221,7 +223,7 @@ class MultiProcessPssh(ShardableSshInterface):
         # Log per-host execution completion
         if self.log:
             for host in cmd_output.keys():
-                self.log.debug(f"Command completed on {host}: {cmd}")
+                self.log.debug("Command completed on %s: %s", host, redact_shell_log_text(full_cmd))
 
         return cmd_output
 
@@ -257,7 +259,7 @@ class MultiProcessPssh(ShardableSshInterface):
         command_by_host = dict(zip(cmd_hosts, raw_commands))
         filtered_commands = [command_by_host[h] for h in self.reachable_hosts if h in command_by_host]
 
-        self.log.info("%s", filtered_commands)
+        self.log.info("%s", redact_shell_log_value(filtered_commands))
 
         # Log command list execution
         if self.log:
@@ -293,7 +295,7 @@ class MultiProcessPssh(ShardableSshInterface):
         # Log per-host command execution
         if self.log:
             for host, cmd in zip(cmd_hosts, expanded):
-                self.log.debug(f"Command on {host}: {cmd}")
+                self.log.debug("Command on %s: %s", host, redact_shell_log_text(cmd))
 
         return cmd_output
 

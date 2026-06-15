@@ -526,61 +526,61 @@ class InferenceBaseJob:
         for node in out_dict.keys():
             self.inference_results_dict[node] = {}
             if re.search('Successful requests:', out_dict[node], re.I):
-                match = re.search('Successful requests:\s+([0-9]+)', out_dict[node], re.I)
+                match = re.search(r'Successful requests:\s+([0-9]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['successful_requests'] = match.group(1)
-            if re.search('Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I):
-                match = re.search('Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I)
+            if re.search(r'Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I):
+                match = re.search(r'Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['benchmark_duration'] = match.group(1)
             if re.search('Total input tokens:', out_dict[node], re.I):
-                match = re.search('Total input tokens:\s+([0-9\.]+)', out_dict[node], re.I)
+                match = re.search(r'Total input tokens:\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['total_input_tokens'] = match.group(1)
             if re.search('Total generated tokens:', out_dict[node], re.I):
-                match = re.search('Total generated tokens:\s+([0-9\.]+)', out_dict[node], re.I)
+                match = re.search(r'Total generated tokens:\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['Total generated tokens:'] = match.group(1)
-            if re.search('Request throughput \(req/s\):', out_dict[node], re.I):
-                match = re.search('Request throughput \(req/s\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search(r'Request throughput \(req/s\):', out_dict[node], re.I):
+                match = re.search(r'Request throughput \(req/s\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['request_throughput_per_sec'] = match.group(1)
-            if re.search('Output token throughput \(tok/s\):', out_dict[node], re.I):
-                match = re.search('Output token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search(r'Output token throughput \(tok/s\):', out_dict[node], re.I):
+                match = re.search(r'Output token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['output_throughput_per_sec'] = match.group(1)
-            if re.search('Total Token throughput \(tok/s\):', out_dict[node], re.I):
-                match = re.search('Total Token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search(r'Total Token throughput \(tok/s\):', out_dict[node], re.I):
+                match = re.search(r'Total Token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['total_throughput_per_sec'] = match.group(1)
-            if re.search('Mean TTFT \(ms\):', out_dict[node], re.I):
-                match = re.search('Mean TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search(r'Mean TTFT \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Mean TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['mean_ttft_ms'] = match.group(1)
             if re.search('Median TTFT (ms):', out_dict[node], re.I):
-                match = re.search('Median TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                match = re.search(r'Median TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['median_ttft_ms'] = match.group(1)
             if re.search('P99 TTFT (ms):', out_dict[node], re.I):
-                match = re.search('P99 TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                match = re.search(r'P99 TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_ttft_ms'] = match.group(1)
-            if re.search('Mean TPOT \(ms\)', out_dict[node], re.I):
-                match = re.search('Mean TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search(r'Mean TPOT \(ms\)', out_dict[node], re.I):
+                match = re.search(r'Mean TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['mean_tpot_ms'] = match.group(1)
-            if re.search('Median TPOT \(ms\):', out_dict[node], re.I):
-                match = re.search('Median TPOT \(ms\):\s+([0-9]+)', out_dict[node], re.I)
+            if re.search(r'Median TPOT \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Median TPOT \(ms\):\s+([0-9]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['median_tpot_ms'] = match.group(1)
             if re.search('P99 TPOT (ms):', out_dict[node], re.I):
-                match = re.search('P99 TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                match = re.search(r'P99 TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_tpot_ms'] = match.group(1)
-            if re.search('Mean ITL \(ms\):', out_dict[node], re.I):
-                match = re.search('Mean ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search(r'Mean ITL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Mean ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['mean_itl_ms'] = match.group(1)
-            if re.search('Median ITL \(ms\):', out_dict[node], re.I):
-                match = re.search('Median ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search(r'Median ITL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Median ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['median_itl_ms'] = match.group(1)
-            if re.search('P99 ITL \(ms\):', out_dict[node], re.I):
-                match = re.search('P99 ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search(r'P99 ITL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'P99 ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_itl_ms'] = match.group(1)
-            if re.search('Mean E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('Mean E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search(r'Mean E2EL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Mean E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['mean_e2el_ms'] = match.group(1)
-            if re.search('Median E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('Median E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search(r'Median E2EL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Median E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['median_e2el_ms'] = match.group(1)
-            if re.search('P99 E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('P99 E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search(r'P99 E2EL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'P99 E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_e2el_ms'] = match.group(1)
 
         log.info("%s", self.inference_results_dict)

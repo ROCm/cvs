@@ -12,6 +12,8 @@ configured as `benchmark_server_script_path` in your inference JSON, for example
   **`--enforce-eager`** (via `VLLM_ENFORCE_EAGER`, default `1`) to avoid HIP launch
   resource errors during CUDA graph capture on some stacks. Set `VLLM_ENFORCE_EAGER=0`
   in the container `env_dict` if you need full graph capture performance.
+  The script reads `VLLM_ENFORCE_EAGER` once, then **unsets** it before `exec vllm` so vLLM does
+  not warn that `VLLM_ENFORCE_EAGER` is an unknown variable (only `--enforce-eager` is official).
 - **`gptoss_fp4_mi300.sh`** — thin wrapper that runs the `fixed_seq_len` script.
 
 Deploy the whole `benchmark_server_scripts/` tree so both paths exist. Example:
