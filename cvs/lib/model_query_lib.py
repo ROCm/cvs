@@ -16,7 +16,7 @@ JsonDict = dict[str, Any]
 
 class OpenAICompatibleModelClient:
     """
-    Minimal client for OpenAI-compatible HTTP APIs (models, chat, completions, health).
+    Minimal client for OpenAI-compatible HTTP APIs (models, chat, completions).
     """
 
     def __init__(
