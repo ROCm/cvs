@@ -22,6 +22,10 @@ def _clone_dirname_from_git_url(repo_url: str) -> str:
 class InferenceMaxJob(InferenceBaseJob):
     """InferenceMAX-specific implementation."""
 
+    # Runner preflight: this CVS build supports host-mounted server scripts when
+    # ``benchmark_server_script_path`` is set (same pattern as ``VllmJob``).
+    uses_local_server_scripts = True
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Upstream InferenceMAX org repo is a stub; real tree lives at SemiAnalysisAI/InferenceX (see that README).
@@ -30,13 +34,21 @@ class InferenceMaxJob(InferenceBaseJob):
             'https://github.com/SemiAnalysisAI/InferenceX.git',
         )
 
+    def _using_host_server_scripts(self) -> bool:
+        p = self.if_dict.get('benchmark_server_script_path')
+        return bool(p and str(p).strip())
+
     def get_server_script_directory(self):
-        """InferenceMAX / InferenceX scripts live under ``/app/<clone-dir>/`` inside the container."""
+        """Script directory: host mount (``benchmark_server_script_path``) or cloned InferenceX tree."""
+        if self._using_host_server_scripts():
+            return str(self.if_dict['benchmark_server_script_path']).rstrip('/')
         name = _clone_dirname_from_git_url(self.if_dict.get('inferencemax_repo', ''))
         return f'/app/{name}'
 
     def get_server_script_path(self):
-        """InferenceMAX scripts are in the cloned repo."""
+        """Script path: basename on host mount, or ``benchmarks/<node_layout>/`` under the clone."""
+        if self._using_host_server_scripts():
+            return self.server_script
         base = "single_node" if int(self.nnodes) == 1 else "multi_node"
         return f'benchmarks/{base}/{self.server_script}'
 
@@ -54,6 +66,12 @@ class InferenceMaxJob(InferenceBaseJob):
 
     def clone_inferencemax_repo(self):
         """Clone InferenceX/InferenceMAX repo into ``/app`` inside the container (matches ``get_server_script_directory``)."""
+        if self._using_host_server_scripts():
+            # Server runs from host-mounted scripts only; skip git clone.
+            self.s_phdl.exec(
+                f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote('mkdir -p /workspace')}"
+            )
+            return
         repo = self.if_dict["inferencemax_repo"]
         clone_name = _clone_dirname_from_git_url(repo)
         # Remove legacy stub checkout name; clone under /app so paths match get_server_script_directory().
