@@ -136,7 +136,6 @@ class VllmJob:
         self.base_url = p.base_url
         self.dataset_name = p.dataset_name
         self.backend = p.backend
-        self.bench_serv_script = p.bench_serv_script
 
         self.model_id = variant.model.id
         self.server_script = variant.roles.server.server_script
@@ -153,7 +152,7 @@ class VllmJob:
         # Single-node: one output directory.
         self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0"
         self.server_log = f"{self.out_dir}/{self.server_script}_server.log"
-        self.client_log = f"{self.out_dir}/bench_serv_script.log"
+        self.client_log = f"{self.out_dir}/client.log"
 
         self._precheck_wait = server_precheck_wait_s
         self._warmup_wait = server_warmup_wait_s
@@ -237,31 +236,14 @@ class VllmJob:
 
     # ---------- client side ----------
 
-    def _clone_bench_serving(self, clone_dir="/app"):
-        # bench_serving is a calibration-bearing fork (kimbochen), NOT stock vLLM:
-        # it carries a warmup phase + redefined random range-ratio/seq-length that
-        # our thresholds are tuned against, so the in-image vLLM scripts won't do.
-        # Hardcoded for parity with the legacy path (base.py's benchmark_script_repo
-        # default); cloned at HEAD (unpinned) -- pin if upstream drift ever bites.
-        cmd = (
-            f"bash -c 'mkdir -p {clone_dir} && cd {clone_dir} && "
-            f"(test -d bench_serving || git clone https://github.com/kimbochen/bench_serving.git)'"
-        )
-        out = self.orch.exec(cmd)
-        for host, output in out.items():
-            if re.search(r"(error|fatal):", output or "", re.I) and not re.search(
-                r"already exists", output or "", re.I
-            ):
-                raise RuntimeError(f"bench_serving clone failed on {host}: {output[-500:]}")
-
     def run_client(self):
-        self._clone_bench_serving("/app")
         # Build as an arg list and shlex.quote each token: a model id or path
         # containing a space or $ would otherwise break the inner bash layer
         # silently. Mirrors the per-field quoting on the server side.
         args = [
-            "python3",
-            f"bench_serving/{self.bench_serv_script}",
+            "vllm",
+            "bench",
+            "serve",
             "--model",
             self.model_id,
             "--backend",
@@ -300,9 +282,7 @@ class VllmJob:
             "results",
         ]
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
-        client_cmd = (
-            f"source /tmp/server_env_script.sh && cd /app && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
-        )
+        client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
         self.orch.exec("bash -c " + shlex.quote(client_cmd))
 
     def wait_client_complete(self):
