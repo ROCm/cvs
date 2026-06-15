@@ -260,7 +260,7 @@ class InferenceBaseJob:
                     sleep 2;ibv_devinfo;sleep 2;"'
                 )
                 for node in out_dict.keys():
-                    if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
+                    if not re.search(r'hca_id:\s+bnxt_', out_dict[node], re.I):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
