@@ -8,7 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import os
 import re
 import time
-from typing import Any
+from typing import Any, Optional
 
 from cvs.lib import globals
 from cvs.lib.model_query_lib import OpenAICompatibleModelClient
@@ -34,6 +34,17 @@ err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_bu
 def textwrap_for_yml(msg_string):
     return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
 
+def _as_node_list(value):
+    """
+    Normalize cluster JSON node field to a list of host strings.
+
+    Config may use a single hostname/IP string or a list. ``list(str)``
+    would split into characters (e.g. ``'10.0.0.1'`` -> ``'1'``), breaking
+    SSH and HTTP clients.
+    """
+    if isinstance(value, str):
+        return [value]
+    return list(value)
 
 class SglangDisaggPD:
     def __init__(
@@ -104,8 +115,8 @@ class SglangDisaggPD:
         self.prefill_nnodes = len(self.prefill_node_list)
         self.decode_nnodes = len(self.decode_node_list)
 
-        self.proxy_node = list(self.inf_dict['proxy_router_node'])
-        self.benchmark_serv_node = list(self.inf_dict['benchmark_serv_node'])
+        self.proxy_node = _as_node_list(self.inf_dict['proxy_router_node'])
+        self.benchmark_serv_node = _as_node_list(self.inf_dict['benchmark_serv_node'])
 
         # ------------------------------------------------------------------
         # SSH handlers for each node group
@@ -1321,19 +1332,25 @@ class SglangDisaggPD:
         return result
 
     def verify_openai_compatible_http_endpoints(
-        self,
-        *,
-        timeout_s: float = 120.0,
-        chat_max_tokens: int = 8,
-        completion_max_tokens: int = 8,
-    ) -> dict[str, tuple[int, Any]]:
+            self,
+            *,
+            host: Optional[str] = None,
+            timeout_s: float = 120.0,
+            chat_max_tokens: int = 8,
+            completion_max_tokens: int = 8,
+        ) -> dict[str, tuple[int, Any]]:
         """
         Smoke-test OpenAI-compatible HTTP API on the proxy router:
         GET /v1/health, GET /v1/models, POST /v1/chat/completions,
         POST /v1/completions.
 
-        Uses ``proxy_router_serv_port`` and the first proxy host from
-        ``proxy_node``. The caller must run this after the proxy router is up.
+        Uses ``proxy_router_serv_port`` (same port as ``bench_serving``) and by
+        default the first **benchmark** host from ``benchmark_serv_node``, so
+        the request path aligns with loadgen on the benchmark node. Pass
+        ``host`` explicitly to probe another ingress (e.g. the proxy node) from
+        the pytest runner's network.
+
+        The caller must run this after the proxy router is up.
 
         On any non-200 response, calls ``fail_test`` (same pattern as other
         checks in this class).
@@ -1341,7 +1358,8 @@ class SglangDisaggPD:
         Returns:
             dict mapping step name to ``(http_status, body)`` for logging.
         """
-        host = self.proxy_node[0]
+        if host is None:
+            host = self.benchmark_serv_node[0]
         port = int(self.inf_dict['proxy_router_serv_port'])
         model_name = self.bp_dict['model']
         client = OpenAICompatibleModelClient(
@@ -1350,6 +1368,7 @@ class SglangDisaggPD:
             host=host,
             timeout_s=timeout_s,
         )
+        
         results: dict[str, tuple[int, Any]] = {}
         results['health'] = client.health()
         results['models'] = client.list_models()
