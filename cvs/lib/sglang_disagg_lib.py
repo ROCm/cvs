@@ -267,15 +267,16 @@ class SglangDisaggPD:
             self.nccl_ib_gid_index = 3
             cmd = f'docker exec {self.container_name} /bin/bash -c "sudo \
                     cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
-                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so;" '
+                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
+                    sleep 2; ibv_devinfo; sleep 2;" '
             pout_dict = self.p_phdl.exec(cmd)
             dout_dict = self.d_phdl.exec(cmd)
             for node in pout_dict.keys():
-                if not re.search('hca_id:\s+bnxt_', pout_dict[node], re.I):
+                if not re.search('hca_id:\s+(bnxt_|rocep)', pout_dict[node], re.I):
                     log.info("%s", pout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
             for node in dout_dict.keys():
-                if not re.search('hca_id:\s+bnxt_', dout_dict[node], re.I):
+                if not re.search('hca_id:\s+(bnxt_|rocep)', dout_dict[node], re.I):
                     log.info("%s", dout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
@@ -500,6 +501,7 @@ class SglangDisaggPD:
         cmd_list = []
         prefill_node_list = self.inf_dict['prefill_node_list']
         log.info('%%%% self.prefill_nnodes {}'.format(self.prefill_nnodes))
+        dist_init_addr = f"{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_coordinator_port']}"
         for i in range(0, int(self.prefill_nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.prefill_nnodes}
@@ -514,6 +516,9 @@ class SglangDisaggPD:
                               --kv-cache-dtype {kv_cache_dtype} \
                               --trust-remote-code \
                               --tp {self.bp_dict['tensor_parallelism']} \
+                              --nnodes {self.prefill_nnodes} \
+                              --node-rank {i} \
+                              --dist-init-addr {dist_init_addr} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
@@ -568,25 +573,8 @@ class SglangDisaggPD:
         cmd_list = []
         decode_node_list = self.inf_dict['decode_node_list']
         log.info('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
+        dist_init_addr = f"{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_coordinator_port']}"
         for i in range(0, int(self.decode_nnodes)):
-            # ------------------------------------------------------------------
-            # Construct a command that writes a Decode server launch script
-            # into /tmp/decode_launch_script.sh inside the container
-            #
-            # Key configuration details:
-            #   - NNODES / NODE_RANK: Distributed topology for SGLang
-            #   - disaggregation-mode decode: Run in Decode-only mode
-            #   - disaggregation-ib-device: RDMA device used for KV transfers
-            #   - host / port: Network endpoint for this Decode server
-            #   - dtype / kv-cache-dtype: Compute and KV precision
-            #   - tensor parallelism: Model sharding across GPUs
-            #   - aiter backend: Optimized attention backend for AMD GPUs
-            #   - memory fraction: Static GPU memory reservation
-            #
-            # NOTE:
-            #   The script is written (echo > file), not executed here.
-            #   Execution is handled by a separate orchestration step.
-            # ------------------------------------------------------------------
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.decode_nnodes}
                       export NODE_RANK={i}
@@ -600,6 +588,9 @@ class SglangDisaggPD:
                               --dtype {dtype} \
                               --kv-cache-dtype {kv_cache_dtype} \
                               --tp {self.bp_dict['tensor_parallelism']} \
+                              --nnodes {self.decode_nnodes} \
+                              --node-rank {i} \
+                              --dist-init-addr {dist_init_addr} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
@@ -647,10 +638,12 @@ class SglangDisaggPD:
         """
         log.info('Waiting 120 secs after launching decode script')
         time.sleep(120)
-        for node_no in range(0, self.prefill_nnodes):
-            self.poll_for_server_ready(node_no, 'prefill')
-        for node_no in range(0, self.decode_nnodes):
-            self.poll_for_server_ready(node_no, 'decode')
+        # for node_no in range(0, self.prefill_nnodes):
+        #     self.poll_for_server_ready(node_no, 'prefill')
+        # for node_no in range(0, self.decode_nnodes):
+        #     self.poll_for_server_ready(node_no, 'decode')
+        self.poll_for_server_ready(0, 'prefill')
+        self.poll_for_server_ready(0, 'decode')
 
     def launch_proxy_router(
         self,
@@ -682,18 +675,18 @@ class SglangDisaggPD:
         # Each Prefill server is specified as:
         #   --prefill http://<host>:<port>
         # ------------------------------------------------------------------
-        prefill_str = ''
-        for prefill_node in self.prefill_node_list:
-            prefill_str = prefill_str + f"--prefill http://{prefill_node}:{self.inf_dict['prefill_serv_port']} "
+
+        prefill_str = (
+            f"--prefill http://{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_serv_port']} "
+        )
         # ------------------------------------------------------------------
         # Build Decode endpoint arguments for the router
         #
         # Each Decode server is specified as:
         #   --decode http://<host>:<port>
         # ------------------------------------------------------------------
-        decode_str = ''
-        for decode_node in self.decode_node_list:
-            decode_str = decode_str + f"--decode http://{decode_node}:{self.inf_dict['decode_serv_port']} "
+
+        decode_str = f"--decode http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']} "
         log.info('#================ * * * =========================#')
         log.info('Create Proxy Router launch script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
@@ -837,6 +830,7 @@ class SglangDisaggPD:
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
                       source /tmp/benchmark_env_script.sh && \
+                      pip install --upgrade --no-deps sglang[all] && \
                       python3 -m sglang.bench_serving --backend {i_dict['backend']} \
                       --dataset-name random \
                       --num-prompts {i_dict['num_prompts']} \
@@ -844,7 +838,7 @@ class SglangDisaggPD:
                       --random-output {i_dict['output_length']} \
                       --random-range-ratio {i_dict['random_range_ratio']} \
                       --host 0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']} \
-                      > {self.log_dir}/benchmark_node/benchmark_results.log" '''
+                      > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1" '''
         formatted_cmd = textwrap_for_yml(cmd)
         self.b_phdl.exec(formatted_cmd, timeout=500)
         time.sleep(5)
@@ -881,38 +875,38 @@ class SglangDisaggPD:
         # Prefill server readiness check
         # ------------------------------------------------------------------
         if re.search('prefill', sglang_function):
-            head_node = self.prefill_node_list[0]
             for j in range(1, no_of_iterations):
                 log.info(f'Starting poll iteration {j}')
                 out_dict = self.p_phdl.exec(
                     f'grep -B 20 -A 20 "200 OK" {self.log_dir}/prefill_node{node_no}/prefill_server.log'
                 )
-                if re.search('GET|POST', out_dict[head_node], re.I):
+                target_pnode = self.prefill_node_list[node_no]
+                if re.search('GET|POST', out_dict[target_pnode], re.I):
                     log.info('Wait 60 secs to start serving traffic')
                     time.sleep(60)
-                    # if re.search('fired up and ready to roll', out_dict[head_node], re.I ):
+                    # if re.search('fired up and ready to roll', out_dict[target_pnode], re.I ):
                     #    print('Prefill server {node_no} ready to serve')
                     return
                 else:
                     log.info('Wait for 120 secs and continue polling')
                     time.sleep(120)
-            head_node = self.prefill_node_list[0]
+
             log.warning(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
             fail_test(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
         # ------------------------------------------------------------------
         # Decode server readiness check
         # ------------------------------------------------------------------
         elif re.search('decode', sglang_function):
-            head_node = self.decode_node_list[0]
             for j in range(1, no_of_iterations):
                 log.info(f'Starting poll iteration {j}')
                 out_dict = self.d_phdl.exec(
                     f'grep -B 20 -A 20 "200 OK" {self.log_dir}/decode_node{node_no}/decode_server.log'
                 )
-                if re.search('GET|POST', out_dict[head_node]):
+                target_dnode = self.decode_node_list[node_no]
+                if re.search('GET|POST', out_dict[target_dnode]):
                     log.info('Wait 60 secs to start serving traffic')
                     time.sleep(60)
-                    # if re.search('fired up and ready to roll', out_dict[head_node], re.I ):
+                    # if re.search('fired up and ready to roll', out_dict[target_dnode], re.I ):
                     #    print('Decode server {node_no} ready to serve')
                     return
                 else:
@@ -1034,7 +1028,7 @@ class SglangDisaggPD:
 
         # Scan all prefill nodes
         for j in range(0, int(self.prefill_nnodes)):
-            cmd = f"sudo cat {self.log_dir}/prefill_node{j}/prefill_server.log"
+            cmd = f"sudo tail -500 {self.log_dir}/prefill_node{j}/prefill_server.log"
             cmd_list.append(cmd)
         out_dict = self.p_phdl.exec_cmd_list(cmd_list)
 
@@ -1047,8 +1041,9 @@ class SglangDisaggPD:
                     inference_pass = False
 
         # Scan all decode nodes
+        cmd_list = []
         for j in range(0, int(self.decode_nnodes)):
-            cmd = f"sudo cat {self.log_dir}/decode_node{j}/decode_server.log"
+            cmd = f"sudo tail -500 {self.log_dir}/decode_node{j}/decode_server.log"
             cmd_list.append(cmd)
         out_dict = self.d_phdl.exec_cmd_list(cmd_list)
 
@@ -1259,3 +1254,66 @@ class SglangDisaggPD:
         verify_dmesg_for_errors(self.r_phdl, self.inference_start_time, self.inference_end_time)
         verify_dmesg_for_errors(self.b_phdl, self.inference_start_time, self.inference_end_time)
         log.info("%s", self.inference_results_dict)
+
+    def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
+        """
+        After model load, count occupied GPUs per prefill/decode node via amd-smi.
+        """
+        tp = int(self.bp_dict["tensor_parallelism"])
+
+        def _count_per_node(phdl):
+            per_node = {}
+            for node, payload in phdl.exec("sudo amd-smi metric --json").items():
+                count = 0
+                try:
+                    entries = json.loads(payload.strip())
+                except (json.JSONDecodeError, AttributeError):
+                    log.warning("Failed to parse amd-smi JSON on node %s", node)
+                    per_node[node] = 0
+                    continue
+                if isinstance(entries, dict) and "gpu_data" in entries:
+                    entries = entries["gpu_data"]
+                if not isinstance(entries, list):
+                    per_node[node] = 0
+                    continue
+                for g in entries:
+                    used_mb = g.get("mem_usage", {}).get("used_vram", {}).get("value", 0)
+                    if used_mb > mem_threshold_mb:
+                        count += 1
+                per_node[node] = count
+            return per_node
+
+        prefill_per_node = _count_per_node(self.p_phdl)
+        decode_per_node = _count_per_node(self.d_phdl)
+        occupied_prefill = sum(prefill_per_node.values())
+        occupied_decode = sum(decode_per_node.values())
+
+        result = {
+            "configured_tp": tp,
+            "prefill_per_node": prefill_per_node,
+            "decode_per_node": decode_per_node,
+            "prefill_occupied_gpus": occupied_prefill,
+            "decode_occupied_gpus": occupied_decode,
+            "total_occupied_gpus": occupied_prefill + occupied_decode,
+        }
+
+        lines = [
+            "",
+            f"Configured TP: {tp}",
+            "",
+            "Prefill:",
+        ]
+        for node, count in prefill_per_node.items():
+            lines.append(f"  {node}: {count} occupied GPUs")
+        lines.append(f"  Total: {occupied_prefill} occupied GPUs")
+        lines.append("")
+        lines.append("Decode:")
+        for node, count in decode_per_node.items():
+            lines.append(f"  {node}: {count} occupied GPUs")
+        lines.append(f"  Total: {occupied_decode} occupied GPUs")
+        lines.append("")
+        lines.append("Total hardware GPUs consumed:")
+        lines.append(f"  {occupied_prefill + occupied_decode}")
+
+        log.info("\n".join(lines))
+        return result
