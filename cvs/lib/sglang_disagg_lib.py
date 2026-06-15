@@ -5,6 +5,8 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import base64
+import json
 import os
 import re
 import time
@@ -1331,6 +1333,68 @@ class SglangDisaggPD:
         log.info("\n".join(lines))
         return result
 
+    def _openai_benchmark_container_probe_script(
+            self,
+            port: int,
+            model: str,
+            timeout_s: float,
+            chat_max_tokens: int,
+            completion_max_tokens: int,
+        ) -> str:
+        """
+        Stdlib-only Python run inside the benchmark container (same network
+        view as GSM8K / bench_serving: http://0.0.0.0:<proxy_router_serv_port>).
+        """
+        return '\n'.join(
+            [
+                'import json, urllib.request, urllib.error',
+                f'PORT = {int(port)}',
+                f'TIMEOUT = {float(timeout_s)}',
+                f'CHAT_MAX = {int(chat_max_tokens)}',
+                f'COMP_MAX = {int(completion_max_tokens)}',
+                f'MODEL = {json.dumps(model)}',
+                'BASE = "http://0.0.0.0:%d" % PORT',
+                '',
+                'def req(method, path, body=None):',
+                '    url = BASE + path',
+                '    data = None if body is None else json.dumps(body).encode("utf-8")',
+                '    hdrs = {}',
+                '    if body is not None:',
+                '        hdrs["Content-Type"] = "application/json"',
+                '    r = urllib.request.Request(url, data=data, headers=hdrs, method=method)',
+                '    try:',
+                '        with urllib.request.urlopen(r, timeout=TIMEOUT) as resp:',
+                '            raw = resp.read().decode("utf-8", errors="replace")',
+                '            code = int(getattr(resp, "status", 200))',
+                '            try:',
+                '                return code, json.loads(raw) if raw else {}',
+                '            except json.JSONDecodeError:',
+                '                return code, raw',
+                '    except urllib.error.HTTPError as e:',
+                '        raw = e.read().decode("utf-8", errors="replace")',
+                '        try:',
+                '            return int(e.code), json.loads(raw) if raw else {}',
+                '        except json.JSONDecodeError:',
+                '            return int(e.code), raw',
+                '',
+                'out = {}',
+                'out["models"] = req("GET", "/v1/models")',
+                'out["chat_completions"] = req("POST", "/v1/chat/completions", {',
+                '    "model": MODEL,',
+                '    "messages": [{"role": "user", "content": "Reply with exactly one word: OK."}],',
+                '    "max_tokens": CHAT_MAX,',
+                '    "temperature": 0.0,',
+                '})',
+                'out["completions"] = req("POST", "/v1/completions", {',
+                '    "model": MODEL,',
+                '    "prompt": "The capital of France is",',
+                '    "max_tokens": COMP_MAX,',
+                '    "temperature": 0.0,',
+                '})',
+                'print(json.dumps(out, default=str))',
+            ]
+        )
+
     def verify_openai_compatible_http_endpoints(
             self,
             *,
@@ -1341,38 +1405,81 @@ class SglangDisaggPD:
         ) -> dict[str, tuple[int, Any]]:
         """
         Smoke-test OpenAI-compatible HTTP API on the proxy router:
-        GET /v1/models, POST /v1/chat/completions,
-        POST /v1/completions.
+        GET /v1/models, POST /v1/chat/completions, POST /v1/completions.
+
+        By default runs **inside the benchmark container** on ``b_phdl`` (same
+        pattern as GSM8K / ``bench_serving``): ``source`` benchmark env, then
+        ``http://0.0.0.0:<proxy_router_serv_port>``.
+
+        If ``host`` is set, runs ``OpenAICompatibleModelClient`` from the pytest
+        process to ``http://{host}:<port>`` instead.
 
         The caller must run this after the proxy router is up.
-
-        On any non-200 response, calls ``fail_test`` (same pattern as other
-        checks in this class).
-
-        Returns:
-            dict mapping step name to ``(http_status, body)`` for logging.
         """
-        if host is None:
-            host = self.proxy_node[0]
         port = int(self.inf_dict['proxy_router_serv_port'])
         model_name = self.bp_dict['model']
-        client = OpenAICompatibleModelClient(
-            model_name,
-            port,
-            host=host,
-            timeout_s=timeout_s,
-        )
-        
-        results: dict[str, tuple[int, Any]] = {}
-        results['models'] = client.list_models()
-        results['chat_completions'] = client.simple_chat(
-            'Reply with exactly one word: OK.',
-            max_tokens=chat_max_tokens,
-        )
-        results['completions'] = client.completions(
-            'The capital of France is',
-            max_tokens=completion_max_tokens,
-        )
+
+        if host is not None:
+            log.info('OpenAI endpoint probe from pytest runner host=%r port=%r', host, port)
+            client = OpenAICompatibleModelClient(
+                model_name,
+                port,
+                host=host,
+                timeout_s=timeout_s,
+            )
+            results: dict[str, tuple[int, Any]] = {}
+            results['models'] = client.list_models()
+            results['chat_completions'] = client.simple_chat(
+                'Reply with exactly one word: OK.',
+                max_tokens=chat_max_tokens,
+            )
+            results['completions'] = client.completions(
+                'The capital of France is',
+                max_tokens=completion_max_tokens,
+            )
+        else:
+            probe_src = self._openai_benchmark_container_probe_script(
+                port,
+                model_name,
+                timeout_s,
+                chat_max_tokens,
+                completion_max_tokens,
+            )
+            b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
+            cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+                      mkdir -p {self.log_dir}/benchmark_node; \
+                      source /tmp/benchmark_env_script.sh && \
+                      echo '{b64}' | base64 -d > /tmp/openai_mq_probe.py && \
+                      python3 /tmp/openai_mq_probe.py && \
+                      rm -f /tmp/openai_mq_probe.py" '''
+            formatted_cmd = textwrap_for_yml(cmd)
+            log.info(
+                'OpenAI endpoint probe inside benchmark container (0.0.0.0:%r), same pattern as GSM8K/benchserv',
+                port,
+            )
+            out_dict = self.b_phdl.exec(formatted_cmd, timeout=min(900, int(timeout_s * 4) + 180))
+            bench_host = self.benchmark_serv_node[0]
+            raw_out = out_dict.get(bench_host)
+            if raw_out is None and out_dict:
+                raw_out = next(iter(out_dict.values()))
+            if not raw_out or not str(raw_out).strip():
+                fail_test(
+                    f'OpenAI-compatible probe produced no output on benchmark node {bench_host!r}: {out_dict!r}'
+                )
+            last_line = str(raw_out).strip().splitlines()[-1]
+            try:
+                parsed = json.loads(last_line)
+            except json.JSONDecodeError as e:
+                fail_test(
+                    f'OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}'
+                )
+            results = {}
+            for step, val in parsed.items():
+                if isinstance(val, (list, tuple)) and len(val) == 2:
+                    results[step] = (int(val[0]), val[1])
+                else:
+                    fail_test(f'OpenAI-compatible probe bad shape at {step!r}: {val!r}')
+
         for step, (code, body) in results.items():
             if code != 200:
                 fail_test(
