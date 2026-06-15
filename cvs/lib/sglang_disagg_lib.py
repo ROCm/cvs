@@ -1334,13 +1334,13 @@ class SglangDisaggPD:
         return result
 
     def _openai_benchmark_container_probe_script(
-            self,
-            port: int,
-            model: str,
-            timeout_s: float,
-            chat_max_tokens: int,
-            completion_max_tokens: int,
-        ) -> str:
+        self,
+        port: int,
+        model: str,
+        timeout_s: float,
+        chat_max_tokens: int,
+        completion_max_tokens: int,
+    ) -> str:
         """
         Stdlib-only Python run inside the benchmark container (same network
         view as GSM8K / bench_serving: http://0.0.0.0:<proxy_router_serv_port>).
@@ -1396,13 +1396,13 @@ class SglangDisaggPD:
         )
 
     def verify_openai_compatible_http_endpoints(
-            self,
-            *,
-            host: Optional[str] = None,
-            timeout_s: float = 120.0,
-            chat_max_tokens: int = 8,
-            completion_max_tokens: int = 8,
-        ) -> dict[str, tuple[int, Any]]:
+        self,
+        *,
+        host: Optional[str] = None,
+        timeout_s: float = 120.0,
+        chat_max_tokens: int = 8,
+        completion_max_tokens: int = 8,
+    ) -> dict[str, tuple[int, Any]]:
         """
         Smoke-test OpenAI-compatible HTTP API on the proxy router:
         GET /v1/models, POST /v1/chat/completions, POST /v1/completions.
@@ -1466,19 +1466,28 @@ class SglangDisaggPD:
                 fail_test(
                     f'OpenAI-compatible probe produced no output on benchmark node {bench_host!r}: {out_dict!r}'
                 )
-            last_line = str(raw_out).strip().splitlines()[-1]
+                return {}
+            lines_out = str(raw_out).strip().splitlines()
+            if not lines_out:
+                fail_test(
+                    f'OpenAI-compatible probe empty lines after strip on benchmark node {bench_host!r}: {raw_out!r}'
+                )
+                return {}
+            last_line = lines_out[-1]
             try:
                 parsed = json.loads(last_line)
             except json.JSONDecodeError as e:
                 fail_test(
                     f'OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}'
                 )
+                return {}
             results = {}
             for step, val in parsed.items():
                 if isinstance(val, (list, tuple)) and len(val) == 2:
                     results[step] = (int(val[0]), val[1])
                 else:
                     fail_test(f'OpenAI-compatible probe bad shape at {step!r}: {val!r}')
+                    return {}
 
         for step, (code, body) in results.items():
             if code != 200:
