@@ -1,11 +1,6 @@
 '''
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
-
-InferenceMax single-node suite — same **stage names** as ``vllm_single`` where
-applicable (``test_launch_container``, ``test_inferencemax_inference`` /
-``test_vllm_inference``, ``test_print_results_table``, ``test_teardown``).
-Model keys live under ``benchmark_params`` (see ``inferencemax_benchmark_model_name``).
 '''
 
 import copy
@@ -28,7 +23,6 @@ log = globals.log
 
 
 def test_launch_container(orch, lifecycle, request):
-    """Stage 1: stale cleanup + ``docker run`` on hosts (same role as ``vllm_single.test_launch_container``)."""
     t = time.monotonic()
     ok = orch.setup_containers()
     lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
@@ -55,7 +49,6 @@ def test_inferencemax_inference(
     lifecycle,
     request,
 ):
-    """Parametrized benchmark cell (vLLM analogue: ``test_vllm_inference``)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
@@ -77,10 +70,11 @@ def test_inferencemax_inference(
         distributed_inference=False,
     )
     try:
-        t = time.monotonic()
+        t_server = time.monotonic()
         im_obj.build_server_inference_job_cmd()
         im_obj.start_inference_server_job()
-        lifecycle.record(request.node.nodeid, "server_start", time.monotonic() - t)
+        lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t_server)
+        t_client = time.monotonic()
         im_obj.start_inference_client_job()
         im_obj.poll_for_inference_completion()
         im_obj.verify_inference_results()
@@ -93,8 +87,9 @@ def test_inferencemax_inference(
         lifecycle.failed = True
         raise
 
+    display_model = str(cell.get("model") or model_name)
     key = (
-        model_name,
+        display_model,
         gpu_type,
         str(seq_combo["isl"]),
         str(seq_combo["osl"]),
@@ -102,16 +97,11 @@ def test_inferencemax_inference(
         concurrency,
     )
     inf_res_dict[key] = getattr(im_obj, "inference_results_dict", {}) or {}
-    lifecycle.record(request.node.nodeid, "inference_wall", time.monotonic() - t)
+    lifecycle.record(request.node.nodeid, "client_complete", time.monotonic() - t_client)
     update_test_result()
 
 
 def test_teardown(orch, lifecycle, request):
-    """Final stage: explicit teardown (same contract as ``vllm_single.test_teardown``).
-
-    Sets ``lifecycle.torn_down`` only after the container is confirmed gone so
-    the ``orch`` fixture leak-guard can retry if teardown failed.
-    """
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     t = time.monotonic()
     orch.teardown_containers()

@@ -247,6 +247,11 @@ class InferenceBaseJob:
     def build_server_inference_job_cmd(
         self,
     ):
+        eager_line = (
+            "\n                    export VLLM_ENFORCE_EAGER=1"
+            if self.if_dict.get("vllm_enforce_eager")
+            else ""
+        )
         s_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                     export MODEL={self.bp_dict['model']}
                     export ISL={self.bp_dict['input_sequence_length']}
@@ -258,7 +263,7 @@ class InferenceBaseJob:
                     export HF_TOKEN={self.hf_token}
                     export VLLM_USE_AITER_UNIFIED_ATTENTION=1
                     export VLLM_ROCM_USE_AITER_MHA=0
-                    export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1
+                    export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1{eager_line}
                     export RESULT_FILENAME=results
                     export PORT={self.bp_dict['port_no']}'  > /tmp/server_env_script.sh"
                     '''

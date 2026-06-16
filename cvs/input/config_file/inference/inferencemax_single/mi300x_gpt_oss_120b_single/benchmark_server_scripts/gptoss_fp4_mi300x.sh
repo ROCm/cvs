@@ -37,5 +37,6 @@ exec vllm serve "${MODEL}" \
   --max-model-len "${MAX_MODEL_LEN}" \
   --gpu-memory-utilization "${GPU_MEM}" \
   --block-size 64 \
+  --no-enable-prefix-caching \
   "${EAGER_FLAG[@]}" \
   "$@"

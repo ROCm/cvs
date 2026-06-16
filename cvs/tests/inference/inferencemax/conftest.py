@@ -3,28 +3,6 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 '''
 
-"""
-InferenceMax suite scaffolding — DTNI-style layout (lifecycle hooks, staged tests,
-``orch`` leak-guard, ``pytest_generate_tests`` / collection ordering) aligned with
-``cvs/tests/inference/vllm/conftest.py`` as a reference implementation.
-
-Differences (documented):
-  * Workloads still use **host SSH + docker run/exec** (``InferenceMaxJob`` in
-    ``cvs.lib.inference.inferencemax_orch``), not
-    ``ContainerOrchestrator.exec`` inside an sshd container. The ``orch`` fixture
-    therefore yields an ``InferenceMaxHostContext`` with the same **stage method
-    names** as a real orchestrator so tests stay structurally parallel to DTNI
-    container suites.
-  * Optional sibling ``*threshold.json`` (same ``glob`` discovery as ``load_variant`` in
-    ``cvs.lib.dtni.config_loader``); merged by ``load_inferencemax_suite_raw``.
-  * Optional **host-mounted** vLLM server scripts live under
-    ``cvs/input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts/``;
-    see ``docs/reference/configuration-files/inferencemax.rst`` for deploy steps and
-    ``use_host_mounted_server_script`` in the inference JSON.
-  * No ``test_setup_sshd`` / ``test_model_fetch`` rows (host Docker + InferenceX
-    path; not the orch-in-container flow used by ``vllm_single``).
-"""
-
 import json
 import os
 import re
@@ -47,8 +25,6 @@ log = globals.log
 
 
 class _Lifecycle:
-    """Shared with vLLM pattern: gate skips + teardown-once + per-stage HTML rows."""
-
     def __init__(self):
         self.failed = False
         self.torn_down = False
@@ -59,8 +35,6 @@ class _Lifecycle:
 
 
 class InferenceMaxHostContext:
-    """Host-orchestrated Docker lifecycle with an orchestrator-like surface for tests."""
-
     def __init__(self, cluster_dict, inference_dict, benchmark_params_dict, model_name):
         self.cluster_dict = cluster_dict
         self.inference_dict = inference_dict
@@ -176,7 +150,6 @@ def model_name(suite_raw):
 
 @pytest.fixture(scope="module")
 def orch(cluster_dict, inference_dict, benchmark_params_dict, lifecycle, model_name):
-    """Leak-guard + same yield shape as vLLM; implementation is host Docker."""
     ctx = InferenceMaxHostContext(cluster_dict, inference_dict, benchmark_params_dict, model_name)
     yield ctx
     if not lifecycle.torn_down:
@@ -198,7 +171,7 @@ def inf_res_dict():
 
 
 def pytest_generate_tests(metafunc):
-    """Single sweep cell from legacy ``benchmark_params`` (parity hook with vLLM)."""
+    """Single sweep cell derived from ``benchmark_params`` for collection-time parametrization."""
     if "seq_combo" not in metafunc.fixturenames or "concurrency" not in metafunc.fixturenames:
         return
     config_file = metafunc.config.getoption("config_file")

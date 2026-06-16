@@ -1,9 +1,6 @@
 '''
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
-
-Shared helpers for the InferenceMax suite (DTNI-style results table; same role as
-``vllm/_shared.py``).
 '''
 
 from tabulate import tabulate
@@ -28,9 +25,10 @@ def test_print_results_table(inf_res_dict):
         "Conc",
         "Host",
         "Req/s",
-        "Tok/s out",
+        "Total tok/s",
         "Mean TTFT (ms)",
         "Mean TPOT (ms)",
+        "P99 ITL (ms)",
     ]
     rows = []
     for key, host_dict in inf_res_dict.items():
@@ -46,9 +44,10 @@ def test_print_results_table(inf_res_dict):
                     conc,
                     host,
                     m.get("request_throughput_per_sec", "-"),
-                    m.get("output_throughput_per_sec", "-"),
+                    m.get("total_throughput_per_sec", "-"),
                     m.get("mean_ttft_ms", "-"),
                     m.get("mean_tpot_ms", "-"),
+                    m.get("p99_itl_ms", "-"),
                 ]
             )
     log.info("\n" + tabulate(rows, headers=headers, tablefmt="github"))

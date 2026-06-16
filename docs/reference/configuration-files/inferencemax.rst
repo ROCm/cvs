@@ -16,17 +16,40 @@ The InferenceMAX tests check:
 - **Benchmarking**: Load testing with various concurrency levels and sequence lengths
 - **Result verification**: Expected throughput and latency metrics
 
-InferenceMAX inputs follow the same directory pattern as ``vllm_single``: ``cvs/input/config_file/inference/inferencemax_single/<variant>/`` with a suite JSON passed as ``--config_file`` (typically ``<variant>_config.json``). Optional pass/fail numbers live in the **sole** ``*threshold.json`` in that directory when present (same ``glob`` rule as ``load_variant`` in ``cvs.lib.dtni.config_loader``; merged by ``load_inferencemax_suite_raw``). For example, MI300X GPT-OSS 120B single-node uses ``mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json`` plus ``mi300x_gpt_oss_120b_single_threshold.json``. A preserved MI355x reference lives at ``mi355x_inferencemax_gpt_oss_120b_single/`` with the same naming pattern; verify ``server_script`` against your InferenceX revision.
+InferenceMAX inputs use per-variant directories under ``cvs/input/config_file/inference/inferencemax_single/<variant>/`` with a suite JSON passed as ``--config_file`` (typically ``<variant>_config.json``). Optional pass/fail numbers live in the **sole** ``*threshold.json`` in that directory when present (same ``glob`` rule as ``load_variant`` in ``cvs.lib.dtni.config_loader``; merged by ``load_inferencemax_suite_raw``). For example, MI300X GPT-OSS 120B single-node uses ``mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json`` plus ``mi300x_gpt_oss_120b_single_threshold.json``. A preserved MI355x reference lives at ``mi355x_inferencemax_gpt_oss_120b_single/`` with the same naming pattern; verify ``server_script`` against your InferenceX revision.
 
 .. note::
 
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
   - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
   - ``server_script`` is interpreted relative to ``benchmarks/single_node/`` (or ``benchmarks/multi_node/`` when multi-node) inside the cloned ``inferencemax_repo``. It must exist at that path in the repo revision you use; upstream layouts change. On current ``SemiAnalysisAI/InferenceX`` ``main``, MI300X GPT-OSS-style server entrypoints often live under ``fixed_seq_len/`` (for example ``fixed_seq_len/gptoss_fp4_mi300x.sh``). CVS ships a **flat** ``benchmark_server_scripts/`` tree (``gptoss_fp4_mi300x.sh`` at the top level); when ``use_host_mounted_server_script`` is set, ``cvs.lib.inference.inferencemax_orch.InferenceMaxJob`` maps ``fixed_seq_len/`` in ``server_script`` to that layout. If the path is wrong, the server log shows ``No such file or directory``.
-  - InferenceX single-node scripts typically write under ``/workspace`` (e.g. ``server.log``, ``gpu_metrics.csv``). CVS creates ``/workspace`` inside the container before launching the server; add a volume mapping for ``/workspace`` in ``container_config.volume_dict`` only if you need those files on the host after the run.
-  - Host-mount server wrappers for GPT-OSS MI300X (optional ``use_host_mounted_server_script``) ship with the variant at ``cvs/input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts/``; rsync that directory to ``benchmark_server_script_path`` on the node. Use the variant's ``*_config.json`` in the same folder as ``--config_file`` for ``cvs run inferencemax_single``.
+  - InferenceX single-node scripts typically write under ``/workspace`` (e.g. ``server.log``, ``gpu_metrics.csv``). CVS creates ``/workspace`` inside the container before launching the server; add a volume mapping for ``/workspace`` in ``container_config.volume_dict`` only if you need those files on the host after the run. For vLLM 0.21+ nightlies, upstream ``benchmarks/single_node/fixed_seq_len/gptoss_fp4_mi300x.sh`` invokes ``vllm serve`` **without** ``--enforce-eager``, so graph capture can still run even when ``vllm_enforce_eager`` adds ``VLLM_ENFORCE_EAGER=1`` to the env; the shipped MI300X suite defaults ``use_host_mounted_server_script`` so the CVS wrapper passes ``--enforce-eager`` on the CLI.
+  - Host-mount server wrappers for GPT-OSS MI300X ship under ``cvs/input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts/``. The shipped ``mi300x_gpt_oss_120b_single_config.json`` sets ``benchmark_server_script_path`` to ``auto`` so ``InferenceMaxJob`` resolves that directory next to the installed ``cvs`` package (works for editable installs and ``site-packages`` as long as the run host mounts the parent of that tree, e.g. full ``/home/{user-id}``). Set an explicit absolute path, or rsync the directory to a stable location and point ``benchmark_server_script_path`` there, if auto-resolution fails.
   - **Thresholds**: optional ``*threshold.json`` in the variant directory (same discovery as ``load_variant`` in ``cvs.lib.dtni.config_loader``: exactly one ``*threshold.json`` if present; multiple files is an error). Merged by ``load_inferencemax_suite_raw``. Keys must match :meth:`~cvs.lib.inference.base.InferenceBaseJob.verify_inference_results` — ``ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>`` (string values as in JSON). You can instead keep ``result_dict`` inline in the suite JSON only when no threshold file is used.
   - **Which model block runs**: if ``benchmark_params`` has a single top-level model key (for example ``gpt-oss-120b``), that block is used automatically. If you add more than one model object under ``benchmark_params``, set a top-level string ``benchmark_model`` to the key you want ``inferencemax_single`` to run (validated by ``cvs.lib.dtni.config_loader.inferencemax_benchmark_model_name``).
+
+Pytest and HTML layout (inferencemax_single)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :widths: 10 35 55
+   :header-rows: 1
+
+   * - Stage
+     - Test
+     - Notes
+   * - 1
+     - ``test_launch_container``
+     - Host ``docker_lib`` launch; records ``container_launch``.
+   * - 2
+     - ``test_inferencemax_inference``
+     - Parametrized cell; records ``server_ready`` then ``client_complete``.
+   * - 3
+     - ``test_print_results_table``
+     - Session results grid from ``inf_res_dict``.
+   * - 4
+     - ``test_teardown``
+     - Explicit teardown; sets ``lifecycle.torn_down`` after verify.
 
 ``mi300x_singlenode_inferencemax.json``
 ========================================
@@ -142,12 +165,15 @@ Use the parameters in this table to configure the InferenceMAX configuration fil
    * - ``log_dir``
      - ``/home/{user-id}/LOGS``
      - Directory where inference logs are stored
+   * - ``vllm_enforce_eager``
+     - (omit / false)
+     - When true, CVS adds ``export VLLM_ENFORCE_EAGER=1`` to ``/tmp/server_env_script.sh`` before the InferenceX server script runs, which typically disables CUDA graph capture and avoids many ROCm + vLLM nightly failures during engine startup (may reduce throughput).
    * - ``container_config.`` |br| ``device_list``
      - Values: |br| - ``"/dev/dri"`` |br| - ``"/dev/kfd"``
      - List of device paths to mount in the container for GPU access
    * - ``container_config.`` |br| ``volume_dict``
-     - ``{"/home/{user-id}": "/home/{user-id}"}``
-     - Dictionary mapping host paths to container paths for volume mounts
+     - ``{"/home/{user-id}": "/home/{user-id}"}`` plus optional |br| ``"/home/{user-id}/LOGS/inference-max/workspace": "/workspace"``
+     - Host to container volume mounts. Map ``{log_dir}/inference-max/workspace`` to ``/workspace`` so InferenceX vLLM artifacts (for example ``server.log``, ``gpu_metrics.csv``) stay on the host after teardown.
    * - ``/home/{user-id}``
      - ``/home/{user-id}``
      - User home directory mount

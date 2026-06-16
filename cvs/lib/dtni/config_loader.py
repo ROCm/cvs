@@ -12,12 +12,7 @@ substitution:
   2. self-reference within `paths` (e.g. `{shared_fs}`)
   3. cross-block (`{paths.models_dir}`, etc.) into the rest of the doc
 
-Also exposes :func:`load_inferencemax_suite_raw` for InferenceMax suite JSON:
-same ``*threshold.json`` sibling discovery as :func:`load_variant` (glob in the
-variant directory; multiple matches is an error; missing file is allowed for
-InferenceMax), with InferenceMax-specific ``result_dict`` merge, and
-:func:`inferencemax_benchmark_model_name` to resolve which ``benchmark_params``
-block ``inferencemax_single`` runs.
+Also exposes :func:`load_inferencemax_suite_raw` and :func:`inferencemax_benchmark_model_name` for InferenceMax suite JSON (threshold sibling rules share :func:`load_variant` glob semantics).
 
 A loaded variant is returned as a `VariantConfig` instance whose `container`
 field (`lifetime`, `name`, `image`, `runtime`) matches the dict shape that
