@@ -127,3 +127,109 @@ def log_openai_probe_results(results: dict[str, tuple[int, Any]], logger: Any) -
                 logger.info("Body: %s", body)
         else:
             logger.info("Body: %s", body)
+
+# Verify OpenAI compatible probe results
+def check_openai_compatible_probe_results(
+    results: dict[str, tuple[int, Any]],
+    *,
+    port: Any,
+    logger: Optional[Any] = None,
+) -> tuple[bool, Optional[str]]:
+    """
+    Each step: HTTP 200, non-null JSON object body, and minimal useful content —
+    models list for ``model_endpoint``; for chat/completion/structured, top-level
+    ``model``, ``choices``, and non-empty text or assistant content (structured:
+    JSON object with title/author/year/genre).
+    """
+    failures: list[str] = []
+
+    def _fail(detail: str) -> None:
+        failures.append(detail)
+        if logger is not None:
+            logger.info(
+                "OpenAI-compatible probe check FAILED: %s port=%r",
+                detail,
+                port,
+            )
+
+    for step, (code, body) in results.items():
+        title = OPENAI_PROBE_STEP_TITLES.get(step, step)
+        if code != 200:
+            _fail(f"{title} (step={step!r}): HTTP status={code} body={body!r}")
+            continue
+        if body is None:
+            _fail(f"{title}: response body is None")
+            continue
+        if not isinstance(body, dict):
+            _fail(f"{title}: body is not a JSON object ({type(body).__name__})")
+            continue
+
+        if step == "model_endpoint":
+            data = body.get("data")
+            if not isinstance(data, list) or not data:
+                _fail(f"{title}: missing or empty models list")
+                continue
+            first = data[0]
+            if not isinstance(first, dict) or not str(
+                first.get("id") or first.get("model") or ""
+            ).strip():
+                _fail(f"{title}: no model id in models response")
+            continue
+
+        if not str(body.get("model") or "").strip():
+            _fail(f"{title}: response has no model field")
+            continue
+
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            _fail(f"{title}: missing or empty choices")
+            continue
+        ch0 = choices[0]
+        if not isinstance(ch0, dict):
+            _fail(f"{title}: choices[0] is not an object")
+            continue
+
+        if step == "completion_endpoint":
+            if not str(ch0.get("text") or "").strip():
+                _fail(f"{title}: empty completion text")
+            continue
+
+        if step in ("chat_completion_endpoint", "structured_output_book"):
+            msg = ch0.get("message")
+            if not isinstance(msg, dict):
+                _fail(f"{title}: choices[0].message is not an object")
+                continue
+            content = msg.get("content")
+            if content is None or not str(content).strip():
+                _fail(f"{title}: empty assistant content")
+                continue
+            if step == "structured_output_book":
+                try:
+                    obj = json.loads(str(content))
+                except json.JSONDecodeError as e:
+                    _fail(f"{title}: assistant content is not JSON ({e!r})")
+                    continue
+                if not isinstance(obj, dict):
+                    _fail(f"{title}: parsed content is not a JSON object")
+                    continue
+                for key in ("title", "author", "year", "genre"):
+                    if key not in obj:
+                        _fail(f"{title}: JSON missing {key!r}")
+                        break
+                    v = obj[key]
+                    if key == "year":
+                        if isinstance(v, (int, float)):
+                            continue
+                        if not str(v).strip():
+                            _fail(f"{title}: JSON year empty")
+                            break
+                    elif not str(v).strip():
+                        _fail(f"{title}: JSON field {key!r} empty")
+                        break
+            continue
+
+    if failures:
+        return False, (
+            f"OpenAI-compatible probe failed port={port!r}: " + " | ".join(failures)
+        )
+    return True, None
