@@ -1,10 +1,11 @@
 {
-    "_comment": "ISL+OSL must fit 8192 context (7168+1024=8192). CVS expects percentile_metrics (not percentiles_metrics). For vLLM 0.21+ nightlies, InferenceX upstream gptoss_fp4_mi300x.sh calls vllm serve without --enforce-eager, so CUDA graph capture still runs and VLLM_ENFORCE_EAGER alone does not help; this suite defaults use_host_mounted_server_script to the CVS wrapper (CLI --enforce-eager). benchmark_server_script_path \"auto\" uses checkout cvs/input/.../benchmark_server_scripts when present, else stages the bundled wrapper under {log_dir}/inference-max/host_scripts_bundled/. Override with an absolute path if needed. volume_dict maps LOGS/.../workspace to /workspace for server.log on the host. env_dict mirrors key ROCm exports from the InferenceX script.",
+    "_comment": "ISL+OSL must fit 8192 context (7168+1024=8192). CVS expects percentile_metrics (not percentiles_metrics). For vLLM 0.21+ nightlies, InferenceX upstream gptoss_fp4_mi300x.sh calls vllm serve without --enforce-eager, so CUDA graph capture still runs and VLLM_ENFORCE_EAGER alone does not help; this suite defaults use_host_mounted_server_script to the CVS wrapper (CLI --enforce-eager). benchmark_server_script_path \"auto\" uses checkout cvs/input/.../benchmark_server_scripts when present (see host_benchmark_scripts_relpath), else stages under {log_dir}/inference-max/host_scripts_staged/<variant>/ (copy from checkout or bundled). Override with an absolute path if needed. volume_dict maps LOGS/.../workspace to /workspace for server.log on the host. env_dict mirrors key ROCm exports from the InferenceX script.",
     "config": {
         "container_image": "rocm/utd-private:vllm-0.21.0-ubuntu24.04-py3.13-nightlies-device-all-cdna-rocm7.14.0a20260602-ad7125a43",
         "container_name": "inference_max_rocm",
         "use_host_mounted_server_script": true,
         "benchmark_server_script_path": "auto",
+        "host_benchmark_scripts_relpath": "input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts",
         "vllm_enforce_eager": true,
         "nnodes": "1",
         "inferencemax_repo": "https://github.com/SemiAnalysisAI/InferenceX.git",

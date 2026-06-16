@@ -9,12 +9,14 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import os
 import re
 import shlex
+import shutil
 import time
 from pathlib import Path
 from typing import Optional
 
 from cvs.lib import globals
 from cvs.lib.inference.base import InferenceBaseJob
+from cvs.lib.inference.inferencemax_host_scripts import bundled_script_body
 from cvs.lib.verify_lib import fail_test
 
 log = globals.log
@@ -30,88 +32,35 @@ _GIT_CLONE_FAIL_RE = re.compile(
 
 _SERVER_LOG_ERROR_SNIPPET_CHARS = 2500
 
-# Staged under {log_dir}/inference-max/host_scripts_bundled/ when ``benchmark_server_script_path``
-# is auto and checkout ``cvs/input/.../benchmark_server_scripts`` is absent. Keep aligned with
-# ``cvs/input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts/gptoss_fp4_mi300x.sh``.
-_BUNDLED_GPTOSS_FP4_MI300X_SH = r'''#!/usr/bin/env bash
-# Server-only entrypoint for CVS InferenceMax + vLLM on MI300-class GPUs.
-# Single entrypoint for this variant (legacy gptoss_fp4_mi300.sh alias removed).
-# CVS runs: source /tmp/server_env_script.sh; nohup bash this_script ...
-# The benchmark client is started separately by CVS (bench_serving).
-#
-# Default: --enforce-eager to reduce HIP "too many resources requested for launch"
-# failures during CUDA graph capture on some ROCm + vLLM + AITER stacks.
-# Disable with container env: VLLM_ENFORCE_EAGER=0
-
-set -euo pipefail
-
-: "${MODEL:?}" "${PORT:?}" "${TP:?}" "${MAX_MODEL_LEN:?}"
-
-# Bash: ${VAR:-1} does not apply default when VAR is set-but-empty (e.g. from env_dict).
-# Normalize whitespace-only to default, then drop the var so vLLM does not log
-# "Unknown vLLM environment variable: VLLM_ENFORCE_EAGER" (only the CLI flag is official).
-_raw_eager="${VLLM_ENFORCE_EAGER-}"
-[[ -z "${_raw_eager//[[:space:]]/}" ]] && _raw_eager=1
-ENFORCE_EAGER="${_raw_eager}"
-unset VLLM_ENFORCE_EAGER || true
-
-EAGER_FLAG=()
-case "${ENFORCE_EAGER}" in
-  1|true|TRUE|yes|YES) EAGER_FLAG=(--enforce-eager) ;;
-  *) ;;
-esac
-
-GPU_MEM="${VLLM_GPU_MEMORY_UTIL:-0.92}"
-
-echo "$(date -Is) [cvs gptoss_fp4_mi300x] vllm serve model=${MODEL} tp=${TP} max_model_len=${MAX_MODEL_LEN} port=${PORT} enforce_eager=${ENFORCE_EAGER} eager_flag_count=${#EAGER_FLAG[@]}"
-
-exec vllm serve "${MODEL}" \
-  --host 0.0.0.0 \
-  --port "${PORT}" \
-  --tensor-parallel-size "${TP}" \
-  --max-model-len "${MAX_MODEL_LEN}" \
-  --gpu-memory-utilization "${GPU_MEM}" \
-  --block-size 64 \
-  --no-enable-prefix-caching \
-  "${EAGER_FLAG[@]}" \
-  "$@"
-'''
-
 
 def _clone_dirname_from_git_url(repo_url: str) -> str:
     part = (repo_url or "").rstrip("/").rsplit("/", 1)[-1]
     return part.removesuffix(".git") if part.endswith(".git") else part or "InferenceX"
 
 
-_REL_BENCH_SCRIPTS = Path(
-    "input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts"
-)
+def _wrapper_dir_ok(d: Path, entry_basename: str) -> bool:
+    return d.is_dir() and (d / entry_basename).is_file()
 
 
-def _gptoss_wrapper_dir_ok(d: Path) -> bool:
-    return d.is_dir() and (d / "gptoss_fp4_mi300x.sh").is_file()
-
-
-def _discover_host_benchmark_scripts_dir() -> Optional[Path]:
+def _discover_host_benchmark_scripts_dir(relpath: Path, entry_basename: str) -> Optional[Path]:
     """
-    Return the directory containing gptoss_fp4_mi300x.sh inside the installed ``cvs`` tree.
+    Return the host directory containing ``entry_basename`` under the ``cvs`` package tree.
 
-    Checks the usual ``cvs/input/.../benchmark_server_scripts`` layout (editable installs and
-    checkouts) and rglob under the package root. Plain ``pip install`` wheels often omit
-    ``cvs/input/**`` because that tree is not a discovered subpackage; callers fall back to
-    :func:`_stage_bundled_gptoss_wrapper`.
+    ``relpath`` is relative to the ``cvs`` package root (e.g.
+    ``input/.../mi300x_gpt_oss_120b_single/benchmark_server_scripts``). When checkout ``input/``
+    is missing, callers copy or materialize into :func:`_stage_auto_host_scripts_dir`.
     """
     import cvs as _cvs_module
 
     root = Path(_cvs_module.__file__).resolve().parent
     candidates: list[Path] = [
-        root / _REL_BENCH_SCRIPTS,
-        Path(__file__).resolve().parents[2] / _REL_BENCH_SCRIPTS,
+        root / relpath,
+        Path(__file__).resolve().parents[2] / relpath,
     ]
     try:
         from importlib.resources import files
 
-        t = files("cvs").joinpath(*_REL_BENCH_SCRIPTS.parts)
+        t = files("cvs").joinpath(*relpath.parts)
         if t.is_dir():
             candidates.append(Path(str(t)))
     except (ModuleNotFoundError, FileNotFoundError, NotImplementedError, OSError, TypeError, ValueError):
@@ -127,54 +76,86 @@ def _discover_host_benchmark_scripts_dir() -> Optional[Path]:
         if key in seen:
             continue
         seen.add(key)
-        if _gptoss_wrapper_dir_ok(rp):
+        if _wrapper_dir_ok(rp, entry_basename):
             return rp
 
     try:
-        for sh in root.rglob("gptoss_fp4_mi300x.sh"):
+        for sh in root.rglob(entry_basename):
             parent = sh.parent
-            if parent.name == "benchmark_server_scripts" and _gptoss_wrapper_dir_ok(parent):
+            if parent.name == "benchmark_server_scripts" and _wrapper_dir_ok(parent, entry_basename):
                 return parent.resolve()
     except OSError:
         pass
     return None
 
 
-def _stage_bundled_gptoss_wrapper(if_dict: dict) -> str:
-    """Write bundled ``gptoss_fp4_mi300x.sh`` under ``{log_dir}/inference-max/host_scripts_bundled``."""
+def _stage_bundle_subdir(relpath: Path) -> str:
+    """Stable subdirectory name under host_scripts_staged/ (per variant)."""
+    parts = relpath.parts
+    if len(parts) >= 2 and parts[-1] == "benchmark_server_scripts":
+        return parts[-2]
+    return "default"
+
+
+def _stage_auto_host_scripts_dir(if_dict: dict, relpath: Path, entry_basename: str) -> str:
+    """
+    Materialize ``entry_basename`` under ``{log_dir}/inference-max/host_scripts_staged/<variant>/``.
+
+    Always use a directory under ``log_dir`` so ``docker exec`` can ``cd`` there even when discovery
+    pointed at a path that exists only on the pytest host (e.g. misleading ``site-packages`` hits)
+    or differs from what compute nodes see. Copy from checkout when present, else bundled body.
+    """
     log_dir = str(if_dict.get("log_dir") or "").strip().replace("\\", "/")
     if not log_dir:
         msg = (
-            "benchmark_server_script_path is auto but host scripts were not found under the cvs "
-            "install and log_dir is empty; cannot stage bundled gptoss_fp4_mi300x.sh."
+            "benchmark_server_script_path is auto but log_dir is empty; cannot stage host server scripts."
         )
         fail_test(msg)
         raise FileNotFoundError(msg)
-    dest = Path(log_dir) / "inference-max" / "host_scripts_bundled"
+    dest = Path(log_dir) / "inference-max" / "host_scripts_staged" / _stage_bundle_subdir(relpath)
     try:
         dest.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         fail_test(f"Cannot create {dest}: {exc}")
         raise
-    script_path = dest / "gptoss_fp4_mi300x.sh"
-    script_path.write_text(_BUNDLED_GPTOSS_FP4_MI300X_SH, encoding="utf-8", newline="\n")
+
+    out_script = dest / entry_basename
+    found = _discover_host_benchmark_scripts_dir(relpath, entry_basename)
+    if found is not None and _wrapper_dir_ok(found, entry_basename):
+        try:
+            shutil.copy2(found / entry_basename, out_script)
+        except OSError as exc:
+            fail_test(f"Cannot copy {found / entry_basename} to {out_script}: {exc}")
+            raise
+        log.info("Staged host server script %s from %s to %s", entry_basename, found, dest)
+    else:
+        body = bundled_script_body(entry_basename)
+        if not body:
+            msg = (
+                f"No checkout or bundled host server script for {entry_basename!r}. "
+                "Add it to ``cvs.lib.inference.inferencemax_host_scripts.BUNDLED_SERVER_SCRIPTS``, "
+                "or set benchmark_server_script_path to a host directory that contains this file, "
+                "or install CVS with ``cvs/input/.../benchmark_server_scripts`` present."
+            )
+            fail_test(msg)
+            raise FileNotFoundError(msg)
+        out_script.write_text(body, encoding="utf-8", newline="\n")
+        log.info("Staged bundled host server script %s under %s", entry_basename, dest)
+
     try:
-        script_path.chmod(0o755)
+        out_script.chmod(0o755)
     except OSError:
         pass
-    log.info(
-        "Using bundled gptoss_fp4_mi300x.sh staged at %s (checkout cvs/input/... not on this install)",
-        dest,
-    )
     return str(dest.resolve())
 
 
-def _resolved_host_benchmark_scripts_dir(if_dict: dict) -> str:
+def _resolved_host_benchmark_scripts_dir(if_dict: dict, relpath: Path, entry_basename: str) -> str:
     """
-    Host directory containing gptoss_fp4_mi300x.sh (bind-mounted into the container).
+    Host directory containing ``entry_basename`` for ``docker exec`` ``cd``.
 
     If ``benchmark_server_script_path`` is set to a non-empty string other than
-    ``auto``, that path is used. Otherwise discover under the installed ``cvs`` package.
+    ``auto``, that path is used. Otherwise materialize under ``log_dir`` (see
+    :func:`_stage_auto_host_scripts_dir`) so the path is always under the mounted home tree.
     """
     raw = if_dict.get("benchmark_server_script_path")
     if raw is not None:
@@ -182,10 +163,7 @@ def _resolved_host_benchmark_scripts_dir(if_dict: dict) -> str:
         if s and s.lower() != "auto":
             return s.rstrip("/")
 
-    found = _discover_host_benchmark_scripts_dir()
-    if found is not None:
-        return str(found)
-    return _stage_bundled_gptoss_wrapper(if_dict)
+    return _stage_auto_host_scripts_dir(if_dict, relpath, entry_basename)
 
 
 class InferenceMaxJob(InferenceBaseJob):
@@ -196,6 +174,10 @@ class InferenceMaxJob(InferenceBaseJob):
         self.if_dict.setdefault(
             'inferencemax_repo',
             'https://github.com/SemiAnalysisAI/InferenceX.git',
+        )
+        self.if_dict.setdefault(
+            'host_benchmark_scripts_relpath',
+            'input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts',
         )
         self.default_server_precheck_error_pattern = re.compile(
             'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback|failed to start|'
@@ -226,7 +208,12 @@ class InferenceMaxJob(InferenceBaseJob):
 
     def get_server_script_directory(self):
         if self._using_host_server_scripts():
-            return _resolved_host_benchmark_scripts_dir(self.if_dict).rstrip('/')
+            rel = Path(str(self.if_dict.get("host_benchmark_scripts_relpath", "")).strip().replace("\\", "/"))
+            if not rel.parts:
+                fail_test("host_benchmark_scripts_relpath is empty")
+                raise ValueError("host_benchmark_scripts_relpath is empty")
+            entry = os.path.basename(self._host_mount_relative_script())
+            return _resolved_host_benchmark_scripts_dir(self.if_dict, rel, entry).rstrip('/')
         name = _clone_dirname_from_git_url(self.if_dict.get('inferencemax_repo', ''))
         return f'/app/{name}'
 
