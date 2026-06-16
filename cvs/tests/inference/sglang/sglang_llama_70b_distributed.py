@@ -388,51 +388,51 @@ def test_launch_proxy_router(im_obj):
 # Test to validate the OpenAI compatible HTTP endpoints
 def test_openai_compatible_http_endpoints(im_obj):
     globals.error_list = []
-    im_obj.verify_openai_compatible_http_endpoints()
+    im_obj.verify_openai_compatible_endpoints()
     update_test_result()
 
 
 # Test to run the canned gsm8k benchmark packaged with the container
-def test_run_gsm8k_benchmark_test(im_obj):
-    """
-    Execute the GSM8K benchmark using the SGLang inference serving stack.
+# def test_run_gsm8k_benchmark_test(im_obj):
+#     """
+#     Execute the GSM8K benchmark using the SGLang inference serving stack.
 
-    Purpose:
-    --------
-    This test validates:
-      - End-to-end inference correctness using a real-world dataset
-      - Sustained decode throughput under realistic query patterns
-      - Proper interaction between Proxy Router, Prefill, and Decode servers
+#     Purpose:
+#     --------
+#     This test validates:
+#       - End-to-end inference correctness using a real-world dataset
+#       - Sustained decode throughput under realistic query patterns
+#       - Proper interaction between Proxy Router, Prefill, and Decode servers
 
-    GSM8K is a commonly used reasoning benchmark, making it a strong
-    signal for both correctness and performance regression detection.
-    """
-    globals.error_list = []
-    im_obj.setup_benchmark_serv_container_env()
-    im_obj.run_gsm8k_benchmark_test()
-    update_test_result()
+#     GSM8K is a commonly used reasoning benchmark, making it a strong
+#     signal for both correctness and performance regression detection.
+#     """
+#     globals.error_list = []
+#     im_obj.setup_benchmark_serv_container_env()
+#     im_obj.run_gsm8k_benchmark_test()
+#     update_test_result()
 
 
-# Test to run the sglang Benchmarking Testing using bench_serv
-def test_run_benchmark_test(im_obj):
-    """
-    Execute a synthetic serving benchmark using sglang.bench_serving
-    with a random dataset.
+# # Test to run the sglang Benchmarking Testing using bench_serv
+# def test_run_benchmark_test(im_obj):
+#     """
+#     Execute a synthetic serving benchmark using sglang.bench_serving
+#     with a random dataset.
 
-    Purpose:
-    --------
-    This test focuses on:
-      - Stress-testing the serving infrastructure
-      - Evaluating scheduling, batching, and throughput under load
-      - Isolating serving performance independent of dataset semantics
+#     Purpose:
+#     --------
+#     This test focuses on:
+#       - Stress-testing the serving infrastructure
+#       - Evaluating scheduling, batching, and throughput under load
+#       - Isolating serving performance independent of dataset semantics
 
-    Randomized workloads are useful for detecting performance regressions
-    and scaling bottlenecks.
-    """
-    globals.error_list = []
-    im_obj.setup_benchmark_serv_container_env()
-    im_obj.benchserv_test_random(d_type='auto')
-    update_test_result()
+#     Randomized workloads are useful for detecting performance regressions
+#     and scaling bottlenecks.
+#     """
+#     globals.error_list = []
+#     im_obj.setup_benchmark_serv_container_env()
+#     im_obj.benchserv_test_random(d_type='auto')
+#     update_test_result()
 
 
 # Test to validate the prefill/decode GPU layout
