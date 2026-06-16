@@ -39,7 +39,7 @@ from cvs.lib.utils_lib import (
     resolve_cluster_config_placeholders,
     resolve_test_config_placeholders,
 )
-from cvs.lib.dtni.config_loader import load_inferencemax_suite_raw
+from cvs.lib.dtni.config_loader import inferencemax_benchmark_model_name, load_inferencemax_suite_raw
 from cvs.lib.verify_lib import update_test_result
 
 log = globals.log
@@ -169,9 +169,14 @@ def lifecycle():
 
 
 @pytest.fixture(scope="module")
-def orch(cluster_dict, inference_dict, benchmark_params_dict, lifecycle):
+def model_name(suite_raw):
+    return inferencemax_benchmark_model_name(suite_raw)
+
+
+@pytest.fixture(scope="module")
+def orch(cluster_dict, inference_dict, benchmark_params_dict, lifecycle, model_name):
     """Leak-guard + same yield shape as vLLM; implementation is host Docker."""
-    ctx = InferenceMaxHostContext(cluster_dict, inference_dict, benchmark_params_dict, "gpt-oss-120b")
+    ctx = InferenceMaxHostContext(cluster_dict, inference_dict, benchmark_params_dict, model_name)
     yield ctx
     if not lifecycle.torn_down:
         log.info("orch fixture leak-guard: tearing down InferenceMax containers")
@@ -199,7 +204,8 @@ def pytest_generate_tests(metafunc):
     if not config_file or not os.path.isfile(config_file):
         return
     raw = load_inferencemax_suite_raw(config_file)
-    bp = raw.get("benchmark_params", {}).get("gpt-oss-120b", {})
+    mname = inferencemax_benchmark_model_name(raw)
+    bp = raw.get("benchmark_params", {}).get(mname, {})
     combo = {
         "isl": str(bp.get("input_sequence_length", "8192")),
         "osl": str(bp.get("output_sequence_length", "1024")),

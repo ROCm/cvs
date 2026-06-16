@@ -47,6 +47,7 @@ def test_inferencemax_inference(
     gpu_type,
     inference_dict,
     benchmark_params_dict,
+    model_name,
     seq_combo,
     concurrency,
     inf_res_dict,
@@ -57,7 +58,7 @@ def test_inferencemax_inference(
         pytest.skip("a prior lifecycle stage failed")
 
     bp_run = copy.deepcopy(benchmark_params_dict)
-    cell = bp_run["gpt-oss-120b"]
+    cell = bp_run[model_name]
     cell["input_sequence_length"] = str(seq_combo["isl"])
     cell["output_sequence_length"] = str(seq_combo["osl"])
     cell["max_concurrency"] = str(concurrency)
@@ -66,7 +67,7 @@ def test_inferencemax_inference(
     im_obj = InferenceMaxJob(
         c_phdl=orch.c_phdl,
         s_phdl=orch.s_phdl,
-        model_name="gpt-oss-120b",
+        model_name=model_name,
         inference_config_dict=inference_dict,
         benchmark_params_dict=bp_run,
         hf_token=hf_token,
@@ -91,7 +92,7 @@ def test_inferencemax_inference(
         raise
 
     key = (
-        "gpt-oss-120b",
+        model_name,
         gpu_type,
         str(seq_combo["isl"]),
         str(seq_combo["osl"]),

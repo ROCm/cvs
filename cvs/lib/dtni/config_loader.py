@@ -15,7 +15,9 @@ substitution:
 Also exposes :func:`load_inferencemax_suite_raw` for InferenceMax suite JSON:
 same ``*threshold.json`` sibling discovery as :func:`load_variant` (glob in the
 variant directory; multiple matches is an error; missing file is allowed for
-InferenceMax), with InferenceMax-specific ``result_dict`` merge.
+InferenceMax), with InferenceMax-specific ``result_dict`` merge, and
+:func:`inferencemax_benchmark_model_name` to resolve which ``benchmark_params``
+block ``inferencemax_single`` runs.
 
 A loaded variant is returned as a `VariantConfig` instance whose `container`
 field (`lifetime`, `name`, `image`, `runtime`) matches the dict shape that
@@ -333,6 +335,43 @@ def _merge_inferencemax_threshold_into_benchmark_params(suite: Dict[str, Any], t
             model_cfg["result_dict"] = per_model[model]
         elif default_rd is not None:
             model_cfg["result_dict"] = copy.deepcopy(default_rd)
+
+
+def inferencemax_benchmark_model_name(suite: Dict[str, Any]) -> str:
+    """Pick the ``benchmark_params`` sub-key the single-node InferenceMax suite runs.
+
+    If the suite JSON has a top-level string ``benchmark_model``, that key must
+    exist under ``benchmark_params`` (useful when multiple model blocks are
+    present). Otherwise there must be exactly one non-underscore key under
+    ``benchmark_params``.
+    """
+    bp = suite.get("benchmark_params")
+    if not isinstance(bp, dict) or not bp:
+        raise ValueError("InferenceMax suite JSON must contain a non-empty benchmark_params object")
+
+    explicit = suite.get("benchmark_model")
+    if explicit is not None and str(explicit).strip():
+        name = str(explicit).strip()
+        if name not in bp:
+            raise ValueError(
+                f'suite "benchmark_model" is {name!r} but that key is missing from benchmark_params '
+                f"(available: {sorted(bp.keys())!r})"
+            )
+        if not isinstance(bp[name], dict):
+            raise ValueError(f"benchmark_params[{name!r}] must be an object")
+        return name
+
+    keys = [k for k in bp if not str(k).startswith("_")]
+    if not keys:
+        raise ValueError("benchmark_params has no model keys (only _*-prefixed entries?)")
+    if len(keys) > 1:
+        raise ValueError(
+            "benchmark_params has multiple model keys "
+            f"{sorted(keys)!r}; set top-level \"benchmark_model\" to the key this suite should run."
+        )
+    if not isinstance(bp[keys[0]], dict):
+        raise ValueError(f"benchmark_params[{keys[0]!r}] must be an object")
+    return keys[0]
 
 
 def load_inferencemax_suite_raw(config_path) -> Dict[str, Any]:
