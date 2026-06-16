@@ -1342,7 +1342,7 @@ class SglangDisaggPD:
         log.info("\n".join(lines))
         return result
 
-    def _openai_benchmark_container_probe_script(
+    def openai_probe_script(
             self,
             port: int,
             model: str,
@@ -1413,7 +1413,7 @@ class SglangDisaggPD:
             ]
         )
 
-    def _log_openai_probe_results(self, results: dict[str, tuple[int, Any]]) -> None:
+    def log_openai_probe_results(self, results: dict[str, tuple[int, Any]]) -> None:
         """One headed block per endpoint for logs / HTML capture."""
         for step, (code, body) in results.items():
             title = OPENAI_PROBE_STEP_TITLES.get(step, step)
@@ -1467,7 +1467,7 @@ class SglangDisaggPD:
                 max_tokens=structured_book_max_tokens,
             )
         else:
-            probe_src = self._openai_benchmark_container_probe_script(
+            probe_src = self.openai_probe_script(
                 port,
                 model_name,
                 timeout_s,
@@ -1493,13 +1493,13 @@ class SglangDisaggPD:
                 raw_out = next(iter(out_dict.values()))
             if not raw_out or not str(raw_out).strip():
                 fail_test(
-                    f'OpenAI-compatible probe produced no output on benchmark node {bench_host!r}: {out_dict!r}'
+                    f'OpenAI-compatible probe produced no output node {bench_host!r}: {out_dict!r}'
                 )
                 return {}
             lines_out = str(raw_out).strip().splitlines()
             if not lines_out:
                 fail_test(
-                    f'OpenAI-compatible probe empty lines after strip on benchmark node {bench_host!r}: {raw_out!r}'
+                    f'OpenAI-compatible probe empty lines after strip on node {bench_host!r}: {raw_out!r}'
                 )
                 return {}
             last_line = lines_out[-1]
@@ -1518,7 +1518,7 @@ class SglangDisaggPD:
                     fail_test(f'OpenAI-compatible probe bad shape at {step!r}: {val!r}')
                     return {}
 
-        self._log_openai_probe_results(results)
+        self.log_openai_probe_results(results)
 
         failed = False
         for step, (code, body) in results.items():
