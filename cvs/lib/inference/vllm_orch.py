@@ -73,13 +73,26 @@ class VllmJob:
     """
 
     READINESS_RE = re.compile(r"Application startup complete|Uvicorn running|Started server", re.I)
-    COMPLETION_RE = re.compile(r"End-to-end Latency", re.I)
+    # The "Serving Benchmark Result" banner is printed unconditionally at the end
+    # of every completed `vllm bench serve` run. Do NOT key off a metric header
+    # like "End-to-end Latency": stock prints those only when the metric is in
+    # --percentile-metrics, so a config omitting e2el would never complete.
+    COMPLETION_RE = re.compile(r"Serving Benchmark Result", re.I)
     # bench_serving ALWAYS prints "Failed requests: N" in its summary, so a bare
     # "Failed" match is a false positive on every successful run. Only a NONZERO
     # count is a real failure.
     FAILED_REQUESTS_RE = re.compile(r"Failed requests:\s+([0-9]+)", re.I)
     # A client-side crash (no summary at all) shows up as a Python traceback.
     CLIENT_CRASH_RE = re.compile(r"Traceback \(most recent call last\)", re.I)
+    # A launch failure (bad/renamed flag, missing `bench` subcommand, vllm not on
+    # PATH) makes the CLI exit before any summary. argparse errors are NOT Python
+    # tracebacks and carry no 'Failed requests:' line, so without this the poll
+    # loop would spin to its cap (~90 min) before failing. Patterns are narrow
+    # CLI-failure markers, not bare 'error:'.
+    CLIENT_LAUNCH_FAIL_RE = re.compile(
+        r"unrecognized arguments|invalid choice|error: argument |command not found|: No such file or directory",
+        re.I,
+    )
     # Narrow launch-failure markers only. Bare "error:"/"exception:"/"traceback" are
     # NOT included: vLLM/ROCm startup routinely logs benign lines containing them
     # (deprecation notes, ignored-exception handlers, optional-probe failures), and
@@ -179,7 +192,6 @@ class VllmJob:
             "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
             "export VLLM_ROCM_USE_AITER_MHA=0",
             "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
-            "export RESULT_FILENAME=results",
             f"export PORT={shlex.quote(str(self.port_no))}",
         ]
         env_script = "\n".join(env_lines) + "\n"
@@ -295,8 +307,8 @@ class VllmJob:
             for host, output in out.items():
                 txt = output or ""
                 done.append(bool(self.COMPLETION_RE.search(txt)))
-                # A crash before the summary -> hard failure now.
-                if self.CLIENT_CRASH_RE.search(txt):
+                # A crash or launch failure before the summary -> hard failure now.
+                if self.CLIENT_CRASH_RE.search(txt) or self.CLIENT_LAUNCH_FAIL_RE.search(txt):
                     failed.append((host, txt[-500:]))
                 else:
                     # The summary always reports a failed-request count; only a
