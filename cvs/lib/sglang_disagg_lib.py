@@ -1428,3 +1428,66 @@ class SglangDisaggPD:
                 list(results.keys()),
             )
         return results
+
+    def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
+        """
+        Run EleutherAI ``lm-eval`` on **hellaswag** against the OpenAI-compatible
+        proxy (same style as GSM8K: ``docker exec`` into the benchmark container).
+
+        """
+        log.info('#================ * * * =========================#')
+        log.info('lm-eval HellaSwag benchmark')
+        log.info('#================ * * * =========================#')
+
+        i_dict = self.bp_dict['inference_tests']['lm_eval_hellaswag']
+        port = self.inf_dict['proxy_router_serv_port']
+        model_id = self.bp_dict['model']
+        lm_eval_model = i_dict.get('lm_eval_model', 'local-completions')
+        path_suffix = (
+            '/v1/chat/completions'
+            if 'chat' in lm_eval_model.lower()
+            else '/v1/completions'
+        )
+        base_url = f'http://0.0.0.0:{port}{path_suffix}'
+        num_concurrent = i_dict.get('num_concurrent', '4')
+        tasks = i_dict.get('tasks', 'hellaswag')
+        num_fewshot = i_dict.get('num_fewshot', '5')
+        batch_size = i_dict.get('batch_size', 'auto')
+        limit = str(i_dict.get('limit', '')).strip()
+        limit_arg = f' --limit {limit}' if limit else ''
+        extra_model_args = str(i_dict.get('extra_model_args', '')).strip()
+        model_args = (
+            f'model={model_id},base_url={base_url},num_concurrent={num_concurrent},'
+            f'tokenized_requests=False'
+        )
+        if extra_model_args:
+            model_args = f'{model_args},{extra_model_args}'
+        model_args_q = shlex.quote(model_args)
+        exec_timeout = int(i_dict.get('exec_timeout_sec', '7200'))
+        log_path = f'{self.log_dir}/benchmark_node/lm_eval_hellaswag.log'
+
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+                  mkdir -p {self.log_dir}/benchmark_node; \
+                  source /tmp/benchmark_env_script.sh && \
+                  python3 -m lm_eval \
+                  --model {lm_eval_model} \
+                  --model_args {model_args_q} \
+                  --tasks {tasks} \
+                  --num_fewshot {num_fewshot} \
+                  --batch_size {batch_size}{limit_arg} \
+                  2>&1 | tee {log_path}" '''
+        formatted_cmd = textwrap_for_yml(cmd)
+        out_dict = self.b_phdl.exec(formatted_cmd, timeout=exec_timeout)
+        time.sleep(5)
+        for node, text in out_dict.items():
+            if not text:
+                fail_test(f'lm-eval HellaSwag produced no output on node {node!r}')
+            elif re.search(r'Traceback \(most recent call last\)', text):
+                fail_test(
+                    f'lm-eval HellaSwag failed on node {node!r}: Python traceback in output'
+                )
+            elif not re.search(r'hellaswag', text, re.I):
+                fail_test(
+                    f'lm-eval HellaSwag output on node {node!r} missing hellaswag results '
+                    f'(see {log_path})'
+                )
