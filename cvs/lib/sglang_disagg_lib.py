@@ -30,6 +30,16 @@ inference_err_dict = {
     'app_err': 'Service Unavailable|No decode workers available|No prefill workers available|Please check if decode servers are configured and healthy|Please check if prefill servers are configured and healthy|Cannot access gated repo|You must have access to it and be authenticated',
 }
 
+ _OPENAI_PROBE_STEP_TITLES = {
+        "model_endpoint": "Model endpoint — GET /v1/models",
+        "chat_completion_endpoint": "Chat completion endpoint — POST /v1/chat/completions",
+        "completion_endpoint": "Completion endpoint — POST /v1/completions",
+        "structured_output_book": (
+            "Structured output (book) — POST /v1/chat/completions "
+            "(response_format: json_object)"
+        ),
+    }
+
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
 
 
@@ -1334,66 +1344,92 @@ class SglangDisaggPD:
         return result
 
     def _openai_benchmark_container_probe_script(
-        self,
-        port: int,
-        model: str,
-        timeout_s: float,
-        chat_max_tokens: int,
-        completion_max_tokens: int,
-    ) -> str:
+            self,
+            port: int,
+            model: str,
+            timeout_s: float,
+            chat_max_tokens: int,
+            completion_max_tokens: int,
+            structured_book_max_tokens: int,
+        ) -> str:
         """
-        Stdlib-only Python run inside the benchmark container (same network
-        view as GSM8K / bench_serving: http://0.0.0.0:<proxy_router_serv_port>).
+        Stdlib-only Python run inside the benchmark container (same URL style
+        as GSM8K / bench_serving: http://0.0.0.0:<proxy_router_serv_port>).
         """
-        return '\n'.join(
+        return "\n".join(
             [
-                'import json, urllib.request, urllib.error',
-                f'PORT = {int(port)}',
-                f'TIMEOUT = {float(timeout_s)}',
-                f'CHAT_MAX = {int(chat_max_tokens)}',
-                f'COMP_MAX = {int(completion_max_tokens)}',
-                f'MODEL = {json.dumps(model)}',
+                "import json, urllib.request, urllib.error",
+                f"PORT = {int(port)}",
+                f"TIMEOUT = {float(timeout_s)}",
+                f"CHAT_MAX = {int(chat_max_tokens)}",
+                f"COMP_MAX = {int(completion_max_tokens)}",
+                f"BOOK_MAX = {int(structured_book_max_tokens)}",
+                f"MODEL = {json.dumps(model)}",
                 'BASE = "http://0.0.0.0:%d" % PORT',
-                '',
-                'def req(method, path, body=None):',
-                '    url = BASE + path',
-                '    data = None if body is None else json.dumps(body).encode("utf-8")',
-                '    hdrs = {}',
-                '    if body is not None:',
+                "",
+                "def req(method, path, body=None):",
+                "    url = BASE + path",
+                "    data = None if body is None else json.dumps(body).encode('utf-8')",
+                "    hdrs = {}",
+                "    if body is not None:",
                 '        hdrs["Content-Type"] = "application/json"',
-                '    r = urllib.request.Request(url, data=data, headers=hdrs, method=method)',
-                '    try:',
-                '        with urllib.request.urlopen(r, timeout=TIMEOUT) as resp:',
+                "    r = urllib.request.Request(url, data=data, headers=hdrs, method=method)",
+                "    try:",
+                "        with urllib.request.urlopen(r, timeout=TIMEOUT) as resp:",
                 '            raw = resp.read().decode("utf-8", errors="replace")',
-                '            code = int(getattr(resp, "status", 200))',
-                '            try:',
-                '                return code, json.loads(raw) if raw else {}',
-                '            except json.JSONDecodeError:',
-                '                return code, raw',
-                '    except urllib.error.HTTPError as e:',
+                "            code = int(getattr(resp, 'status', 200))",
+                "            try:",
+                "                return code, json.loads(raw) if raw else {}",
+                "            except json.JSONDecodeError:",
+                "                return code, raw",
+                "    except urllib.error.HTTPError as e:",
                 '        raw = e.read().decode("utf-8", errors="replace")',
-                '        try:',
-                '            return int(e.code), json.loads(raw) if raw else {}',
-                '        except json.JSONDecodeError:',
-                '            return int(e.code), raw',
-                '',
-                'out = {}',
-                'out["models"] = req("GET", "/v1/models")',
-                'out["chat_completions"] = req("POST", "/v1/chat/completions", {',
+                "        try:",
+                "            return int(e.code), json.loads(raw) if raw else {}",
+                "        except json.JSONDecodeError:",
+                "            return int(e.code), raw",
+                "",
+                "out = {}",
+                'out["model_endpoint"] = req("GET", "/v1/models")',
+                'out["chat_completion_endpoint"] = req("POST", "/v1/chat/completions", {',
                 '    "model": MODEL,',
                 '    "messages": [{"role": "user", "content": "Reply with exactly one word: OK."}],',
-                '    "max_tokens": CHAT_MAX,',
+                "    \"max_tokens\": CHAT_MAX,",
                 '    "temperature": 0.0,',
-                '})',
-                'out["completions"] = req("POST", "/v1/completions", {',
+                "})",
+                'out["completion_endpoint"] = req("POST", "/v1/completions", {',
                 '    "model": MODEL,',
                 '    "prompt": "The capital of France is",',
-                '    "max_tokens": COMP_MAX,',
+                "    \"max_tokens\": COMP_MAX,",
                 '    "temperature": 0.0,',
-                '})',
-                'print(json.dumps(out, default=str))',
+                "})",
+                'out["structured_output_book"] = req("POST", "/v1/chat/completions", {',
+                '    "model": MODEL,',
+                '    "messages": [',
+                '        {"role": "system", "content": "Respond with a single JSON object only. No markdown."},',
+                '        {"role": "user", "content": "Return one book as JSON with keys: title (string), author (string), year (integer), genre (string)."},',
+                "    ],",
+                "    \"max_tokens\": BOOK_MAX,",
+                '    "temperature": 0.0,',
+                '    "response_format": {"type": "json_object"},',
+                "})",
+                "print(json.dumps(out, default=str))",
             ]
         )
+
+    def _log_openai_probe_results(self, results: dict[str, tuple[int, Any]]) -> None:
+        """One headed block per endpoint for logs / HTML capture."""
+        for step, (code, body) in results.items():
+            title = self._OPENAI_PROBE_STEP_TITLES.get(step, step)
+            log.info("#================ %s ================#", title)
+            log.info("HTTP status: %s", code)
+            if isinstance(body, (dict, list)):
+                try:
+                    log.info("Body:\n%s", json.dumps(body, indent=2, default=str))
+                except (TypeError, ValueError):
+                    log.info("Body: %s", body)
+            else:
+                log.info("Body: %s", body)
 
     def verify_openai_compatible_http_endpoints(
         self,
