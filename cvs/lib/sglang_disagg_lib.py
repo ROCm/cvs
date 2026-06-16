@@ -9,11 +9,13 @@ import base64
 import json
 import os
 import re
+import shlex
 import time
 from typing import Any, Optional
 
 from cvs.lib import globals
 from cvs.lib.model_query_lib import (
+    check_openai_compatible_probe_results,
     log_openai_probe_results,
     openai_probe_script,
 )
@@ -1412,21 +1414,14 @@ class SglangDisaggPD:
 
         log_openai_probe_results(results, log)
 
-        http_err: Optional[str] = None
-        for step, (code, body) in results.items():
-            if code != 200:
-                http_err = (
-                    f"OpenAI-compatible endpoint check failed step={step!r} "
-                    f"port={port!r} status={code} body={body!r}"
-                )
-                break
-        if http_err is not None:
-            fail_test(http_err)
-        else:
-            log.info(
-                "OpenAI-compatible HTTP endpoints passed: %s",
-                list(results.keys()),
-            )
+        ok, err = check_openai_compatible_probe_results(results, port=port, logger=log)
+        if not ok:
+            fail_test(err)
+            return results
+        log.info(
+            "OpenAI-compatible probe passed (HTTP + content): %s",
+            list(results.keys()),
+        )
         return results
 
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
