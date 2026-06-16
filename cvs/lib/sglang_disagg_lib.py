@@ -1469,6 +1469,7 @@ class SglangDisaggPD:
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                   mkdir -p {self.log_dir}/benchmark_node; \
                   source /tmp/benchmark_env_script.sh && \
+                  pip install -q lm-eval && \
                   python3 -m lm_eval \
                   --model {lm_eval_model} \
                   --model_args {model_args_q} \
