@@ -1465,6 +1465,7 @@ class SglangDisaggPD:
                   mkdir -p {self.log_dir}/benchmark_node; \
                   source /tmp/benchmark_env_script.sh && \
                   pip install -q lm-eval && \
+                  pip install -q 'lm-eval[api]' && \
                   python3 -m lm_eval \
                   --model {lm_eval_model} \
                   --model_args {model_args_q} \
