@@ -13,7 +13,10 @@ import time
 from typing import Any, Optional
 
 from cvs.lib import globals
-from cvs.lib.model_query_lib import OpenAICompatibleModelClient
+from cvs.lib.model_query_lib import (
+    log_openai_probe_results,
+    openai_probe_script,
+)
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -31,16 +34,6 @@ inference_err_dict = {
 }
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
-
-OPENAI_PROBE_STEP_TITLES = {
-        "model_endpoint": "Model endpoint — GET /v1/models",
-        "chat_completion_endpoint": "Chat completion endpoint — POST /v1/chat/completions",
-        "completion_endpoint": "Completion endpoint — POST /v1/completions",
-        "structured_output_book": (
-            "Structured output (book) — POST /v1/chat/completions "
-            "(response_format: json_object)"
-        ),
-    }
 
 def textwrap_for_yml(msg_string):
     return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
@@ -1342,192 +1335,96 @@ class SglangDisaggPD:
         log.info("\n".join(lines))
         return result
 
-    def openai_probe_script(
-            self,
-            port: int,
-            model: str,
-            timeout_s: float,
-            chat_max_tokens: int,
-            completion_max_tokens: int,
-            structured_book_max_tokens: int,
-        ) -> str:
-        
-        return "\n".join(
-            [
-                "import json, urllib.request, urllib.error",
-                f"PORT = {int(port)}",
-                f"TIMEOUT = {float(timeout_s)}",
-                f"CHAT_MAX = {int(chat_max_tokens)}",
-                f"COMP_MAX = {int(completion_max_tokens)}",
-                f"BOOK_MAX = {int(structured_book_max_tokens)}",
-                f"MODEL = {json.dumps(model)}",
-                'BASE = "http://0.0.0.0:%d" % PORT',
-                "",
-                "def req(method, path, body=None):",
-                "    url = BASE + path",
-                "    data = None if body is None else json.dumps(body).encode('utf-8')",
-                "    hdrs = {}",
-                "    if body is not None:",
-                '        hdrs["Content-Type"] = "application/json"',
-                "    r = urllib.request.Request(url, data=data, headers=hdrs, method=method)",
-                "    try:",
-                "        with urllib.request.urlopen(r, timeout=TIMEOUT) as resp:",
-                '            raw = resp.read().decode("utf-8", errors="replace")',
-                "            code = int(getattr(resp, 'status', 200))",
-                "            try:",
-                "                return code, json.loads(raw) if raw else {}",
-                "            except json.JSONDecodeError:",
-                "                return code, raw",
-                "    except urllib.error.HTTPError as e:",
-                '        raw = e.read().decode("utf-8", errors="replace")',
-                "        try:",
-                "            return int(e.code), json.loads(raw) if raw else {}",
-                "        except json.JSONDecodeError:",
-                "            return int(e.code), raw",
-                "",
-                "out = {}",
-                'out["model_endpoint"] = req("GET", "/v1/models")',
-                'out["chat_completion_endpoint"] = req("POST", "/v1/chat/completions", {',
-                '    "model": MODEL,',
-                '    "messages": [{"role": "user", "content": "Reply with exactly one word: OK."}],',
-                "    \"max_tokens\": CHAT_MAX,",
-                '    "temperature": 0.0,',
-                "})",
-                'out["completion_endpoint"] = req("POST", "/v1/completions", {',
-                '    "model": MODEL,',
-                '    "prompt": "The capital of France is",',
-                "    \"max_tokens\": COMP_MAX,",
-                '    "temperature": 0.0,',
-                "})",
-                'out["structured_output_book"] = req("POST", "/v1/chat/completions", {',
-                '    "model": MODEL,',
-                '    "messages": [',
-                '        {"role": "system", "content": "Respond with a single JSON object only. No markdown."},',
-                '        {"role": "user", "content": "Return one book as JSON with keys: title (string), author (string), year (integer), genre (string)."},',
-                "    ],",
-                "    \"max_tokens\": BOOK_MAX,",
-                '    "temperature": 0.0,',
-                '    "response_format": {"type": "json_object"},',
-                "})",
-                "print(json.dumps(out, default=str))",
-            ]
+    
+    def verify_openai_compatible_endpoints(self) -> dict[str, tuple[int, Any]]:
+        """
+        Smoke-test OpenAI-compatible HTTP API on the proxy router (inside the
+        benchmark container via ``docker exec``): GET /v1/models,
+        POST /v1/chat/completions, POST /v1/completions, and structured JSON
+        (book) via chat completions.
+        """
+        port = int(self.inf_dict["proxy_router_serv_port"])
+        model_name = self.bp_dict["model"]
+
+        probe_src = openai_probe_script(port, model_name)
+        b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+                  mkdir -p {self.log_dir}/benchmark_node; \
+                  echo '{b64}' | base64 -d > /tmp/openai_mq_probe.py && \
+                  python3 /tmp/openai_mq_probe.py && \
+                  rm -f /tmp/openai_mq_probe.py" '''
+        formatted_cmd = textwrap_for_yml(cmd)
+        log.info(
+            "OpenAI endpoint probe inside benchmark container (0.0.0.0:%r), same pattern as GSM8K/benchserv",
+            port,
         )
+        out_dict = self.b_phdl.exec(
+            formatted_cmd,
+            timeout=min(900, 480 + 180),
+        )
+        bench_host = self.benchmark_serv_node[0]
+        raw_out = out_dict.get(bench_host)
+        if raw_out is None and out_dict:
+            raw_out = next(iter(out_dict.values()))
 
-    def log_openai_probe_results(self, results: dict[str, tuple[int, Any]]) -> None:
-        """One headed block per endpoint for logs / HTML capture."""
-        for step, (code, body) in results.items():
-            title = OPENAI_PROBE_STEP_TITLES.get(step, step)
-            log.info("#================ %s ================#", title)
-            log.info("HTTP status: %s", code)
-            if isinstance(body, (dict, list)):
-                try:
-                    log.info("Body:\n%s", json.dumps(body, indent=2, default=str))
-                except (TypeError, ValueError):
-                    log.info("Body: %s", body)
-            else:
-                log.info("Body: %s", body)
-
-    def verify_openai_compatible_http_endpoints(
-            self,
-            *,
-            host: Optional[str] = None,
-            timeout_s: float = 120.0,
-            chat_max_tokens: int = 8,
-            completion_max_tokens: int = 8,
-            structured_book_max_tokens: int = 256,
-        ) -> dict[str, tuple[int, Any]]:
-        """
-        Smoke-test OpenAI-compatible HTTP API on the proxy router:
-        GET /v1/models, POST /v1/chat/completions, POST /v1/completions,
-        and structured JSON (book) via chat completions.
-
-        """
-        port = int(self.inf_dict['proxy_router_serv_port'])
-        model_name = self.bp_dict['model']
-
-        if host is not None:
-            log.info('OpenAI endpoint probe from pytest runner host=%r port=%r', host, port)
-            client = OpenAICompatibleModelClient(
-                model_name,
-                port,
-                host=host,
-                timeout_s=timeout_s,
-            )
-            results: dict[str, tuple[int, Any]] = {}
-            results['model_endpoint'] = client.list_models()
-            results['chat_completion_endpoint'] = client.simple_chat(
-                'Reply with exactly one word: OK.',
-                max_tokens=chat_max_tokens,
-            )
-            results['completion_endpoint'] = client.completions(
-                'The capital of France is',
-                max_tokens=completion_max_tokens,
-            )
-            results['structured_output_book'] = client.chat_completions_structured_book(
-                max_tokens=structured_book_max_tokens,
+        probe_err: Optional[str] = None
+        results: dict[str, tuple[int, Any]] = {}
+        if not raw_out or not str(raw_out).strip():
+            probe_err = (
+                f"OpenAI-compatible probe produced no output node {bench_host!r}: "
+                f"{out_dict!r}"
             )
         else:
-            probe_src = self.openai_probe_script(
-                port,
-                model_name,
-                timeout_s,
-                chat_max_tokens,
-                completion_max_tokens,
-                structured_book_max_tokens,
-            )
-            b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
-            cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                      mkdir -p {self.log_dir}/benchmark_node; \
-                      echo '{b64}' | base64 -d > /tmp/openai_mq_probe.py && \
-                      python3 /tmp/openai_mq_probe.py && \
-                      rm -f /tmp/openai_mq_probe.py" '''
-            formatted_cmd = textwrap_for_yml(cmd)
-            log.info(
-                'OpenAI endpoint probe inside benchmark container (0.0.0.0:%r), same pattern as GSM8K/benchserv',
-                port,
-            )
-            out_dict = self.b_phdl.exec(formatted_cmd, timeout=min(900, int(timeout_s * 4) + 180))
-            bench_host = self.benchmark_serv_node[0]
-            raw_out = out_dict.get(bench_host)
-            if raw_out is None and out_dict:
-                raw_out = next(iter(out_dict.values()))
-            if not raw_out or not str(raw_out).strip():
-                fail_test(
-                    f'OpenAI-compatible probe produced no output node {bench_host!r}: {out_dict!r}'
-                )
-                return {}
             lines_out = str(raw_out).strip().splitlines()
             if not lines_out:
-                fail_test(
-                    f'OpenAI-compatible probe empty lines after strip on node {bench_host!r}: {raw_out!r}'
+                probe_err = (
+                    f"OpenAI-compatible probe empty lines after strip on node "
+                    f"{bench_host!r}: {raw_out!r}"
                 )
-                return {}
-            last_line = lines_out[-1]
-            try:
-                parsed = json.loads(last_line)
-            except json.JSONDecodeError as e:
-                fail_test(
-                    f'OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}'
-                )
-                return {}
-            results = {}
-            for step, val in parsed.items():
-                if isinstance(val, (list, tuple)) and len(val) == 2:
-                    results[step] = (int(val[0]), val[1])
+            else:
+                last_line = lines_out[-1]
+                try:
+                    parsed = json.loads(last_line)
+                except json.JSONDecodeError as e:
+                    probe_err = (
+                        f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
+                    )
                 else:
-                    fail_test(f'OpenAI-compatible probe bad shape at {step!r}: {val!r}')
-                    return {}
+                    if not isinstance(parsed, dict):
+                        probe_err = (
+                            f"OpenAI-compatible probe expected JSON object, got "
+                            f"{type(parsed).__name__!r}"
+                        )
+                    else:
+                        for step, val in parsed.items():
+                            if isinstance(val, (list, tuple)) and len(val) == 2:
+                                results[step] = (int(val[0]), val[1])
+                            else:
+                                probe_err = (
+                                    f"OpenAI-compatible probe bad shape at "
+                                    f"{step!r}: {val!r}"
+                                )
+                                break
 
-        self.log_openai_probe_results(results)
+        if probe_err is not None:
+            fail_test(probe_err)
+            return {}
 
-        failed = False
+        log_openai_probe_results(results, log)
+
+        http_err: Optional[str] = None
         for step, (code, body) in results.items():
             if code != 200:
-                failed = True
-                fail_test(
-                    f'OpenAI-compatible endpoint check failed step={step!r} '
-                    f'host={host!r} port={port!r} status={code} body={body!r}'
+                http_err = (
+                    f"OpenAI-compatible endpoint check failed step={step!r} "
+                    f"port={port!r} status={code} body={body!r}"
                 )
-        if not failed:
-            log.info('OpenAI-compatible HTTP endpoints passed: %s', list(results.keys()))
+                break
+        if http_err is not None:
+            fail_test(http_err)
+        else:
+            log.info(
+                "OpenAI-compatible HTTP endpoints passed: %s",
+                list(results.keys()),
+            )
         return results
