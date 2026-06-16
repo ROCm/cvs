@@ -30,7 +30,9 @@ inference_err_dict = {
     'app_err': 'Service Unavailable|No decode workers available|No prefill workers available|Please check if decode servers are configured and healthy|Please check if prefill servers are configured and healthy|Cannot access gated repo|You must have access to it and be authenticated',
 }
 
- _OPENAI_PROBE_STEP_TITLES = {
+err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
+
+OPENAI_PROBE_STEP_TITLES = {
         "model_endpoint": "Model endpoint — GET /v1/models",
         "chat_completion_endpoint": "Chat completion endpoint — POST /v1/chat/completions",
         "completion_endpoint": "Completion endpoint — POST /v1/completions",
@@ -39,9 +41,6 @@ inference_err_dict = {
             "(response_format: json_object)"
         ),
     }
-
-err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
-
 
 def textwrap_for_yml(msg_string):
     return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
@@ -1352,10 +1351,7 @@ class SglangDisaggPD:
             completion_max_tokens: int,
             structured_book_max_tokens: int,
         ) -> str:
-        """
-        Stdlib-only Python run inside the benchmark container (same URL style
-        as GSM8K / bench_serving: http://0.0.0.0:<proxy_router_serv_port>).
-        """
+        
         return "\n".join(
             [
                 "import json, urllib.request, urllib.error",
@@ -1420,7 +1416,7 @@ class SglangDisaggPD:
     def _log_openai_probe_results(self, results: dict[str, tuple[int, Any]]) -> None:
         """One headed block per endpoint for logs / HTML capture."""
         for step, (code, body) in results.items():
-            title = self._OPENAI_PROBE_STEP_TITLES.get(step, step)
+            title = OPENAI_PROBE_STEP_TITLES.get(step, step)
             log.info("#================ %s ================#", title)
             log.info("HTTP status: %s", code)
             if isinstance(body, (dict, list)):
@@ -1432,25 +1428,19 @@ class SglangDisaggPD:
                 log.info("Body: %s", body)
 
     def verify_openai_compatible_http_endpoints(
-        self,
-        *,
-        host: Optional[str] = None,
-        timeout_s: float = 120.0,
-        chat_max_tokens: int = 8,
-        completion_max_tokens: int = 8,
-    ) -> dict[str, tuple[int, Any]]:
+            self,
+            *,
+            host: Optional[str] = None,
+            timeout_s: float = 120.0,
+            chat_max_tokens: int = 8,
+            completion_max_tokens: int = 8,
+            structured_book_max_tokens: int = 256,
+        ) -> dict[str, tuple[int, Any]]:
         """
         Smoke-test OpenAI-compatible HTTP API on the proxy router:
-        GET /v1/models, POST /v1/chat/completions, POST /v1/completions.
+        GET /v1/models, POST /v1/chat/completions, POST /v1/completions,
+        and structured JSON (book) via chat completions.
 
-        By default runs **inside the benchmark container** on ``b_phdl`` (same
-        pattern as GSM8K / ``bench_serving``): ``source`` benchmark env, then
-        ``http://0.0.0.0:<proxy_router_serv_port>``.
-
-        If ``host`` is set, runs ``OpenAICompatibleModelClient`` from the pytest
-        process to ``http://{host}:<port>`` instead.
-
-        The caller must run this after the proxy router is up.
         """
         port = int(self.inf_dict['proxy_router_serv_port'])
         model_name = self.bp_dict['model']
@@ -1464,14 +1454,17 @@ class SglangDisaggPD:
                 timeout_s=timeout_s,
             )
             results: dict[str, tuple[int, Any]] = {}
-            results['models'] = client.list_models()
-            results['chat_completions'] = client.simple_chat(
+            results['model_endpoint'] = client.list_models()
+            results['chat_completion_endpoint'] = client.simple_chat(
                 'Reply with exactly one word: OK.',
                 max_tokens=chat_max_tokens,
             )
-            results['completions'] = client.completions(
+            results['completion_endpoint'] = client.completions(
                 'The capital of France is',
                 max_tokens=completion_max_tokens,
+            )
+            results['structured_output_book'] = client.chat_completions_structured_book(
+                max_tokens=structured_book_max_tokens,
             )
         else:
             probe_src = self._openai_benchmark_container_probe_script(
@@ -1480,6 +1473,7 @@ class SglangDisaggPD:
                 timeout_s,
                 chat_max_tokens,
                 completion_max_tokens,
+                structured_book_max_tokens,
             )
             b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "
@@ -1524,11 +1518,16 @@ class SglangDisaggPD:
                     fail_test(f'OpenAI-compatible probe bad shape at {step!r}: {val!r}')
                     return {}
 
+        self._log_openai_probe_results(results)
+
+        failed = False
         for step, (code, body) in results.items():
             if code != 200:
+                failed = True
                 fail_test(
                     f'OpenAI-compatible endpoint check failed step={step!r} '
                     f'host={host!r} port={port!r} status={code} body={body!r}'
                 )
-        log.info('OpenAI-compatible HTTP endpoints passed: %s', list(results.keys()))
+        if not failed:
+            log.info('OpenAI-compatible HTTP endpoints passed: %s', list(results.keys()))
         return results
