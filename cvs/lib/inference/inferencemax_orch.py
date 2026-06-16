@@ -6,10 +6,10 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import base64
 import os
 import re
 import shlex
-import shutil
 import time
 from pathlib import Path
 from typing import Optional
@@ -48,7 +48,7 @@ def _discover_host_benchmark_scripts_dir(relpath: Path, entry_basename: str) -> 
 
     ``relpath`` is relative to the ``cvs`` package root (e.g.
     ``input/.../mi300x_gpt_oss_120b_single/benchmark_server_scripts``). When checkout ``input/``
-    is missing, callers copy or materialize into :func:`_stage_auto_host_scripts_dir`.
+    is missing, bundled bytes are used when deploying to cluster nodes.
     """
     import cvs as _cvs_module
 
@@ -97,56 +97,72 @@ def _stage_bundle_subdir(relpath: Path) -> str:
     return "default"
 
 
-def _stage_auto_host_scripts_dir(if_dict: dict, relpath: Path, entry_basename: str) -> str:
-    """
-    Materialize ``entry_basename`` under ``{log_dir}/inference-max/host_scripts_staged/<variant>/``.
+def _benchmark_server_script_path_is_auto(if_dict: dict) -> bool:
+    raw = if_dict.get("benchmark_server_script_path")
+    if raw is None:
+        return True
+    s = str(raw).strip()
+    return not s or s.lower() == "auto"
 
-    Always use a directory under ``log_dir`` so ``docker exec`` can ``cd`` there even when discovery
-    pointed at a path that exists only on the pytest host (e.g. misleading ``site-packages`` hits)
-    or differs from what compute nodes see. Copy from checkout when present, else bundled body.
-    """
+
+def _compute_staged_host_script_dir(if_dict: dict, relpath: Path) -> str:
+    """Return ``{log_dir}/inference-max/host_scripts_staged/<variant>/`` (POSIX string, no I/O)."""
     log_dir = str(if_dict.get("log_dir") or "").strip().replace("\\", "/")
     if not log_dir:
-        msg = (
-            "benchmark_server_script_path is auto but log_dir is empty; cannot stage host server scripts."
-        )
+        msg = "benchmark_server_script_path is auto but log_dir is empty; cannot stage host server scripts."
         fail_test(msg)
         raise FileNotFoundError(msg)
     dest = Path(log_dir) / "inference-max" / "host_scripts_staged" / _stage_bundle_subdir(relpath)
-    try:
-        dest.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        fail_test(f"Cannot create {dest}: {exc}")
-        raise
+    return str(dest).replace("\\", "/")
 
-    out_script = dest / entry_basename
+
+def _read_host_script_payload(if_dict: dict, relpath: Path, entry_basename: str) -> bytes:
+    """Read server script bytes from local checkout discovery or bundled registry."""
     found = _discover_host_benchmark_scripts_dir(relpath, entry_basename)
     if found is not None and _wrapper_dir_ok(found, entry_basename):
         try:
-            shutil.copy2(found / entry_basename, out_script)
+            return (found / entry_basename).read_bytes()
         except OSError as exc:
-            fail_test(f"Cannot copy {found / entry_basename} to {out_script}: {exc}")
+            fail_test(f"Cannot read {found / entry_basename}: {exc}")
             raise
-        log.info("Staged host server script %s from %s to %s", entry_basename, found, dest)
-    else:
-        body = bundled_script_body(entry_basename)
-        if not body:
-            msg = (
-                f"No checkout or bundled host server script for {entry_basename!r}. "
-                "Add it to ``cvs.lib.inference.inferencemax_host_scripts.BUNDLED_SERVER_SCRIPTS``, "
-                "or set benchmark_server_script_path to a host directory that contains this file, "
-                "or install CVS with ``cvs/input/.../benchmark_server_scripts`` present."
-            )
-            fail_test(msg)
-            raise FileNotFoundError(msg)
-        out_script.write_text(body, encoding="utf-8", newline="\n")
-        log.info("Staged bundled host server script %s under %s", entry_basename, dest)
+    body = bundled_script_body(entry_basename)
+    if not body:
+        msg = (
+            f"No checkout or bundled host server script for {entry_basename!r}. "
+            "Add it to ``cvs.lib.inference.inferencemax_host_scripts.BUNDLED_SERVER_SCRIPTS``, "
+            "or set benchmark_server_script_path to a host directory that contains this file, "
+            "or install CVS with ``cvs/input/.../benchmark_server_scripts`` present."
+        )
+        fail_test(msg)
+        raise FileNotFoundError(msg)
+    return body.replace("\r\n", "\n").encode("utf-8")
 
-    try:
-        out_script.chmod(0o755)
-    except OSError:
-        pass
-    return str(dest.resolve())
+
+def _deploy_host_script_to_cluster_nodes(s_phdl, dest_dir: str, entry_basename: str, content: bytes) -> None:
+    """
+    Write ``content`` to ``{dest_dir}/{entry_basename}`` on every node ``s_phdl`` reaches.
+
+    Pytest may run on a different host than the GPU nodes; files must exist on each node's
+    filesystem under the Docker bind mount (e.g. ``/home/.../LOGS/...``).
+    """
+    dest_file = f"{dest_dir.rstrip('/')}/{entry_basename}"
+    b64 = base64.standard_b64encode(content).decode("ascii")
+    py = (
+        "import base64,os,pathlib;"
+        f"p=pathlib.Path({dest_file!r});"
+        "p.parent.mkdir(parents=True,exist_ok=True);"
+        f"p.write_bytes(base64.standard_b64decode({b64!r}));"
+        "os.chmod(p,0o755)"
+    )
+    cmd = f"python3 -c {shlex.quote(py)}"
+    out_dict = s_phdl.exec(cmd)
+    for node, out in (out_dict or {}).items():
+        text = out or ""
+        if re.search(r"traceback|syntaxerror|filenotfounderror|permissionerror|nosuchfile", text, re.I):
+            log.error("FAIL - staging host script on node %s: %s", node, text[-2000:])
+            fail_test(f"Staging host server script failed on node {node}")
+            raise RuntimeError(f"Staging host server script failed on node {node}: {text[-1500:]}")
+    log.info("Deployed host server script %s to cluster nodes under %s", entry_basename, dest_dir)
 
 
 def _resolved_host_benchmark_scripts_dir(if_dict: dict, relpath: Path, entry_basename: str) -> str:
@@ -154,8 +170,8 @@ def _resolved_host_benchmark_scripts_dir(if_dict: dict, relpath: Path, entry_bas
     Host directory containing ``entry_basename`` for ``docker exec`` ``cd``.
 
     If ``benchmark_server_script_path`` is set to a non-empty string other than
-    ``auto``, that path is used. Otherwise materialize under ``log_dir`` (see
-    :func:`_stage_auto_host_scripts_dir`) so the path is always under the mounted home tree.
+    ``auto``, that path is used. Otherwise return the staged directory under ``log_dir``; the script
+    file is deployed onto each GPU node in :meth:`InferenceMaxJob.launch_server`.
     """
     raw = if_dict.get("benchmark_server_script_path")
     if raw is not None:
@@ -163,7 +179,7 @@ def _resolved_host_benchmark_scripts_dir(if_dict: dict, relpath: Path, entry_bas
         if s and s.lower() != "auto":
             return s.rstrip("/")
 
-    return _stage_auto_host_scripts_dir(if_dict, relpath, entry_basename)
+    return _compute_staged_host_script_dir(if_dict, relpath)
 
 
 class InferenceMaxJob(InferenceBaseJob):
@@ -263,6 +279,15 @@ class InferenceMaxJob(InferenceBaseJob):
         script_dir = self.get_server_script_directory()
         log_file = f'{self.server_script}_server.log'
         script_path = self.get_server_script_path()
+
+        if self._using_host_server_scripts() and _benchmark_server_script_path_is_auto(self.if_dict):
+            rel = Path(str(self.if_dict.get("host_benchmark_scripts_relpath", "")).strip().replace("\\", "/"))
+            if not rel.parts:
+                fail_test("host_benchmark_scripts_relpath is empty")
+                raise ValueError("host_benchmark_scripts_relpath is empty")
+            entry = os.path.basename(self._host_mount_relative_script())
+            payload = _read_host_script_payload(self.if_dict, rel, entry)
+            _deploy_host_script_to_cluster_nodes(self.s_phdl, script_dir, entry, payload)
 
         cmd_list = []
         workspace_host = f'{self.log_dir}/{self.get_log_subdir()}/workspace'.replace('\\', '/')
