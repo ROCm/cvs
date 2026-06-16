@@ -640,10 +640,10 @@ You can list all available Inferencemax test cases using the CLI:
 .. code:: text
 
   Available tests in inferencemax_single:
-    - test_aa_launch_container
+    - test_launch_container
     - test_inferencemax_inference
     - test_print_results_table
-    - test_zz_teardown
+    - test_teardown
 
 Use these scripts to run the Inferencemax tests. Supply your own suite JSON
 (``config`` + ``benchmark_params``); see :doc:`../reference/configuration-files/inferencemax`.

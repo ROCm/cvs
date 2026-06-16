@@ -2,9 +2,10 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-InferenceMax single-node suite — DTNI-style staged layout (see ``vllm_single.py``
-for the reference pattern). GPT-OSS 120B workload; model id remains in JSON under
-``benchmark_params``.
+InferenceMax single-node suite — same **stage names** as ``vllm_single`` where
+applicable (``test_launch_container``, ``test_inferencemax_inference`` /
+``test_vllm_inference``, ``test_print_results_table``, ``test_teardown``).
+Model keys live under ``benchmark_params`` (see ``inferencemax_benchmark_model_name``).
 '''
 
 import copy
@@ -26,8 +27,8 @@ test_print_results_table = _mod.test_print_results_table  # noqa: F841
 log = globals.log
 
 
-def test_aa_launch_container(orch, lifecycle, request):
-    """Stage 1: stale cleanup + ``docker run`` on hosts (same role as vLLM ``test_aa``)."""
+def test_launch_container(orch, lifecycle, request):
+    """Stage 1: stale cleanup + ``docker run`` on hosts (same role as ``vllm_single.test_launch_container``)."""
     t = time.monotonic()
     ok = orch.setup_containers()
     lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
@@ -54,6 +55,7 @@ def test_inferencemax_inference(
     lifecycle,
     request,
 ):
+    """Parametrized benchmark cell (vLLM analogue: ``test_vllm_inference``)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
@@ -104,11 +106,16 @@ def test_inferencemax_inference(
     update_test_result()
 
 
-def test_zz_teardown(orch, lifecycle, request):
+def test_teardown(orch, lifecycle, request):
+    """Final stage: explicit teardown (same contract as ``vllm_single.test_teardown``).
+
+    Sets ``lifecycle.torn_down`` only after the container is confirmed gone so
+    the ``orch`` fixture leak-guard can retry if teardown failed.
+    """
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     t = time.monotonic()
     orch.teardown_containers()
     lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t)
-    lifecycle.torn_down = True
     if orch.verify_containers_running(name):
         pytest.fail(f"container {name} still running after teardown_containers()")
+    lifecycle.torn_down = True

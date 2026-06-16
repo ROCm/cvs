@@ -21,7 +21,8 @@ Differences (documented):
     ``cvs/input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts/``;
     see ``docs/reference/configuration-files/inferencemax.rst`` for deploy steps and
     ``use_host_mounted_server_script`` in the inference JSON.
-  * No ``test_ab_setup_sshd`` / ``test_ac_model_fetch`` rows (not applicable).
+  * No ``test_setup_sshd`` / ``test_model_fetch`` rows (host Docker + InferenceX
+    path; not the orch-in-container flow used by ``vllm_single``).
 """
 
 import json
@@ -218,10 +219,10 @@ def pytest_generate_tests(metafunc):
 
 def pytest_collection_modifyitems(items):
     rank = {
-        "test_aa_launch_container": 0,
+        "test_launch_container": 0,
         "test_inferencemax_inference": 1,
         "test_print_results_table": 2,
-        "test_zz_teardown": 3,
+        "test_teardown": 3,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 

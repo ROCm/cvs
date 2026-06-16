@@ -10,8 +10,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 InferenceMax host Docker job (extends :class:`~cvs.lib.inference.base.InferenceBaseJob`).
 
 This module is the InferenceMax counterpart to :mod:`cvs.lib.inference.vllm_orch` for
-**pytest layout**: ``inferencemax_single`` uses the same staged lifecycle pattern as
-``vllm_single`` (``test_aa_*``, parametrized inference, ``test_zz_teardown``), but
+**pytest layout**: ``inferencemax_single`` mirrors ``vllm_single`` stage names
+(``test_launch_container``, parametrized inference, ``test_print_results_table``,
+``test_teardown``) where applicable, but
 this job still runs over ``c_phdl``/``s_phdl`` and host ``docker exec`` because
 InferenceX is integrated that way today—not via
 :class:`~cvs.core.orchestrators.container.ContainerOrchestrator`.
