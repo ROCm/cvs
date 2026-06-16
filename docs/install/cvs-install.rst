@@ -313,7 +313,7 @@ CVS provides comprehensive inference testing configurations for various LLM serv
 
    .. code:: bash
 
-     cvs copy-config inference/mi300x_singlenode_inferencemax.json --output ~/my_inferencemax_config.json
+     cvs copy-config inference/inferencemax_single/mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json --output ~/my_inferencemax_config.json
 
 2. Edit the file and modify these parameters:
 

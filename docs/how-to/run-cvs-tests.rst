@@ -650,7 +650,7 @@ Use these scripts to run the Inferencemax tests. Supply your own suite JSON
 
 .. code:: bash
 
-  cvs run inferencemax_single --cluster_file input/cluster_file/cluster.json --config_file /path/to/inferencemax_config.json --html=/var/www/html/cvs/inferencemax.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencemax.log -vvv -s
+  cvs run inferencemax_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json --html=/var/www/html/cvs/inferencemax.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencemax.log -vvv -s
 
 
 Pytorch xdit test scripts

@@ -120,7 +120,7 @@ def launch_docker_container(
     cmd = cmd + f' --shm-size {shm_size} --name {container_name} {image} '
     cmd = cmd + 'tail -f /dev/null'
 
-    log.info('cmd = %s', redact_shell_log_text(cmd))
+    log.info(f'cmd = {cmd}')
     out_dict = phdl.exec(cmd, timeout=timeout)
     time.sleep(15)
 

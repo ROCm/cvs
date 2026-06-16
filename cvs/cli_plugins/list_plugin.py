@@ -10,18 +10,6 @@ from .base import SubcommandPlugin
 from cvs.extension import ExtensionConfig, CORE_PKG_NAME, CORE_TESTS_DIR
 
 
-def _is_discoverable_test_module(filename: str) -> bool:
-    """Return False for pytest helpers and non-suite modules (not ``cvs run`` targets)."""
-    if not filename.endswith(".py") or filename == "__init__.py":
-        return False
-    base = filename[:-3]
-    if base == "conftest":
-        return False
-    if base.startswith("_"):
-        return False
-    return True
-
-
 class ListPlugin(SubcommandPlugin):
     @staticmethod
     def discover_tests():

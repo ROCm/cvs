@@ -16,14 +16,15 @@ The InferenceMAX tests check:
 - **Benchmarking**: Load testing with various concurrency levels and sequence lengths
 - **Result verification**: Expected throughput and latency metrics
 
-Change the parameters as needed in the InferenceMAX configuration file: ``mi300x_singlenode_inferencemax.json`` for single node inference configurations.
+InferenceMAX inputs follow the same directory pattern as ``vllm_single``: ``cvs/input/config_file/inference/inferencemax_single/<variant>/<variant>_config.json`` (pass that ``*_config.json`` path as ``--config_file``). For example, MI300X GPT-OSS 120B single-node uses ``mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json``. A preserved MI355x reference (same basename as the former flat file) lives at ``mi355x_inferencemax_gpt_oss_120b_single/mi355x_inferencemax_gpt_oss_120b_single_config.json``; verify ``server_script`` against your InferenceX revision.
 
 .. note::
 
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
   - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
-  - ``server_script`` is interpreted relative to ``benchmarks/single_node/`` (or ``benchmarks/multi_node/`` when multi-node) inside the cloned ``inferencemax_repo``. It must exist at that path in the repo revision you use; upstream layouts change. On current ``SemiAnalysisAI/InferenceX`` ``main``, MI300X GPT-OSS-style server entrypoints live under subdirectories such as ``fixed_seq_len/`` (for example ``fixed_seq_len/gptoss_fp4_mi300x.sh``). If the path is wrong, the server log shows ``No such file or directory``.
+  - ``server_script`` is interpreted relative to ``benchmarks/single_node/`` (or ``benchmarks/multi_node/`` when multi-node) inside the cloned ``inferencemax_repo``. It must exist at that path in the repo revision you use; upstream layouts change. On current ``SemiAnalysisAI/InferenceX`` ``main``, MI300X GPT-OSS-style server entrypoints often live under ``fixed_seq_len/`` (for example ``fixed_seq_len/gptoss_fp4_mi300x.sh``). CVS ships a **flat** ``benchmark_server_scripts/`` tree (``gptoss_fp4_mi300x.sh`` at the top level); when ``use_host_mounted_server_script`` is set, ``InferenceMaxJob`` maps ``fixed_seq_len/`` in ``server_script`` to that layout. If the path is wrong, the server log shows ``No such file or directory``.
   - InferenceX single-node scripts typically write under ``/workspace`` (e.g. ``server.log``, ``gpu_metrics.csv``). CVS creates ``/workspace`` inside the container before launching the server; add a volume mapping for ``/workspace`` in ``container_config.volume_dict`` only if you need those files on the host after the run.
+  - Host-mount server wrappers for GPT-OSS MI300X (optional ``use_host_mounted_server_script``) ship with the variant at ``cvs/input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts/``; rsync that directory to ``benchmark_server_script_path`` on the node. Use the variant's ``*_config.json`` in the same folder as ``--config_file`` for ``cvs run inferencemax_single``.
 
 ``mi300x_singlenode_inferencemax.json``
 ========================================
@@ -76,7 +77,7 @@ Here's a code snippet of the ``mi300x_singlenode_inferencemax.json`` file for re
                 "tensor_parallelism": "8",
                 "_example_tokenizer_mode": "auto|slow|mistral|custom",
                 "tokenizer_mode": "auto",
-                "percentiles_metrics": "ttft,tpot,itl,e2el",
+                "percentile_metrics": "ttft,tpot,itl,e2el",
                 "metric_percentiles": "99",
                 "server_script": "fixed_seq_len/gptoss_fp4_mi300x.sh",
                 "bench_serv_script": "benchmark_serving.py",
@@ -189,7 +190,7 @@ Use the parameters in this table to configure the InferenceMAX configuration fil
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``tokenizer_mode``
      - auto
      - Tokenizer mode (auto, slow, mistral, custom)
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``percentiles_metrics``
+   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``percentile_metrics``
      - ttft,tpot,itl,e2el
      - Comma-separated list of metrics to compute percentiles for (ttft: Time to First Token, tpot: Time Per Output Token, itl: Inter-Token Latency, e2el: End-to-End Latency)
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``metric_percentiles``
@@ -197,7 +198,7 @@ Use the parameters in this table to configure the InferenceMAX configuration fil
      - Percentile values to compute for metrics (e.g., 99 for 99th percentile)
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.server_script``
      - fixed_seq_len/ |br| gptoss_fp4_mi300x.sh
-     - Path under ``benchmarks/<single_node|multi_node>/`` to the shell script that launches the inference server inside the clone (must exist in ``inferencemax_repo``)
+     - Path under ``benchmarks/<single_node|multi_node>/`` to the shell script inside the clone (must exist in ``inferencemax_repo``). With ``use_host_mounted_server_script``, CVS resolves ``fixed_seq_len/`` to the flat scripts under ``benchmark_server_script_path``.
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``bench_serv_script``
      - benchmark_serving.py
      - Script to run the benchmarking client

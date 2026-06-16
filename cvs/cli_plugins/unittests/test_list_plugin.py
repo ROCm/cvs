@@ -3,19 +3,11 @@ from unittest.mock import patch
 import os
 import tempfile
 
-from cvs.cli_plugins.list_plugin import ListPlugin, _is_discoverable_test_module
+from cvs.cli_plugins.list_plugin import ListPlugin
 
 
 class TestListPlugin(unittest.TestCase):
     """Test ListPlugin test discovery"""
-
-    def test_is_discoverable_test_module_skips_helpers(self):
-        """conftest, _shared, and __init__ are not cvs run targets."""
-        self.assertFalse(_is_discoverable_test_module("conftest.py"))
-        self.assertFalse(_is_discoverable_test_module("_shared.py"))
-        self.assertFalse(_is_discoverable_test_module("__init__.py"))
-        self.assertTrue(_is_discoverable_test_module("inferencemax_single.py"))
-        self.assertTrue(_is_discoverable_test_module("agfhc_cvs.py"))
 
     def test_discover_tests_core_only(self):
         """Test discovering tests from core cvs package only"""

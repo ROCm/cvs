@@ -7,7 +7,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import os
 import re
-import shlex
 import time
 
 from cvs.lib import globals
@@ -27,20 +26,6 @@ inference_err_dict = {
 }
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
-
-# bench_serving / vLLM-style client summary: do not treat bare "Failed" substrings as failure (PR #223).
-_BENCH_FAILED_REQUESTS_RE = re.compile(r"Failed\s+requests:\s*(\d+)", re.I)
-_BENCH_CLIENT_TRACEBACK_RE = re.compile(r"Traceback\s*\(most recent call last\):", re.I)
-
-# git clone failures only (avoid matching benign "error" / "failed" words in unrelated log lines).
-_GIT_CLONE_FAIL_RE = re.compile(
-    r"(?:^|\n)(?:fatal:\s|error:\s)|Could not resolve host|Repository not found|"
-    r"Permission denied \(publickey\)|SSL certificate problem",
-    re.I,
-)
-
-# Log tail slice for server startup failures (avoid mid-line truncation hiding the real error).
-_SERVER_LOG_ERROR_SNIPPET_CHARS = 2500
 
 
 def textwrap_for_yml(msg_string):
@@ -146,16 +131,11 @@ class InferenceBaseJob:
         self.default_server_poll_wait_time = 60
         self.default_server_poll_count = server_launch_poll_count
         self.default_server_precheck_error_pattern = re.compile(
-            'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback|failed to start|'
-            'hiperrorlaunchoutofresources|too many resources requested for launch|distbackender',
+            'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback|failed to start',
             re.I,
         )
         self.default_server_error_pattern_poll = re.compile(
-            'failed to start|no such file or directory|command not found|cannot access|'
-            'engine core initialization failed|server died before becoming healthy|failed core proc|'
-            'hiperrorlaunchoutofresources|too many resources requested for launch|distbackender|'
-            'worker proc .+ died unexpectedly',
-            re.I,
+            'failed to start|no such file or directory|command not found|cannot access', re.I
         )
         self.default_client_wait_time = 120
         self.default_client_poll_count = 20
@@ -260,7 +240,7 @@ class InferenceBaseJob:
                     sleep 2;ibv_devinfo;sleep 2;"'
                 )
                 for node in out_dict.keys():
-                    if not re.search(r'hca_id:\s+bnxt_', out_dict[node], re.I):
+                    if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
@@ -319,16 +299,12 @@ class InferenceBaseJob:
 
     def clone_bench_serving_repo(self, clone_dir):
         """Clone bench_serving repository for client benchmarks."""
-        inner = f"cd {shlex.quote(clone_dir)} && git clone {shlex.quote(self.if_dict['benchmark_script_repo'])}"
-        cmd = f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(inner)}"
+        cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {clone_dir}; git clone {self.if_dict['benchmark_script_repo']}" '''
         out_dict = self.c_phdl.exec(cmd)
         for node in out_dict.keys():
-            out = out_dict[node] or ""
-            # Ignore "already exists" — repo was cloned in a prior stage.
-            if re.search("already exists", out, re.I):
-                continue
-            if _GIT_CLONE_FAIL_RE.search(out):
-                fail_test("Errors or failures seen in pulling bench_serving repo from Github, pls check")
+            # Ignore "already exists" error - repo was cloned in previous test
+            if re.search('error|fail', out_dict[node], re.I) and not re.search('already exists', out_dict[node], re.I):
+                fail_test('Errors or failures seen in pulling bench_serving repo from Github, pls check')
         time.sleep(3)
 
     def launch_server(self):
@@ -340,10 +316,7 @@ class InferenceBaseJob:
         # Start the server side inference job
         cmd_list = []
         for i in range(0, int(self.nnodes)):
-            log_base = f'{self.log_dir}/{self.get_log_subdir()}/out-node{i}'
-            log_path = f'{log_base}/{log_file}'
-            log_parent = os.path.dirname(log_path).replace('\\', '/')
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {log_parent}; cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash {script_path} > {log_path} 2>&1 &" '''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash {script_path} > {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file} 2>&1 &" '''
             cmd_list.append(cmd)
         out_dict = self.s_phdl.exec_cmd_list(cmd_list)
 
@@ -365,7 +338,7 @@ class InferenceBaseJob:
 
         for node, output in out_dict.items():
             if error_pattern.search(output or ''):
-                error_msg = f'Failed to start server on node {node}: {output[-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
+                error_msg = f'Failed to start server on node {node}: {output[-500:]}'
                 fail_test(error_msg)
                 raise Exception(error_msg)
 
@@ -397,7 +370,7 @@ class InferenceBaseJob:
         for node in out_dict.keys():
             log_content = out_dict[node].lower()
             if self.default_server_precheck_error_pattern.search(log_content):
-                error_msg = f'Failed to start server on node {node}: {out_dict[node][-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
+                error_msg = f'Failed to start server on node {node}: {out_dict[node][-500:]}'
                 fail_test(error_msg)
                 raise Exception(error_msg)
 
@@ -416,7 +389,7 @@ class InferenceBaseJob:
 
             for node in out_dict.keys():
                 if self.default_server_error_pattern_poll.search(out_dict[node] or ''):
-                    error_msg = f'Failed to start server on node {node}: {out_dict[node][-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
+                    error_msg = f'Failed to start server on node {node}: {out_dict[node][-500:]}'
                     fail_test(error_msg)
                     raise Exception(error_msg)
 
@@ -478,22 +451,11 @@ class InferenceBaseJob:
                 cmd_list.append(cmd)
             out_dict = self.c_phdl.exec_cmd_list(cmd_list)
             for node in out_dict.keys():
-                log_tail = out_dict[node] or ""
-                if _BENCH_CLIENT_TRACEBACK_RE.search(log_tail):
-                    fail_test(
-                        f"Benchmark client traceback on node {node} "
-                        f"(see bench_serv_script.log); aborting before completion."
-                    )
+                if re.search('Failed', out_dict[node], re.I):
+                    fail_test(f'Failed to run benchmark script on node {node}')
                     return
-                m_fail = _BENCH_FAILED_REQUESTS_RE.search(log_tail)
-                if m_fail and int(m_fail.group(1)) > 0:
-                    fail_test(
-                        f"Benchmark client on node {node} reports "
-                        f"Failed requests: {m_fail.group(1)} (non-zero); see bench_serv_script.log."
-                    )
-                    return
-                if not re.search("End-to-end Latency", log_tail, re.I):
-                    log.info(f"Waiting {self.default_client_poll_wait_time} secs for next poll")
+                if not re.search('End-to-end Latency', out_dict[node], re.I):
+                    log.info(f'Waiting {self.default_client_poll_wait_time} secs for next poll')
                     time.sleep(self.default_client_poll_wait_time)
 
     def start_inference_server_job(
@@ -526,61 +488,61 @@ class InferenceBaseJob:
         for node in out_dict.keys():
             self.inference_results_dict[node] = {}
             if re.search('Successful requests:', out_dict[node], re.I):
-                match = re.search(r'Successful requests:\s+([0-9]+)', out_dict[node], re.I)
+                match = re.search('Successful requests:\s+([0-9]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['successful_requests'] = match.group(1)
-            if re.search(r'Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I):
-                match = re.search(r'Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I)
+            if re.search('Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I):
+                match = re.search('Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['benchmark_duration'] = match.group(1)
             if re.search('Total input tokens:', out_dict[node], re.I):
-                match = re.search(r'Total input tokens:\s+([0-9\.]+)', out_dict[node], re.I)
+                match = re.search('Total input tokens:\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['total_input_tokens'] = match.group(1)
             if re.search('Total generated tokens:', out_dict[node], re.I):
-                match = re.search(r'Total generated tokens:\s+([0-9\.]+)', out_dict[node], re.I)
+                match = re.search('Total generated tokens:\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['Total generated tokens:'] = match.group(1)
-            if re.search(r'Request throughput \(req/s\):', out_dict[node], re.I):
-                match = re.search(r'Request throughput \(req/s\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('Request throughput \(req/s\):', out_dict[node], re.I):
+                match = re.search('Request throughput \(req/s\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['request_throughput_per_sec'] = match.group(1)
-            if re.search(r'Output token throughput \(tok/s\):', out_dict[node], re.I):
-                match = re.search(r'Output token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('Output token throughput \(tok/s\):', out_dict[node], re.I):
+                match = re.search('Output token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['output_throughput_per_sec'] = match.group(1)
-            if re.search(r'Total Token throughput \(tok/s\):', out_dict[node], re.I):
-                match = re.search(r'Total Token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('Total Token throughput \(tok/s\):', out_dict[node], re.I):
+                match = re.search('Total Token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['total_throughput_per_sec'] = match.group(1)
-            if re.search(r'Mean TTFT \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Mean TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('Mean TTFT \(ms\):', out_dict[node], re.I):
+                match = re.search('Mean TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['mean_ttft_ms'] = match.group(1)
-            if re.search('Median TTFT (ms):', out_dict[node], re.I):
+            if re.search(r'Median TTFT \(ms\):', out_dict[node], re.I):
                 match = re.search(r'Median TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['median_ttft_ms'] = match.group(1)
-            if re.search('P99 TTFT (ms):', out_dict[node], re.I):
+            if re.search(r'P99 TTFT \(ms\):', out_dict[node], re.I):
                 match = re.search(r'P99 TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_ttft_ms'] = match.group(1)
-            if re.search(r'Mean TPOT \(ms\)', out_dict[node], re.I):
-                match = re.search(r'Mean TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('Mean TPOT \(ms\)', out_dict[node], re.I):
+                match = re.search('Mean TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['mean_tpot_ms'] = match.group(1)
-            if re.search(r'Median TPOT \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Median TPOT \(ms\):\s+([0-9]+)', out_dict[node], re.I)
+            if re.search('Median TPOT \(ms\):', out_dict[node], re.I):
+                match = re.search('Median TPOT \(ms\):\s+([0-9]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['median_tpot_ms'] = match.group(1)
-            if re.search('P99 TPOT (ms):', out_dict[node], re.I):
+            if re.search(r'P99 TPOT \(ms\):', out_dict[node], re.I):
                 match = re.search(r'P99 TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_tpot_ms'] = match.group(1)
-            if re.search(r'Mean ITL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Mean ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('Mean ITL \(ms\):', out_dict[node], re.I):
+                match = re.search('Mean ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['mean_itl_ms'] = match.group(1)
-            if re.search(r'Median ITL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Median ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('Median ITL \(ms\):', out_dict[node], re.I):
+                match = re.search('Median ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['median_itl_ms'] = match.group(1)
-            if re.search(r'P99 ITL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'P99 ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('P99 ITL \(ms\):', out_dict[node], re.I):
+                match = re.search('P99 ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_itl_ms'] = match.group(1)
-            if re.search(r'Mean E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Mean E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('Mean E2EL \(ms\):', out_dict[node], re.I):
+                match = re.search('Mean E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['mean_e2el_ms'] = match.group(1)
-            if re.search(r'Median E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Median E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('Median E2EL \(ms\):', out_dict[node], re.I):
+                match = re.search('Median E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['median_e2el_ms'] = match.group(1)
-            if re.search(r'P99 E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'P99 E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('P99 E2EL \(ms\):', out_dict[node], re.I):
+                match = re.search('P99 E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_e2el_ms'] = match.group(1)
 
         log.info("%s", self.inference_results_dict)

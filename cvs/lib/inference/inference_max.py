@@ -1,16 +1,35 @@
 '''
 Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
+All rights reserved.
+This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import os
 import re
 import shlex
 import time
 
-from cvs.lib.inference.base import InferenceBaseJob, _GIT_CLONE_FAIL_RE
+from cvs.lib import globals
+from cvs.lib.inference.base import InferenceBaseJob
 from cvs.lib.verify_lib import fail_test
+
+log = globals.log
+
+# bench_serving / vLLM-style client summary: do not treat bare "Failed" substrings as failure.
+_BENCH_FAILED_REQUESTS_RE = re.compile(r"Failed\s+requests:\s*(\d+)", re.I)
+_BENCH_CLIENT_TRACEBACK_RE = re.compile(r"Traceback\s*\(most recent call last\):", re.I)
+
+# git clone failures only (avoid matching benign "error" / "failed" words in unrelated log lines).
+_GIT_CLONE_FAIL_RE = re.compile(
+    r"(?:^|\n)(?:fatal:\s|error:\s)|Could not resolve host|Repository not found|"
+    r"Permission denied \(publickey\)|SSL certificate problem",
+    re.I,
+)
+
+# Log tail slice for server startup failures (avoid mid-line truncation hiding the real error).
+_SERVER_LOG_ERROR_SNIPPET_CHARS = 2500
 
 
 def _clone_dirname_from_git_url(repo_url: str) -> str:
@@ -20,7 +39,12 @@ def _clone_dirname_from_git_url(repo_url: str) -> str:
 
 
 class InferenceMaxJob(InferenceBaseJob):
-    """InferenceMAX-specific implementation."""
+    """InferenceMAX-specific implementation.
+
+    Bench-serving / vLLM log handling and stricter server-startup detection live on this
+    subclass so :class:`~cvs.lib.inference.base.InferenceBaseJob` stays generic for other
+    inference owners.
+    """
 
     # Runner preflight: this CVS build supports opt-in host-mounted server scripts
     # (``use_host_mounted_server_script`` + ``benchmark_server_script_path``).
@@ -28,10 +52,22 @@ class InferenceMaxJob(InferenceBaseJob):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Upstream InferenceMAX org repo is a stub; real tree lives at SemiAnalysisAI/InferenceX (see that README).
         self.if_dict.setdefault(
             'inferencemax_repo',
             'https://github.com/SemiAnalysisAI/InferenceX.git',
+        )
+        # InferenceMax / vLLM-on-ROCm: broader fail-fast patterns than the generic base defaults.
+        self.default_server_precheck_error_pattern = re.compile(
+            'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback|failed to start|'
+            'hiperrorlaunchoutofresources|too many resources requested for launch|distbackender',
+            re.I,
+        )
+        self.default_server_error_pattern_poll = re.compile(
+            'failed to start|no such file or directory|command not found|cannot access|'
+            'engine core initialization failed|server died before becoming healthy|failed core proc|'
+            'hiperrorlaunchoutofresources|too many resources requested for launch|distbackender|'
+            'worker proc .+ died unexpectedly',
+            re.I,
         )
 
     def _using_host_server_scripts(self) -> bool:
@@ -47,7 +83,13 @@ class InferenceMaxJob(InferenceBaseJob):
         base = 'single_node' if int(self.nnodes) == 1 else 'multi_node'
         for prefix in (f'benchmarks/{base}/', 'benchmarks/single_node/', 'benchmarks/multi_node/'):
             if ss.startswith(prefix):
-                return ss[len(prefix) :]
+                ss = ss[len(prefix) :]
+                break
+        # CVS ships these scripts flat under ``benchmark_server_script_path``; InferenceX
+        # nests the same filenames under ``fixed_seq_len/``. Keep ``server_script`` aligned
+        # with the clone (``benchmarks/.../fixed_seq_len/...``) and map here for host mode.
+        if ss.startswith('fixed_seq_len/'):
+            ss = ss[len('fixed_seq_len/') :]
         return ss
 
     def get_server_script_directory(self):
@@ -76,17 +118,231 @@ class InferenceMaxJob(InferenceBaseJob):
         """InferenceMAX uses 'inference-max' log subdirectory."""
         return 'inference-max'
 
+    def exec_nic_setup_scripts(self):
+        """Same as base but use a raw-string HCA pattern (``hca_id:\\s+bnxt_``) for reliable matching."""
+        if self.distributed_inference is True:
+            if re.search('broadcom|thor', self.nic_type, re.I):
+                self.nccl_ib_gid_index = 3
+                out_dict = self.s_phdl.exec(
+                    f'docker exec {self.container_name} /bin/bash -c "sudo \
+                    cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
+                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
+                    sleep 2;ibv_devinfo;sleep 2;"'
+                )
+                for node in out_dict.keys():
+                    if not re.search(r'hca_id:\s+bnxt_', out_dict[node], re.I):
+                        log.info("%s", out_dict[node])
+                        fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
+
+    def clone_bench_serving_repo(self, clone_dir):
+        """Clone bench_serving repository for client benchmarks (quoted paths, narrow clone-failure match)."""
+        inner = f"cd {shlex.quote(clone_dir)} && git clone {shlex.quote(self.if_dict['benchmark_script_repo'])}"
+        cmd = f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(inner)}"
+        out_dict = self.c_phdl.exec(cmd)
+        for node in out_dict.keys():
+            out = out_dict[node] or ""
+            if re.search("already exists", out, re.I):
+                continue
+            if _GIT_CLONE_FAIL_RE.search(out):
+                fail_test("Errors or failures seen in pulling bench_serving repo from Github, pls check")
+        time.sleep(3)
+
+    def launch_server(self):
+        """Launch inference server; ensure log directory exists before redirect."""
+        script_dir = self.get_server_script_directory()
+        log_file = f'{self.server_script}_server.log'
+        script_path = self.get_server_script_path()
+
+        cmd_list = []
+        for i in range(0, int(self.nnodes)):
+            log_base = f'{self.log_dir}/{self.get_log_subdir()}/out-node{i}'
+            log_path = f'{log_base}/{log_file}'
+            log_parent = os.path.dirname(log_path).replace('\\', '/')
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {log_parent}; cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash {script_path} > {log_path} 2>&1 &" '''
+            cmd_list.append(cmd)
+        out_dict = self.s_phdl.exec_cmd_list(cmd_list)
+
+        for node in out_dict.keys():
+            if re.search(
+                'No such file or directory|command not found|cannot access|Permission denied', out_dict[node], re.I
+            ):
+                log.error(f'FAIL - Failed to start server on node {node}: {out_dict[node]}')
+                raise Exception(f'Failed to start server on node {node}: {out_dict[node]}')
+
+    def check_server_status(self, log_file, log_subdir, error_pattern):
+        """Tail recent server logs, detect launch failures, and return the output dict."""
+        cmd_list = []
+        for i in range(0, int(self.nnodes)):
+            cmd = f'tail -30 {self.log_dir}/{log_subdir}/out-node{i}/{log_file}'
+            cmd_list.append(cmd)
+        out_dict = self.s_phdl.exec_cmd_list(cmd_list)
+
+        for node, output in out_dict.items():
+            if error_pattern.search(output or ''):
+                error_msg = f'Failed to start server on node {node}: {output[-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
+                fail_test(error_msg)
+                raise Exception(error_msg)
+
+        return out_dict
+
+    def poll_server_startup(self):
+        """Poll for server startup completion (longer error log tail than generic base)."""
+        log_file = f'{self.server_script}_server.log'
+        readiness_pattern = self.readiness_pattern
+
+        log.info(f'Waiting {self.default_server_precheck_wait_time} secs for server to start writing logs...')
+        time.sleep(self.default_server_precheck_wait_time)
+
+        cmd_list = []
+        for i in range(0, int(self.nnodes)):
+            cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'
+            cmd_list.append(cmd)
+        out_dict = self.s_phdl.exec_cmd_list(cmd_list)
+        for node in out_dict.keys():
+            log_content = out_dict[node].lower()
+            if self.default_server_precheck_error_pattern.search(log_content):
+                error_msg = f'Failed to start server on node {node}: {out_dict[node][-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
+                fail_test(error_msg)
+                raise Exception(error_msg)
+
+        log.info(
+            f'No immediate errors detected. Waiting {self.default_server_wait_time} more secs for server to fully launch...'
+        )
+        time.sleep(self.default_server_wait_time)
+
+        for j in range(0, self.default_server_poll_count):
+            log.info(f'Polling for application startup complete on all nodes, iteration {j}')
+            cmd_list = []
+            for i in range(0, int(self.nnodes)):
+                cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'
+                cmd_list.append(cmd)
+            out_dict = self.s_phdl.exec_cmd_list(cmd_list)
+
+            for node in out_dict.keys():
+                if self.default_server_error_pattern_poll.search(out_dict[node] or ''):
+                    error_msg = f'Failed to start server on node {node}: {out_dict[node][-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
+                    fail_test(error_msg)
+                    raise Exception(error_msg)
+
+            if self.is_server_ready(out_dict, readiness_pattern):
+                log.info('Server startup confirmed on all nodes')
+                return
+
+            log.info(f'Waiting {self.default_server_poll_wait_time} secs for next poll')
+            time.sleep(self.default_server_poll_wait_time)
+
+        error_msg = 'Server did not report readiness before timeout; aborting startup'
+        fail_test(error_msg)
+        raise Exception(error_msg)
+
+    def poll_client_completion(self):
+        """Poll for client benchmark completion; bench_serving always prints ``Failed requests: N``."""
+        log.info(f'Waiting for {self.default_client_wait_time} secs for benchmark scripts to start')
+        time.sleep(self.default_client_wait_time)
+        for j in range(0, self.default_client_poll_count):
+            log.info(f'Polling for Benchmark script to complete on all nodes, iteration {j}')
+            cmd_list = []
+            for i in range(0, int(self.nnodes)):
+                cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/bench_serv_script.log'
+                cmd_list.append(cmd)
+            out_dict = self.c_phdl.exec_cmd_list(cmd_list)
+            for node in out_dict.keys():
+                log_tail = out_dict[node] or ""
+                if _BENCH_CLIENT_TRACEBACK_RE.search(log_tail):
+                    msg = (
+                        f"Benchmark client traceback on node {node} "
+                        f"(see bench_serv_script.log); aborting before completion."
+                    )
+                    fail_test(msg)
+                    raise Exception(msg)
+                m_fail = _BENCH_FAILED_REQUESTS_RE.search(log_tail)
+                if m_fail and int(m_fail.group(1)) > 0:
+                    msg = (
+                        f"Benchmark client on node {node} reports "
+                        f"Failed requests: {m_fail.group(1)} (non-zero); see bench_serv_script.log."
+                    )
+                    fail_test(msg)
+                    raise Exception(msg)
+                if not re.search("End-to-end Latency", log_tail, re.I):
+                    log.info(f"Waiting {self.default_client_poll_wait_time} secs for next poll")
+                    time.sleep(self.default_client_poll_wait_time)
+
+    def get_inference_results_dict(self, out_dict):
+        """Parse bench_serving summary lines (raw-string regexes for metric lines)."""
+        log.info('Get the inference results dict using get_inference_results_dict')
+        self.inference_results_dict = {}
+        for node in out_dict.keys():
+            self.inference_results_dict[node] = {}
+            if re.search('Successful requests:', out_dict[node], re.I):
+                match = re.search(r'Successful requests:\s+([0-9]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['successful_requests'] = match.group(1)
+            if re.search(r'Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I):
+                match = re.search(r'Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['benchmark_duration'] = match.group(1)
+            if re.search('Total input tokens:', out_dict[node], re.I):
+                match = re.search(r'Total input tokens:\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['total_input_tokens'] = match.group(1)
+            if re.search('Total generated tokens:', out_dict[node], re.I):
+                match = re.search(r'Total generated tokens:\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['Total generated tokens:'] = match.group(1)
+            if re.search(r'Request throughput \(req/s\):', out_dict[node], re.I):
+                match = re.search(r'Request throughput \(req/s\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['request_throughput_per_sec'] = match.group(1)
+            if re.search(r'Output token throughput \(tok/s\):', out_dict[node], re.I):
+                match = re.search(r'Output token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['output_throughput_per_sec'] = match.group(1)
+            if re.search(r'Total Token throughput \(tok/s\):', out_dict[node], re.I):
+                match = re.search(r'Total Token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['total_throughput_per_sec'] = match.group(1)
+            if re.search(r'Mean TTFT \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Mean TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['mean_ttft_ms'] = match.group(1)
+            if re.search(r'Median TTFT \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Median TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['median_ttft_ms'] = match.group(1)
+            if re.search(r'P99 TTFT \(ms\):', out_dict[node], re.I):
+                match = re.search(r'P99 TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['p99_ttft_ms'] = match.group(1)
+            if re.search(r'Mean TPOT \(ms\)', out_dict[node], re.I):
+                match = re.search(r'Mean TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['mean_tpot_ms'] = match.group(1)
+            if re.search(r'Median TPOT \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Median TPOT \(ms\):\s+([0-9]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['median_tpot_ms'] = match.group(1)
+            if re.search(r'P99 TPOT \(ms\):', out_dict[node], re.I):
+                match = re.search(r'P99 TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['p99_tpot_ms'] = match.group(1)
+            if re.search(r'Mean ITL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Mean ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['mean_itl_ms'] = match.group(1)
+            if re.search(r'Median ITL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Median ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['median_itl_ms'] = match.group(1)
+            if re.search(r'P99 ITL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'P99 ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['p99_itl_ms'] = match.group(1)
+            if re.search(r'Mean E2EL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Mean E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['mean_e2el_ms'] = match.group(1)
+            if re.search(r'Median E2EL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'Median E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['median_e2el_ms'] = match.group(1)
+            if re.search(r'P99 E2EL \(ms\):', out_dict[node], re.I):
+                match = re.search(r'P99 E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                self.inference_results_dict[node]['p99_e2el_ms'] = match.group(1)
+
+        log.info("%s", self.inference_results_dict)
+        return self.inference_results_dict
+
     def clone_inferencemax_repo(self):
         """Clone InferenceX/InferenceMAX repo into ``/app`` inside the container (matches ``get_server_script_directory``)."""
         if self._using_host_server_scripts():
-            # Server runs from host-mounted scripts only; skip git clone.
             self.s_phdl.exec(
                 f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote('mkdir -p /workspace')}"
             )
             return
         repo = self.if_dict["inferencemax_repo"]
         clone_name = _clone_dirname_from_git_url(repo)
-        # Remove legacy stub checkout name; clone under /app so paths match get_server_script_directory().
         inner = (
             "set -e; mkdir -p /app; cd /app; "
             "rm -rf InferenceMAX; "
@@ -105,13 +361,11 @@ class InferenceMaxJob(InferenceBaseJob):
         self.s_phdl.exec(
             f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(ls_inner)}"
         )
-        # InferenceX benchmark scripts expect /workspace for server.log and gpu_metrics.csv
-        # (see benchmark_lib.sh); CVS host-docker runs do not mount it by default.
         self.s_phdl.exec(
             f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote('mkdir -p /workspace')}"
         )
 
     def start_inference_server_job(self):
-        """Start InferenceMAX server - clone repo, then call base implementation."""
+        """Start InferenceMAX server - clone repo, then base launch + poll (uses overridden methods)."""
         self.clone_inferencemax_repo()
         super().start_inference_server_job()

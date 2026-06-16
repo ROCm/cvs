@@ -1,5 +1,5 @@
 {
-    "_comment": "ISL+OSL must fit 8192 context (7168+1024=8192). CVS expects percentile_metrics (not percentiles_metrics).",
+    "_comment": "ISL+OSL must fit 8192 context (7168+1024=8192). CVS expects percentile_metrics (not percentiles_metrics). Optional host-mounted server scripts live in ./benchmark_server_scripts/.",
     "config": {
         "container_image": "rocm/7.0:rocm7.0_ubuntu_22.04_vllm_0.10.1_instinct_20250927_rc1",
         "container_name": "inference_max_rocm",
@@ -40,7 +40,7 @@
             "tokenizer_mode": "auto",
             "percentile_metrics": "ttft,tpot,itl,e2el",
             "metric_percentiles": "99",
-            "server_script": "gptoss_fp4_mi300x.sh",
+            "server_script": "fixed_seq_len/gptoss_fp4_mi300x.sh",
             "bench_serv_script": "benchmark_serving.py",
             "result_dict": {
                 "output_throughput_per_sec": "4200",

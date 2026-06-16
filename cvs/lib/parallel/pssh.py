@@ -13,7 +13,6 @@ from pssh.exceptions import Timeout, ConnectionError, SessionError
 
 from cvs.lib.env_lib import build_env_prefix
 from cvs.lib import globals
-from cvs.lib.utils_lib import redact_shell_log_text, redact_shell_log_value
 
 global_log = globals.log
 
@@ -184,17 +183,17 @@ class Pssh:
             self.log.info('#----------------------------------------------------------#')
             cmd_out_str = ''
             if cmd_list:
-                self.log.debug("%s", redact_shell_log_text(cmd_list[i]))
+                self.log.debug("%s", cmd_list[i])
             else:
-                self.log.debug("%s", redact_shell_log_text(cmd))
+                self.log.debug("%s", cmd)
             try:
                 for line in item.stdout or []:
                     if print_console:
-                        self.log.info("%s", redact_shell_log_text(line))
+                        self.log.info("%s", line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
                 for line in item.stderr or []:
                     if print_console:
-                        self.log.info("%s", redact_shell_log_text(line))
+                        self.log.info("%s", line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
             except Timeout as e:
                 if not self.stop_on_errors:
@@ -254,17 +253,16 @@ class Pssh:
         else:
             full_cmd = cmd
 
-        self.log.info('cmd = %s', redact_shell_log_text(full_cmd))
+        self.log.info(f'cmd = {full_cmd}')
 
         # Log command execution
         if self.log:
-            safe_cmd = redact_shell_log_text(full_cmd)
             if timeout is not None:
                 self.log.debug(
-                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {safe_cmd}"
+                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
                 )
             else:
-                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {safe_cmd}")
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
 
         if timeout is None:
             output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
@@ -277,7 +275,7 @@ class Pssh:
         # Log per-host execution completion
         if self.log:
             for host in cmd_output.keys():
-                self.log.debug("Command completed on %s: %s", host, redact_shell_log_text(full_cmd))
+                self.log.debug(f"Command completed on {host}: {cmd}")
 
         return cmd_output
 
@@ -292,7 +290,7 @@ class Pssh:
         else:
             cmd_list = cmd_list
 
-        self.log.info("%s", redact_shell_log_value(cmd_list))
+        self.log.info("%s", cmd_list)
 
         # Log command list execution
         if self.log:
@@ -313,7 +311,7 @@ class Pssh:
         # Log per-host command execution (only for processed output)
         if self.process_output and self.log and isinstance(cmd_output, dict):
             for host, cmd in zip(self.reachable_hosts, cmd_list):
-                self.log.debug("Command on %s: %s", host, redact_shell_log_text(cmd))
+                self.log.debug(f"Command on {host}: {cmd}")
 
         return cmd_output
 
