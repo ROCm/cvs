@@ -391,6 +391,11 @@ def test_openai_compatible_http_endpoints(im_obj):
     im_obj.verify_openai_compatible_endpoints()
     update_test_result()
 
+# Test to run the lm-eval hellaswag benchmark
+def test_run_lm_eval_hellaswag_benchmark_test(im_obj):
+    globals.error_list = []
+    im_obj.run_lm_eval_hellaswag_benchmark_test()
+    update_test_result()
 
 # Test to run the canned gsm8k benchmark packaged with the container
 # def test_run_gsm8k_benchmark_test(im_obj):
