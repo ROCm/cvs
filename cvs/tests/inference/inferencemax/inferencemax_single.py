@@ -15,7 +15,7 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.inference_max import InferenceMaxJob
+from cvs.lib.inference.inferencemax_orch import InferenceMaxJob
 from cvs.lib.verify_lib import update_test_result
 
 _spec = _ilu.spec_from_file_location("_inferencemax_shared", _pl.Path(__file__).with_name("_shared.py"))

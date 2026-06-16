@@ -9,11 +9,14 @@ InferenceMax suite scaffolding — DTNI-style layout (lifecycle hooks, staged te
 ``cvs/tests/inference/vllm/conftest.py`` as a reference implementation.
 
 Differences (documented):
-  * Workloads still use **host SSH + docker run/exec** (``InferenceMaxJob``), not
+  * Workloads still use **host SSH + docker run/exec** (``InferenceMaxJob`` in
+    ``cvs.lib.inference.inferencemax_orch``), not
     ``ContainerOrchestrator.exec`` inside an sshd container. The ``orch`` fixture
     therefore yields an ``InferenceMaxHostContext`` with the same **stage method
     names** as a real orchestrator so tests stay structurally parallel to DTNI
     container suites.
+  * Optional sibling ``*threshold.json`` (same ``glob`` discovery as ``load_variant`` in
+    ``cvs.lib.dtni.config_loader``); merged by ``load_inferencemax_suite_raw``.
   * Optional **host-mounted** vLLM server scripts live under
     ``cvs/input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts/``;
     see ``docs/reference/configuration-files/inferencemax.rst`` for deploy steps and
@@ -36,6 +39,7 @@ from cvs.lib.utils_lib import (
     resolve_cluster_config_placeholders,
     resolve_test_config_placeholders,
 )
+from cvs.lib.dtni.config_loader import load_inferencemax_suite_raw
 from cvs.lib.verify_lib import update_test_result
 
 log = globals.log
@@ -135,8 +139,7 @@ def suite_raw(pytestconfig):
     config_file = pytestconfig.getoption("config_file")
     if not config_file:
         pytest.fail("--config_file is required")
-    with open(config_file) as fp:
-        return json.load(fp)
+    return load_inferencemax_suite_raw(config_file)
 
 
 @pytest.fixture(scope="module")
@@ -195,8 +198,7 @@ def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
         return
-    with open(config_file) as fp:
-        raw = json.load(fp)
+    raw = load_inferencemax_suite_raw(config_file)
     bp = raw.get("benchmark_params", {}).get("gpt-oss-120b", {})
     combo = {
         "isl": str(bp.get("input_sequence_length", "8192")),

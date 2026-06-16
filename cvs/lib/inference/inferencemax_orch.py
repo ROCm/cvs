@@ -6,6 +6,21 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+"""
+InferenceMax host Docker job (extends :class:`~cvs.lib.inference.base.InferenceBaseJob`).
+
+This module is the InferenceMax counterpart to :mod:`cvs.lib.inference.vllm_orch` for
+**pytest layout**: ``inferencemax_single`` uses the same staged lifecycle pattern as
+``vllm_single`` (``test_aa_*``, parametrized inference, ``test_zz_teardown``), but
+this job still runs over ``c_phdl``/``s_phdl`` and host ``docker exec`` because
+InferenceX is integrated that way today—not via
+:class:`~cvs.core.orchestrators.container.ContainerOrchestrator`.
+
+Bench-serving **client** semantics match :class:`~cvs.lib.inference.vllm_orch.VllmJob`
+(nonzero ``Failed requests:`` only, ``Traceback`` short-circuit). Server polling uses
+stricter regex defaults than :class:`~cvs.lib.inference.base.InferenceBaseJob`.
+"""
+
 import os
 import re
 import shlex
@@ -39,12 +54,7 @@ def _clone_dirname_from_git_url(repo_url: str) -> str:
 
 
 class InferenceMaxJob(InferenceBaseJob):
-    """InferenceMAX-specific implementation.
-
-    Bench-serving / vLLM log handling and stricter server-startup detection live on this
-    subclass so :class:`~cvs.lib.inference.base.InferenceBaseJob` stays generic for other
-    inference owners.
-    """
+    """InferenceMAX job: host ``docker exec`` + bench_serving (see module docstring)."""
 
     # Runner preflight: this CVS build supports opt-in host-mounted server scripts
     # (``use_host_mounted_server_script`` + ``benchmark_server_script_path``).

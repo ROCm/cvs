@@ -16,20 +16,36 @@ The InferenceMAX tests check:
 - **Benchmarking**: Load testing with various concurrency levels and sequence lengths
 - **Result verification**: Expected throughput and latency metrics
 
-InferenceMAX inputs follow the same directory pattern as ``vllm_single``: ``cvs/input/config_file/inference/inferencemax_single/<variant>/<variant>_config.json`` (pass that ``*_config.json`` path as ``--config_file``). For example, MI300X GPT-OSS 120B single-node uses ``mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json``. A preserved MI355x reference (same basename as the former flat file) lives at ``mi355x_inferencemax_gpt_oss_120b_single/mi355x_inferencemax_gpt_oss_120b_single_config.json``; verify ``server_script`` against your InferenceX revision.
+InferenceMAX inputs follow the same directory pattern as ``vllm_single``: ``cvs/input/config_file/inference/inferencemax_single/<variant>/`` with a suite JSON passed as ``--config_file`` (typically ``<variant>_config.json``). Optional pass/fail numbers live in the **sole** ``*threshold.json`` in that directory when present (same ``glob`` rule as ``load_variant`` in ``cvs.lib.dtni.config_loader``; merged by ``load_inferencemax_suite_raw``). For example, MI300X GPT-OSS 120B single-node uses ``mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json`` plus ``mi300x_gpt_oss_120b_single_threshold.json``. A preserved MI355x reference lives at ``mi355x_inferencemax_gpt_oss_120b_single/`` with the same naming pattern; verify ``server_script`` against your InferenceX revision.
 
 .. note::
 
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
   - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
-  - ``server_script`` is interpreted relative to ``benchmarks/single_node/`` (or ``benchmarks/multi_node/`` when multi-node) inside the cloned ``inferencemax_repo``. It must exist at that path in the repo revision you use; upstream layouts change. On current ``SemiAnalysisAI/InferenceX`` ``main``, MI300X GPT-OSS-style server entrypoints often live under ``fixed_seq_len/`` (for example ``fixed_seq_len/gptoss_fp4_mi300x.sh``). CVS ships a **flat** ``benchmark_server_scripts/`` tree (``gptoss_fp4_mi300x.sh`` at the top level); when ``use_host_mounted_server_script`` is set, ``InferenceMaxJob`` maps ``fixed_seq_len/`` in ``server_script`` to that layout. If the path is wrong, the server log shows ``No such file or directory``.
+  - ``server_script`` is interpreted relative to ``benchmarks/single_node/`` (or ``benchmarks/multi_node/`` when multi-node) inside the cloned ``inferencemax_repo``. It must exist at that path in the repo revision you use; upstream layouts change. On current ``SemiAnalysisAI/InferenceX`` ``main``, MI300X GPT-OSS-style server entrypoints often live under ``fixed_seq_len/`` (for example ``fixed_seq_len/gptoss_fp4_mi300x.sh``). CVS ships a **flat** ``benchmark_server_scripts/`` tree (``gptoss_fp4_mi300x.sh`` at the top level); when ``use_host_mounted_server_script`` is set, ``cvs.lib.inference.inferencemax_orch.InferenceMaxJob`` maps ``fixed_seq_len/`` in ``server_script`` to that layout. If the path is wrong, the server log shows ``No such file or directory``.
   - InferenceX single-node scripts typically write under ``/workspace`` (e.g. ``server.log``, ``gpu_metrics.csv``). CVS creates ``/workspace`` inside the container before launching the server; add a volume mapping for ``/workspace`` in ``container_config.volume_dict`` only if you need those files on the host after the run.
   - Host-mount server wrappers for GPT-OSS MI300X (optional ``use_host_mounted_server_script``) ship with the variant at ``cvs/input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts/``; rsync that directory to ``benchmark_server_script_path`` on the node. Use the variant's ``*_config.json`` in the same folder as ``--config_file`` for ``cvs run inferencemax_single``.
+  - **Thresholds**: optional ``*threshold.json`` in the variant directory (same discovery as ``load_variant`` in ``cvs.lib.dtni.config_loader``: exactly one ``*threshold.json`` if present; multiple files is an error). Merged by ``load_inferencemax_suite_raw``. Keys must match :meth:`~cvs.lib.inference.base.InferenceBaseJob.verify_inference_results` — ``ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>`` (string values as in JSON). You can instead keep ``result_dict`` inline in the suite JSON only when no threshold file is used.
 
 ``mi300x_singlenode_inferencemax.json``
 ========================================
 
-Here's a code snippet of the ``mi300x_singlenode_inferencemax.json`` file for reference:
+Legacy monolithic reference (historical). Current variants split **run** parameters into ``*_config.json`` and **expected metrics** into ``*_threshold.json`` beside it.
+
+.. dropdown:: Example ``mi300x_gpt_oss_120b_single_threshold.json``
+
+  .. code:: json
+
+    {
+        "_comment": "Pass/fail expectations; keys must match verify_inference_results.",
+        "result_dict": {
+            "ISL=7168,OSL=1024,TP=8,CONC=64": {
+                "output_throughput_per_sec": "4200",
+                "mean_ttft_ms": "500",
+                "mean_tpot_ms": "15"
+            }
+        }
+    }
 
 .. dropdown:: ``mi300x_singlenode_inferencemax.json``
 
@@ -80,12 +96,7 @@ Here's a code snippet of the ``mi300x_singlenode_inferencemax.json`` file for re
                 "percentile_metrics": "ttft,tpot,itl,e2el",
                 "metric_percentiles": "99",
                 "server_script": "fixed_seq_len/gptoss_fp4_mi300x.sh",
-                "bench_serv_script": "benchmark_serving.py",
-                "result_dict": {
-                    "output_throughput_per_sec": "4200",
-                    "mean_ttft_ms": "500",
-                    "mean_tpot_ms": "15"
-                }
+                "bench_serv_script": "benchmark_serving.py"
             }
         }
     }
@@ -204,10 +215,10 @@ Use the parameters in this table to configure the InferenceMAX configuration fil
      - Script to run the benchmarking client
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.result_dict.`` |br| ``output_throughput_`` |br| ``per_sec``
      - 4200
-     - Expected number of output tokens generated per second
+     - Under each ``ISL=...,OSL=...,TP=...,CONC=...`` key (see ``verify_inference_results``): expected output tok/s (higher is better). Usually supplied from ``*_threshold.json`` merged at pytest load time.
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.result_dict.`` |br| ``mean_ttft_ms``
      - 500
-     - Expected mean Time to First Token in milliseconds
+     - Same keyed map: expected mean TTFT in ms (lower is better).
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.result_dict.`` |br| ``mean_tpot_ms``
      - 15
-     - Expected mean Time Per Output Token in milliseconds
+     - Same keyed map: expected mean TPOT in ms (lower is better).
