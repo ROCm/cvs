@@ -112,3 +112,37 @@ class OpenAICompatibleModelClient:
             [{"role": "user", "content": user_text}],
             **kwargs,
         )
+
+    def chat_completions_structured_book(
+            self,
+            *,
+            max_tokens: int = 256,
+            temperature: float = 0.0,
+        ) -> tuple[int, Any]:
+        """
+        POST /v1/chat/completions with ``response_format: {type: json_object}``
+        and a prompt that asks for one book (title, author, year, genre).
+        """
+        messages: list[dict[str, str]] = [
+            {
+                "role": "system",
+                "content": (
+                    "Respond with a single JSON object only. "
+                    "No markdown or text outside the JSON."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Return one book as a JSON object with keys: "
+                    "title (string), author (string), year (integer), genre (string)."
+                ),
+            },
+        ]
+        extra: JsonDict = {"response_format": {"type": "json_object"}}
+        return self.chat_completions(
+            messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            extra=extra,
+        )
