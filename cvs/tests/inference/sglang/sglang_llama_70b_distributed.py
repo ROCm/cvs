@@ -426,26 +426,26 @@ def test_run_lm_eval_gsm8k_benchmark_test(im_obj):
 #     update_test_result()
 
 
-# # Test to run the sglang Benchmarking Testing using bench_serv
-# def test_run_benchmark_test(im_obj):
-#     """
-#     Execute a synthetic serving benchmark using sglang.bench_serving
-#     with a random dataset.
+# Test to run the sglang Benchmarking Testing using bench_serv
+def test_run_benchmark_test(im_obj):
+    """
+    Execute a synthetic serving benchmark using sglang.bench_serving
+    with a random dataset.
 
-#     Purpose:
-#     --------
-#     This test focuses on:
-#       - Stress-testing the serving infrastructure
-#       - Evaluating scheduling, batching, and throughput under load
-#       - Isolating serving performance independent of dataset semantics
+    Purpose:
+    --------
+    This test focuses on:
+      - Stress-testing the serving infrastructure
+      - Evaluating scheduling, batching, and throughput under load
+      - Isolating serving performance independent of dataset semantics
 
-#     Randomized workloads are useful for detecting performance regressions
-#     and scaling bottlenecks.
-#     """
-#     globals.error_list = []
-#     im_obj.setup_benchmark_serv_container_env()
-#     im_obj.benchserv_test_random(d_type='auto')
-#     update_test_result()
+    Randomized workloads are useful for detecting performance regressions
+    and scaling bottlenecks.
+    """
+    globals.error_list = []
+    im_obj.setup_benchmark_serv_container_env()
+    im_obj.benchserv_test_random(d_type='auto')
+    update_test_result()
 
 
 # Test to validate the prefill/decode GPU layout
