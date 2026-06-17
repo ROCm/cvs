@@ -1,6 +1,6 @@
 # DTNI validation tracker
 
-Canonical checklist for **multi-node distributed training and inference** validation on DTNI clusters. After team review, this workbook is the reference for **automation uplift** on the [`dev/dtni`](https://github.com/ROCm/cvs/tree/dev/dtni) branch.
+Canonical checklist for *multi-node distributed training and inference validation* on DTNI clusters. After team review, this workbook is the reference for **automation uplift** on the [`dev/dtni`](https://github.com/ROCm/cvs/tree/dev/dtni) branch.
 
 ## Files
 
