@@ -1495,7 +1495,7 @@ class SglangDisaggPD:
                 elif abs(actual - expected) > 0.05 * abs(expected):
                     fail_test(f"hellaswag acc_norm {actual:.4f} not within 5% of expected {expected:.4f}")
 
-    def lm_eval_metric_value(text: str, task: str = "hellaswag", metric: str = "acc_norm") -> float | None:
+    def lm_eval_metric_value(self, text: str, task: str = "hellaswag", metric: str = "acc_norm") -> float | None:
         pat = rf"\|\s*{re.escape(task)}\b[^|]*\|[^|]*\|[^|]*\|[^|]*\|\s*{re.escape(metric)}\b[^|]*\|\s*[^\|]*\|\s*([0-9]+(?:\.[0-9]+)?)"
         m = re.search(pat, text, flags=re.I | re.S)
         return float(m.group(1)) if m else None
