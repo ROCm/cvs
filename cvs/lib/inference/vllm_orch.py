@@ -16,6 +16,10 @@ is a base-layer refactor (out of scope for this PoC); see
 `plans/vllm-single-orch-poc.md`. The legacy `cvs.lib.inference.vllm.VllmJob`
 has no remaining importers and can be removed in that follow-up.
 
+Server shell entrypoints shared with InferenceMax live under
+:mod:`cvs.lib.dtni.vllm_benchmark_scripts`; point ``variant.paths.benchmark_scripts_dir``
+at a host path that contains copies of (or symlinks to) those files inside the container.
+
 Behavioural improvements over the base-class lifecycle it mirrors:
   - no dead distributed/`nnodes` branch
   - readiness is detected by scanning the whole server log, not `tail -30`
@@ -32,6 +36,7 @@ import shlex
 import time
 
 from cvs.lib import globals
+from cvs.lib.dtni.vllm_benchmark_scripts import BENCH_SERVING_GIT_URL
 
 log = globals.log
 
@@ -241,11 +246,11 @@ class VllmJob:
         # bench_serving is a calibration-bearing fork (kimbochen), NOT stock vLLM:
         # it carries a warmup phase + redefined random range-ratio/seq-length that
         # our thresholds are tuned against, so the in-image vLLM scripts won't do.
-        # Hardcoded for parity with the legacy path (base.py's benchmark_script_repo
-        # default); cloned at HEAD (unpinned) -- pin if upstream drift ever bites.
+        # URL is shared with :mod:`cvs.lib.inference.base` (``benchmark_script_repo``).
+        quoted = shlex.quote(BENCH_SERVING_GIT_URL)
         cmd = (
             f"bash -c 'mkdir -p {clone_dir} && cd {clone_dir} && "
-            f"(test -d bench_serving || git clone https://github.com/kimbochen/bench_serving.git)'"
+            f"(test -d bench_serving || git clone {quoted})'"
         )
         out = self.orch.exec(cmd)
         for host, output in out.items():

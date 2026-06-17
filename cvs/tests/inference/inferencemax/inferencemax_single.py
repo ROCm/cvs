@@ -34,6 +34,8 @@ def test_launch_container(orch, lifecycle, request):
     if not orch.verify_containers_running(name):
         lifecycle.failed = True
         pytest.fail(f"container {name} not running after setup_containers()")
+    time.sleep(30)
+    update_test_result()
 
 
 def test_inferencemax_inference(
@@ -60,14 +62,15 @@ def test_inferencemax_inference(
 
     globals.error_list = []
     im_obj = InferenceMaxJob(
-        c_phdl=orch.c_phdl,
-        s_phdl=orch.s_phdl,
+        c_phdl=orch.all,
+        s_phdl=orch.all,
         model_name=model_name,
         inference_config_dict=inference_dict,
         benchmark_params_dict=bp_run,
         hf_token=hf_token,
         gpu_type=gpu_type,
         distributed_inference=False,
+        orch=orch,
     )
     try:
         t_server = time.monotonic()
@@ -76,7 +79,8 @@ def test_inferencemax_inference(
         lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t_server)
         t_client = time.monotonic()
         im_obj.start_inference_client_job()
-        im_obj.poll_for_inference_completion()
+        poll_status = im_obj.poll_for_inference_completion()
+        assert poll_status.get("status") == "success", f"Inference did not complete: {poll_status}"
         im_obj.verify_inference_results()
         assert im_obj.inference_results_dict, (
             "inference_results_dict empty after benchmark; log parsing or client run likely failed silently"

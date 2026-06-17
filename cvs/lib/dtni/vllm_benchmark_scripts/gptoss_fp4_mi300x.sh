@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Server-only entrypoint for CVS InferenceMax + vLLM on MI300-class GPUs.
-# Single entrypoint for this variant (legacy gptoss_fp4_mi300.sh alias removed).
+# Server-only entrypoint for CVS + vLLM (GPT-OSS FP4) on MI300-class GPUs.
+# Shared canonical copy: cvs.lib.dtni.vllm_benchmark_scripts (see README.md).
 # CVS runs: source /tmp/server_env_script.sh; nohup bash this_script ...
 # The benchmark client is started separately by CVS (bench_serving).
 #

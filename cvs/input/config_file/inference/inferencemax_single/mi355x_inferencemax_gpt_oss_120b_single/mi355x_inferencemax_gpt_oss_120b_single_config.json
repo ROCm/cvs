@@ -1,11 +1,8 @@
 {
-    "_comment": "Restored from removed mi355x_inferencemax_gpt_oss_120b_single.json (single node). ISL+OSL within 8192; CVS uses percentile_metrics. Confirm server_script exists in your InferenceX revision (e.g. gptoss_fp4_mi355x.sh under benchmarks/single_node/).",
+    "_comment": "Single-node InferenceMax sample. Set container_image for your environment. ISL+OSL within max_model_length; CVS uses percentile_metrics. Confirm server_script exists in your InferenceX layout when not using host-mounted scripts.",
     "config": {
         "container_image": "rocm/7.0:rocm7.0_ubuntu_22.04_vllm_0.10.1_instinct_20250927_rc1",
-        "container_name": "inference_max_rocm",
-        "nnodes": "1",
-        "inferencemax_repo": "https://github.com/SemiAnalysisAI/InferenceX.git",
-        "benchmark_script_repo": "https://github.com/kimbochen/bench_serving.git",
+        "container_name": "inferencemax_benchmark",
         "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "128G",
         "log_dir": "/home/{user-id}/LOGS",

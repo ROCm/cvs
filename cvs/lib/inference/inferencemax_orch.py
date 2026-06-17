@@ -47,16 +47,29 @@ def _discover_host_benchmark_scripts_dir(relpath: Path, entry_basename: str) -> 
     Return the host directory containing ``entry_basename`` under the ``cvs`` package tree.
 
     ``relpath`` is relative to the ``cvs`` package root (e.g.
-    ``input/.../mi300x_gpt_oss_120b_single/benchmark_server_scripts``). When checkout ``input/``
-    is missing, bundled bytes are used when deploying to cluster nodes.
+    ``lib/dtni/vllm_benchmark_scripts`` or legacy ``input/.../benchmark_server_scripts``).
+    The shared :mod:`cvs.lib.dtni.vllm_benchmark_scripts` directory is tried first when it
+    contains ``entry_basename``. When checkout paths are missing, bundled bytes are used
+    when deploying to cluster nodes.
     """
     import cvs as _cvs_module
 
     root = Path(_cvs_module.__file__).resolve().parent
-    candidates: list[Path] = [
-        root / relpath,
-        Path(__file__).resolve().parents[2] / relpath,
-    ]
+    candidates: list[Path] = []
+    try:
+        from cvs.lib.dtni.vllm_benchmark_scripts import bundled_scripts_dir as _vbs_scripts_root
+
+        _shared = _vbs_scripts_root()
+        if _wrapper_dir_ok(_shared, entry_basename):
+            candidates.append(_shared)
+    except (ImportError, OSError, TypeError, ValueError):
+        pass
+    candidates.extend(
+        [
+            root / relpath,
+            Path(__file__).resolve().parents[2] / relpath,
+        ]
+    )
     try:
         from importlib.resources import files
 
@@ -129,9 +142,8 @@ def _read_host_script_payload(if_dict: dict, relpath: Path, entry_basename: str)
     if not body:
         msg = (
             f"No checkout or bundled host server script for {entry_basename!r}. "
-            "Add it to ``cvs.lib.inference.inferencemax_host_scripts.BUNDLED_SERVER_SCRIPTS``, "
-            "or set benchmark_server_script_path to a host directory that contains this file, "
-            "or install CVS with ``cvs/input/.../benchmark_server_scripts`` present."
+            "Add it under ``cvs.lib.dtni.vllm_benchmark_scripts`` (see that package's README), "
+            "or set benchmark_server_script_path to a host directory that contains this file."
         )
         fail_test(msg)
         raise FileNotFoundError(msg)
@@ -200,15 +212,16 @@ def _resolved_host_benchmark_scripts_dir(if_dict: dict, relpath: Path, entry_bas
 class InferenceMaxJob(InferenceBaseJob):
     uses_local_server_scripts = True
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, orch=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.orch = orch
         self.if_dict.setdefault(
             'inferencemax_repo',
             'https://github.com/SemiAnalysisAI/InferenceX.git',
         )
         self.if_dict.setdefault(
             'host_benchmark_scripts_relpath',
-            'input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/benchmark_server_scripts',
+            'lib/dtni/vllm_benchmark_scripts',
         )
         self.default_server_precheck_error_pattern = re.compile(
             'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback|failed to start|'
@@ -391,16 +404,56 @@ class InferenceMaxJob(InferenceBaseJob):
         fail_test(error_msg)
         raise Exception(error_msg)
 
+    def _tail_client_bench_logs(self) -> dict:
+        """Return host -> last lines of bench_serv_script.log (inside the inference container).
+
+        Uses :meth:`ContainerOrchestrator.exec` whenever ``self.orch`` is set (routes through
+        core container runtime). For ``nnodes == 1``, a single ``exec`` on all hosts matches
+        the vLLM-style pattern. For ``nnodes > 1``, rank *i* is assumed to run on ``orch.hosts[i]``
+        (same ordering as ``Pssh.exec_cmd_list`` used to launch clients), so we issue one
+        ``exec(..., hosts=[host])`` per rank with that rank's log path — one global ``exec``
+        cannot apply different paths per host.
+        """
+        log_sub = self.get_log_subdir()
+        orch = getattr(self, "orch", None)
+        if orch is None:
+            cmd_list = []
+            for i in range(0, int(self.nnodes)):
+                path = f"{self.log_dir}/{log_sub}/out-node{i}/bench_serv_script.log".replace("\\", "/")
+                inner = f"tail -30 {shlex.quote(path)}"
+                cmd_list.append(f"docker exec {shlex.quote(self.container_name)} bash -c {shlex.quote(inner)}")
+            return self.s_phdl.exec_cmd_list(cmd_list)
+
+        n = int(self.nnodes)
+        hosts = list(getattr(orch, "hosts", ()) or ())
+        if not hosts:
+            msg = "orch.hosts is empty; cannot poll client logs via orchestrator"
+            fail_test(msg)
+            raise RuntimeError(msg)
+        if n > len(hosts):
+            msg = f"nnodes={n} exceeds orchestrator host count {len(hosts)}; cannot map ranks to hosts"
+            fail_test(msg)
+            raise RuntimeError(msg)
+
+        if n == 1:
+            path = f"{self.log_dir}/{log_sub}/out-node0/bench_serv_script.log".replace("\\", "/")
+            return orch.exec(f"tail -30 {shlex.quote(path)}")
+
+        out: dict = {}
+        for rank in range(n):
+            host = hosts[rank]
+            path = f"{self.log_dir}/{log_sub}/out-node{rank}/bench_serv_script.log".replace("\\", "/")
+            cmd = f"tail -30 {shlex.quote(path)}"
+            out.update(orch.exec(cmd, hosts=[host]))
+        return out
+
     def poll_client_completion(self):
         log.info(f'Waiting for {self.default_client_wait_time} secs for benchmark scripts to start')
         time.sleep(self.default_client_wait_time)
         for j in range(0, self.default_client_poll_count):
             log.info(f'Polling for Benchmark script to complete on all nodes, iteration {j}')
-            cmd_list = []
-            for i in range(0, int(self.nnodes)):
-                cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/bench_serv_script.log'
-                cmd_list.append(cmd)
-            out_dict = self.c_phdl.exec_cmd_list(cmd_list)
+            out_dict = self._tail_client_bench_logs()
+            done = []
             for node in out_dict.keys():
                 log_tail = out_dict[node] or ""
                 if _BENCH_CLIENT_TRACEBACK_RE.search(log_tail):
@@ -418,9 +471,15 @@ class InferenceMaxJob(InferenceBaseJob):
                     )
                     fail_test(msg)
                     raise Exception(msg)
-                if not re.search("End-to-end Latency", log_tail, re.I):
-                    log.info(f"Waiting {self.default_client_poll_wait_time} secs for next poll")
-                    time.sleep(self.default_client_poll_wait_time)
+                done.append(bool(re.search("End-to-end Latency", log_tail, re.I)))
+            if done and all(done):
+                log.info("Benchmark client complete on all nodes (iter=%d)", j)
+                return
+            log.info(f"Waiting {self.default_client_poll_wait_time} secs for next poll")
+            time.sleep(self.default_client_poll_wait_time)
+        msg = "client did not complete before poll cap"
+        fail_test(msg)
+        raise Exception(msg)
 
     def get_inference_results_dict(self, out_dict):
         log.info('Get the inference results dict using get_inference_results_dict')
@@ -438,7 +497,7 @@ class InferenceMaxJob(InferenceBaseJob):
                 self.inference_results_dict[node]['total_input_tokens'] = match.group(1)
             if re.search('Total generated tokens:', out_dict[node], re.I):
                 match = re.search(r'Total generated tokens:\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['Total generated tokens:'] = match.group(1)
+                self.inference_results_dict[node]['total_generated_tokens'] = match.group(1)
             if re.search(r'Request throughput \(req/s\):', out_dict[node], re.I):
                 match = re.search(r'Request throughput \(req/s\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['request_throughput_per_sec'] = match.group(1)
@@ -461,7 +520,7 @@ class InferenceMaxJob(InferenceBaseJob):
                 match = re.search(r'Mean TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['mean_tpot_ms'] = match.group(1)
             if re.search(r'Median TPOT \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Median TPOT \(ms\):\s+([0-9]+)', out_dict[node], re.I)
+                match = re.search(r'Median TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['median_tpot_ms'] = match.group(1)
             if re.search(r'P99 TPOT \(ms\):', out_dict[node], re.I):
                 match = re.search(r'P99 TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)

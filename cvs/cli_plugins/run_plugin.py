@@ -1,11 +1,8 @@
 import pytest
 import sys
 import os
-from pathlib import Path
 
 from .list_plugin import ListPlugin
-
-_DEFAULT_PYTEST_LOG_FILE = str(Path.home() / ".cvs" / "logs" / "pytest.log")
 
 
 class RunPlugin(ListPlugin):
@@ -26,10 +23,11 @@ class RunPlugin(ListPlugin):
         )
         parser.add_argument(
             "--log-file",
-            default=_DEFAULT_PYTEST_LOG_FILE,
+            default=None,
+            metavar="PATH",
             help=(
-                "Pytest: Path to file for logging output "
-                f"(default: {_DEFAULT_PYTEST_LOG_FILE}; parent dirs are created automatically)"
+                "Pytest: write logging output to this file (optional). "
+                "Parent directories are created automatically when set."
             ),
         )
         parser.add_argument(

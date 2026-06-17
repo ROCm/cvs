@@ -5,23 +5,56 @@ All rights reserved.
 
 import json
 import os
-import re
-import time
 
 import pytest
 
-from cvs.core.orchestrators.container import ContainerOrchestrator
-from cvs.lib import docker_lib, globals
-from cvs.lib.parallel_ssh_lib import Pssh
+from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
+from cvs.lib import globals
+from cvs.lib.dtni.config_loader import inferencemax_benchmark_model_name, load_inferencemax_suite_raw
 from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
     resolve_test_config_placeholders,
 )
-from cvs.lib.dtni.config_loader import inferencemax_benchmark_model_name, load_inferencemax_suite_raw
 from cvs.lib.verify_lib import update_test_result
 
 log = globals.log
+
+
+def _deep_merge(base, override):
+    """Recursively merge `override` onto `base` (dicts merged key-wise, scalars/lists replaced)."""
+    if not (isinstance(base, dict) and isinstance(override, dict)):
+        return override
+    out = dict(base)
+    for k, v in override.items():
+        out[k] = _deep_merge(base[k], v) if k in base and isinstance(base[k], dict) and isinstance(v, dict) else v
+    return out
+
+
+def _container_block_from_inference(inference_dict, benchmark_params_dict, model_name):
+    """Build a ``container`` dict for :class:`OrchestratorConfig` from legacy InferenceMax suite JSON."""
+    cc = inference_dict["container_config"]
+    bp = benchmark_params_dict.get(model_name, {})
+    image = bp.get("container_image", inference_dict["container_image"])
+    volumes = [f"{h}:{c}" for h, c in cc["volume_dict"].items()]
+    devices = list(cc.get("device_list", []))
+    env = dict(cc.get("env_dict", {}))
+    return {
+        "lifetime": "per_run",
+        "name": inference_dict["container_name"],
+        "image": image,
+        "env": env,
+        "runtime": {
+            "name": "docker",
+            "args": {
+                "volumes": volumes,
+                "devices": devices,
+                "network": "host",
+                "ipc": "host",
+                "privileged": True,
+            },
+        },
+    }
 
 
 class _Lifecycle:
@@ -32,71 +65,6 @@ class _Lifecycle:
 
     def record(self, nodeid, label, value, unit="s"):
         self.report.setdefault(nodeid, []).append((label, value, unit))
-
-
-class InferenceMaxHostContext:
-    def __init__(self, cluster_dict, inference_dict, benchmark_params_dict, model_name):
-        self.cluster_dict = cluster_dict
-        self.inference_dict = inference_dict
-        self.benchmark_params_dict = benchmark_params_dict
-        self.model_name = model_name
-        env_vars = cluster_dict.get("env_vars")
-        node_list = list(cluster_dict["node_dict"].keys())
-        user = cluster_dict["username"]
-        pkey = cluster_dict["priv_key_file"]
-        self.s_phdl = Pssh(log, node_list, user=user, pkey=pkey, env_vars=env_vars)
-        self.c_phdl = Pssh(log, node_list, user=user, pkey=pkey, env_vars=env_vars)
-        bp = benchmark_params_dict.get(model_name, {})
-        image = bp.get("container_image", inference_dict["container_image"])
-        self.container_config = {
-            "name": inference_dict["container_name"],
-            "image": image,
-        }
-
-    def get_container_name(self, cfg, image):
-        return ContainerOrchestrator.get_container_name(cfg, image)
-
-    def setup_containers(self):
-        globals.error_list = []
-        name = self.inference_dict["container_name"]
-        docker_lib.kill_docker_container(self.s_phdl, name)
-        docker_lib.delete_all_containers_and_volumes(self.s_phdl)
-
-        bp = self.benchmark_params_dict.get(self.model_name, {})
-        container_image = bp.get("container_image", self.inference_dict["container_image"])
-        shm = self.inference_dict.get("shm_size", "48G")
-
-        docker_lib.launch_docker_container(
-            self.s_phdl,
-            name,
-            container_image,
-            self.inference_dict["container_config"]["device_list"],
-            self.inference_dict["container_config"]["volume_dict"],
-            self.inference_dict["container_config"]["env_dict"],
-            shm_size=shm,
-            timeout=60 * 20,
-        )
-
-        time.sleep(30)
-        out_dict = self.s_phdl.exec("docker ps")
-        for node in out_dict.keys():
-            if not re.search(re.escape(name), out_dict[node], re.I):
-                return False
-        update_test_result()
-        return True
-
-    def verify_containers_running(self, name):
-        out_dict = self.s_phdl.exec("docker ps")
-        for node in out_dict.keys():
-            if not re.search(re.escape(name), out_dict[node], re.I):
-                return False
-        return True
-
-    def teardown_containers(self):
-        name = self.inference_dict["container_name"]
-        docker_lib.kill_docker_container(self.s_phdl, name)
-        docker_lib.delete_all_containers_and_volumes(self.s_phdl)
-        return True
 
 
 @pytest.fixture(scope="module")
@@ -150,17 +118,27 @@ def model_name(suite_raw):
 
 @pytest.fixture(scope="module")
 def orch(cluster_dict, inference_dict, benchmark_params_dict, lifecycle, model_name):
-    ctx = InferenceMaxHostContext(cluster_dict, inference_dict, benchmark_params_dict, model_name)
-    yield ctx
+    """Container orchestrator: launch/teardown and ``exec`` into the inference container (see vllm_single)."""
+    container_block = _deep_merge(
+        cluster_dict.get("container", {}),
+        _container_block_from_inference(inference_dict, benchmark_params_dict, model_name),
+    )
+    testsuite_config = {
+        "orchestrator": "container",
+        "container": container_block,
+    }
+    cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
+    o = OrchestratorFactory.create_orchestrator(log, cfg)
+    yield o
     if not lifecycle.torn_down:
         log.info("orch fixture leak-guard: tearing down InferenceMax containers")
-        ctx.teardown_containers()
+        o.teardown_containers()
 
 
 @pytest.fixture(scope="module")
 def gpu_type(orch):
-    head_node = orch.s_phdl.host_list[0]
-    smi_out_dict = orch.s_phdl.exec('rocm-smi -a | head -30')
+    head_node = orch.head.host_list[0]
+    smi_out_dict = orch.head.exec('rocm-smi -a | head -30')
     smi_out = smi_out_dict[head_node]
     return get_model_from_rocm_smi_output(smi_out)
 
