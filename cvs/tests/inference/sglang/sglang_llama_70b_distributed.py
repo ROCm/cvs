@@ -398,6 +398,13 @@ def test_run_lm_eval_hellaswag_benchmark_test(im_obj):
     im_obj.run_lm_eval_hellaswag_benchmark_test()
     update_test_result()
 
+# Test to run the lm-eval gsm8k benchmark
+def test_run_lm_eval_gsm8k_benchmark_test(im_obj):
+    globals.error_list = []
+    im_obj.setup_benchmark_serv_container_env()
+    im_obj.run_lm_eval_gsm8k_benchmark_test()
+    update_test_result()
+
 # Test to run the canned gsm8k benchmark packaged with the container
 # def test_run_gsm8k_benchmark_test(im_obj):
 #     """
