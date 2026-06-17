@@ -2,199 +2,156 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Disaggregated (PD) SGLang benchmark: prefill, decode, proxy router, and benchmark
-client roles from the inference config. Containers are launched only on the union
-of role hosts (not every host in cluster.json unless all are assigned roles).
-
-Run:
-  pytest cvs/tests/inference/sglang/sglang_disagg_distributed.py \\
-    --cluster_file cvs/input/cluster_file/cluster_container.json \\
-    --config_file cvs/input/config_file/inference/sglang/mi30x_sglang_distributed.json \\
-    --html=~/cvs_results/sglang_disagg.html
-
-``cluster_container.json`` ``node_dict`` must include all prefill/decode/router/bench hosts.
-Model variant is selected from ``benchmark_params`` via ``active_benchmark`` / env / single-key auto.
-
-With ``--html``, session end also writes ``sglang_disagg_run_deck.html`` (plus JSON
-and interactive viewer) via ``cvs.lib.report.presets.sglang_disagg_distributed``.
+Single SGLang disaggregated (PD) benchmark module: model is selected from
+``benchmark_params`` via ``active_benchmark`` / env / single-key auto (see ``_shared``).
 '''
 
-import pytest
+import importlib.util as _ilu
+import pathlib as _pl
+import re
 import time
-from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
-from cvs.lib import globals
-# from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
+
+import pytest
+
+from cvs.lib import docker_lib, globals
+from cvs.lib.utils_lib import fail_test, update_test_result
+
+_spec = _ilu.spec_from_file_location(
+    "_sglang_disagg_shared", _pl.Path(__file__).with_name("_shared.py")
+)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+test_print_results_table = _mod.test_print_results_table  # noqa: F841
 
 log = globals.log
 
 
-def test_launch_container(orch, variant_config, lifecycle, request):
-    """Stage 1: launch SGLang containers and reset log directory."""
-    log.info("Testcase launch SGLang containers (disagg PD)")
+def test_cleanup_stale_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict):
+    container_name = inference_dict["container_name"]
+    for a_phdl in (p_phdl, d_phdl, r_phdl, b_phdl):
+        docker_lib.kill_docker_container(a_phdl, container_name)
+        docker_lib.delete_all_containers_and_volumes(a_phdl)
+    log.info("Cleaning up log directory")
+    r_phdl.exec(f"sudo rm -rf {inference_dict['log_dir']}")
+    time.sleep(5)
+
+
+def test_launch_inference_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict):
+    log.info("Testcase launch SGLang containers")
     globals.error_list = []
-    t0 = time.monotonic()
+    container_name = inference_dict["container_name"]
+    hdl_list = [p_phdl, d_phdl]
 
-    if not orch.setup_containers():
-        lifecycle.failed = True
-        lifecycle.complete_stage(request, "container_launch", t0)
-        pytest.fail("setup_containers() returned False")
+    if inference_dict["proxy_router_node"] == inference_dict["benchmark_serv_node"]:
+        if (inference_dict["proxy_router_node"] in inference_dict["prefill_node_list"]) or (
+            inference_dict["proxy_router_node"] in inference_dict["decode_node_list"]
+        ):
+            log.info("Already part of the handle list, no need to add")
+        else:
+            hdl_list.append(r_phdl)
+    else:
+        if (inference_dict["proxy_router_node"] in inference_dict["prefill_node_list"]) or (
+            inference_dict["proxy_router_node"] in inference_dict["decode_node_list"]
+        ):
+            log.info("Already part of the handle list, no need to add")
+        else:
+            hdl_list.append(r_phdl)
+        if (inference_dict["benchmark_serv_node"] in inference_dict["prefill_node_list"]) or (
+            inference_dict["benchmark_serv_node"] in inference_dict["decode_node_list"]
+        ):
+            log.info("Already part of the handle list, no need to add")
+        else:
+            hdl_list.append(b_phdl)
 
-    cleanup_sglang_log_dir(orch, variant_config.paths.log_dir)
+    for a_phdl in hdl_list:
+        docker_lib.launch_docker_container(
+            a_phdl,
+            container_name,
+            inference_dict["container_image"],
+            inference_dict["container_config"]["device_list"],
+            inference_dict["container_config"]["volume_dict"],
+            inference_dict["container_config"]["env_dict"],
+            shm_size="48G",
+            timeout=60 * 20,
+        )
+    time.sleep(30)
+    log.info("Verify if the containers have been launched properly")
+    for a_phdl in (p_phdl, d_phdl, r_phdl, b_phdl):
+        out_dict = a_phdl.exec("docker ps")
+        for node, out in out_dict.items():
+            if not re.search(re.escape(container_name), out or "", re.I):
+                fail_test(f"Failed to launch container on node {node}")
+    update_test_result()
 
-    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
-    if not orch.verify_containers_running(name):
-        lifecycle.failed = True
-        lifecycle.complete_stage(request, "container_launch", t0)
-        pytest.fail(f"container {name} not running after setup_containers()")
 
-    lifecycle.complete_stage(request, "container_launch", t0)
-
-
-# def test_setup_ibv_devices(im_obj, lifecycle, request):
-#     globals.error_list = []
-#     t0 = time.monotonic()
-#     im_obj.exec_nic_setup_scripts()
-#     im_obj.check_ibv_devices()
-#     lifecycle.complete_stage(request, "ibv_setup", t0)
-
-
-def test_rms_norm(im_obj, lifecycle, request):
+def test_setup_ibv_devices(im_obj):
     globals.error_list = []
-    t0 = time.monotonic()
+    im_obj.check_ibv_devices()
+    im_obj.exec_nic_setup_scripts()
+    update_test_result()
+
+
+def test_rms_norm(im_obj):
+    globals.error_list = []
     im_obj.run_test_rmsnorm()
-    lifecycle.complete_stage(request, "rms_norm", t0)
+    update_test_result()
 
 
-def test_launch_prefill_servers(im_obj, lifecycle, request):
+def test_launch_prefill_servers(im_obj):
     globals.error_list = []
-    t0 = time.monotonic()
     im_obj.setup_prefill_container_env()
     im_obj.launch_prefill_servers()
-    lifecycle.complete_stage(request, "prefill_launch", t0)
+    update_test_result()
 
 
-def test_launch_decode_servers(im_obj, lifecycle, request):
+def test_launch_decode_servers(im_obj):
     globals.error_list = []
-    t0 = time.monotonic()
     im_obj.setup_decode_container_env()
     im_obj.launch_decode_servers()
-    lifecycle.complete_stage(request, "decode_launch", t0)
+    update_test_result()
 
 
-def test_poll_for_server_ready(im_obj, lifecycle, request):
+def test_poll_for_server_ready(im_obj):
     globals.error_list = []
-    t0 = time.monotonic()
     im_obj.poll_and_check_server_ready()
-    lifecycle.complete_stage(request, "server_ready", t0)
+    update_test_result()
 
 
-def test_launch_proxy_router(im_obj, lifecycle, request):
+def test_launch_proxy_router(im_obj):
     globals.error_list = []
-    t0 = time.monotonic()
     im_obj.setup_proxy_router_container_env()
     im_obj.launch_proxy_router()
-    lifecycle.complete_stage(request, "proxy_router_launch", t0)
+    update_test_result()
 
 
-def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, request):
+def test_openai_compatible_http_endpoints(im_obj):
     globals.error_list = []
-    t0 = time.monotonic()
-    results = im_obj.verify_openai_compatible_endpoints()
-    lifecycle.smoke_results = results
-    lifecycle.complete_stage(request, "smoke_endpoints", t0)
+    im_obj.verify_openai_compatible_endpoints()
+    update_test_result()
 
 
-# def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
-#     globals.error_list = []
-#     t0 = time.monotonic()
-#     bench = im_obj.bp_dict["inference_tests"]["long_ctx_niah"]
-#     bench["input_length"] = acc_cell["isl"]
-#     bench["output_length"] = acc_cell["osl"]
-#     bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(acc_cell["specs"])
-#     im_obj.bp_dict["max_concurrency"] = "1"
-#     im_obj.setup_benchmark_serv_container_env()
-#     summary = im_obj.run_long_context_niah_accuracy(
-#         isl=int(acc_cell["isl"]),
-#         osl=int(acc_cell["osl"]),
-#         d_type="auto",
-#     )
-#     lifecycle.phase_labels[f"accuracy_long_ctx_{acc_cell['isl']}"] = summary
-#     lifecycle.phase_labels.setdefault("accuracy_by_cell", {})[acc_cell["cell_key"]] = (
-#         "PASS" if summary.get("passed") else "FAIL"
-#     )
-#     lifecycle.complete_stage(
-#         request,
-#         f"long_ctx_niah[{acc_cell['isl']}/{acc_cell['osl']}]",
-#         t0,
-#     )
-
-
-def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
+def test_run_lm_eval_hellaswag_benchmark_test(im_obj):
     globals.error_list = []
-    t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
-    h = im_obj.run_lm_eval_hellaswag_benchmark_test()
-    lifecycle.phase_labels["accuracy_hellaswag"] = h
-    lifecycle.complete_stage(request, "lm_eval_hellaswag", t0)
+    im_obj.run_lm_eval_hellaswag_benchmark_test()
+    update_test_result()
 
 
-def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
+def test_run_lm_eval_gsm8k_benchmark_test(im_obj):
     globals.error_list = []
-    t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
-    g = im_obj.run_lm_eval_gsm8k_benchmark_test()
-    lifecycle.phase_labels["accuracy_gsm8k"] = g
-    lifecycle.complete_stage(request, "lm_eval_gsm8k", t0)
+    im_obj.run_lm_eval_gsm8k_benchmark_test()
+    update_test_result()
 
 
-def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request, perf_cell):
+def test_run_benchmark_test(im_obj):
     globals.error_list = []
-    t0 = time.monotonic()
-    bench = im_obj.bp_dict["inference_tests"]["bench_serv_random"]
-    bench["input_length"] = perf_cell["isl"]
-    bench["output_length"] = perf_cell["osl"]
-    bench.setdefault("expected_results", {})["auto"] = dict(perf_cell["specs"])
-    im_obj.bp_dict["max_concurrency"] = perf_cell["conc"]
     im_obj.setup_benchmark_serv_container_env()
     im_obj.benchserv_test_random(d_type="auto")
-    key = (
-        im_obj.model_name,
-        im_obj.gpu_type,
-        perf_cell["isl"],
-        perf_cell["osl"],
-        "bench_serv_random",
-        str(perf_cell["conc"]),
-    )
-    lifecycle.phase_labels.setdefault("performance_by_cell", {})[perf_cell["cell_key"]] = (
-        "PASS" if not globals.error_list else "FAIL"
-    )
-    inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
-    lifecycle.complete_stage(request, f"bench_serv_random[{perf_cell['isl']}/{perf_cell['osl']}]", t0)
+    update_test_result()
 
 
-def test_disagg_gpu_topology(im_obj, lifecycle, request):
+def test_disagg_gpu_topology(im_obj):
     globals.error_list = []
-    t0 = time.monotonic()
     im_obj.sglang_disagg_gpu_counts()
-    lifecycle.complete_stage(request, "gpu_topology", t0)
-
-
-def test_print_results_table(inf_res_dict, lifecycle, variant_config):
-    from cvs.lib.report.registry import bind_session_results
-    from cvs.tests.inference.sglang._shared import test_print_results_table as _print
-
-    bind_session_results(
-        inf_res_dict=inf_res_dict,
-        variant_config=variant_config,
-        lifecycle=lifecycle,
-    )
-    _print(inf_res_dict, lifecycle, variant_config)
-
-
-def test_teardown(orch, variant_config, lifecycle, request):
-    """Final stage: tear down containers and logs. Runs even if a prior stage failed."""
-    t0 = time.monotonic()
-    orch.teardown_containers()
-    cleanup_sglang_log_dir(orch, variant_config.paths.log_dir)
-    lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t0)
-    lifecycle.torn_down = True
+    update_test_result()
