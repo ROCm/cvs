@@ -1487,3 +1487,15 @@ class SglangDisaggPD:
                     f'lm-eval HellaSwag output on node {node!r} missing hellaswag results '
                     f'(see {log_path})'
                 )
+            else:
+                expected = float(i_dict["expected_results"]["hellaswag"]["acc_norm,none"])  # or pass in
+                actual = self.lm_eval_metric_value(text)
+                if actual is None:
+                    fail_test("could not parse lm-eval table score for hellaswag / acc_norm")
+                elif abs(actual - expected) > 0.05 * abs(expected):
+                    fail_test(f"hellaswag acc_norm {actual:.4f} not within 5% of expected {expected:.4f}")
+
+    def lm_eval_metric_value(text: str, task: str = "hellaswag", metric: str = "acc_norm") -> float | None:
+        pat = rf"\|\s*{re.escape(task)}\b[^|]*\|[^|]*\|[^|]*\|[^|]*\|\s*{re.escape(metric)}\b[^|]*\|\s*[^\|]*\|\s*([0-9]+(?:\.[0-9]+)?)"
+        m = re.search(pat, text, flags=re.I | re.S)
+        return float(m.group(1)) if m else None
