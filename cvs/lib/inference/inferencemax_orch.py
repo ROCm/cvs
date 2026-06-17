@@ -138,12 +138,21 @@ def _read_host_script_payload(if_dict: dict, relpath: Path, entry_basename: str)
     return body.replace("\r\n", "\n").encode("utf-8")
 
 
-def _deploy_host_script_to_cluster_nodes(s_phdl, dest_dir: str, entry_basename: str, content: bytes) -> None:
+def _deploy_host_script_to_cluster_nodes(
+    s_phdl,
+    dest_dir: str,
+    entry_basename: str,
+    content: bytes,
+    *,
+    container_name: str,
+) -> None:
     """
     Write ``content`` to ``{dest_dir}/{entry_basename}`` on every node ``s_phdl`` reaches.
 
-    Pytest may run on a different host than the GPU nodes; files must exist on each node's
-    filesystem under the Docker bind mount (e.g. ``/home/.../LOGS/...``).
+    Uses ``docker exec`` so directories are created as root inside the container, matching
+    how log/output paths under ``log_dir`` are typically prepared. That avoids
+    ``PermissionError`` when ``{log_dir}/inference-max`` was created earlier by ``docker exec``
+    and is not writable over SSH as the cluster login user.
     """
     dest_file = f"{dest_dir.rstrip('/')}/{entry_basename}"
     b64 = base64.standard_b64encode(content).decode("ascii")
@@ -154,7 +163,8 @@ def _deploy_host_script_to_cluster_nodes(s_phdl, dest_dir: str, entry_basename: 
         f"p.write_bytes(base64.standard_b64decode({b64!r}));"
         "os.chmod(p,0o755)"
     )
-    cmd = f"python3 -c {shlex.quote(py)}"
+    inner = f"python3 -c {shlex.quote(py)}"
+    cmd = f"docker exec {shlex.quote(container_name)} /bin/bash -c {shlex.quote(inner)}"
     out_dict = s_phdl.exec(cmd)
     for node, out in (out_dict or {}).items():
         text = out or ""
@@ -162,7 +172,12 @@ def _deploy_host_script_to_cluster_nodes(s_phdl, dest_dir: str, entry_basename: 
             log.error("FAIL - staging host script on node %s: %s", node, text[-2000:])
             fail_test(f"Staging host server script failed on node {node}")
             raise RuntimeError(f"Staging host server script failed on node {node}: {text[-1500:]}")
-    log.info("Deployed host server script %s to cluster nodes under %s", entry_basename, dest_dir)
+    log.info(
+        "Deployed host server script %s on cluster nodes under %s (via docker exec %s)",
+        entry_basename,
+        dest_dir,
+        container_name,
+    )
 
 
 def _resolved_host_benchmark_scripts_dir(if_dict: dict, relpath: Path, entry_basename: str) -> str:
@@ -171,7 +186,7 @@ def _resolved_host_benchmark_scripts_dir(if_dict: dict, relpath: Path, entry_bas
 
     If ``benchmark_server_script_path`` is set to a non-empty string other than
     ``auto``, that path is used. Otherwise return the staged directory under ``log_dir``; the script
-    file is deployed onto each GPU node in :meth:`InferenceMaxJob.launch_server`.
+    file is written on each GPU node (via ``docker exec`` into the inference container) in :meth:`InferenceMaxJob.launch_server`.
     """
     raw = if_dict.get("benchmark_server_script_path")
     if raw is not None:
@@ -287,7 +302,13 @@ class InferenceMaxJob(InferenceBaseJob):
                 raise ValueError("host_benchmark_scripts_relpath is empty")
             entry = os.path.basename(self._host_mount_relative_script())
             payload = _read_host_script_payload(self.if_dict, rel, entry)
-            _deploy_host_script_to_cluster_nodes(self.s_phdl, script_dir, entry, payload)
+            _deploy_host_script_to_cluster_nodes(
+                self.s_phdl,
+                script_dir,
+                entry,
+                payload,
+                container_name=self.container_name,
+            )
 
         cmd_list = []
         workspace_host = f'{self.log_dir}/{self.get_log_subdir()}/workspace'.replace('\\', '/')
