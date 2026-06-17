@@ -10,7 +10,7 @@ import re
 import time
 
 from cvs.lib import globals
-from cvs.lib.dtni.vllm_benchmark_scripts import BENCH_SERVING_GIT_URL
+from cvs.lib.dtni.vllm_benchmark_scripts import bash_export_bench_script_from_vllm_install
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
@@ -92,7 +92,6 @@ class InferenceBaseJob:
         self.if_dict.setdefault('nccl_debug', 'ERROR')
         self.if_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.if_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
-        self.if_dict.setdefault('benchmark_script_repo', BENCH_SERVING_GIT_URL)
 
         log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
         log.info(f'inference_dict = {self.if_dict}')
@@ -305,14 +304,10 @@ class InferenceBaseJob:
         self.s_phdl.exec_cmd_list(cmd_list)
 
     def clone_bench_serving_repo(self, clone_dir):
-        """Clone bench_serving repository for client benchmarks."""
-        cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {clone_dir}; git clone {self.if_dict['benchmark_script_repo']}" '''
-        out_dict = self.c_phdl.exec(cmd)
-        for node in out_dict.keys():
-            # Ignore "already exists" error - repo was cloned in previous test
-            if re.search('error|fail', out_dict[node], re.I) and not re.search('already exists', out_dict[node], re.I):
-                fail_test('Errors or failures seen in pulling bench_serving repo from Github, pls check')
-        time.sleep(3)
+        """No-op: client benchmarks use the installed ``vllm`` package ``benchmarks/<bench_serv_script>``."""
+        log.info(
+            "clone_bench_serving_repo skipped; using vLLM-shipped benchmarks/ (no third-party bench_serving clone)"
+        )
 
     def launch_server(self):
         """Launch inference server."""
@@ -417,11 +412,13 @@ class InferenceBaseJob:
         backend = self.bp_dict['backend']
         result_filename = self.get_result_filename()
 
+        export_bench = bash_export_bench_script_from_vllm_install(self.bench_serv_script)
+
         # Launch client benchmark
         cmd_list = []
         for i in range(0, int(self.nnodes)):
-            client_cmd = f'''source /tmp/server_env_script.sh; cd {clone_dir}; \
-                    python3 bench_serving/{self.bench_serv_script} \
+            client_cmd = f'''source /tmp/server_env_script.sh; {export_bench}; cd {clone_dir}; \
+                    python3 "$BENCH_SCRIPT" \
                     --model {self.bp_dict['model']} \
                     --backend {backend} \
                     --base-url {self.bp_dict['base_url']}:{self.bp_dict['port_no']} \
@@ -486,7 +483,7 @@ class InferenceBaseJob:
     ):
         log.info('Start Client side benchmark script on all Nodes')
 
-        # Clone bench_serving repo to /app
+        # Resolve benchmark driver from the installed vllm package (see dtni.vllm_benchmark_scripts)
         self.clone_bench_serving_repo('/app')
 
         if self.distributed_inference:

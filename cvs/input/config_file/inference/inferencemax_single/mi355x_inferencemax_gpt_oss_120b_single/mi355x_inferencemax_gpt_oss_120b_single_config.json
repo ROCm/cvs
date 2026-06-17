@@ -1,8 +1,8 @@
 {
-    "_comment": "Single-node InferenceMax sample. Set container_image for your environment. ISL+OSL within max_model_length; CVS uses percentile_metrics. Confirm server_script exists in your InferenceX layout when not using host-mounted scripts.",
+    "_comment": "Single-node InferenceMax sample. Set container_image and container_name (e.g. replace <changeme>). ISL+OSL within max_model_length; CVS uses percentile_metrics.",
     "config": {
-        "container_image": "rocm/7.0:rocm7.0_ubuntu_22.04_vllm_0.10.1_instinct_20250927_rc1",
-        "container_name": "inferencemax_benchmark",
+        "container_image": "<changeme>",
+        "container_name": "<changeme>",
         "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "128G",
         "log_dir": "/home/{user-id}/LOGS",
@@ -37,7 +37,7 @@
             "tokenizer_mode": "auto",
             "percentile_metrics": "ttft,tpot,itl,e2el",
             "metric_percentiles": "99",
-            "server_script": "gptoss_fp4_mi355x.sh",
+            "server_script": "fixed_seq_len/vllm_serve_mi300x.sh",
             "bench_serv_script": "benchmark_serving.py"
         }
     }

@@ -2,7 +2,11 @@
 
 Shell entrypoints for **`vllm serve`** used by CVS **vllm_single** (`VllmJob` in `cvs.lib.inference.vllm_orch`) and **InferenceMax** host-mounted server flows.
 
+- **`vllm_serve_mi300x.sh`** — default MI300-class server wrapper; the served checkpoint is whatever you set in `MODEL` (the filename is not model-specific).
+
 - Point **vLLM** `paths.benchmark_scripts_dir` (host path, bind-mounted into the container) at a directory that contains copies of—or symlinks to—these files, **or** mount this package directory.
 - Point **InferenceMax** `host_benchmark_scripts_relpath` at `lib/dtni/vllm_benchmark_scripts` (relative to the `cvs` Python package root) unless you override `benchmark_server_script_path`.
 
-Python API: `cvs.lib.dtni.vllm_benchmark_scripts.BENCH_SERVING_GIT_URL`, `bundled_scripts_dir()`.
+**Client benchmarks** use the Python file shipped with the installed **vLLM** package under `vllm/benchmarks/<bench_serv_script>` (resolved at runtime inside the container). CVS no longer clones a third-party `bench_serving` git repo.
+
+Python API: `bundled_scripts_dir()`, `bash_export_bench_script_from_vllm_install()`, `validated_bench_script_basename()`.

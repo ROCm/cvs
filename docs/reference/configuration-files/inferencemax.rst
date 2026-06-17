@@ -1,5 +1,4 @@
-.. meta::
-  :description: Configure the variables in the InferenceMAX configuration files
+.. meta::  :description: Configure the variables in the InferenceMAX configuration files
   :keywords: inference, ROCm, install, cvs, InferenceMAX, vLLM
 
 ***************************************
@@ -18,13 +17,13 @@ The InferenceMAX tests check:
 
 InferenceMAX inputs use per-variant directories under ``cvs/input/config_file/inference/inferencemax_single/<variant>/`` with a suite JSON passed as ``--config_file`` (typically ``<variant>_config.json``). Optional pass/fail numbers live in the **sole** ``*threshold.json`` in that directory when present (same ``glob`` rule as ``load_variant`` in ``cvs.lib.dtni.config_loader``; merged by ``load_inferencemax_suite_raw``). For example, MI300X GPT-OSS 120B single-node uses ``mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json`` plus ``mi300x_gpt_oss_120b_single_threshold.json``. A preserved MI355x reference lives at ``mi355x_inferencemax_gpt_oss_120b_single/`` with the same naming pattern; verify ``server_script`` against your InferenceX revision.
 
-.. note::
+**InferenceX ATOM / M.. note::
 
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
   - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
-  - ``server_script`` is interpreted relative to ``benchmarks/single_node/`` (or ``benchmarks/multi_node/`` when multi-node) inside the cloned ``inferencemax_repo``. It must exist at that path in the repo revision you use; upstream layouts change. On current ``SemiAnalysisAI/InferenceX`` ``main``, MI300X GPT-OSS-style server entrypoints often live under ``fixed_seq_len/`` (for example ``fixed_seq_len/gptoss_fp4_mi300x.sh``). CVS ships a **flat** ``benchmark_server_scripts/`` tree (``gptoss_fp4_mi300x.sh`` at the top level); when ``use_host_mounted_server_script`` is set, ``cvs.lib.inference.inferencemax_orch.InferenceMaxJob`` maps ``fixed_seq_len/`` in ``server_script`` to that layout. If the path is wrong, the server log shows ``No such file or directory``.
-  - InferenceX single-node scripts typically write under ``/workspace`` (e.g. ``server.log``, ``gpu_metrics.csv``). CVS creates ``/workspace`` inside the container before launching the server; add a volume mapping for ``/workspace`` in ``container_config.volume_dict`` only if you need those files on the host after the run. For vLLM 0.21+ nightlies, upstream ``benchmarks/single_node/fixed_seq_len/gptoss_fp4_mi300x.sh`` invokes ``vllm serve`` **without** ``--enforce-eager``, so graph capture can still run even when ``vllm_enforce_eager`` adds ``VLLM_ENFORCE_EAGER=1`` to the env; the shipped MI300X suite defaults ``use_host_mounted_server_script`` so the CVS wrapper passes ``--enforce-eager`` on the CLI.
-  - Canonical host-mount server wrappers for shared models (e.g. GPT-OSS MI300x) live under ``cvs/lib/dtni/vllm_benchmark_scripts/`` — the same tree ``vllm_orch`` / vLLM single configs should reference via ``paths.benchmark_scripts_dir`` on the host. Set ``host_benchmark_scripts_relpath`` to ``lib/dtni/vllm_benchmark_scripts`` (**relative to the ``cvs`` package root**; this is the default in ``InferenceMaxJob``). Per-variant ``cvs/input/.../<variant>/benchmark_server_scripts/`` remains optional for forks. With ``benchmark_server_script_path`` ``auto``, CVS reads the entry script from the driver checkout when present, otherwise from that package directory (see :func:`cvs.lib.inference.inferencemax_host_scripts.bundled_script_body`), then writes bytes under ``{log_dir}/inference-max/host_scripts_staged/<variant>/`` on **each** GPU node using ``docker exec`` into the inference container when staging is required. Set an explicit absolute ``benchmark_server_script_path`` to skip deploy and use that directory directly on the nodes.
+  - ``server_script`` is interpreted relative to ``benchmarks/single_node/`` (or ``benchmarks/multi_node/`` when multi-node) inside the cloned ``inferencemax_repo``. It must exist at that path in the repo revision you use; upstream layouts change. Upstream ``InferenceX`` may still ship model-specific names under ``fixed_seq_len/``; CVS bundles a **model-agnostic** ``vllm_serve_mi300x.sh`` (flat under :mod:`cvs.lib.dtni.vllm_benchmark_scripts`). Use ``fixed_seq_len/vllm_serve_mi300x.sh`` in the suite JSON so ``InferenceMaxJob`` strips the prefix and resolves the basename against that tree when ``use_host_mounted_server_script`` is set. If the path is wrong, the server log shows ``No such file or directory``.
+  - InferenceX single-node scripts typically write under ``/workspace`` (e.g. ``server.log``, ``gpu_metrics.csv``). CVS creates ``/workspace`` inside the container before launching the server; add a volume mapping for ``/workspace`` in ``container_config.volume_dict`` only if you need those files on the host after the run. For vLLM 0.21+ nightlies, some upstream ``fixed_seq_len/*.sh`` helpers invoke ``vllm serve`` **without** ``--enforce-eager``, so graph capture can still run even when ``vllm_enforce_eager`` adds ``VLLM_ENFORCE_EAGER=1`` to the env; the shipped MI300X suite defaults ``use_host_mounted_server_script`` so the CVS ``vllm_serve_mi300x.sh`` wrapper passes ``--enforce-eager`` on the CLI.
+  - Canonical host-mount ``vllm serve`` wrappers for MI300-class GPUs live under ``cvs/lib/dtni/vllm_benchmark_scripts/`` (checkpoint comes from ``MODEL`` in the server env — the same tree ``vllm_orch`` / vLLM single configs should reference via ``paths.benchmark_scripts_dir`` on the host). Set ``host_benchmark_scripts_relpath`` to ``lib/dtni/vllm_benchmark_scripts`` (**relative to the ``cvs`` package root**; this is the default in ``InferenceMaxJob``). Per-variant ``cvs/input/.../<variant>/benchmark_server_scripts/`` remains optional for forks. With ``benchmark_server_script_path`` ``auto``, CVS reads the entry script from the driver checkout when present, otherwise from that package directory (see :func:`cvs.lib.inference.inferencemax_host_scripts.bundled_script_body`), then writes bytes under ``{log_dir}/inference-max/host_scripts_staged/<variant>/`` on **each** GPU node using ``docker exec`` into the inference container when staging is required. Set an explicit absolute ``benchmark_server_script_path`` to skip deploy and use that directory directly on the nodes.
   - **Thresholds**: optional ``*threshold.json`` in the variant directory (same discovery as ``load_variant`` in ``cvs.lib.dtni.config_loader``: exactly one ``*threshold.json`` if present; multiple files is an error). Merged by ``load_inferencemax_suite_raw``. Keys must match :meth:`~cvs.lib.inference.base.InferenceBaseJob.verify_inference_results` — ``ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>`` (string values as in JSON). You can instead keep ``result_dict`` inline in the suite JSON only when no threshold file is used.
   - **Which model block runs**: if ``benchmark_params`` has a single top-level model key (for example ``gpt-oss-120b``), that block is used automatically. If you add more than one model object under ``benchmark_params``, set a top-level string ``benchmark_model`` to the key you want ``inferencemax_single`` to run (validated by ``cvs.lib.dtni.config_loader.inferencemax_benchmark_model_name``).
 
@@ -77,12 +76,11 @@ Legacy monolithic reference (historical). Current variants split **run** paramet
 
     {
         "config": {
-            "container_image": "rocm/7.0:rocm7.0_ubuntu_22.04_vllm_0.10.1_instinct_20250927_rc1",
-            "container_name": "inference_max_rocm",
+            "container_image": "<changeme>",
+            "container_name": "<changeme>",
             "_example_nnodes": "4",
             "nnodes": "4",
             "inferencemax_repo": "https://github.com/InferenceMAX/InferenceMAX.git",
-            "benchmark_script_repo": "https://github.com/kimbochen/bench_serving.git",
             "hf_token_file": "/home/{user-id}/.hf_token",
             "shm_size": "128G",
             "log_dir": "/home/{user-id}/LOGS",
@@ -119,7 +117,7 @@ Legacy monolithic reference (historical). Current variants split **run** paramet
                 "tokenizer_mode": "auto",
                 "percentile_metrics": "ttft,tpot,itl,e2el",
                 "metric_percentiles": "99",
-                "server_script": "fixed_seq_len/gptoss_fp4_mi300x.sh",
+                "server_script": "fixed_seq_len/vllm_serve_mi300x.sh",
                 "bench_serv_script": "benchmark_serving.py"
             }
         }
@@ -142,10 +140,10 @@ Use the parameters in this table to configure the InferenceMAX configuration fil
      - Default values
      - Description
    * - ``container_image``
-     - rocm/7.0:rocm7.0_ubuntu_22.04_ |br| vllm_0.10.1_instinct_20250927_rc1
-     - Docker container image with ROCm and vLLM for inference
+     - ``<changeme>``
+     - Docker image for inference (set in your environment; do not commit internal registry paths)
    * - ``container_name``
-     - inference_max_rocm
+     - ``<changeme>``
      - Name of the Docker container instance
    * - ``nnodes``
      - 4
@@ -153,9 +151,9 @@ Use the parameters in this table to configure the InferenceMAX configuration fil
    * - ``inferencemax_repo``
      - https://github.com/ |br| SemiAnalysisAI/InferenceX.git
      - Git repository URL for the InferenceX tree CVS clones into ``/app`` inside the container (the legacy ``InferenceMAX/InferenceMAX`` stub only redirects here; override in JSON if you use a fork or pin a tag)
-   * - ``benchmark_script_repo``
-     - https://github.com/kimbochen/ |br| bench_serving.git
-     - Git repository URL for benchmarking scripts
+   * - ``benchmark_script_repo`` (legacy)
+     - (ignored)
+     - **Deprecated.** CVS uses the ``benchmarks/<bench_serv_script>`` file shipped with the installed **vLLM** package inside the container. The key may still appear in old JSON; it is not read for cloning.
    * - ``hf_token_file``
      - ``/home/{user-id}/`` |br| ``.hf_token``
      - Path to HuggingFace authentication token file for model access
@@ -243,8 +241,6 @@ Use the parameters in this table to configure the InferenceMAX configuration fil
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``metric_percentiles``
      - 99
      - Percentile values to compute for metrics (e.g., 99 for 99th percentile)
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.server_script``
-     - fixed_seq_len/ |br| gptoss_fp4_mi300x.sh
      - Path under ``benchmarks/<single_node|multi_node>/`` to the shell script inside the clone (must exist in ``inferencemax_repo``). With ``use_host_mounted_server_script`` and ``benchmark_server_script_path`` ``auto``, CVS maps ``fixed_seq_len/`` to the flat script name and runs it from ``host_scripts_staged`` under ``log_dir`` (deployed to each node from checkout or bundled bytes); with an explicit ``benchmark_server_script_path``, it uses that host directory on the nodes.
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``bench_serv_script``
      - benchmark_serving.py

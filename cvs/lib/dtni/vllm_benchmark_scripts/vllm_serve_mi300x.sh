@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Server-only entrypoint for CVS + vLLM (GPT-OSS FP4) on MI300-class GPUs.
+# Model-agnostic vLLM server entrypoint for CVS benchmark flows on MI300-class GPUs.
+# Pass the checkpoint via MODEL (from server env); extra vLLM CLI flags via "$@".
 # Shared canonical copy: cvs.lib.dtni.vllm_benchmark_scripts (see README.md).
 # CVS runs: source /tmp/server_env_script.sh; nohup bash this_script ...
-# The benchmark client is started separately by CVS (bench_serving).
+# The load client is started separately by CVS (vLLM benchmarks/ driver).
 #
 # Default: --enforce-eager to reduce HIP "too many resources requested for launch"
 # failures during CUDA graph capture on some ROCm + vLLM + AITER stacks.
@@ -28,7 +29,7 @@ esac
 
 GPU_MEM="${VLLM_GPU_MEMORY_UTIL:-0.92}"
 
-echo "$(date -Is) [cvs gptoss_fp4_mi300x] vllm serve model=${MODEL} tp=${TP} max_model_len=${MAX_MODEL_LEN} port=${PORT} enforce_eager=${ENFORCE_EAGER} eager_flag_count=${#EAGER_FLAG[@]}"
+echo "$(date -Is) [cvs vllm_serve_mi300x] vllm serve model=${MODEL} tp=${TP} max_model_len=${MAX_MODEL_LEN} port=${PORT} enforce_eager=${ENFORCE_EAGER} eager_flag_count=${#EAGER_FLAG[@]}"
 
 exec vllm serve "${MODEL}" \
   --host 0.0.0.0 \

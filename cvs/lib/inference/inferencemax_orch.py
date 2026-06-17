@@ -291,18 +291,6 @@ class InferenceMaxJob(InferenceBaseJob):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
-    def clone_bench_serving_repo(self, clone_dir):
-        inner = f"cd {shlex.quote(clone_dir)} && git clone {shlex.quote(self.if_dict['benchmark_script_repo'])}"
-        cmd = f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(inner)}"
-        out_dict = self.c_phdl.exec(cmd)
-        for node in out_dict.keys():
-            out = out_dict[node] or ""
-            if re.search("already exists", out, re.I):
-                continue
-            if _GIT_CLONE_FAIL_RE.search(out):
-                fail_test("Errors or failures seen in pulling bench_serving repo from Github, pls check")
-        time.sleep(3)
-
     def launch_server(self):
         script_dir = self.get_server_script_directory()
         log_file = f'{self.server_script}_server.log'

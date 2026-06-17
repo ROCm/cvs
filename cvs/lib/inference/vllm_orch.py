@@ -36,7 +36,7 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.dtni.vllm_benchmark_scripts import BENCH_SERVING_GIT_URL
+from cvs.lib.dtni.vllm_benchmark_scripts import bash_export_bench_script_from_vllm_install
 
 log = globals.log
 
@@ -69,7 +69,7 @@ class VllmJob:
 
     All container/SSH plumbing belongs to `orch`. This class composes the
     server-env script, launches the server in the background inside the
-    container, polls until ready, runs the bench_serving client, and parses
+    container, polls until ready, runs the vLLM ``benchmarks/`` client driver, and parses
     the resulting log.
 
     The `orch` instance is expected to already have `setup_containers()` and
@@ -79,8 +79,8 @@ class VllmJob:
 
     READINESS_RE = re.compile(r"Application startup complete|Uvicorn running|Started server", re.I)
     COMPLETION_RE = re.compile(r"End-to-end Latency", re.I)
-    # bench_serving ALWAYS prints "Failed requests: N" in its summary, so a bare
-    # "Failed" match is a false positive on every successful run. Only a NONZERO
+    # vLLM benchmark summary always prints "Failed requests: N"; a bare substring
+    # match on "Failed" is a false positive on successful runs. Only a nonzero
     # count is a real failure.
     FAILED_REQUESTS_RE = re.compile(r"Failed requests:\s+([0-9]+)", re.I)
     # A client-side crash (no summary at all) shows up as a Python traceback.
@@ -242,31 +242,12 @@ class VllmJob:
 
     # ---------- client side ----------
 
-    def _clone_bench_serving(self, clone_dir="/app"):
-        # bench_serving is a calibration-bearing fork (kimbochen), NOT stock vLLM:
-        # it carries a warmup phase + redefined random range-ratio/seq-length that
-        # our thresholds are tuned against, so the in-image vLLM scripts won't do.
-        # URL is shared with :mod:`cvs.lib.inference.base` (``benchmark_script_repo``).
-        quoted = shlex.quote(BENCH_SERVING_GIT_URL)
-        cmd = (
-            f"bash -c 'mkdir -p {clone_dir} && cd {clone_dir} && "
-            f"(test -d bench_serving || git clone {quoted})'"
-        )
-        out = self.orch.exec(cmd)
-        for host, output in out.items():
-            if re.search(r"(error|fatal):", output or "", re.I) and not re.search(
-                r"already exists", output or "", re.I
-            ):
-                raise RuntimeError(f"bench_serving clone failed on {host}: {output[-500:]}")
-
     def run_client(self):
-        self._clone_bench_serving("/app")
+        export_frag = bash_export_bench_script_from_vllm_install(self.bench_serv_script)
         # Build as an arg list and shlex.quote each token: a model id or path
         # containing a space or $ would otherwise break the inner bash layer
         # silently. Mirrors the per-field quoting on the server side.
         args = [
-            "python3",
-            f"bench_serving/{self.bench_serv_script}",
             "--model",
             self.model_id,
             "--backend",
@@ -306,7 +287,8 @@ class VllmJob:
         ]
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
         client_cmd = (
-            f"source /tmp/server_env_script.sh && cd /app && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
+            f"source /tmp/server_env_script.sh && {export_frag} && "
+            f'python3 "$BENCH_SCRIPT" {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &'
         )
         self.orch.exec("bash -c " + shlex.quote(client_cmd))
 
