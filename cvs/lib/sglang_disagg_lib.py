@@ -1427,8 +1427,7 @@ class SglangDisaggPD:
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
         """
         Run EleutherAI ``lm-eval`` on **hellaswag** against the OpenAI-compatible
-        proxy (same style as GSM8K: ``docker exec`` into the benchmark container).
-
+        
         """
         log.info('#================ * * * =========================#')
         log.info('lm-eval HellaSwag benchmark')
@@ -1489,14 +1488,83 @@ class SglangDisaggPD:
                 )
             else:
                 expected = float(i_dict["expected_results"]["hellaswag"]["acc_norm,none"])  # or pass in
-                actual = self.lm_eval_metric_value(text)
+                actual = self.lm_eval_metric_value(text, "hellaswag", "acc_norm")
                 if actual is None:
                     fail_test("could not parse lm-eval table score for hellaswag / acc_norm")
                 elif abs(actual - expected) > 0.05 * abs(expected):
                     fail_test(f"hellaswag acc_norm {actual:.4f} not within 5% of expected {expected:.4f}")
 
-    def lm_eval_metric_value(self, text: str, task: str = "hellaswag", metric: str = "acc_norm") -> float | None:
-        pat = rf"\|\s*{re.escape(task)}\b[^|]*\|[^|]*\|[^|]*\|[^|]*\|\s*{re.escape(metric)}\b[^|]*\|\s*[^\|]*\|\s*([0-9]+(?:\.[0-9]+)?)"
+    def run_lm_eval_gsm8k_benchmark_test(self, _d_type='auto'):
+        """
+        Run EleutherAI ``lm-eval`` on **gsm8k** against the OpenAI-compatible
+
+        """
+        log.info('#================ * * * =========================#')
+        log.info('lm-eval GSM8K benchmark')
+        log.info('#================ * * * =========================#')
+
+        i_dict = self.bp_dict['inference_tests']['lm_eval_gsm8k']
+        port = self.inf_dict['proxy_router_serv_port']
+        model_id = self.bp_dict['model']
+        lm_eval_model = i_dict.get('lm_eval_model', 'local-completions')
+        path_suffix = (
+            '/v1/chat/completions'
+            if 'chat' in lm_eval_model.lower()
+            else '/v1/completions'
+        )
+        base_url = f'http://0.0.0.0:{port}{path_suffix}'
+        num_concurrent = i_dict.get('num_concurrent', '4')
+        tasks = i_dict.get('tasks', 'gsm8k')
+        num_fewshot = i_dict.get('num_fewshot', '5')
+        batch_size = i_dict.get('batch_size', 'auto')
+        limit = str(i_dict.get('limit', '')).strip()
+        limit_arg = f' --limit {limit}' if limit else ''
+        extra_model_args = str(i_dict.get('extra_model_args', '')).strip()
+        model_args = (
+            f'model={model_id},base_url={base_url},num_concurrent={num_concurrent},'
+            f'tokenized_requests=False'
+        )
+        if extra_model_args:
+            model_args = f'{model_args},{extra_model_args}'
+        model_args_q = shlex.quote(model_args)
+        exec_timeout = int(i_dict.get('exec_timeout_sec', '7200'))
+        log_path = f'{self.log_dir}/benchmark_node/lm_eval_gsm8k.log'
+
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+                  mkdir -p {self.log_dir}/benchmark_node; \
+                  source /tmp/benchmark_env_script.sh && \
+                  pip install -q 'lm-eval[api]' && \
+                  python3 -m lm_eval \
+                  --model {lm_eval_model} \
+                  --model_args {model_args_q} \
+                  --tasks {tasks} \
+                  --num_fewshot {num_fewshot} \
+                  --batch_size {batch_size}{limit_arg} \
+                  2>&1 | tee {log_path}" '''
+        formatted_cmd = textwrap_for_yml(cmd)
+        out_dict = self.b_phdl.exec(formatted_cmd, timeout=exec_timeout)
+        time.sleep(5)
+        for node, text in out_dict.items():
+            if not text:
+                fail_test(f'lm-eval GSM8K produced no output on node {node!r}')
+            elif re.search(r'Traceback \(most recent call last\)', text):
+                fail_test(
+                    f'lm-eval GSM8K failed on node {node!r}: Python traceback in output'
+                )
+            elif not re.search(r'gsm8k', text, re.I):
+                fail_test(
+                    f'lm-eval GSM8K output on node {node!r} missing gsm8k results '
+                    f'(see {log_path})'
+                )
+            else:
+                expected = float(i_dict["expected_results"]["gsm8k"]["exact_match,flexible-extract"])  # or pass in
+                actual = self.lm_eval_metric_value(text, "gsm8k", "exact_match")
+                if actual is None:
+                    fail_test("could not parse lm-eval table score for gsm8k / flexible-extract")
+                elif abs(actual - expected) > 0.05 * abs(expected):
+                    fail_test(f"gsm8k flexible-extract {actual:.4f} not within 5% of expected {expected:.4f}")
+
+    def lm_eval_metric_value(self, text: str, task: str, metric: str) -> float | None:
         m = re.search(
             rf"{re.escape(metric)}\s*\|\s*[^|\n]+\|\s*([0-9]+(?:\.[0-9]+)?)",
             text,
