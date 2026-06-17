@@ -56,7 +56,6 @@
     "tokenizer_mode": "auto",
     "percentile_metrics": "ttft,tpot,itl,e2el",
     "metric_percentiles": "99",
-    "bench_serv_script": "benchmark_serving.py",
     "num_prompts": "3200",
     "client_poll_count": "90"
   },
