@@ -150,6 +150,12 @@ def test_run_benchmark_test(im_obj):
     im_obj.benchserv_test_random(d_type="auto")
     update_test_result()
 
+def test_run_lm_eval_mmlu_benchmark_test(im_obj):
+    globals.error_list = []
+    im_obj.setup_benchmark_serv_container_env()
+    im_obj.run_lm_eval_mmlu_benchmark_test()
+    update_test_result()
+
 
 def test_disagg_gpu_topology(im_obj):
     globals.error_list = []
