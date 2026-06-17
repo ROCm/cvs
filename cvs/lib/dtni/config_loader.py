@@ -123,7 +123,6 @@ class Params(_Forbid):
     tokenizer_mode: str = "auto"
     percentile_metrics: str = "ttft,tpot,itl,e2el"
     metric_percentiles: str = "99"
-    bench_serv_script: str = "benchmark_serving.py"
     num_prompts: str = "3200"
     # Completion-poll budget for the bench client = client_poll_count * 60s
     # (plus a 120s initial wait). Large-output cells (high osl) need a bigger
