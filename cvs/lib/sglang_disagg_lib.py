@@ -1497,5 +1497,9 @@ class SglangDisaggPD:
 
     def lm_eval_metric_value(self, text: str, task: str = "hellaswag", metric: str = "acc_norm") -> float | None:
         pat = rf"\|\s*{re.escape(task)}\b[^|]*\|[^|]*\|[^|]*\|[^|]*\|\s*{re.escape(metric)}\b[^|]*\|\s*[^\|]*\|\s*([0-9]+(?:\.[0-9]+)?)"
-        m = re.search(pat, text, flags=re.I | re.S)
+        m = re.search(
+            rf"{re.escape(metric)}\s*\|\s*[^|\n]+\|\s*([0-9]+(?:\.[0-9]+)?)",
+            text,
+            flags=re.I,
+        )
         return float(m.group(1)) if m else None
