@@ -17,7 +17,7 @@ from cvs.lib.utils_lib import (
     resolve_test_config_placeholders,
 )
 
-from ._shared import SGLANG_DISAGG_TEST_ORDER, resolve_benchmark_variant_key
+from cvs.tests.inference.sglang._shared import SGLANG_DISAGG_TEST_ORDER, resolve_benchmark_variant_key
 
 log = globals.log
 
