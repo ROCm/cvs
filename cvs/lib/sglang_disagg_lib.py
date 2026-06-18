@@ -952,7 +952,7 @@ class SglangDisaggPD:
                 self.inference_results_dict[node]['total_input_tokens'] = match.group(1)
             if re.search('Total generated tokens:', out_dict[node], re.I):
                 match = re.search('Total generated tokens:\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['Total generated tokens:'] = match.group(1)
+                self.inference_results_dict[node]['total_generated_tokens'] = match.group(1)
             if re.search('Request throughput \(req/s\):', out_dict[node], re.I):
                 match = re.search('Request throughput \(req/s\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['request_throughput_per_sec'] = match.group(1)
