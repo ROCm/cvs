@@ -437,7 +437,7 @@ class InferenceBaseJob:
         cmd_list = []
         for i in range(0, int(self.nnodes)):
             client_cmd = f'''source /tmp/server_env_script.sh; {export_bench}; cd {clone_dir}; \
-                    "$BENCH_PY" "$BENCH_SCRIPT" \
+                    _cvs_run_bench \
                     --model {self.bp_dict['model']} \
                     --backend {backend} \
                     --base-url {self.bp_dict['base_url']}:{self.bp_dict['port_no']} \
@@ -476,6 +476,12 @@ class InferenceBaseJob:
             done = []
             for node in out_dict.keys():
                 log_tail = out_dict[node] or ''
+                if re.search(r"can't open file|No such file or directory", log_tail, re.I):
+                    fail_test(
+                        f'Benchmark script missing or unreadable on node {node} '
+                        f'(see bench_serv_script.log); install vllm[bench] or use an image with benchmarks/.'
+                    )
+                    return
                 if re.search('Failed', log_tail, re.I):
                     fail_test(f'Failed to run benchmark script on node {node}')
                     return

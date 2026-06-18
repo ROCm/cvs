@@ -23,6 +23,11 @@ log = globals.log
 
 _BENCH_FAILED_REQUESTS_RE = re.compile(r"Failed\s+requests:\s*(\d+)", re.I)
 _BENCH_CLIENT_TRACEBACK_RE = re.compile(r"Traceback\s*\(most recent call last\):", re.I)
+_BENCH_LAUNCH_FAIL_RE = re.compile(
+    r"can't open file|No such file or directory|unrecognized arguments|invalid choice|"
+    r"error: argument |command not found",
+    re.I,
+)
 
 _GIT_CLONE_FAIL_RE = re.compile(
     r"(?:^|\n)(?:fatal:\s|error:\s)|Could not resolve host|Repository not found|"
@@ -446,6 +451,13 @@ class InferenceMaxJob(InferenceBaseJob):
                 if _BENCH_CLIENT_TRACEBACK_RE.search(log_tail):
                     msg = (
                         f"Benchmark client traceback on node {node} "
+                        f"(see bench_serv_script.log); aborting before completion."
+                    )
+                    fail_test(msg)
+                    raise Exception(msg)
+                if _BENCH_LAUNCH_FAIL_RE.search(log_tail):
+                    msg = (
+                        f"Benchmark client launch failure on node {node} "
                         f"(see bench_serv_script.log); aborting before completion."
                     )
                     fail_test(msg)
