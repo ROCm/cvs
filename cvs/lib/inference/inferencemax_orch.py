@@ -345,7 +345,6 @@ class InferenceMaxJob(InferenceBaseJob):
 
     def poll_server_startup(self):
         log_file = f'{self.server_script}_server.log'
-        readiness_pattern = self.readiness_pattern
 
         log.info(f'Waiting {self.default_server_precheck_wait_time} secs for server to start writing logs...')
         time.sleep(self.default_server_precheck_wait_time)
@@ -369,11 +368,10 @@ class InferenceMaxJob(InferenceBaseJob):
 
         for j in range(0, self.default_server_poll_count):
             log.info(f'Polling for application startup complete on all nodes, iteration {j}')
-            cmd_list = []
+            tail_cmds = []
             for i in range(0, int(self.nnodes)):
-                cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'
-                cmd_list.append(cmd)
-            out_dict = self.s_phdl.exec_cmd_list(cmd_list)
+                tail_cmds.append(f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}')
+            out_dict = self.s_phdl.exec_cmd_list(tail_cmds)
 
             for node in out_dict.keys():
                 if self.default_server_error_pattern_poll.search(out_dict[node] or ''):
@@ -381,7 +379,8 @@ class InferenceMaxJob(InferenceBaseJob):
                     fail_test(error_msg)
                     raise Exception(error_msg)
 
-            if self.is_server_ready(out_dict, readiness_pattern):
+            grep_out = self.s_phdl.exec_cmd_list(self._readiness_grep_cmd_list(log_file))
+            if self._grep_readiness_outputs_ok(grep_out):
                 log.info('Server startup confirmed on all nodes')
                 return
 

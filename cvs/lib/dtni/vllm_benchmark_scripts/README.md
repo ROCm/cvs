@@ -2,7 +2,7 @@
 
 Shell entrypoints for **`vllm serve`** used by CVS **vllm_single** (`VllmJob` in `cvs.lib.inference.vllm_orch`) and **InferenceMax** host-mounted server flows.
 
-- **`vllm_serve_mi300x.sh`** — default MI300-class server wrapper; the served checkpoint is whatever you set in `MODEL` (the filename is not model-specific).
+- **`vllm_serve_mi300x.sh`** — default MI300-class server wrapper; the served checkpoint is whatever you set in `MODEL` (the filename is not model-specific). Use **`CVS_GPU_MEMORY_UTIL`** in `container_config.env_dict` for `--gpu-memory-utilization` (legacy `VLLM_GPU_MEMORY_UTIL` is still read once then unset so vLLM does not warn). ROCm **AITER** `VLLM_*` tuning vars may still produce vLLM “unknown env” warnings until those names are whitelisted upstream; they are optional performance knobs.
 
 - Point **vLLM** `paths.benchmark_scripts_dir` (host path, bind-mounted into the container) at a directory that contains copies of—or symlinks to—these files, **or** mount this package directory.
 - Point **InferenceMax** `host_benchmark_scripts_relpath` at `lib/dtni/vllm_benchmark_scripts` (relative to the `cvs` Python package root) unless you override `benchmark_server_script_path`.

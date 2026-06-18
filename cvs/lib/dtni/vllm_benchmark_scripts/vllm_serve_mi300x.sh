@@ -27,7 +27,12 @@ case "${ENFORCE_EAGER}" in
   *) ;;
 esac
 
-GPU_MEM="${VLLM_GPU_MEMORY_UTIL:-0.92}"
+# GPU mem fraction for --gpu-memory-utilization only (not an official vLLM_* env; vLLM warns on unknown VLLM_*).
+# Prefer CVS_GPU_MEMORY_UTIL in container env_dict; accept legacy VLLM_GPU_MEMORY_UTIL then unset both.
+_raw_gpu="${CVS_GPU_MEMORY_UTIL:-${VLLM_GPU_MEMORY_UTIL:-}}"
+[[ -z "${_raw_gpu//[[:space:]]/}" ]] && _raw_gpu=0.92
+GPU_MEM="${_raw_gpu}"
+unset CVS_GPU_MEMORY_UTIL VLLM_GPU_MEMORY_UTIL || true
 
 echo "$(date -Is) [cvs vllm_serve_mi300x] vllm serve model=${MODEL} tp=${TP} max_model_len=${MAX_MODEL_LEN} port=${PORT} enforce_eager=${ENFORCE_EAGER} eager_flag_count=${#EAGER_FLAG[@]}"
 
