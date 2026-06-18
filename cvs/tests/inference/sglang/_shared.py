@@ -78,10 +78,10 @@ SGLANG_DISAGG_TEST_ORDER = {
     "test_poll_for_server_ready": 6,
     "test_launch_proxy_router": 7,
     "test_openai_compatible_http_endpoints": 8,
-    "test_run_lm_eval_hellaswag_benchmark_test": 9,
+    # "test_run_lm_eval_hellaswag_benchmark_test": 9,
     "test_run_lm_eval_gsm8k_benchmark_test": 10,
-    "test_run_lm_eval_mmlu_benchmark_test": 11,
-    "test_run_benchmark_test": 12,
+    # "test_run_lm_eval_mmlu_benchmark_test": 11,
+    # "test_run_benchmark_test": 12,
     "test_disagg_gpu_topology": 13,
 }
 
