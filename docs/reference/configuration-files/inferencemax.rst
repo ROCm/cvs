@@ -241,6 +241,14 @@ Use the parameters in this table to configure the InferenceMAX configuration fil
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``metric_percentiles``
      - 99
      - Percentile values to compute for metrics (e.g., 99 for 99th percentile)
+   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``client_poll_count``
+     - 50
+     - Maximum number of times CVS tails ``bench_serv_script.log`` waiting for completion (each followed by ``client_poll_wait_time`` seconds if still running). Raise for slow cells (large ``num_prompts`` × long sequences).
+   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``client_poll_wait_time``
+     - 60
+     - Seconds to sleep between benchmark completion polls.
+   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``server_script``
+     - fixed_seq_len/vllm_serve_mi300x.sh
      - Path under ``benchmarks/<single_node|multi_node>/`` to the shell script inside the clone (must exist in ``inferencemax_repo``). With ``use_host_mounted_server_script`` and ``benchmark_server_script_path`` ``auto``, CVS maps ``fixed_seq_len/`` to the flat script name and runs it from ``host_scripts_staged`` under ``log_dir`` (deployed to each node from checkout or bundled bytes); with an explicit ``benchmark_server_script_path``, it uses that host directory on the nodes.
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``bench_serv_script``
      - benchmark_serving.py
