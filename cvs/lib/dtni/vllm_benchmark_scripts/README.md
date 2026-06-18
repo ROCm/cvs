@@ -11,6 +11,10 @@ Shell entrypoints for **`vllm serve`** used by CVS **vllm_single** (`VllmJob` in
 
 If **both** the script path and the bench CLI are unavailable, install bench-capable vLLM in the image (e.g. `pip install 'vllm[bench]'`) or bind-mount a matching `benchmarks/` tree from a vLLM checkout.
 
-Resolution exports **`BENCH_PY`**, **`BENCH_KIND`** (`script` or `cli_module`), **`BENCH_SCRIPT`** (path when `script`), and defines a shell function **`_cvs_run_bench`** used by `InferenceBaseJob` / `VllmJob`. Interpreters are probed in `python3.13` … `python3` order so images where `python3` is not the vLLM interpreter still work.
+Client invocations also pass ``--temperature 0`` so greedy sampling matches the legacy
+``benchmark_serving.py`` default, and clamp ``--random-range-ratio`` when the configured
+spread would let ``(ISL+OSL)*(1+r)`` exceed ``max_model_length`` (otherwise vLLM rejects
+most random prompts).
 
-Python API: `bundled_scripts_dir()`, `bash_export_bench_script_from_vllm_install()`, `validated_bench_script_basename()`.
+Python API: ``bundled_scripts_dir()``, ``bash_export_bench_script_from_vllm_install()``,
+``clamped_bench_random_range_ratio_str()``, ``validated_bench_script_basename()``.

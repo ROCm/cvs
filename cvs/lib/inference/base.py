@@ -11,7 +11,10 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.dtni.vllm_benchmark_scripts import bash_export_bench_script_from_vllm_install
+from cvs.lib.dtni.vllm_benchmark_scripts import (
+    bash_export_bench_script_from_vllm_install,
+    clamped_bench_random_range_ratio_str,
+)
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
@@ -433,6 +436,23 @@ class InferenceBaseJob:
 
         export_bench = bash_export_bench_script_from_vllm_install(self.bench_serv_script)
 
+        rr_str, rr_clamped = clamped_bench_random_range_ratio_str(
+            self.bp_dict["random_range_ratio"],
+            self.bp_dict["input_sequence_length"],
+            self.bp_dict["output_sequence_length"],
+            self.bp_dict["max_model_length"],
+        )
+        if rr_clamped:
+            log.info(
+                "CVS: clamped --random-range-ratio from %s to %s so peak random (ISL+OSL)*(1+r) "
+                "fits max_model_length=%s (ISL=%s OSL=%s)",
+                self.bp_dict["random_range_ratio"],
+                rr_str,
+                self.bp_dict["max_model_length"],
+                self.bp_dict["input_sequence_length"],
+                self.bp_dict["output_sequence_length"],
+            )
+
         # Launch client benchmark
         cmd_list = []
         for i in range(0, int(self.nnodes)):
@@ -450,9 +470,11 @@ class InferenceBaseJob:
                     --burstiness {self.bp_dict['burstiness']} \
                     --tokenizer-mode {self.bp_dict['tokenizer_mode']} \
                     --seed {self.bp_dict['seed']} \
-                    --random-range-ratio {self.bp_dict['random_range_ratio']} \
+                    --random-range-ratio {rr_str} \
                     --random-prefix-len {self.bp_dict['random_prefix_len']} \
                     --percentile-metrics {self.bp_dict['percentile_metrics']} \
+                    --metric-percentiles {self.bp_dict['metric_percentiles']} \
+                    --temperature 0 \
                     --ignore-eos \
                     --save-result \
                     --result-dir {self.log_dir}/{self.get_log_subdir()}/out-node{i} \
