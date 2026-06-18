@@ -82,7 +82,6 @@ class InferenceBaseJob:
         self.rdma_stats_dict_after = {}
         self.inference_start_time = s_phdl.exec('date +"%a %b %e %H:%M"')
         self.inference_end_time = None
-        self.inference_results_dict = {}
 
         self.home_dir = os.path.expanduser("~")
         self.if_dict.setdefault('container_image', 'rocm/7.0:rocm7.0_ubuntu_22.04_vllm_0.10.1_instinct_20250927_rc1')
@@ -98,6 +97,7 @@ class InferenceBaseJob:
         self.if_dict.setdefault('nccl_debug', 'ERROR')
         self.if_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.if_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
+        self.if_dict.setdefault('benchmark_script_repo', 'https://github.com/kimbochen/bench_serving.git')
 
         log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
         log.info(f'inference_dict = {self.if_dict}')
@@ -162,7 +162,7 @@ class InferenceBaseJob:
         self.bp_dict.setdefault('seed', '0')
         self.bp_dict.setdefault('request_rate', 'inf')
         self.bp_dict.setdefault('max_model_length', '9216')
-        self.bp_dict.setdefault('random_range_ratio', '1.0')
+        self.bp_dict.setdefault('random_range_ration', '1.0')
         self.bp_dict.setdefault('random_prefix_len', '0')
         self.bp_dict.setdefault('tensor_parallelism', '1')
         self.bp_dict.setdefault('port_no', '8000')
@@ -285,7 +285,7 @@ class InferenceBaseJob:
                     export HF_TOKEN={self.hf_token}
                     export VLLM_USE_AITER_UNIFIED_ATTENTION=1
                     export VLLM_ROCM_USE_AITER_MHA=0
-                    export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1{eager_line}
+                    export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1
                     export RESULT_FILENAME=results
                     export PORT={self.bp_dict['port_no']}'  > /tmp/server_env_script.sh"
                     '''
@@ -325,10 +325,14 @@ class InferenceBaseJob:
         self.s_phdl.exec_cmd_list(cmd_list)
 
     def clone_bench_serving_repo(self, clone_dir):
-        """No-op: client benchmarks use the installed ``vllm`` package ``benchmarks/<bench_serv_script>``."""
-        log.info(
-            "clone_bench_serving_repo skipped; using vLLM-shipped benchmarks/ (no third-party bench_serving clone)"
-        )
+        """Clone bench_serving repository for client benchmarks."""
+        cmd = f'''docker exec {self.container_name} /bin/bash -c "cd {clone_dir}; git clone {self.if_dict['benchmark_script_repo']}" '''
+        out_dict = self.c_phdl.exec(cmd)
+        for node in out_dict.keys():
+            # Ignore "already exists" error - repo was cloned in previous test
+            if re.search('error|fail', out_dict[node], re.I) and not re.search('already exists', out_dict[node], re.I):
+                fail_test('Errors or failures seen in pulling bench_serving repo from Github, pls check')
+        time.sleep(3)
 
     def launch_server(self):
         """Launch inference server."""
@@ -510,7 +514,6 @@ class InferenceBaseJob:
                 cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/bench_serv_script.log'
                 cmd_list.append(cmd)
             out_dict = self.c_phdl.exec_cmd_list(cmd_list)
-            done = []
             for node in out_dict.keys():
                 log_tail = out_dict[node] or ''
                 if re.search(r"can't open file|No such file or directory", log_tail, re.I):
@@ -580,7 +583,7 @@ class InferenceBaseJob:
                 self.inference_results_dict[node]['total_input_tokens'] = match.group(1)
             if re.search('Total generated tokens:', out_dict[node], re.I):
                 match = re.search('Total generated tokens:\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['total_generated_tokens'] = match.group(1)
+                self.inference_results_dict[node]['Total generated tokens:'] = match.group(1)
             if re.search('Request throughput \(req/s\):', out_dict[node], re.I):
                 match = re.search('Request throughput \(req/s\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['request_throughput_per_sec'] = match.group(1)
@@ -593,20 +596,20 @@ class InferenceBaseJob:
             if re.search('Mean TTFT \(ms\):', out_dict[node], re.I):
                 match = re.search('Mean TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['mean_ttft_ms'] = match.group(1)
-            if re.search(r'Median TTFT \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Median TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('Median TTFT (ms):', out_dict[node], re.I):
+                match = re.search('Median TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['median_ttft_ms'] = match.group(1)
-            if re.search(r'P99 TTFT \(ms\):', out_dict[node], re.I):
-                match = re.search(r'P99 TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('P99 TTFT (ms):', out_dict[node], re.I):
+                match = re.search('P99 TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_ttft_ms'] = match.group(1)
             if re.search('Mean TPOT \(ms\)', out_dict[node], re.I):
                 match = re.search('Mean TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['mean_tpot_ms'] = match.group(1)
             if re.search('Median TPOT \(ms\):', out_dict[node], re.I):
-                match = re.search('Median TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+                match = re.search('Median TPOT \(ms\):\s+([0-9]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['median_tpot_ms'] = match.group(1)
-            if re.search(r'P99 TPOT \(ms\):', out_dict[node], re.I):
-                match = re.search(r'P99 TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
+            if re.search('P99 TPOT (ms):', out_dict[node], re.I):
+                match = re.search('P99 TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_tpot_ms'] = match.group(1)
             if re.search('Mean ITL \(ms\):', out_dict[node], re.I):
                 match = re.search('Mean ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
