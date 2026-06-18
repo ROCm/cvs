@@ -52,6 +52,10 @@ def _as_node_list(value):
         return [value]
     return list(value)
 
+def _first_float(pattern, text):
+    m = re.search(pattern, text, re.I)
+    return m.group(1) if m else None
+
 class SglangDisaggPD:
     def __init__(
         self,
@@ -833,6 +837,7 @@ class SglangDisaggPD:
         log.info('Benchmark Random Dataset')
         log.info('#================ * * * =========================#')
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
+        self._bench_num_prompts = int(i_dict['num_prompts'])
         # ------------------------------------------------------------------
         # Construct command to run sglang.bench_serving with random dataset
         #
@@ -959,6 +964,7 @@ class SglangDisaggPD:
         self.inference_results_dict = {}
         log.info('Inside get_inference_results_dict')
         log.info("%s", out_dict)
+        
         for node in out_dict.keys():
             self.inference_results_dict[node] = {}
             if re.search('Successful requests:', out_dict[node], re.I):
@@ -1006,15 +1012,40 @@ class SglangDisaggPD:
             if re.search('P99 ITL \(ms\):', out_dict[node], re.I):
                 match = re.search('P99 ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_itl_ms'] = match.group(1)
-            if re.search('Mean E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('Mean E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_e2el_ms'] = match.group(1)
-            if re.search('Median E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('Median E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_e2el_ms'] = match.group(1)
-            if re.search('P99 E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('P99 E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_e2el_ms'] = match.group(1)
+            # --- SGLang "E2E Latency" wording -----
+            m = _first_float(r'Mean E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
+            if m:
+                self.inference_results_dict[node]['mean_e2e_latency_ms'] = m
+            m = _first_float(r'Median E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
+            if m:
+                self.inference_results_dict[node]['median_e2e_latency_ms'] = m
+            for p in (90, 95, 99):
+                m = _first_float(rf'P{p} E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
+                if m:
+                    self.inference_results_dict[node][f'p{p}_e2e_latency_ms'] = m
+
+            # Goodput: log totals, or successful+failed, or benchmark num_prompts
+            total_req = _first_float(r"Total requests:\s+([0-9]+)", out_dict[node])
+            failed_req = _first_float(r"Failed requests:\s+([0-9]+)", out_dict[node])
+            succ = self.inference_results_dict[node].get("successful_requests")
+            if total_req:
+                self.inference_results_dict[node]["total_requests"] = total_req
+            elif succ is not None and failed_req is not None:
+                self.inference_results_dict[node]["total_requests"] = str(int(succ) + int(failed_req))
+            elif succ is not None and getattr(self, "_bench_num_prompts", None) is not None:
+                self.inference_results_dict[node]["total_requests"] = str(int(self._bench_num_prompts))
+            if succ and self.inference_results_dict[node].get("total_requests"):
+                s, t = int(succ), int(self.inference_results_dict[node]["total_requests"])
+                self.inference_results_dict[node]["goodput"] = f"{(s / t):.6f}" if t else None
+
+            # Per-GPU throughput (derived): define denominator to match *your* accounting policy
+            out_tps = self.inference_results_dict[node].get("output_throughput_per_sec")
+            if out_tps:
+                ng = int(self.bp_dict.get("tensor_parallelism", "1"))
+                if ng > 0:
+                    self.inference_results_dict[node]["output_throughput_per_gpu_per_sec"] = (
+                        f"{float(out_tps) / ng:.6f}"
+                    )
 
         log.info("%s", self.inference_results_dict)
         return self.inference_results_dict
