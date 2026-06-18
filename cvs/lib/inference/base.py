@@ -47,7 +47,9 @@ class InferenceBaseJob:
         hf_token,
         gpu_type='mi300',
         distributed_inference=False,
-        server_launch_poll_count=20,
+        # 60 * 60s polls after warmup matches VllmJob: large HF model cache + weight load
+        # on MI300 can exceed 20min with little log churn before Uvicorn prints ready.
+        server_launch_poll_count=60,
     ):
         # Client instance phdl
         self.c_phdl = c_phdl
@@ -355,10 +357,26 @@ class InferenceBaseJob:
         node_ready = {node: bool(readiness_pattern.search(output or '')) for node, output in out_dict.items()}
         return bool(node_ready) and all(node_ready.values())
 
+    def _readiness_grep_cmd_list(self, log_file: str) -> list[str]:
+        """Remote bash lines: print CVS_SERVER_READY if the full server log matches readiness.
+
+        Uses grep on the whole file (not tail) so the marker is not lost once vLLM logs scroll.
+        """
+        pat = self.readiness_pattern.pattern
+        cmd_list: list[str] = []
+        for i in range(0, int(self.nnodes)):
+            path = f'{self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'.replace('\\', '/')
+            inner = f'grep -qiE {shlex.quote(pat)} {shlex.quote(path)} && echo CVS_SERVER_READY || true'
+            cmd_list.append(f'bash -c {shlex.quote(inner)}')
+        return cmd_list
+
+    @staticmethod
+    def _grep_readiness_outputs_ok(out_dict: dict) -> bool:
+        return bool(out_dict) and all('CVS_SERVER_READY' in (output or '') for output in out_dict.values())
+
     def poll_server_startup(self):
         """Poll for server startup completion."""
         log_file = f'{self.server_script}_server.log'
-        readiness_pattern = self.readiness_pattern
 
         # Do an early check for fast failures before the long wait
         log.info(f'Waiting {self.default_server_precheck_wait_time} secs for server to start writing logs...')
@@ -384,11 +402,10 @@ class InferenceBaseJob:
 
         for j in range(0, self.default_server_poll_count):
             log.info(f'Polling for application startup complete on all nodes, iteration {j}')
-            cmd_list = []
+            tail_cmds = []
             for i in range(0, int(self.nnodes)):
-                cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'
-                cmd_list.append(cmd)
-            out_dict = self.s_phdl.exec_cmd_list(cmd_list)
+                tail_cmds.append(f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}')
+            out_dict = self.s_phdl.exec_cmd_list(tail_cmds)
 
             for node in out_dict.keys():
                 if self.default_server_error_pattern_poll.search(out_dict[node] or ''):
@@ -396,7 +413,8 @@ class InferenceBaseJob:
                     fail_test(error_msg)
                     raise Exception(error_msg)
 
-            if self.is_server_ready(out_dict, readiness_pattern):
+            grep_out = self.s_phdl.exec_cmd_list(self._readiness_grep_cmd_list(log_file))
+            if self._grep_readiness_outputs_ok(grep_out):
                 log.info('Server startup confirmed on all nodes')
                 return
 

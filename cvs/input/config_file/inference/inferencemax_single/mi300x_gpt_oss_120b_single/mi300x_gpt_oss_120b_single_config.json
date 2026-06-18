@@ -22,7 +22,7 @@
                 "AMDGCN_USE_BUFFER_OPS": "0",
                 "VLLM_ROCM_USE_AITER": "1",
                 "VLLM_ROCM_QUICK_REDUCE_QUANTIZATION": "INT4",
-                "VLLM_GPU_MEMORY_UTIL": "0.95"
+                "CVS_GPU_MEMORY_UTIL": "0.95"
             }
         }
     },
