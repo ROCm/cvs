@@ -36,11 +36,13 @@ def validated_bench_script_basename(name: str) -> str:
 
 def bash_export_bench_script_from_vllm_install(bench_serv_script: str) -> str:
     """
-    Shell snippet that ``export``\ s ``BENCH_SCRIPT`` to the absolute path of the packaged
-    benchmark driver next to the installed ``vllm`` package (typically ``.../vllm/benchmarks/...``).
+    Shell snippet that sets ``BENCH_PY`` (``sys.executable`` for the import) and
+    ``BENCH_SCRIPT`` (absolute path to ``vllm/benchmarks/<script>``), then ``export``\ s both.
 
-    Fails at runtime if the file is missing (use a vLLM image/wheel that ships the ``benchmarks/``
-    tree, or ``vllm bench serve`` once CVS migrates its CLI wiring).
+    Tries ``python3.13``, ``python3.12``, …, ``python3`` so ROCm images where ``/usr/bin/python3``
+    is not the interpreter that owns the installed ``vllm`` package still resolve the driver.
+
+    Fails at runtime if no interpreter can import ``vllm`` or the benchmark file is missing.
     """
     base = validated_bench_script_basename(bench_serv_script)
     py = (
@@ -48,7 +50,17 @@ def bash_export_bench_script_from_vllm_install(bench_serv_script: str) -> str:
         f"n={base!r};"
         "r=pathlib.Path(vllm.__file__).resolve().parent;"
         "c=r/'benchmarks'/n;"
-        "(c.is_file() and print(c)) or "
-        "(sys.stderr.write('CVS: missing vLLM benchmark script: '+str(c)+chr(10)) or sys.exit(1))"
+        "(c.is_file() or (sys.stderr.write('CVS: missing vLLM benchmark script: '+str(c)+chr(10)) or sys.exit(1)));"
+        "print(sys.executable);print(c)"
     )
-    return f'export BENCH_SCRIPT="$(python3 -c {shlex.quote(py)})"'
+    py_q = shlex.quote(py)
+    # Embedded in ``bash -c`` arguments (use :func:`shlex.quote` on the full script in callers).
+    return (
+        "BENCH_PY=; BENCH_SCRIPT=; "
+        "for _cvs_py in python3.13 python3.12 python3.11 python3.10 python3; do "
+        f"{{ read -r BENCH_PY; read -r BENCH_SCRIPT; }} < <($_cvs_py -c {py_q} 2>/dev/null) && break; "
+        "done; "
+        '[ -n "$BENCH_SCRIPT" ] && [ -n "$BENCH_PY" ] || '
+        "{ echo 'CVS: could not resolve vLLM benchmark driver (tried python3.13..python3)' >&2; exit 1; }; "
+        "export BENCH_PY BENCH_SCRIPT"
+    )

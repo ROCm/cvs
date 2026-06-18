@@ -9,4 +9,6 @@ Shell entrypoints for **`vllm serve`** used by CVS **vllm_single** (`VllmJob` in
 
 **Client benchmarks** use the Python file shipped with the installed **vLLM** package under `vllm/benchmarks/<bench_serv_script>` (resolved at runtime inside the container). CVS no longer clones a third-party `bench_serving` git repo.
 
+Resolution exports **`BENCH_PY`** (the `sys.executable` that successfully imported `vllm`) and **`BENCH_SCRIPT`** (path to the driver), trying `python3.13` … `python3` so images where `python3` is not the vLLM interpreter still work.
+
 Python API: `bundled_scripts_dir()`, `bash_export_bench_script_from_vllm_install()`, `validated_bench_script_basename()`.

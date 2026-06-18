@@ -459,7 +459,15 @@ class InferenceMaxJob(InferenceBaseJob):
                     )
                     fail_test(msg)
                     raise Exception(msg)
-                done.append(bool(re.search("End-to-end Latency", log_tail, re.I)))
+                done.append(
+                    bool(
+                        re.search(
+                            r"Serving Benchmark Result|End-to-end Latency",
+                            log_tail,
+                            re.I,
+                        )
+                    )
+                )
             if done and all(done):
                 log.info("Benchmark client complete on all nodes (iter=%d)", j)
                 return
