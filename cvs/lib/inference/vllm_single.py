@@ -17,6 +17,10 @@ is a base-layer refactor (out of scope for this PoC); see
 `plans/vllm-single-orch-poc.md`. The legacy `cvs.lib.inference.vllm.VllmJob`
 has no remaining importers and can be removed in that follow-up.
 
+Server shell entrypoints shared with InferenceMax live under
+:mod:`cvs.lib.dtni.vllm_benchmark_scripts`; point ``variant.paths.benchmark_scripts_dir``
+at a host path that contains copies of (or symlinks to) those files inside the container.
+
 Behavioural improvements over the base-class lifecycle it mirrors:
   - no dead distributed/`nnodes` branch
   - readiness is detected by scanning the whole server log, not `tail -30`
@@ -45,7 +49,7 @@ class VllmJob:
 
     All container/SSH plumbing belongs to `orch`. This class composes the
     server-env script, launches the server in the background inside the
-    container, polls until ready, runs the bench_serving client, and parses
+    container, polls until ready, runs the vLLM ``benchmarks/`` client driver, and parses
     the resulting log.
 
     The `orch` instance is expected to already have `setup_containers()` and
@@ -55,13 +59,14 @@ class VllmJob:
 
     READINESS_RE = re.compile(r"Application startup complete|Uvicorn running|Started server", re.I)
     # The "Serving Benchmark Result" banner is printed unconditionally at the end
-    # of every completed `vllm bench serve` run. Do NOT key off a metric header
-    # like "End-to-end Latency": stock prints those only when the metric is in
-    # --percentile-metrics, so a config omitting e2el would never complete.
+    # of a completed vLLM serving benchmark (``python3 .../benchmark_serving.py``
+    # or ``vllm bench serve``). Do NOT key off a metric header like
+    # "End-to-end Latency": output only includes sections for metrics listed in
+    # ``--percentile-metrics``, so a config omitting e2el would never complete.
     COMPLETION_RE = re.compile(r"Serving Benchmark Result", re.I)
-    # bench_serving ALWAYS prints "Failed requests: N" in its summary, so a bare
-    # "Failed" match is a false positive on every successful run. Only a NONZERO
-    # count is a real failure.
+    # The summary always prints "Failed requests: N"; a bare substring match on
+    # "Failed" is a false positive on successful runs. Only a nonzero count is a
+    # real failure.
     FAILED_REQUESTS_RE = re.compile(r"Failed requests:\s+([0-9]+)", re.I)
     # A client-side crash (no summary at all) shows up as a Python traceback.
     CLIENT_CRASH_RE = re.compile(r"Traceback \(most recent call last\)", re.I)
@@ -135,6 +140,7 @@ class VllmJob:
         self.base_url = p.base_url
         self.dataset_name = p.dataset_name
         self.backend = p.backend
+        self.bench_serv_script = p.bench_serv_script
 
         self.model_id = variant.model.id
         self.log_dir = variant.paths.log_dir
@@ -300,13 +306,11 @@ class VllmJob:
     # ---------- client side ----------
 
     def run_client(self):
+        export_frag = bash_export_bench_script_from_vllm_install(self.bench_serv_script)
         # Build as an arg list and shlex.quote each token: a model id or path
         # containing a space or $ would otherwise break the inner bash layer
         # silently. Mirrors the per-field quoting on the server side.
         args = [
-            "vllm",
-            "bench",
-            "serve",
             "--model",
             self.model_id,
             "--backend",
@@ -357,7 +361,10 @@ class VllmJob:
                 if val is not None:
                     args.append(f"{metric}:{val}")
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
-        client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
+        client_cmd = (
+            f"source /tmp/server_env_script.sh && {export_frag} && "
+            f'python3 "$BENCH_SCRIPT" {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &'
+        )
         self.orch.exec("bash -c " + shlex.quote(client_cmd))
 
     def wait_client_complete(self):
