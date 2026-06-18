@@ -876,8 +876,7 @@ class SglangDisaggPD:
             sr = m.get("successful_requests", "n/a")
             inner = (
                 f"echo '' >> {log_path} && "
-                f"echo '============ CVS derived (after Serving Benchmark Result) ============' >> {log_path} && "
-                f"echo 'Node: {node}' >> {log_path} && "
+                f"echo '============ Derived Benchmark Results ============' >> {log_path} && "
                 f"echo 'Goodput (successful / total): {sr} / {tr}  =>  {gp}' >> {log_path} && "
                 f"echo 'Output token throughput per GPU (tok/s/GPU): {tpg}' >> {log_path} && "
                 f"echo '=====================================================================' >> {log_path}"
