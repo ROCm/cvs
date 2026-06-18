@@ -6,20 +6,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.lib import globals
-from cvs.lib.inference.inferencemax_orch import InferenceMaxJob
+from cvs.lib.inference_max_lib import InferenceMaxJob, VllmJob
 
 log = globals.log
-
-
-class _LegacyVllmInferenceJobPlaceholder:
-    """``InferenceJobFactory`` no longer constructs a host+docker vLLM ``InferenceBaseJob``."""
-
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError(
-            "InferenceJobFactory no longer builds a host+docker vLLM InferenceBaseJob. "
-            "Use ``cvs.lib.inference.vllm_orch.VllmJob`` with ``ContainerOrchestrator`` "
-            "from the tests under ``cvs.tests.inference.vllm``."
-        )
 
 
 class InferenceJobFactory:
@@ -27,7 +16,7 @@ class InferenceJobFactory:
 
     # Registry of supported frameworks
     _FRAMEWORK_CLASSES = {
-        'vllm': _LegacyVllmInferenceJobPlaceholder,
+        'vllm': VllmJob,
         'inferencemax': InferenceMaxJob,
     }
 
@@ -83,8 +72,7 @@ class InferenceJobFactory:
             framework: Framework type ('vllm', 'inferencemax', or None for auto-detect)
 
         Returns:
-            Instance of :class:`~cvs.lib.inference.inferencemax_orch.InferenceMaxJob` or the
-            vLLM placeholder (raises if selected).
+            Instance of VllmJob or InferenceMaxJob
 
         Raises:
             ValueError: If framework is not supported
