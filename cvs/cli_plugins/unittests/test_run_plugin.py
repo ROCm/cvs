@@ -79,6 +79,35 @@ class TestRunPlugin(unittest.TestCase):
         mock_pytest_main.assert_called_once_with(expected_args)
         mock_exit.assert_called_once_with(0)
 
+    @patch("cvs.cli_plugins.run_plugin.pytest.main")
+    @patch("cvs.cli_plugins.run_plugin.sys.exit")
+    def test_run_test_omits_log_file_when_not_set(self, mock_exit, mock_pytest_main):
+        """No --log-file is passed to pytest when the user does not request file logging."""
+        args = MagicMock()
+        args.test = "agfhc_cvs"
+        args.function = []
+        args.cluster_file = "/path/to/cluster.json"
+        args.config_file = "/path/to/config.json"
+        args.html = None
+        args.self_contained_html = False
+        args.log_file = None
+        args.log_level = None
+        args.capture = None
+        args.extra_pytest_args = []
+
+        mock_pytest_main.return_value = 0
+
+        with patch.object(self.plugin, "get_test_file", return_value="/mock/path/test.py"):
+            self.plugin.run(args)
+
+        expected_args = [
+            "/mock/path/test.py",
+            "--cluster_file=/path/to/cluster.json",
+            "--config_file=/path/to/config.json",
+        ]
+        mock_pytest_main.assert_called_once_with(expected_args)
+        mock_exit.assert_called_once_with(0)
+
 
 if __name__ == "__main__":
     unittest.main()
