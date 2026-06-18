@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import os
 import re
+import shlex
 import time
 
 from cvs.lib import globals
@@ -418,7 +419,7 @@ class InferenceBaseJob:
         cmd_list = []
         for i in range(0, int(self.nnodes)):
             client_cmd = f'''source /tmp/server_env_script.sh; {export_bench}; cd {clone_dir}; \
-                    python3 "$BENCH_SCRIPT" \
+                    "$BENCH_PY" "$BENCH_SCRIPT" \
                     --model {self.bp_dict['model']} \
                     --backend {backend} \
                     --base-url {self.bp_dict['base_url']}:{self.bp_dict['port_no']} \
@@ -439,7 +440,7 @@ class InferenceBaseJob:
                     --result-dir {self.log_dir}/{self.get_log_subdir()}/out-node{i} \
                     --result-filename {result_filename} \
                     > {self.log_dir}/{self.get_log_subdir()}/out-node{i}/bench_serv_script.log 2>&1 &'''
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "{client_cmd}" '''
+            cmd = f"docker exec {shlex.quote(str(self.container_name))} /bin/bash -c {shlex.quote(client_cmd)}"
             cmd_list.append(cmd)
         self.c_phdl.exec_cmd_list(cmd_list)
 
@@ -460,7 +461,15 @@ class InferenceBaseJob:
                 if re.search('Failed', log_tail, re.I):
                     fail_test(f'Failed to run benchmark script on node {node}')
                     return
-                done.append(bool(re.search('End-to-end Latency', log_tail, re.I)))
+                done.append(
+                    bool(
+                        re.search(
+                            r'Serving Benchmark Result|End-to-end Latency',
+                            log_tail,
+                            re.I,
+                        )
+                    )
+                )
             if done and all(done):
                 log.info('Benchmark client complete on all nodes (iter=%d)', j)
                 return
