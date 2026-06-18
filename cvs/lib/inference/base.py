@@ -173,6 +173,7 @@ class InferenceBaseJob:
         # default_client_wait_time + client_poll_count * client_poll_wait_time.
         self.bp_dict.setdefault('client_poll_count', '50')
         self.bp_dict.setdefault('client_poll_wait_time', '60')
+        self.bp_dict.setdefault('bench_max_failed_requests', '0')
         try:
             self.default_client_poll_count = max(1, int(float(str(self.bp_dict['client_poll_count']).strip())))
         except (TypeError, ValueError):
@@ -181,6 +182,12 @@ class InferenceBaseJob:
             self.default_client_poll_wait_time = max(1, int(float(str(self.bp_dict['client_poll_wait_time']).strip())))
         except (TypeError, ValueError):
             self.default_client_poll_wait_time = 60
+        try:
+            self.bench_max_failed_requests_cap = max(
+                0, int(float(str(self.bp_dict['bench_max_failed_requests']).strip()))
+            )
+        except (TypeError, ValueError):
+            self.bench_max_failed_requests_cap = 0
 
         # Set server and client scripts
         self.server_script = self.bp_dict['server_script']
