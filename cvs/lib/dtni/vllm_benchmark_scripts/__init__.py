@@ -42,17 +42,59 @@ def bash_export_bench_script_from_vllm_install(bench_serv_script: str) -> str:
     Tries ``python3.13``, ``python3.12``, …, ``python3`` so ROCm images where ``/usr/bin/python3``
     is not the interpreter that owns the installed ``vllm`` package still resolve the driver.
 
-    Fails at runtime if no interpreter can import ``vllm`` or the benchmark file is missing.
+    Resolution searches several layouts (``site-packages/vllm/benchmarks/``, ancestors, bare
+    ``site-packages/benchmarks/``) because some vLLM wheels omit ``benchmarks/`` unless built
+    with bench extras; the probe opens the file before printing the path.
+
+    Fails at runtime if no interpreter can import ``vllm`` or no readable benchmark script exists.
     """
     base = validated_bench_script_basename(bench_serv_script)
-    py = (
-        "import pathlib,sys;import vllm;"
-        f"n={base!r};"
-        "r=pathlib.Path(vllm.__file__).resolve().parent;"
-        "c=r/'benchmarks'/n;"
-        "(c.is_file() or (sys.stderr.write('CVS: missing vLLM benchmark script: '+str(c)+chr(10)) or sys.exit(1)));"
-        "print(sys.executable);print(c)"
+    # Multiline -c body: shlex.quote wraps it safely for bash -c.
+    py = f"""import os, pathlib, site, sys
+import vllm
+n = {base!r}
+root = pathlib.Path(vllm.__file__).resolve().parent
+seen = set()
+cands = []
+
+def add(p):
+    try:
+        q = pathlib.Path(p).resolve()
+    except Exception:
+        return
+    if q in seen:
+        return
+    seen.add(q)
+    cands.append(q)
+
+add(root / "benchmarks" / n)
+for anc in list(root.parents)[:8]:
+    add(anc / "benchmarks" / n)
+for sp in site.getsitepackages():
+    sp = pathlib.Path(sp)
+    add(sp / "vllm" / "benchmarks" / n)
+    add(sp / "benchmarks" / n)
+chosen = None
+for c in cands:
+    if not (c.is_file() and os.access(c, os.R_OK)):
+        continue
+    try:
+        with c.open("rb") as f:
+            f.read(1)
+    except OSError:
+        continue
+    chosen = c
+    break
+if not chosen:
+    sys.stderr.write(
+        "CVS: vLLM benchmark script %r not found after search. "
+        "Many wheels omit vllm/benchmarks; install in the image (e.g. pip install 'vllm[bench]') "
+        "or bind-mount benchmark_serving.py from a vLLM source tree.\\n" % (n,)
     )
+    sys.exit(1)
+print(sys.executable)
+print(str(chosen))
+"""
     py_q = shlex.quote(py)
     # Embedded in ``bash -c`` arguments (use :func:`shlex.quote` on the full script in callers).
     return (
