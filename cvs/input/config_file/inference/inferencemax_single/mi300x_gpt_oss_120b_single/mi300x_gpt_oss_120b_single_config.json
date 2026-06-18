@@ -1,5 +1,5 @@
 {
-    "_comment": "Single-node InferenceMax. Set container_image and container_name to your values (use <changeme> in committed samples). ISL+OSL must fit max_model_length. CVS expects percentile_metrics (not percentiles_metrics). Shared server scripts: cvs.lib.dtni.vllm_benchmark_scripts (host_benchmark_scripts_relpath). benchmark_server_script_path auto stages from checkout or that package.",
+    "_comment": "Single-node InferenceMax. Set container_image and container_name to your values (use <changeme> in committed samples). ISL+OSL must fit max_model_length. CVS expects percentile_metrics (not percentiles_metrics). Shared server scripts: cvs.lib.dtni.vllm_benchmark_scripts (host_benchmark_scripts_relpath). benchmark_server_script_path auto stages from checkout or that package. volume_dict: map only home→home; ContainerOrchestrator adds /home/<user>:/workspace so do not add a second :/workspace bind (Docker duplicate mount). InferenceX files under /workspace appear on the host under your home (e.g. ~/server.log).",
     "config": {
         "container_image": "<changeme>",
         "container_name": "<changeme>",
@@ -16,8 +16,7 @@
                 "/dev/kfd"
             ],
             "volume_dict": {
-                "/home/{user-id}": "/home/{user-id}",
-                "/home/{user-id}/LOGS/inference-max/workspace": "/workspace"
+                "/home/{user-id}": "/home/{user-id}"
             },
             "env_dict": {
                 "AMDGCN_USE_BUFFER_OPS": "0",
