@@ -36,6 +36,43 @@ def validated_bench_script_basename(name: str) -> str:
     return base
 
 
+def clamped_bench_random_range_ratio_str(
+    random_range_ratio: str | float | int,
+    input_sequence_length: str | float | int,
+    output_sequence_length: str | float | int,
+    max_model_length: str | float | int,
+) -> tuple[str, bool]:
+    """
+    Return ``(ratio_str, was_clamped)`` for ``--random-range-ratio`` on vLLM ``random`` datasets.
+
+    Current vLLM bench drivers sample input and output lengths near the configured ISL/OSL with
+    spread controlled by ``random_range_ratio`` (approximately ``ISL*(1±r)`` and ``OSL*(1±r)``).
+    If the peak combined length ``(ISL+OSL)*(1+r)`` would exceed ``max_model_length``, many
+    completion requests are rejected by the server; clamp ``r`` to ``max(0, MML/(ISL+OSL)-1)``.
+    """
+    raw_s = str(random_range_ratio).strip()
+    try:
+        r = float(raw_s)
+        isl = int(float(str(input_sequence_length).strip()))
+        osl = int(float(str(output_sequence_length).strip()))
+        mml = int(float(str(max_model_length).strip()))
+    except (TypeError, ValueError, ArithmeticError):
+        return raw_s, False
+
+    base = isl + osl
+    if base <= 0 or mml <= 0:
+        return raw_s, False
+
+    r_cap = mml / float(base) - 1.0
+    if r_cap < 0.0:
+        r_cap = 0.0
+    r_eff = min(max(r, 0.0), r_cap)
+    # Stable short decimal (avoid 0.30000000004-style floats in argv).
+    out = f"{r_eff:.12g}"
+    was = abs(r_eff - r) > 1e-12
+    return out, was
+
+
 def bash_export_bench_script_from_vllm_install(bench_serv_script: str) -> str:
     """
     Shell snippet that exports ``BENCH_PY``, ``BENCH_KIND``, ``BENCH_SCRIPT``, and defines
