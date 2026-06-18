@@ -22,6 +22,7 @@ from cvs.lib.verify_lib import fail_test
 log = globals.log
 
 _BENCH_FAILED_REQUESTS_RE = re.compile(r"Failed\s+requests:\s*(\d+)", re.I)
+_BENCH_COMPLETION_RE = re.compile(r"Serving Benchmark Result|End-to-end Latency", re.I)
 _BENCH_CLIENT_TRACEBACK_RE = re.compile(r"Traceback\s*\(most recent call last\):", re.I)
 _BENCH_LAUNCH_FAIL_RE = re.compile(
     r"can't open file|No such file or directory|unrecognized arguments|invalid choice|"
@@ -412,7 +413,7 @@ class InferenceMaxJob(InferenceBaseJob):
             cmd_list = []
             for i in range(0, int(self.nnodes)):
                 path = f"{self.log_dir}/{log_sub}/out-node{i}/bench_serv_script.log".replace("\\", "/")
-                inner = f"tail -30 {shlex.quote(path)}"
+                inner = f"tail -2000 {shlex.quote(path)}"
                 cmd_list.append(f"docker exec {shlex.quote(self.container_name)} bash -c {shlex.quote(inner)}")
             return self.s_phdl.exec_cmd_list(cmd_list)
 
@@ -429,19 +430,20 @@ class InferenceMaxJob(InferenceBaseJob):
 
         if n == 1:
             path = f"{self.log_dir}/{log_sub}/out-node0/bench_serv_script.log".replace("\\", "/")
-            return orch.exec(f"tail -30 {shlex.quote(path)}")
+            return orch.exec(f"tail -2000 {shlex.quote(path)}")
 
         out: dict = {}
         for rank in range(n):
             host = hosts[rank]
             path = f"{self.log_dir}/{log_sub}/out-node{rank}/bench_serv_script.log".replace("\\", "/")
-            cmd = f"tail -30 {shlex.quote(path)}"
+            cmd = f"tail -2000 {shlex.quote(path)}"
             out.update(orch.exec(cmd, hosts=[host]))
         return out
 
     def poll_client_completion(self):
         log.info(f'Waiting for {self.default_client_wait_time} secs for benchmark scripts to start')
         time.sleep(self.default_client_wait_time)
+        cap = self.bench_max_failed_requests_cap
         for j in range(0, self.default_client_poll_count):
             log.info(f'Polling for Benchmark script to complete on all nodes, iteration {j}')
             out_dict = self._tail_client_bench_logs()
@@ -462,27 +464,31 @@ class InferenceMaxJob(InferenceBaseJob):
                     )
                     fail_test(msg)
                     raise Exception(msg)
+                if not _BENCH_COMPLETION_RE.search(log_tail):
+                    done.append(False)
+                    continue
                 m_fail = _BENCH_FAILED_REQUESTS_RE.search(log_tail)
-                if m_fail and int(m_fail.group(1)) > 0:
+                fc = int(m_fail.group(1)) if m_fail else 0
+                if fc > cap:
                     msg = (
-                        f"Benchmark client on node {node} reports "
-                        f"Failed requests: {m_fail.group(1)} (non-zero); see bench_serv_script.log."
+                        f"Benchmark client on node {node} reports Failed requests: {fc} "
+                        f"(exceeds bench_max_failed_requests={cap}); see bench_serv_script.log."
                     )
                     fail_test(msg)
                     raise Exception(msg)
-                done.append(
-                    bool(
-                        re.search(
-                            r"Serving Benchmark Result|End-to-end Latency",
-                            log_tail,
-                            re.I,
-                        )
+                if fc > 0:
+                    log.warning(
+                        "Benchmark client on node %s completed with %d failed requests (allowed up to %d); "
+                        "see bench_serv_script.log",
+                        node,
+                        fc,
+                        cap,
                     )
-                )
+                done.append(True)
             if done and all(done):
                 log.info("Benchmark client complete on all nodes (iter=%d)", j)
                 return
-            log.info(f"Waiting {self.default_client_poll_wait_time} secs for next poll")
+            log.info(f'Waiting {self.default_client_poll_wait_time} secs for next poll')
             time.sleep(self.default_client_poll_wait_time)
         msg = "client did not complete before poll cap"
         fail_test(msg)

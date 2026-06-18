@@ -247,6 +247,9 @@ Use the parameters in this table to configure the InferenceMAX configuration fil
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``client_poll_wait_time``
      - 60
      - Seconds to sleep between benchmark completion polls.
+   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``bench_max_failed_requests``
+     - 0
+     - After the bench summary appears in ``bench_serv_script.log``, CVS compares the reported ``Failed requests`` count to this cap. ``0`` (default) fails the test on any failure; set a positive value for lab/soak runs where a bounded error budget is acceptable.
    * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``server_script``
      - fixed_seq_len/vllm_serve_mi300x.sh
      - Path under ``benchmarks/<single_node|multi_node>/`` to the shell script inside the clone (must exist in ``inferencemax_repo``). With ``use_host_mounted_server_script`` and ``benchmark_server_script_path`` ``auto``, CVS maps ``fixed_seq_len/`` to the flat script name and runs it from ``host_scripts_staged`` under ``log_dir`` (deployed to each node from checkout or bundled bytes); with an explicit ``benchmark_server_script_path``, it uses that host directory on the nodes.
