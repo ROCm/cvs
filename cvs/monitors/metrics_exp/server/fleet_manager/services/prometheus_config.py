@@ -35,6 +35,11 @@ class PrometheusConfigManager:
         safe_name = "".join(c if c.isalnum() else "_" for c in node_group_name)
         return self.targets_path / f"rdma_{safe_name}.json"
 
+    def _get_user_activity_targets_file(self, node_group_name: str) -> Path:
+        """Get path to user activity exporter targets file for a node group."""
+        safe_name = "".join(c if c.isalnum() else "_" for c in node_group_name)
+        return self.targets_path / f"user_activity_{safe_name}.json"
+
     def update_node_group_targets(
         self,
         node_group_name: str,
@@ -121,6 +126,23 @@ class PrometheusConfigManager:
             with open(rdma_file, "w") as f:
                 json.dump(rdma_targets, f, indent=2)
 
+            # User activity exporter targets (port 9420)
+            user_activity_targets = []
+            for node in active_nodes:
+                user_activity_targets.append(
+                    {
+                        "targets": [f"{node['ip']}:9420"],
+                        "labels": {
+                            "node_group": node_group_name,
+                            "hostname": node.get("hostname", node["ip"]),
+                            "job": "user_activity",
+                        },
+                    }
+                )
+            user_activity_file = self._get_user_activity_targets_file(node_group_name)
+            with open(user_activity_file, "w") as f:
+                json.dump(user_activity_targets, f, indent=2)
+
             logger.info(f"Updated targets for node group '{node_group_name}': {len(active_nodes)} nodes")
             return True
 
@@ -134,13 +156,11 @@ class PrometheusConfigManager:
             gpu_file = self._get_gpu_targets_file(node_group_name)
             node_file = self._get_node_targets_file(node_group_name)
             rdma_file = self._get_rdma_targets_file(node_group_name)
+            user_activity_file = self._get_user_activity_targets_file(node_group_name)
 
-            if gpu_file.exists():
-                gpu_file.unlink()
-            if node_file.exists():
-                node_file.unlink()
-            if rdma_file.exists():
-                rdma_file.unlink()
+            for f in [gpu_file, node_file, rdma_file, user_activity_file]:
+                if f.exists():
+                    f.unlink()
 
             logger.info(f"Removed targets for node group '{node_group_name}'")
             return True
@@ -210,3 +230,111 @@ class PrometheusConfigManager:
                 return {"status": "error", "error": response.text}
         except Exception as e:
             return {"status": "error", "error": str(e)}
+
+    # ----------------------------------------------------------------
+    # Control Node Group target management
+    # ----------------------------------------------------------------
+
+    def _get_control_node_targets_file(self, group_name: str) -> Path:
+        """Path to node_exporter targets file for a control node group."""
+        safe_name = "".join(c if c.isalnum() else "_" for c in group_name)
+        return self.targets_path / f"control_node_{safe_name}.json"
+
+    def _get_slurm_targets_file(self, group_name: str) -> Path:
+        safe_name = "".join(c if c.isalnum() else "_" for c in group_name)
+        return self.targets_path / f"slurm_{safe_name}.json"
+
+    def _get_k8s_targets_file(self, group_name: str) -> Path:
+        safe_name = "".join(c if c.isalnum() else "_" for c in group_name)
+        return self.targets_path / f"k8s_{safe_name}.json"
+
+    def update_control_node_group_targets(
+        self,
+        group_name: str,
+        control_type: str,
+        nodes: List[Dict[str, Any]],
+    ) -> bool:
+        """
+        Update Prometheus targets for a control node group.
+
+        Args:
+            group_name:   Name of the control node group
+            control_type: "slurm" or "kubernetes"
+            nodes:        List of node dicts with keys:
+                          ip, hostname, node_port, exporter_port, status
+        Returns:
+            True if successful
+        """
+        try:
+            active_nodes = [n for n in nodes if n.get("status") == "active"]
+
+            # ---- node_exporter targets (control_node_exporter job) ----
+            node_targets = []
+            for node in active_nodes:
+                node_targets.append(
+                    {
+                        "targets": [f"{node['ip']}:{node.get('node_port', 9100)}"],
+                        "labels": {
+                            "control_node_group": group_name,
+                            "hostname": node.get("hostname", node["ip"]),
+                            "job": "control_node_exporter",
+                        },
+                    }
+                )
+            control_node_file = self._get_control_node_targets_file(group_name)
+            with open(control_node_file, "w") as f:
+                json.dump(node_targets, f, indent=2)
+
+            # ---- Custom exporter targets (slurm_metrics or k8s_control_plane job) ----
+            default_exporter_port = 9418 if control_type == "slurm" else 9419
+            job_name = "slurm_metrics" if control_type == "slurm" else "k8s_control_plane"
+
+            exporter_targets = []
+            for node in active_nodes:
+                exporter_targets.append(
+                    {
+                        "targets": [f"{node['ip']}:{node.get('exporter_port', default_exporter_port)}"],
+                        "labels": {
+                            "control_node_group": group_name,
+                            "hostname": node.get("hostname", node["ip"]),
+                            "job": job_name,
+                        },
+                    }
+                )
+
+            if control_type == "slurm":
+                target_file = self._get_slurm_targets_file(group_name)
+            else:
+                target_file = self._get_k8s_targets_file(group_name)
+
+            with open(target_file, "w") as f:
+                json.dump(exporter_targets, f, indent=2)
+
+            logger.info(
+                f"Updated control node group targets '{group_name}' ({control_type}): {len(active_nodes)} active nodes"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update control node targets for '{group_name}': {e}")
+            return False
+
+    def remove_control_node_group_targets(self, group_name: str, control_type: str) -> bool:
+        """Remove all Prometheus target files for a control node group."""
+        try:
+            files_to_remove = [self._get_control_node_targets_file(group_name)]
+            if control_type == "slurm":
+                files_to_remove.append(self._get_slurm_targets_file(group_name))
+            else:
+                files_to_remove.append(self._get_k8s_targets_file(group_name))
+
+            for f in files_to_remove:
+                if f.exists():
+                    f.unlink()
+
+            logger.info(f"Removed control node group targets for '{group_name}'")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to remove control node targets for '{group_name}': {e}")
+            return False

@@ -18,6 +18,7 @@ from .api.routes import (
     monitoring_router,
     monitoring_servers_router,
     metric_groups_router,
+    control_nodegroups_router,
 )
 from .api.schemas import HealthResponse, ServiceHealth, FleetStats
 from .services import PrometheusConfigManager, GrafanaProvisioner
@@ -82,6 +83,7 @@ app.include_router(dashboards_router, prefix="/api/v1")
 app.include_router(monitoring_router, prefix="/api/v1")
 app.include_router(monitoring_servers_router, prefix="/api/v1")
 app.include_router(metric_groups_router, prefix="/api/v1")
+app.include_router(control_nodegroups_router, prefix="/api/v1")
 
 
 @app.get("/", tags=["Root"], include_in_schema=False)
@@ -214,6 +216,8 @@ if os.path.exists(static_path):
 @app.get("/dashboard/{full_path:path}", include_in_schema=False)
 @app.get("/nodegroups", include_in_schema=False)
 @app.get("/nodegroups/{full_path:path}", include_in_schema=False)
+@app.get("/control-nodegroups", include_in_schema=False)
+@app.get("/control-nodegroups/{full_path:path}", include_in_schema=False)
 @app.get("/monitoring", include_in_schema=False)
 @app.get("/monitoring/{full_path:path}", include_in_schema=False)
 @app.get("/metrics", include_in_schema=False)

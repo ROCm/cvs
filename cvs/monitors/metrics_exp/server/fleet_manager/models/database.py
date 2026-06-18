@@ -21,7 +21,9 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://fleet:fleet_secret@localhost:5432/fleet_monitor")
+# DATABASE_URL must be set via environment variable (see .env.example).
+# The fallback is intentionally non-functional to prevent accidental insecure defaults in production.
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://fleet:change_this_password@localhost:5432/fleet_monitor")
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=20)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -106,6 +108,7 @@ class MonitoringServer(Base):
 
     # Relationships
     node_groups = relationship("NodeGroup", back_populates="monitoring_server")
+    control_node_groups = relationship("ControlNodeGroup", back_populates="monitoring_server")
 
     def __repr__(self):
         return f"<MonitoringServer(id={self.id}, name='{self.name}', server='{self.server_ip}')>"
@@ -355,6 +358,101 @@ class InstallationLog(Base):
         return f"<InstallationLog(id={self.id}, node_id={self.node_id}, action='{self.action}')>"
 
 
+class ControlNodeGroup(Base):
+    """A group of control plane nodes (Slurm head nodes or Kubernetes control plane)."""
+
+    __tablename__ = "control_node_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+
+    # Control plane type: "slurm" or "kubernetes"
+    control_type = Column(String(20), nullable=False, default="slurm")
+
+    # Associated monitoring server (reuses existing MonitoringServer)
+    monitoring_server_id = Column(Integer, ForeignKey("monitoring_servers.id"), nullable=True)
+
+    # Custom exporter port override (0 = use default: 9418 for slurm, 9419 for k8s)
+    custom_exporter_port = Column(Integer, default=0)
+
+    # SSH credentials for control nodes (direct connection)
+    ssh_user = Column(String(255), nullable=False, default="root")
+    ssh_port = Column(Integer, nullable=False, default=22)
+    ssh_auth_type = Column(String(20), nullable=False, default="key")
+    ssh_key_path = Column(String(512), nullable=True)
+    ssh_password = Column(String(512), nullable=True)
+
+    # Jump host configuration (optional)
+    use_jump_host = Column(Boolean, default=False)
+    jump_host = Column(String(255), nullable=True)
+    jump_port = Column(Integer, nullable=True, default=22)
+    jump_user = Column(String(255), nullable=True)
+    jump_auth_type = Column(String(20), nullable=True, default="key")
+    jump_key_path = Column(String(512), nullable=True)
+    jump_password = Column(String(512), nullable=True)
+
+    # Credentials for control nodes when using jump host
+    remote_auth_type = Column(String(20), nullable=True, default="key")
+    remote_key_path = Column(String(512), nullable=True)
+    remote_password = Column(String(512), nullable=True)
+
+    # Kubeconfig for Kubernetes control plane (only relevant when control_type="kubernetes")
+    # kubeconfig_source: how the exporter finds the kubeconfig
+    #   "auto"   — exporter auto-detects /etc/kubernetes/admin.conf or ~/.kube/config (default)
+    #   "path"   — user provides the path on the K8s node; stored in kubeconfig_remote_path
+    #   "upload" — user uploads a kubeconfig file; stored in kubeconfig_local_path on Fleet Manager,
+    #              then pushed to the K8s node at /etc/k8s-cp-exporter/kubeconfig during install
+    kubeconfig_source = Column(String(20), nullable=True, default="auto")
+    kubeconfig_remote_path = Column(String(512), nullable=True)  # path ON the K8s node
+    kubeconfig_local_path = Column(String(512), nullable=True)  # path on Fleet Manager server
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    nodes = relationship("ControlNode", back_populates="control_node_group", cascade="all, delete-orphan")
+    monitoring_server = relationship("MonitoringServer", back_populates="control_node_groups")
+
+    def __repr__(self):
+        return f"<ControlNodeGroup(id={self.id}, name='{self.name}', type='{self.control_type}')>"
+
+
+class ControlNode(Base):
+    """A single control plane node in a control node group."""
+
+    __tablename__ = "control_nodes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    control_node_group_id = Column(Integer, ForeignKey("control_node_groups.id"), nullable=False)
+
+    # Node identification
+    ip_address = Column(String(45), nullable=False)
+    hostname = Column(String(255), nullable=True)
+
+    # Status
+    status = Column(String(20), default=NodeStatus.PENDING.value)
+    status_message = Column(Text, nullable=True)
+    last_seen = Column(DateTime, nullable=True)
+
+    # Role/type-specific info (k8s node role, slurm partition, etc.)
+    role_info = Column(JSON, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    control_node_group = relationship("ControlNodeGroup", back_populates="nodes")
+
+    # Unique IP per control node group
+    __table_args__ = (Index("ix_control_nodes_group_ip", "control_node_group_id", "ip_address", unique=True),)
+
+    def __repr__(self):
+        return f"<ControlNode(id={self.id}, ip='{self.ip_address}', status='{self.status}')>"
+
+
 def get_db() -> Generator[Session, None, None]:
     """Dependency to get database session."""
     db = SessionLocal()
@@ -386,6 +484,10 @@ def init_db():
     with engine.connect() as conn:
         migrations = [
             "ALTER TABLE monitoring_servers ADD COLUMN IF NOT EXISTS prometheus_storage_path VARCHAR(512)",
+            # Kubeconfig support for Kubernetes control node groups
+            "ALTER TABLE control_node_groups ADD COLUMN IF NOT EXISTS kubeconfig_source VARCHAR(20) DEFAULT 'auto'",
+            "ALTER TABLE control_node_groups ADD COLUMN IF NOT EXISTS kubeconfig_remote_path VARCHAR(512)",
+            "ALTER TABLE control_node_groups ADD COLUMN IF NOT EXISTS kubeconfig_local_path VARCHAR(512)",
         ]
         for stmt in migrations:
             try:

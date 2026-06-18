@@ -13,3 +13,15 @@ providers:
     options:
       path: /var/lib/grafana/dashboards
       foldersFromFilesStructure: false
+
+  - name: 'Control Plane Monitoring'
+    orgId: 1
+    folder: 'Control Plane Monitoring'
+    folderUid: 'control-plane'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/control-plane
+      foldersFromFilesStructure: false

@@ -84,3 +84,65 @@ scrape_configs:
         target_label: nodegroup
       - source_labels: [hostname]
         target_label: host
+
+  # User Activity Exporter (user logins, KFD GPU processes) on GPU nodes
+  - job_name: 'user_activity'
+    scrape_interval: 30s
+    file_sd_configs:
+      - files:
+          - '/etc/prometheus/targets/user_activity_*.json'
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [node_group]
+        target_label: nodegroup
+      - source_labels: [hostname]
+        target_label: host
+
+  # Control Plane Node Exporter (for Slurm head nodes and K8s control plane nodes)
+  - job_name: 'control_node_exporter'
+    scrape_interval: 15s
+    file_sd_configs:
+      - files:
+          - '/etc/prometheus/targets/control_node_*.json'
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [control_node_group]
+        target_label: control_nodegroup
+      - source_labels: [hostname]
+        target_label: host
+
+  # Slurm Control Plane Metrics (slurm_exporter.py on port 9418)
+  - job_name: 'slurm_metrics'
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    file_sd_configs:
+      - files:
+          - '/etc/prometheus/targets/slurm_*.json'
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [control_node_group]
+        target_label: control_nodegroup
+      - source_labels: [hostname]
+        target_label: host
+
+  # Kubernetes Control Plane Metrics (k8s_control_plane_exporter.py on port 9419)
+  - job_name: 'k8s_control_plane'
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    file_sd_configs:
+      - files:
+          - '/etc/prometheus/targets/k8s_*.json'
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [control_node_group]
+        target_label: control_nodegroup
+      - source_labels: [hostname]
+        target_label: host

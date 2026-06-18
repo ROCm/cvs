@@ -463,3 +463,164 @@ class MonitoringConfigUpdate(BaseModel):
     monitoring_remote_auth_type: Optional[str] = None
     monitoring_remote_key_path: Optional[str] = None
     monitoring_remote_password: Optional[str] = None
+
+
+# ============================================
+# Control Node Schemas
+# ============================================
+
+
+class ControlNodeCreate(BaseModel):
+    """Schema for creating a control node."""
+
+    ip_address: str
+    hostname: Optional[str] = None
+
+
+class ControlNodeBulkCreate(BaseModel):
+    """Schema for bulk creating control nodes from IP list."""
+
+    ip_addresses: List[str]
+
+    @field_validator('ip_addresses')
+    @classmethod
+    def validate_ips(cls, v):
+        if not v:
+            raise ValueError('At least one IP address is required')
+        return v
+
+
+class ControlNodeResponse(BaseModel):
+    """Schema for control node response."""
+
+    id: int
+    control_node_group_id: int
+    ip_address: str
+    hostname: Optional[str] = None
+    status: NodeStatus
+    status_message: Optional[str] = None
+    last_seen: Optional[datetime] = None
+    role_info: Optional[dict] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================
+# Control Node Group Schemas
+# ============================================
+
+
+class ControlNodeGroupBase(BaseModel):
+    """Base control node group schema."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+
+    # Control plane type
+    control_type: str = "slurm"  # "slurm" or "kubernetes"
+
+    # Custom exporter port (0 = use default: 9418 for slurm, 9419 for k8s)
+    custom_exporter_port: int = 0
+
+    # SSH credentials for control nodes
+    ssh_user: str = "root"
+    ssh_port: int = 22
+    ssh_auth_type: str = "key"  # "key" or "password"
+    ssh_password: Optional[str] = None
+
+    # Jump host configuration
+    use_jump_host: bool = False
+    jump_host: Optional[str] = None
+    jump_port: int = 22
+    jump_user: Optional[str] = None
+    jump_auth_type: str = "key"
+    jump_password: Optional[str] = None
+
+    # Control node access from jump host
+    remote_auth_type: str = "key"
+    remote_key_path: Optional[str] = None
+    remote_password: Optional[str] = None
+
+    # Kubeconfig source (only relevant for control_type="kubernetes")
+    # "auto"   — exporter auto-detects /etc/kubernetes/admin.conf or ~/.kube/config
+    # "path"   — provide the path on the K8s node (kubeconfig_remote_path)
+    # "upload" — upload a kubeconfig file via the UI
+    kubeconfig_source: str = "auto"
+    kubeconfig_remote_path: Optional[str] = None  # path on the K8s node
+
+
+class ControlNodeGroupCreate(ControlNodeGroupBase):
+    """Schema for creating a control node group."""
+
+    monitoring_server_id: Optional[int] = None
+
+
+class ControlNodeGroupCreateWithNodes(ControlNodeGroupCreate):
+    """Schema for creating a control node group with initial nodes."""
+
+    ip_addresses: List[str] = Field(default_factory=list)
+
+
+class ControlNodeGroupResponse(ControlNodeGroupBase):
+    """Schema for control node group response."""
+
+    id: int
+    ssh_key_path: Optional[str] = None
+    jump_key_path: Optional[str] = None
+    monitoring_server_id: Optional[int] = None
+    node_count: int = 0
+    active_node_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    # Hide passwords in response
+    ssh_password: Optional[str] = Field(None, exclude=True)
+    jump_password: Optional[str] = Field(None, exclude=True)
+    remote_password: Optional[str] = Field(None, exclude=True)
+
+    # Show if password is set (without revealing it)
+    has_ssh_password: bool = False
+    has_jump_password: bool = False
+    has_remote_password: bool = False
+
+    # Kubeconfig (never expose the file content path, just the source and node path)
+    kubeconfig_source: str = "auto"
+    kubeconfig_remote_path: Optional[str] = None
+    has_kubeconfig_upload: bool = False  # True if a kubeconfig file has been uploaded
+
+    class Config:
+        from_attributes = True
+
+
+class ControlNodeGroupDetail(ControlNodeGroupResponse):
+    """Detailed control node group response with nodes."""
+
+    nodes: List[ControlNodeResponse] = Field(default_factory=list)
+
+
+class ControlNodeGroupUpdate(BaseModel):
+    """Schema for updating a control node group."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    control_type: Optional[str] = None
+    custom_exporter_port: Optional[int] = None
+    ssh_user: Optional[str] = None
+    ssh_port: Optional[int] = None
+    ssh_auth_type: Optional[str] = None
+    ssh_password: Optional[str] = None
+    monitoring_server_id: Optional[int] = None
+    use_jump_host: Optional[bool] = None
+    jump_host: Optional[str] = None
+    jump_port: Optional[int] = None
+    jump_user: Optional[str] = None
+    jump_auth_type: Optional[str] = None
+    jump_password: Optional[str] = None
+    remote_auth_type: Optional[str] = None
+    remote_key_path: Optional[str] = None
+    remote_password: Optional[str] = None
+    kubeconfig_source: Optional[str] = None
+    kubeconfig_remote_path: Optional[str] = None

@@ -454,6 +454,29 @@ scrape_configs:
           host: {self.hostname}
           node_group: {self.node_group_name}
           __path__: /var/log/dmesg*
+
+  # Auth logs — SSH logins, sudo usage, PAM events
+  # Covers both Ubuntu (/var/log/auth.log) and RHEL (/var/log/secure)
+  # Promtail silently skips files that don't exist, so both entries are safe
+  - job_name: auth_ubuntu
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: auth
+          host: {self.hostname}
+          node_group: {self.node_group_name}
+          __path__: /var/log/auth.log
+
+  - job_name: auth_rhel
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: auth
+          host: {self.hostname}
+          node_group: {self.node_group_name}
+          __path__: /var/log/secure
 """
 
         # Upload config using heredoc with base64 to avoid shell escaping issues
@@ -734,11 +757,98 @@ WantedBy=multi-user.target
         self._log("rdma_exporter", "Installation completed but service not responding", False)
         return False
 
+    async def install_user_activity_exporter(self, port: int = 9420) -> bool:
+        """
+        Install the user activity exporter (user logins, KFD GPU processes).
+        Reads the script from SCRIPTS_PATH at install time so the latest version
+        is always deployed on reinstall — no container rebuild needed.
+        """
+        self._log("user_activity_exporter", "Starting installation...")
+
+        # Stop existing service if running
+        await self.ssh.execute(
+            "sudo systemctl stop user-activity-exporter 2>/dev/null || true; "
+            "sudo systemctl disable user-activity-exporter 2>/dev/null || true"
+        )
+
+        # Read the script from the mounted scripts directory
+        script_path = os.path.join(SCRIPTS_PATH, "user_activity_exporter.py")
+        if not os.path.exists(script_path):
+            self._log("user_activity_exporter", f"Script not found at {script_path}", False)
+            return False
+
+        with open(script_path, "rb") as f:
+            script_bytes = f.read()
+
+        import base64
+
+        script_b64 = base64.b64encode(script_bytes).decode()
+
+        # Upload script
+        result = await self.ssh.execute(
+            f"cat << 'EOFB64' | base64 -d | sudo tee /usr/local/bin/user-activity-exporter.py > /dev/null\n"
+            f"{script_b64}\nEOFB64"
+        )
+        if not result.success:
+            self._log("user_activity_exporter", f"Failed to upload script: {result.stderr}", False)
+            return False
+
+        await self.ssh.execute("sudo chmod +x /usr/local/bin/user-activity-exporter.py")
+
+        # Create systemd service — User=root ensures access to /proc, /sys, auth logs
+        service_content = f"""[Unit]
+Description=User Activity Metrics Exporter for Prometheus
+Documentation=Tracks logins and KFD GPU processes on GPU nodes
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /usr/local/bin/user-activity-exporter.py --port {port}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+        service_b64 = base64.b64encode(service_content.encode()).decode()
+        await self.ssh.execute(
+            f"cat << 'EOFB64' | base64 -d | sudo tee "
+            f"/etc/systemd/system/user-activity-exporter.service > /dev/null\n"
+            f"{service_b64}\nEOFB64"
+        )
+
+        result = await self.ssh.execute(
+            "sudo systemctl daemon-reload && "
+            "sudo systemctl enable user-activity-exporter && "
+            "sudo systemctl restart user-activity-exporter",
+            timeout=60,
+        )
+        if not result.success:
+            self._log("user_activity_exporter", f"Failed to start service: {result.stderr}", False)
+            return False
+
+        await asyncio.sleep(4)
+        result = await self.ssh.execute(f"curl -s http://localhost:{port}/health")
+        if result.success and "OK" in result.stdout:
+            self._log("user_activity_exporter", f"Successfully installed on port {port}")
+            return True
+
+        # Service running is acceptable even if health endpoint is slow
+        result = await self.ssh.execute("systemctl is-active user-activity-exporter")
+        if result.success and "active" in result.stdout:
+            self._log("user_activity_exporter", f"Service running on port {port}")
+            return True
+
+        self._log("user_activity_exporter", "Installed but service not responding", False)
+        return False
+
     async def install_all(
         self,
         gpu_port: int = 5000,
         node_port: int = 9100,
         rdma_port: int = 9417,
+        user_activity_port: int = 9420,
     ) -> Dict[str, bool]:
         """Install all monitoring components."""
         results = {}
@@ -757,6 +867,7 @@ WantedBy=multi-user.target
         results["node_exporter"] = await self.install_node_exporter(port=node_port)
         results["promtail"] = await self.install_promtail()
         results["rdma_exporter"] = await self.install_rdma_exporter(port=rdma_port)
+        results["user_activity_exporter"] = await self.install_user_activity_exporter(port=user_activity_port)
 
         return results
 
@@ -803,11 +914,22 @@ WantedBy=multi-user.target
         )
         results["rdma_exporter"] = result.success
 
+        # Stop user activity exporter
+        result = await self.ssh.execute(
+            "sudo systemctl stop user-activity-exporter 2>/dev/null; "
+            "sudo systemctl disable user-activity-exporter 2>/dev/null; "
+            "sudo rm -f /usr/local/bin/user-activity-exporter.py "
+            "/etc/systemd/system/user-activity-exporter.service"
+        )
+        results["user_activity_exporter"] = result.success
+
         await self.ssh.execute("systemctl daemon-reload")
 
         return results
 
-    async def health_check(self, gpu_port: int = 5000, node_port: int = 9100, rdma_port: int = 9417) -> Dict[str, Any]:
+    async def health_check(
+        self, gpu_port: int = 5000, node_port: int = 9100, rdma_port: int = 9417, user_activity_port: int = 9420
+    ) -> Dict[str, Any]:
         """Check health of all installed components."""
         health = {}
 
@@ -837,6 +959,542 @@ WantedBy=multi-user.target
         }
 
         # Promtail
+        result = await self.ssh.execute("systemctl is-active promtail")
+        health["promtail"] = {
+            "running": result.success and "active" in result.stdout,
+        }
+
+        # User activity exporter
+        result = await self.ssh.execute(
+            f"curl -s -o /dev/null -w '%{{http_code}}' http://localhost:{user_activity_port}/health"
+        )
+        health["user_activity_exporter"] = {
+            "running": result.success and result.stdout.strip() == "200",
+            "port": user_activity_port,
+        }
+
+        return health
+
+
+class ControlNodeInstaller:
+    """Handles installation of monitoring components on control plane nodes (Slurm / Kubernetes)."""
+
+    # Default ports for control plane exporters
+    SLURM_EXPORTER_PORT = 9418
+    K8S_EXPORTER_PORT = 9419
+
+    def __init__(
+        self,
+        ssh_manager: SSHManager,
+        loki_url: str,
+        node_group_name: str,
+        hostname: Optional[str] = None,
+        control_type: str = "slurm",
+        # Kubeconfig options for Kubernetes groups (ignored for Slurm)
+        kubeconfig_source: str = "auto",
+        kubeconfig_remote_path: Optional[str] = None,  # path ON the K8s node
+        kubeconfig_local_path: Optional[str] = None,  # uploaded file path on Fleet Manager
+    ):
+        self.ssh = ssh_manager
+        self.loki_url = loki_url
+        self.node_group_name = node_group_name
+        self.hostname = hostname or ssh_manager.host
+        self.control_type = control_type  # "slurm" or "kubernetes"
+        self.kubeconfig_source = kubeconfig_source
+        self.kubeconfig_remote_path = kubeconfig_remote_path
+        self.kubeconfig_local_path = kubeconfig_local_path
+        self.install_log: list = []
+
+    def _log(self, component: str, message: str, success: bool = True):
+        """Add entry to installation log."""
+        self.install_log.append(
+            {
+                "timestamp": datetime.utcnow().isoformat(),
+                "component": component,
+                "message": message,
+                "success": success,
+            }
+        )
+        if success:
+            logger.info(f"[{self.ssh.host}] {component}: {message}")
+        else:
+            logger.error(f"[{self.ssh.host}] {component}: {message}")
+
+    async def install_node_exporter(self, port: int = 9100, version: str = "1.7.0") -> bool:
+        """Install Prometheus node_exporter (identical to NodeInstaller)."""
+        self._log("node_exporter", "Starting installation...")
+
+        # Check if already running
+        result = await self.ssh.execute("systemctl is-active node_exporter 2>/dev/null")
+        if result.success and "active" in result.stdout:
+            self._log("node_exporter", f"Already running on port {port}")
+            return True
+
+        # Detect architecture
+        arch_result = await self.ssh.execute("uname -m")
+        arch = "amd64"
+        if arch_result.success:
+            machine = arch_result.stdout.strip()
+            if "aarch64" in machine or "arm64" in machine:
+                arch = "arm64"
+
+        download_url = (
+            f"https://github.com/prometheus/node_exporter/releases/download/"
+            f"v{version}/node_exporter-{version}.linux-{arch}.tar.gz"
+        )
+
+        # Download and install
+        result = await self.ssh.execute(
+            f"cd /tmp && curl -LO {download_url} && "
+            f"tar xzf node_exporter-{version}.linux-{arch}.tar.gz && "
+            f"sudo cp node_exporter-{version}.linux-{arch}/node_exporter /usr/local/bin/ && "
+            f"sudo chmod +x /usr/local/bin/node_exporter && "
+            f"rm -rf node_exporter-{version}.linux-{arch}*",
+            timeout=120,
+        )
+        if not result.success:
+            self._log("node_exporter", f"Download/install failed: {result.stderr}", False)
+            return False
+
+        # Create systemd service
+        import base64
+
+        service_content = f"""[Unit]
+Description=Prometheus Node Exporter
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/node_exporter --web.listen-address=:{port}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"""
+        service_b64 = base64.b64encode(service_content.encode()).decode()
+        await self.ssh.execute(
+            f"cat << 'EOFB64' | base64 -d | sudo tee /etc/systemd/system/node_exporter.service > /dev/null\n{service_b64}\nEOFB64"
+        )
+
+        result = await self.ssh.execute(
+            "sudo systemctl daemon-reload && sudo systemctl enable node_exporter && sudo systemctl restart node_exporter",
+            timeout=60,
+        )
+        if not result.success:
+            self._log("node_exporter", f"Failed to start service: {result.stderr}", False)
+            return False
+
+        await asyncio.sleep(3)
+        result = await self.ssh.execute(f"curl -s http://localhost:{port}/metrics | grep -c 'node_'")
+        if result.success and int(result.stdout.strip() or "0") > 0:
+            self._log("node_exporter", f"Successfully installed on port {port}")
+            return True
+
+        self._log("node_exporter", "Installed but metrics not yet available", False)
+        return False
+
+    async def install_promtail(self, version: str = "2.9.5") -> bool:
+        """Install Promtail log shipper (uses control_node_group label for Loki isolation)."""
+        self._log("promtail", "Starting installation...")
+
+        result = await self.ssh.execute("systemctl is-active promtail 2>/dev/null")
+        if result.success and "active" in result.stdout:
+            self._log("promtail", "Already running")
+            return True
+
+        # Detect architecture
+        arch_result = await self.ssh.execute("uname -m")
+        arch = "amd64"
+        if arch_result.success and ("aarch64" in arch_result.stdout or "arm64" in arch_result.stdout):
+            arch = "arm64"
+
+        result = await self.ssh.execute(
+            f"cd /tmp && curl -LO https://github.com/grafana/loki/releases/download/v{version}/promtail-linux-{arch}.zip && "
+            f"unzip -o promtail-linux-{arch}.zip && "
+            f"sudo mv promtail-linux-{arch} /usr/local/bin/promtail && "
+            f"sudo chmod +x /usr/local/bin/promtail && "
+            f"rm -f promtail-linux-{arch}.zip && "
+            f"sudo mkdir -p /etc/promtail",
+            timeout=120,
+        )
+        if not result.success:
+            self._log("promtail", f"Download failed: {result.stderr}", False)
+            return False
+
+        import base64
+
+        # NOTE: label key is "control_node_group" (not "node_group") for isolation
+        config_content = f"""server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/promtail-positions.yaml
+
+clients:
+  - url: {self.loki_url}/loki/api/v1/push
+
+scrape_configs:
+  - job_name: journal
+    journal:
+      max_age: 12h
+      labels:
+        job: systemd-journal
+        control_node_group: "{self.node_group_name}"
+        hostname: "{self.hostname}"
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: unit
+
+  - job_name: syslog
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: syslog
+          control_node_group: "{self.node_group_name}"
+          hostname: "{self.hostname}"
+          __path__: /var/log/{{syslog,messages}}
+
+  - job_name: dmesg
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: dmesg
+          control_node_group: "{self.node_group_name}"
+          hostname: "{self.hostname}"
+          __path__: /var/log/dmesg*
+"""
+        config_b64 = base64.b64encode(config_content.encode()).decode()
+        await self.ssh.execute(
+            f"cat << 'EOFB64' | base64 -d | sudo tee /etc/promtail/config.yml > /dev/null\n{config_b64}\nEOFB64"
+        )
+
+        service_content = """[Unit]
+Description=Promtail Log Shipper
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/promtail -config.file=/etc/promtail/config.yml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"""
+        service_b64 = base64.b64encode(service_content.encode()).decode()
+        await self.ssh.execute(
+            f"cat << 'EOFB64' | base64 -d | sudo tee /etc/systemd/system/promtail.service > /dev/null\n{service_b64}\nEOFB64"
+        )
+
+        result = await self.ssh.execute(
+            "sudo systemctl daemon-reload && sudo systemctl enable promtail && sudo systemctl restart promtail",
+            timeout=60,
+        )
+        if not result.success:
+            self._log("promtail", f"Failed to start: {result.stderr}", False)
+            return False
+
+        self._log("promtail", "Successfully installed")
+        return True
+
+    async def install_slurm_exporter(self, port: int = SLURM_EXPORTER_PORT) -> bool:
+        """Upload and install the Slurm metrics exporter as a systemd service."""
+        self._log("slurm_exporter", "Starting installation...")
+
+        # Check if Slurm is available
+        result = await self.ssh.execute("which sinfo squeue sdiag 2>/dev/null")
+        if not result.success or not result.stdout.strip():
+            self._log("slurm_exporter", "Slurm CLI not found (sinfo/squeue/sdiag). Is this a Slurm head node?", False)
+            return False
+
+        # Read the exporter script from disk
+        slurm_script_path = os.path.join(SCRIPTS_PATH, "slurm_exporter.py")
+        if os.path.exists(slurm_script_path):
+            with open(slurm_script_path, "rb") as f:
+                script_bytes = f.read()
+        else:
+            self._log("slurm_exporter", f"Script not found at {slurm_script_path}", False)
+            return False
+
+        import base64
+
+        # Stop existing service if running
+        await self.ssh.execute(
+            "sudo systemctl stop slurm-exporter 2>/dev/null || true; "
+            "sudo systemctl disable slurm-exporter 2>/dev/null || true"
+        )
+
+        script_b64 = base64.b64encode(script_bytes).decode()
+        result = await self.ssh.execute(
+            f"cat << 'EOFB64' | base64 -d | sudo tee /usr/local/bin/slurm-exporter.py > /dev/null\n{script_b64}\nEOFB64"
+        )
+        if not result.success:
+            self._log("slurm_exporter", f"Failed to upload script: {result.stderr}", False)
+            return False
+
+        await self.ssh.execute("sudo chmod +x /usr/local/bin/slurm-exporter.py")
+
+        service_content = f"""[Unit]
+Description=Slurm Metrics Exporter for Prometheus
+After=network.target slurmctld.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /usr/local/bin/slurm-exporter.py --port {port}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+        service_b64 = base64.b64encode(service_content.encode()).decode()
+        await self.ssh.execute(
+            f"cat << 'EOFB64' | base64 -d | sudo tee /etc/systemd/system/slurm-exporter.service > /dev/null\n{service_b64}\nEOFB64"
+        )
+
+        result = await self.ssh.execute(
+            "sudo systemctl daemon-reload && sudo systemctl enable slurm-exporter && sudo systemctl restart slurm-exporter",
+            timeout=60,
+        )
+        if not result.success:
+            self._log("slurm_exporter", f"Failed to start service: {result.stderr}", False)
+            return False
+
+        await asyncio.sleep(5)
+        result = await self.ssh.execute(f"curl -s http://localhost:{port}/health")
+        if result.success and "OK" in result.stdout:
+            self._log("slurm_exporter", f"Successfully installed on port {port}")
+            return True
+
+        # Fall back to service status check
+        result = await self.ssh.execute("systemctl is-active slurm-exporter")
+        if result.success and "active" in result.stdout:
+            self._log("slurm_exporter", f"Service running on port {port}")
+            return True
+
+        self._log("slurm_exporter", "Installed but service not responding", False)
+        return False
+
+    async def install_k8s_exporter(self, port: int = K8S_EXPORTER_PORT) -> bool:
+        """
+        Upload and install the Kubernetes control plane exporter as a systemd service.
+
+        Kubeconfig handling (from self.kubeconfig_source):
+          "auto"   — no --kubeconfig flag; exporter auto-detects admin.conf / ~/.kube/config
+          "path"   — passes --kubeconfig <self.kubeconfig_remote_path> to the exporter
+          "upload" — reads self.kubeconfig_local_path from Fleet Manager disk, uploads it to
+                     /etc/k8s-cp-exporter/kubeconfig on the node, passes --kubeconfig to exporter
+        """
+        self._log("k8s_exporter", "Starting installation...")
+
+        # Check if kubectl is available
+        result = await self.ssh.execute("which kubectl 2>/dev/null")
+        if not result.success or not result.stdout.strip():
+            self._log("k8s_exporter", "kubectl not found. Is this a Kubernetes control plane node?", False)
+            return False
+
+        # Read the exporter script from disk
+        k8s_script_path = os.path.join(SCRIPTS_PATH, "k8s_control_plane_exporter.py")
+        if os.path.exists(k8s_script_path):
+            with open(k8s_script_path, "rb") as f:
+                script_bytes = f.read()
+        else:
+            self._log("k8s_exporter", f"Script not found at {k8s_script_path}", False)
+            return False
+
+        import base64
+
+        await self.ssh.execute(
+            "sudo systemctl stop k8s-cp-exporter 2>/dev/null || true; "
+            "sudo systemctl disable k8s-cp-exporter 2>/dev/null || true"
+        )
+
+        # Upload exporter script
+        script_b64 = base64.b64encode(script_bytes).decode()
+        result = await self.ssh.execute(
+            f"cat << 'EOFB64' | base64 -d | sudo tee /usr/local/bin/k8s-cp-exporter.py > /dev/null\n"
+            f"{script_b64}\nEOFB64"
+        )
+        if not result.success:
+            self._log("k8s_exporter", f"Failed to upload script: {result.stderr}", False)
+            return False
+        await self.ssh.execute("sudo chmod +x /usr/local/bin/k8s-cp-exporter.py")
+
+        # ── Kubeconfig handling ───────────────────────────────────────────
+        kubeconfig_arg = ""
+        remote_kubeconfig_dir = "/etc/k8s-cp-exporter"
+
+        if self.kubeconfig_source == "upload" and self.kubeconfig_local_path:
+            # Upload the kubeconfig file from Fleet Manager to the K8s node
+            if not os.path.exists(self.kubeconfig_local_path):
+                self._log(
+                    "k8s_exporter",
+                    f"Uploaded kubeconfig file not found at {self.kubeconfig_local_path}. "
+                    "Using auto-detection instead.",
+                    False,
+                )
+            else:
+                with open(self.kubeconfig_local_path, "rb") as f:
+                    kube_bytes = f.read()
+                kube_b64 = base64.b64encode(kube_bytes).decode()
+                await self.ssh.execute(f"sudo mkdir -p {remote_kubeconfig_dir}")
+                result = await self.ssh.execute(
+                    f"cat << 'EOFB64' | base64 -d | sudo tee "
+                    f"{remote_kubeconfig_dir}/kubeconfig > /dev/null\n{kube_b64}\nEOFB64"
+                )
+                if result.success:
+                    await self.ssh.execute(f"sudo chmod 600 {remote_kubeconfig_dir}/kubeconfig")
+                    kubeconfig_arg = f"--kubeconfig {remote_kubeconfig_dir}/kubeconfig"
+                    self._log("k8s_exporter", f"Kubeconfig uploaded to {remote_kubeconfig_dir}/kubeconfig")
+                else:
+                    self._log(
+                        "k8s_exporter",
+                        f"Failed to upload kubeconfig: {result.stderr}. Using auto-detection instead.",
+                        False,
+                    )
+
+        elif self.kubeconfig_source == "path" and self.kubeconfig_remote_path:
+            kubeconfig_arg = f"--kubeconfig {self.kubeconfig_remote_path}"
+            self._log("k8s_exporter", f"Using kubeconfig at {self.kubeconfig_remote_path} on the K8s node")
+        else:
+            self._log("k8s_exporter", "Kubeconfig: auto-detect (/etc/kubernetes/admin.conf or ~/.kube/config)")
+        # ─────────────────────────────────────────────────────────────────
+
+        exec_start = f"/usr/bin/python3 /usr/local/bin/k8s-cp-exporter.py --port {port} {kubeconfig_arg}".strip()
+
+        service_content = f"""[Unit]
+Description=Kubernetes Control Plane Metrics Exporter for Prometheus
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart={exec_start}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+        service_b64 = base64.b64encode(service_content.encode()).decode()
+        await self.ssh.execute(
+            f"cat << 'EOFB64' | base64 -d | sudo tee "
+            f"/etc/systemd/system/k8s-cp-exporter.service > /dev/null\n{service_b64}\nEOFB64"
+        )
+
+        result = await self.ssh.execute(
+            "sudo systemctl daemon-reload && "
+            "sudo systemctl enable k8s-cp-exporter && "
+            "sudo systemctl restart k8s-cp-exporter",
+            timeout=60,
+        )
+        if not result.success:
+            self._log("k8s_exporter", f"Failed to start service: {result.stderr}", False)
+            return False
+
+        await asyncio.sleep(5)
+        result = await self.ssh.execute(f"curl -s http://localhost:{port}/health")
+        if result.success and "OK" in result.stdout:
+            self._log("k8s_exporter", f"Successfully installed on port {port}")
+            return True
+
+        result = await self.ssh.execute("systemctl is-active k8s-cp-exporter")
+        if result.success and "active" in result.stdout:
+            self._log("k8s_exporter", f"Service running on port {port}")
+            return True
+
+        self._log("k8s_exporter", "Installed but service not responding", False)
+        return False
+
+    async def install_all(self, node_port: int = 9100, custom_exporter_port: int = 0) -> Dict[str, Any]:
+        """Install all control plane monitoring components."""
+        results: Dict[str, Any] = {}
+
+        # Determine exporter port
+        if custom_exporter_port and custom_exporter_port > 0:
+            exporter_port = custom_exporter_port
+        elif self.control_type == "slurm":
+            exporter_port = self.SLURM_EXPORTER_PORT
+        else:
+            exporter_port = self.K8S_EXPORTER_PORT
+
+        results["node_exporter"] = await self.install_node_exporter(port=node_port)
+        results["promtail"] = await self.install_promtail()
+
+        if self.control_type == "slurm":
+            results["slurm_exporter"] = await self.install_slurm_exporter(port=exporter_port)
+        else:
+            results["k8s_exporter"] = await self.install_k8s_exporter(port=exporter_port)
+
+        return results
+
+    async def uninstall_all(self) -> Dict[str, Any]:
+        """Uninstall all control plane monitoring components."""
+        results: Dict[str, Any] = {}
+
+        result = await self.ssh.execute(
+            "sudo systemctl stop node_exporter 2>/dev/null; "
+            "sudo systemctl disable node_exporter 2>/dev/null; "
+            "sudo rm -f /usr/local/bin/node_exporter /etc/systemd/system/node_exporter.service"
+        )
+        results["node_exporter"] = result.success
+
+        result = await self.ssh.execute(
+            "sudo systemctl stop promtail 2>/dev/null; "
+            "sudo systemctl disable promtail 2>/dev/null; "
+            "sudo rm -f /usr/local/bin/promtail /etc/systemd/system/promtail.service"
+        )
+        results["promtail"] = result.success
+
+        if self.control_type == "slurm":
+            result = await self.ssh.execute(
+                "sudo systemctl stop slurm-exporter 2>/dev/null; "
+                "sudo systemctl disable slurm-exporter 2>/dev/null; "
+                "sudo rm -f /usr/local/bin/slurm-exporter.py /etc/systemd/system/slurm-exporter.service"
+            )
+            results["slurm_exporter"] = result.success
+        else:
+            result = await self.ssh.execute(
+                "sudo systemctl stop k8s-cp-exporter 2>/dev/null; "
+                "sudo systemctl disable k8s-cp-exporter 2>/dev/null; "
+                "sudo rm -f /usr/local/bin/k8s-cp-exporter.py /etc/systemd/system/k8s-cp-exporter.service"
+            )
+            results["k8s_exporter"] = result.success
+
+        await self.ssh.execute("sudo systemctl daemon-reload")
+        return results
+
+    async def health_check(self, node_port: int = 9100, custom_exporter_port: int = 0) -> Dict[str, Any]:
+        """Check health of all installed control plane monitoring components."""
+        health: Dict[str, Any] = {}
+
+        if custom_exporter_port and custom_exporter_port > 0:
+            exporter_port = custom_exporter_port
+        elif self.control_type == "slurm":
+            exporter_port = self.SLURM_EXPORTER_PORT
+        else:
+            exporter_port = self.K8S_EXPORTER_PORT
+
+        result = await self.ssh.execute(
+            f"curl -s -o /dev/null -w '%{{http_code}}' http://localhost:{node_port}/metrics"
+        )
+        health["node_exporter"] = {
+            "running": result.success and result.stdout.strip() == "200",
+            "port": node_port,
+        }
+
+        exporter_key = "slurm_exporter" if self.control_type == "slurm" else "k8s_exporter"
+        result = await self.ssh.execute(f"curl -s http://localhost:{exporter_port}/health")
+        health[exporter_key] = {
+            "running": result.success and "OK" in result.stdout,
+            "port": exporter_port,
+        }
+
         result = await self.ssh.execute("systemctl is-active promtail")
         health["promtail"] = {
             "running": result.success and "active" in result.stdout,
