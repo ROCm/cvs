@@ -526,7 +526,6 @@ class SglangDisaggPD:
                       export NNODES={self.prefill_nnodes}
                       export NODE_RANK={i}
                       export SGLANG_USE_AITER=1
-                      pip install --upgrade --no-deps sglang[all] && \
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --disaggregation-mode prefill \
                               --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
@@ -599,7 +598,6 @@ class SglangDisaggPD:
                       export NNODES={self.decode_nnodes}
                       export NODE_RANK={i}
                       export SGLANG_USE_AITER=1
-                      pip install --upgrade --no-deps sglang[all] && \
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --disaggregation-mode decode \
                               --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
