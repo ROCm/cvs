@@ -130,11 +130,11 @@ def test_openai_compatible_http_endpoints(im_obj):
     update_test_result()
 
 
-# def test_run_lm_eval_hellaswag_benchmark_test(im_obj):
-#     globals.error_list = []
-#     im_obj.setup_benchmark_serv_container_env()
-#     im_obj.run_lm_eval_hellaswag_benchmark_test()
-#     update_test_result()
+def test_run_lm_eval_hellaswag_benchmark_test(im_obj):
+    globals.error_list = []
+    im_obj.setup_benchmark_serv_container_env()
+    im_obj.run_lm_eval_hellaswag_benchmark_test()
+    update_test_result()
 
 
 def test_run_lm_eval_gsm8k_benchmark_test(im_obj):
@@ -151,11 +151,11 @@ def test_run_lm_eval_gsm8k_benchmark_test(im_obj):
 #     update_test_result()
 
 
-# def test_run_benchmark_test(im_obj):
-#     globals.error_list = []
-#     im_obj.setup_benchmark_serv_container_env()
-#     im_obj.benchserv_test_random(d_type="auto")
-#     update_test_result()
+def test_run_benchmark_test(im_obj):
+    globals.error_list = []
+    im_obj.setup_benchmark_serv_container_env()
+    im_obj.benchserv_test_random(d_type="auto")
+    update_test_result()
 
 
 def test_disagg_gpu_topology(im_obj):
