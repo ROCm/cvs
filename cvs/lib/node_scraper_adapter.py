@@ -30,7 +30,6 @@ try:
     from nodescraper.models import SystemInfo
     from nodescraper.plugins.inband.dmesg.analyzer_args import DmesgAnalyzerArgs
     from nodescraper.plugins.inband.dmesg.dmesg_plugin import DmesgPlugin
-    from nodescraper.plugins.inband.dmesg.dmesgdata import DmesgData
 
     NODE_SCRAPER_AVAILABLE = True
     _IMPORT_ERROR: Optional[Exception] = None
@@ -91,11 +90,25 @@ def parse_dmesg(
     _require_node_scraper()
 
     plugin = DmesgPlugin(system_info=SystemInfo(name=node_name or DEFAULT_NODE_NAME))
-    result = plugin.analyze(
-        data=DmesgData(dmesg_content=dmesg_content or ""),
+    # Use the common DataPlugin.run() entry point (collection=False) so the same
+    # DataPluginResult shape can be reused for other plugins (e.g. NicPlugin).
+    plugin_result = plugin.run(
+        collection=False,
+        data={"dmesg_content": dmesg_content or ""},
         analysis_args=analysis_args,
     )
-    return [_normalize_event(event) for event in result.events]
+    return [_normalize_event(event) for event in _extract_analysis_events(plugin_result)]
+
+
+def _extract_analysis_events(plugin_result: Any) -> List[Any]:
+    """Return analyzer events from a DataPlugin.run() PluginResult."""
+    result_data = getattr(plugin_result, "result_data", None)
+    if result_data is None:
+        return []
+    analysis_result = getattr(result_data, "analysis_result", None)
+    if analysis_result is None:
+        return []
+    return list(getattr(analysis_result, "events", []) or [])
 
 
 def _normalize_event(event: Any) -> Dict[str, Any]:
