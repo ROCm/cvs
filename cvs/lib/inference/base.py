@@ -145,8 +145,6 @@ class InferenceBaseJob:
             'failed to start|no such file or directory|command not found|cannot access', re.I
         )
         self.default_client_wait_time = 120
-        self.default_client_poll_count = 20
-        self.default_client_poll_wait_time = 60
 
         # Regex/parse defaults that derived classes may override
         self.readiness_pattern = re.compile('Application startup complete|Uvicorn running|Started server', re.I)
@@ -171,6 +169,18 @@ class InferenceBaseJob:
         self.bp_dict.setdefault('tokenizer_mode', 'auto')
         self.bp_dict.setdefault('percentile_metrics', 'ttft,tpot,itl,e2el')
         self.bp_dict.setdefault('metric_percentiles', '99')
+        # Bench client can exceed 20min for large num_prompts × long ISL/OSL; budget is
+        # default_client_wait_time + client_poll_count * client_poll_wait_time.
+        self.bp_dict.setdefault('client_poll_count', '50')
+        self.bp_dict.setdefault('client_poll_wait_time', '60')
+        try:
+            self.default_client_poll_count = max(1, int(float(str(self.bp_dict['client_poll_count']).strip())))
+        except (TypeError, ValueError):
+            self.default_client_poll_count = 50
+        try:
+            self.default_client_poll_wait_time = max(1, int(float(str(self.bp_dict['client_poll_wait_time']).strip())))
+        except (TypeError, ValueError):
+            self.default_client_poll_wait_time = 60
 
         # Set server and client scripts
         self.server_script = self.bp_dict['server_script']

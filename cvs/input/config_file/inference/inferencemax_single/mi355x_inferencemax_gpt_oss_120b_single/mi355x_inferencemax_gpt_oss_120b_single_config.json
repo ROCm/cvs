@@ -37,6 +37,8 @@
             "tokenizer_mode": "auto",
             "percentile_metrics": "ttft,tpot,itl,e2el",
             "metric_percentiles": "99",
+            "client_poll_count": "50",
+            "client_poll_wait_time": "60",
             "server_script": "fixed_seq_len/vllm_serve_mi300x.sh",
             "bench_serv_script": "benchmark_serving.py"
         }
