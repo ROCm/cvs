@@ -867,6 +867,24 @@ class SglangDisaggPD:
         self.b_phdl.exec(formatted_cmd, timeout=500)
         time.sleep(5)
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
+        
+        log_path = f"{self.log_dir}/benchmark_node/benchmark_results.log"
+        for node, m in (self.inference_results_dict or {}).items():
+            gp = m.get("goodput", "n/a")
+            tpg = m.get("output_throughput_per_gpu_per_sec", "n/a")
+            tr = m.get("total_requests", "n/a")
+            sr = m.get("successful_requests", "n/a")
+            inner = (
+                f"echo '' >> {log_path} && "
+                f"echo '============ CVS derived (after Serving Benchmark Result) ============' >> {log_path} && "
+                f"echo 'Node: {node}' >> {log_path} && "
+                f"echo 'Goodput (successful / total): {sr} / {tr}  =>  {gp}' >> {log_path} && "
+                f"echo 'Output token throughput per GPU (tok/s/GPU): {tpg}' >> {log_path} && "
+                f"echo '=====================================================================' >> {log_path}"
+            )
+            cmd = f"docker exec {self.container_name} /bin/bash -c {shlex.quote(inner)}"
+            self.b_phdl.exec(cmd)
+
         self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
 
     def poll_for_server_ready(self, node_no, sglang_function, no_of_iterations=16):
