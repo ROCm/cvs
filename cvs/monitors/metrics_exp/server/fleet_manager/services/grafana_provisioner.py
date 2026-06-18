@@ -515,6 +515,187 @@ class GrafanaProvisioner:
             panel_id += 1
             y_pos += 10
 
+        # ── User Activity & KFD GPU Process Tracking ─────────────────────
+        # This section is always added — it shows data when the user_activity_exporter
+        # is installed (Force Reinstall deploys it automatically).
+        def _ua_table(pid, title, expr, col_map, x, y, w=24, h=10, desc="", sort_col=None, sort_desc=False):
+            exclude = {"Time": True, "Value": True, "__name__": True, "job": True, "instance": True, "node_group": True}
+            sort_by = [{"displayName": sort_col, "desc": sort_desc}] if sort_col else []
+            return {
+                "id": pid,
+                "type": "table",
+                "title": title,
+                "description": desc,
+                "gridPos": {"h": h, "w": w, "x": x, "y": y},
+                "targets": [{"expr": expr, "instant": True, "legendFormat": "", "format": "table"}],
+                "transformations": [
+                    {"id": "merge", "options": {}},
+                    {
+                        "id": "organize",
+                        "options": {
+                            "excludeByName": exclude,
+                            "renameByName": {k: v for k, v in col_map.items()},
+                        },
+                    },
+                ],
+                "options": {"sortBy": sort_by},
+                "fieldConfig": {"defaults": {"custom": {"displayMode": "auto", "filterable": True}}},
+            }
+
+        ng = node_group_name
+
+        panels.append(
+            {
+                "id": panel_id,
+                "type": "row",
+                "title": "User Activity & GPU Process Tracking",
+                "gridPos": {"h": 1, "w": 24, "x": 0, "y": y_pos},
+            }
+        )
+        panel_id += 1
+        y_pos += 1
+
+        # Stat row: KFD process count, logged-in count, unique GPU users
+        panels.append(
+            {
+                "id": panel_id,
+                "type": "stat",
+                "title": "Active GPU Processes (KFD)",
+                "description": "Processes currently launching GPU kernels. 0 = idle or KFD not loaded.",
+                "gridPos": {"h": 4, "w": 8, "x": 0, "y": y_pos},
+                "targets": [{"expr": f'sum(node_kfd_process_count{{node_group="{ng}"}})', "instant": True}],
+                "fieldConfig": {"defaults": {"unit": "short"}},
+                "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+            }
+        )
+        panel_id += 1
+        panels.append(
+            {
+                "id": panel_id,
+                "type": "stat",
+                "title": "Logged-In Users",
+                "gridPos": {"h": 4, "w": 8, "x": 8, "y": y_pos},
+                "targets": [{"expr": f'sum(node_logged_in_users_count{{node_group="{ng}"}})', "instant": True}],
+                "fieldConfig": {"defaults": {"unit": "short"}},
+                "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+            }
+        )
+        panel_id += 1
+        panels.append(
+            {
+                "id": panel_id,
+                "type": "stat",
+                "title": "Unique GPU Users (KFD)",
+                "gridPos": {"h": 4, "w": 8, "x": 16, "y": y_pos},
+                "targets": [
+                    {"expr": f'count(count by (user) (node_kfd_process_info{{node_group="{ng}"}}))', "instant": True}
+                ],
+                "fieldConfig": {"defaults": {"unit": "short"}},
+                "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+            }
+        )
+        panel_id += 1
+        y_pos += 4
+
+        # KFD GPU processes table
+        panels.append(
+            _ua_table(
+                panel_id,
+                "KFD GPU Processes (Active GPU Kernel Users)",
+                f'node_kfd_process_info{{node_group="{ng}"}} == 1',
+                {"hostname": "Node", "user": "User", "pid": "PID", "cmd": "Command", "gpu_mem_mb": "GPU Mem (MB)"},
+                0,
+                y_pos,
+                desc="Processes using the GPU right now via KFD. Empty when no GPU workloads are running.",
+                sort_col="GPU Mem (MB)",
+                sort_desc=True,
+            )
+        )
+        panel_id += 1
+        y_pos += 10
+
+        # Currently logged in + process count side by side
+        panels.append(
+            _ua_table(
+                panel_id,
+                "Currently Logged-In Users",
+                f'node_logged_in_user_info{{node_group="{ng}"}} == 1',
+                {
+                    "hostname": "Node",
+                    "user": "User",
+                    "tty": "Terminal",
+                    "from_host": "From",
+                    "login_time": "Login Time",
+                },
+                0,
+                y_pos,
+                w=12,
+            )
+        )
+        panel_id += 1
+        panels.append(
+            _ua_table(
+                panel_id,
+                "User Process Summary",
+                f'node_user_process_count{{node_group="{ng}"}} > 0',
+                {"hostname": "Node", "user": "User", "Value": "Process Count"},
+                12,
+                y_pos,
+                w=12,
+                sort_col="Process Count",
+                sort_desc=True,
+            )
+        )
+        panel_id += 1
+        y_pos += 10
+
+        # Notable commands
+        panels.append(
+            _ua_table(
+                panel_id,
+                "Notable User Commands (GPU/ML workloads prioritised)",
+                f'node_user_top_process_info{{node_group="{ng}"}} == 1',
+                {"hostname": "Node", "user": "User", "cmd": "Command"},
+                0,
+                y_pos,
+            )
+        )
+        panel_id += 1
+        y_pos += 10
+
+        # Recent login history
+        panels.append(
+            _ua_table(
+                panel_id,
+                "Recent Login History",
+                f'node_recent_login_info{{node_group="{ng}"}} == 1',
+                {"hostname": "Node", "user": "User", "tty": "Terminal", "from_host": "From", "date": "Date/Time"},
+                0,
+                y_pos,
+                h=12,
+            )
+        )
+        panel_id += 1
+        y_pos += 12
+
+        # Auth logs
+        panels.append(
+            {
+                "id": panel_id,
+                "type": "logs",
+                "title": "Auth Logs (SSH Logins & sudo Events)",
+                "description": "Live from /var/log/auth.log or /var/log/secure. Use the search bar to filter.",
+                "datasource": {"type": "loki", "uid": "loki"},
+                "gridPos": {"h": 12, "w": 24, "x": 0, "y": y_pos},
+                "targets": [
+                    {"datasource": {"type": "loki", "uid": "loki"}, "expr": f'{{node_group="{ng}", job="auth"}}'}
+                ],
+                "options": {"showTime": True, "showLabels": True, "wrapLogMessage": False, "dedupStrategy": "none"},
+            }
+        )
+        panel_id += 1
+        y_pos += 12
+
         dashboard = {
             "uid": uid,
             "title": f"Node Group: {node_group_name}",
@@ -1290,3 +1471,1044 @@ class GrafanaProvisioner:
                 logger.info(f"Provisioned dashboard: {dashboard.get('title')}")
 
         return results
+
+    # ----------------------------------------------------------------
+    # Control Node Group Dashboards
+    # ----------------------------------------------------------------
+
+    def _cng_safe_name(self, group_name: str) -> str:
+        """Return safe UID component for a control node group name."""
+        return ("".join(c if c.isalnum() else "_" for c in group_name))[:35]
+
+    def generate_slurm_dashboard(self, group_name: str) -> Dict[str, Any]:
+        """Generate a comprehensive Grafana dashboard for a Slurm control node group."""
+        safe_name = self._cng_safe_name(group_name)
+        uid = f"cng_{safe_name}"
+        ng = group_name
+
+        def ts(panel_id, title, expr_list, x, y, w=12, h=8, unit="short"):
+            targets = [{"expr": e, "legendFormat": lf} for e, lf in expr_list]
+            return {
+                "id": panel_id,
+                "type": "timeseries",
+                "title": title,
+                "gridPos": {"h": h, "w": w, "x": x, "y": y},
+                "targets": targets,
+                "fieldConfig": {"defaults": {"unit": unit}},
+            }
+
+        def stat(panel_id, title, expr, x, y, w=4, h=4, unit="short", thresholds=None, description=""):
+            p = {
+                "id": panel_id,
+                "type": "stat",
+                "title": title,
+                "description": description,
+                "gridPos": {"h": h, "w": w, "x": x, "y": y},
+                "targets": [{"expr": expr, "instant": True}],
+                "fieldConfig": {"defaults": {"unit": unit}},
+                "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+            }
+            if thresholds:
+                p["fieldConfig"]["defaults"]["thresholds"] = thresholds
+            return p
+
+        def row(panel_id, title, y):
+            return {"id": panel_id, "type": "row", "title": title, "gridPos": {"h": 1, "w": 24, "x": 0, "y": y}}
+
+        def table(panel_id, title, expr, col_map, x, y, w=24, h=12, sort_col=None, desc=False):
+            """
+            Table panel using format=table so Prometheus returns all rows directly.
+            The merge transformation combines multiple frames into one scrollable table.
+            h=12 gives enough height to show ~8 rows with a scrollbar for overflow.
+            """
+            exclude = {
+                "Time": True,
+                "Value": True,
+                "__name__": True,
+                "job": True,
+                "instance": True,
+                "control_node_group": True,
+            }
+            sort_by = [{"displayName": sort_col, "desc": desc}] if sort_col else []
+            return {
+                "id": panel_id,
+                "type": "table",
+                "title": title,
+                "gridPos": {"h": h, "w": w, "x": x, "y": y},
+                "targets": [{"expr": expr, "instant": True, "legendFormat": "", "format": "table"}],
+                "transformations": [
+                    {"id": "merge", "options": {}},
+                    {
+                        "id": "organize",
+                        "options": {
+                            "excludeByName": exclude,
+                            "renameByName": {k: v for k, v in col_map.items()},
+                        },
+                    },
+                ],
+                "options": {"sortBy": sort_by},
+                "fieldConfig": {
+                    "defaults": {
+                        "custom": {
+                            "displayMode": "auto",
+                            "filterable": True,
+                        }
+                    }
+                },
+            }
+
+        up_thresh = {"mode": "absolute", "steps": [{"color": "red", "value": None}, {"color": "green", "value": 1}]}
+
+        p = 1
+        y = 0
+        panels = []
+
+        # ---- Row 1: Cluster Compute Overview ----
+        # These stats reflect the compute nodes (not the head node itself)
+        panels.append(row(p, "Cluster Compute Overview (69 compute nodes, not the head node)", y))
+        p += 1
+        y += 1
+        panels.append(
+            stat(
+                p,
+                "Total Compute Nodes",
+                f'slurm_nodes_total{{control_node_group="{ng}"}}',
+                0,
+                y,
+                description="Total compute nodes managed by this Slurm cluster",
+            )
+        )
+        p += 1
+        panels.append(stat(p, "Running Jobs", f'slurm_jobs_state{{control_node_group="{ng}",state="running"}}', 4, y))
+        p += 1
+        panels.append(stat(p, "Pending Jobs", f'slurm_jobs_state{{control_node_group="{ng}",state="pending"}}', 8, y))
+        p += 1
+        panels.append(
+            stat(
+                p,
+                "Compute CPU Util %",
+                f'100 * slurm_running_cpus{{control_node_group="{ng}"}} '
+                f'/ clamp_min(slurm_cpus_total{{control_node_group="{ng}"}}, 1)',
+                12,
+                y,
+                unit="percent",
+                description="% of COMPUTE NODE CPUs used by actively running jobs. "
+                "This is cluster-wide utilization across all compute nodes, "
+                "NOT the head node CPU (head node is always near 0%).",
+                thresholds={
+                    "mode": "absolute",
+                    "steps": [
+                        {"color": "green", "value": None},
+                        {"color": "yellow", "value": 70},
+                        {"color": "red", "value": 90},
+                    ],
+                },
+            )
+        )
+        p += 1
+        panels.append(
+            stat(
+                p,
+                "Running CPUs",
+                f'slurm_running_cpus{{control_node_group="{ng}"}}',
+                16,
+                y,
+                description="Total CPUs actively used by running jobs across all compute nodes",
+            )
+        )
+        p += 1
+        panels.append(
+            stat(
+                p,
+                "Total Cluster CPUs",
+                f'slurm_cpus_total{{control_node_group="{ng}"}}',
+                20,
+                y,
+                description="Total CPUs available across all compute nodes in the cluster",
+            )
+        )
+        p += 1
+        y += 4
+
+        # ---- Row 2: Head Node Health ----
+        # These stats reflect the head/login node where slurmctld runs
+        panels.append(row(p, "Head Node Health (the slurmctld server — always near 0% CPU, that is normal)", y))
+        p += 1
+        y += 1
+        panels.append(
+            stat(
+                p,
+                "slurmctld",
+                f'slurm_slurmctld_up{{control_node_group="{ng}"}}',
+                0,
+                y,
+                description="slurmctld reachability via scontrol ping",
+                thresholds=up_thresh,
+            )
+        )
+        p += 1
+        panels.append(
+            stat(
+                p,
+                "slurmdbd",
+                f'slurm_slurmdbd_up{{control_node_group="{ng}"}}',
+                4,
+                y,
+                description="slurmdbd reachability via sacctmgr",
+                thresholds=up_thresh,
+            )
+        )
+        p += 1
+        panels.append(
+            stat(
+                p,
+                "Head Node CPU %",
+                f'100 - (avg(irate(node_cpu_seconds_total{{control_node_group="{ng}",mode="idle"}}[5m])) * 100)',
+                8,
+                y,
+                unit="percent",
+                description="Head node's own CPU usage. Expected to be near 0% — "
+                "the head node only runs slurmctld/slurmdbd, not compute jobs.",
+            )
+        )
+        p += 1
+        panels.append(
+            stat(
+                p,
+                "Head Node Memory %",
+                f'100 * (1 - node_memory_MemAvailable_bytes{{control_node_group="{ng}"}}'
+                f' / node_memory_MemTotal_bytes{{control_node_group="{ng}"}})',
+                12,
+                y,
+                unit="percent",
+                description="Head node's own memory usage",
+                thresholds={
+                    "mode": "absolute",
+                    "steps": [
+                        {"color": "green", "value": None},
+                        {"color": "yellow", "value": 75},
+                        {"color": "red", "value": 90},
+                    ],
+                },
+            )
+        )
+        p += 1
+        panels.append(
+            stat(
+                p,
+                "Head Node Disk %",
+                f'max(100 * (1 - node_filesystem_avail_bytes{{control_node_group="{ng}",'
+                f'fstype!~"tmpfs|devtmpfs|squashfs"}}'
+                f' / node_filesystem_size_bytes{{control_node_group="{ng}",'
+                f'fstype!~"tmpfs|devtmpfs|squashfs"}}))',
+                16,
+                y,
+                unit="percent",
+                description="Head node's most-used filesystem",
+                thresholds={
+                    "mode": "absolute",
+                    "steps": [
+                        {"color": "green", "value": None},
+                        {"color": "yellow", "value": 75},
+                        {"color": "red", "value": 90},
+                    ],
+                },
+            )
+        )
+        p += 1
+        y += 4
+
+        # ---- Row 2: Node states + CPU ----
+        panels.append(row(p, "Node States & CPU", y))
+        p += 1
+        y += 1
+        panels.append(
+            ts(
+                p,
+                "Node States Over Time",
+                [
+                    (f'slurm_nodes_state{{control_node_group="{ng}",state="idle"}}', "Idle"),
+                    (f'slurm_nodes_state{{control_node_group="{ng}",state="allocated"}}', "Allocated"),
+                    (f'slurm_nodes_state{{control_node_group="{ng}",state="mixed"}}', "Mixed"),
+                    (f'slurm_nodes_state{{control_node_group="{ng}",state="planned"}}', "Planned"),
+                    (f'slurm_nodes_state{{control_node_group="{ng}",state="drained"}}', "Drained"),
+                    (f'slurm_nodes_state{{control_node_group="{ng}",state="down"}}', "Down"),
+                ],
+                0,
+                y,
+            )
+        )
+        p += 1
+        panels.append(
+            ts(
+                p,
+                "CPU — Running vs Total",
+                [
+                    (f'slurm_cpus_total{{control_node_group="{ng}"}}', "Total CPUs"),
+                    (f'slurm_running_cpus{{control_node_group="{ng}"}}', "Running CPUs"),
+                    (f'slurm_cpus_allocated{{control_node_group="{ng}"}}', "Allocated (alloc+mixed nodes)"),
+                ],
+                12,
+                y,
+            )
+        )
+        p += 1
+        y += 8
+
+        # ---- Row 3: Jobs + Memory ----
+        panels.append(row(p, "Jobs & Memory", y))
+        p += 1
+        y += 1
+        panels.append(
+            ts(
+                p,
+                "Jobs Over Time",
+                [
+                    (f'slurm_jobs_state{{control_node_group="{ng}",state="running"}}', "Running"),
+                    (f'slurm_jobs_state{{control_node_group="{ng}",state="pending"}}', "Pending"),
+                    (f'slurm_jobs_state{{control_node_group="{ng}",state="completing"}}', "Completing"),
+                ],
+                0,
+                y,
+            )
+        )
+        p += 1
+        panels.append(
+            ts(
+                p,
+                "Slurm Memory Allocated vs Total (MB)",
+                [
+                    (f'slurm_memory_total_mb{{control_node_group="{ng}"}}', "Total"),
+                    (f'slurm_memory_allocated_mb{{control_node_group="{ng}"}}', "Allocated"),
+                ],
+                12,
+                y,
+                unit="decmbytes",
+            )
+        )
+        p += 1
+        y += 8
+
+        # ---- Row 4: Scheduler health ----
+        panels.append(row(p, "Scheduler Health", y))
+        p += 1
+        y += 1
+        panels.append(
+            ts(
+                p,
+                "Backfill Cycle Time (s)",
+                [
+                    (f'slurm_scheduler_backfill_cycle_last_seconds{{control_node_group="{ng}"}}', "Last"),
+                    (f'slurm_scheduler_backfill_cycle_mean_seconds{{control_node_group="{ng}"}}', "Mean"),
+                ],
+                0,
+                y,
+                unit="s",
+            )
+        )
+        p += 1
+        panels.append(
+            ts(
+                p,
+                "Active Scheduler Threads",
+                [
+                    (f'slurm_scheduler_threads_active{{control_node_group="{ng}"}}', "Threads"),
+                ],
+                12,
+                y,
+            )
+        )
+        p += 1
+        y += 8
+        panels.append(
+            ts(
+                p,
+                "DBD Agent Queue Size",
+                [
+                    (f'slurm_scheduler_dbd_agent_queue_size{{control_node_group="{ng}"}}', "Queue Size"),
+                ],
+                0,
+                y,
+                w=24,
+            )
+        )
+        p += 1
+        y += 8
+
+        # ---- Row 5: Head node system resources ----
+        panels.append(row(p, "Head Node System Resources (node_exporter)", y))
+        p += 1
+        y += 1
+        panels.append(
+            ts(
+                p,
+                "Head Node Memory Usage %",
+                [
+                    (
+                        f'100 * (1 - node_memory_MemAvailable_bytes{{control_node_group="{ng}"}}'
+                        f' / node_memory_MemTotal_bytes{{control_node_group="{ng}"}})',
+                        "{{hostname}} Memory %",
+                    ),
+                ],
+                0,
+                y,
+                unit="percent",
+            )
+        )
+        p += 1
+        panels.append(
+            ts(
+                p,
+                "Head Node Disk Usage %",
+                [
+                    (
+                        f'100 * (1 - node_filesystem_avail_bytes{{control_node_group="{ng}",'
+                        f'fstype!~"tmpfs|devtmpfs|squashfs"}}'
+                        f' / node_filesystem_size_bytes{{control_node_group="{ng}",'
+                        f'fstype!~"tmpfs|devtmpfs|squashfs"}})',
+                        "{{hostname}} {{mountpoint}}",
+                    ),
+                ],
+                12,
+                y,
+                unit="percent",
+            )
+        )
+        p += 1
+        y += 8
+        panels.append(
+            ts(
+                p,
+                "Head Node CPU Usage %",
+                [
+                    (
+                        f'100 - (avg by (hostname) (irate(node_cpu_seconds_total{{'
+                        f'control_node_group="{ng}",mode="idle"}}[5m])) * 100)',
+                        "{{hostname}} CPU %",
+                    ),
+                ],
+                0,
+                y,
+                w=24,
+                unit="percent",
+            )
+        )
+        p += 1
+        y += 8
+
+        # ---- Row 6: Node state table ----
+        panels.append(row(p, "Node Details", y))
+        p += 1
+        y += 1
+        panels.append(
+            table(
+                p,
+                "Node State Table",
+                f'slurm_node_info{{control_node_group="{ng}"}} == 1',
+                {
+                    "node": "Node",
+                    "partition": "Partition",
+                    "state": "State",
+                    "cpus": "CPUs",
+                    "memory": "Memory (MB)",
+                    "reason": "Reason",
+                },
+                0,
+                y,
+                sort_col="Node",
+            )
+        )
+        p += 1
+        y += 12
+
+        # ---- Row 7: Job queue table ----
+        panels.append(row(p, "Job Queue", y))
+        p += 1
+        y += 1
+        panels.append(
+            table(
+                p,
+                "Active Job Queue",
+                f'slurm_job_info{{control_node_group="{ng}"}} == 1',
+                {
+                    "job_id": "Job ID",
+                    "name": "Name",
+                    "user": "User",
+                    "partition": "Partition",
+                    "state": "State",
+                    "cpus": "CPUs",
+                    "time_limit": "Time Limit",
+                    "reason": "Reason (if pending)",
+                },
+                0,
+                y,
+                sort_col="Job ID",
+                desc=True,
+            )
+        )
+        p += 1
+        y += 12
+
+        # ---- Row 8: Top CPU consumers (pie chart + table) ----
+        panels.append(row(p, "Top CPU Consumers", y))
+        p += 1
+        y += 1
+
+        # Pie chart: CPU share by user
+        panels.append(
+            {
+                "id": p,
+                "type": "piechart",
+                "title": "CPU Distribution by User (Running Jobs)",
+                "description": "Share of cluster CPUs consumed by each user's running jobs",
+                "gridPos": {"h": 10, "w": 24, "x": 0, "y": y},
+                "targets": [
+                    {
+                        "expr": f'sum by (user) (slurm_job_cpu_count{{control_node_group="{ng}",state="running"}})',
+                        "legendFormat": "{{user}}",
+                        "instant": True,
+                    }
+                ],
+                "options": {
+                    "pieType": "donut",
+                    "displayLabels": ["name", "percent"],
+                    "legend": {
+                        "displayMode": "table",
+                        "placement": "right",
+                        "values": ["value", "percent"],
+                    },
+                    "tooltip": {"mode": "single"},
+                },
+                "fieldConfig": {"defaults": {"unit": "short"}},
+            }
+        )
+        p += 1
+        y += 10
+
+        panels.append(
+            table(
+                p,
+                "Top CPU Consumers — Job Detail (Running Jobs)",
+                f'topk(20, slurm_job_cpu_count{{control_node_group="{ng}",state="running"}})',
+                {"job_id": "Job ID", "name": "Job Name", "user": "User", "partition": "Partition", "Value": "CPUs"},
+                0,
+                y,
+                sort_col="CPUs",
+                desc=True,
+            )
+        )
+        p += 1
+        y += 12
+
+        # ---- Row 9: Partition table ----
+        panels.append(row(p, "Partitions", y))
+        p += 1
+        y += 1
+        panels.append(
+            table(
+                p,
+                "Partition Summary",
+                f'slurm_partition_info{{control_node_group="{ng}"}} == 1',
+                {
+                    "partition": "Partition",
+                    "state": "State",
+                    "nodes": "Nodes",
+                    "cpus_total": "CPUs Total",
+                    "cpus_alloc": "CPUs Allocated",
+                },
+                0,
+                y,
+                h=8,
+            )
+        )
+        p += 1
+        y += 8
+
+        # ---- Row 10: Recent jobs table ----
+        panels.append(row(p, "Recent Completed Jobs (last 24h)", y))
+        p += 1
+        y += 1
+        panels.append(
+            table(
+                p,
+                "Recent Jobs",
+                f'slurm_recent_job_info{{control_node_group="{ng}"}} == 1',
+                {
+                    "job_id": "Job ID",
+                    "name": "Name",
+                    "user": "User",
+                    "state": "State",
+                    "elapsed": "Elapsed",
+                    "exit_code": "Exit Code",
+                },
+                0,
+                y,
+                sort_col="Job ID",
+                desc=True,
+            )
+        )
+        p += 1
+        y += 12
+
+        # ---- Row 11: Logs ----
+        panels.append(row(p, "Logs", y))
+        p += 1
+        y += 1
+        panels.append(
+            {
+                "id": p,
+                "type": "logs",
+                "title": "slurmctld Logs",
+                "datasource": {"type": "loki", "uid": "loki"},
+                "gridPos": {"h": 10, "w": 24, "x": 0, "y": y},
+                "targets": [
+                    {
+                        "datasource": {"type": "loki", "uid": "loki"},
+                        "expr": f'{{control_node_group="{ng}"}}',
+                    }
+                ],
+                "options": {"showTime": True, "showLabels": True, "wrapLogMessage": True},
+            }
+        )
+
+        return {
+            "uid": uid,
+            "title": f"Slurm Control Plane — {group_name}",
+            "tags": ["control-plane", "slurm"],
+            "timezone": "browser",
+            "schemaVersion": 38,
+            "refresh": "30s",
+            "time": {"from": "now-1h", "to": "now"},
+            "templating": {"list": []},
+            "panels": panels,
+        }
+
+    def generate_k8s_dashboard(self, group_name: str) -> Dict[str, Any]:
+        """Generate a comprehensive Grafana dashboard for a Kubernetes control node group."""
+        safe_name = self._cng_safe_name(group_name)
+        uid = f"cng_{safe_name}"
+        ng = group_name
+
+        def ts(panel_id, title, expr_list, x, y, w=12, h=8, unit="short"):
+            targets = [{"expr": e, "legendFormat": lf} for e, lf in expr_list]
+            return {
+                "id": panel_id,
+                "type": "timeseries",
+                "title": title,
+                "gridPos": {"h": h, "w": w, "x": x, "y": y},
+                "targets": targets,
+                "fieldConfig": {"defaults": {"unit": unit}},
+            }
+
+        def stat(panel_id, title, expr, x, y, w=6, h=4, unit="short", thresholds=None):
+            p = {
+                "id": panel_id,
+                "type": "stat",
+                "title": title,
+                "gridPos": {"h": h, "w": w, "x": x, "y": y},
+                "targets": [{"expr": expr, "instant": True}],
+                "fieldConfig": {"defaults": {"unit": unit}},
+                "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+            }
+            if thresholds:
+                p["fieldConfig"]["defaults"]["thresholds"] = thresholds
+            return p
+
+        def row(panel_id, title, y):
+            return {"id": panel_id, "type": "row", "title": title, "gridPos": {"h": 1, "w": 24, "x": 0, "y": y}}
+
+        def table(panel_id, title, expr, col_map, x, y, w=24, h=12, sort_col=None, desc=False):
+            exclude = {
+                "Time": True,
+                "Value": True,
+                "__name__": True,
+                "job": True,
+                "instance": True,
+                "control_node_group": True,
+            }
+            sort_by = [{"displayName": sort_col, "desc": desc}] if sort_col else []
+            return {
+                "id": panel_id,
+                "type": "table",
+                "title": title,
+                "gridPos": {"h": h, "w": w, "x": x, "y": y},
+                "targets": [{"expr": expr, "instant": True, "legendFormat": "", "format": "table"}],
+                "transformations": [
+                    {"id": "merge", "options": {}},
+                    {
+                        "id": "organize",
+                        "options": {
+                            "excludeByName": exclude,
+                            "renameByName": {k: v for k, v in col_map.items()},
+                        },
+                    },
+                ],
+                "options": {"sortBy": sort_by},
+                "fieldConfig": {
+                    "defaults": {
+                        "custom": {
+                            "displayMode": "auto",
+                            "filterable": True,
+                        }
+                    }
+                },
+            }
+
+        up_thresholds = {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": None}, {"color": "green", "value": 1}],
+        }
+
+        p = 1
+        y = 0
+        panels = []
+
+        # Row 1: Health overview stats
+        panels.append(row(p, "Control Plane Health", y))
+        p += 1
+        y += 1
+        panels.append(
+            stat(p, "API Server", f'k8s_apiserver_up{{control_node_group="{ng}"}}', 0, y, thresholds=up_thresholds)
+        )
+        p += 1
+        panels.append(stat(p, "etcd", f'k8s_etcd_up{{control_node_group="{ng}"}}', 6, y, thresholds=up_thresholds))
+        p += 1
+        panels.append(
+            stat(p, "Scheduler", f'k8s_scheduler_up{{control_node_group="{ng}"}}', 12, y, thresholds=up_thresholds)
+        )
+        p += 1
+        panels.append(
+            stat(
+                p,
+                "Controller Manager",
+                f'k8s_controller_manager_up{{control_node_group="{ng}"}}',
+                18,
+                y,
+                thresholds=up_thresholds,
+            )
+        )
+        p += 1
+        y += 4
+
+        # Row 2: API Server
+        panels.append(row(p, "API Server", y))
+        p += 1
+        y += 1
+        panels.append(
+            ts(
+                p,
+                "API Request Rate (by verb)",
+                [
+                    (f'sum by (verb) (k8s_apiserver_request_rate{{control_node_group="{ng}"}})', "{{verb}}"),
+                ],
+                0,
+                y,
+                unit="reqps",
+            )
+        )
+        p += 1
+        panels.append(
+            ts(
+                p,
+                "API P99 Latency (s)",
+                [
+                    (f'k8s_apiserver_request_duration_p99_seconds{{control_node_group="{ng}"}}', "{{verb}}"),
+                ],
+                12,
+                y,
+                unit="s",
+            )
+        )
+        p += 1
+        y += 8
+        panels.append(
+            ts(
+                p,
+                "API Error Rate (5xx)",
+                [
+                    (
+                        f'sum by (verb) (k8s_apiserver_request_rate{{control_node_group="{ng}",code=~"5.."}})',
+                        "{{verb}}",
+                    ),
+                ],
+                0,
+                y,
+                w=24,
+            )
+        )
+        p += 1
+        y += 8
+
+        # Row 3: etcd
+        panels.append(row(p, "etcd", y))
+        p += 1
+        y += 1
+        panels.append(
+            stat(
+                p,
+                "etcd Has Leader",
+                f'k8s_etcd_has_leader{{control_node_group="{ng}"}}',
+                0,
+                y,
+                w=4,
+                thresholds=up_thresholds,
+            )
+        )
+        p += 1
+        panels.append(
+            ts(
+                p,
+                "etcd Leader Changes",
+                [
+                    (f'k8s_etcd_leader_changes_total{{control_node_group="{ng}"}}', "Leader Changes"),
+                ],
+                4,
+                y,
+                w=10,
+            )
+        )
+        p += 1
+        panels.append(
+            ts(
+                p,
+                "etcd WAL Fsync P99 (s)",
+                [
+                    (f'k8s_etcd_wal_fsync_duration_p99_seconds{{control_node_group="{ng}"}}', "P99 Fsync"),
+                ],
+                14,
+                y,
+                w=10,
+                unit="s",
+            )
+        )
+        p += 1
+        y += 8
+        panels.append(
+            ts(
+                p,
+                "etcd Proposals Failed",
+                [
+                    (f'k8s_etcd_proposals_failed_total{{control_node_group="{ng}"}}', "Proposals Failed"),
+                ],
+                0,
+                y,
+                w=24,
+            )
+        )
+        p += 1
+        y += 8
+
+        # Row 4: Scheduler
+        panels.append(row(p, "Scheduler", y))
+        p += 1
+        y += 1
+        panels.append(
+            ts(
+                p,
+                "Pending Pods by Queue",
+                [
+                    (f'k8s_scheduler_pending_pods{{control_node_group="{ng}",queue="active"}}', "Active"),
+                    (f'k8s_scheduler_pending_pods{{control_node_group="{ng}",queue="backoff"}}', "Backoff"),
+                    (f'k8s_scheduler_pending_pods{{control_node_group="{ng}",queue="unschedulable"}}', "Unschedulable"),
+                    (f'k8s_scheduler_pending_pods{{control_node_group="{ng}",queue="gated"}}', "Gated"),
+                ],
+                0,
+                y,
+            )
+        )
+        p += 1
+        panels.append(
+            ts(
+                p,
+                "Scheduling Attempt Failures",
+                [
+                    (f'k8s_scheduler_schedule_attempts_total{{control_node_group="{ng}",result="error"}}', "Error"),
+                    (
+                        f'k8s_scheduler_schedule_attempts_total{{control_node_group="{ng}",result="unschedulable"}}',
+                        "Unschedulable",
+                    ),
+                ],
+                12,
+                y,
+            )
+        )
+        p += 1
+        y += 8
+
+        # Row 5: Controller Manager
+        panels.append(row(p, "Controller Manager", y))
+        p += 1
+        y += 1
+        panels.append(
+            ts(
+                p,
+                "Work Queue Depth",
+                [
+                    (f'k8s_controller_manager_workqueue_depth{{control_node_group="{ng}"}}', "{{queue_name}}"),
+                ],
+                0,
+                y,
+                w=24,
+            )
+        )
+        p += 1
+        y += 8
+
+        # Row 6: System (node_exporter)
+        panels.append(row(p, "Control Plane Node System", y))
+        p += 1
+        y += 1
+        panels.append(
+            ts(
+                p,
+                "CPU Usage %",
+                [
+                    (
+                        f'100 - (avg by (hostname) (irate(node_cpu_seconds_total{{control_node_group="{ng}",mode="idle"}}[5m])) * 100)',
+                        "{{hostname}} CPU",
+                    ),
+                ],
+                0,
+                y,
+                unit="percent",
+            )
+        )
+        p += 1
+        panels.append(
+            ts(
+                p,
+                "Memory Usage %",
+                [
+                    (
+                        f'100 * (1 - node_memory_MemAvailable_bytes{{control_node_group="{ng}"}} / node_memory_MemTotal_bytes{{control_node_group="{ng}"}})',
+                        "{{hostname}} Memory",
+                    ),
+                ],
+                12,
+                y,
+                unit="percent",
+            )
+        )
+        p += 1
+        y += 8
+
+        # Row 7: Node table
+        panels.append(row(p, "Cluster Nodes", y))
+        p += 1
+        y += 1
+        panels.append(
+            table(
+                p,
+                "Node Status",
+                f'k8s_node_info{{control_node_group="{ng}"}} == 1',
+                {"node": "Node", "role": "Role", "status": "Status", "version": "K8s Version"},
+                0,
+                y,
+                h=6,
+            )
+        )
+        p += 1
+        y += 6
+
+        # Row 8: Pending/Failed pods
+        panels.append(row(p, "Pending & Failed Pods", y))
+        p += 1
+        y += 1
+        panels.append(
+            table(
+                p,
+                "Pending / Failed Pods",
+                f'k8s_pod_info{{control_node_group="{ng}"}} == 1',
+                {"pod": "Pod", "namespace": "Namespace", "phase": "Phase", "reason": "Reason", "node": "Node"},
+                0,
+                y,
+            )
+        )
+        p += 1
+        y += 8
+
+        # Row 9: Component health table
+        panels.append(row(p, "Component Health", y))
+        p += 1
+        y += 1
+        panels.append(
+            table(
+                p,
+                "Component Health Check",
+                f'k8s_component_health{{control_node_group="{ng}"}}',
+                {"component": "Component", "endpoint": "Endpoint"},
+                0,
+                y,
+                h=6,
+            )
+        )
+        p += 1
+        y += 6
+
+        # Row 10: Logs
+        panels.append(row(p, "Logs", y))
+        p += 1
+        y += 1
+        panels.append(
+            {
+                "id": p,
+                "type": "logs",
+                "title": "Control Plane Logs",
+                "datasource": {"type": "loki", "uid": "loki"},
+                "gridPos": {"h": 10, "w": 24, "x": 0, "y": y},
+                "targets": [
+                    {
+                        "datasource": {"type": "loki", "uid": "loki"},
+                        "expr": f'{{control_node_group="{ng}"}}',
+                    }
+                ],
+                "options": {"showTime": True, "showLabels": True, "wrapLogMessage": True},
+            }
+        )
+
+        return {
+            "uid": uid,
+            "title": f"Kubernetes Control Plane — {group_name}",
+            "tags": ["control-plane", "kubernetes"],
+            "timezone": "browser",
+            "schemaVersion": 38,
+            "refresh": "30s",
+            "time": {"from": "now-1h", "to": "now"},
+            "templating": {"list": []},
+            "panels": panels,
+        }
+
+    async def provision_control_node_group_dashboard(
+        self,
+        group_name: str,
+        control_type: str,
+    ) -> Optional[str]:
+        """Create or update the Grafana dashboard for a control node group.
+
+        Returns the dashboard UID on success, None on failure.
+        """
+        folder_uid = "control-plane"
+        await self.get_or_create_folder("Control Plane Monitoring", folder_uid)
+
+        if control_type == "slurm":
+            dashboard = self.generate_slurm_dashboard(group_name)
+        else:
+            dashboard = self.generate_k8s_dashboard(group_name)
+
+        result = await self.create_dashboard(dashboard, folder_uid=folder_uid, overwrite=True)
+        if "error" in result:
+            logger.error(f"Failed to provision control node group dashboard for '{group_name}': {result.get('error')}")
+            return None
+
+        uid = dashboard["uid"]
+        logger.info(f"Provisioned control node group dashboard: {dashboard['title']} (uid={uid})")
+        return uid
+
+    async def remove_control_node_group_dashboard(self, group_name: str) -> bool:
+        """Delete the Grafana dashboard for a control node group."""
+        safe_name = self._cng_safe_name(group_name)
+        uid = f"cng_{safe_name}"
+        success = await self.delete_dashboard(uid)
+        if success:
+            logger.info(f"Removed control node group dashboard: {uid}")
+        return success

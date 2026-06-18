@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Outlet, NavLink } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { fetchHealth, fetchNodeGroups, fetchMonitoringServers } from '../api'
+import { fetchHealth, fetchNodeGroups, fetchMonitoringServers, fetchControlNodeGroups } from '../api'
 import {
   LayoutDashboard,
   Server,
@@ -11,10 +11,12 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronUp,
+  Cpu,
 } from 'lucide-react'
 
 function Layout() {
   const [dashboardsExpanded, setDashboardsExpanded] = useState(true)
+  const [controlDashboardsExpanded, setControlDashboardsExpanded] = useState(true)
 
   const { data: health } = useQuery({
     queryKey: ['health'],
@@ -28,21 +30,27 @@ function Layout() {
     refetchInterval: 30000,
   })
 
+  const { data: controlNodeGroups = [] } = useQuery({
+    queryKey: ['control-nodegroups'],
+    queryFn: fetchControlNodeGroups,
+    refetchInterval: 30000,
+  })
+
   const { data: monitoringServers = [] } = useQuery({
     queryKey: ['monitoring-servers'],
     queryFn: fetchMonitoringServers,
     refetchInterval: 30000,
   })
 
-  // Menu order: Dashboard -> Monitoring Servers -> Metric Groups -> Node Groups
   const navItems = [
     { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/monitoring', icon: Monitor, label: 'Monitoring Servers' },
     { to: '/metrics', icon: BarChart3, label: 'Metric Groups' },
     { to: '/nodegroups', icon: Server, label: 'Node Groups' },
+    { to: '/control-nodegroups', icon: Cpu, label: 'Control Node Groups' },
   ]
 
-  // Build dashboard links for each node group with a monitoring server
+  // GPU Node Group dashboard links
   const dashboardLinks = nodeGroups
     .filter((ng) => ng.monitoring_server_id)
     .map((ng) => {
@@ -57,6 +65,23 @@ function Layout() {
       }
     })
     .filter(Boolean) as { href: string; label: string; serverName: string }[]
+
+  // Control Node Group dashboard links
+  const controlDashboardLinks = controlNodeGroups
+    .filter((cng) => cng.monitoring_server_id)
+    .map((cng) => {
+      const server = monitoringServers.find((s) => s.id === cng.monitoring_server_id)
+      if (!server || !server.server_ip) return null
+      const grafanaUrl = `http://${server.server_ip}:${server.grafana_port}`
+      const dashboardId = `cng_${cng.name.replace(/[^a-zA-Z0-9]/g, '_')}`
+      return {
+        href: `${grafanaUrl}/d/${dashboardId}`,
+        label: cng.name,
+        serverName: server.name,
+        controlType: cng.control_type,
+      }
+    })
+    .filter(Boolean) as { href: string; label: string; serverName: string; controlType: string }[]
 
   return (
     <div className="min-h-screen flex">
@@ -76,7 +101,7 @@ function Layout() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-4">
+        <nav className="flex-1 p-4 overflow-y-auto">
           <ul className="space-y-2">
             {navItems.map(({ to, icon: Icon, label }) => (
               <li key={to}>
@@ -97,12 +122,13 @@ function Layout() {
             ))}
           </ul>
 
+          {/* GPU Fleet Dashboards */}
           <div className="mt-8">
             <button
               onClick={() => setDashboardsExpanded(!dashboardsExpanded)}
               className="w-full px-4 flex items-center justify-between text-xs font-semibold text-amd-gray-500 uppercase tracking-wider mb-2 hover:text-amd-gray-300"
             >
-              <span>Grafana Dashboards</span>
+              <span>GPU Dashboards</span>
               {dashboardsExpanded ? (
                 <ChevronUp className="w-4 h-4" />
               ) : (
@@ -124,6 +150,49 @@ function Layout() {
                         <div className="flex flex-col">
                           <span className="text-sm">{label}</span>
                           <span className="text-xs text-amd-gray-500">{serverName}</span>
+                        </div>
+                      </a>
+                    </li>
+                  ))
+                ) : (
+                  <li className="px-4 py-2 text-sm text-amd-gray-500">
+                    No dashboards configured
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
+
+          {/* Control Plane Dashboards */}
+          <div className="mt-4">
+            <button
+              onClick={() => setControlDashboardsExpanded(!controlDashboardsExpanded)}
+              className="w-full px-4 flex items-center justify-between text-xs font-semibold text-amd-gray-500 uppercase tracking-wider mb-2 hover:text-amd-gray-300"
+            >
+              <span>Control Plane</span>
+              {controlDashboardsExpanded ? (
+                <ChevronUp className="w-4 h-4" />
+              ) : (
+                <ChevronDown className="w-4 h-4" />
+              )}
+            </button>
+            {controlDashboardsExpanded && (
+              <ul className="space-y-1">
+                {controlDashboardLinks.length > 0 ? (
+                  controlDashboardLinks.map(({ href, label, serverName, controlType }) => (
+                    <li key={href}>
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 px-4 py-2 rounded-lg text-amd-gray-300 hover:bg-amd-gray-800 transition-colors"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        <div className="flex flex-col">
+                          <span className="text-sm">{label}</span>
+                          <span className="text-xs text-amd-gray-500">
+                            {controlType === 'slurm' ? 'Slurm' : 'K8s'} · {serverName}
+                          </span>
                         </div>
                       </a>
                     </li>

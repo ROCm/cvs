@@ -6,6 +6,9 @@ import NodeGroupDetail from './pages/NodeGroupDetail'
 import AddNodeGroup from './pages/AddNodeGroup'
 import MonitoringServers from './pages/MonitoringServers'
 import MetricGroups from './pages/MetricGroups'
+import ControlNodeGroups from './pages/ControlNodeGroups'
+import ControlNodeGroupDetail from './pages/ControlNodeGroupDetail'
+import AddControlNodeGroup from './pages/AddControlNodeGroup'
 
 function App() {
   return (
@@ -19,6 +22,9 @@ function App() {
           <Route path="nodegroups" element={<NodeGroups />} />
           <Route path="nodegroups/new" element={<AddNodeGroup />} />
           <Route path="nodegroups/:id" element={<NodeGroupDetail />} />
+          <Route path="control-nodegroups" element={<ControlNodeGroups />} />
+          <Route path="control-nodegroups/new" element={<AddControlNodeGroup />} />
+          <Route path="control-nodegroups/:id" element={<ControlNodeGroupDetail />} />
         </Route>
       </Routes>
     </BrowserRouter>

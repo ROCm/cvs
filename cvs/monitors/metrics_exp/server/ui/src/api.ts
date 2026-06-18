@@ -323,4 +323,137 @@ export interface InstallationStatus {
 export const fetchInstallationStatus = (jobId: string) =>
   api.get<InstallationStatus>(`/monitoring/install-status/${jobId}`).then(r => r.data)
 
+// ============================================================
+// Control Node Group types and API functions
+// ============================================================
+
+export interface ControlNodeGroup {
+  id: number
+  name: string
+  description?: string
+  control_type: 'slurm' | 'kubernetes'
+  custom_exporter_port: number
+  ssh_user: string
+  ssh_port: number
+  ssh_auth_type: 'key' | 'password'
+  ssh_key_path?: string
+  has_ssh_password: boolean
+  use_jump_host: boolean
+  jump_host?: string
+  jump_port: number
+  jump_user?: string
+  jump_auth_type: 'key' | 'password'
+  jump_key_path?: string
+  has_jump_password: boolean
+  remote_auth_type: 'key' | 'password'
+  remote_key_path?: string
+  has_remote_password: boolean
+  monitoring_server_id?: number
+  node_count: number
+  active_node_count: number
+  // Kubeconfig (Kubernetes only)
+  kubeconfig_source: 'auto' | 'path' | 'upload'
+  kubeconfig_remote_path?: string
+  has_kubeconfig_upload: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ControlNode {
+  id: number
+  control_node_group_id: number
+  ip_address: string
+  hostname?: string
+  status: 'pending' | 'connected' | 'installing' | 'active' | 'error' | 'unreachable'
+  status_message?: string
+  last_seen?: string
+  role_info?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface ControlNodeGroupDetail extends ControlNodeGroup {
+  nodes: ControlNode[]
+}
+
+export const fetchControlNodeGroups = () =>
+  api.get<ControlNodeGroup[]>('/control-nodegroups').then(r => r.data)
+
+export const fetchControlNodeGroup = (id: number) =>
+  api.get<ControlNodeGroupDetail>(`/control-nodegroups/${id}`).then(r => r.data)
+
+export const createControlNodeGroup = (data: {
+  name: string
+  description?: string
+  control_type: 'slurm' | 'kubernetes'
+  custom_exporter_port?: number
+  ssh_user: string
+  ssh_port: number
+  ssh_auth_type?: 'key' | 'password'
+  ssh_password?: string
+  use_jump_host?: boolean
+  jump_host?: string
+  jump_port?: number
+  jump_user?: string
+  jump_auth_type?: 'key' | 'password'
+  jump_password?: string
+  remote_auth_type?: 'key' | 'password'
+  remote_key_path?: string
+  remote_password?: string
+  ip_addresses?: string[]
+  monitoring_server_id?: number
+  kubeconfig_source?: 'auto' | 'path' | 'upload'
+  kubeconfig_remote_path?: string
+}) => api.post<ControlNodeGroupDetail>('/control-nodegroups/with-nodes', data).then(r => r.data)
+
+export const uploadControlNodeGroupKubeconfig = (id: number, file: File) => {
+  const formData = new FormData()
+  formData.append('kubeconfig_file', file)
+  return api.post(`/control-nodegroups/${id}/kubeconfig`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export const updateControlNodeGroup = (id: number, data: {
+  kubeconfig_source?: 'auto' | 'path' | 'upload'
+  kubeconfig_remote_path?: string
+  [key: string]: unknown
+}) => api.patch<ControlNodeGroup>(`/control-nodegroups/${id}`, data).then(r => r.data)
+
+export const deleteControlNodeGroup = (id: number) =>
+  api.delete(`/control-nodegroups/${id}`)
+
+export const uploadControlNodeGroupSSHKey = (id: number, file: File) => {
+  const formData = new FormData()
+  formData.append('key_file', file)
+  return api.post(`/control-nodegroups/${id}/ssh-key`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export const uploadControlNodeGroupJumpKey = (id: number, file: File) => {
+  const formData = new FormData()
+  formData.append('key_file', file)
+  return api.post(`/control-nodegroups/${id}/jump-key`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export const verifyControlNodeConnectivity = (id: number) =>
+  api.post(`/control-nodegroups/${id}/verify`)
+
+export const installControlNodeExporters = (id: number, force = false) =>
+  api.post(`/control-nodegroups/${id}/install`, { force })
+
+export const addControlNodes = (id: number, ipAddresses: string[]) =>
+  api.post<ControlNode[]>(`/control-nodegroups/${id}/nodes/bulk`, {
+    ip_addresses: ipAddresses,
+  }).then(r => r.data)
+
+export const deleteControlNode = (groupId: number, nodeId: number) =>
+  api.delete(`/control-nodegroups/${groupId}/nodes/${nodeId}`)
+
+export const refreshControlNodeTargets = (id: number) =>
+  api.post(`/control-nodegroups/${id}/refresh-targets`)
+
 export default api

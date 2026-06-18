@@ -7,6 +7,7 @@ from .dashboards import router as dashboards_router
 from .monitoring import router as monitoring_router
 from .monitoring_servers import router as monitoring_servers_router
 from .metric_groups import router as metric_groups_router
+from .control_nodegroups import router as control_nodegroups_router
 
 __all__ = [
     "nodegroups_router",
@@ -16,4 +17,5 @@ __all__ = [
     "monitoring_router",
     "monitoring_servers_router",
     "metric_groups_router",
+    "control_nodegroups_router",
 ]
