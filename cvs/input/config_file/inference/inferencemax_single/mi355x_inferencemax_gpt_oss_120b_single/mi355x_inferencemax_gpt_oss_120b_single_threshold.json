@@ -1,0 +1,10 @@
+{
+    "_comment": "Pass/fail expectations for verify_inference_results (keyed by ISL, OSL, TP, CONC). Must match benchmark_params for the cell you run. Tune values for your hardware.",
+    "result_dict": {
+        "ISL=7168,OSL=1024,TP=8,CONC=64": {
+            "output_throughput_per_sec": "4200",
+            "mean_ttft_ms": "500",
+            "mean_tpot_ms": "15"
+        }
+    }
+}
