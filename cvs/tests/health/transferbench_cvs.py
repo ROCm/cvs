@@ -163,7 +163,8 @@ def parse_tb_scaling_bw(out_dict, exp_dict):
 def parse_tb_schmoo_bw(out_dict, exp_dict):
     for node in out_dict.keys():
         match = re.search(
-            '\s+32\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)', out_dict[node]
+            r'(?:│\s*)?32(?:\s*│)?\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)',
+            out_dict[node],
         )
         local_read = float(match.group(1))
         local_write = float(match.group(2))
@@ -419,7 +420,7 @@ def test_transfer_bench_schmoo(
     path = config_dict['path']
     rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
     out_dict = orch.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench schmoo'",
+        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && GFX_UNROLL=32 SWEEP_MIN=32 {path}/TransferBench schmoo'",
         timeout=(60 * 5),
     )
     print_test_output(log, out_dict)
