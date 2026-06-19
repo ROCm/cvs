@@ -333,11 +333,7 @@ class VllmJob:
         if self.goodput_slo:
             args.append("--goodput")
             for metric, key in (("ttft", "ttft_ms"), ("tpot", "tpot_ms"), ("e2el", "e2el_ms")):
-                val = (
-                    self.goodput_slo.get(key)
-                    if hasattr(self.goodput_slo, "get")
-                    else getattr(self.goodput_slo, key, None)
-                )
+                val = self.goodput_slo.get(key)
                 if val is not None:
                     args.append(f"{metric}:{val}")
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)

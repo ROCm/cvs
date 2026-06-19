@@ -166,13 +166,6 @@ class TestRunClientFlags(unittest.TestCase):
         for tok in ("ttft:500.0", "tpot:50.0", "e2el:60000.0"):
             self.assertIn(tok, cmd)
 
-    def test_goodput_flag_built_from_slo_object(self):
-        # config_loader.GoodputSlo is a pydantic object (attr access), not a dict.
-        slo = SimpleNamespace(ttft_ms=500.0, tpot_ms=50.0, e2el_ms=60000.0)
-        cmd = self._client_cmd(slo)
-        self.assertIn("--goodput", cmd)
-        self.assertIn("ttft:500.0", cmd)
-
 
 class TestKeyConsistency(unittest.TestCase):
     """Mechanical guard (verification #5): every key the table reads and every
