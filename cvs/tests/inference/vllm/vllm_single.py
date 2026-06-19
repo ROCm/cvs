@@ -13,13 +13,15 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.dtni.verdict import evaluate_all
+from cvs.lib.inference.utils.inferencing_config_loader import GoodputSlo
+from cvs.lib.utils.verdict import evaluate_all
+from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
 from cvs.lib.inference.vllm_orch import VllmJob
 
 import importlib.util as _ilu
 import pathlib as _pl
 
-_spec = _ilu.spec_from_file_location("_dtni_vllm_shared", _pl.Path(__file__).with_name("_shared.py"))
+_spec = _ilu.spec_from_file_location("_vllm_shared", _pl.Path(__file__).with_name("_shared.py"))
 _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 test_print_results_table = _mod.test_print_results_table  # exported as a sibling test  # noqa: F841
@@ -34,14 +36,19 @@ _FETCH_POLL_WAIT_S = 30
 _FETCH_PRESENCE_RETRIES = 5
 
 
+
 def pytest_generate_tests(metafunc):
-    """Parametrize test_vllm_inference over sequence_combinations × concurrency_levels.
+    """Parametrize test_vllm_inference from the sweep's named-combo + runs selector.
 
     Lives in the suite module (not conftest) because it parametrizes fixtures
     only test_vllm_inference consumes -- co-locating the parametrization with
     its sole consumer. It runs at collection time, before fixtures exist, so it
     reads the raw config_file JSON directly (it cannot use the variant_config
     fixture / the typed loader).
+
+    The sweep lists `sequence_combinations` (each with a `name`) once and a
+    `runs` array of `{combo, concurrency}` pairs; one case is emitted per run.
+    No NxM cartesian -- exactly the cells `runs` enumerates.
     """
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
@@ -50,15 +57,46 @@ def pytest_generate_tests(metafunc):
         raw = json.load(fp)
     sweep = raw.get("sweep", {})
     combos = sweep.get("sequence_combinations", [])
-    concs = sweep.get("concurrency_levels", [])
+    runs = sweep.get("runs", [])
+    # Validate each raw goodput_slo dict through the same _Forbid model the
+    # typed loader uses. pytest_generate_tests bypasses load_variant (it reads
+    # raw JSON at collection time), so without this a typo'd SLO key would be
+    # silently dropped and a wrong goodput gate would run on hardware.
+    for combo in combos:
+        if combo.get("goodput_slo") is not None:
+            GoodputSlo(**combo["goodput_slo"])
+    # Build the name->combo map and mirror the typed Sweep validator here (this
+    # path reads raw JSON before load_variant runs): a duplicate combo name or a
+    # run referencing an unknown combo must fail collection, not silently drop.
+    by_name = {}
+    for combo in combos:
+        nm = combo["name"]
+        if nm in by_name:
+            raise ValueError(f"duplicate sequence_combination name: {nm!r}")
+        by_name[nm] = combo
     cases = []
     ids = []
-    for combo in combos:
-        default_name = "isl" + combo["isl"] + "_osl" + combo["osl"]
-        for c in concs:
-            cases.append((combo, c))
-            ids.append(combo.get("name", default_name) + "-conc" + str(c))
-    if "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames and cases:
+    for run in runs:
+        combo_name = run["combo"]
+        if combo_name not in by_name:
+            raise ValueError(
+                f"run.combo {combo_name!r} names no sequence_combination "
+                f"(known: {sorted(by_name)})"
+            )
+        combo = by_name[combo_name]
+        conc = run["concurrency"]
+        cases.append((combo, conc))
+        ids.append(combo_name + "-conc" + str(conc))
+    if "metric" in metafunc.fixturenames:
+        if cases:
+            metric_cases = []
+            metric_ids = []
+            for (combo, c), cid in zip(cases, ids):
+                for short, _unit in _METRICS:
+                    metric_cases.append((combo, c, short))
+                    metric_ids.append(cid + "-" + short)
+            metafunc.parametrize("seq_combo,concurrency,metric", metric_cases, ids=metric_ids)
+    elif "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames and cases:
         metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
 
 
@@ -93,7 +131,7 @@ def test_launch_container(orch, variant_config, lifecycle, request):
 
 
 def test_setup_sshd(orch, lifecycle, request):
-    """Stage 2: start sshd in the container. Asserts the daemon is reachable on 2224."""
+    """Stage 2: start sshd in the container (multinode only; single-node skips it)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     t = time.monotonic()
@@ -102,10 +140,13 @@ def test_setup_sshd(orch, lifecycle, request):
     if not ok:
         lifecycle.failed = True
         pytest.fail("setup_sshd() returned False")
-    probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
-    if not any("OK" in (v or "") for v in (probe or {}).values()):
-        lifecycle.failed = True
-        pytest.fail("sshd not listening on 2224 after setup_sshd()")
+    # Single-node runs skip starting the in-container sshd (it exists only for
+    # inter-node MPI), so only probe 2224 when there is more than one host.
+    if len(orch.hosts) > 1:
+        probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
+        if not any("OK" in (v or "") for v in (probe or {}).values()):
+            lifecycle.failed = True
+            pytest.fail("sshd not listening on 2224 after setup_sshd()")
 
 
 def test_model_fetch(orch, variant_config, lifecycle, request):
@@ -184,6 +225,7 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         osl=osl,
         concurrency=concurrency,
         num_prompts=_num_prompts_for(osl, concurrency),
+        goodput_slo=seq_combo.get("goodput_slo"),
         client_poll_count=int(variant_config.params.client_poll_count),
     )
 
@@ -214,22 +256,56 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         concurrency,
     )
     inf_res_dict[key] = results
+    # Verdict is no longer asserted here: each metric is its own test (test_metric,
+    # one HTML row per metric per cell). This test only runs the benchmark and
+    # records the cell's results into the module-scoped inf_res_dict.
 
-    # Per-cell thresholds: thresholds layout is `{"ISL=...,OSL=...,TP=...,CONC=...": {metric: spec}}`.
-    # The key is built by VariantConfig.cell_key (the same builder the loader uses for its
-    # coverage check). When enforce_thresholds is true a missing cell is a hard error -- never
-    # a silent skip that would report a green PASS with no assertions. When it is false the
-    # config is a record-only scaffold (un-calibrated thresholds): capture the metrics and
-    # skip the verdict.
+
+def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, lifecycle, request):
+    """One pytest test (= one HTML row) per perf metric per cell.
+
+    The benchmark already ran once in test_vllm_inference and stashed its results
+    in the module-scoped inf_res_dict; this reads a single cached metric and
+    surfaces it as its own pass/fail row. The value is rendered inline via the
+    Value/Unit table columns (pytest_html_results_table_row in conftest). No GPU
+    work. Skips cleanly when the cell's inference failed/skipped so a missing cell
+    never reports a false green.
+
+    Verdict: when enforce_thresholds is true AND a spec exists for this cell+metric
+    the value is asserted via the shared evaluate_all; otherwise the row is a
+    record-only PASS that simply displays the number. evaluate_all is handed the
+    full per-cell actuals (not just this one metric) so a min_ratio spec can still
+    resolve its reference metric.
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    isl = seq_combo["isl"]
+    osl = seq_combo["osl"]
+    key = (
+        variant_config.model.id,
+        variant_config.gpu_arch,
+        isl,
+        osl,
+        seq_combo.get("name", "default"),
+        concurrency,
+    )
+    if key not in inf_res_dict:
+        pytest.skip(f"no recorded results for cell {key!r} (inference did not run)")
+    host_dict = inf_res_dict[key]
+    _host, actuals = next(iter(host_dict.items()))
+    full = "client." + metric
+    value = actuals.get(full)
+    unit = _METRIC_UNITS.get(metric, "-")
+    request.node.user_properties.append(("metric_value", value))
+    request.node.user_properties.append(("metric_unit", unit))
+
     if not variant_config.enforce_thresholds:
-        log.info("enforce_thresholds=false; recorded metrics for cell, skipping verdict")
         return
     cell = variant_config.cell_key(isl, osl, concurrency)
-    cell_thresholds = variant_config.thresholds.get(cell)
-    if not cell_thresholds:
-        raise AssertionError(f"no thresholds for cell {cell!r}; threshold file is out of sync with the sweep")
-    for host, actuals in results.items():
-        evaluate_all(actuals, cell_thresholds)
+    spec = (variant_config.thresholds.get(cell) or {}).get(full)
+    if spec is None:
+        return
+    evaluate_all(actuals, {full: spec})
 
 
 def test_teardown(orch, lifecycle, request):
