@@ -62,7 +62,7 @@ def _fake_variant():
     return SimpleNamespace(
         params=params,
         model=SimpleNamespace(id="amd/Llama-3.1-70B-Instruct-FP8-KV"),
-        roles=SimpleNamespace(server=SimpleNamespace(extra_serve_args=[], env={})),
+        roles=SimpleNamespace(server=SimpleNamespace(serve_args={}, env={})),
         paths=SimpleNamespace(log_dir="/tmp/logs", models_dir="/tmp/models"),
     )
 
@@ -328,10 +328,13 @@ class TestDerivedMaxModelLen(unittest.TestCase):
         # 2176 + 64 + 8 = 2248.
         self.assertEqual(job._derive_max_model_len(), "2248")
 
-    def test_env_script_carries_derived_value(self):
+    def test_server_argv_carries_derived_value(self):
+        # The derived max-model-len is passed as the --max-model-len flag on the
+        # `vllm serve` argv (it is no longer exported into the env script).
         job = _make_job(FakeOrch())
-        cmd = self._env_cmd(job)
-        self.assertIn("MAX_MODEL_LEN=3925", cmd)
+        argv = job._server_argv()
+        self.assertIn("--max-model-len", argv)
+        self.assertEqual(argv[argv.index("--max-model-len") + 1], "3925")
 
 
 import importlib.util as _ilu_t

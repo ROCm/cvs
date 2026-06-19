@@ -21,7 +21,7 @@ when a second serving framework lands.
 from __future__ import annotations
 
 import warnings
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import model_validator
 from typing_extensions import Literal
@@ -35,11 +35,15 @@ from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_c
 class RoleServer(_Forbid):
     # The `vllm serve` command is built in Python (cvs.lib.inference.vllm_orch),
     # not cloned from a `.sh` script, so a run is self-contained. Per-model
-    # server quirks live here: extra `vllm serve` flags and extra env vars
+    # server quirks live here: extra `vllm serve` flags (serve_args) and env vars
     # merged over the defaults the orchestrator sets. Both default empty; the
-    # fp8-kv cell sets its --kv-cache-dtype via extra_serve_args, kept out of
-    # the generic driver so it stays model-agnostic.
-    extra_serve_args: List[str] = []
+    # fp8-kv cell sets its --kv-cache-dtype via serve_args, kept out of the
+    # generic driver so it stays model-agnostic. A {flag: value} map (flag
+    # without the leading --): a scalar renders `--flag value`, True renders a
+    # bare `--flag`, and a list renders the flag once per element. Cleaner than
+    # a flat [flag, value, flag, value] list and still covers vllm's bare and
+    # repeatable flags.
+    serve_args: Dict[str, Any] = {}
     env: Dict[str, str] = {}
 
 

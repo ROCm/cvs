@@ -141,7 +141,7 @@ class VllmJob:
         # Per-model server quirks from config (both default empty): extra
         # `vllm serve` flags and extra env vars merged over the orchestrator's
         # defaults. The server command itself is Python-built (no .sh script).
-        self.extra_serve_args = list(variant.roles.server.extra_serve_args)
+        self.serve_args = dict(variant.roles.server.serve_args)
         self.server_env = dict(variant.roles.server.env)
         # Pin the HF cache onto the mounted models dir. The container binds
         # models_dir both at /models and (via the home bind mount) at its own
@@ -203,13 +203,36 @@ class VllmJob:
         self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
         self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
 
+    @staticmethod
+    def _flatten_serve_args(mapping):
+        """A {flag: value} serve-args map -> a flat `vllm serve` arg list.
+
+        Flags are given without the leading `--`. A scalar renders
+        `--flag <value>`; True renders a bare `--flag` (e.g. --trust-remote-code);
+        a list renders the flag once per element (a repeatable flag). This keeps
+        config readable ({"kv-cache-dtype": "fp8"}) while still covering vllm's
+        bare and repeatable flags, which a flat list could express but not read.
+        """
+        argv = []
+        for flag, value in mapping.items():
+            opt = f"--{flag}"
+            if value is True:
+                argv.append(opt)
+            elif isinstance(value, (list, tuple)):
+                for v in value:
+                    argv.extend([opt, str(v)])
+            else:
+                argv.extend([opt, str(value)])
+        return argv
+
     def _server_argv(self):
         """The `vllm serve` arg list for this cell.
 
         Built in Python (mirrors run_client) so a run is self-contained -- no
-        external `.sh` to clone/stage. Only framework-generic flags are set
-        here; per-model knobs (e.g. --kv-cache-dtype for an FP8-KV model) come
-        from roles.server.extra_serve_args so this driver stays model-agnostic.
+        external `.sh` to clone/stage. Only the derived, framework-generic flags
+        (tp/max-model-len/port, computed per cell) are set here; per-model knobs
+        (e.g. --kv-cache-dtype for an FP8-KV model) come from roles.server.serve_args
+        so this driver stays model-agnostic.
         """
         argv = [
             "vllm",
@@ -222,7 +245,7 @@ class VllmJob:
             "--port",
             str(self.port_no),
         ]
-        argv.extend(self.extra_serve_args)
+        argv.extend(self._flatten_serve_args(self.serve_args))
         return argv
 
     def start_server(self):
