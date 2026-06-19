@@ -3,6 +3,14 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
 Fixtures and hooks for ``sglang_disagg_distributed`` (multi-node PSSH + Docker).
+
+``--config_file`` supplies cluster/runtime settings: either a monolithic JSON with
+top-level ``"config"`` and ``"benchmark_params"``, or (when ``--model_config_file``
+is also passed) the main config only—either flat key/value or under ``"config"``.
+
+When ``--model_config_file`` is set, it must be JSON with top-level
+``"benchmark_params"`` (e.g. ``llama-70b-config.json``). When omitted, benchmark
+parameters are read from ``--config_file`` as before.
 '''
 
 import json
@@ -22,6 +30,17 @@ from cvs.tests.inference.sglang._shared import SGLANG_DISAGG_TEST_ORDER, resolve
 log = globals.log
 
 
+def _model_config_path(pytestconfig):
+    try:
+        p = pytestconfig.getoption("model_config_file")
+    except ValueError:
+        return None
+    if p is None:
+        return None
+    s = str(p).strip()
+    return s or None
+
+
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
     path = pytestconfig.getoption("cluster_file")
@@ -39,40 +58,66 @@ def inference_config_file(pytestconfig):
 
 
 @pytest.fixture(scope="module")
+def model_config_file(pytestconfig):
+    return _model_config_path(pytestconfig)
+
+
+@pytest.fixture(scope="module")
 def cluster_dict(cluster_file):
-    with open(cluster_file) as fp:
+    with open(cluster_file, encoding="utf-8") as fp:
         d = json.load(fp)
     return resolve_cluster_config_placeholders(d)
 
 
 @pytest.fixture(scope="module")
 def inference_config_root(inference_config_file):
-    with open(inference_config_file) as fp:
+    with open(inference_config_file, encoding="utf-8") as fp:
+        return json.load(fp)
+
+
+@pytest.fixture(scope="module")
+def benchmark_config_root(model_config_file):
+    if not model_config_file:
+        return None
+    with open(model_config_file, encoding="utf-8") as fp:
         return json.load(fp)
 
 
 @pytest.fixture(scope="module")
 def inference_dict(inference_config_root, cluster_dict):
-    cfg = inference_config_root["config"]
+    if isinstance(inference_config_root, dict) and "config" in inference_config_root:
+        cfg = inference_config_root["config"]
+    else:
+        cfg = inference_config_root
     return resolve_test_config_placeholders(cfg, cluster_dict)
 
 
 @pytest.fixture(scope="module")
-def benchmark_params_dict(inference_config_root, cluster_dict):
-    bp = inference_config_root["benchmark_params"]
+def benchmark_params_dict(inference_config_root, benchmark_config_root, cluster_dict):
+    if benchmark_config_root is not None:
+        bp = benchmark_config_root["benchmark_params"]
+    else:
+        bp = inference_config_root["benchmark_params"]
     return resolve_test_config_placeholders(bp, cluster_dict)
 
 
 @pytest.fixture(scope="module")
-def benchmark_variant(inference_config_root, inference_config_file):
-    return resolve_benchmark_variant_key(inference_config_root, inference_config_file)
+def benchmark_variant(
+    inference_config_root,
+    benchmark_config_root,
+    inference_config_file,
+    model_config_file,
+):
+    root = benchmark_config_root if benchmark_config_root is not None else inference_config_root
+    label = model_config_file if benchmark_config_root is not None else inference_config_file
+    return resolve_benchmark_variant_key(root, label)
 
 
 @pytest.fixture(scope="module")
 def hf_token(inference_dict):
     hf_token_file = inference_dict["hf_token_file"]
     try:
-        with open(hf_token_file, "r") as fp:
+        with open(hf_token_file, encoding="utf-8") as fp:
             return fp.read().rstrip("\n")
     except FileNotFoundError:
         pytest.fail(f"hf_token file not found: {hf_token_file}")
