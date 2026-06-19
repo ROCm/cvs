@@ -6,8 +6,8 @@ Single SGLang disaggregated (PD) benchmark module: model is selected from
 ``benchmark_params`` via ``active_benchmark`` / env / single-key auto (see ``_shared``).
 '''
 
-# import importlib.util as _ilu
-# import pathlib as _pl
+import importlib.util as _ilu
+import pathlib as _pl
 import re
 import time
 
@@ -16,11 +16,13 @@ import pytest
 from cvs.lib import docker_lib, globals
 from cvs.lib.utils_lib import fail_test, update_test_result
 
-# _spec = _ilu.spec_from_file_location(
-#     "_sglang_disagg_shared", _pl.Path(__file__).with_name("_shared.py")
-# )
-# _mod = _ilu.module_from_spec(_spec)
-# _spec.loader.exec_module(_mod)
+_spec = _ilu.spec_from_file_location(
+    "_sglang_disagg_shared", _pl.Path(__file__).with_name("_shared.py")
+)
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+
+test_print_results_table = _mod.test_print_results_table
 
 log = globals.log
 
@@ -150,10 +152,22 @@ def test_run_lm_eval_gsm8k_benchmark_test(im_obj):
 #     update_test_result()
 
 
-def test_run_benchmark_test(im_obj):
+def test_run_benchmark_test(im_obj, inf_res_dict):
     globals.error_list = []
     im_obj.setup_benchmark_serv_container_env()
     im_obj.benchserv_test_random(d_type="auto")
+
+    bench = (im_obj.bp_dict.get("inference_tests") or {}).get("bench_serv_random") or {}
+    key = (
+        im_obj.model_name,
+        im_obj.gpu_type,
+        str(bench.get("input_length", "-")),
+        str(bench.get("output_length", "-")),
+        "bench_serv_random",
+        str(im_obj.bp_dict.get("max_concurrency", "-")),
+    )
+    inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
+
     update_test_result()
 
 
