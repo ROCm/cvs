@@ -151,8 +151,11 @@ class VllmJob:
         # every run. Same value the model-fetch test polls with `du`.
         self.models_dir = variant.paths.models_dir
 
-        # Single-node: one output directory.
-        self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0"
+        # Single-node, per-cell output directory. Keyed by the cell (isl/osl/
+        # conc) so a multi-cell sweep does not overwrite an earlier cell's
+        # artifacts -- and so parse_results can never cat a stale `results` from
+        # a prior cell when the current cell's client failed to write one.
+        self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
         self.server_log = f"{self.out_dir}/vllm_serve_server.log"
         self.client_log = f"{self.out_dir}/client.log"
 
