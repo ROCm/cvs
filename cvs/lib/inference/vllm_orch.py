@@ -181,20 +181,16 @@ class VllmJob:
     def build_server_cmd(self):
         """Write the server-env script (sourced by both server and client)
         and create the per-node out-dir inside the container."""
+        # Only the HF cache pin + token and the AITER tuning flags are read by
+        # the vllm process. The server and client commands are Python-built and
+        # pass every other value (model, isl/osl, tp, port, max-model-len) as an
+        # explicit flag, so exporting them here would be dead.
         env_lines = [
-            f"export MODEL={shlex.quote(self.model_id)}",
-            f"export ISL={shlex.quote(self.isl)}",
-            f"export OSL={shlex.quote(self.osl)}",
-            f"export MAX_MODEL_LEN={shlex.quote(self._derive_max_model_len())}",
-            f"export RANDOM_RANGE_RATIO={shlex.quote(self.random_range_ratio)}",
-            f"export TP={shlex.quote(str(self.tp))}",
-            f"export CONC={shlex.quote(self.concurrency)}",
             f"export HF_TOKEN={shlex.quote(self.hf_token)}",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
             "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
             "export VLLM_ROCM_USE_AITER_MHA=0",
             "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
-            f"export PORT={shlex.quote(str(self.port_no))}",
         ]
         # Per-model env overrides win over the defaults above (appended last).
         for k, v in self.server_env.items():
