@@ -7,7 +7,7 @@
     "shared_fs": "/home/{user-id}",
     "models_dir": "{shared_fs}/models",
     "log_dir": "{shared_fs}/LOGS",
-    "hf_token_file": "/data/atnair/.hf_token"
+    "hf_token_file": "<changeme>"
   },
   "model": {
     "id": "amd/Llama-3.1-70B-Instruct-FP8-KV",
@@ -15,13 +15,13 @@
     "precision": "fp8"
   },
   "image": {
-    "tag": "rocm/vllm-dev:nightly",
+    "tag": "<changeme>",
     "remote": 1
   },
   "container": {
     "lifetime": "per_run",
     "name": "w1_llama31_70b_fp8kv_perf_inference_rocm",
-    "image": "rocm/vllm-dev:nightly",
+    "image": "<changeme>",
     "runtime": {
       "name": "docker",
       "args": {
