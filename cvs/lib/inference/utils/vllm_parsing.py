@@ -129,13 +129,13 @@ CLIENT_METRIC_UNITS = dict(CLIENT_METRICS)
 # threshold spec for every name here in every present cell, so a gated metric
 # can never silently fall through to a zero-assertion record-only row.
 #
-# Membership = "out of range means FAILURE", not "informational". So this is
-# deliberately small: throughput (central + per-request), latency central
-# (mean) AND tail (p99 -- mean can pass while the tail blows out), and run
-# health (success_rate floor, failed ceiling). Inputs (num_prompts), totals
-# (total_*_tokens), and derived diagnostics (normalized_ttft_ms_per_tok,
-# decode_latency_ratio -- collinear with their raw metric within a cell) stay
-# record-only by design.
+# Membership = "out of range means FAILURE", not "informational". Gated:
+# throughput (total + per-request output), the FULL latency distribution
+# (mean/median/p90/p95/p99 for ttft, tpot, itl, e2el -- itl has no p90), and run
+# health (success_rate floor, failed ceiling). Record-only by design: inputs
+# (num_prompts), totals (total_*_tokens), secondary throughputs (per_gpu_*,
+# decode_throughput_p50, max_output_tokens_per_s, request_throughput, goodput),
+# and derived diagnostics (normalized_ttft_ms_per_tok, decode_latency_ratio).
 #
 # Closed-world default: a NEW metric added to CLIENT_METRICS is record-only
 # until its name is added here. Add a metric to this set the moment it becomes
@@ -146,13 +146,26 @@ GATED_METRICS = {
     # throughput
     "total_token_throughput",
     "output_throughput",
-    # latency -- central
+    # latency -- full distribution per family (mean/median/p90/p95/p99;
+    # itl has no p90 producer). Every emitted quantile is a pass/fail gate.
     "mean_ttft_ms",
-    "mean_tpot_ms",
-    # latency -- tail (independent signal; not collinear with the means)
+    "median_ttft_ms",
+    "p90_ttft_ms",
+    "p95_ttft_ms",
     "p99_ttft_ms",
+    "mean_tpot_ms",
+    "median_tpot_ms",
+    "p90_tpot_ms",
+    "p95_tpot_ms",
     "p99_tpot_ms",
+    "mean_itl_ms",
+    "median_itl_ms",
+    "p95_itl_ms",
     "p99_itl_ms",
+    "mean_e2el_ms",
+    "median_e2el_ms",
+    "p90_e2el_ms",
+    "p95_e2el_ms",
     "p99_e2el_ms",
     # run health
     "success_rate",

@@ -1,5 +1,5 @@
 {
-  "_comment": "PLACEHOLDER thresholds for W1 (Llama 3.1 70B FP8-KV, in=128/out=2048, TP=8, conc=16) -- the single cell the sweep's runs selector enumerates. Every gated metric (the SLO contract in vllm_parsing.GATED_METRICS: throughput, mean+p99 latency, success_rate/failed health) has a spec here so the loader's gated-coverage check passes; the values are NOT calibrated (AMD's published source gives throughput-vs-latency curves, not per-cell scalars). config.json sets enforce_thresholds=false: the suite records metrics and skips pass/fail. Replace the placeholder values with real numbers and flip enforce_thresholds=true to assert.",
+  "_comment": "PLACEHOLDER thresholds for W1 (Llama 3.1 70B FP8-KV, in=128/out=2048, TP=8, conc=16) -- the single cell the sweep enumerates. Every gated metric (vllm_parsing.GATED_METRICS: throughput, the full latency distribution mean/median/p90/p95/p99 per ttft/tpot/itl/e2el family, and success_rate/failed health) has a spec here so the loader gated-coverage check passes. Values are NOT calibrated (AMD publishes throughput-vs-latency curves, not per-cell scalars). config.json sets enforce_thresholds=false: the suite records metrics and skips pass/fail. Replace placeholders with real numbers and flip enforce_thresholds=true to assert.",
   "ISL=128,OSL=2048,TP=8,CONC=16": {
     "client.total_token_throughput": {
       "kind": "min_tok_s",
@@ -13,7 +13,15 @@
       "kind": "max_ms",
       "value": 1000000
     },
-    "client.mean_tpot_ms": {
+    "client.median_ttft_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.p90_ttft_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.p95_ttft_ms": {
       "kind": "max_ms",
       "value": 1000000
     },
@@ -21,11 +29,55 @@
       "kind": "max_ms",
       "value": 1000000
     },
+    "client.mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.median_tpot_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.p90_tpot_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.p95_tpot_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
     "client.p99_tpot_ms": {
       "kind": "max_ms",
       "value": 1000000
     },
+    "client.mean_itl_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.median_itl_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.p95_itl_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
     "client.p99_itl_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.mean_e2el_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.median_e2el_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.p90_e2el_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.p95_e2el_ms": {
       "kind": "max_ms",
       "value": 1000000
     },
