@@ -27,6 +27,12 @@ def _check_one(metric, actual_raw, spec):
         target = _to_float(spec["value"])
         if actual > target:
             return f"{metric}: actual {actual} ms > max {target} ms"
+    elif kind == "max":
+        # Unit-agnostic upper bound, for counts like `failed` where `max_ms`
+        # would be a unit lie. Same comparison, honest message.
+        target = _to_float(spec["value"])
+        if actual > target:
+            return f"{metric}: actual {actual} > max {target}"
     elif kind == "within":
         target = _to_float(spec["value"])
         pct = _to_float(spec["tolerance_pct"])
