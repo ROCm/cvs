@@ -16,6 +16,7 @@ class RunPlugin(ListPlugin):
         parser.add_argument("function", nargs="*", help="Optional: specific test functions to run")
         parser.add_argument("--cluster_file", required=True, help="Path to cluster configuration JSON file")
         parser.add_argument("--config_file", required=True, help="Path to test configuration JSON file")
+        parser.add_argument("--model_config_file", required=False, help="Path to model configuration JSON file")
         parser.add_argument("--html", help="Pytest: Create HTML report file at given path")
         parser.add_argument(
             "--self-contained-html",
@@ -54,6 +55,7 @@ Run Commands:
             args.function,
             args.cluster_file,
             args.config_file,
+            getattr(args, "model_config_file", None),
             args.html,
             args.self_contained_html,
             args.log_file,
@@ -88,6 +90,7 @@ Run Commands:
         test_functions,
         cluster_file,
         config_file,
+        model_config_file,
         html,
         self_contained_html,
         log_file,
@@ -120,6 +123,8 @@ Run Commands:
         # Add CVS-specific arguments
         pytest_args.append(f"--cluster_file={cluster_file}")
         pytest_args.append(f"--config_file={config_file}")
+        if model_config_file:
+            pytest_args.append(f"--model_config_file={model_config_file}")
 
         # Ensure log directory exists
         if log_file:

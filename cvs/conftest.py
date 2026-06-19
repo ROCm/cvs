@@ -51,6 +51,16 @@ def pytest_addoption(parser):
     except ValueError:
         # Option already exists, skip
         pass
+    try:
+        parser.addoption(
+            "--model_config_file",
+            action="store",
+            default=None,
+            help="Optional: benchmark_params JSON (SGLang disagg); main config comes from --config_file.",
+        )
+    except ValueError:
+        # Option already exists, skip
+        pass
 
 
 def pytest_metadata(metadata):
