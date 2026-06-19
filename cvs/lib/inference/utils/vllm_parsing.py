@@ -123,3 +123,38 @@ CLIENT_METRICS = [
     ("p99_e2el_ms", "ms"),
 ]
 CLIENT_METRIC_UNITS = dict(CLIENT_METRICS)
+
+# The perf+health SLO contract: the subset of CLIENT_METRICS a calibrated run
+# must *assert*, not merely display. The loader's coverage check requires a
+# threshold spec for every name here in every present cell, so a gated metric
+# can never silently fall through to a zero-assertion record-only row.
+#
+# Membership = "out of range means FAILURE", not "informational". So this is
+# deliberately small: throughput (central + per-request), latency central
+# (mean) AND tail (p99 -- mean can pass while the tail blows out), and run
+# health (success_rate floor, failed ceiling). Inputs (num_prompts), totals
+# (total_*_tokens), and derived diagnostics (normalized_ttft_ms_per_tok,
+# decode_latency_ratio -- collinear with their raw metric within a cell) stay
+# record-only by design.
+#
+# Closed-world default: a NEW metric added to CLIENT_METRICS is record-only
+# until its name is added here. Add a metric to this set the moment it becomes
+# a pass/fail criterion -- the loader then forces a spec for it in every cell
+# before the suite can run green. Every name must also appear in CLIENT_METRICS
+# (a gated metric with no producer would gate a '-'); a unit test pins that.
+GATED_METRICS = {
+    # throughput
+    "total_token_throughput",
+    "output_throughput",
+    # latency -- central
+    "mean_ttft_ms",
+    "mean_tpot_ms",
+    # latency -- tail (independent signal; not collinear with the means)
+    "p99_ttft_ms",
+    "p99_tpot_ms",
+    "p99_itl_ms",
+    "p99_e2el_ms",
+    # run health
+    "success_rate",
+    "failed",
+}

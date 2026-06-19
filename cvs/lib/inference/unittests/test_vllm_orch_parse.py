@@ -406,6 +406,19 @@ class TestMetricTests(unittest.TestCase):
         missing = [short for short, _u in self.vs._METRICS if ("client." + short) not in produced]
         self.assertEqual(missing, [], f"_METRICS names with no producer: {missing}")
 
+    def test_gated_metrics_are_all_produced_and_displayed(self):
+        """Every GATED_METRICS name must be both produced (parse_results emits
+        client.<name>) and displayed (in _METRICS) -- a gated metric with no
+        producer would gate a '-', and one absent from _METRICS would assert a
+        value that never appears in the report."""
+        from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
+        produced = set(self.actuals.keys())
+        displayed = {short for short, _u in self.vs._METRICS}
+        no_producer = sorted(m for m in GATED_METRICS if ("client." + m) not in produced)
+        no_row = sorted(m for m in GATED_METRICS if m not in displayed)
+        self.assertEqual(no_producer, [], f"gated metrics with no producer: {no_producer}")
+        self.assertEqual(no_row, [], f"gated metrics not in _METRICS: {no_row}")
+
     def test_skips_when_cell_absent(self):
         import pytest as _pt
         with self.assertRaises(_pt.skip.Exception):

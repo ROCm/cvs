@@ -1,7 +1,11 @@
 {
-  "_comment": "PLACEHOLDER thresholds for W1 (Llama 3.1 70B FP8-KV, in=128/out=2048, TP=8, conc=16) -- the single cell the sweep's runs selector enumerates. AMD's published source (performance-results.html) gives throughput-vs-latency curves, not tabulated per-cell numbers, so these are not yet calibrated. config.json sets enforce_thresholds=false: the suite records metrics and skips pass/fail. Metric keys are namespaced client.* (from the stock results artifact). Replace min_tok_s/max_ms with real numbers and flip enforce_thresholds=true to make this cell assert.",
+  "_comment": "PLACEHOLDER thresholds for W1 (Llama 3.1 70B FP8-KV, in=128/out=2048, TP=8, conc=16) -- the single cell the sweep's runs selector enumerates. Every gated metric (the SLO contract in vllm_parsing.GATED_METRICS: throughput, mean+p99 latency, success_rate/failed health) has a spec here so the loader's gated-coverage check passes; the values are NOT calibrated (AMD's published source gives throughput-vs-latency curves, not per-cell scalars). config.json sets enforce_thresholds=false: the suite records metrics and skips pass/fail. Replace the placeholder values with real numbers and flip enforce_thresholds=true to assert.",
   "ISL=128,OSL=2048,TP=8,CONC=16": {
     "client.total_token_throughput": {
+      "kind": "min_tok_s",
+      "value": 0
+    },
+    "client.output_throughput": {
       "kind": "min_tok_s",
       "value": 0
     },
@@ -12,6 +16,30 @@
     "client.mean_tpot_ms": {
       "kind": "max_ms",
       "value": 1000000
+    },
+    "client.p99_ttft_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.p99_tpot_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.p99_itl_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.p99_e2el_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "client.success_rate": {
+      "kind": "min",
+      "value": 0
+    },
+    "client.failed": {
+      "kind": "max",
+      "value": 1000000000
     }
   }
 }

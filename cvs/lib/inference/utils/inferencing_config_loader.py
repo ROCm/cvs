@@ -27,6 +27,7 @@ from pydantic import model_validator
 from typing_extensions import Literal
 
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
+from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
 
 
 # ---------- pydantic models (inference) ----------
@@ -163,9 +164,13 @@ class VariantConfig(BaseVariantConfig):
     def _check_thresholds_cover_sweep(self):
         """Fail at load time if any sweep cell lacks a threshold entry.
 
-        Without this, a mistyped/whitespaced threshold key (or a new sweep
-        entry without a matching threshold) makes the test silently skip its
-        verdict and report a green PASS with zero assertions.
+        Two axes are checked. (1) Cell coverage: every sweep cell has a
+        threshold entry, and no threshold key names a cell the sweep does not
+        run. (2) Gated-metric coverage: every present cell carries a spec for
+        every GATED_METRICS member -- the SLO contract. Without (2) a gated
+        metric with no spec falls through `test_metric`'s `spec is None`
+        record-only branch and reports a green PASS with zero assertions, even
+        under enforce_thresholds=true.
 
         When `enforce_thresholds` is false the same mismatch is reported as a
         warning rather than an error -- the config loads as a record-only
@@ -180,6 +185,17 @@ class VariantConfig(BaseVariantConfig):
             problems.append(f"sweep cells with no threshold entry: {missing}")
         if extra:
             problems.append(f"threshold keys matching no sweep cell (typo?): {extra}")
+        # Gated-metric coverage, only for cells that are present (a wholly
+        # missing cell is already reported above -- do not double-report it).
+        gated_keys = [f"client.{m}" for m in sorted(GATED_METRICS)]
+        gated_gaps = {}
+        for cell in sorted(expected & present):
+            specs = self.thresholds.get(cell) or {}
+            absent = [k for k in gated_keys if k not in specs]
+            if absent:
+                gated_gaps[cell] = absent
+        if gated_gaps:
+            problems.append(f"cells missing gated-metric specs: {gated_gaps}")
         if problems:
             msg = "threshold.json does not match the sweep matrix; " + "; ".join(problems)
             if self.enforce_thresholds:
