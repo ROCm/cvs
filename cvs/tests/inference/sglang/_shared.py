@@ -18,7 +18,7 @@ log = globals.log
 __all__ = [
     "resolve_benchmark_variant_key",
     "SGLANG_DISAGG_TEST_ORDER",
-    "test_print_results_table",
+    #"test_print_results_table",
 ]
 
 
@@ -86,6 +86,6 @@ SGLANG_DISAGG_TEST_ORDER = {
 }
 
 
-def test_print_results_table():
-    """Reserved hook so the suite can grow a vLLM-style metrics table later."""
-    log.info("test_print_results_table: no aggregated metrics dict in this suite yet")
+# def test_print_results_table():
+#     """Reserved hook so the suite can grow a vLLM-style metrics table later."""
+#     log.info("test_print_results_table: no aggregated metrics dict in this suite yet")
