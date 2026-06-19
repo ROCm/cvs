@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from tabulate import tabulate
 from typing import Any, Mapping
 
 from cvs.lib import globals
@@ -18,7 +19,7 @@ log = globals.log
 __all__ = [
     "resolve_benchmark_variant_key",
     "SGLANG_DISAGG_TEST_ORDER",
-    #"test_print_results_table",
+    "test_print_results_table",
 ]
 
 
@@ -83,9 +84,50 @@ SGLANG_DISAGG_TEST_ORDER = {
     # "test_run_lm_eval_mmlu_benchmark_test": 11,
     "test_run_benchmark_test": 12,
     "test_disagg_gpu_topology": 13,
+    "test_print_results_table": 14,
 }
 
 
-# def test_print_results_table():
-#     """Reserved hook so the suite can grow a vLLM-style metrics table later."""
-#     log.info("test_print_results_table: no aggregated metrics dict in this suite yet")
+def test_print_results_table(inf_res_dict):
+    if not inf_res_dict:
+        log.info("inf_res_dict empty, nothing to print")
+        return
+    headers = [
+        "Model",
+        "GPU",
+        "ISL",
+        "OSL",
+        "Policy",
+        "Conc",
+        "Host",
+        "Req/s",
+        "Total tok/s",
+        "Mean TTFT (ms)",
+        "Mean TPOT (ms)",
+        "P99 ITL (ms)",
+        "Goodput",
+        "Output tok/s/GPU",
+    ]
+    rows = []
+    for key, host_dict in inf_res_dict.items():
+        model, gpu, isl, osl, policy, conc = key
+        for host, m in host_dict.items():
+            rows.append(
+                [
+                    model,
+                    gpu,
+                    isl,
+                    osl,
+                    policy,
+                    conc,
+                    host,
+                    m.get("request_throughput_per_sec", "-"),
+                    m.get("total_throughput_per_sec", m.get("output_throughput_per_sec", "-")),
+                    m.get("mean_ttft_ms", "-"),
+                    m.get("mean_tpot_ms", "-"),
+                    m.get("p99_itl_ms", "-"),
+                    m.get("goodput", "-"),
+                    m.get("output_throughput_per_gpu_per_sec", "-"),
+                ]
+            )
+    log.info("\n" + tabulate(rows, headers=headers, tablefmt="github"))
