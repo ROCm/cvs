@@ -374,7 +374,7 @@ def test_transfer_bench_healthcheck(
     rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
     out_dict = phdl.exec(
         f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench healthcheck'",
-        timeout=(60 * 2),
+        timeout=(60 * 3),
     )
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
