@@ -1,4 +1,4 @@
-# Building a CVS test suite — a reference guide
+**Building a CVS test suite — a reference guide**
 
 This guide documents the base infrastructure for writing a new **inference** or
 **training** test suite in CVS, using the `vllm_single` suite (PR against
@@ -16,7 +16,7 @@ patterns here rather than on the older `InferenceBaseJob` / `if_dict` style.
 > deliberately framework-neutral so a training suite drops into the same shape —
 > this guide is the blueprint for that port, not a record of it.
 
-## What changed in the restructure
+### What changed in the restructure
 
 This PR reorganizes where shared vs. workload-specific code lives, so the next
 suite reuses machinery instead of copy-pasting it.
@@ -67,7 +67,7 @@ cvs/lib/
     utils/                       #   training_config_loader.py, <metric>_parsing.py
 ```
 
-## The layered architecture
+### The layered architecture
 
 A suite is built from six layers. Each has one job; the seams between them are
 the reusable surface a second suite plugs into.
@@ -95,7 +95,7 @@ in `cvs/lib/utils/`; anything specific to *your* workload lives in your own
 docstring literally calls this the "generalization seam," and this PR executes
 the split.
 
-## The two config files (per workload)
+### The two config files (per workload)
 
 A workload is described by a pair of JSON files in the same directory:
 
@@ -106,7 +106,7 @@ The loader finds the threshold by **sibling glob** (exactly one `*threshold.json
 next to the config), so the two share a descriptive prefix
 (`llama31_70b_fp8_config.json` / `llama31_70b_fp8_threshold.json`).
 
-### Placeholders
+#### Placeholders
 
 Config values use `{...}` placeholders resolved in three passes:
 `{user-id}` (from the cluster file) → `{shared_fs}` (self-reference within
@@ -114,7 +114,7 @@ Config values use `{...}` placeholders resolved in three passes:
 literal — there is no error, so check for a stray brace in a resolved path if
 something doesn't mount.
 
-### enforce_thresholds
+#### enforce_thresholds
 
 `enforce_thresholds: false` makes the suite **record-only**: it captures every
 metric and skips assertions, and a threshold/sweep mismatch warns instead of
@@ -124,7 +124,7 @@ Flip to `true` once you have real numbers — the coverage check then guarantees
 every sweep cell has a threshold entry, so a green run can't have silently
 skipped its verdict.
 
-## The sweep selector (named combos + runs)
+### The sweep selector (named combos + runs)
 
 The sweep enumerates exactly the `(sequence-shape, concurrency)` cells to run. It
 replaces the old `sequence_combinations × concurrency_levels` cartesian:
@@ -154,7 +154,7 @@ Each cell's threshold key is produced by `VariantConfig.cell_key()`
 coverage check and the verdict lookup, so threshold.json keys must match it
 exactly.
 
-## The job/driver (self-contained, no external .sh)
+### The job/driver (self-contained, no external .sh)
 
 `vllm_orch.VllmJob` is the reference driver. It talks only to an injected
 orchestrator (`orch.exec`, which routes into the running container) and a typed
@@ -178,7 +178,7 @@ orchestrator (`orch.exec`, which routes into the running container) and a typed
 The fetch lives in the job (artifact layout is job-specific); the transform lives
 in `inference/utils` (so distributed/disagg/InferenceMax reuse it).
 
-## The suite (lifecycle-as-tests)
+### The suite (lifecycle-as-tests)
 
 In `cvs/tests/inference/vllm/`, each lifecycle stage is its own pytest test so it
 shows up as a timed, pass/fail row in the HTML report:
@@ -210,7 +210,7 @@ Patterns to copy:
   `_row` hooks scoped to this conftest, populated from
   `metric_value`/`metric_unit` user-properties.
 
-## Parsing + verdict
+### Parsing + verdict
 
 - **`to_client_metrics(raw, *, tp, isl)`** — pure: stock keys namespaced
   `client.*` 1:1, plus derived metrics (`per_gpu_throughput`,
@@ -220,7 +220,7 @@ Patterns to copy:
   `min`, `max_ms`, `within`, `min_tok_s`, `min_ratio`. Raises `ThresholdViolation`
   listing every failure. A `None` actual is a loud violation, not a TypeError.
 
-## To add your own suite — checklist
+### To add your own suite — checklist
 
 1. **Schema.** If serving: reuse `inferencing_config_loader` (subclass `Params`
    for a new framework's flags). If a new domain (training): create
@@ -245,7 +245,7 @@ Patterns to copy:
 7. **Verify independently.** After a run, read the artifact + the HTML cells
    yourself. CVS's PASS is not a trustworthy oracle.
 
-## Reference files (this PR)
+### Reference files (this PR)
 
 | Layer | File |
 |---|---|
