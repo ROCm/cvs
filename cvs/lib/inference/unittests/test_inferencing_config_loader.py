@@ -58,7 +58,6 @@ def _variant(sweep, tp="8"):
             "hf_token_file": "/home/x/.hf",
         },
         model={"id": "amd/Llama-3.1-70B-Instruct-FP8-KV", "remote": 0, "precision": "fp8"},
-        image={"tag": "rocm/vllm-dev:nightly-sshd", "remote": 1},
         container={
             "name": "c",
             "image": "rocm/vllm-dev:nightly-sshd",
@@ -158,7 +157,6 @@ class TestGatedMetricCoverage(unittest.TestCase):
                 "hf_token_file": "/home/x/.hf",
             },
             model={"id": "amd/Llama-3.1-70B-Instruct-FP8-KV", "remote": 0, "precision": "fp8"},
-            image={"tag": "rocm/vllm-dev:nightly-sshd", "remote": 1},
             container={"name": "c", "image": "rocm/vllm-dev:nightly-sshd", "runtime": {"name": "docker"}},
             params={"tensor_parallelism": "8"},
             sweep=sw,

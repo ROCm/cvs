@@ -14,10 +14,6 @@
     "remote": 0,
     "precision": "fp8"
   },
-  "image": {
-    "tag": "<changeme>",
-    "remote": 1
-  },
   "container": {
     "lifetime": "per_run",
     "name": "w1_llama31_70b_fp8kv_perf_inference_rocm",

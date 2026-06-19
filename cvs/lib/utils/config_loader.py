@@ -66,11 +66,6 @@ class ModelSpec(_Forbid):
     precision: str
 
 
-class ImageSpec(_Forbid):
-    tag: str
-    remote: Literal[0, 1]
-
-
 class RuntimeSpec(_Allow):
     name: str
     args: Dict[str, Any] = Field(default_factory=dict)
@@ -101,7 +96,8 @@ class BaseVariantConfig(_Forbid):
     enforce_thresholds: bool = True
     paths: Paths
     model: ModelSpec
-    image: ImageSpec
+    # The container image is declared once, on container.image (ContainerSpec).
+    # There is no separate top-level image block.
     container: ContainerSpec
     thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 

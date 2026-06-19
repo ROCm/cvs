@@ -96,7 +96,6 @@ def orch(cluster_dict, variant_config, lifecycle):
         cluster_dict.get("container", {}),
         variant_config.container.model_dump(),
     )
-    container_block["image"] = variant_config.image.tag
     testsuite_config = {
         "orchestrator": "container",
         "container": container_block,
