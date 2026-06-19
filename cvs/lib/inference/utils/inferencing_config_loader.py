@@ -36,9 +36,9 @@ class RoleServer(_Forbid):
     # The `vllm serve` command is built in Python (cvs.lib.inference.vllm_orch),
     # not cloned from a `.sh` script, so a run is self-contained. Per-model
     # server quirks live here: extra `vllm serve` flags and extra env vars
-    # merged over the defaults the orchestrator sets. Both default empty -- the
-    # fp8-kv cell needs neither (its --kv-cache-dtype is set unconditionally in
-    # code).
+    # merged over the defaults the orchestrator sets. Both default empty; the
+    # fp8-kv cell sets its --kv-cache-dtype via extra_serve_args, kept out of
+    # the generic driver so it stays model-agnostic.
     extra_serve_args: List[str] = []
     env: Dict[str, str] = {}
 

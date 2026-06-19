@@ -36,7 +36,12 @@
     }
   },
   "roles": {
-    "server": {}
+    "server": {
+      "extra_serve_args": [
+        "--kv-cache-dtype",
+        "fp8"
+      ]
+    }
   },
   "params": {
     "backend": "vllm",

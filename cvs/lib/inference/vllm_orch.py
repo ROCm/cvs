@@ -204,9 +204,9 @@ class VllmJob:
         """The `vllm serve` arg list for this cell.
 
         Built in Python (mirrors run_client) so a run is self-contained -- no
-        external `.sh` to clone/stage. --kv-cache-dtype fp8 is set
-        unconditionally (the model is FP8-KV); per-model extras come from
-        roles.server.extra_serve_args.
+        external `.sh` to clone/stage. Only framework-generic flags are set
+        here; per-model knobs (e.g. --kv-cache-dtype for an FP8-KV model) come
+        from roles.server.extra_serve_args so this driver stays model-agnostic.
         """
         argv = [
             "vllm",
@@ -218,8 +218,6 @@ class VllmJob:
             self._derive_max_model_len(),
             "--port",
             str(self.port_no),
-            "--kv-cache-dtype",
-            "fp8",
         ]
         argv.extend(self.extra_serve_args)
         return argv
