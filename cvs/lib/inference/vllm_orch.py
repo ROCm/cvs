@@ -5,7 +5,8 @@ All rights reserved.
 Standalone vLLM single-node job driven by a ContainerOrchestrator.
 
 This class talks only to `orch.exec`, which already routes into the running
-container, and to a typed `VariantConfig` (see `cvs.lib.dtni.config_loader`).
+container, and to a typed `VariantConfig` (see
+`cvs.lib.inference.utils.inferencing_config_loader`).
 It is deliberately single-node and free of the `c_phdl`/`s_phdl` + manual
 `docker exec` plumbing that `cvs.lib.inference.base.InferenceBaseJob` carries.
 
@@ -27,36 +28,16 @@ Behavioural improvements over the base-class lifecycle it mirrors:
 
 from __future__ import annotations
 
+import json
+import math
 import re
 import shlex
 import time
 
 from cvs.lib import globals
+from cvs.lib.inference.utils.vllm_parsing import to_client_metrics
 
 log = globals.log
-
-
-_METRIC_RES = [
-    ("successful_requests", re.compile(r"Successful requests:\s+([0-9]+)", re.I)),
-    ("benchmark_duration", re.compile(r"Benchmark duration\s+\(s\):\s+([0-9\.]+)", re.I)),
-    ("total_input_tokens", re.compile(r"Total input tokens:\s+([0-9\.]+)", re.I)),
-    ("total_generated_tokens", re.compile(r"Total generated tokens:\s+([0-9\.]+)", re.I)),
-    ("request_throughput_per_sec", re.compile(r"Request throughput \(req/s\):\s+([0-9\.]+)", re.I)),
-    ("output_throughput_per_sec", re.compile(r"Output token throughput \(tok/s\):\s+([0-9\.]+)", re.I)),
-    ("total_throughput_per_sec", re.compile(r"Total Token throughput \(tok/s\):\s+([0-9\.]+)", re.I)),
-    ("mean_ttft_ms", re.compile(r"Mean TTFT \(ms\):\s+([0-9\.]+)", re.I)),
-    ("median_ttft_ms", re.compile(r"Median TTFT \(ms\):\s+([0-9\.]+)", re.I)),
-    ("p99_ttft_ms", re.compile(r"P99 TTFT \(ms\):\s+([0-9\.]+)", re.I)),
-    ("mean_tpot_ms", re.compile(r"Mean TPOT \(ms\):\s+([0-9\.]+)", re.I)),
-    ("median_tpot_ms", re.compile(r"Median TPOT \(ms\):\s+([0-9\.]+)", re.I)),
-    ("p99_tpot_ms", re.compile(r"P99 TPOT \(ms\):\s+([0-9\.]+)", re.I)),
-    ("mean_itl_ms", re.compile(r"Mean ITL \(ms\):\s+([0-9\.]+)", re.I)),
-    ("median_itl_ms", re.compile(r"Median ITL \(ms\):\s+([0-9\.]+)", re.I)),
-    ("p99_itl_ms", re.compile(r"P99 ITL \(ms\):\s+([0-9\.]+)", re.I)),
-    ("mean_e2el_ms", re.compile(r"Mean E2EL \(ms\):\s+([0-9\.]+)", re.I)),
-    ("median_e2el_ms", re.compile(r"Median E2EL \(ms\):\s+([0-9\.]+)", re.I)),
-    ("p99_e2el_ms", re.compile(r"P99 E2EL \(ms\):\s+([0-9\.]+)", re.I)),
-]
 
 
 class VllmJob:
@@ -111,6 +92,7 @@ class VllmJob:
         osl,
         concurrency,
         num_prompts,
+        goodput_slo=None,
         log_subdir="vllm",
         server_precheck_wait_s=30,
         server_warmup_wait_s=330,
@@ -132,12 +114,16 @@ class VllmJob:
         self.osl = str(osl)
         self.concurrency = str(concurrency)
         self.num_prompts = str(num_prompts)
+        # Per-cell SLO dict {ttft_ms, tpot_ms, e2el_ms} or None. An INPUT to the
+        # run (passed to `vllm bench serve --goodput`), threaded per-cell like isl
+        # because e2el scales with osl. None -> the --goodput flag is omitted and
+        # stock leaves request_goodput null.
+        self.goodput_slo = goodput_slo
         self.log_subdir = log_subdir
 
         p = variant.params
         self.tp = p.tensor_parallelism
         self.port_no = p.port_no
-        self.max_model_length = p.max_model_length
         self.random_range_ratio = p.random_range_ratio
         self.random_prefix_len = p.random_prefix_len
         self.burstiness = p.burstiness
@@ -151,9 +137,12 @@ class VllmJob:
         self.backend = p.backend
 
         self.model_id = variant.model.id
-        self.server_script = variant.roles.server.server_script
         self.log_dir = variant.paths.log_dir
-        self.scripts_dir = variant.paths.benchmark_scripts_dir
+        # Per-model server quirks from config (both default empty): extra
+        # `vllm serve` flags and extra env vars merged over the orchestrator's
+        # defaults. The server command itself is Python-built (no .sh script).
+        self.extra_serve_args = list(variant.roles.server.extra_serve_args)
+        self.server_env = dict(variant.roles.server.env)
         # Pin the HF cache onto the mounted models dir. The container binds
         # models_dir both at /models and (via the home bind mount) at its own
         # host path, so this path is valid inside the container and the bytes
@@ -164,7 +153,7 @@ class VllmJob:
 
         # Single-node: one output directory.
         self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0"
-        self.server_log = f"{self.out_dir}/{self.server_script}_server.log"
+        self.server_log = f"{self.out_dir}/vllm_serve_server.log"
         self.client_log = f"{self.out_dir}/client.log"
 
         self._precheck_wait = server_precheck_wait_s
@@ -177,13 +166,26 @@ class VllmJob:
 
     # ---------- server side ----------
 
+    # vLLM's RandomDataset samples input in [isl*(1-r), isl*(1+r)] and output in
+    # [osl*(1-r), osl*(1+r)] (r = random_range_ratio), then prepends random_prefix_len
+    # fixed tokens. --max-model-len must cover the worst-case input+output+prefix or
+    # vLLM 400s every over-length request. Derive it per cell so any sweep change
+    # (isl/osl/ratio) stays self-consistent; +8 absorbs the sampler's integer rounding.
+    _MML_PAD = 8
+
+    def _derive_max_model_len(self):
+        r = float(self.random_range_ratio)
+        worst = (int(self.isl) + int(self.osl)) * (1.0 + r)
+        return str(math.ceil(worst) + int(self.random_prefix_len) + self._MML_PAD)
+
     def build_server_cmd(self):
-        """Write the server-env script and create the per-node out-dir inside the container."""
+        """Write the server-env script (sourced by both server and client)
+        and create the per-node out-dir inside the container."""
         env_lines = [
             f"export MODEL={shlex.quote(self.model_id)}",
             f"export ISL={shlex.quote(self.isl)}",
             f"export OSL={shlex.quote(self.osl)}",
-            f"export MAX_MODEL_LEN={shlex.quote(self.max_model_length)}",
+            f"export MAX_MODEL_LEN={shlex.quote(self._derive_max_model_len())}",
             f"export RANDOM_RANGE_RATIO={shlex.quote(self.random_range_ratio)}",
             f"export TP={shlex.quote(str(self.tp))}",
             f"export CONC={shlex.quote(self.concurrency)}",
@@ -194,15 +196,47 @@ class VllmJob:
             "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
             f"export PORT={shlex.quote(str(self.port_no))}",
         ]
+        # Per-model env overrides win over the defaults above (appended last).
+        for k, v in self.server_env.items():
+            env_lines.append(f"export {k}={shlex.quote(str(v))}")
         env_script = "\n".join(env_lines) + "\n"
         # printf the script body verbatim; shlex.quote protects the outer bash layer.
         self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
         self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
 
+    def _server_argv(self):
+        """The `vllm serve` arg list for this cell.
+
+        Built in Python (mirrors run_client) so a run is self-contained -- no
+        external `.sh` to clone/stage. --kv-cache-dtype fp8 is set
+        unconditionally (the model is FP8-KV); per-model extras come from
+        roles.server.extra_serve_args.
+        """
+        argv = [
+            "vllm",
+            "serve",
+            self.model_id,
+            "--tensor-parallel-size",
+            str(self.tp),
+            "--max-model-len",
+            self._derive_max_model_len(),
+            "--port",
+            str(self.port_no),
+            "--kv-cache-dtype",
+            "fp8",
+        ]
+        argv.extend(self.extra_serve_args)
+        return argv
+
     def start_server(self):
+        # Each token shlex.quoted: a model id/path with a space or $ would
+        # otherwise break the inner bash layer silently (same quoting as the
+        # client). The env script (HF token, AITER flags, cache pin) is sourced
+        # first; nohup backgrounds the server into its fixed log.
+        serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv())
         inner = (
-            f"cd {shlex.quote(self.scripts_dir)} && source /tmp/server_env_script.sh && "
-            f"nohup /bin/bash {shlex.quote(self.server_script)} > {shlex.quote(self.server_log)} 2>&1 &"
+            f"source /tmp/server_env_script.sh && "
+            f"nohup {serve_cmd} > {shlex.quote(self.server_log)} 2>&1 &"
         )
         out = self.orch.exec("bash -c " + shlex.quote(inner))
         for host, output in out.items():
@@ -286,6 +320,8 @@ class VllmJob:
             self.random_prefix_len,
             "--percentile-metrics",
             self.percentile_metrics,
+            "--metric-percentiles",
+            self.metric_percentiles,
             "--ignore-eos",
             "--save-result",
             "--result-dir",
@@ -293,6 +329,20 @@ class VllmJob:
             "--result-filename",
             "results",
         ]
+        # Goodput SLO gate (optional). Stock computes request_goodput (good-req/s)
+        # only when --goodput is passed; a request is good iff it meets EVERY named
+        # SLO. Omit the flag entirely when no per-cell SLO is set (passing
+        # ttft:None would be a launch failure).
+        if self.goodput_slo:
+            args.append("--goodput")
+            for metric, key in (("ttft", "ttft_ms"), ("tpot", "tpot_ms"), ("e2el", "e2el_ms")):
+                val = (
+                    self.goodput_slo.get(key)
+                    if hasattr(self.goodput_slo, "get")
+                    else getattr(self.goodput_slo, key, None)
+                )
+                if val is not None:
+                    args.append(f"{metric}:{val}")
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
         client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
         self.orch.exec("bash -c " + shlex.quote(client_cmd))
@@ -325,15 +375,27 @@ class VllmJob:
         raise RuntimeError("client did not complete before poll cap")
 
     def parse_results(self):
-        """Return {host: {metric: str_value}} parsed from the client log."""
-        out = self.orch.exec(f"tail -2000 {shlex.quote(self.client_log)}")
+        """Return {host: {client.METRIC: value}} parsed from the stock `results` artifact.
+
+        Fetches the extensionless JSON `results` file `vllm bench serve` writes to
+        `--result-dir` (NOT the console log; NOT `results.json`) and delegates the
+        namespacing + derived-metric math to the pure
+        `cvs.lib.inference.utils.vllm_parsing.to_client_metrics`. Raises if the artifact is
+        missing/empty/unparseable -- the test wraps the job in try/except ... raise,
+        so this hard-fails the cell rather than recording an empty (silently-green)
+        row. The fetch lives here because artifact layout is job-specific; the
+        transform lives in inference.utils so distributed/disagg/InferenceMax can reuse it.
+        """
+        artifact = f"{self.out_dir}/results"
+        out = self.orch.exec(f"cat {shlex.quote(artifact)}")
         results = {}
         for host, text in out.items():
-            text = text or ""
-            m = {}
-            for key, pat in _METRIC_RES:
-                hit = pat.search(text)
-                if hit:
-                    m[key] = hit.group(1)
-            results[host] = m
+            text = (text or "").strip()
+            if not text:
+                raise RuntimeError(f"empty/missing results artifact on {host}: {artifact}")
+            try:
+                raw = json.loads(text)
+            except (json.JSONDecodeError, ValueError) as e:
+                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}") from e
+            results[host] = to_client_metrics(raw, tp=self.tp, isl=self.isl)
         return results
