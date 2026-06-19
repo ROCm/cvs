@@ -7,7 +7,7 @@ crept in, it belongs in `cvs/lib/inference/utils/` instead — keep this boundar
 ## What's here
 
 - `config_loader.py` — the generic half of variant-config loading: the
-  `paths`/`model`/`image`/`container` schema, `BaseVariantConfig`, the 3-pass
+  `paths`/`model`/`container` schema, `BaseVariantConfig`, the 3-pass
   placeholder substitution engine, and `substitute_config()`.
 - `verdict.py` — `evaluate_all(actuals, thresholds)`: a tiny, framework-neutral
   threshold checker.
@@ -20,12 +20,14 @@ crept in, it belongs in `cvs/lib/inference/utils/` instead — keep this boundar
   **unvalidated** dict plus the parsed thresholds. A per-framework loader calls
   this, then builds its own typed `VariantConfig(**raw)`.
 - `BaseVariantConfig` — subclass it per framework. Carries the shared fields
-  (`schema_version`, `enforce_thresholds`, `paths`, `model`, `image`,
-  `container`, `thresholds`) and the `model.remote==1` NotImplementedError guard.
+  (`schema_version`, `enforce_thresholds`, `paths`, `model`, `container`,
+  `thresholds`) and the `model.remote==1` NotImplementedError guard. The image
+  is declared once on `container.image` — there is no separate top-level block.
 - `evaluate_all(actuals, thresholds)` — raises `ThresholdViolation` listing every
-  failing metric. Threshold kinds: `min`, `max_ms`, `within` (±tolerance_pct),
-  `min_tok_s`, `min_ratio` (compares against another metric named in
-  `reference`).
+  failing metric. Threshold kinds: `min`, `max` (unit-agnostic ceiling, for
+  counts like `failed`), `max_ms` (a ceiling that prints `ms`), `within`
+  (±tolerance_pct), `min_tok_s`, `min_ratio` (compares against another metric
+  named in `reference`).
 
 ## The seam (why this is split out)
 

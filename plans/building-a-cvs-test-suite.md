@@ -99,7 +99,8 @@ the split.
 
 A workload is described by a pair of JSON files in the same directory:
 
-- `*_config.json` — the variant: paths, model, image, container, params, sweep.
+- `*_config.json` — the variant: paths, model, container (with `container.image`),
+  params, sweep.
 - `*threshold.json` — the per-cell pass/fail thresholds.
 
 The loader finds the threshold by **sibling glob** (exactly one `*threshold.json`
@@ -121,8 +122,9 @@ metric and skips assertions, and a threshold/sweep mismatch warns instead of
 failing the load. Use it for un-calibrated workloads (e.g. throughput
 characterization where the published numbers are curves, not tabulated cells).
 Flip to `true` once you have real numbers — the coverage check then guarantees
-every sweep cell has a threshold entry, so a green run can't have silently
-skipped its verdict.
+both that every sweep cell has a threshold entry AND that every cell carries a
+spec for every gated metric (`GATED_METRICS`), so a green run can't have
+silently skipped its verdict.
 
 ### The sweep selector (named combos + runs)
 
@@ -162,7 +164,8 @@ orchestrator (`orch.exec`, which routes into the running container) and a typed
 
 - **The server command is built in Python** (`_server_argv`), not cloned from an
   external `.sh` repo. A run is self-contained. Per-model quirks come from
-  `roles.server.extra_serve_args` / `roles.server.env` in config.
+  `roles.server.serve_args` (a `{flag: value}` map) / `roles.server.env` in
+  config.
 - **`/tmp/server_env_script.sh`** is written by `build_server_cmd` and **sourced
   by both server and client**, so the two share one environment (HF token, cache
   pin, AITER flags). Each value is `shlex.quote`d.
@@ -217,8 +220,14 @@ Patterns to copy:
   `decode_throughput_p50`, `success_rate`, …) via `_safe_div` (degrades to
   `None`, never crashes). `CLIENT_METRICS` is the ordered display surface.
 - **`evaluate_all(actuals, thresholds)`** — generic, framework-neutral. Kinds:
-  `min`, `max_ms`, `within`, `min_tok_s`, `min_ratio`. Raises `ThresholdViolation`
-  listing every failure. A `None` actual is a loud violation, not a TypeError.
+  `min`, `max`, `max_ms`, `within`, `min_tok_s`, `min_ratio`. Raises
+  `ThresholdViolation` listing every failure. A `None` actual is a loud
+  violation, not a TypeError.
+- **`GATED_METRICS`** (in `vllm_parsing`) — the asserted SLO subset of
+  `CLIENT_METRICS`. The loader's coverage check requires a threshold spec for
+  every gated metric in every present cell, so a gated metric can't silently
+  fall through to a zero-assertion record-only row. A new metric is record-only
+  until added to the set.
 
 ### To add your own suite — checklist
 

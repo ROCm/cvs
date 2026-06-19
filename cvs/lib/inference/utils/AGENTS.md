@@ -13,8 +13,8 @@ schema and the vLLM client-metric vocabulary.
   flags), the `server` role, and `VariantConfig(BaseVariantConfig)` with
   `cell_key`/`expected_cells` + the threshold-coverage check.
 - `vllm_parsing.py` — pure parsers for vLLM benchmark artifacts:
-  `to_client_metrics()`, the `client.*` namespace, and `CLIENT_METRICS` (the
-  display surface).
+  `to_client_metrics()`, the `client.*` namespace, `CLIENT_METRICS` (the
+  display surface), and `GATED_METRICS` (the asserted SLO subset).
 
 ## Public entry points
 
@@ -29,6 +29,14 @@ schema and the vLLM client-metric vocabulary.
   The ordered `(short_name, unit)` list that becomes one HTML row per metric. The
   single definition every vLLM flavour (single-node, distributed, disagg,
   InferenceMax) shares — don't re-list rows per suite.
+- `GATED_METRICS`
+  The asserted subset of `CLIENT_METRICS`: the perf+health SLO contract a
+  calibrated run must *assert*, not merely display. Membership = "out of range
+  means FAILURE". Today: throughput (total + per-request output), the full
+  latency distribution (mean/median/p90/p95/p99 per ttft/tpot/itl/e2el — itl has
+  no p90 producer), and run health (`success_rate` floor, `failed` ceiling).
+  Closed-world default: a new metric is record-only until its name is added
+  here, at which point the loader forces a spec for it in every cell.
 - `GoodputSlo`, `SeqCombo`, `Run`, `Sweep`, `Params`, `Roles`, `VariantConfig` —
   the typed schema.
 
@@ -55,10 +63,14 @@ names and any `run.combo` that names no combo, **at load time**.
   lookup both call it, so they can't drift on whitespace/ordering. If you change
   the key format, everything keyed on it (threshold.json, `expected_cells`) moves
   together — change it in one place.
-- **`_check_thresholds_cover_sweep` is what prevents a silent green.** Without it,
-  a mistyped threshold key makes the test skip its verdict and report PASS with
-  zero assertions. When `enforce_thresholds=false` the same mismatch is a
-  *warning* (record-only mode), not an error — that's intentional for
+- **`_check_thresholds_cover_sweep` is what prevents a silent green.** It checks
+  two axes: (1) cell coverage — every sweep cell has a threshold entry, no key
+  names a non-existent cell; (2) gated-metric coverage — every present cell
+  carries a spec for every `GATED_METRICS` member. Without (1) a mistyped key
+  makes the test skip its verdict; without (2) a gated metric with no spec falls
+  through `test_metric`'s record-only branch and reports PASS with zero
+  assertions even under `enforce_thresholds=true`. When `enforce_thresholds=false`
+  both are *warnings* (record-only mode), not errors — intentional for
   un-calibrated configs, not a bug to "fix".
 - **`pytest_generate_tests` reads raw JSON and bypasses this loader** (it runs at
   collection time, before fixtures exist). So the validators here are
@@ -89,7 +101,9 @@ names and any `run.combo` that names no combo, **at load time**.
 ## When extending
 
 - New `client.*` metric → add the derivation in `to_client_metrics` (guard
-  divisors with `_safe_div`) AND a `(name, unit)` entry in `CLIENT_METRICS`.
+  divisors with `_safe_div`) AND a `(name, unit)` entry in `CLIENT_METRICS`. If
+  it's a pass/fail criterion, also add it to `GATED_METRICS` (then every cell's
+  threshold.json needs a spec for it) — otherwise it stays record-only.
 - New combo field → add to `SeqCombo` (`_Forbid`, so also update any raw-JSON
   reader like `pytest_generate_tests`).
 - Second framework → subclass `Params`; reuse everything else here and
