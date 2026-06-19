@@ -162,10 +162,20 @@ def parse_tb_scaling_bw(out_dict, exp_dict):
 
 def parse_tb_schmoo_bw(out_dict, exp_dict):
     for node in out_dict.keys():
+        # Line-anchored schmoo data row: leading indent + optional |/│, then whole 32 (not 132/320).
+        # Use (?<![0-9])32(?![0-9]) instead of \b32\b so indented lines (spaces are non-word) still match.
         match = re.search(
-            r'(?:│\s*)?32(?:\s*│)?\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)',
+            r'(?m)^[ \t]*(?:[|│][ \t]*)*(?<![0-9])32(?![0-9])(?:[ \t]*[|│])?[ \t]+'
+            r'([0-9\.]+)[ \t]+([0-9\.]+)[ \t]+([0-9\.]+)[ \t]+([0-9\.]+)[ \t]+([0-9\.]+)[ \t]+([0-9\.]+)',
             out_dict[node],
         )
+        if not match:
+            out = out_dict[node]
+            tail = 6000
+            if len(out) > tail:
+                out = f"...[truncated {len(out_dict[node]) - tail} chars; schmoo table is usually near the end]...\n{out_dict[node][-tail:]}"
+            fail_test(f"TransferBench schmoo row for 32 CU not found on node {node}. Output: {out}")
+            continue
         local_read = float(match.group(1))
         local_write = float(match.group(2))
         local_copy = float(match.group(3))
