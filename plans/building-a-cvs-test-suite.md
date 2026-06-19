@@ -4,16 +4,70 @@ This guide documents the base infrastructure for writing a new **inference** or
 **training** test suite in CVS, using the `vllm_single` suite (PR against
 `dev/dtni`) as the worked reference implementation. If you are adding a serving
 framework, a training benchmark, or any new workload, base your structure on the
-patterns here rather than on the older `InferenceBaseJob`/`if_dict` style.
+patterns here rather than on the older `InferenceBaseJob` / `if_dict` style.
 
 > **Status note.** CVS is experimental. Flags and config keys change, and the
 > built-in pass/fail is not a trustworthy oracle on its own — always verify a
 > run's artifacts independently. This guide describes the structure, not a frozen
 > API.
 
----
+> **Training is not ported yet.** Only `vllm_single` (inference) exists today.
+> The library layout, the generic↔domain seam, and the suite skeleton below are
+> deliberately framework-neutral so a training suite drops into the same shape —
+> this guide is the blueprint for that port, not a record of it.
 
-## 1. The layered architecture
+## What changed in the restructure
+
+This PR reorganizes where shared vs. workload-specific code lives, so the next
+suite reuses machinery instead of copy-pasting it.
+
+**`cvs/lib/dtni` → `cvs/lib/utils` (renamed).** `dtni` was a leftover project
+codename; the directory actually holds pure, framework-agnostic helpers. The new
+name says what it is: utilities any suite (inference, training, …) can call.
+
+**`cvs/lib/utils/` — the shared/common layer.** Everything here is generic: no
+suite knows about vLLM, Megatron, ISL/OSL, or goodput. It holds:
+- `config_loader.py` — the generic config skeleton (`BaseVariantConfig`), the
+  `paths`/`model`/`image`/`container` schema, the 3-pass placeholder
+  substitution engine, and `substitute_config()` (read a config + its sibling
+  threshold file, resolve placeholders).
+- `verdict.py` — `evaluate_all(actuals, thresholds)`, a metric-name-agnostic
+  threshold checker (`min`, `max_ms`, `within`, `min_tok_s`, `min_ratio`).
+
+**`cvs/lib/inference/utils/` — the domain-specific layer.** Helpers only an
+*inference* suite needs live here, one level down from the shared dir. It holds:
+- `inferencing_config_loader.py` — the inference config schema: the named-combo
+  sweep selector, `GoodputSlo`, the vLLM bench `Params`, and
+  `VariantConfig(BaseVariantConfig)` with the ISL/OSL/TP/CONC `cell_key`. It
+  *imports* `BaseVariantConfig` + `substitute_config` from `cvs/lib/utils` rather
+  than re-implementing them.
+- `vllm_parsing.py` — the `client.*` metric vocabulary (`to_client_metrics`,
+  `CLIENT_METRICS`): pure transforms from a vLLM benchmark artifact to a
+  namespaced metric dict.
+
+**The rule for where a helper goes.** If every workload could use it (config
+plumbing, threshold math) → `cvs/lib/utils/`. If it only makes sense for one
+domain (sweep shapes, serving metrics) → `cvs/lib/<domain>/utils/`. A training
+port adds `cvs/lib/training/utils/` the same way inference did — subclass
+`BaseVariantConfig`, reuse `substitute_config` and `evaluate_all`, add its own
+schema and metric vocabulary. The shared layer never grows a dependency on a
+specific framework.
+
+```
+cvs/lib/
+  utils/                         # shared, framework-agnostic (was: dtni)
+    config_loader.py             #   BaseVariantConfig, substitute_config, placeholders
+    verdict.py                   #   evaluate_all (generic threshold kinds)
+  inference/
+    utils/                       # inference-only helpers
+      inferencing_config_loader.py   #   sweep selector, Params, VariantConfig, cell_key
+      vllm_parsing.py            #   client.* metrics, to_client_metrics
+    vllm_orch.py                 #   the driver (VllmJob)
+  training/                      # (future) same shape:
+    utils/                       #   training_config_loader.py, <metric>_parsing.py
+```
+
+## The layered architecture
 
 A suite is built from six layers. Each has one job; the seams between them are
 the reusable surface a second suite plugs into.
@@ -23,8 +77,8 @@ the reusable surface a second suite plugs into.
         |
   variant config (*_config.json + *threshold.json) <- per-workload, IN repo
         |
-  config loader  ── cvs/lib/utils/config_loader.py        (generic: schema, substitution)
-        |          └ cvs/lib/inference/utils/inferencing_config_loader.py (framework schema + sweep)
+  config loader  ── cvs/lib/utils/config_loader.py                  (generic: schema, substitution)
+        |          └ cvs/lib/inference/utils/inferencing_config_loader.py (domain schema + sweep)
         |
   orchestrator   ── cvs/core/orchestrators (ContainerOrchestrator; provided)
         |
@@ -35,18 +89,15 @@ the reusable surface a second suite plugs into.
   parsing + verdict ── vllm_parsing.to_client_metrics + cvs/lib/utils/verdict.evaluate_all
 ```
 
-The **generic ↔ framework seam** is the key idea: anything every workload shares
-lives in `cvs/lib/utils/` (`BaseVariantConfig`, placeholder substitution,
-`substitute_config`, `evaluate_all`); anything specific to *your* workload lives
-in your own `cvs/lib/<domain>/utils/` module that subclasses/reuses it. The
-config loader literally documents this as a "generalization seam," and this PR
-executes the split.
+The **generic↔domain seam** is the key idea: anything every workload shares lives
+in `cvs/lib/utils/`; anything specific to *your* workload lives in your own
+`cvs/lib/<domain>/utils/` module that subclasses/reuses it. The config loader
+docstring literally calls this the "generalization seam," and this PR executes
+the split.
 
----
+## The two config files (per workload)
 
-## 2. The two config files (per workload)
-
-A workload is described by a pair of JSON files sitting in the same directory:
+A workload is described by a pair of JSON files in the same directory:
 
 - `*_config.json` — the variant: paths, model, image, container, params, sweep.
 - `*threshold.json` — the per-cell pass/fail thresholds.
@@ -60,7 +111,7 @@ next to the config), so the two share a descriptive prefix
 Config values use `{...}` placeholders resolved in three passes:
 `{user-id}` (from the cluster file) → `{shared_fs}` (self-reference within
 `paths`) → `{paths.models_dir}` (cross-block). An unknown placeholder is left
-literal — there is no error, so check a stray brace in a resolved path if
+literal — there is no error, so check for a stray brace in a resolved path if
 something doesn't mount.
 
 ### enforce_thresholds
@@ -73,18 +124,16 @@ Flip to `true` once you have real numbers — the coverage check then guarantees
 every sweep cell has a threshold entry, so a green run can't have silently
 skipped its verdict.
 
----
+## The sweep selector (named combos + runs)
 
-## 3. The sweep selector (named combos + runs)
-
-The sweep enumerates exactly the `(sequence-shape, concurrency)` cells to run.
-It replaces the old `sequence_combinations × concurrency_levels` cartesian:
+The sweep enumerates exactly the `(sequence-shape, concurrency)` cells to run. It
+replaces the old `sequence_combinations × concurrency_levels` cartesian:
 
 ```json
 "sweep": {
   "sequence_combinations": [
     { "name": "w1_isl=128_osl=2048", "isl": "128", "osl": "2048",
-      "goodput_slo": { "ttft_ms": 1e9, "tpot_ms": 1e9, "e2el_ms": 1e9 } }
+      "goodput_slo": { "ttft_ms": 1000000000.0, "tpot_ms": 1000000000.0, "e2el_ms": 1000000000.0 } }
   ],
   "runs": [
     { "combo": "w1_isl=128_osl=2048", "concurrency": 16 }
@@ -105,9 +154,7 @@ Each cell's threshold key is produced by `VariantConfig.cell_key()`
 coverage check and the verdict lookup, so threshold.json keys must match it
 exactly.
 
----
-
-## 4. The job/driver (self-contained, no external .sh)
+## The job/driver (self-contained, no external .sh)
 
 `vllm_orch.VllmJob` is the reference driver. It talks only to an injected
 orchestrator (`orch.exec`, which routes into the running container) and a typed
@@ -129,11 +176,9 @@ orchestrator (`orch.exec`, which routes into the running container) and a typed
   unparseable → hard-fail the cell (never a silently-green empty row).
 
 The fetch lives in the job (artifact layout is job-specific); the transform lives
-in `inference.utils` (so distributed/disagg/InferenceMax reuse it).
+in `inference/utils` (so distributed/disagg/InferenceMax reuse it).
 
----
-
-## 5. The suite (lifecycle-as-tests)
+## The suite (lifecycle-as-tests)
 
 In `cvs/tests/inference/vllm/`, each lifecycle stage is its own pytest test so it
 shows up as a timed, pass/fail row in the HTML report:
@@ -159,15 +204,13 @@ Patterns to copy:
 - **The `orch` fixture owns only the teardown safety net** — launch/sshd happen
   in tests so they're timed rows. A mid-sweep failure still tears the container
   down via the finalizer.
-- **`single-node guards`**: `test_setup_sshd` only probes port 2224 when
+- **Single-node guards**: `test_setup_sshd` only probes port 2224 when
   `len(orch.hosts) > 1` (in-container sshd exists only for inter-node MPI).
-- **HTML Value/Unit columns** come from `pytest_html_results_table_header/_row`
-  hooks scoped to this conftest, populated from `metric_value`/`metric_unit`
-  user-properties.
+- **HTML Value/Unit columns** come from `pytest_html_results_table_header` /
+  `_row` hooks scoped to this conftest, populated from
+  `metric_value`/`metric_unit` user-properties.
 
----
-
-## 6. Parsing + verdict
+## Parsing + verdict
 
 - **`to_client_metrics(raw, *, tp, isl)`** — pure: stock keys namespaced
   `client.*` 1:1, plus derived metrics (`per_gpu_throughput`,
@@ -177,9 +220,7 @@ Patterns to copy:
   `min`, `max_ms`, `within`, `min_tok_s`, `min_ratio`. Raises `ThresholdViolation`
   listing every failure. A `None` actual is a loud violation, not a TypeError.
 
----
-
-## 7. To add your own suite — checklist
+## To add your own suite — checklist
 
 1. **Schema.** If serving: reuse `inferencing_config_loader` (subclass `Params`
    for a new framework's flags). If a new domain (training): create
@@ -204,9 +245,7 @@ Patterns to copy:
 7. **Verify independently.** After a run, read the artifact + the HTML cells
    yourself. CVS's PASS is not a trustworthy oracle.
 
----
-
-## 8. Reference files (this PR)
+## Reference files (this PR)
 
 | Layer | File |
 |---|---|
