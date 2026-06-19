@@ -42,7 +42,7 @@ class FakeOrch:
         return self.exec_return
 
 
-def _fake_variant(goodput_slo_unused=None):
+def _fake_variant():
     """A SimpleNamespace tree carrying exactly the attributes VllmJob.__init__ reads."""
     params = SimpleNamespace(
         tensor_parallelism=str(_TP),
