@@ -74,26 +74,38 @@ class Run(_Forbid):
     concurrency: int
 
 
+def validate_sweep_selector(combo_names, run_combo_refs):
+    """The sweep-selector rule: combo names unique, every run.combo names one.
+
+    The single home for this check, shared by the typed `Sweep` validator (load
+    time) and `pytest_generate_tests` (collection time, which reads raw JSON
+    before the loader runs) so the two can never drift. Operates on plain lists
+    of strings so both call sites can feed it.
+
+    Without it a duplicate name silently shadows a combo and a typo'd
+    `run.combo` is a silently-dropped cell -- either way the sweep runs a
+    different matrix than the config reads.
+    """
+    names = list(combo_names)
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        raise ValueError(f"duplicate sequence_combination names: {dupes}")
+    known = set(names)
+    unknown = sorted({r for r in run_combo_refs if r not in known})
+    if unknown:
+        raise ValueError(f"run.combo names no sequence_combination: {unknown} (known: {sorted(known)})")
+
+
 class Sweep(_Forbid):
     sequence_combinations: List[SeqCombo]
     runs: List[Run]
 
     @model_validator(mode="after")
     def _check_runs_reference_known_combos(self):
-        """Combo names must be unique and every run.combo must name one.
-
-        Without this a duplicate name silently shadows a combo and a typo'd
-        `run.combo` is a silently-dropped cell -- either way the sweep runs a
-        different matrix than the config reads.
-        """
-        names = [c.name for c in self.sequence_combinations]
-        dupes = sorted({n for n in names if names.count(n) > 1})
-        if dupes:
-            raise ValueError(f"duplicate sequence_combination names: {dupes}")
-        known = set(names)
-        unknown = sorted({r.combo for r in self.runs if r.combo not in known})
-        if unknown:
-            raise ValueError(f"run.combo names no sequence_combination: {unknown} (known: {sorted(known)})")
+        validate_sweep_selector(
+            [c.name for c in self.sequence_combinations],
+            [r.combo for r in self.runs],
+        )
         return self
 
 

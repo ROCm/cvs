@@ -13,7 +13,7 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.inferencing_config_loader import GoodputSlo
+from cvs.lib.inference.utils.inferencing_config_loader import GoodputSlo, validate_sweep_selector
 from cvs.lib.utils.verdict import evaluate_all
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
 from cvs.lib.inference.vllm_orch import VllmJob
@@ -65,28 +65,19 @@ def pytest_generate_tests(metafunc):
     for combo in combos:
         if combo.get("goodput_slo") is not None:
             GoodputSlo(**combo["goodput_slo"])
-    # Build the name->combo map and mirror the typed Sweep validator here (this
-    # path reads raw JSON before load_variant runs): a duplicate combo name or a
-    # run referencing an unknown combo must fail collection, not silently drop.
-    by_name = {}
-    for combo in combos:
-        nm = combo["name"]
-        if nm in by_name:
-            raise ValueError(f"duplicate sequence_combination name: {nm!r}")
-        by_name[nm] = combo
+    # Mirror the typed Sweep validator here (this path reads raw JSON before
+    # load_variant runs) via the shared rule so the two cannot drift: a
+    # duplicate combo name or a run referencing an unknown combo must fail
+    # collection, not silently drop.
+    validate_sweep_selector([c["name"] for c in combos], [r["combo"] for r in runs])
+    by_name = {c["name"]: c for c in combos}
     cases = []
     ids = []
     for run in runs:
-        combo_name = run["combo"]
-        if combo_name not in by_name:
-            raise ValueError(
-                f"run.combo {combo_name!r} names no sequence_combination "
-                f"(known: {sorted(by_name)})"
-            )
-        combo = by_name[combo_name]
+        combo = by_name[run["combo"]]
         conc = run["concurrency"]
         cases.append((combo, conc))
-        ids.append(combo_name + "-conc" + str(conc))
+        ids.append(run["combo"] + "-conc" + str(conc))
     if "metric" in metafunc.fixturenames:
         if cases:
             metric_cases = []
