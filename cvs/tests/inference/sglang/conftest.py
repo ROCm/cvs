@@ -180,6 +180,9 @@ def gpu_type(p_phdl, cluster_dict):
     smi_out = smi_out_dict[head_node]
     return get_model_from_rocm_smi_output(smi_out)
 
+@pytest.fixture(scope="module")
+def inf_res_dict():
+    return {}
 
 @pytest.fixture(scope="module")
 def im_obj(
