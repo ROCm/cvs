@@ -125,23 +125,26 @@ def test_launch_proxy_router(im_obj):
     update_test_result()
 
 
-def test_openai_compatible_http_endpoints(im_obj):
+def test_openai_compatible_http_endpoints(im_obj, inf_res_dict):
     globals.error_list = []
     im_obj.verify_openai_compatible_endpoints()
+    inf_res_dict.setdefault("__phase_labels__", {})["smoke_test"] = "PASS"
     update_test_result()
 
 
-def test_run_lm_eval_hellaswag_benchmark_test(im_obj):
+def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict):
     globals.error_list = []
     im_obj.setup_benchmark_serv_container_env()
     im_obj.run_lm_eval_hellaswag_benchmark_test()
+    inf_res_dict.setdefault("__phase_labels__", {})["accuracy_hellaswag"] = "PASS"  
     update_test_result()
 
 
-def test_run_lm_eval_gsm8k_benchmark_test(im_obj):
+def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict):
     globals.error_list = []
     im_obj.setup_benchmark_serv_container_env()
     im_obj.run_lm_eval_gsm8k_benchmark_test()
+    inf_res_dict.setdefault("__phase_labels__", {})["accuracy_gsm8k"] = "PASS"
     update_test_result()
 
 
@@ -149,10 +152,11 @@ def test_run_lm_eval_gsm8k_benchmark_test(im_obj):
 #     globals.error_list = []
 #     im_obj.setup_benchmark_serv_container_env()
 #     im_obj.run_lm_eval_mmlu_benchmark_test()
+#     inf_res_dict.setdefault("__phase_labels__", {})["accuracy_mmlu"] = "PASS"
 #     update_test_result()
 
 
-def test_run_benchmark_test(im_obj, inf_res_dict):
+def test_run_perfornamce_benchmark_test(im_obj, inf_res_dict):
     globals.error_list = []
     im_obj.setup_benchmark_serv_container_env()
     im_obj.benchserv_test_random(d_type="auto")
@@ -166,6 +170,7 @@ def test_run_benchmark_test(im_obj, inf_res_dict):
         "bench_serv_random",
         str(im_obj.bp_dict.get("max_concurrency", "-")),
     )
+    inf_res_dict.setdefault("__phase_labels__", {})["performance_test"] = "PASS"
     inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
 
     update_test_result()
