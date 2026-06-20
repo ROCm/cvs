@@ -82,16 +82,24 @@ SGLANG_DISAGG_TEST_ORDER = {
     "test_run_lm_eval_hellaswag_benchmark_test": 9,
     "test_run_lm_eval_gsm8k_benchmark_test": 10,
     # "test_run_lm_eval_mmlu_benchmark_test": 11,
-    "test_run_benchmark_test": 12,
+    "test_run_performance_benchmark_test": 12,
     "test_disagg_gpu_topology": 13,
     "test_print_results_table": 14,
 }
 
 
 def test_print_results_table(inf_res_dict):
+    phase_labels = inf_res_dict.pop("__phase_labels__", None) or {}
+    smoke = phase_labels.get("smoke_test", "-")
+    h = phase_labels.get("accuracy_hellaswag", "-")
+    g = phase_labels.get("accuracy_gsm8k", "-")
+    accuracy = f"HellaSwag: {h}; GSM8K: {g}"
+    performance = phase_labels.get("performance_test", "-")
+
     if not inf_res_dict:
         log.info("inf_res_dict empty, nothing to print")
         return
+
     headers = [
         "Model",
         "GPU",
@@ -100,6 +108,9 @@ def test_print_results_table(inf_res_dict):
         "Policy",
         "Conc",
         "Host",
+        "Smoke test",
+        "Accuracy tests",
+        "Performance test",
         "Req/s",
         "Total tok/s",
         "Mean TTFT (ms)",
@@ -121,12 +132,18 @@ def test_print_results_table(inf_res_dict):
                     policy,
                     conc,
                     host,
+                    smoke,
+                    accuracy,
+                    performance,
                     m.get("request_throughput_per_sec", "-"),
-                    m.get("total_throughput_per_sec", m.get("output_throughput_per_sec", "-")),
+                    m.get(
+                        "total_throughput_per_sec",
+                        m.get("output_throughput_per_sec", "-"),
+                    ),
                     m.get("mean_ttft_ms", "-"),
                     m.get("mean_tpot_ms", "-"),
                     m.get("p99_itl_ms", "-"),
-                    m.get("goodput", "-"),
+                    m.get("goodput") or "-",
                     m.get("output_throughput_per_gpu_per_sec", "-"),
                 ]
             )
