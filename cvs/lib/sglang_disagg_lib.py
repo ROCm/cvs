@@ -1522,6 +1522,7 @@ class SglangDisaggPD:
         formatted_cmd = textwrap_for_yml(cmd)
         out_dict = self.b_phdl.exec(formatted_cmd, timeout=exec_timeout)
         time.sleep(5)
+        summary: dict[str, Any] | None = None
         for node, text in out_dict.items():
             if not text:
                 fail_test(f'lm-eval HellaSwag produced no output on node {node!r}')
@@ -1535,12 +1536,23 @@ class SglangDisaggPD:
                     f'(see {log_path})'
                 )
             else:
-                expected = float(i_dict["expected_results"]["hellaswag"]["acc_norm,none"])  # or pass in
+                expected = float(i_dict["expected_results"]["hellaswag"]["acc_norm,none"])
                 actual = self.lm_eval_metric_value(text, "hellaswag", "acc_norm")
                 if actual is None:
                     fail_test("could not parse lm-eval table score for hellaswag / acc_norm")
                 elif abs(actual - expected) > 0.05 * abs(expected):
-                    fail_test(f"hellaswag acc_norm {actual:.4f} not within 5% of expected {expected:.4f}")
+                    fail_test(
+                        f"hellaswag acc_norm {actual:.4f} not within 5% of expected {expected:.4f}"
+                    )
+                summary = {
+                    "task": str(tasks),
+                    "metric_key": "acc_norm,none",
+                    "actual": float(actual),
+                    "expected": float(expected),
+                }
+        if summary is None:
+            fail_test("lm-eval HellaSwag: no benchmark nodes produced output to score")
+        return summary
 
     def run_lm_eval_gsm8k_benchmark_test(self, _d_type='auto'):
         """
@@ -1592,6 +1604,7 @@ class SglangDisaggPD:
         formatted_cmd = textwrap_for_yml(cmd)
         out_dict = self.b_phdl.exec(formatted_cmd, timeout=exec_timeout)
         time.sleep(5)
+        summary: dict[str, Any] | None = None
         for node, text in out_dict.items():
             if not text:
                 fail_test(f'lm-eval GSM8K produced no output on node {node!r}')
@@ -1605,12 +1618,27 @@ class SglangDisaggPD:
                     f'(see {log_path})'
                 )
             else:
-                expected = float(i_dict["expected_results"]["gsm8k"]["exact_match,flexible-extract"])  # or pass in
+                expected = float(
+                    i_dict["expected_results"]["gsm8k"]["exact_match,flexible-extract"]
+                )
                 actual = self.lm_eval_metric_value(text, "gsm8k", "exact_match")
                 if actual is None:
-                    fail_test("could not parse lm-eval table score for gsm8k / flexible-extract")
+                    fail_test(
+                        "could not parse lm-eval table score for gsm8k / flexible-extract"
+                    )
                 elif abs(actual - expected) > 0.05 * abs(expected):
-                    fail_test(f"gsm8k flexible-extract {actual:.4f} not within 5% of expected {expected:.4f}")
+                    fail_test(
+                        f"gsm8k flexible-extract {actual:.4f} not within 5% of expected {expected:.4f}"
+                    )
+                summary = {
+                    "task": str(tasks),
+                    "metric_key": "exact_match,flexible-extract",
+                    "actual": float(actual),
+                    "expected": float(expected),
+                }
+        if summary is None:
+            fail_test("lm-eval GSM8K: no benchmark nodes produced output to score")
+        return summary
 
     def run_lm_eval_mmlu_benchmark_test(self, _d_type='auto'):
         """
