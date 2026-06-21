@@ -168,6 +168,5 @@ def test_print_results_table(inf_res_dict):
                     m.get("output_throughput_per_gpu_per_sec", "-"),
                 ]
             )
-    log.info(
-            "\n\n\n\n======== Performance results ========\n",
+    log.info("\n\n\n\n======== Performance results ========\n")
     log.info("\n" + tabulate(rows, headers=headers, tablefmt="github"))
