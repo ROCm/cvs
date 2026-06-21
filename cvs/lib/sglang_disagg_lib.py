@@ -1459,34 +1459,52 @@ class SglangDisaggPD:
 
         if probe_err is not None:
             fail_test(probe_err)
-            return {}
+            return []
 
         log_openai_probe_results(results, log)
 
         ok, err = check_openai_compatible_probe_results(results, port=port, logger=log)
         if not ok:
-            summary = self.summarize_results(results)
-            summary_text = "\n".join(summary)
-            log.info(
-                "OpenAI-compatible probe failed (per-endpoint summary):\n%s",
-                summary_text,
-            )
-            fail_test(f"{err}\n{summary_text}")
+            summary = self.summarize_results(results, ok, err)
+            fail_test(f"{err}")
             return summary
 
-        summary = self.summarize_results(results)
-        summary_text = "\n".join(summary)
-        log.info(
-            "OpenAI-compatible probe passed (HTTP + content): \n%s",
-            summary_text,
-        )
+        summary = self.summarize_results(results, ok, None)
         return summary
 
-    def summarize_results(self, results: dict[str, tuple[int, Any]]) -> list[str]:
-        summary = []
+    def summarize_results(
+            self,
+            results: dict[str, tuple[int, Any]],
+            ok: bool,
+            err: Optional[str],
+        ) -> list[str]:
+       
+        failure_parts: list[str] = []
+        if not ok and err:
+            marker = "OpenAI-compatible probe failed port="
+            if err.startswith(marker):
+                rest = err[len(marker) :]
+                colon_idx = rest.find(": ")
+                if colon_idx != -1:
+                    failures_blob = rest[colon_idx + 2 :]
+                    failure_parts = [p.strip() for p in failures_blob.split("|")]
+
+        summary: list[str] = []
         for step, (status, _content) in results.items():
             title = OPENAI_PROBE_STEP_TITLES.get(step, step)
-            outcome = "Pass" if status == 200 else "Fail"
+            if ok:
+                outcome = "Pass" if status == 200 else "Fail"
+            else:
+                step_failed_check = any(
+                    p.startswith(title) or p.startswith(f"{title} (step=")
+                    for p in failure_parts
+                )
+                if status != 200:
+                    outcome = "Fail"
+                elif step_failed_check:
+                    outcome = "Fail"
+                else:
+                    outcome = "Pass"
             summary.append(f"{title} -> {outcome} ({status})")
         return summary
 
