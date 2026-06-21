@@ -12,7 +12,6 @@ from tabulate import tabulate
 from typing import Any, Mapping
 
 from cvs.lib import globals
-from cvs.lib.model_query_lib import log_openai_probe_results
 
 log = globals.log
 
@@ -93,15 +92,8 @@ def test_print_results_table(inf_res_dict):
 
     smoke_results = inf_res_dict.pop("__smoke_probe_results__", None)
     if smoke_results:
-        if isinstance(smoke_results, list):
-            print(
-                "\n======== OpenAI-compatible smoke (endpoint summary) ========\n"
-                + "\n".join(str(line) for line in smoke_results),
-                flush=True,
-            )
-        else:
-            log.info("\n======== OpenAI-compatible smoke (full probe) ========\n")
-            log_openai_probe_results(smoke_results, log)
+        log.info("\n======== OpenAI-compatible smoke ========\n")
+        print("\n".join(str(line) for line in smoke_results), flush=True)
 
     acc_rows = []
     for label, key in (("HellaSwag", "accuracy_hellaswag"), ("GSM8K", "accuracy_gsm8k")):
