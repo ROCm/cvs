@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 from cvs.lib import globals
 from cvs.lib.model_query_lib import (
+    OPENAI_PROBE_STEP_TITLES,
     check_openai_compatible_probe_results,
     log_openai_probe_results,
     openai_probe_script,
@@ -1386,7 +1387,7 @@ class SglangDisaggPD:
         return result
 
     
-    def verify_openai_compatible_endpoints(self) -> dict[str, tuple[int, Any]]:
+    def verify_openai_compatible_endpoints(self) -> list[str]:
         """
         Smoke-test OpenAI-compatible HTTP API on the proxy router (inside the
         benchmark container via ``docker exec``): GET /v1/models,
@@ -1464,17 +1465,24 @@ class SglangDisaggPD:
 
         ok, err = check_openai_compatible_probe_results(results, port=port, logger=log)
         if not ok:
-            fail_test(err)
-            return results
+            summary = self.summarize_results(results)
+            summary_text = "\n".join(summary)
+            log.info(
+                "OpenAI-compatible probe failed (per-endpoint summary):\n%s",
+                summary_text,
+            )
+            fail_test(f"{err}\n{summary_text}")
+            return summary
 
-        summary = summarize_results(results)
+        summary = self.summarize_results(results)
+        summary_text = "\n".join(summary)
         log.info(
-            "OpenAI-compatible probe passed (HTTP + content): %s",
-            summary,
+            "OpenAI-compatible probe passed (HTTP + content): \n%s",
+            summary_text,
         )
         return summary
 
-    def summarize_results(results: dict[str, tuple[int, Any]]) -> list[str]:
+    def summarize_results(self, results: dict[str, tuple[int, Any]]) -> list[str]:
         summary = []
         for step, (status, _content) in results.items():
             title = OPENAI_PROBE_STEP_TITLES.get(step, step)
