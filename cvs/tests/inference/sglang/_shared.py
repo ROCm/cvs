@@ -93,8 +93,8 @@ def test_print_results_table(inf_res_dict):
 
     smoke_results = inf_res_dict.pop("__smoke_probe_results__", None)
     if smoke_results:
-        log.info("\n======== OpenAI-compatible smoke (full probe) ========\n")
-        log_openai_probe_results(smoke_results, log)
+        log.info("\n======== OpenAI-compatible smoke (endpoint summary) ========\n")
+        log.info("%s", "\n".join(str(line) for line in smoke_results))
 
     acc_rows = []
     for label, key in (("HellaSwag", "accuracy_hellaswag"), ("GSM8K", "accuracy_gsm8k")):
