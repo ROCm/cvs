@@ -93,7 +93,7 @@ def test_print_results_table(inf_res_dict):
 
     smoke_results = inf_res_dict.pop("__smoke_probe_results__", None)
     if smoke_results:
-        log.info("======== OpenAI-compatible smoke (full probe) ========")
+        log.info("\n======== OpenAI-compatible smoke (full probe) ========\n")
         log_openai_probe_results(smoke_results, log)
 
     acc_rows = []
@@ -111,7 +111,7 @@ def test_print_results_table(inf_res_dict):
             )
     if acc_rows:
         log.info(
-            "======== LM-eval accuracy ========\n%s",
+            "\n\n\n\n======== LM-eval accuracy results ========\n%s",
             tabulate(
                 acc_rows,
                 headers=["Suite", "Task", "Metric", "Actual", "Expected"],
@@ -168,4 +168,6 @@ def test_print_results_table(inf_res_dict):
                     m.get("output_throughput_per_gpu_per_sec", "-"),
                 ]
             )
+    log.info(
+            "\n\n\n\n======== Performance results ========\n",
     log.info("\n" + tabulate(rows, headers=headers, tablefmt="github"))
