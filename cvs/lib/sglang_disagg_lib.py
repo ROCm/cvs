@@ -1466,11 +1466,22 @@ class SglangDisaggPD:
         if not ok:
             fail_test(err)
             return results
+
+        summary = summarize_results(results)
         log.info(
             "OpenAI-compatible probe passed (HTTP + content): %s",
-            list(results.keys()),
+            summary,
         )
-        return results
+        return summary
+
+    def summarize_results(results: dict[str, tuple[int, Any]]) -> list[str]:
+        summary = []
+        for step, (status, _content) in results.items():
+            title = OPENAI_PROBE_STEP_TITLES.get(step, step)
+            outcome = "Pass" if status == 200 else "Fail"
+            summary.append(f"{title} -> {outcome} ({status})")
+        return summary
+
 
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
         """
