@@ -1472,13 +1472,7 @@ class SglangDisaggPD:
         summary = self.summarize_results(results, ok, err)
         return summary
 
-    # def summarize_results(self, results: dict[str, tuple[int, Any]]) -> list[str]:
-    #     summary = []
-    #     for title, (status, _content) in results.items():
-    #         outcome = "Pass" if status == 200 else "Fail"
-    #         summary.append(f"{title} -> {outcome} ({status})")
-    #     return summary
-
+ 
     def summarize_results(
             self,
             results: dict[str, tuple[int, Any]],
