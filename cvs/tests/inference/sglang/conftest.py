@@ -4,13 +4,8 @@ All rights reserved.
 
 Fixtures and hooks for ``sglang_disagg_distributed`` (multi-node PSSH + Docker).
 
-``--config_file`` supplies cluster/runtime settings: either a monolithic JSON with
-top-level ``"config"`` and ``"benchmark_params"``, or (when ``--model_config_file``
-is also passed) the main config only—either flat key/value or under ``"config"``.
-
-When ``--model_config_file`` is set, it must be JSON with top-level
-``"benchmark_params"`` (e.g. ``llama-70b-config.json``). When omitted, benchmark
-parameters are read from ``--config_file`` as before.
+``--config_file`` must be JSON with top-level ``"config"`` and ``"benchmark_params"``.
+Use ``active_benchmark`` (or ``SGLANG_BENCHMARK_KEY``) when multiple models are defined.
 '''
 
 import json
@@ -30,16 +25,6 @@ from cvs.tests.inference.sglang._shared import SGLANG_DISAGG_TEST_ORDER, resolve
 log = globals.log
 
 
-def _model_config_path(pytestconfig):
-    try:
-        p = pytestconfig.getoption("model_config_file")
-    except ValueError:
-        return None
-    if p is None:
-        return None
-    s = str(p).strip()
-    return s or None
-
 
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
@@ -57,9 +42,7 @@ def inference_config_file(pytestconfig):
     return path
 
 
-@pytest.fixture(scope="module")
-def model_config_file(pytestconfig):
-    return _model_config_path(pytestconfig)
+
 
 
 @pytest.fixture(scope="module")
@@ -75,12 +58,6 @@ def inference_config_root(inference_config_file):
         return json.load(fp)
 
 
-@pytest.fixture(scope="module")
-def benchmark_config_root(model_config_file):
-    if not model_config_file:
-        return None
-    with open(model_config_file, encoding="utf-8") as fp:
-        return json.load(fp)
 
 
 @pytest.fixture(scope="module")
@@ -93,24 +70,14 @@ def inference_dict(inference_config_root, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def benchmark_params_dict(inference_config_root, benchmark_config_root, cluster_dict):
-    if benchmark_config_root is not None:
-        bp = benchmark_config_root["benchmark_params"]
-    else:
-        bp = inference_config_root["benchmark_params"]
+def benchmark_params_dict(inference_config_root, cluster_dict):
+    bp = inference_config_root["benchmark_params"]
     return resolve_test_config_placeholders(bp, cluster_dict)
 
 
 @pytest.fixture(scope="module")
-def benchmark_variant(
-    inference_config_root,
-    benchmark_config_root,
-    inference_config_file,
-    model_config_file,
-):
-    root = benchmark_config_root if benchmark_config_root is not None else inference_config_root
-    label = model_config_file if benchmark_config_root is not None else inference_config_file
-    return resolve_benchmark_variant_key(root, label)
+def benchmark_variant(inference_config_root, inference_config_file):
+    return resolve_benchmark_variant_key(inference_config_root, inference_config_file)
 
 
 @pytest.fixture(scope="module")
