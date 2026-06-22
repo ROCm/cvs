@@ -26,7 +26,7 @@ from cvs.lib.utils_lib import (
 from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditFluxConfigFile
-from cvs.parsers.pytorch_xdit_flux import FluxBenchmarkResult, FluxOutputParser
+from cvs.parsers.pytorch_xdit_flux import FluxOutputParser
 
 log = globals.log
 
@@ -758,68 +758,38 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
 
     results_summary = []
 
-    for node, output_dir in zip(s_phdl.host_list, output_dirs):
+    for output_dir in output_dirs:
+        # Extract hostname label from directory name
         dir_name = output_dir.split('/')[-1]
         label = dir_name.replace('flux_', '').replace('_outputs', '')
-        remote_timing = f"{output_dir}/results/timing.json"
 
-        log.info(f"Parsing results from: {output_dir} ({label}) on node {node}")
+        log.info(f"Parsing results from: {output_dir} ({label})")
+        parser = FluxOutputParser(output_dir, expected_image_pattern="flux_*.png")
+        result, errors = parser.parse()
 
-        probe = s_phdl.exec(
-            f"test -f {shlex.quote(remote_timing)} && echo OK || echo MISSING",
-            print_console=False,
-        )
-        if "OK" not in (probe.get(node, "") or ""):
-            log.error(f"timing.json not found on {node}: {remote_timing}")
-            all_passed = False
-            continue
-
-        cat_out = s_phdl.exec(f"cat {shlex.quote(remote_timing)}", print_console=False)
-        pipe_times, errors = FluxOutputParser.parse_pipe_times_from_text(
-            cat_out.get(node, "") or ""
-        )
         for error in errors:
             log.warning(f"Parse warning ({label}): {error}")
 
-        if not pipe_times:
+        if result is None:
             log.error(f"Failed to parse benchmark results for {label}: {errors}")
             all_passed = False
             continue
 
-        img_out = s_phdl.exec(
-            f"find {shlex.quote(output_dir)} -name 'flux_*.png' 2>/dev/null | head -1",
-            print_console=False,
-        )
-        image_paths = [
-            line.strip()
-            for line in (img_out.get(node, "") or "").splitlines()
-            if line.strip()
-        ]
-        if not image_paths:
-            log.warning(f"No images (flux_*.png) found under {output_dir} on {node}")
+        if not result.image_paths:
+            log.warning(f"No images (flux_*.png) found under {output_dir}")
         else:
-            log.info(f"Found generated image(s) for {label} on {node}")
-
-        avg_pipe_time_s = sum(pipe_times) / len(pipe_times)
-        log.info(f"Average pipe_time: {avg_pipe_time_s:.2f}s (from {len(pipe_times)} repetitions)")
-
-        result = FluxBenchmarkResult(
-            avg_pipe_time_s=avg_pipe_time_s,
-            repetition_count=len(pipe_times),
-            pipe_times=pipe_times,
-            timing_json_path=remote_timing,
-            image_paths=image_paths,
-        )
+            log.info(f"Found {len(result.image_paths)} generated images for {label}")
 
         log.info(f"Benchmark results ({label}):")
         log.info(f"  Repetitions parsed: {result.repetition_count}")
         log.info(f"  Average pipe_time: {result.avg_pipe_time_s:.2f}s")
 
-        parser = FluxOutputParser(output_dir)
+        # Validate against threshold
         passed, message = parser.validate_threshold(result, expected_results, gpu_type)
         log.info(f"{label}: {message}")
 
         results_summary.append({'label': label, 'avg_pipe_time_s': result.avg_pipe_time_s, 'passed': passed})
+
         if not passed:
             all_passed = False
 
