@@ -13,6 +13,7 @@ from typing import Any, Mapping
 
 from cvs.lib import globals
 
+
 log = globals.log
 
 __all__ = [
@@ -91,11 +92,13 @@ def test_print_results_table(inf_res_dict):
     phase_labels = inf_res_dict.pop("__phase_labels__", None) or {}
 
     smoke_results = inf_res_dict.pop("__smoke_probe_results__", None)
-    log.info("\n======== OpenAI-compatible smoke (full probe) ========\n")
+    log.info("\n======== OpenAI-compatible smoke results ========\n")
     print(smoke_results, flush=True)
     if smoke_results:
         if isinstance(smoke_results, list):
-            print("\n".join(str(line) for line in smoke_results), flush=True)
+            log.info(
+                "\n".join(str(line) for line in smoke_results),
+            )
         
     acc_rows = []
     for label, key in (("HellaSwag", "accuracy_hellaswag"), ("GSM8K", "accuracy_gsm8k")):
