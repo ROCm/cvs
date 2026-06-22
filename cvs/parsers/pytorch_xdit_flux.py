@@ -130,51 +130,6 @@ class FluxOutputParser:
 
         return pipe_times, errors
 
-    @staticmethod
-    def parse_pipe_times_from_text(text: str) -> Tuple[List[float], List[str]]:
-        pipe_times = []
-        errors = []
-
-        if not (text or "").strip():
-            errors.append("timing.json: empty content")
-            return pipe_times, errors
-
-        try:
-            data = json.loads(text)
-
-            if not isinstance(data, list):
-                errors.append(f"timing.json: expected a JSON list, got {type(data).__name__}")
-                return pipe_times, errors
-
-            for i, entry in enumerate(data):
-                if not isinstance(entry, dict):
-                    errors.append(f"timing.json[{i}]: expected dict, got {type(entry).__name__}")
-                    continue
-
-                if "pipe_time" not in entry:
-                    errors.append(f"timing.json[{i}]: missing 'pipe_time' field")
-                    continue
-
-                pipe_time = entry["pipe_time"]
-
-                if not isinstance(pipe_time, (int, float)):
-                    errors.append(
-                        f"timing.json[{i}]: pipe_time is not numeric (got {type(pipe_time).__name__})"
-                    )
-                    continue
-
-                pipe_times.append(float(pipe_time))
-                log.debug(f"timing.json[{i}]: pipe_time = {pipe_time:.2f}s")
-
-        except json.JSONDecodeError as e:
-            errors.append(f"timing.json: JSON parse error - {e}")
-        except Exception as e:
-            errors.append(f"timing.json: unexpected error - {e}")
-
-        return pipe_times, errors
-
-
-
     def find_images(self) -> List[Path]:
         """
         Locate generated image files under output_dir.
