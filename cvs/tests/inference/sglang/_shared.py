@@ -93,7 +93,6 @@ def test_print_results_table(inf_res_dict):
 
     smoke_results = inf_res_dict.pop("__smoke_probe_results__", None)
     log.info("\n======== OpenAI-compatible smoke results ========\n")
-    print(smoke_results, flush=True)
     if smoke_results:
         if isinstance(smoke_results, list):
             log.info(
