@@ -11,7 +11,7 @@ pandas
 tabulate
 
 # AMD node-scraper: offline dmesg/log parsing (see cvs/lib/node_scraper_adapter.py)
-amd-node-scraper >= 1.1.4
+amd-node-scraper >= 1.1.7
 
 # Docker SDK for container orchestration
 docker >= 7.0.0

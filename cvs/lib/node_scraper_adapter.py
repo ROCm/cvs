@@ -24,19 +24,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Union
 
+from nodescraper.models import SystemInfo
+from nodescraper.plugins.inband.dmesg.analyzer_args import DmesgAnalyzerArgs
+from nodescraper.plugins.inband.dmesg.dmesg_plugin import DmesgPlugin
+
 log = logging.getLogger(__name__)
-
-try:
-    from nodescraper.models import SystemInfo
-    from nodescraper.plugins.inband.dmesg.analyzer_args import DmesgAnalyzerArgs
-    from nodescraper.plugins.inband.dmesg.dmesg_plugin import DmesgPlugin
-
-    NODE_SCRAPER_AVAILABLE = True
-    _IMPORT_ERROR: Optional[Exception] = None
-except Exception as exc:  # pragma: no cover - only hit when dependency is absent
-    NODE_SCRAPER_AVAILABLE = False
-    _IMPORT_ERROR = exc
-
 
 DEFAULT_NODE_NAME = "cvs-node"
 
@@ -51,23 +43,10 @@ EVENT_KEYS = (
 )
 
 
-def is_available() -> bool:
-    """Return True if the amd-node-scraper package is importable."""
-    return NODE_SCRAPER_AVAILABLE
-
-
-def _require_node_scraper() -> None:
-    if not NODE_SCRAPER_AVAILABLE:
-        raise RuntimeError(
-            "amd-node-scraper is not installed; add it from requirements.txt to use "
-            f"the node-scraper dmesg adapter. Original import error: {_IMPORT_ERROR}"
-        )
-
-
 def parse_dmesg(
     dmesg_content: str,
     node_name: Optional[str] = None,
-    analysis_args: Optional[Union[dict, "DmesgAnalyzerArgs"]] = None,
+    analysis_args: Optional[Union[dict, DmesgAnalyzerArgs]] = None,
 ) -> List[Dict[str, Any]]:
     """Parse raw dmesg text using node-scraper's offline DmesgAnalyzer.
 
@@ -87,8 +66,6 @@ def parse_dmesg(
         priority, category, description, match_content, count, timestamps,
         source.
     """
-    _require_node_scraper()
-
     plugin = DmesgPlugin(system_info=SystemInfo(name=node_name or DEFAULT_NODE_NAME))
     # Use the common DataPlugin.run() entry point (collection=False) so the same
     # DataPluginResult shape can be reused for other plugins (e.g. NicPlugin).

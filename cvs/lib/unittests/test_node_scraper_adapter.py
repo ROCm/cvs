@@ -26,10 +26,6 @@ SAMPLE_DMESG = (
 )
 
 
-@unittest.skipUnless(
-    node_scraper_adapter.is_available(),
-    "amd-node-scraper not installed",
-)
 class TestParseDmesg(unittest.TestCase):
     def test_detects_known_errors(self):
         events = node_scraper_adapter.parse_dmesg(SAMPLE_DMESG, node_name="node1")

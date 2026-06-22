@@ -34,7 +34,6 @@ threshold_counter_val = 1000
 # Environment toggle selecting the dmesg parser backend:
 #   CVS_DMESG_PARSER=node-scraper (default) -> AMD node-scraper analyzer
 #   CVS_DMESG_PARSER=legacy                 -> historical err_patterns_dict regex
-# Falls back to legacy automatically when node-scraper is not installed.
 DMESG_PARSER_ENV = 'CVS_DMESG_PARSER'
 
 
@@ -43,12 +42,12 @@ def use_node_scraper_dmesg():
 
     Controlled by the CVS_DMESG_PARSER environment variable (default
     'node-scraper'). Values legacy/cvs/0/false/off/no select the legacy regex
-    path. Automatically falls back to legacy if node-scraper is unavailable.
+    path for explicit comparison or rollback.
     """
     choice = os.environ.get(DMESG_PARSER_ENV, 'node-scraper').strip().lower()
     if choice in ('legacy', 'cvs', '0', 'false', 'off', 'no'):
         return False
-    return node_scraper_adapter.is_available()
+    return True
 
 
 def verify_gpu_pcie_bus_width(phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pcie_width=16):
