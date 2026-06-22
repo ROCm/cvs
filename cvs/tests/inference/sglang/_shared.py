@@ -92,10 +92,10 @@ def test_print_results_table(inf_res_dict):
     phase_labels = inf_res_dict.pop("__phase_labels__", None) or {}
 
     smoke_results = inf_res_dict.pop("__smoke_probe_results__", None)
-    log.info("\n======== OpenAI-compatible smoke results ========\n")
     if smoke_results:
         if isinstance(smoke_results, list):
             log.info(
+                "\n======== OpenAI-compatible smoke results ========\n%s",
                 "\n".join(str(line) for line in smoke_results),
             )
         
