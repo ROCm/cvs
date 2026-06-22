@@ -1459,7 +1459,7 @@ class SglangDisaggPD:
 
         if probe_err is not None:
             fail_test(probe_err)
-            return {}
+            return []
 
         log_openai_probe_results(results, log)
 
@@ -1472,47 +1472,48 @@ class SglangDisaggPD:
         summary = self.summarize_results(results)
         return summary
 
-    # def summarize_results(self, results: dict[str, tuple[int, Any]]) -> list[str]:
-    #     summary = []
-    #     for title, (status, _content) in results.items():
-    #         outcome = "Pass" if status == 200 else "Fail"
-    #         summary.append(f"{title} -> {outcome} ({status})")
-    #     return summary
-    def summarize_results(
-            self,
-            results: dict[str, tuple[int, Any]],
-            ok: bool,
-            err: Optional[str],
-        ) -> list[str]:
-       
-        failure_parts: list[str] = []
-        if not ok and err:
-            marker = "OpenAI-compatible probe failed port="
-            if err.startswith(marker):
-                rest = err[len(marker) :]
-                colon_idx = rest.find(": ")
-                if colon_idx != -1:
-                    failures_blob = rest[colon_idx + 2 :]
-                    failure_parts = [p.strip() for p in failures_blob.split("|")]
-
-        summary: list[str] = []
-        for step, (status, _content) in results.items():
-            title = OPENAI_PROBE_STEP_TITLES.get(step, step)
-            if ok:
-                outcome = "Pass" if status == 200 else "Fail"
-            else:
-                step_failed_check = any(
-                    p.startswith(title) or p.startswith(f"{title} (step=")
-                    for p in failure_parts
-                )
-                if status != 200:
-                    outcome = "Fail"
-                elif step_failed_check:
-                    outcome = "Fail"
-                else:
-                    outcome = "Pass"
+    def summarize_results(self, results: dict[str, tuple[int, Any]]) -> list[str]:
+        summary = []
+        for title, (status, _content) in results.items():
+            outcome = "Pass" if status == 200 else "Fail"
             summary.append(f"{title} -> {outcome} ({status})")
         return summary
+        
+    # def summarize_results(
+    #         self,
+    #         results: dict[str, tuple[int, Any]],
+    #         ok: bool,
+    #         err: Optional[str],
+    #     ) -> list[str]:
+       
+    #     failure_parts: list[str] = []
+    #     if not ok and err:
+    #         marker = "OpenAI-compatible probe failed port="
+    #         if err.startswith(marker):
+    #             rest = err[len(marker) :]
+    #             colon_idx = rest.find(": ")
+    #             if colon_idx != -1:
+    #                 failures_blob = rest[colon_idx + 2 :]
+    #                 failure_parts = [p.strip() for p in failures_blob.split("|")]
+
+    #     summary: list[str] = []
+    #     for step, (status, _content) in results.items():
+    #         title = OPENAI_PROBE_STEP_TITLES.get(step, step)
+    #         if ok:
+    #             outcome = "Pass" if status == 200 else "Fail"
+    #         else:
+    #             step_failed_check = any(
+    #                 p.startswith(title) or p.startswith(f"{title} (step=")
+    #                 for p in failure_parts
+    #             )
+    #             if status != 200:
+    #                 outcome = "Fail"
+    #             elif step_failed_check:
+    #                 outcome = "Fail"
+    #             else:
+    #                 outcome = "Pass"
+    #         summary.append(f"{title} -> {outcome} ({status})")
+    #     return summary
 
 
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
