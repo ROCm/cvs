@@ -23,8 +23,12 @@ class RunPlugin(ListPlugin):
         )
         parser.add_argument(
             "--log-file",
-            default="/tmp/cvs/test.log",
-            help="Pytest: Path to file for logging output (default: /tmp/cvs/test.log)",
+            default=None,
+            metavar="PATH",
+            help=(
+                "Pytest: write logging output to this file (optional). "
+                "Parent directories are created automatically when set."
+            ),
         )
         parser.add_argument(
             "--log-level",

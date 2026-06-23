@@ -1,55 +1,36 @@
 '''
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
-
-Parametrized vLLM single-node benchmark suite (replaces the 4 per-model wrappers).
 '''
 
+import importlib.util as _ilu
 import json
 import os
+import pathlib as _pl
 import shlex
 import time
 
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.inferencing_config_loader import GoodputSlo, validate_sweep_selector
-from cvs.lib.utils.verdict import evaluate_all
+from cvs.lib.inference.inferencemax_orch import InferenceMaxJob
+from cvs.lib.inference.utils.inferencing_config_loader import validate_sweep_selector
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
-from cvs.lib.inference.vllm_orch import VllmJob
+from cvs.lib.utils.verdict import evaluate_all
 
-import importlib.util as _ilu
-import pathlib as _pl
-
-_spec = _ilu.spec_from_file_location("_vllm_shared", _pl.Path(__file__).with_name("_shared.py"))
+_spec = _ilu.spec_from_file_location("_inferencemax_shared", _pl.Path(__file__).with_name("_shared.py"))
 _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
-test_print_results_table = _mod.test_print_results_table  # exported as a sibling test  # noqa: F841
+test_print_results_table = _mod.test_print_results_table  # noqa: F841
 
 log = globals.log
 
-# Fetch-progress poll: du the cache dir until its size stops growing. The model
-# download streams in parallel shards, so size climbs then plateaus at the full
-# weight set; a stable size across two polls means the fetch settled.
 _FETCH_POLL_COUNT = 80
 _FETCH_POLL_WAIT_S = 30
 _FETCH_PRESENCE_RETRIES = 5
 
 
-
 def pytest_generate_tests(metafunc):
-    """Parametrize test_vllm_inference from the sweep's named-combo + runs selector.
-
-    Lives in the suite module (not conftest) because it parametrizes fixtures
-    only test_vllm_inference consumes -- co-locating the parametrization with
-    its sole consumer. It runs at collection time, before fixtures exist, so it
-    reads the raw config_file JSON directly (it cannot use the variant_config
-    fixture / the typed loader).
-
-    The sweep lists `sequence_combinations` (each with a `name`) once and a
-    `runs` array of `{combo, concurrency}` pairs; one case is emitted per run.
-    No NxM cartesian -- exactly the cells `runs` enumerates.
-    """
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
         return
@@ -58,17 +39,6 @@ def pytest_generate_tests(metafunc):
     sweep = raw.get("sweep", {})
     combos = sweep.get("sequence_combinations", [])
     runs = sweep.get("runs", [])
-    # Validate each raw goodput_slo dict through the same _Forbid model the
-    # typed loader uses. pytest_generate_tests bypasses load_variant (it reads
-    # raw JSON at collection time), so without this a typo'd SLO key would be
-    # silently dropped and a wrong goodput gate would run on hardware.
-    for combo in combos:
-        if combo.get("goodput_slo") is not None:
-            GoodputSlo(**combo["goodput_slo"])
-    # Mirror the typed Sweep validator here (this path reads raw JSON before
-    # load_variant runs) via the shared rule so the two cannot drift: a
-    # duplicate combo name or a run referencing an unknown combo must fail
-    # collection, not silently drop.
     validate_sweep_selector([c["name"] for c in combos], [r["combo"] for r in runs])
     by_name = {c["name"]: c for c in combos}
     cases = []
@@ -91,12 +61,7 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
 
 
-def _num_prompts_for(osl, concurrency):
-    return str(concurrency * 20) if int(osl) >= 8192 else str(concurrency * 50)
-
-
 def _du_bytes(orch, path):
-    """Total bytes under `path` inside the container, or 0 if it doesn't exist yet."""
     out = orch.exec(f"bash -c {shlex.quote(f'du -sb {shlex.quote(path)} 2>/dev/null | cut -f1')}")
     total = 0
     for text in (out or {}).values():
@@ -106,8 +71,7 @@ def _du_bytes(orch, path):
     return total
 
 
-def test_launch_container(orch, variant_config, lifecycle, request):
-    """Stage 1: launch the container. Asserts it is independently observed running."""
+def test_launch_container(orch, lifecycle, request):
     t = time.monotonic()
     ok = orch.setup_containers()
     lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
@@ -119,10 +83,10 @@ def test_launch_container(orch, variant_config, lifecycle, request):
     if not orch.verify_containers_running(name):
         lifecycle.failed = True
         pytest.fail(f"container {name} not running after setup_containers()")
+    time.sleep(30)
 
 
 def test_setup_sshd(orch, lifecycle, request):
-    """Stage 2: start sshd in the container (multinode only; single-node skips it)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     t = time.monotonic()
@@ -131,8 +95,6 @@ def test_setup_sshd(orch, lifecycle, request):
     if not ok:
         lifecycle.failed = True
         pytest.fail("setup_sshd() returned False")
-    # Single-node runs skip starting the in-container sshd (it exists only for
-    # inter-node MPI), so only probe 2224 when there is more than one host.
     if len(orch.hosts) > 1:
         probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
         if not any("OK" in (v or "") for v in (probe or {}).values()):
@@ -141,14 +103,6 @@ def test_setup_sshd(orch, lifecycle, request):
 
 
 def test_model_fetch(orch, variant_config, lifecycle, request):
-    """Stage 3: ensure the model is present in the HF cache (mounted models dir).
-
-    For a remote pull this is the ~152GB download; the row shows its real
-    duration and final size. For an offline/pre-staged model it returns near
-    instantly. Skips (never silently passes) if the cache dir is unconfigured
-    -- without it the fetch target is meaningless. Progress is polled via
-    `du -sb` (size on disk), the robust size-poll proven in the validation run.
-    """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     models_dir = variant_config.paths.models_dir
@@ -160,9 +114,6 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
     orch.exec(f"mkdir -p {shlex.quote(models_dir)}")
 
     if not remote:
-        # Pre-staged model: nothing to download. Confirm bytes are present,
-        # retrying a few times so a cold/slow mount that reads 0 on the first
-        # du does not false-fail a model that is actually there.
         final = 0
         for it in range(_FETCH_PRESENCE_RETRIES):
             final = _du_bytes(orch, models_dir)
@@ -171,15 +122,12 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
                 break
             time.sleep(_FETCH_POLL_WAIT_S)
     else:
-        # Kick a background download into the pinned cache, then poll size until
-        # it stops growing (two equal readings) or we exhaust the poll budget.
         fetch = (
             f"HF_HUB_CACHE={shlex.quote(models_dir)} "
             f"nohup hf download {shlex.quote(variant_config.model.id)} "
             f"> /tmp/hf_fetch.log 2>&1 &"
         )
         orch.exec("bash -c " + shlex.quote(fetch))
-
         prev = -1
         stable = 0
         final = _du_bytes(orch, models_dir)
@@ -203,27 +151,35 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
         pytest.fail(f"no model bytes under {models_dir} after fetch")
 
 
-def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, inf_res_dict, lifecycle, request):
+def test_inferencemax_inference(
+    orch,
+    variant_config,
+    hf_token,
+    seq_combo,
+    concurrency,
+    inf_res_dict,
+    lifecycle,
+    request,
+):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
+
     isl = seq_combo["isl"]
     osl = seq_combo["osl"]
-    job = VllmJob(
+    p = variant_config.params
+    job = InferenceMaxJob(
         orch=orch,
         variant=variant_config,
         hf_token=hf_token,
         isl=isl,
         osl=osl,
         concurrency=concurrency,
-        num_prompts=_num_prompts_for(osl, concurrency),
-        goodput_slo=seq_combo.get("goodput_slo"),
-        client_poll_count=int(variant_config.params.client_poll_count),
+        num_prompts=p.num_prompts,
+        client_poll_count=int(p.client_poll_count),
+        client_poll_wait_s=int(p.client_poll_wait_time),
+        bench_max_failed_requests=int(p.bench_max_failed_requests),
     )
 
-    # A failure mid-sweep flips lifecycle.failed so the remaining cells skip
-    # cleanly (instead of each re-failing) AND the orch leak-guard finalizer
-    # still tears the container down. The explicit teardown row may not run on
-    # the failure path, which is exactly what the finalizer covers.
     try:
         job.stop_server()
         job.build_server_cmd()
@@ -231,6 +187,7 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         job.start_server()
         job.wait_ready()
         lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
+        t_client = time.monotonic()
         job.run_client()
         job.wait_client_complete()
         results = job.parse_results()
@@ -247,27 +204,10 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         concurrency,
     )
     inf_res_dict[key] = results
-    # Verdict is no longer asserted here: each metric is its own test (test_metric,
-    # one HTML row per metric per cell). This test only runs the benchmark and
-    # records the cell's results into the module-scoped inf_res_dict.
+    lifecycle.record(request.node.nodeid, "client_complete", time.monotonic() - t_client)
 
 
 def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, lifecycle, request):
-    """One pytest test (= one HTML row) per perf metric per cell.
-
-    The benchmark already ran once in test_vllm_inference and stashed its results
-    in the module-scoped inf_res_dict; this reads a single cached metric and
-    surfaces it as its own pass/fail row. The value is rendered inline via the
-    Value/Unit table columns (pytest_html_results_table_row in conftest). No GPU
-    work. Skips cleanly when the cell's inference failed/skipped so a missing cell
-    never reports a false green.
-
-    Verdict: when enforce_thresholds is true AND a spec exists for this cell+metric
-    the value is asserted via the shared evaluate_all; otherwise the row is a
-    record-only PASS that simply displays the number. evaluate_all is handed the
-    full per-cell actuals (not just this one metric) so a min_ratio spec can still
-    resolve its reference metric.
-    """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     isl = seq_combo["isl"]
@@ -300,17 +240,10 @@ def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, li
 
 
 def test_teardown(orch, lifecycle, request):
-    """Final stage: explicit container teardown, timed, asserting it is gone.
-
-    Sets lifecycle.torn_down so the orch fixture's leak-guard finalizer no-ops
-    (avoids a double teardown). Runs even if an earlier stage failed -- teardown
-    must happen regardless -- so it does NOT skip on lifecycle.failed.
-    """
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     t = time.monotonic()
     orch.teardown_containers()
     lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t)
     if orch.verify_containers_running(name):
-        # Leave torn_down False so the orch finalizer retries the teardown.
         pytest.fail(f"container {name} still running after teardown_containers()")
     lifecycle.torn_down = True

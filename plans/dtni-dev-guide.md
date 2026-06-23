@@ -1,5 +1,16 @@
 # DTNI suite developer guide
 
+> **⚠️ SUPERSEDED — design doc, not current state.** This guide predates the
+> restructure that shipped. It still references the old `cvs/lib/dtni/` and
+> `cvs/input/dtni/` paths (now `cvs/lib/utils/` + `cvs/lib/inference/utils/`),
+> the `concurrency_levels × sequence_combinations` cartesian (now named combos +
+> a `runs[]` selector), the top-level `image` block (now `container.image`),
+> `OrchestratorConfig.from_dicts` / `container.enabled|launch`, and other
+> pre-merge shapes. For the as-built architecture, read
+> `plans/building-a-cvs-test-suite.md` and each package's `AGENTS.md`. Kept for
+> the design rationale (the §5–§7 *why* behind the seam, the Job split, and the
+> config/threshold split), which is still accurate.
+
 ## 1. Intro and scope
 
 This guide is for CVS developers who already run `cvs run` regularly and have edited a test wrapper or a lib helper, but who haven't worked under the new DTNI (data-center training and inference) layout. The goal is to give you the mental model and the concrete skeleton needed to port an existing suite or author a new one.
@@ -58,7 +69,7 @@ flowchart TD
 
 Phase-by-phase:
 
-1. **Load.** `cvs/lib/dtni/config_loader.py` reads `cvs/input/dtni/<suite>/<variant>/config.json` and `threshold.json`, validates through Pydantic models (`extra="forbid"` everywhere except the runtime args passthrough), runs placeholder substitution in fixed order (cluster → self-reference → cross-block), and returns typed objects. One wrapper per suite, parametrized across all variant directories.
+1. **Load.** Generic substitution and threshold discovery live in `cvs/lib/utils/config_loader.py` (`substitute_config`). Per-suite typed loaders validate the result — for example `cvs/lib/inference/utils/inferencing_config_loader.py` (vLLM) or `cvs/lib/inference/utils/inferencemax_config_loader.py` (InferenceMax). Variant configs live under `cvs/input/config_file/inference/<suite>/<variant>/` with a sibling `*threshold.json`. One wrapper per suite, parametrized across variant directories.
 2. **Setup.** A pytest fixture builds an `OrchestratorConfig` (`cvs/core/orchestrators/factory.py`) from the loaded config and yields an `orch`. The fixture calls `orch.setup_containers()` on entry and `orch.teardown_containers()` on exit. No `test_cleanup_stale_containers` or `test_launch_*_containers` in suite code — those concerns are gone.
 3. **Generated tests.** `pytest_generate_tests` (in the suite's `conftest.py`) reads sweep dimensions from the typed config — `benchmark_params.concurrency_levels × sequence_combinations` for inference, `model_params` presets for training — and parametrizes the workload test. Each parametrize cell constructs a Job, calls its verbs, gets back a flat `actuals` dict, and runs `evaluate_all(actuals, thresholds)`.
 4. **Custom tests.** Suite-specific assertions that aren't part of the sweep grid: firewall disable, NIC setup probe, results-table printer, smoke checks. These live in the wrapper as plain `def test_*` functions and use `orch.exec`/`orch.exec_on_head` to talk to the cluster — never `phdl.exec` or `docker_lib` directly.
@@ -74,8 +85,8 @@ This is the base layout. Copy and replace the framework-specific bits.
 """<suite> — DTNI layout. Phases: load → setup → generated → custom."""
 
 import pytest
-from cvs.lib.dtni.config_loader import load_variant, enumerate_variants
-from cvs.lib.dtni.verdict import evaluate_all
+from cvs.lib.inference.utils.inferencing_config_loader import load_variant
+from cvs.lib.utils.verdict import evaluate_all
 from cvs.lib.<domain>.<framework>_orch import <Framework>Job
 
 
@@ -123,13 +134,14 @@ And the conftest that backs it:
 ```python
 # cvs/tests/<domain>/<framework>/conftest.py
 import pytest
-from cvs.lib.dtni.config_loader import load_variant, enumerate_variants
+from cvs.lib.inference.utils.inferencing_config_loader import load_variant
 from cvs.core.orchestrators.factory import OrchestratorConfig, build_orchestrator
 
 def pytest_generate_tests(metafunc):
     if "variant_config" in metafunc.fixturenames:
-        variants = enumerate_variants("cvs/input/dtni/<suite>")
-        metafunc.parametrize("variant_config", variants, ids=[v.id for v in variants], indirect=True)
+        # Most suites pass a single --config_file; multi-variant wrappers may
+        # glob cvs/input/config_file/<domain>/<suite>/<variant>/*_config.json.
+        ...
     if "cell" in metafunc.fixturenames:
         # Cross-product of sweep dims from the already-resolved variant_config.
         ...

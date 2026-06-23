@@ -1,5 +1,4 @@
-.. meta::
-  :description: Configure the variables in the InferenceMAX configuration files
+.. meta::  :description: Configure the variables in the InferenceMAX configuration files
   :keywords: inference, ROCm, install, cvs, InferenceMAX, vLLM
 
 ***************************************
@@ -16,195 +15,123 @@ The InferenceMAX tests check:
 - **Benchmarking**: Load testing with various concurrency levels and sequence lengths
 - **Result verification**: Expected throughput and latency metrics
 
-Change the parameters as needed in the InferenceMAX configuration file: ``mi300x_singlenode_inferencemax.json`` for single node inference configurations.
+InferenceMAX inputs use per-variant directories under ``cvs/input/config_file/inference/inferencemax_single/<variant>/`` with a suite JSON passed as ``--config_file`` (typically ``<variant>_config.json``). Pass/fail numbers live in the **sole** ``*threshold.json`` in that directory (loaded by :func:`cvs.lib.inference.utils.inferencemax_config_loader.load_variant`). For example, MI300X GPT-OSS 120B single-node uses ``mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json`` plus ``mi300x_gpt_oss_120b_single_threshold.json``.
 
-.. note::
+**InferenceX ATOM / M.. note::
 
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
   - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
+  - **Server**: ``roles.server.serve_args`` and ``roles.server.env`` drive a Python-built ``vllm serve`` command inside the container (same pattern as ``vllm_single``). MI300-class defaults include ``enforce-eager``, ``block-size``, and ``no-enable-prefix-caching``.
+  - **Thresholds**: sibling ``*threshold.json`` in the variant directory (exactly one file; multiple files is an error). Loaded by :func:`cvs.lib.inference.utils.inferencemax_config_loader.load_variant`. Cell keys use ``ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>`` with ``client.*`` metric specs (see vLLM threshold examples). ``test_metric`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all` when ``enforce_thresholds`` is true.
+  - **Sweep**: ``sweep.sequence_combinations`` (named ISL/OSL pairs) plus ``sweep.runs`` (explicit ``{combo, concurrency}`` list). Model id comes from ``model.id``.
 
-``mi300x_singlenode_inferencemax.json``
-========================================
+Pytest and HTML layout (inferencemax_single)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Here's a code snippet of the ``mi300x_singlenode_inferencemax.json`` file for reference:
+.. list-table::
+   :widths: 10 35 55
+   :header-rows: 1
 
-.. dropdown:: ``mi300x_singlenode_inferencemax.json``
+   * - Stage
+     - Test
+     - Notes
+   * - 1
+     - ``test_launch_container``
+     - Host ``docker_lib`` launch; records ``container_launch``.
+   * - 2
+     - ``test_setup_sshd``
+     - Multinode only; single-node skips sshd probe.
+   * - 3
+     - ``test_model_fetch``
+     - Ensures model bytes are present under ``paths.models_dir``.
+   * - 4
+     - ``test_inferencemax_inference``
+     - Parametrized cell; records ``server_ready`` then ``client_complete``.
+   * - 5
+     - ``test_metric``
+     - One HTML row per ``client.*`` metric per cell.
+   * - 6
+     - ``test_print_results_table``
+     - Session results grid from ``inf_res_dict``.
+   * - 7
+     - ``test_teardown``
+     - Explicit teardown; sets ``lifecycle.torn_down`` after verify.
+
+Example variant layout
+======================
+
+Each variant directory contains ``<variant>_config.json`` (``schema_version: 1``) and a sibling ``<variant>_threshold.json``. See ``mi300x_gpt_oss_120b_single/`` for a calibrated GPT-OSS 120B reference.
+
+.. dropdown:: Example ``mi300x_gpt_oss_120b_single_threshold.json`` (excerpt)
 
   .. code:: json
 
     {
-        "config": {
-            "container_image": "rocm/7.0:rocm7.0_ubuntu_22.04_vllm_0.10.1_instinct_20250927_rc1",
-            "container_name": "inference_max_rocm",
-            "_example_nnodes": "4",
-            "nnodes": "4",
-            "inferencemax_repo": "https://github.com/InferenceMAX/InferenceMAX.git",
-            "benchmark_script_repo": "https://github.com/kimbochen/bench_serving.git",
-            "hf_token_file": "/home/{user-id}/.hf_token",
-            "shm_size": "128G",
-            "log_dir": "/home/{user-id}/LOGS",
-            "container_config": {
-                "device_list": [
-                    "/dev/dri",
-                    "/dev/kfd"
-                ],
-                "volume_dict": {
-                    "/home/{user-id}": "/home/{user-id}"
-                },
-                "env_dict": {}
-            }
-        },
-        "benchmark_params": {
-            "gpt-oss-120b": {
-                "backend": "vllm",
-                "base_url": "http://0.0.0.0",
-                "port_no": "8000",
-                "_example_dataset_name": "sharegpt|hf|random|sonnet|burstgpt",
-                "dataset_name": "random",
-                "max_concurrency": "64",
-                "model": "openai/gpt-oss-120b",
-                "num_prompts": "1000",
-                "input_sequence_length": "8192",
-                "output_sequence_length": "1024",
-                "burstiness": "1.0",
-                "seed": "0",
-                "max_model_length": "9216",
-                "random_range_ratio": "0.8",
-                "random_prefix_len": "0",
-                "tensor_parallelism": "8",
-                "_example_tokenizer_mode": "auto|slow|mistral|custom",
-                "tokenizer_mode": "auto",
-                "percentiles_metrics": "ttft,tpot,itl,e2el",
-                "metric_percentiles": "99",
-                "server_script": "gptoss_fp4_mi300x_docker.sh",
-                "bench_serv_script": "benchmark_serving.py",
-                "result_dict": {
-                    "output_throughput_per_sec": "4200",
-                    "mean_ttft_ms": "500",
-                    "mean_tpot_ms": "15"
-                }
-            }
-        }
+      "ISL=7168,OSL=1024,TP=8,CONC=64": {
+        "client.output_throughput": {"kind": "min_tok_s", "value": 4200},
+        "client.mean_ttft_ms": {"kind": "max_ms", "value": 500},
+        "client.mean_tpot_ms": {"kind": "max_ms", "value": 15}
+      }
     }
+
+  Every member of ``GATED_METRICS`` needs a spec in each cell (see the shipped file for the full set). Set ``enforce_thresholds: false`` in ``*_config.json`` until numbers are calibrated.
 
 Parameters
 ==========
 
-Use the parameters in this table to configure the InferenceMAX configuration file.
-
-.. |br| raw:: html
-
-    <br />
+Top-level blocks match the vLLM single-node schema (see ``plans/building-a-cvs-test-suite.md``). InferenceMax-specific notes:
 
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1
 
-   * - Configuration parameters
-     - Default values
+   * - Block / key
+     - Example
      - Description
-   * - ``container_image``
-     - rocm/7.0:rocm7.0_ubuntu_22.04_ |br| vllm_0.10.1_instinct_20250927_rc1
-     - Docker container image with ROCm and vLLM for inference
-   * - ``container_name``
-     - inference_max_rocm
-     - Name of the Docker container instance
-   * - ``nnodes``
-     - 4
-     - Number of nodes in the cluster
-   * - ``inferencemax_repo``
-     - https://github.com/InferenceMAX/ |br| InferenceMAX.git
-     - Git repository URL for InferenceMAX framework
-   * - ``benchmark_script_repo``
-     - https://github.com/kimbochen/ |br| bench_serving.git
-     - Git repository URL for benchmarking scripts
-   * - ``hf_token_file``
-     - ``/home/{user-id}/`` |br| ``.hf_token``
-     - Path to HuggingFace authentication token file for model access
-   * - ``shm_size``
-     - 128G
-     - Shared memory size allocated to the container
-   * - ``log_dir``
-     - ``/home/{user-id}/LOGS``
-     - Directory where inference logs are stored
-   * - ``container_config.`` |br| ``device_list``
-     - Values: |br| - ``"/dev/dri"`` |br| - ``"/dev/kfd"``
-     - List of device paths to mount in the container for GPU access
-   * - ``container_config.`` |br| ``volume_dict``
-     - ``{"/home/{user-id}": "/home/{user-id}"}``
-     - Dictionary mapping host paths to container paths for volume mounts
-   * - ``/home/{user-id}``
-     - ``/home/{user-id}``
-     - User home directory mount
-   * - ``container_config.`` |br| ``env_dict``
-     - Empty
-     - Dictionary of environment variables to set in the container
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.backend``
-     - vllm
-     - Inference backend to use (vLLM)
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.base_url``
-     - http://0.0.0.0
-     - Base URL for the inference server
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.port_no``
-     - 8000
-     - Port number for the inference server
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``dataset_name``
-     - random
-     - Dataset type for benchmarking (sharegpt, hf, random, sonnet, burstgpt)
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``max_concurrency``
-     - 64
-     - Maximum number of concurrent requests during benchmarking
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.model``
-     - openai/gpt-oss-120b
-     - HuggingFace model identifier or path
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``num_prompts``
-     - 1000
-     - Total number of prompts to send during the benchmark
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``input_sequence_length``
-     - 8192
-     - Length of input sequences in tokens
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``output_sequence_`` |br| ``length``
-     - 1024
-     - Expected length of output sequences in tokens
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.burstiness``
-     - 1.0
-     - Request burstiness factor (1.0 = uniform distribution)
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.seed``
-     - 0
-     - Random seed for reproducible benchmark results
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``max_model_length``
-     - 9216
-     - Maximum total sequence length the model can handle
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``random_range_ratio``
-     - 0.8
-     - Range ratio for random dataset generation
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``random_prefix_len``
-     - 0
-     - Prefix length for random dataset generation
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``tensor_parallelism``
-     - 8
-     - Number of GPUs to use for tensor parallelism
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``tokenizer_mode``
-     - auto
-     - Tokenizer mode (auto, slow, mistral, custom)
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``percentiles_metrics``
-     - ttft,tpot,itl,e2el
-     - Comma-separated list of metrics to compute percentiles for (ttft: Time to First Token, tpot: Time Per Output Token, itl: Inter-Token Latency, e2el: End-to-End Latency)
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``metric_percentiles``
-     - 99
-     - Percentile values to compute for metrics (e.g., 99 for 99th percentile)
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.server_script``
-     - gptoss_fp4_mi300x_docker.sh
-     - Script to launch the inference server
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.`` |br| ``bench_serv_script``
-     - benchmark_serving.py
-     - Script to run the benchmarking client
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.result_dict.`` |br| ``output_throughput_`` |br| ``per_sec``
-     - 4200
-     - Expected number of output tokens generated per second
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.result_dict.`` |br| ``mean_ttft_ms``
-     - 500
-     - Expected mean Time to First Token in milliseconds
-   * - ``benchmark_params.`` |br| ``gpt-oss-120b.result_dict.`` |br| ``mean_tpot_ms``
-     - 15
-     - Expected mean Time Per Output Token in milliseconds
+   * - ``framework``
+     - ``inferencemax_single``
+     - Suite identifier passed to the loader.
+   * - ``enforce_thresholds``
+     - ``false``
+     - When false, ``test_metric`` records ``client.*`` values without asserting. Flip to ``true`` after calibrating ``*_threshold.json``.
+   * - ``paths.*``
+     - ``shared_fs``, ``models_dir``, ``log_dir``, ``hf_token_file``
+     - Placeholder-substituted paths. ``models_dir`` is the HF cache pin for serve and fetch.
+   * - ``model.id``
+     - ``openai/gpt-oss-120b``
+     - HuggingFace model id passed to ``vllm serve`` and ``vllm bench serve``.
+   * - ``container.image`` / ``container.name``
+     - ``<changeme>``
+     - Docker image and container name (set per environment).
+   * - ``container.runtime.args``
+     - ``shm_size``, ``volumes``, ``devices``
+     - Bind **only** ``/home/{user-id}:/home/{user-id}`` in ``volumes``; the orchestrator also mounts ``/home/<user>:/workspace``.
+   * - ``roles.server.serve_args``
+     - ``enforce-eager``, ``gpu-memory-utilization``, ``block-size``
+     - Extra ``vllm serve`` flags (Python-built; no host ``.sh`` staging).
+   * - ``roles.server.env``
+     - ``VLLM_ROCM_USE_AITER``, etc.
+     - Container env merged into ``/tmp/server_env_script.sh`` before launch.
+   * - ``params.tensor_parallelism``
+     - ``8``
+     - Tensor-parallel size for serve and bench; appears in threshold cell keys as ``TP``.
+   * - ``params.max_model_length``
+     - ``8192``
+     - Passed to ``vllm serve --max-model-len``. ISL + OSL (with ``random_range_ratio``) must fit.
+   * - ``params.num_prompts``
+     - ``1000``
+     - Prompt count for ``vllm bench serve``.
+   * - ``params.client_poll_count`` / ``client_poll_wait_time``
+     - ``50`` / ``60``
+     - Client completion poll budget.
+   * - ``params.bench_max_failed_requests``
+     - ``0``
+     - After the bench summary, fail when ``Failed requests`` exceeds this cap.
+   * - ``sweep.sequence_combinations``
+     - named ``isl`` / ``osl`` pairs
+     - Named combos referenced by ``sweep.runs``.
+   * - ``sweep.runs``
+     - ``{combo, concurrency}``
+     - Explicit list of cells to run (not a cartesian product).
+
+Legacy monolithic JSON (``config`` + ``benchmark_params``) is no longer supported by ``inferencemax_single``.
