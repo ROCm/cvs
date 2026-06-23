@@ -12,6 +12,11 @@ log = globals.log
 __all__ = ["test_print_results_table"]
 
 
+def _cell(m, key):
+    v = m.get(key)
+    return "-" if v is None else v
+
+
 def test_print_results_table(inf_res_dict):
     if not inf_res_dict:
         log.info("inf_res_dict empty, nothing to print")
@@ -24,7 +29,7 @@ def test_print_results_table(inf_res_dict):
         "Policy",
         "Conc",
         "Host",
-        "Req/s",
+        "Output tok/s",
         "Total tok/s",
         "Mean TTFT (ms)",
         "Mean TPOT (ms)",
@@ -43,11 +48,11 @@ def test_print_results_table(inf_res_dict):
                     policy,
                     conc,
                     host,
-                    m.get("request_throughput_per_sec", "-"),
-                    m.get("total_throughput_per_sec", "-"),
-                    m.get("mean_ttft_ms", "-"),
-                    m.get("mean_tpot_ms", "-"),
-                    m.get("p99_itl_ms", "-"),
+                    _cell(m, "client.output_throughput"),
+                    _cell(m, "client.total_token_throughput"),
+                    _cell(m, "client.mean_ttft_ms"),
+                    _cell(m, "client.mean_tpot_ms"),
+                    _cell(m, "client.p99_itl_ms"),
                 ]
             )
     log.info("\n" + tabulate(rows, headers=headers, tablefmt="github"))
