@@ -1,13 +1,10 @@
 # vLLM benchmark server scripts (shared)
 
-Shell entrypoints for **`vllm serve`** used by CVS **vllm_single** (`VllmJob` in `cvs.lib.inference.vllm_orch`) and **InferenceMax** host-mounted server flows.
+Shell entrypoints for **`vllm serve`** kept for legacy **InferenceBaseJob** flows.
 
-- **`vllm_serve_mi300x.sh`** — default MI300-class server wrapper; the served checkpoint is whatever you set in `MODEL` (the filename is not model-specific). Use **`CVS_GPU_MEMORY_UTIL`** in `container_config.env_dict` for `--gpu-memory-utilization` (legacy `VLLM_GPU_MEMORY_UTIL` is still read once then unset so vLLM does not warn). ROCm **AITER** `VLLM_*` tuning vars may still produce vLLM “unknown env” warnings until those names are whitelisted upstream; they are optional performance knobs.
+- **`vllm_serve_mi300x.sh`** — reference MI300-class server flags (``enforce-eager``, ``gpu-memory-utilization``, etc.). **InferenceMax** and **vllm_single** encode equivalent flags in ``roles.server.serve_args`` instead of running this script.
 
-- Point **vLLM** `paths.benchmark_scripts_dir` (host path, bind-mounted into the container) at a directory that contains copies of—or symlinks to—these files, **or** mount this package directory.
-- Point **InferenceMax** `host_benchmark_scripts_relpath` at `lib/dtni/vllm_benchmark_scripts` (relative to the `cvs` Python package root) unless you override `benchmark_server_script_path`.
-
-**Client benchmarks** prefer the Python file shipped with the installed **vLLM** package under `vllm/benchmarks/<bench_serv_script>` (resolved at runtime inside the container). If that file is missing (many wheels omit `benchmarks/`), CVS falls back to `python -m vllm.entrypoints.cli.main bench serve` with the same flags. CVS no longer clones a third-party `bench_serving` git repo.
+**Client benchmarks** use ``vllm bench serve`` (stock results artifact). CVS no longer clones a third-party ``bench_serving`` git repo for InferenceMax.
 
 If **both** the script path and the bench CLI are unavailable, install bench-capable vLLM in the image (e.g. `pip install 'vllm[bench]'`) or bind-mount a matching `benchmarks/` tree from a vLLM checkout.
 
