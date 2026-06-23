@@ -18,14 +18,27 @@ from pydantic import model_validator
 from typing_extensions import Literal
 
 from cvs.lib.inference.utils.inferencing_config_loader import (
-    Roles,
+    RoleServer,
     Sweep,
 )
 from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
 
 
+class InferenceXAtomRoleServer(RoleServer):
+    # Extra CLI tokens for ``python -m atom.entrypoints.openai_server`` after
+    # ``--model`` / ``--server-port`` (e.g. ``-tp``, ``--kv_cache_dtype``).
+    atom_args: List[str] = []
+
+
+class InferenceXAtomRoles(_Forbid):
+    server: InferenceXAtomRoleServer = InferenceXAtomRoleServer()
+
+
 class InferenceXAtomParams(_Forbid):
+    # ``atom`` uses ATOM openai_server + benchmark_serving; ``vllm`` keeps the
+    # interim uplift path (vllm serve + vllm bench serve).
+    driver: Literal["atom", "vllm"] = "vllm"
     backend: str = "vllm"
     base_url: str = "http://0.0.0.0"
     port_no: str = "8000"
@@ -44,12 +57,14 @@ class InferenceXAtomParams(_Forbid):
     client_poll_count: str = "50"
     client_poll_wait_time: str = "60"
     bench_max_failed_requests: str = "0"
+    bench_extra_args: str = ""
+    result_filename: str = "results"
 
 
 class InferenceXAtomVariantConfig(BaseVariantConfig):
     framework: Literal["inferencex_atom_single"]
     gpu_arch: str
-    roles: Roles = Roles()
+    roles: InferenceXAtomRoles = InferenceXAtomRoles()
     params: InferenceXAtomParams
     sweep: Sweep
 

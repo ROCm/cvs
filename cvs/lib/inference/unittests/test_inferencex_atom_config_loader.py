@@ -30,8 +30,27 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.framework, "inferencex_atom_single")
+        self.assertEqual(variant.params.driver, "vllm")
         self.assertEqual(variant.expected_cells(), ["ISL=7168,OSL=1024,TP=8,CONC=64"])
         self.assertIn("enforce-eager", variant.roles.server.serve_args)
+
+    def test_load_w1_mi300x_atom_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/dtni/inferencex_atom_single/"
+            "deepseek_r1_fp8_mi300x_atom_perf/config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.gpu_arch, "mi300x")
+        self.assertEqual(variant.params.driver, "atom")
+        self.assertEqual(
+            variant.roles.server.atom_args[:4],
+            ["-tp", "8", "--kv_cache_dtype", "fp8"],
+        )
+        self.assertEqual(
+            variant.expected_cells(),
+            ["ISL=1024,OSL=1024,TP=8,CONC=128", "ISL=1024,OSL=1024,TP=8,CONC=256"],
+        )
 
     def test_orchestrator_container_includes_server_env(self):
         sweep = Sweep(

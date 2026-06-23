@@ -4,9 +4,12 @@ All rights reserved.
 
 Standalone InferenceX ATOM single-node job driven by a ContainerOrchestrator.
 
-Mirrors :class:`cvs.lib.inference.vllm_orch.VllmJob`: Python-built ``vllm serve``,
-``vllm bench serve``, and artifact parsing via ``to_client_metrics``. Does NOT
-subclass :class:`cvs.lib.inference.base.InferenceBaseJob`.
+``params.driver=atom`` (target): ``atom.entrypoints.openai_server`` +
+``atom.benchmarks.benchmark_serving`` with ATOM JSON artifacts.
+
+``params.driver=vllm`` (interim uplift): ``vllm serve`` + ``vllm bench serve``.
+
+Does NOT subclass :class:`cvs.lib.inference.base.InferenceBaseJob`.
 '''
 
 from __future__ import annotations
@@ -72,6 +75,7 @@ class InferenceXAtomJob:
         self.log_subdir = log_subdir
 
         p = variant.params
+        self.driver = p.driver
         self.tp = p.tensor_parallelism
         self.port_no = p.port_no
         self.random_range_ratio = p.random_range_ratio
@@ -86,19 +90,31 @@ class InferenceXAtomJob:
         self.dataset_name = p.dataset_name
         self.backend = p.backend
         self.max_model_length = str(p.max_model_length)
+        self.bench_extra_args = (p.bench_extra_args or "").strip()
+        self.result_stem = (p.result_filename or "results").removesuffix(".json")
 
         self.model_id = variant.model.id
         self.log_dir = variant.paths.log_dir
         self.models_dir = variant.paths.models_dir
         self.serve_args = self._merged_serve_args(variant)
+        self.atom_server_args = list(variant.roles.server.atom_args)
         self.server_env = dict(variant.roles.server.env)
 
         self.out_dir = (
             f"{self.log_dir}/{self.log_subdir}/out-node0/"
             f"isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
         )
-        self.server_log = f"{self.out_dir}/vllm_serve_server.log"
+        self.server_log = (
+            f"{self.out_dir}/atom_server.log"
+            if self.driver == "atom"
+            else f"{self.out_dir}/vllm_serve_server.log"
+        )
         self.client_log = f"{self.out_dir}/client.log"
+        self._result_artifact = (
+            f"{self.out_dir}/{self.result_stem}.json"
+            if self.driver == "atom"
+            else f"{self.out_dir}/{self.result_stem}"
+        )
 
         self._precheck_wait = server_precheck_wait_s
         self._warmup_wait = server_warmup_wait_s
@@ -139,10 +155,15 @@ class InferenceXAtomJob:
         env_lines = [
             f"export HF_TOKEN={shlex.quote(self.hf_token)}",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
-            "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
-            "export VLLM_ROCM_USE_AITER_MHA=0",
-            "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
         ]
+        if self.driver == "vllm":
+            env_lines.extend(
+                [
+                    "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
+                    "export VLLM_ROCM_USE_AITER_MHA=0",
+                    "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
+                ]
+            )
         for k, v in self.server_env.items():
             if k in ("CVS_GPU_MEMORY_UTIL", "VLLM_GPU_MEMORY_UTIL", "VLLM_ENFORCE_EAGER"):
                 continue
@@ -150,6 +171,8 @@ class InferenceXAtomJob:
         env_script = "\n".join(env_lines) + "\n"
         self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
         self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
+        if self.driver == "atom":
+            self.orch.exec("bash -c 'rm -rf ~/.cache/atom/* 2>/dev/null || true'")
 
     def _server_argv(self):
         argv = [
@@ -168,18 +191,57 @@ class InferenceXAtomJob:
         argv.extend(self._flatten_serve_args(self.serve_args))
         return argv
 
+    def _atom_server_argv(self):
+        argv = [
+            "python",
+            "-m",
+            "atom.entrypoints.openai_server",
+            "--model",
+            self.model_id,
+            "--server-port",
+            str(self.port_no),
+        ]
+        argv.extend(self.atom_server_args)
+        return argv
+
     def start_server(self):
-        serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv())
+        if self.driver == "atom":
+            serve_cmd = " ".join(shlex.quote(str(a)) for a in self._atom_server_argv())
+        else:
+            serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv())
         inner = (
             f"source /tmp/server_env_script.sh && "
             f"nohup {serve_cmd} > {shlex.quote(self.server_log)} 2>&1 &"
         )
         out = self.orch.exec("bash -c " + shlex.quote(inner))
+        label = "atom" if self.driver == "atom" else "vllm"
         for host, output in out.items():
             if self.EARLY_FAILURE_RE.search(output or ""):
-                raise RuntimeError(f"vllm server failed to launch on {host}: {output[-500:]}")
+                raise RuntimeError(f"{label} server failed to launch on {host}: {output[-500:]}")
+
+    def _atom_health_ok(self):
+        url = f"http://localhost:{self.port_no}/health"
+        out = self.orch.exec(
+            f"curl -sf {shlex.quote(url)} -o /dev/null && echo OK || echo NO"
+        )
+        return bool(out) and all("OK" in (v or "") for v in out.values())
+
+    def _atom_warmup_ok(self):
+        payload = json.dumps(
+            {"model": self.model_id, "prompt": "hi", "max_tokens": 1},
+            separators=(",", ":"),
+        )
+        url = f"http://localhost:{self.port_no}/v1/completions"
+        inner = (
+            f"curl -sf {shlex.quote(url)} -H 'Content-Type: application/json' "
+            f"-d {shlex.quote(payload)} -o /dev/null --max-time 120 && echo OK || echo NO"
+        )
+        out = self.orch.exec("bash -c " + shlex.quote(inner))
+        return bool(out) and all("OK" in (v or "") for v in out.values())
 
     def is_ready(self):
+        if self.driver == "atom":
+            return self._atom_health_ok()
         pattern = self.READINESS_RE.pattern
         out = self.orch.exec(
             f"grep -qiE {shlex.quote(pattern)} {shlex.quote(self.server_log)}",
@@ -191,28 +253,90 @@ class InferenceXAtomJob:
         log.info("waiting %ds for server log to materialise", self._precheck_wait)
         time.sleep(self._precheck_wait)
 
-        out = self.orch.exec(f"tail -30 {shlex.quote(self.server_log)}")
-        for host, output in out.items():
-            if self.EARLY_FAILURE_RE.search(output or ""):
-                raise RuntimeError(f"vllm server early failure on {host}: {output[-500:]}")
+        if self.driver != "atom":
+            out = self.orch.exec(f"tail -30 {shlex.quote(self.server_log)}")
+            for host, output in out.items():
+                if self.EARLY_FAILURE_RE.search(output or ""):
+                    raise RuntimeError(f"vllm server early failure on {host}: {output[-500:]}")
 
         log.info("warmup wait %ds", self._warmup_wait)
         time.sleep(self._warmup_wait)
 
         for it in range(self._server_poll_count):
             if self.is_ready():
-                log.info("server ready (iter=%d)", it)
-                return
+                log.info("server health ready (iter=%d)", it)
+                break
             time.sleep(self._server_poll_wait)
-        raise RuntimeError("vllm server did not become ready before timeout")
+        else:
+            raise RuntimeError("server did not become ready before timeout")
+
+        if self.driver == "atom":
+            for it in range(10):
+                if self._atom_warmup_ok():
+                    log.info("server warmup complete (iter=%d)", it)
+                    return
+                time.sleep(30)
+            raise RuntimeError("atom server warmup did not complete before timeout")
 
     def stop_server(self):
-        log.info("stopping vllm server")
-        self.orch.exec("bash -c 'pkill -f \"vllm serve\" || true'")
+        if self.driver == "atom":
+            log.info("stopping atom server")
+            self.orch.exec(
+                "bash -c "
+                + shlex.quote(
+                    "pkill -f 'atom.entrypoints.openai_server' || "
+                    "pkill -f 'openai_server' || true"
+                )
+            )
+        else:
+            log.info("stopping vllm server")
+            self.orch.exec("bash -c 'pkill -f \"vllm serve\" || true'")
         time.sleep(5)
 
-    def run_client(self):
-        args = [
+    def _atom_client_argv(self):
+        warmups = int(self.concurrency) * 2
+        argv = [
+            "python",
+            "-m",
+            "atom.benchmarks.benchmark_serving",
+            "--model",
+            self.model_id,
+            "--backend",
+            "vllm",
+            "--base-url",
+            f"http://localhost:{self.port_no}",
+            "--dataset-name",
+            self.dataset_name,
+            "--random-input-len",
+            self.isl,
+            "--random-output-len",
+            self.osl,
+            "--random-range-ratio",
+            self.random_range_ratio,
+            "--max-concurrency",
+            self.concurrency,
+            "--num-prompts",
+            self.num_prompts,
+            "--trust-remote-code",
+            "--num-warmups",
+            str(warmups),
+            "--request-rate",
+            self.request_rate,
+            "--ignore-eos",
+            "--save-result",
+            "--percentile-metrics",
+            self.percentile_metrics,
+            "--result-dir",
+            self.out_dir,
+            "--result-filename",
+            f"{self.result_stem}.json",
+        ]
+        if self.bench_extra_args:
+            argv.extend(shlex.split(self.bench_extra_args))
+        return argv
+
+    def _vllm_client_argv(self):
+        return [
             "vllm",
             "bench",
             "serve",
@@ -253,11 +377,18 @@ class InferenceXAtomJob:
             "--result-dir",
             self.out_dir,
             "--result-filename",
-            "results",
+            self.result_stem,
         ]
+
+    def run_client(self):
+        args = self._atom_client_argv() if self.driver == "atom" else self._vllm_client_argv()
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
         client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
         self.orch.exec("bash -c " + shlex.quote(client_cmd))
+
+    def _atom_result_ready(self):
+        out = self.orch.exec(f"test -s {shlex.quote(self._result_artifact)} && echo OK || echo NO")
+        return bool(out) and all("OK" in (v or "") for v in out.values())
 
     def wait_client_complete(self):
         log.info("client initial wait %ds", self._client_initial_wait)
@@ -269,7 +400,10 @@ class InferenceXAtomJob:
             done = []
             for host, output in out.items():
                 txt = output or ""
-                done.append(bool(self.COMPLETION_RE.search(txt)))
+                if self.driver == "atom":
+                    done.append(self._atom_result_ready())
+                else:
+                    done.append(bool(self.COMPLETION_RE.search(txt)))
                 if self.CLIENT_CRASH_RE.search(txt) or self.CLIENT_LAUNCH_FAIL_RE.search(txt):
                     failed.append((host, txt[-500:]))
                 else:
@@ -294,16 +428,20 @@ class InferenceXAtomJob:
         raise RuntimeError("client did not complete before poll cap")
 
     def parse_results(self):
-        artifact = f"{self.out_dir}/results"
-        out = self.orch.exec(f"cat {shlex.quote(artifact)}")
+        out = self.orch.exec(f"cat {shlex.quote(self._result_artifact)}")
         results = {}
         for host, text in out.items():
             text = (text or "").strip()
             if not text:
-                raise RuntimeError(f"empty/missing results artifact on {host}: {artifact}")
+                raise RuntimeError(f"empty/missing results artifact on {host}: {self._result_artifact}")
             try:
                 raw = json.loads(text)
             except (json.JSONDecodeError, ValueError) as e:
-                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}") from e
+                raise RuntimeError(
+                    f"unparseable results artifact on {host}: {self._result_artifact}: {e}"
+                ) from e
+            if self.driver == "atom":
+                raw.setdefault("random_input_len", int(self.isl))
+                raw.setdefault("random_output_len", int(self.osl))
             results[host] = to_client_metrics(raw, tp=self.tp, isl=self.isl)
         return results
