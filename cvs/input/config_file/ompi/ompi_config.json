@@ -1,0 +1,15 @@
+{
+    "ompi":
+    {
+
+       "_comment_install_dir": "Directory where ompi tarball is fectched, install is in ompi-5.0.10/install sub-directory under it",
+       "install_dir": "/home/{user-id}/",
+       "ompi_url": "https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-5.0.10.tar.gz",
+       "disable_oshmem": "True",
+       "disable_mpi_fortran": "True",
+       "hwloc": "Internal",
+       "libevent": "Internal",
+       "pmix": "Internal",
+       "prrte": "Internal"
+    }
+}
