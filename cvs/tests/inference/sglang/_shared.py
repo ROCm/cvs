@@ -144,6 +144,7 @@ def test_print_results_table(inf_res_dict):
         "P99 ITL (ms)",
         "Goodput",
         "Output tok/s/GPU",
+        "MFU (estimated)"
     ]
     rows = []
     for key, host_dict in inf_res_dict.items():
@@ -169,6 +170,7 @@ def test_print_results_table(inf_res_dict):
                     m.get("p99_itl_ms", "-"),
                     m.get("goodput") or "-",
                     m.get("output_throughput_per_gpu_per_sec", "-"),
+                    m.get("mfu", "-"),
                 ]
             )
     log.info("\n\n\n\n======== Performance results ========\n")
