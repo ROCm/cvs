@@ -6,7 +6,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.lib import globals
-from cvs.lib.inference.inferencemax_orch import InferenceMaxJob
 
 log = globals.log
 
@@ -22,13 +21,24 @@ class _LegacyVllmInferenceJobPlaceholder:
         )
 
 
+class _LegacyInferenceMaxInferenceJobPlaceholder:
+    """``InferenceJobFactory`` no longer constructs a host+docker InferenceMax ``InferenceBaseJob``."""
+
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError(
+            "InferenceJobFactory no longer builds a host+docker InferenceMax InferenceBaseJob. "
+            "Use ``cvs.lib.inference.inferencemax_orch.InferenceMaxJob`` with "
+            "``ContainerOrchestrator`` from the tests under ``cvs.tests.inference.inferencemax``."
+        )
+
+
 class InferenceJobFactory:
     """Factory class to create inference job instances based on framework type."""
 
     # Registry of supported frameworks
     _FRAMEWORK_CLASSES = {
         'vllm': _LegacyVllmInferenceJobPlaceholder,
-        'inferencemax': InferenceMaxJob,
+        'inferencemax': _LegacyInferenceMaxInferenceJobPlaceholder,
     }
 
     @classmethod

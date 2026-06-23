@@ -6,11 +6,7 @@ InferenceMax suite config schema (``framework: inferencemax_single``).
 
 Generic paths/model/container/threshold plumbing lives in
 :mod:`cvs.lib.utils.config_loader`. Sweep selector types are shared with
-:mod:`cvs.lib.inference.utils.inferencing_config_loader`. This module adds
-InferenceMax-specific ``params``, ``inferencemax`` options, and adapters that
-produce the legacy ``inference_dict`` / ``benchmark_params`` shapes still
-consumed by :class:`cvs.lib.inference.inferencemax_orch.InferenceMaxJob` until
-the driver is ported (Phase 3).
+:mod:`cvs.lib.inference.utils.inferencing_config_loader`.
 '''
 
 from __future__ import annotations
@@ -27,22 +23,6 @@ from cvs.lib.inference.utils.inferencing_config_loader import (
 )
 from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
-
-# Legacy verify_inference_results metric names keyed from client.* threshold specs.
-_CLIENT_TO_LEGACY_RESULT = {
-    "client.output_throughput": "output_throughput_per_sec",
-    "client.mean_ttft_ms": "mean_ttft_ms",
-    "client.mean_tpot_ms": "mean_tpot_ms",
-}
-
-
-class InferenceMaxOptions(_Forbid):
-    use_host_mounted_server_script: bool = True
-    benchmark_server_script_path: str = "auto"
-    host_benchmark_scripts_relpath: str = "lib/dtni/vllm_benchmark_scripts"
-    vllm_enforce_eager: bool = True
-    inferencemax_repo: str = "https://github.com/SemiAnalysisAI/InferenceX.git"
-    benchmark_script_repo: str = "https://github.com/kimbochen/bench_serving.git"
 
 
 class InferenceMaxParams(_Forbid):
@@ -64,8 +44,6 @@ class InferenceMaxParams(_Forbid):
     client_poll_count: str = "50"
     client_poll_wait_time: str = "60"
     bench_max_failed_requests: str = "0"
-    server_script: str = "fixed_seq_len/vllm_serve_mi300x.sh"
-    bench_serv_script: str = "benchmark_serving.py"
 
 
 class InferenceMaxVariantConfig(BaseVariantConfig):
@@ -74,7 +52,6 @@ class InferenceMaxVariantConfig(BaseVariantConfig):
     roles: Roles = Roles()
     params: InferenceMaxParams
     sweep: Sweep
-    inferencemax: InferenceMaxOptions = InferenceMaxOptions()
 
     def cell_key(self, isl, osl, concurrency):
         return f"ISL={isl},OSL={osl},TP={self.params.tensor_parallelism},CONC={concurrency}"
@@ -121,69 +98,6 @@ def load_variant(config_path, cluster_dict) -> InferenceMaxVariantConfig:
     return InferenceMaxVariantConfig(**raw)
 
 
-def benchmark_model_key(variant: InferenceMaxVariantConfig) -> str:
-    """``benchmark_params`` dict key (basename of ``model.id``)."""
-    return variant.model.id.rsplit("/", 1)[-1]
-
-
-def legacy_inference_dict_from_variant(variant: InferenceMaxVariantConfig) -> Dict[str, Any]:
-    """Build the legacy ``config`` object for :class:`InferenceMaxJob`."""
-    runtime_args = variant.container.runtime.args
-    env = dict(variant.roles.server.env)
-    return {
-        "container_image": variant.container.image,
-        "container_name": variant.container.name,
-        "use_host_mounted_server_script": variant.inferencemax.use_host_mounted_server_script,
-        "benchmark_server_script_path": variant.inferencemax.benchmark_server_script_path,
-        "host_benchmark_scripts_relpath": variant.inferencemax.host_benchmark_scripts_relpath,
-        "vllm_enforce_eager": variant.inferencemax.vllm_enforce_eager,
-        "inferencemax_repo": variant.inferencemax.inferencemax_repo,
-        "benchmark_script_repo": variant.inferencemax.benchmark_script_repo,
-        "hf_token_file": variant.paths.hf_token_file,
-        "shm_size": str(runtime_args.get("shm_size", "128G")),
-        "log_dir": variant.paths.log_dir,
-        "nnodes": "1",
-        "distributed_inference": False,
-        "container_config": {
-            "device_list": list(runtime_args.get("devices") or ["/dev/dri", "/dev/kfd"]),
-            "volume_dict": _volume_dict_from_container(variant),
-            "env_dict": env,
-        },
-    }
-
-
-def _legacy_result_dict_from_thresholds(variant: InferenceMaxVariantConfig) -> Dict[str, Dict[str, str]]:
-    out: Dict[str, Dict[str, str]] = {}
-    for cell_key, specs in variant.thresholds.items():
-        if not isinstance(specs, dict):
-            continue
-        legacy: Dict[str, str] = {}
-        for client_key, legacy_key in _CLIENT_TO_LEGACY_RESULT.items():
-            spec = specs.get(client_key)
-            if isinstance(spec, dict) and "value" in spec:
-                legacy[legacy_key] = str(spec["value"])
-        if legacy:
-            out[cell_key] = legacy
-    return out
-
-
-def legacy_benchmark_params_from_variant(variant: InferenceMaxVariantConfig) -> Dict[str, Dict[str, Any]]:
-    """Build the legacy ``benchmark_params`` object for :class:`InferenceMaxJob`."""
-    key = benchmark_model_key(variant)
-    by_name = {c.name: c for c in variant.sweep.sequence_combinations}
-    first = variant.sweep.runs[0]
-    combo = by_name[first.combo]
-    cell = {
-        **variant.params.model_dump(),
-        "model": variant.model.id,
-        "input_sequence_length": str(combo.isl),
-        "output_sequence_length": str(combo.osl),
-        "max_concurrency": str(first.concurrency),
-        "result_dict": _legacy_result_dict_from_thresholds(variant),
-    }
-    return {key: cell}
-
-
 def placeholder_gated_threshold_cell(
     *,
     output_throughput_min: float = 0,
@@ -195,7 +109,7 @@ def placeholder_gated_threshold_cell(
     """Return one sweep cell's ``client.*`` specs covering every ``GATED_METRICS`` member."""
     loose_ms = {"kind": "max_ms", "value": 1_000_000}
     loose_tok = {"kind": "min_tok_s", "value": 0}
-    cell: Dict[str, Any] = {
+    return {
         "client.total_token_throughput": loose_tok,
         "client.output_throughput": {"kind": "min_tok_s", "value": output_throughput_min},
         "client.mean_ttft_ms": {"kind": "max_ms", "value": mean_ttft_max_ms},
@@ -217,19 +131,10 @@ def placeholder_gated_threshold_cell(
         "client.p90_e2el_ms": loose_ms,
         "client.p95_e2el_ms": loose_ms,
         "client.p99_e2el_ms": loose_ms,
+        "client.p99_e2el_ms": loose_ms,
         "client.success_rate": {"kind": "min", "value": success_rate_min},
         "client.failed": {"kind": "max", "value": failed_max},
     }
-    return cell
-
-
-def _volume_dict_from_container(variant: InferenceMaxVariantConfig) -> Dict[str, str]:
-    out: Dict[str, str] = {}
-    for vol in variant.container.runtime.args.get("volumes") or []:
-        if isinstance(vol, str) and ":" in vol:
-            host, container = vol.split(":", 1)
-            out[host] = container
-    return out
 
 
 def orchestrator_container_from_variant(variant: InferenceMaxVariantConfig) -> Dict[str, Any]:
