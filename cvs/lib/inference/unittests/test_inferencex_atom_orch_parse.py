@@ -28,8 +28,9 @@ class FakeOrch:
         return self.exec_return
 
 
-def _fake_variant():
+def _fake_variant(*, driver="vllm"):
     params = SimpleNamespace(
+        driver=driver,
         tensor_parallelism=str(_TP),
         port_no="8000",
         random_range_ratio="0.8",
@@ -44,8 +45,10 @@ def _fake_variant():
         dataset_name="random",
         backend="vllm",
         max_model_length="8192",
+        bench_extra_args="",
+        result_filename="results",
     )
-    roles = SimpleNamespace(server=SimpleNamespace(serve_args={}, env={}))
+    roles = SimpleNamespace(server=SimpleNamespace(serve_args={}, atom_args=[], env={}))
     paths = SimpleNamespace(log_dir="/LOGS", models_dir="/models")
     model = SimpleNamespace(id="openai/gpt-oss-120b")
     return SimpleNamespace(params=params, roles=roles, paths=paths, model=model)
@@ -56,7 +59,7 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         raw = json.loads((_FIXTURES / "vllm_results_sample.json").read_text())
         job = InferenceXAtomJob(
             orch=FakeOrch(exec_return={"node0": json.dumps(raw)}),
-            variant=_fake_variant(),
+            variant=_fake_variant(driver="vllm"),
             hf_token="tok",
             isl=_ISL,
             osl=_OSL,
@@ -67,6 +70,21 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         metrics = out["node0"]
         self.assertIn("client.output_throughput", metrics)
         self.assertIn("client.mean_ttft_ms", metrics)
+
+    def test_parse_results_atom_json_suffix(self):
+        raw = json.loads((_FIXTURES / "vllm_results_sample.json").read_text())
+        job = InferenceXAtomJob(
+            orch=FakeOrch(exec_return={"node0": json.dumps(raw)}),
+            variant=_fake_variant(driver="atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertTrue(job._result_artifact.endswith("/results.json"))
+        out = job.parse_results()
+        self.assertIn("client.output_throughput", out["node0"])
 
 
 if __name__ == "__main__":

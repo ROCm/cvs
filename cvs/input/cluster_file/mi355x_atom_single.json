@@ -1,0 +1,30 @@
+{
+  "_comment": "Single-node MI355X example for inferencex_atom_single (ATOM driver). Pin image to match variant config / ATOM CI run.",
+  "orchestrator": "container",
+  "username": "{user-id}",
+  "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+  "head_node_dict": {
+    "mgmt_ip": "{xx.xx.xx.xx|hostname}"
+  },
+  "env_vars": {},
+  "node_dict": {
+    "{xx.xx.xx.xx|hostname}": {
+      "bmc_ip": "NA",
+      "vpc_ip": "{xx.xx.xx.xx|hostname}"
+    }
+  },
+  "container": {
+    "lifetime": "per_run",
+    "image": "rocm/atom-dev:nightly_202606211542",
+    "name": "cvs_atom_mi355x",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G"
+      }
+    }
+  }
+}
