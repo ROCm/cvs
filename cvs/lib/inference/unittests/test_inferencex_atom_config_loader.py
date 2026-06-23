@@ -2,14 +2,14 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for cvs.lib.inference.utils.inferencemax_config_loader.
+Unit tests for cvs.lib.inference.utils.inferencex_atom_config_loader.
 '''
 
 import unittest
 from pathlib import Path
 
-from cvs.lib.inference.utils.inferencemax_config_loader import (
-    InferenceMaxVariantConfig,
+from cvs.lib.inference.utils.inferencex_atom_config_loader import (
+    InferenceXAtomVariantConfig,
     load_variant,
     orchestrator_container_from_variant,
     placeholder_gated_threshold_cell,
@@ -21,15 +21,15 @@ def _cluster_dict():
     return {"username": "testuser"}
 
 
-class TestInferenceMaxConfigLoader(unittest.TestCase):
+class TestInferenceXAtomConfigLoader(unittest.TestCase):
     def test_load_mi300x_sample_config(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencemax_single/"
+            "input/config_file/inference/inferencex_atom_single/"
             "mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json"
         )
         variant = load_variant(config, _cluster_dict())
-        self.assertEqual(variant.framework, "inferencemax_single")
+        self.assertEqual(variant.framework, "inferencex_atom_single")
         self.assertEqual(variant.expected_cells(), ["ISL=7168,OSL=1024,TP=8,CONC=64"])
         self.assertIn("enforce-eager", variant.roles.server.serve_args)
 
@@ -41,9 +41,9 @@ class TestInferenceMaxConfigLoader(unittest.TestCase):
         thresholds = {
             "ISL=7168,OSL=1024,TP=8,CONC=64": placeholder_gated_threshold_cell(),
         }
-        variant = InferenceMaxVariantConfig(
+        variant = InferenceXAtomVariantConfig(
             schema_version=1,
-            framework="inferencemax_single",
+            framework="inferencex_atom_single",
             gpu_arch="mi300x",
             enforce_thresholds=False,
             paths={

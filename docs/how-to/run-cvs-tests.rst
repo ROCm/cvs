@@ -41,8 +41,8 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
       • ib_perf_bw_test
       • install_ibperf_tools
   
-    cvs.tests.inference.inferencemax (1 test suite)
-      • inferencemax_single
+    cvs.tests.inference.inferencex_atom (1 test suite)
+      • inferencex_atom_single
   
     cvs.tests.inference.pytorch_xdit (2 test suites)
       • pytorch_xdit_flux1_dev_single
@@ -625,29 +625,29 @@ Use these scripts to run the Mori tests.
   cvs run mori_benchmark_test --cluster_file input/cluster_file/cluster.json --config_file input/config_file/mori/mi35x_mori_config.json --html=/var/www/html/cvs/mori.html --capture=tee-sys --self-contained-html --log-file=/tmp/mori.log -vvv -s
 
 
-Inferencemax test scripts
+InferenceX ATOM test scripts
 ------------------------------
 
-You can list all available Inferencemax test cases using the CLI:
+You can list all available InferenceX ATOM test cases using the CLI:
 
 .. code:: bash
 
-  cvs list inferencemax_single
+  cvs list inferencex_atom_single
 
 .. code:: text
 
-  Available tests in inferencemax_single:
+  Available tests in inferencex_atom_single:
     - test_launch_container
-    - test_inferencemax_inference
+    - test_inferencex_atom_inference
     - test_print_results_table
     - test_teardown
 
-Use these scripts to run the Inferencemax tests. Supply your own suite JSON
-(``config`` + ``benchmark_params``); see :doc:`../reference/configuration-files/inferencemax`.
+Use these scripts to run the InferenceX ATOM tests. Supply your own suite JSON
+(``schema_version: 1`` variant config); see :doc:`../reference/configuration-files/inferencex_atom`.
 
 .. code:: bash
 
-  cvs run inferencemax_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencemax_single/mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json --html=/var/www/html/cvs/inferencemax.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencemax.log -vvv -s
+  cvs run inferencex_atom_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencex_atom_single/mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json --html=/var/www/html/cvs/inferencex_atom.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencex_atom.log -vvv -s
 
 
 Pytorch xdit test scripts
@@ -749,7 +749,7 @@ VLLM test scripts
 
 Single-node vLLM benchmarks use one parametrized suite, ``vllm_single``. Each **variant**
 is a directory under ``cvs/input/config_file/inference/vllm_single/<variant>/`` containing
-``*_config.json`` and a sibling ``*_threshold.json`` (see :func:`cvs.lib.inference.utils.inferencing_config_loader.load_variant` for vLLM, or :func:`cvs.lib.inference.utils.inferencemax_config_loader.load_variant` for InferenceMax).
+``*_config.json`` and a sibling ``*_threshold.json`` (see :func:`cvs.lib.inference.utils.inferencing_config_loader.load_variant` for vLLM, or :func:`cvs.lib.inference.utils.inferencex_atom_config_loader.load_variant` for InferenceX ATOM).
 Point ``--config_file`` at the variant's ``*_config.json`` and ``--cluster_file`` at a cluster
 JSON that matches your hardware (for example ``input/cluster_file/mi300x_vllm_single.json``).
 

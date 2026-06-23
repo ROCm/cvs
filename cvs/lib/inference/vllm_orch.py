@@ -400,7 +400,7 @@ class VllmJob:
         missing/empty/unparseable -- the test wraps the job in try/except ... raise,
         so this hard-fails the cell rather than recording an empty (silently-green)
         row. The fetch lives here because artifact layout is job-specific; the
-        transform lives in inference.utils so distributed/disagg/InferenceMax can reuse it.
+        transform lives in inference.utils so distributed/disagg/InferenceX ATOM can reuse it.
         """
         artifact = f"{self.out_dir}/results"
         out = self.orch.exec(f"cat {shlex.quote(artifact)}")

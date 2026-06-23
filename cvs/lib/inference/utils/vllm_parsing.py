@@ -12,7 +12,7 @@ lays its artifacts out differently -- single-node `cat`, disagg prefill+decode,
 distributed rank-0 vs all-ranks) and hand the parsed/raw payload in here.
 
 Keeping the transforms pure makes them reusable across jobs (single-node,
-distributed, disaggregated, InferenceMax) and unit-testable with plain
+distributed, disaggregated, InferenceX ATOM) and unit-testable with plain
 dict/string fixtures -- no fake orchestrator required.
 
 Namespacing contract:
@@ -81,7 +81,7 @@ def to_client_metrics(raw, *, tp, isl):
 # dict to_client_metrics returns. request_rate is omitted (stock emits the
 # string "inf"). This is the *display surface* of the client.* vocabulary above
 # -- it lives here, beside to_client_metrics, so every vLLM flavor (single-node,
-# distributed, disaggregated, InferenceMax) shares one definition instead of
+# distributed, disaggregated, InferenceX ATOM) shares one definition instead of
 # each suite re-listing the rows.
 CLIENT_METRICS = [
     ("max_concurrency", "-"),

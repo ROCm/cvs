@@ -1,13 +1,13 @@
-.. meta::  :description: Configure the variables in the InferenceMAX configuration files
-  :keywords: inference, ROCm, install, cvs, InferenceMAX, vLLM
+.. meta::  :description: Configure the variables in the InferenceX ATOM configuration files
+  :keywords: inference, ROCm, install, cvs, InferenceX ATOM, vLLM
 
 ***************************************
-InferenceMAX inference configuration file
+InferenceX ATOM inference configuration file
 ***************************************
 
-InferenceMAX tests validate inference performance for large language models (LLMs) using vLLM backend on AMD GPU clusters. These tests ensure optimal inference throughput, latency, and token generation performance for AI serving workloads.
+InferenceX ATOM tests validate inference performance for large language models (LLMs) using vLLM backend on AMD GPU clusters. These tests ensure optimal inference throughput, latency, and token generation performance for AI serving workloads.
 
-The InferenceMAX tests check:
+The InferenceX ATOM tests check:
 
 - **Container orchestration**: Docker setup with ROCm for inference workloads
 - **Model serving**: vLLM backend initialization and model loading
@@ -15,18 +15,18 @@ The InferenceMAX tests check:
 - **Benchmarking**: Load testing with various concurrency levels and sequence lengths
 - **Result verification**: Expected throughput and latency metrics
 
-InferenceMAX inputs use per-variant directories under ``cvs/input/config_file/inference/inferencemax_single/<variant>/`` with a suite JSON passed as ``--config_file`` (typically ``<variant>_config.json``). Pass/fail numbers live in the **sole** ``*threshold.json`` in that directory (loaded by :func:`cvs.lib.inference.utils.inferencemax_config_loader.load_variant`). For example, MI300X GPT-OSS 120B single-node uses ``mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json`` plus ``mi300x_gpt_oss_120b_single_threshold.json``.
+InferenceX ATOM inputs use per-variant directories under ``cvs/input/config_file/inference/inferencex_atom_single/<variant>/`` with a suite JSON passed as ``--config_file`` (typically ``<variant>_config.json``). Pass/fail numbers live in the **sole** ``*threshold.json`` in that directory (loaded by :func:`cvs.lib.inference.utils.inferencex_atom_config_loader.load_variant`). For example, MI300X GPT-OSS 120B single-node uses ``mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json`` plus ``mi300x_gpt_oss_120b_single_threshold.json``.
 
-**InferenceX ATOM / M.. note::
+**InferenceX ATOM / MI300X note:**
 
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
   - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
   - **Server**: ``roles.server.serve_args`` and ``roles.server.env`` drive a Python-built ``vllm serve`` command inside the container (same pattern as ``vllm_single``). MI300-class defaults include ``enforce-eager``, ``block-size``, and ``no-enable-prefix-caching``.
-  - **Thresholds**: sibling ``*threshold.json`` in the variant directory (exactly one file; multiple files is an error). Loaded by :func:`cvs.lib.inference.utils.inferencemax_config_loader.load_variant`. Cell keys use ``ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>`` with ``client.*`` metric specs (see vLLM threshold examples). ``test_metric`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all` when ``enforce_thresholds`` is true.
+  - **Thresholds**: sibling ``*threshold.json`` in the variant directory (exactly one file; multiple files is an error). Loaded by :func:`cvs.lib.inference.utils.inferencex_atom_config_loader.load_variant`. Cell keys use ``ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>`` with ``client.*`` metric specs (see vLLM threshold examples). ``test_metric`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all` when ``enforce_thresholds`` is true.
   - **Sweep**: ``sweep.sequence_combinations`` (named ISL/OSL pairs) plus ``sweep.runs`` (explicit ``{combo, concurrency}`` list). Model id comes from ``model.id``.
 
-Pytest and HTML layout (inferencemax_single)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Pytest and HTML layout (inferencex_atom_single)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :widths: 10 35 55
@@ -45,7 +45,7 @@ Pytest and HTML layout (inferencemax_single)
      - ``test_model_fetch``
      - Ensures model bytes are present under ``paths.models_dir``.
    * - 4
-     - ``test_inferencemax_inference``
+     - ``test_inferencex_atom_inference``
      - Parametrized cell; records ``server_ready`` then ``client_complete``.
    * - 5
      - ``test_metric``
@@ -79,7 +79,7 @@ Each variant directory contains ``<variant>_config.json`` (``schema_version: 1``
 Parameters
 ==========
 
-Top-level blocks match the vLLM single-node schema (see ``plans/building-a-cvs-test-suite.md``). InferenceMax-specific notes:
+Top-level blocks match the vLLM single-node schema (see ``plans/building-a-cvs-test-suite.md``). InferenceX ATOM-specific notes:
 
 .. list-table::
    :widths: 3 3 5
@@ -89,7 +89,7 @@ Top-level blocks match the vLLM single-node schema (see ``plans/building-a-cvs-t
      - Example
      - Description
    * - ``framework``
-     - ``inferencemax_single``
+     - ``inferencex_atom_single``
      - Suite identifier passed to the loader.
    * - ``enforce_thresholds``
      - ``false``
@@ -134,4 +134,4 @@ Top-level blocks match the vLLM single-node schema (see ``plans/building-a-cvs-t
      - ``{combo, concurrency}``
      - Explicit list of cells to run (not a cartesian product).
 
-Legacy monolithic JSON (``config`` + ``benchmark_params``) is no longer supported by ``inferencemax_single``.
+Legacy monolithic JSON (``config`` + ``benchmark_params``) is no longer supported by ``inferencex_atom_single``.

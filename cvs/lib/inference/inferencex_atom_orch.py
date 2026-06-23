@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Standalone InferenceMax single-node job driven by a ContainerOrchestrator.
+Standalone InferenceX ATOM single-node job driven by a ContainerOrchestrator.
 
 Mirrors :class:`cvs.lib.inference.vllm_orch.VllmJob`: Python-built ``vllm serve``,
 ``vllm bench serve``, and artifact parsing via ``to_client_metrics``. Does NOT
@@ -22,8 +22,8 @@ from cvs.lib.inference.utils.vllm_parsing import to_client_metrics
 log = globals.log
 
 
-class InferenceMaxJob:
-    """Single-node InferenceMax benchmark job driven by an injected ContainerOrchestrator."""
+class InferenceXAtomJob:
+    """Single-node InferenceX ATOM benchmark job driven by an injected ContainerOrchestrator."""
 
     READINESS_RE = re.compile(r"Application startup complete|Uvicorn running|Started server", re.I)
     COMPLETION_RE = re.compile(r"Serving Benchmark Result", re.I)
@@ -52,7 +52,7 @@ class InferenceMaxJob:
         osl,
         concurrency,
         num_prompts,
-        log_subdir="inference-max",
+        log_subdir="inferencex-atom",
         server_precheck_wait_s=30,
         server_warmup_wait_s=330,
         server_poll_count=60,

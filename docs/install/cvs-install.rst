@@ -307,14 +307,14 @@ Inference
 
 CVS provides comprehensive inference testing configurations for various LLM serving frameworks and models.
 
-**InferenceMAX (vLLM Benchmarking)**
+**InferenceX ATOM (vLLM Benchmarking)**
 
-1. Copy the InferenceMAX configuration files (``*_config.json`` and optional sibling ``*_threshold.json``):
+1. Copy the InferenceX ATOM configuration files (``*_config.json`` and optional sibling ``*_threshold.json``):
 
-   .. code:: bash
+.. code:: bash
 
-     cvs copy-config inference/inferencemax_single/mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json --output ~/my_inferencemax_config.json
-     cvs copy-config inference/inferencemax_single/mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_threshold.json --output ~/my_inferencemax_threshold.json
+     cvs copy-config inference/inferencex_atom_single/mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json --output ~/my_inferencex_atom_config.json
+     cvs copy-config inference/inferencex_atom_single/mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_threshold.json --output ~/my_inferencex_atom_threshold.json
 
 2. Edit the files and modify these parameters:
 

@@ -17,7 +17,7 @@ This guide is for CVS developers who already run `cvs run` regularly and have ed
 
 The framing: today every suite is a hand-written pytest module that ships its own container lifecycle, its own config parsing, and its own threshold checks inline. Under DTNI, those concerns move out of the test module into shared machinery — a typed config loader, an `orch` (orchestrator) fixture that owns the container, and a per-framework Job class that bundles the framework-specific verbs — so the test module shrinks to a few phases: load → setup → generated tests → custom tests.
 
-`vllm_single` (inference) and `megatron_*` (training) appear as running examples. The same shape applies to sglang, inferencemax, pytorch_xdit, jax.
+`vllm_single` (inference) and `megatron_*` (training) appear as running examples. The same shape applies to sglang, inferencex_atom, pytorch_xdit, jax.
 
 ## 2. Old lifecycle: `cvs run` to HTML report
 
@@ -69,7 +69,7 @@ flowchart TD
 
 Phase-by-phase:
 
-1. **Load.** Generic substitution and threshold discovery live in `cvs/lib/utils/config_loader.py` (`substitute_config`). Per-suite typed loaders validate the result — for example `cvs/lib/inference/utils/inferencing_config_loader.py` (vLLM) or `cvs/lib/inference/utils/inferencemax_config_loader.py` (InferenceMax). Variant configs live under `cvs/input/config_file/inference/<suite>/<variant>/` with a sibling `*threshold.json`. One wrapper per suite, parametrized across variant directories.
+1. **Load.** Generic substitution and threshold discovery live in `cvs/lib/utils/config_loader.py` (`substitute_config`). Per-suite typed loaders validate the result — for example `cvs/lib/inference/utils/inferencing_config_loader.py` (vLLM) or `cvs/lib/inference/utils/inferencex_atom_config_loader.py` (InferenceX ATOM). Variant configs live under `cvs/input/config_file/inference/<suite>/<variant>/` with a sibling `*threshold.json`. One wrapper per suite, parametrized across variant directories.
 2. **Setup.** A pytest fixture builds an `OrchestratorConfig` (`cvs/core/orchestrators/factory.py`) from the loaded config and yields an `orch`. The fixture calls `orch.setup_containers()` on entry and `orch.teardown_containers()` on exit. No `test_cleanup_stale_containers` or `test_launch_*_containers` in suite code — those concerns are gone.
 3. **Generated tests.** `pytest_generate_tests` (in the suite's `conftest.py`) reads sweep dimensions from the typed config — `benchmark_params.concurrency_levels × sequence_combinations` for inference, `model_params` presets for training — and parametrizes the workload test. Each parametrize cell constructs a Job, calls its verbs, gets back a flat `actuals` dict, and runs `evaluate_all(actuals, thresholds)`.
 4. **Custom tests.** Suite-specific assertions that aren't part of the sweep grid: firewall disable, NIC setup probe, results-table printer, smoke checks. These live in the wrapper as plain `def test_*` functions and use `orch.exec`/`orch.exec_on_head` to talk to the cluster — never `phdl.exec` or `docker_lib` directly.

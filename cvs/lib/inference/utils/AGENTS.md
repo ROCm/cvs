@@ -9,7 +9,7 @@ schema and the vLLM client-metric vocabulary.
 ## What's here
 
 - `inferencing_config_loader.py` — the vLLM config schema (`VariantConfig`, sweep, `load_variant`).
-- `inferencemax_config_loader.py` — the InferenceMax config schema (`InferenceMaxVariantConfig`, `InferenceMaxParams`, `load_variant`, `orchestrator_container_from_variant`).
+- `inferencex_atom_config_loader.py` — the InferenceX ATOM config schema (`InferenceXAtomVariantConfig`, `InferenceXAtomParams`, `load_variant`, `orchestrator_container_from_variant`).
 - `vllm_parsing.py` — pure parsers for vLLM benchmark artifacts:
   `to_client_metrics()`, the `client.*` namespace, `CLIENT_METRICS` (the
   display surface), and `GATED_METRICS` (the asserted SLO subset).
@@ -17,14 +17,14 @@ schema and the vLLM client-metric vocabulary.
 ## Public entry points
 
 - `inferencing_config_loader.load_variant(...) -> VariantConfig` — vLLM suite loader.
-- `inferencemax_config_loader.load_variant(...) -> InferenceMaxVariantConfig` — InferenceMax suite loader.
+- `inferencex_atom_config_loader.load_variant(...) -> InferenceXAtomVariantConfig` — InferenceX ATOM suite loader.
 - `to_client_metrics(raw, *, tp, isl) -> {client.*: value}`
   Maps a stock `vllm bench serve` results dict to the namespaced metric dict.
   **Pure** — no I/O, no orchestration. Caller fetches + json-loads the artifact.
 - `CLIENT_METRICS` / `CLIENT_METRIC_UNITS`
   The ordered `(short_name, unit)` list that becomes one HTML row per metric. The
   single definition every vLLM flavour (single-node, distributed, disagg,
-  InferenceMax) shares — don't re-list rows per suite.
+  InferenceX ATOM) shares — don't re-list rows per suite.
 - `GATED_METRICS`
   The asserted subset of `CLIENT_METRICS`: the perf+health SLO contract a
   calibrated run must *assert*, not merely display. Membership = "out of range

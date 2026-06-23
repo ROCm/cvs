@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-InferenceMax suite config schema (``framework: inferencemax_single``).
+InferenceX ATOM suite config schema (``framework: inferencex_atom_single``).
 
 Generic paths/model/container/threshold plumbing lives in
 :mod:`cvs.lib.utils.config_loader`. Sweep selector types are shared with
@@ -25,7 +25,7 @@ from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
 
 
-class InferenceMaxParams(_Forbid):
+class InferenceXAtomParams(_Forbid):
     backend: str = "vllm"
     base_url: str = "http://0.0.0.0"
     port_no: str = "8000"
@@ -46,11 +46,11 @@ class InferenceMaxParams(_Forbid):
     bench_max_failed_requests: str = "0"
 
 
-class InferenceMaxVariantConfig(BaseVariantConfig):
-    framework: Literal["inferencemax_single"]
+class InferenceXAtomVariantConfig(BaseVariantConfig):
+    framework: Literal["inferencex_atom_single"]
     gpu_arch: str
     roles: Roles = Roles()
-    params: InferenceMaxParams
+    params: InferenceXAtomParams
     sweep: Sweep
 
     def cell_key(self, isl, osl, concurrency):
@@ -91,11 +91,11 @@ class InferenceMaxVariantConfig(BaseVariantConfig):
         return self
 
 
-def load_variant(config_path, cluster_dict) -> InferenceMaxVariantConfig:
-    """Load and validate an InferenceMax variant config + sibling ``*threshold.json``."""
+def load_variant(config_path, cluster_dict) -> InferenceXAtomVariantConfig:
+    """Load and validate an InferenceX ATOM variant config + sibling ``*threshold.json``."""
     raw, thresholds = substitute_config(config_path, cluster_dict)
     raw["thresholds"] = thresholds
-    return InferenceMaxVariantConfig(**raw)
+    return InferenceXAtomVariantConfig(**raw)
 
 
 def placeholder_gated_threshold_cell(
@@ -131,13 +131,12 @@ def placeholder_gated_threshold_cell(
         "client.p90_e2el_ms": loose_ms,
         "client.p95_e2el_ms": loose_ms,
         "client.p99_e2el_ms": loose_ms,
-        "client.p99_e2el_ms": loose_ms,
         "client.success_rate": {"kind": "min", "value": success_rate_min},
         "client.failed": {"kind": "max", "value": failed_max},
     }
 
 
-def orchestrator_container_from_variant(variant: InferenceMaxVariantConfig) -> Dict[str, Any]:
+def orchestrator_container_from_variant(variant: InferenceXAtomVariantConfig) -> Dict[str, Any]:
     """``container`` block for :class:`OrchestratorConfig` (includes server env)."""
     block = variant.container.model_dump()
     server_env = variant.roles.server.env

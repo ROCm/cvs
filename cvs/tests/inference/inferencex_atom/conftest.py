@@ -10,7 +10,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.inference.utils.inferencemax_config_loader import (
+from cvs.lib.inference.utils.inferencex_atom_config_loader import (
     load_variant,
     orchestrator_container_from_variant,
 )
@@ -76,7 +76,7 @@ def orch(cluster_dict, variant_config, lifecycle):
     o = OrchestratorFactory.create_orchestrator(log, cfg)
     yield o
     if not lifecycle.torn_down:
-        log.info("orch fixture leak-guard: tearing down InferenceMax containers")
+        log.info("orch fixture leak-guard: tearing down InferenceX ATOM containers")
         o.teardown_containers()
 
 
@@ -99,7 +99,7 @@ def pytest_collection_modifyitems(items):
         "test_launch_container": 0,
         "test_setup_sshd": 1,
         "test_model_fetch": 2,
-        "test_inferencemax_inference": 3,
+        "test_inferencex_atom_inference": 3,
         "test_metric": 4,
         "test_print_results_table": 5,
         "test_teardown": 6,
