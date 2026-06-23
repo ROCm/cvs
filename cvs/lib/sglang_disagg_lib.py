@@ -176,6 +176,7 @@ class SglangDisaggPD:
         self.inf_dict.setdefault('nic_type', 'ainic')
         self.inf_dict.setdefault('nccl_ib_hca_list', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
         self.inf_dict.setdefault('nccl_ib_hca', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
+        self.inf_dict.setdefault('hca_id_prefix', 'bnxt_')
         self.inf_dict.setdefault('nccl_socket_ifname', 'eno0')
         self.inf_dict.setdefault('gloo_socket_ifname', 'eno0')
         self.inf_dict.setdefault('nccl_ib_gid_index', '1')
@@ -202,6 +203,7 @@ class SglangDisaggPD:
         self.nccl_debug = self.inf_dict['nccl_debug']
         self.data_cache_dir = self.inf_dict['data_cache_dir']
         self.log_dir = self.inf_dict['log_dir']
+        self.hca_id_prefix = str(self.inf_dict['hca_id_prefix']).strip()
 
         # set defaults for benchmark param dict if not passed via JSON file
         self.bp_dict.setdefault('backend', 'sglang')
@@ -291,12 +293,13 @@ class SglangDisaggPD:
                     sleep 2; ibv_devinfo; sleep 2;" '
             pout_dict = self.p_phdl.exec(cmd)
             dout_dict = self.d_phdl.exec(cmd)
+            hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
             for node in pout_dict.keys():
-                if not re.search('hca_id:\s+(bnxt_|rocep)', pout_dict[node], re.I):
+                if not re.search(hca_id_regex, pout_dict[node], re.I):
                     log.info("%s", pout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
             for node in dout_dict.keys():
-                if not re.search('hca_id:\s+(bnxt_|rocep)', dout_dict[node], re.I):
+                if not re.search(hca_id_regex, dout_dict[node], re.I):
                     log.info("%s", dout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
