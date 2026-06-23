@@ -1477,8 +1477,7 @@ class SglangDisaggPD:
 
         OpenAIProbe.log_results(results, log)
 
-        check_kwargs = OpenAIProbe.check_kwargs_from_scoring(scoring)
-        ok, summary, err = OpenAIProbe.check_results(text, **check_kwargs)
+        ok, err = OpenAIProbe.check_results(results, port=port, logger=log)
         if not ok:
             summary = OpenAIProbe.summarize_results(results, ok, err)
             fail_test(f"{err}")
@@ -1514,19 +1513,27 @@ class SglangDisaggPD:
         out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
         time.sleep(5)
 
+        check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
         summary = None
+        errors: list[str] = []
+
         for node, text in out_dict.items():
-            ok, summary, err = LmEvalBenchmark.check_results(text, **{
-                k: scoring[k]
-                for k in (
-                    "task_name", "parse_metric", "expected", "metric_key",
-                    "tasks", "tolerance_frac", "log_path", "label",
-                )
-            })
+            ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
+            if node_summary is not None:
+                summary = node_summary
             if not ok:
-                fail_test(f"lm-eval HellaSwag on node {node!r}: {err}")
+                errors.append(f"lm-eval HellaSwag on node {node!r}: {err}")
+
         if summary is None:
-            fail_test("lm-eval HellaSwag: no benchmark nodes produced output to score")
+            summary = LmEvalBenchmark.fallback_summary(
+                scoring,
+                error=errors[-1] if errors else "no benchmark nodes produced output to score",
+            )
+            errors.append("lm-eval HellaSwag: no benchmark nodes produced output to score")
+
+        for msg in errors:
+            fail_test(msg)
+
         return summary
 
     def run_lm_eval_gsm8k_benchmark_test(self, _d_type="auto"):
@@ -1555,19 +1562,27 @@ class SglangDisaggPD:
         out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
         time.sleep(5)
 
+        check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
         summary = None
+        errors: list[str] = []
+
         for node, text in out_dict.items():
-            ok, summary, err = LmEvalBenchmark.check_results(text, **{
-                k: scoring[k]
-                for k in (
-                    "task_name", "parse_metric", "expected", "metric_key",
-                    "tasks", "tolerance_frac", "log_path", "label",
-                )
-            })
+            ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
+            if node_summary is not None:
+                summary = node_summary
             if not ok:
-                fail_test(f"lm-eval GSM8K on node {node!r}: {err}")
+                errors.append(f"lm-eval GSM8K on node {node!r}: {err}")
+
         if summary is None:
-            fail_test("lm-eval GSM8K: no benchmark nodes produced output to score")
+            summary = LmEvalBenchmark.fallback_summary(
+                scoring,
+                error=errors[-1] if errors else "no benchmark nodes produced output to score",
+            )
+            errors.append("lm-eval GSM8K: no benchmark nodes produced output to score")
+
+        for msg in errors:
+            fail_test(msg)
+
         return summary
 
     def run_lm_eval_mmlu_benchmark_test(self, _d_type="auto"):
@@ -1596,17 +1611,25 @@ class SglangDisaggPD:
         out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
         time.sleep(5)
 
+        check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
         summary = None
+        errors: list[str] = []
+
         for node, text in out_dict.items():
-            ok, summary, err = LmEvalBenchmark.check_results(text, **{
-                k: scoring[k]
-                for k in (
-                    "task_name", "parse_metric", "expected", "metric_key",
-                    "tasks", "tolerance_frac", "log_path", "label",
-                )
-            })
+            ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
+            if node_summary is not None:
+                summary = node_summary
             if not ok:
-                fail_test(f"lm-eval MMLU on node {node!r}: {err}")
+                errors.append(f"lm-eval MMLU on node {node!r}: {err}")
+
         if summary is None:
-            fail_test("lm-eval MMLU: no benchmark nodes produced output to score")
+            summary = LmEvalBenchmark.fallback_summary(
+                scoring,
+                error=errors[-1] if errors else "no benchmark nodes produced output to score",
+            )
+            errors.append("lm-eval MMLU: no benchmark nodes produced output to score")
+
+        for msg in errors:
+            fail_test(msg)
+
         return summary
