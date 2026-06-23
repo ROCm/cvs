@@ -869,17 +869,35 @@ class SglangDisaggPD:
         time.sleep(5)
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
         
+        # MFU (derived from same bench metrics as TTFT/TPOT)
+        peak_tflops = float(i_dict.get("peak_gpu_tflops", 1300))
+        num_params = float(i_dict.get("model_num_params", 70e9))
+        tp = int(self.bp_dict.get("tensor_parallelism", 1))
+        num_gpus = (int(self.prefill_nnodes) + int(self.decode_nnodes)) * tp
+        for node, m in (self.inference_results_dict or {}).items():
+            duration = float(m.get("benchmark_duration") or 0)
+            in_tok = float(m.get("total_input_tokens") or 0)
+            out_tok = float(
+                m.get("total_generated_tokens") or m.get("Total generated tokens:") or 0
+            )
+            if duration > 0 and num_gpus > 0:
+                achieved = 6.0 * num_params * (in_tok + out_tok)
+                peak = peak_tflops * 1e12 * num_gpus * duration
+                m["mfu"] = f"{achieved / peak:.6f}"
+
         log_path = f"{self.log_dir}/benchmark_node/benchmark_results.log"
         for node, m in (self.inference_results_dict or {}).items():
             gp = m.get("goodput", "n/a")
             tpg = m.get("output_throughput_per_gpu_per_sec", "n/a")
             tr = m.get("total_requests", "n/a")
             sr = m.get("successful_requests", "n/a")
+            mfu = m.get("mfu", "n/a")
             inner = (
                 f"echo '' >> {log_path} && "
                 f"echo '============ Derived Benchmark Results ============' >> {log_path} && "
                 f"echo 'Goodput (successful / total): {sr} / {tr}  =>  {gp}' >> {log_path} && "
                 f"echo 'Output token throughput per GPU (tok/s/GPU): {tpg}' >> {log_path} && "
+                 f"echo 'MFU (estimated): {mfu}' >> {log_path} && "
                 f"echo '=====================================================================' >> {log_path}"
             )
             cmd = f"docker exec {self.container_name} /bin/bash -c {shlex.quote(inner)}"
