@@ -38,19 +38,18 @@
   },
   "roles": {
     "server": {
+      "serve_args": {
+        "enforce-eager": true,
+        "gpu-memory-utilization": "0.95",
+        "block-size": 64,
+        "no-enable-prefix-caching": true
+      },
       "env": {
         "AMDGCN_USE_BUFFER_OPS": "0",
         "VLLM_ROCM_USE_AITER": "1",
-        "VLLM_ROCM_QUICK_REDUCE_QUANTIZATION": "INT4",
-        "CVS_GPU_MEMORY_UTIL": "0.95"
+        "VLLM_ROCM_QUICK_REDUCE_QUANTIZATION": "INT4"
       }
     }
-  },
-  "inferencemax": {
-    "use_host_mounted_server_script": true,
-    "benchmark_server_script_path": "auto",
-    "host_benchmark_scripts_relpath": "lib/dtni/vllm_benchmark_scripts",
-    "vllm_enforce_eager": true
   },
   "params": {
     "backend": "vllm",
@@ -70,9 +69,7 @@
     "max_model_length": "8192",
     "client_poll_count": "50",
     "client_poll_wait_time": "60",
-    "bench_max_failed_requests": "0",
-    "server_script": "fixed_seq_len/vllm_serve_mi300x.sh",
-    "bench_serv_script": "benchmark_serving.py"
+    "bench_max_failed_requests": "0"
   },
   "sweep": {
     "sequence_combinations": [
