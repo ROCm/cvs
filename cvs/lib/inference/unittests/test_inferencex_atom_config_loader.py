@@ -53,6 +53,16 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
             ["ISL=1024,OSL=1024,TP=8,CONC=128", "ISL=1024,OSL=1024,TP=8,CONC=256"],
         )
 
+    def test_load_w1_mi300x_smoke_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/dtni/inferencex_atom_single/"
+            "deepseek_r1_fp8_mi300x_atom_smoke/config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.num_prompts, "128")
+        self.assertEqual(variant.expected_cells(), ["ISL=1024,OSL=1024,TP=8,CONC=128"])
+
     def test_orchestrator_container_includes_server_env(self):
         sweep = Sweep(
             sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],
