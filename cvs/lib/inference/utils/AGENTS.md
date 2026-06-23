@@ -8,20 +8,16 @@ schema and the vLLM client-metric vocabulary.
 
 ## What's here
 
-- `inferencing_config_loader.py` — the inference config schema: the named-combo
-  sweep selector (`SeqCombo`/`Run`/`Sweep`), `GoodputSlo`, `Params` (vLLM bench
-  flags), the `server` role, and `VariantConfig(BaseVariantConfig)` with
-  `cell_key`/`expected_cells` + the threshold-coverage check.
+- `inferencing_config_loader.py` — the vLLM config schema (`VariantConfig`, sweep, `load_variant`).
+- `inferencemax_config_loader.py` — the InferenceMax config schema (`InferenceMaxVariantConfig`, `InferenceMaxParams`, `load_variant`, `orchestrator_container_from_variant`).
 - `vllm_parsing.py` — pure parsers for vLLM benchmark artifacts:
   `to_client_metrics()`, the `client.*` namespace, `CLIENT_METRICS` (the
   display surface), and `GATED_METRICS` (the asserted SLO subset).
 
 ## Public entry points
 
-- `load_variant(config_path, cluster_dict) -> VariantConfig`
-  The inference loader. Delegates file-read + substitution to
-  `substitute_config`, attaches thresholds, builds + validates the typed
-  `VariantConfig`. This is what the suite's `variant_config` fixture calls.
+- `inferencing_config_loader.load_variant(...) -> VariantConfig` — vLLM suite loader.
+- `inferencemax_config_loader.load_variant(...) -> InferenceMaxVariantConfig` — InferenceMax suite loader.
 - `to_client_metrics(raw, *, tp, isl) -> {client.*: value}`
   Maps a stock `vllm bench serve` results dict to the namespaced metric dict.
   **Pure** — no I/O, no orchestration. Caller fetches + json-loads the artifact.

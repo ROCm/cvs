@@ -1,5 +1,5 @@
 {
-  "_comment": "Single-node InferenceMax (schema_version 1). Set container.image and container.name. ISL+OSL must fit max_model_length. Host server scripts: cvs.lib.dtni.vllm_benchmark_scripts via inferencemax.host_benchmark_scripts_relpath. Volume bind home only; ContainerOrchestrator adds /home/<user>:/workspace.",
+  "_comment": "Single-node InferenceMax (schema_version 1). Set container.image and container.name. ISL+OSL must fit params.max_model_length. Volume bind home only; ContainerOrchestrator adds /home/<user>:/workspace.",
   "schema_version": 1,
   "framework": "inferencemax_single",
   "gpu_arch": "mi300x",
