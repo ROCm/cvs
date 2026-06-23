@@ -12,10 +12,12 @@ Generic paths/model/container/threshold plumbing lives in
 from __future__ import annotations
 
 import warnings
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import model_validator
 from typing_extensions import Literal
+
+from cvs.lib.inference.utils.inferencex_atom_recipes import apply_ix_recipe
 
 from cvs.lib.inference.utils.inferencing_config_loader import (
     RoleServer,
@@ -61,9 +63,17 @@ class InferenceXAtomParams(_Forbid):
     result_filename: str = "results"
 
 
+class InferenceXAtomRunCard(_Forbid):
+    upstream_run_url: str = ""
+    atom_image_pin: str = ""
+    notes: str = ""
+
+
 class InferenceXAtomVariantConfig(BaseVariantConfig):
     framework: Literal["inferencex_atom_single"]
     gpu_arch: str
+    ix_recipe_id: Optional[str] = None
+    run_card: InferenceXAtomRunCard = InferenceXAtomRunCard()
     roles: InferenceXAtomRoles = InferenceXAtomRoles()
     params: InferenceXAtomParams
     sweep: Sweep
@@ -109,6 +119,7 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
 def load_variant(config_path, cluster_dict) -> InferenceXAtomVariantConfig:
     """Load and validate an InferenceX ATOM variant config + sibling ``*threshold.json``."""
     raw, thresholds = substitute_config(config_path, cluster_dict)
+    raw = apply_ix_recipe(raw)
     raw["thresholds"] = thresholds
     return InferenceXAtomVariantConfig(**raw)
 
