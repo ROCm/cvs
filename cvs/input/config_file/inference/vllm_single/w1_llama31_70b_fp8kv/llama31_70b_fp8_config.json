@@ -58,9 +58,49 @@
   "sweep": {
     "sequence_combinations": [
       {
-        "name": "w1_isl=128_osl=2048",
-        "isl": "128",
-        "osl": "2048",
+        "name": "w1_isl=1024_osl=1024",
+        "isl": "1024",
+        "osl": "1024",
+        "goodput_slo": {
+          "ttft_ms": 1000000000.0,
+          "tpot_ms": 1000000000.0,
+          "e2el_ms": 1000000000.0
+        }
+      },
+      {
+        "name": "w1_isl=8192_osl=1024",
+        "isl": "8192",
+        "osl": "1024",
+        "goodput_slo": {
+          "ttft_ms": 1000000000.0,
+          "tpot_ms": 1000000000.0,
+          "e2el_ms": 1000000000.0
+        }
+      },
+      {
+        "name": "w1_isl=1024_osl=8192",
+        "isl": "1024",
+        "osl": "8192",
+        "goodput_slo": {
+          "ttft_ms": 1000000000.0,
+          "tpot_ms": 1000000000.0,
+          "e2el_ms": 1000000000.0
+        }
+      },
+      {
+        "name": "w1_isl=1024_osl=4096",
+        "isl": "1024",
+        "osl": "4096",
+        "goodput_slo": {
+          "ttft_ms": 1000000000.0,
+          "tpot_ms": 1000000000.0,
+          "e2el_ms": 1000000000.0
+        }
+      },
+      {
+        "name": "w1_isl=5000_osl=1024",
+        "isl": "5000",
+        "osl": "1024",
         "goodput_slo": {
           "ttft_ms": 1000000000.0,
           "tpot_ms": 1000000000.0,
@@ -69,10 +109,11 @@
       }
     ],
     "runs": [
-      {
-        "combo": "w1_isl=128_osl=2048",
-        "concurrency": 16
-      }
+      { "combo": "w1_isl=1024_osl=1024",  "concurrency": 16 },
+      { "combo": "w1_isl=8192_osl=1024",  "concurrency": 16 },
+      { "combo": "w1_isl=1024_osl=8192",  "concurrency": 16 },
+      { "combo": "w1_isl=1024_osl=4096",  "concurrency": 16 },
+      { "combo": "w1_isl=5000_osl=1024",  "concurrency": 16 }
     ]
   }
 }
