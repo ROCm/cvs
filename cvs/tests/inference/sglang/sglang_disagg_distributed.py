@@ -148,12 +148,12 @@ def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict):
     update_test_result()
 
 
-# def test_run_lm_eval_mmlu_benchmark_test(im_obj):
-#     globals.error_list = []
-#     im_obj.setup_benchmark_serv_container_env()
-#     im_obj.run_lm_eval_mmlu_benchmark_test()
-#     inf_res_dict.setdefault("__phase_labels__", {})["accuracy_mmlu"] = "PASS"
-#     update_test_result()
+def test_run_lm_eval_mmlu_benchmark_test(im_obj, inf_res_dict):
+    globals.error_list = []
+    im_obj.setup_benchmark_serv_container_env()
+    m = im_obj.run_lm_eval_mmlu_benchmark_test()
+    inf_res_dict.setdefault("__phase_labels__", {})["accuracy_mmlu"] = m
+    update_test_result()
 
 
 def test_run_performance_benchmark_test(im_obj, inf_res_dict):
