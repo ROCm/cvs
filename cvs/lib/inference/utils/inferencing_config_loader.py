@@ -21,6 +21,7 @@ when a second serving framework lands.
 from __future__ import annotations
 
 import warnings
+from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from pydantic import model_validator
@@ -34,7 +35,7 @@ from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
 
 
 class RoleServer(_Forbid):
-    # The `vllm serve` command is built in Python (cvs.lib.inference.vllm_orch),
+    # The `vllm serve` command is built in Python (cvs.lib.inference.vllm_single),
     # not cloned from a `.sh` script, so a run is self-contained. Per-model
     # server quirks live here: extra `vllm serve` flags (serve_args) and env vars
     # merged over the defaults the orchestrator sets. Both default empty; the
@@ -91,11 +92,11 @@ def validate_sweep_selector(combo_names, run_combo_refs):
     `run.combo` is a silently-dropped cell -- either way the sweep runs a
     different matrix than the config reads.
     """
-    names = list(combo_names)
-    dupes = sorted({n for n in names if names.count(n) > 1})
+    counts = Counter(combo_names)
+    dupes = sorted(name for name, count in counts.items() if count > 1)
     if dupes:
         raise ValueError(f"duplicate sequence_combination names: {dupes}")
-    known = set(names)
+    known = set(counts)
     unknown = sorted({r for r in run_combo_refs if r not in known})
     if unknown:
         raise ValueError(f"run.combo names no sequence_combination: {unknown} (known: {sorted(known)})")
@@ -155,10 +156,7 @@ class VariantConfig(BaseVariantConfig):
     def expected_cells(self):
         """Every (isl, osl, conc) cell the sweep's `runs` selector picks."""
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
-        return [
-            self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency)
-            for r in self.sweep.runs
-        ]
+        return [self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency) for r in self.sweep.runs]
 
     @model_validator(mode="after")
     def _check_thresholds_cover_sweep(self):
