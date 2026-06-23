@@ -1,46 +1,81 @@
 {
-    "_comment": "Single-node InferenceMax sample. Set container_image and container_name (e.g. replace <changeme>). ISL+OSL within max_model_length; CVS uses percentile_metrics.",
-    "config": {
-        "container_image": "<changeme>",
-        "container_name": "<changeme>",
-        "hf_token_file": "/home/{user-id}/.hf_token",
+  "_comment": "Single-node InferenceMax sample (schema_version 1). Set container.image and container.name. Verify server_script against your InferenceX revision.",
+  "schema_version": 1,
+  "framework": "inferencemax_single",
+  "gpu_arch": "mi355x",
+  "enforce_thresholds": false,
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "{shared_fs}/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "openai/gpt-oss-120b",
+    "remote": 0,
+    "precision": "bf16"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "<changeme>",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
         "shm_size": "128G",
-        "log_dir": "/home/{user-id}/LOGS",
-        "container_config": {
-            "device_list": [
-                "/dev/dri",
-                "/dev/kfd"
-            ],
-            "volume_dict": {
-                "/home/{user-id}": "/home/{user-id}"
-            },
-            "env_dict": {}
-        }
-    },
-    "benchmark_params": {
-        "gpt-oss-120b": {
-            "backend": "vllm",
-            "base_url": "http://0.0.0.0",
-            "port_no": "8000",
-            "dataset_name": "random",
-            "max_concurrency": "64",
-            "model": "openai/gpt-oss-120b",
-            "num_prompts": "1000",
-            "input_sequence_length": "7168",
-            "output_sequence_length": "1024",
-            "burstiness": "1.0",
-            "seed": "0",
-            "max_model_length": "8192",
-            "random_range_ratio": "0.8",
-            "random_prefix_len": "0",
-            "tensor_parallelism": "8",
-            "tokenizer_mode": "auto",
-            "percentile_metrics": "ttft,tpot,itl,e2el",
-            "metric_percentiles": "99",
-            "client_poll_count": "50",
-            "client_poll_wait_time": "60",
-            "server_script": "fixed_seq_len/vllm_serve_mi300x.sh",
-            "bench_serv_script": "benchmark_serving.py"
-        }
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
     }
+  },
+  "roles": {
+    "server": {
+      "env": {}
+    }
+  },
+  "params": {
+    "backend": "vllm",
+    "base_url": "http://0.0.0.0",
+    "port_no": "8000",
+    "dataset_name": "random",
+    "burstiness": "1.0",
+    "seed": "0",
+    "request_rate": "inf",
+    "random_range_ratio": "0.8",
+    "random_prefix_len": "0",
+    "tensor_parallelism": "8",
+    "tokenizer_mode": "auto",
+    "percentile_metrics": "ttft,tpot,itl,e2el",
+    "metric_percentiles": "99",
+    "num_prompts": "1000",
+    "max_model_length": "8192",
+    "client_poll_count": "50",
+    "client_poll_wait_time": "60",
+    "bench_max_failed_requests": "0",
+    "server_script": "fixed_seq_len/vllm_serve_mi300x.sh",
+    "bench_serv_script": "benchmark_serving.py"
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "name": "legacy_profile",
+        "isl": "7168",
+        "osl": "1024"
+      }
+    ],
+    "runs": [
+      {
+        "combo": "legacy_profile",
+        "concurrency": 64
+      }
+    ]
+  }
 }
