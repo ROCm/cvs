@@ -3,6 +3,7 @@
   "framework": "vllm_single",
   "gpu_arch": "mi300x",
   "enforce_thresholds": false,
+  "threshold_json": "<changeme>",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "{shared_fs}/models",
@@ -11,8 +12,7 @@
   },
   "model": {
     "id": "amd/Llama-3.1-70B-Instruct-FP8-KV",
-    "remote": 0,
-    "precision": "fp8"
+    "remote": 0
   },
   "container": {
     "lifetime": "per_run",
