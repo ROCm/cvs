@@ -162,6 +162,8 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict):
     im_obj.benchserv_test_random(d_type="auto")
 
     bench = (im_obj.bp_dict.get("inference_tests") or {}).get("bench_serv_random") or {}
+    expected = (bench.get("expected_results") or {}).get("auto") or {}
+
     key = (
         im_obj.model_name,
         im_obj.gpu_type,
@@ -170,9 +172,11 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict):
         "bench_serv_random",
         str(im_obj.bp_dict.get("max_concurrency", "-")),
     )
-    inf_res_dict.setdefault("__phase_labels__", {})["performance_test"] = "PASS"
-    inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
+    labels = inf_res_dict.setdefault("__phase_labels__", {})
+    labels["performance_expected"] = expected
+    labels["performance_test"] = "PASS" if not globals.error_list else "FAIL"
 
+    inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
     update_test_result()
 
 
