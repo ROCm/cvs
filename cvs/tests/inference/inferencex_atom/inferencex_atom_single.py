@@ -30,6 +30,24 @@ _FETCH_POLL_WAIT_S = 30
 _FETCH_PRESENCE_RETRIES = 5
 
 
+def _log_variant_run_card(variant_config):
+    rc = variant_config.run_card
+    parts = [
+        f"gpu_arch={variant_config.gpu_arch}",
+        f"driver={variant_config.params.driver}",
+        f"model={variant_config.model.id}",
+    ]
+    if variant_config.ix_recipe_id:
+        parts.append(f"ix_recipe_id={variant_config.ix_recipe_id}")
+    if rc.atom_image_pin:
+        parts.append(f"image_pin={rc.atom_image_pin}")
+    if rc.upstream_run_url:
+        parts.append(f"upstream_run={rc.upstream_run_url}")
+    if rc.notes:
+        parts.append(f"notes={rc.notes}")
+    log.info("InferenceX ATOM run card: %s", "; ".join(parts))
+
+
 def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
@@ -167,6 +185,7 @@ def test_inferencex_atom_inference(
     isl = seq_combo["isl"]
     osl = seq_combo["osl"]
     p = variant_config.params
+    _log_variant_run_card(variant_config)
     job = InferenceXAtomJob(
         orch=orch,
         variant=variant_config,

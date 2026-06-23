@@ -42,6 +42,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.gpu_arch, "mi300x")
+        self.assertEqual(variant.ix_recipe_id, "dsr1-fp8-mi300x-atom")
         self.assertEqual(variant.params.driver, "atom")
         self.assertEqual(
             variant.roles.server.atom_args[:4],

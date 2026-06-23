@@ -54,6 +54,7 @@ Copy-Config Commands:
         config_root = os.path.join(cvs_dir, "input", "config_file")
         cluster_root = os.path.join(cvs_dir, "input", "cluster_file")
         env_root = os.path.join(cvs_dir, "input", "env_file")
+        dtni_root = os.path.join(cvs_dir, "input", "dtni")
         roots = []
 
         # Add core cvs config directories
@@ -63,6 +64,8 @@ Copy-Config Commands:
             roots.append(cluster_root)
         if os.path.exists(env_root):
             roots.append(env_root)
+        if os.path.exists(dtni_root):
+            roots.append(dtni_root)
 
         # Add extension config directories
         config = ExtensionConfig()
