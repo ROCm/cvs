@@ -8,6 +8,7 @@ Shared helpers and ordering for the SGLang disaggregated inference suite.
 from __future__ import annotations
 
 import os
+import re
 from tabulate import tabulate
 from typing import Any, Mapping
 
@@ -22,6 +23,7 @@ __all__ = [
     "test_print_results_table",
 ]
 
+_SMOKE_LINE_RE = re.compile(r"^(.+) -> (Pass|Fail) \((\d+)\)$")
 
 def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> str:
     """Pick which ``benchmark_params`` entry to run.
@@ -93,16 +95,28 @@ def test_print_results_table(inf_res_dict):
 
     smoke_results = inf_res_dict.pop("__smoke_probe_results__", None)
     if smoke_results:
-        if isinstance(smoke_results, list):
+        smoke_rows = []
+        for line in smoke_results:
+            m = _SMOKE_LINE_RE.match(str(line).strip())
+            if m:
+                smoke_rows.append([m.group(1), m.group(2).upper(), m.group(3)])
+            else:
+                smoke_rows.append([str(line), "-", "-"])
+        if smoke_rows:
             log.info(
-                "\n======== OpenAI-compatible smoke results ========\n%s",
-                "\n".join(str(line) for line in smoke_results),
+                "\n\n\n\n======== OpenAI-compatible smoke results ========\n%s",
+                tabulate(
+                    smoke_rows,
+                    headers=["Check", "Result", "HTTP status"],
+                    tablefmt="github",
+                ),
             )
         
     acc_rows = []
     for label, key in (("HellaSwag", "accuracy_hellaswag"), ("GSM8K", "accuracy_gsm8k"), ("MMLU", "accuracy_mmlu")):
         e = phase_labels.get(key)
         if isinstance(e, dict) and "task" in e:
+            passed = e.get("passed")
             acc_rows.append(
                 [
                     label,
@@ -110,6 +124,7 @@ def test_print_results_table(inf_res_dict):
                     e.get("metric_key", "-"),
                     f"{float(e['actual']):.4f}" if e.get("actual") is not None else "-",
                     f"{float(e['expected']):.4f}",
+                    "PASS" if passed is True else "FAIL" if passed is False else "-",
                 ]
             )
     if acc_rows:
@@ -117,61 +132,63 @@ def test_print_results_table(inf_res_dict):
             "\n\n\n\n======== LM-eval accuracy results ========\n%s",
             tabulate(
                 acc_rows,
-                headers=["Suite", "Task", "Metric", "Actual", "Expected"],
+                headers=["Suite", "Task", "Metric", "Actual", "Expected", "Result"],
                 tablefmt="github",
             ),
         )
 
-    performance = phase_labels.get("performance_test", "-")
+    perf_expected = phase_labels.get("performance_expected") or {}
 
-    if not inf_res_dict:
-        log.info("inf_res_dict empty, nothing to print")
-        return
-
-    headers = [
-        "Model",
-        "GPU",
-        "ISL",
-        "OSL",
-        "Policy",
-        "Conc",
-        "Host",
-        "Performance test",
-        "Req/s",
-        "Total tok/s",
-        "Mean TTFT (ms)",
-        "Mean TPOT (ms)",
-        "P99 ITL (ms)",
-        "Goodput",
-        "Output tok/s/GPU",
-        "MFU (estimated)"
+    PERF_METRICS = [
+        ("Mean TTFT (ms)", "mean_ttft_ms"),
+        ("Mean TPOT (ms)", "mean_tpot_ms"),
+        ("P99 ITL (ms)", "p99_itl_ms"),
+        ("Mean E2E latency (ms)", "mean_e2e_latency_ms"),
+        ("Req/s", "request_throughput_per_sec"),
+        ("Output tok/s", "output_throughput_per_sec"),
+        ("Output tok/s/GPU", "output_throughput_per_gpu_per_sec"),
+        ("Goodput", "goodput"),
+        ("MFU (estimated)", "mfu"),
     ]
-    rows = []
+
+    def _perf_result(actual, expected, metric_key: str) -> str:
+        if actual is None or expected is None:
+            return "-"
+        a, e = float(actual), float(expected)
+        if "ms" in metric_key.lower():
+            return "PASS" if a <= e else "FAIL"
+        return "PASS" if a >= e else "FAIL"
+
+    perf_rows = []
     for key, host_dict in inf_res_dict.items():
         model, gpu, isl, osl, policy, conc = key
         for host, m in host_dict.items():
-            rows.append(
-                [
-                    model,
-                    gpu,
-                    isl,
-                    osl,
-                    policy,
-                    conc,
-                    host,
-                    performance,
-                    m.get("request_throughput_per_sec", "-"),
-                    m.get(
-                        "total_throughput_per_sec",
-                        m.get("output_throughput_per_sec", "-"),
-                    ),
-                    m.get("mean_ttft_ms", "-"),
-                    m.get("mean_tpot_ms", "-"),
-                    m.get("p99_itl_ms", "-"),
-                    m.get("goodput") or "-",
-                    m.get("output_throughput_per_gpu_per_sec", "-"),
-                    m.get("mfu", "-"),
-                ]
-            )
-    log.info("\n\n\n\n======== Performance results ========\n")
-    log.info("\n" + tabulate(rows, headers=headers, tablefmt="github"))
+            for label, metric_key in PERF_METRICS:
+                actual = m.get(metric_key)
+                if actual is None:
+                    continue
+
+                expected = perf_expected.get(metric_key)
+                perf_rows.append(
+                    [
+                        model,
+                        gpu,
+                        host,
+                        label,
+                        f"{float(actual):.4f}",
+                        f"{float(expected):.4f}" if expected is not None else "-",
+                        _perf_result(actual, expected, metric_key),
+                    ]
+                )
+
+    if perf_rows:
+        log.info(
+            "\n\n\n\n======== Performance results ========\n%s",
+            tabulate(
+                perf_rows,
+                headers=["Model", "GPU", "Host", "Metric", "Actual", "Expected", "Result"],
+                tablefmt="github",
+            ),
+        )
+    elif not smoke_results and not acc_rows:
+        log.info("inf_res_dict empty, nothing to print")
