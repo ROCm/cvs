@@ -426,20 +426,24 @@ class LmEvalBenchmark:
                 if "flexible" in metric_key.lower()
                 else parse_metric
             )
-            return (
-                False,
-                None,
-                (
-                    f"{task_name} {short_metric} {actual:.4f} not within "
-                    f"{tolerance_frac * 100:.0f}% of expected {expected_f:.4f}"
-                ),
+            err = (
+                f"{task_name} {short_metric} {actual:.4f} not within "
+                f"{tolerance_frac * 100:.0f}% of expected {expected_f:.4f}"
             )
-
+            summary = {
+                "task": str(tasks or task_name),
+                "metric_key": metric_key,
+                "actual": float(actual),
+                "expected": expected_f,
+                "passed": False,
+            }
+            return False, summary, err
         summary = {
             "task": str(tasks or task_name),
             "metric_key": metric_key,
             "actual": float(actual),
             "expected": expected_f,
+            "passed": True,
         }
         return True, summary, None
 
@@ -520,3 +524,20 @@ class LmEvalBenchmark:
     def check_kwargs_from_scoring(cls, scoring: Mapping[str, Any]) -> dict[str, Any]:
         """Extract kwargs for check_results() from a scoring_config dict."""
         return {k: scoring[k] for k in LM_EVAL_CHECK_RESULT_KEYS}
+
+    @classmethod
+    def fallback_summary(
+        cls,
+        scoring: Mapping[str, Any],
+        *,
+        actual: float | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "task": str(scoring.get("tasks") or scoring["task_name"]),
+            "metric_key": scoring["metric_key"],
+            "actual": actual,
+            "expected": float(scoring["expected"]),
+            "passed": False,
+            "error": error,
+        }

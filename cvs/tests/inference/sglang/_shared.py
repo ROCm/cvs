@@ -108,7 +108,7 @@ def test_print_results_table(inf_res_dict):
                     label,
                     e.get("task", "-"),
                     e.get("metric_key", "-"),
-                    f"{float(e['actual']):.4f}",
+                    f"{float(e['actual']):.4f}" if e.get("actual") is not None else "-",
                     f"{float(e['expected']):.4f}",
                 ]
             )
