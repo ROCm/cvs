@@ -1,595 +1,309 @@
 '''
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
-This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
-The year included in the foregoing notice is the year of creation of the work.
-All code contained here is Property of Advanced Micro Devices, Inc.
+
+Standalone InferenceMax single-node job driven by a ContainerOrchestrator.
+
+Mirrors :class:`cvs.lib.inference.vllm_orch.VllmJob`: Python-built ``vllm serve``,
+``vllm bench serve``, and artifact parsing via ``to_client_metrics``. Does NOT
+subclass :class:`cvs.lib.inference.base.InferenceBaseJob`.
 '''
 
-import base64
-import os
+from __future__ import annotations
+
+import json
 import re
 import shlex
 import time
-from pathlib import Path
-from typing import Optional
 
 from cvs.lib import globals
-from cvs.lib.inference.base import InferenceBaseJob
-from cvs.lib.inference.inferencemax_host_scripts import bundled_script_body
-from cvs.lib.verify_lib import fail_test
+from cvs.lib.inference.utils.vllm_parsing import to_client_metrics
 
 log = globals.log
 
-_BENCH_FAILED_REQUESTS_RE = re.compile(r"Failed\s+requests:\s*(\d+)", re.I)
-_BENCH_COMPLETION_RE = re.compile(r"Serving Benchmark Result|End-to-end Latency", re.I)
-_BENCH_CLIENT_TRACEBACK_RE = re.compile(r"Traceback\s*\(most recent call last\):", re.I)
-_BENCH_LAUNCH_FAIL_RE = re.compile(
-    r"can't open file|No such file or directory|unrecognized arguments|invalid choice|"
-    r"error: argument |command not found",
-    re.I,
-)
 
-_GIT_CLONE_FAIL_RE = re.compile(
-    r"(?:^|\n)(?:fatal:\s|error:\s)|Could not resolve host|Repository not found|"
-    r"Permission denied \(publickey\)|SSL certificate problem",
-    re.I,
-)
+class InferenceMaxJob:
+    """Single-node InferenceMax benchmark job driven by an injected ContainerOrchestrator."""
 
-_SERVER_LOG_ERROR_SNIPPET_CHARS = 2500
-
-
-def _clone_dirname_from_git_url(repo_url: str) -> str:
-    part = (repo_url or "").rstrip("/").rsplit("/", 1)[-1]
-    return part.removesuffix(".git") if part.endswith(".git") else part or "InferenceX"
-
-
-def _wrapper_dir_ok(d: Path, entry_basename: str) -> bool:
-    return d.is_dir() and (d / entry_basename).is_file()
-
-
-def _discover_host_benchmark_scripts_dir(relpath: Path, entry_basename: str) -> Optional[Path]:
-    """
-    Return the host directory containing ``entry_basename`` under the ``cvs`` package tree.
-
-    ``relpath`` is relative to the ``cvs`` package root (e.g.
-    ``lib/dtni/vllm_benchmark_scripts`` or legacy ``input/.../benchmark_server_scripts``).
-    The shared :mod:`cvs.lib.dtni.vllm_benchmark_scripts` directory is tried first when it
-    contains ``entry_basename``. When checkout paths are missing, bundled bytes are used
-    when deploying to cluster nodes.
-    """
-    import cvs as _cvs_module
-
-    root = Path(_cvs_module.__file__).resolve().parent
-    candidates: list[Path] = []
-    try:
-        from cvs.lib.dtni.vllm_benchmark_scripts import bundled_scripts_dir as _vbs_scripts_root
-
-        _shared = _vbs_scripts_root()
-        if _wrapper_dir_ok(_shared, entry_basename):
-            candidates.append(_shared)
-    except (ImportError, OSError, TypeError, ValueError):
-        pass
-    candidates.extend(
-        [
-            root / relpath,
-            Path(__file__).resolve().parents[2] / relpath,
-        ]
+    READINESS_RE = re.compile(r"Application startup complete|Uvicorn running|Started server", re.I)
+    COMPLETION_RE = re.compile(r"Serving Benchmark Result", re.I)
+    FAILED_REQUESTS_RE = re.compile(r"Failed requests:\s+([0-9]+)", re.I)
+    CLIENT_CRASH_RE = re.compile(r"Traceback \(most recent call last\)", re.I)
+    CLIENT_LAUNCH_FAIL_RE = re.compile(
+        r"unrecognized arguments|invalid choice|error: argument |command not found|: No such file or directory",
+        re.I,
     )
-    try:
-        from importlib.resources import files
-
-        t = files("cvs").joinpath(*relpath.parts)
-        if t.is_dir():
-            candidates.append(Path(str(t)))
-    except (ModuleNotFoundError, FileNotFoundError, NotImplementedError, OSError, TypeError, ValueError):
-        pass
-
-    seen: set[str] = set()
-    for p in candidates:
-        try:
-            rp = p.resolve()
-        except OSError:
-            continue
-        key = str(rp)
-        if key in seen:
-            continue
-        seen.add(key)
-        if _wrapper_dir_ok(rp, entry_basename):
-            return rp
-
-    try:
-        for sh in root.rglob(entry_basename):
-            parent = sh.parent
-            if parent.name == "benchmark_server_scripts" and _wrapper_dir_ok(parent, entry_basename):
-                return parent.resolve()
-    except OSError:
-        pass
-    return None
-
-
-def _stage_bundle_subdir(relpath: Path) -> str:
-    """Stable subdirectory name under host_scripts_staged/ (per variant)."""
-    parts = relpath.parts
-    if len(parts) >= 2 and parts[-1] == "benchmark_server_scripts":
-        return parts[-2]
-    return "default"
-
-
-def _benchmark_server_script_path_is_auto(if_dict: dict) -> bool:
-    raw = if_dict.get("benchmark_server_script_path")
-    if raw is None:
-        return True
-    s = str(raw).strip()
-    return not s or s.lower() == "auto"
-
-
-def _compute_staged_host_script_dir(if_dict: dict, relpath: Path) -> str:
-    """Return ``{log_dir}/inference-max/host_scripts_staged/<variant>/`` (POSIX string, no I/O)."""
-    log_dir = str(if_dict.get("log_dir") or "").strip().replace("\\", "/")
-    if not log_dir:
-        msg = "benchmark_server_script_path is auto but log_dir is empty; cannot stage host server scripts."
-        fail_test(msg)
-        raise FileNotFoundError(msg)
-    dest = Path(log_dir) / "inference-max" / "host_scripts_staged" / _stage_bundle_subdir(relpath)
-    return str(dest).replace("\\", "/")
-
-
-def _read_host_script_payload(if_dict: dict, relpath: Path, entry_basename: str) -> bytes:
-    """Read server script bytes from local checkout discovery or bundled registry."""
-    found = _discover_host_benchmark_scripts_dir(relpath, entry_basename)
-    if found is not None and _wrapper_dir_ok(found, entry_basename):
-        try:
-            return (found / entry_basename).read_bytes()
-        except OSError as exc:
-            fail_test(f"Cannot read {found / entry_basename}: {exc}")
-            raise
-    body = bundled_script_body(entry_basename)
-    if not body:
-        msg = (
-            f"No checkout or bundled host server script for {entry_basename!r}. "
-            "Add it under ``cvs.lib.dtni.vllm_benchmark_scripts`` (see that package's README), "
-            "or set benchmark_server_script_path to a host directory that contains this file."
-        )
-        fail_test(msg)
-        raise FileNotFoundError(msg)
-    return body.replace("\r\n", "\n").encode("utf-8")
-
-
-def _deploy_host_script_to_cluster_nodes(
-    s_phdl,
-    dest_dir: str,
-    entry_basename: str,
-    content: bytes,
-    *,
-    container_name: str,
-) -> None:
-    """
-    Write ``content`` to ``{dest_dir}/{entry_basename}`` on every node ``s_phdl`` reaches.
-
-    Uses ``docker exec`` so directories are created as root inside the container, matching
-    how log/output paths under ``log_dir`` are typically prepared. That avoids
-    ``PermissionError`` when ``{log_dir}/inference-max`` was created earlier by ``docker exec``
-    and is not writable over SSH as the cluster login user.
-    """
-    dest_file = f"{dest_dir.rstrip('/')}/{entry_basename}"
-    b64 = base64.standard_b64encode(content).decode("ascii")
-    py = (
-        "import base64,os,pathlib;"
-        f"p=pathlib.Path({dest_file!r});"
-        "p.parent.mkdir(parents=True,exist_ok=True);"
-        f"p.write_bytes(base64.standard_b64decode({b64!r}));"
-        "os.chmod(p,0o755)"
-    )
-    inner = f"python3 -c {shlex.quote(py)}"
-    cmd = f"docker exec {shlex.quote(container_name)} /bin/bash -c {shlex.quote(inner)}"
-    out_dict = s_phdl.exec(cmd)
-    for node, out in (out_dict or {}).items():
-        text = out or ""
-        if re.search(r"traceback|syntaxerror|filenotfounderror|permissionerror|nosuchfile", text, re.I):
-            log.error("FAIL - staging host script on node %s: %s", node, text[-2000:])
-            fail_test(f"Staging host server script failed on node {node}")
-            raise RuntimeError(f"Staging host server script failed on node {node}: {text[-1500:]}")
-    log.info(
-        "Deployed host server script %s on cluster nodes under %s (via docker exec %s)",
-        entry_basename,
-        dest_dir,
-        container_name,
+    EARLY_FAILURE_RE = re.compile(
+        r"no such file or directory|command not found|cannot access|failed to start",
+        re.I,
     )
 
+    _DEFAULT_SERVE_ARGS = {
+        "block-size": 64,
+        "no-enable-prefix-caching": True,
+    }
 
-def _resolved_host_benchmark_scripts_dir(if_dict: dict, relpath: Path, entry_basename: str) -> str:
-    """
-    Host directory containing ``entry_basename`` for ``docker exec`` ``cd``.
-
-    If ``benchmark_server_script_path`` is set to a non-empty string other than
-    ``auto``, that path is used. Otherwise return the staged directory under ``log_dir``; the script
-    file is written on each GPU node (via ``docker exec`` into the inference container) in :meth:`InferenceMaxJob.launch_server`.
-    """
-    raw = if_dict.get("benchmark_server_script_path")
-    if raw is not None:
-        s = str(raw).strip()
-        if s and s.lower() != "auto":
-            return s.rstrip("/")
-
-    return _compute_staged_host_script_dir(if_dict, relpath)
-
-
-class InferenceMaxJob(InferenceBaseJob):
-    uses_local_server_scripts = True
-
-    def __init__(self, *args, orch=None, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        orch,
+        variant,
+        hf_token,
+        isl,
+        osl,
+        concurrency,
+        num_prompts,
+        log_subdir="inference-max",
+        server_precheck_wait_s=30,
+        server_warmup_wait_s=330,
+        server_poll_count=60,
+        server_poll_wait_s=60,
+        client_initial_wait_s=120,
+        client_poll_count=50,
+        client_poll_wait_s=60,
+        bench_max_failed_requests=0,
+    ):
         self.orch = orch
-        self.if_dict.setdefault(
-            'inferencemax_repo',
-            'https://github.com/SemiAnalysisAI/InferenceX.git',
+        self.variant = variant
+        self.hf_token = hf_token
+        self.isl = str(isl)
+        self.osl = str(osl)
+        self.concurrency = str(concurrency)
+        self.num_prompts = str(num_prompts)
+        self.log_subdir = log_subdir
+
+        p = variant.params
+        self.tp = p.tensor_parallelism
+        self.port_no = p.port_no
+        self.random_range_ratio = p.random_range_ratio
+        self.random_prefix_len = p.random_prefix_len
+        self.burstiness = p.burstiness
+        self.seed = p.seed
+        self.request_rate = p.request_rate
+        self.tokenizer_mode = p.tokenizer_mode
+        self.percentile_metrics = p.percentile_metrics
+        self.metric_percentiles = p.metric_percentiles
+        self.base_url = p.base_url
+        self.dataset_name = p.dataset_name
+        self.backend = p.backend
+        self.max_model_length = str(p.max_model_length)
+
+        self.model_id = variant.model.id
+        self.log_dir = variant.paths.log_dir
+        self.models_dir = variant.paths.models_dir
+        self.serve_args = self._merged_serve_args(variant)
+        self.server_env = dict(variant.roles.server.env)
+
+        self.out_dir = (
+            f"{self.log_dir}/{self.log_subdir}/out-node0/"
+            f"isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
         )
-        self.if_dict.setdefault(
-            'host_benchmark_scripts_relpath',
-            'lib/dtni/vllm_benchmark_scripts',
-        )
-        self.default_server_precheck_error_pattern = re.compile(
-            'no such file or directory|command not found|cannot access|permission denied|error:|exception:|traceback|failed to start|'
-            'hiperrorlaunchoutofresources|too many resources requested for launch|distbackender',
-            re.I,
-        )
-        self.default_server_error_pattern_poll = re.compile(
-            'failed to start|no such file or directory|command not found|cannot access|'
-            'engine core initialization failed|server died before becoming healthy|failed core proc|'
-            'hiperrorlaunchoutofresources|too many resources requested for launch|distbackender|'
-            'worker proc .+ died unexpectedly',
-            re.I,
-        )
+        self.server_log = f"{self.out_dir}/vllm_serve_server.log"
+        self.client_log = f"{self.out_dir}/client.log"
 
-    def _using_host_server_scripts(self) -> bool:
-        return bool(self.if_dict.get('use_host_mounted_server_script'))
+        self._precheck_wait = server_precheck_wait_s
+        self._warmup_wait = server_warmup_wait_s
+        self._server_poll_count = server_poll_count
+        self._server_poll_wait = server_poll_wait_s
+        self._client_initial_wait = client_initial_wait_s
+        self._client_poll_count = client_poll_count
+        self._client_poll_wait = client_poll_wait_s
+        self._bench_max_failed_requests = int(bench_max_failed_requests)
 
-    def _host_mount_relative_script(self) -> str:
-        ss = self.server_script.replace('\\', '/')
-        base = 'single_node' if int(self.nnodes) == 1 else 'multi_node'
-        for prefix in (f'benchmarks/{base}/', 'benchmarks/single_node/', 'benchmarks/multi_node/'):
-            if ss.startswith(prefix):
-                ss = ss[len(prefix) :]
-                break
-        if ss.startswith('fixed_seq_len/'):
-            ss = ss[len('fixed_seq_len/') :]
-        return ss
+    @classmethod
+    def _merged_serve_args(cls, variant):
+        merged = dict(cls._DEFAULT_SERVE_ARGS)
+        merged.update(variant.roles.server.serve_args)
+        env = variant.roles.server.env
+        gpu_mem = env.get("CVS_GPU_MEMORY_UTIL") or env.get("VLLM_GPU_MEMORY_UTIL")
+        if gpu_mem is not None and "gpu-memory-utilization" not in merged:
+            merged["gpu-memory-utilization"] = str(gpu_mem)
+        if "enforce-eager" not in merged:
+            merged["enforce-eager"] = True
+        return merged
 
-    def get_server_script_directory(self):
-        if self._using_host_server_scripts():
-            rel = Path(str(self.if_dict.get("host_benchmark_scripts_relpath", "")).strip().replace("\\", "/"))
-            if not rel.parts:
-                fail_test("host_benchmark_scripts_relpath is empty")
-                raise ValueError("host_benchmark_scripts_relpath is empty")
-            entry = os.path.basename(self._host_mount_relative_script())
-            return _resolved_host_benchmark_scripts_dir(self.if_dict, rel, entry).rstrip('/')
-        name = _clone_dirname_from_git_url(self.if_dict.get('inferencemax_repo', ''))
-        return f'/app/{name}'
+    @staticmethod
+    def _flatten_serve_args(mapping):
+        argv = []
+        for flag, value in mapping.items():
+            opt = f"--{flag}"
+            if value is True:
+                argv.append(opt)
+            elif isinstance(value, (list, tuple)):
+                for v in value:
+                    argv.extend([opt, str(v)])
+            else:
+                argv.extend([opt, str(value)])
+        return argv
 
-    def get_server_script_path(self):
-        if self._using_host_server_scripts():
-            return self._host_mount_relative_script()
-        base = "single_node" if int(self.nnodes) == 1 else "multi_node"
-        return f'benchmarks/{base}/{self.server_script}'
-
-    def get_result_filename(self):
-        return 'inferencemax_test_result.json'
-
-    def get_completion_pattern(self):
-        return re.compile('Serving Benchmark Result', re.I)
-
-    def get_log_subdir(self):
-        return 'inference-max'
-
-    def exec_nic_setup_scripts(self):
-        if self.distributed_inference is True:
-            if re.search('broadcom|thor', self.nic_type, re.I):
-                self.nccl_ib_gid_index = 3
-                out_dict = self.s_phdl.exec(
-                    f'docker exec {self.container_name} /bin/bash -c "sudo \
-                    cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
-                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
-                    sleep 2;ibv_devinfo;sleep 2;"'
-                )
-                for node in out_dict.keys():
-                    if not re.search(r'hca_id:\s+bnxt_', out_dict[node], re.I):
-                        log.info("%s", out_dict[node])
-                        fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
-
-    def launch_server(self):
-        script_dir = self.get_server_script_directory()
-        log_file = f'{self.server_script}_server.log'
-        script_path = self.get_server_script_path()
-
-        if self._using_host_server_scripts() and _benchmark_server_script_path_is_auto(self.if_dict):
-            rel = Path(str(self.if_dict.get("host_benchmark_scripts_relpath", "")).strip().replace("\\", "/"))
-            if not rel.parts:
-                fail_test("host_benchmark_scripts_relpath is empty")
-                raise ValueError("host_benchmark_scripts_relpath is empty")
-            entry = os.path.basename(self._host_mount_relative_script())
-            payload = _read_host_script_payload(self.if_dict, rel, entry)
-            _deploy_host_script_to_cluster_nodes(
-                self.s_phdl,
-                script_dir,
-                entry,
-                payload,
-                container_name=self.container_name,
-            )
-
-        cmd_list = []
-        workspace_host = f'{self.log_dir}/{self.get_log_subdir()}/workspace'.replace('\\', '/')
-        for i in range(0, int(self.nnodes)):
-            log_base = f'{self.log_dir}/{self.get_log_subdir()}/out-node{i}'
-            log_path = f'{log_base}/{log_file}'
-            log_parent = os.path.dirname(log_path).replace('\\', '/')
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "mkdir -p {log_parent} {workspace_host}; cd {script_dir}; source /tmp/server_env_script.sh; nohup /bin/bash {script_path} > {log_path} 2>&1 &" '''
-            cmd_list.append(cmd)
-        out_dict = self.s_phdl.exec_cmd_list(cmd_list)
-
-        for node in out_dict.keys():
-            if re.search(
-                'No such file or directory|command not found|cannot access|Permission denied', out_dict[node], re.I
-            ):
-                log.error(f'FAIL - Failed to start server on node {node}: {out_dict[node]}')
-                raise Exception(f'Failed to start server on node {node}: {out_dict[node]}')
-
-    def check_server_status(self, log_file, log_subdir, error_pattern):
-        cmd_list = []
-        for i in range(0, int(self.nnodes)):
-            cmd = f'tail -30 {self.log_dir}/{log_subdir}/out-node{i}/{log_file}'
-            cmd_list.append(cmd)
-        out_dict = self.s_phdl.exec_cmd_list(cmd_list)
-
-        for node, output in out_dict.items():
-            if error_pattern.search(output or ''):
-                error_msg = f'Failed to start server on node {node}: {output[-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
-                fail_test(error_msg)
-                raise Exception(error_msg)
-
-        return out_dict
-
-    def poll_server_startup(self):
-        log_file = f'{self.server_script}_server.log'
-
-        log.info(f'Waiting {self.default_server_precheck_wait_time} secs for server to start writing logs...')
-        time.sleep(self.default_server_precheck_wait_time)
-
-        cmd_list = []
-        for i in range(0, int(self.nnodes)):
-            cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'
-            cmd_list.append(cmd)
-        out_dict = self.s_phdl.exec_cmd_list(cmd_list)
-        for node in out_dict.keys():
-            log_content = out_dict[node].lower()
-            if self.default_server_precheck_error_pattern.search(log_content):
-                error_msg = f'Failed to start server on node {node}: {out_dict[node][-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
-                fail_test(error_msg)
-                raise Exception(error_msg)
-
-        log.info(
-            f'No immediate errors detected. Waiting {self.default_server_wait_time} more secs for server to fully launch...'
-        )
-        time.sleep(self.default_server_wait_time)
-
-        for j in range(0, self.default_server_poll_count):
-            log.info(f'Polling for application startup complete on all nodes, iteration {j}')
-            tail_cmds = []
-            for i in range(0, int(self.nnodes)):
-                tail_cmds.append(f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}')
-            out_dict = self.s_phdl.exec_cmd_list(tail_cmds)
-
-            for node in out_dict.keys():
-                if self.default_server_error_pattern_poll.search(out_dict[node] or ''):
-                    error_msg = f'Failed to start server on node {node}: {out_dict[node][-_SERVER_LOG_ERROR_SNIPPET_CHARS:]}'
-                    fail_test(error_msg)
-                    raise Exception(error_msg)
-
-            grep_out = self.s_phdl.exec_cmd_list(self._readiness_grep_cmd_list(log_file))
-            if self._grep_readiness_outputs_ok(grep_out):
-                log.info('Server startup confirmed on all nodes')
-                return
-
-            log.info(f'Waiting {self.default_server_poll_wait_time} secs for next poll')
-            time.sleep(self.default_server_poll_wait_time)
-
-        error_msg = 'Server did not report readiness before timeout; aborting startup'
-        fail_test(error_msg)
-        raise Exception(error_msg)
-
-    def _tail_client_bench_logs(self) -> dict:
-        """Return host -> last lines of bench_serv_script.log (inside the inference container).
-
-        Uses :meth:`ContainerOrchestrator.exec` whenever ``self.orch`` is set (routes through
-        core container runtime). For ``nnodes == 1``, a single ``exec`` on all hosts matches
-        the vLLM-style pattern. For ``nnodes > 1``, rank *i* is assumed to run on ``orch.hosts[i]``
-        (same ordering as ``Pssh.exec_cmd_list`` used to launch clients), so we issue one
-        ``exec(..., hosts=[host])`` per rank with that rank's log path — one global ``exec``
-        cannot apply different paths per host.
-        """
-        log_sub = self.get_log_subdir()
-        orch = getattr(self, "orch", None)
-        if orch is None:
-            cmd_list = []
-            for i in range(0, int(self.nnodes)):
-                path = f"{self.log_dir}/{log_sub}/out-node{i}/bench_serv_script.log".replace("\\", "/")
-                inner = f"tail -2000 {shlex.quote(path)}"
-                cmd_list.append(f"docker exec {shlex.quote(self.container_name)} bash -c {shlex.quote(inner)}")
-            return self.s_phdl.exec_cmd_list(cmd_list)
-
-        n = int(self.nnodes)
-        hosts = list(getattr(orch, "hosts", ()) or ())
-        if not hosts:
-            msg = "orch.hosts is empty; cannot poll client logs via orchestrator"
-            fail_test(msg)
-            raise RuntimeError(msg)
-        if n > len(hosts):
-            msg = f"nnodes={n} exceeds orchestrator host count {len(hosts)}; cannot map ranks to hosts"
-            fail_test(msg)
-            raise RuntimeError(msg)
-
-        if n == 1:
-            path = f"{self.log_dir}/{log_sub}/out-node0/bench_serv_script.log".replace("\\", "/")
-            return orch.exec(f"tail -2000 {shlex.quote(path)}")
-
-        out: dict = {}
-        for rank in range(n):
-            host = hosts[rank]
-            path = f"{self.log_dir}/{log_sub}/out-node{rank}/bench_serv_script.log".replace("\\", "/")
-            cmd = f"tail -2000 {shlex.quote(path)}"
-            out.update(orch.exec(cmd, hosts=[host]))
-        return out
-
-    def poll_client_completion(self):
-        log.info(f'Waiting for {self.default_client_wait_time} secs for benchmark scripts to start')
-        time.sleep(self.default_client_wait_time)
-        cap = self.bench_max_failed_requests_cap
-        for j in range(0, self.default_client_poll_count):
-            log.info(f'Polling for Benchmark script to complete on all nodes, iteration {j}')
-            out_dict = self._tail_client_bench_logs()
-            done = []
-            for node in out_dict.keys():
-                log_tail = out_dict[node] or ""
-                if _BENCH_CLIENT_TRACEBACK_RE.search(log_tail):
-                    msg = (
-                        f"Benchmark client traceback on node {node} "
-                        f"(see bench_serv_script.log); aborting before completion."
-                    )
-                    fail_test(msg)
-                    raise Exception(msg)
-                if _BENCH_LAUNCH_FAIL_RE.search(log_tail):
-                    msg = (
-                        f"Benchmark client launch failure on node {node} "
-                        f"(see bench_serv_script.log); aborting before completion."
-                    )
-                    fail_test(msg)
-                    raise Exception(msg)
-                if not _BENCH_COMPLETION_RE.search(log_tail):
-                    done.append(False)
-                    continue
-                m_fail = _BENCH_FAILED_REQUESTS_RE.search(log_tail)
-                fc = int(m_fail.group(1)) if m_fail else 0
-                if fc > cap:
-                    msg = (
-                        f"Benchmark client on node {node} reports Failed requests: {fc} "
-                        f"(exceeds bench_max_failed_requests={cap}); see bench_serv_script.log."
-                    )
-                    fail_test(msg)
-                    raise Exception(msg)
-                if fc > 0:
-                    log.warning(
-                        "Benchmark client on node %s completed with %d failed requests (allowed up to %d); "
-                        "see bench_serv_script.log",
-                        node,
-                        fc,
-                        cap,
-                    )
-                done.append(True)
-            if done and all(done):
-                log.info("Benchmark client complete on all nodes (iter=%d)", j)
-                return
-            log.info(f'Waiting {self.default_client_poll_wait_time} secs for next poll')
-            time.sleep(self.default_client_poll_wait_time)
-        msg = "client did not complete before poll cap"
-        fail_test(msg)
-        raise Exception(msg)
-
-    def get_inference_results_dict(self, out_dict):
-        log.info('Get the inference results dict using get_inference_results_dict')
-        self.inference_results_dict = {}
-        for node in out_dict.keys():
-            self.inference_results_dict[node] = {}
-            if re.search('Successful requests:', out_dict[node], re.I):
-                match = re.search(r'Successful requests:\s+([0-9]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['successful_requests'] = match.group(1)
-            if re.search(r'Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I):
-                match = re.search(r'Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['benchmark_duration'] = match.group(1)
-            if re.search('Total input tokens:', out_dict[node], re.I):
-                match = re.search(r'Total input tokens:\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['total_input_tokens'] = match.group(1)
-            if re.search('Total generated tokens:', out_dict[node], re.I):
-                match = re.search(r'Total generated tokens:\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['total_generated_tokens'] = match.group(1)
-            if re.search(r'Request throughput \(req/s\):', out_dict[node], re.I):
-                match = re.search(r'Request throughput \(req/s\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['request_throughput_per_sec'] = match.group(1)
-            if re.search(r'Output token throughput \(tok/s\):', out_dict[node], re.I):
-                match = re.search(r'Output token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['output_throughput_per_sec'] = match.group(1)
-            if re.search(r'Total Token throughput \(tok/s\):', out_dict[node], re.I):
-                match = re.search(r'Total Token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['total_throughput_per_sec'] = match.group(1)
-            if re.search(r'Mean TTFT \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Mean TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_ttft_ms'] = match.group(1)
-            if re.search(r'Median TTFT \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Median TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_ttft_ms'] = match.group(1)
-            if re.search(r'P99 TTFT \(ms\):', out_dict[node], re.I):
-                match = re.search(r'P99 TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_ttft_ms'] = match.group(1)
-            if re.search(r'Mean TPOT \(ms\)', out_dict[node], re.I):
-                match = re.search(r'Mean TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_tpot_ms'] = match.group(1)
-            if re.search(r'Median TPOT \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Median TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_tpot_ms'] = match.group(1)
-            if re.search(r'P99 TPOT \(ms\):', out_dict[node], re.I):
-                match = re.search(r'P99 TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_tpot_ms'] = match.group(1)
-            if re.search(r'Mean ITL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Mean ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_itl_ms'] = match.group(1)
-            if re.search(r'Median ITL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Median ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_itl_ms'] = match.group(1)
-            if re.search(r'P99 ITL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'P99 ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_itl_ms'] = match.group(1)
-            if re.search(r'Mean E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Mean E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_e2el_ms'] = match.group(1)
-            if re.search(r'Median E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'Median E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_e2el_ms'] = match.group(1)
-            if re.search(r'P99 E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search(r'P99 E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_e2el_ms'] = match.group(1)
-
-        log.info("%s", self.inference_results_dict)
-        return self.inference_results_dict
-
-    def clone_inferencemax_repo(self):
-        if self._using_host_server_scripts():
-            self.s_phdl.exec(
-                f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote('mkdir -p /workspace')}"
-            )
-            return
-        repo = self.if_dict["inferencemax_repo"]
-        clone_name = _clone_dirname_from_git_url(repo)
-        inner = (
-            "set -e; mkdir -p /app; cd /app; "
-            "rm -rf InferenceMAX; "
-            f"if [ ! -d {shlex.quote(clone_name)} ]; then git clone {shlex.quote(repo)}; fi"
-        )
-        cmd = f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(inner)}"
-        out_dict = self.s_phdl.exec(cmd)
-        for node in out_dict.keys():
-            out = out_dict[node] or ""
-            if re.search("already exists", out, re.I):
+    def build_server_cmd(self):
+        env_lines = [
+            f"export HF_TOKEN={shlex.quote(self.hf_token)}",
+            f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
+            "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
+            "export VLLM_ROCM_USE_AITER_MHA=0",
+            "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
+        ]
+        for k, v in self.server_env.items():
+            if k in ("CVS_GPU_MEMORY_UTIL", "VLLM_GPU_MEMORY_UTIL", "VLLM_ENFORCE_EAGER"):
                 continue
-            if _GIT_CLONE_FAIL_RE.search(out):
-                fail_test("Errors or failures seen in pulling InferenceMAX repo from Github, pls check")
-        time.sleep(3)
-        ls_inner = f"ls -ld /app/{clone_name}"
-        self.s_phdl.exec(
-            f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote(ls_inner)}"
-        )
-        self.s_phdl.exec(
-            f"docker exec {shlex.quote(self.container_name)} /bin/bash -c {shlex.quote('mkdir -p /workspace')}"
-        )
+            env_lines.append(f"export {k}={shlex.quote(str(v))}")
+        env_script = "\n".join(env_lines) + "\n"
+        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
+        self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
 
-    def start_inference_server_job(self):
-        self.clone_inferencemax_repo()
-        super().start_inference_server_job()
+    def _server_argv(self):
+        argv = [
+            "vllm",
+            "serve",
+            self.model_id,
+            "--host",
+            "0.0.0.0",
+            "--tensor-parallel-size",
+            str(self.tp),
+            "--max-model-len",
+            self.max_model_length,
+            "--port",
+            str(self.port_no),
+        ]
+        argv.extend(self._flatten_serve_args(self.serve_args))
+        return argv
+
+    def start_server(self):
+        serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv())
+        inner = (
+            f"source /tmp/server_env_script.sh && "
+            f"nohup {serve_cmd} > {shlex.quote(self.server_log)} 2>&1 &"
+        )
+        out = self.orch.exec("bash -c " + shlex.quote(inner))
+        for host, output in out.items():
+            if self.EARLY_FAILURE_RE.search(output or ""):
+                raise RuntimeError(f"vllm server failed to launch on {host}: {output[-500:]}")
+
+    def is_ready(self):
+        pattern = self.READINESS_RE.pattern
+        out = self.orch.exec(
+            f"grep -qiE {shlex.quote(pattern)} {shlex.quote(self.server_log)}",
+            detailed=True,
+        )
+        return bool(out) and all(r["exit_code"] == 0 for r in out.values())
+
+    def wait_ready(self):
+        log.info("waiting %ds for server log to materialise", self._precheck_wait)
+        time.sleep(self._precheck_wait)
+
+        out = self.orch.exec(f"tail -30 {shlex.quote(self.server_log)}")
+        for host, output in out.items():
+            if self.EARLY_FAILURE_RE.search(output or ""):
+                raise RuntimeError(f"vllm server early failure on {host}: {output[-500:]}")
+
+        log.info("warmup wait %ds", self._warmup_wait)
+        time.sleep(self._warmup_wait)
+
+        for it in range(self._server_poll_count):
+            if self.is_ready():
+                log.info("server ready (iter=%d)", it)
+                return
+            time.sleep(self._server_poll_wait)
+        raise RuntimeError("vllm server did not become ready before timeout")
+
+    def stop_server(self):
+        log.info("stopping vllm server")
+        self.orch.exec("bash -c 'pkill -f \"vllm serve\" || true'")
+        time.sleep(5)
+
+    def run_client(self):
+        args = [
+            "vllm",
+            "bench",
+            "serve",
+            "--model",
+            self.model_id,
+            "--backend",
+            self.backend,
+            "--base-url",
+            f"{self.base_url}:{self.port_no}",
+            "--dataset-name",
+            self.dataset_name,
+            "--num-prompts",
+            self.num_prompts,
+            "--random-input-len",
+            self.isl,
+            "--random-output-len",
+            self.osl,
+            "--max-concurrency",
+            self.concurrency,
+            "--request-rate",
+            self.request_rate,
+            "--burstiness",
+            self.burstiness,
+            "--tokenizer-mode",
+            self.tokenizer_mode,
+            "--seed",
+            self.seed,
+            "--random-range-ratio",
+            self.random_range_ratio,
+            "--random-prefix-len",
+            self.random_prefix_len,
+            "--percentile-metrics",
+            self.percentile_metrics,
+            "--metric-percentiles",
+            self.metric_percentiles,
+            "--ignore-eos",
+            "--save-result",
+            "--result-dir",
+            self.out_dir,
+            "--result-filename",
+            "results",
+        ]
+        bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
+        client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
+        self.orch.exec("bash -c " + shlex.quote(client_cmd))
+
+    def wait_client_complete(self):
+        log.info("client initial wait %ds", self._client_initial_wait)
+        time.sleep(self._client_initial_wait)
+        cap = self._bench_max_failed_requests
+        for it in range(self._client_poll_count):
+            out = self.orch.exec(f"tail -2000 {shlex.quote(self.client_log)}")
+            failed = []
+            done = []
+            for host, output in out.items():
+                txt = output or ""
+                done.append(bool(self.COMPLETION_RE.search(txt)))
+                if self.CLIENT_CRASH_RE.search(txt) or self.CLIENT_LAUNCH_FAIL_RE.search(txt):
+                    failed.append((host, txt[-500:]))
+                else:
+                    fm = self.FAILED_REQUESTS_RE.search(txt)
+                    if fm:
+                        fc = int(fm.group(1))
+                        if fc > cap:
+                            failed.append((host, f"Failed requests: {fc} (cap {cap}) -- {txt[-500:]}"))
+                        elif fc > 0:
+                            log.warning(
+                                "client on %s completed with %d failed requests (allowed up to %d)",
+                                host,
+                                fc,
+                                cap,
+                            )
+            if failed:
+                raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
+            if done and all(done):
+                log.info("client complete (iter=%d)", it)
+                return
+            time.sleep(self._client_poll_wait)
+        raise RuntimeError("client did not complete before poll cap")
+
+    def parse_results(self):
+        artifact = f"{self.out_dir}/results"
+        out = self.orch.exec(f"cat {shlex.quote(artifact)}")
+        results = {}
+        for host, text in out.items():
+            text = (text or "").strip()
+            if not text:
+                raise RuntimeError(f"empty/missing results artifact on {host}: {artifact}")
+            try:
+                raw = json.loads(text)
+            except (json.JSONDecodeError, ValueError) as e:
+                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}") from e
+            results[host] = to_client_metrics(raw, tp=self.tp, isl=self.isl)
+        return results
