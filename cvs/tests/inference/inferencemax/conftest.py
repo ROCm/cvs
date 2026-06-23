@@ -11,16 +11,10 @@ import pytest
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
 from cvs.lib.inference.utils.inferencemax_config_loader import (
-    benchmark_model_key,
-    legacy_benchmark_params_from_variant,
-    legacy_inference_dict_from_variant,
     load_variant,
     orchestrator_container_from_variant,
 )
-from cvs.lib.utils_lib import (
-    get_model_from_rocm_smi_output,
-    resolve_cluster_config_placeholders,
-)
+from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log
 
@@ -64,39 +58,12 @@ def variant_config(pytestconfig, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def inference_dict(variant_config):
-    """Legacy ``config`` block for :class:`InferenceMaxJob` (Phase 3 will drop this)."""
-    return legacy_inference_dict_from_variant(variant_config)
-
-
-@pytest.fixture(scope="module")
-def benchmark_params_dict(variant_config):
-    """Legacy ``benchmark_params`` block for :class:`InferenceMaxJob` (Phase 3 will drop this)."""
-    return legacy_benchmark_params_from_variant(variant_config)
-
-
-@pytest.fixture(scope="module")
-def hf_token(variant_config):
-    path = variant_config.paths.hf_token_file
-    if not os.path.isfile(path):
-        pytest.skip(f"hf_token file missing: {path}")
-    with open(path) as fp:
-        return fp.read().strip()
-
-
-@pytest.fixture(scope="module")
 def lifecycle():
     return _Lifecycle()
 
 
 @pytest.fixture(scope="module")
-def model_name(variant_config):
-    return benchmark_model_key(variant_config)
-
-
-@pytest.fixture(scope="module")
 def orch(cluster_dict, variant_config, lifecycle):
-    """Container orchestrator: launch/teardown and ``exec`` into the inference container."""
     container_block = _deep_merge(
         cluster_dict.get("container", {}),
         orchestrator_container_from_variant(variant_config),
@@ -114,11 +81,12 @@ def orch(cluster_dict, variant_config, lifecycle):
 
 
 @pytest.fixture(scope="module")
-def gpu_type(orch):
-    head_node = orch.head.host_list[0]
-    smi_out_dict = orch.head.exec('rocm-smi -a | head -30')
-    smi_out = smi_out_dict[head_node]
-    return get_model_from_rocm_smi_output(smi_out)
+def hf_token(variant_config):
+    path = variant_config.paths.hf_token_file
+    if not os.path.isfile(path):
+        pytest.skip(f"hf_token file missing: {path}")
+    with open(path) as fp:
+        return fp.read().strip()
 
 
 @pytest.fixture(scope="session")
@@ -129,9 +97,12 @@ def inf_res_dict():
 def pytest_collection_modifyitems(items):
     rank = {
         "test_launch_container": 0,
-        "test_inferencemax_inference": 1,
-        "test_print_results_table": 2,
-        "test_teardown": 3,
+        "test_setup_sshd": 1,
+        "test_model_fetch": 2,
+        "test_inferencemax_inference": 3,
+        "test_metric": 4,
+        "test_print_results_table": 5,
+        "test_teardown": 6,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
@@ -158,3 +129,25 @@ def pytest_runtest_makereport(item, call):
     extras = getattr(report, "extras", [])
     extras.append(pytest_html.extras.html(html))
     report.extras = extras
+
+
+def pytest_html_results_table_header(cells):
+    cells.insert(-1, "<th>Value</th>")
+    cells.insert(-1, "<th>Unit</th>")
+
+
+def pytest_html_results_table_row(report, cells):
+    props = dict(report.user_properties)
+    has = "metric_value" in props
+    val = props.get("metric_value")
+    unit = props.get("metric_unit", "") if has else ""
+    if not has:
+        shown = ""
+    elif val is None:
+        shown = "-"
+    elif isinstance(val, float):
+        shown = f"{val:.3f}"
+    else:
+        shown = str(val)
+    cells.insert(-1, f"<td>{shown}</td>")
+    cells.insert(-1, f"<td>{unit}</td>")

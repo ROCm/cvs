@@ -3,11 +3,11 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 '''
 
-import copy
 import importlib.util as _ilu
 import json
 import os
 import pathlib as _pl
+import shlex
 import time
 
 import pytest
@@ -15,7 +15,8 @@ import pytest
 from cvs.lib import globals
 from cvs.lib.inference.inferencemax_orch import InferenceMaxJob
 from cvs.lib.inference.utils.inferencing_config_loader import validate_sweep_selector
-from cvs.lib.verify_lib import update_test_result
+from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
+from cvs.lib.utils.verdict import evaluate_all
 
 _spec = _ilu.spec_from_file_location("_inferencemax_shared", _pl.Path(__file__).with_name("_shared.py"))
 _mod = _ilu.module_from_spec(_spec)
@@ -24,11 +25,12 @@ test_print_results_table = _mod.test_print_results_table  # noqa: F841
 
 log = globals.log
 
+_FETCH_POLL_COUNT = 80
+_FETCH_POLL_WAIT_S = 30
+_FETCH_PRESENCE_RETRIES = 5
+
 
 def pytest_generate_tests(metafunc):
-    """Parametrize test_inferencemax_inference from the sweep's named-combo + runs selector."""
-    if "seq_combo" not in metafunc.fixturenames or "concurrency" not in metafunc.fixturenames:
-        return
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
         return
@@ -46,7 +48,27 @@ def pytest_generate_tests(metafunc):
         conc = run["concurrency"]
         cases.append((combo, conc))
         ids.append(run["combo"] + "-conc" + str(conc))
-    metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
+    if "metric" in metafunc.fixturenames:
+        if cases:
+            metric_cases = []
+            metric_ids = []
+            for (combo, c), cid in zip(cases, ids):
+                for short, _unit in _METRICS:
+                    metric_cases.append((combo, c, short))
+                    metric_ids.append(cid + "-" + short)
+            metafunc.parametrize("seq_combo,concurrency,metric", metric_cases, ids=metric_ids)
+    elif "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames and cases:
+        metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
+
+
+def _du_bytes(orch, path):
+    out = orch.exec(f"bash -c {shlex.quote(f'du -sb {shlex.quote(path)} 2>/dev/null | cut -f1')}")
+    total = 0
+    for text in (out or {}).values():
+        for tok in (text or "").split():
+            if tok.isdigit():
+                total = max(total, int(tok))
+    return total
 
 
 def test_launch_container(orch, lifecycle, request):
@@ -62,16 +84,77 @@ def test_launch_container(orch, lifecycle, request):
         lifecycle.failed = True
         pytest.fail(f"container {name} not running after setup_containers()")
     time.sleep(30)
-    update_test_result()
+
+
+def test_setup_sshd(orch, lifecycle, request):
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    t = time.monotonic()
+    ok = orch.setup_sshd()
+    lifecycle.record(request.node.nodeid, "sshd_setup", time.monotonic() - t)
+    if not ok:
+        lifecycle.failed = True
+        pytest.fail("setup_sshd() returned False")
+    if len(orch.hosts) > 1:
+        probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
+        if not any("OK" in (v or "") for v in (probe or {}).values()):
+            lifecycle.failed = True
+            pytest.fail("sshd not listening on 2224 after setup_sshd()")
+
+
+def test_model_fetch(orch, variant_config, lifecycle, request):
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    models_dir = variant_config.paths.models_dir
+    if not models_dir:
+        pytest.skip("paths.models_dir unset; cannot locate/verify the HF cache")
+
+    remote = getattr(variant_config.model, "remote", 0)
+    t = time.monotonic()
+    orch.exec(f"mkdir -p {shlex.quote(models_dir)}")
+
+    if not remote:
+        final = 0
+        for it in range(_FETCH_PRESENCE_RETRIES):
+            final = _du_bytes(orch, models_dir)
+            log.info("[fetch presence %d] size=%.1fGB", it, final / 1e9)
+            if final > 0:
+                break
+            time.sleep(_FETCH_POLL_WAIT_S)
+    else:
+        fetch = (
+            f"HF_HUB_CACHE={shlex.quote(models_dir)} "
+            f"nohup hf download {shlex.quote(variant_config.model.id)} "
+            f"> /tmp/hf_fetch.log 2>&1 &"
+        )
+        orch.exec("bash -c " + shlex.quote(fetch))
+        prev = -1
+        stable = 0
+        final = _du_bytes(orch, models_dir)
+        for it in range(_FETCH_POLL_COUNT):
+            cur = _du_bytes(orch, models_dir)
+            final = cur
+            log.info("[fetch poll %d] size=%.1fGB", it, cur / 1e9)
+            if cur > 0 and cur == prev:
+                stable += 1
+                if stable >= 2:
+                    break
+            else:
+                stable = 0
+            prev = cur
+            time.sleep(_FETCH_POLL_WAIT_S)
+
+    lifecycle.record(request.node.nodeid, "model_fetch", time.monotonic() - t)
+    lifecycle.record(request.node.nodeid, "model_size", final / 1e9, "GB")
+    if final <= 0:
+        lifecycle.failed = True
+        pytest.fail(f"no model bytes under {models_dir} after fetch")
 
 
 def test_inferencemax_inference(
     orch,
+    variant_config,
     hf_token,
-    gpu_type,
-    inference_dict,
-    benchmark_params_dict,
-    model_name,
     seq_combo,
     concurrency,
     inf_res_dict,
@@ -81,55 +164,79 @@ def test_inferencemax_inference(
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    bp_run = copy.deepcopy(benchmark_params_dict)
-    cell = bp_run[model_name]
-    cell["input_sequence_length"] = str(seq_combo["isl"])
-    cell["output_sequence_length"] = str(seq_combo["osl"])
-    cell["max_concurrency"] = str(concurrency)
-
-    globals.error_list = []
-    im_obj = InferenceMaxJob(
-        c_phdl=orch.all,
-        s_phdl=orch.all,
-        model_name=model_name,
-        inference_config_dict=inference_dict,
-        benchmark_params_dict=bp_run,
-        hf_token=hf_token,
-        gpu_type=gpu_type,
-        distributed_inference=False,
+    isl = seq_combo["isl"]
+    osl = seq_combo["osl"]
+    p = variant_config.params
+    job = InferenceMaxJob(
         orch=orch,
+        variant=variant_config,
+        hf_token=hf_token,
+        isl=isl,
+        osl=osl,
+        concurrency=concurrency,
+        num_prompts=p.num_prompts,
+        client_poll_count=int(p.client_poll_count),
+        client_poll_wait_s=int(p.client_poll_wait_time),
+        bench_max_failed_requests=int(p.bench_max_failed_requests),
     )
+
     try:
-        t_server = time.monotonic()
-        im_obj.build_server_inference_job_cmd()
-        im_obj.start_inference_server_job()
-        lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t_server)
+        job.stop_server()
+        job.build_server_cmd()
+        t = time.monotonic()
+        job.start_server()
+        job.wait_ready()
+        lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
         t_client = time.monotonic()
-        im_obj.start_inference_client_job()
-        poll_status = im_obj.poll_for_inference_completion()
-        assert poll_status.get("status") == "success", f"Inference did not complete: {poll_status}"
-        im_obj.verify_inference_results()
-        assert im_obj.inference_results_dict, (
-            "inference_results_dict empty after benchmark; log parsing or client run likely failed silently"
-        )
-        for _node, metrics in im_obj.inference_results_dict.items():
-            assert metrics, f"no per-metric rows parsed for node {_node}; check bench_serv_script.log"
+        job.run_client()
+        job.wait_client_complete()
+        results = job.parse_results()
     except Exception:
         lifecycle.failed = True
         raise
 
-    display_model = str(cell.get("model") or model_name)
     key = (
-        display_model,
-        gpu_type,
-        str(seq_combo["isl"]),
-        str(seq_combo["osl"]),
+        variant_config.model.id,
+        variant_config.gpu_arch,
+        isl,
+        osl,
         seq_combo.get("name", "default"),
         concurrency,
     )
-    inf_res_dict[key] = getattr(im_obj, "inference_results_dict", {}) or {}
+    inf_res_dict[key] = results
     lifecycle.record(request.node.nodeid, "client_complete", time.monotonic() - t_client)
-    update_test_result()
+
+
+def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, lifecycle, request):
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    isl = seq_combo["isl"]
+    osl = seq_combo["osl"]
+    key = (
+        variant_config.model.id,
+        variant_config.gpu_arch,
+        isl,
+        osl,
+        seq_combo.get("name", "default"),
+        concurrency,
+    )
+    if key not in inf_res_dict:
+        pytest.skip(f"no recorded results for cell {key!r} (inference did not run)")
+    host_dict = inf_res_dict[key]
+    _host, actuals = next(iter(host_dict.items()))
+    full = "client." + metric
+    value = actuals.get(full)
+    unit = _METRIC_UNITS.get(metric, "-")
+    request.node.user_properties.append(("metric_value", value))
+    request.node.user_properties.append(("metric_unit", unit))
+
+    if not variant_config.enforce_thresholds:
+        return
+    cell = variant_config.cell_key(isl, osl, concurrency)
+    spec = (variant_config.thresholds.get(cell) or {}).get(full)
+    if spec is None:
+        return
+    evaluate_all(actuals, {full: spec})
 
 
 def test_teardown(orch, lifecycle, request):
