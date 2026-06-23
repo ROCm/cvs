@@ -13,12 +13,12 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.inferencemax_orch import InferenceMaxJob
+from cvs.lib.inference.inferencex_atom_orch import InferenceXAtomJob
 from cvs.lib.inference.utils.inferencing_config_loader import validate_sweep_selector
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
 from cvs.lib.utils.verdict import evaluate_all
 
-_spec = _ilu.spec_from_file_location("_inferencemax_shared", _pl.Path(__file__).with_name("_shared.py"))
+_spec = _ilu.spec_from_file_location("_inferencex_atom_shared", _pl.Path(__file__).with_name("_shared.py"))
 _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 test_print_results_table = _mod.test_print_results_table  # noqa: F841
@@ -151,7 +151,7 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
         pytest.fail(f"no model bytes under {models_dir} after fetch")
 
 
-def test_inferencemax_inference(
+def test_inferencex_atom_inference(
     orch,
     variant_config,
     hf_token,
@@ -167,7 +167,7 @@ def test_inferencemax_inference(
     isl = seq_combo["isl"]
     osl = seq_combo["osl"]
     p = variant_config.params
-    job = InferenceMaxJob(
+    job = InferenceXAtomJob(
         orch=orch,
         variant=variant_config,
         hf_token=hf_token,

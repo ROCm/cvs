@@ -179,7 +179,7 @@ orchestrator (`orch.exec`, which routes into the running container) and a typed
   unparseable → hard-fail the cell (never a silently-green empty row).
 
 The fetch lives in the job (artifact layout is job-specific); the transform lives
-in `inference/utils` (so distributed/disagg/InferenceMax reuse it).
+in `inference/utils` (so distributed/disagg/InferenceX ATOM reuse it).
 
 ### The suite (lifecycle-as-tests)
 

@@ -3,7 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
 Canonical **vLLM benchmark server** shell helpers retained for legacy
-:class:`~cvs.lib.inference.base.InferenceBaseJob` flows. **InferenceMax** and
+:class:`~cvs.lib.inference.base.InferenceBaseJob` flows. **InferenceX ATOM** and
 **vllm_single** (:class:`~cvs.lib.inference.vllm_orch.VllmJob`) build
 ``vllm serve`` in Python via ``roles.server.serve_args``; they do not stage
 these scripts at runtime.

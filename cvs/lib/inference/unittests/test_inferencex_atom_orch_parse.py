@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for InferenceMaxJob.parse_results (stock ``results`` artifact -> client.*).
+Unit tests for InferenceXAtomJob.parse_results (stock ``results`` artifact -> client.*).
 No hardware: a fake orch returns committed fixture text.
 '''
 
@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from cvs.lib.inference.inferencemax_orch import InferenceMaxJob
+from cvs.lib.inference.inferencex_atom_orch import InferenceXAtomJob
 
 _HERE = Path(__file__).parent
 _FIXTURES = _HERE / "fixtures"
@@ -51,10 +51,10 @@ def _fake_variant():
     return SimpleNamespace(params=params, roles=roles, paths=paths, model=model)
 
 
-class TestInferenceMaxOrchParse(unittest.TestCase):
+class TestInferenceXAtomOrchParse(unittest.TestCase):
     def test_parse_results_maps_client_metrics(self):
         raw = json.loads((_FIXTURES / "vllm_results_sample.json").read_text())
-        job = InferenceMaxJob(
+        job = InferenceXAtomJob(
             orch=FakeOrch(exec_return={"node0": json.dumps(raw)}),
             variant=_fake_variant(),
             hf_token="tok",

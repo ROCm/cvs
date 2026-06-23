@@ -491,7 +491,7 @@ class TestToClientMetricsPure(unittest.TestCase):
     """Direct tests of the pure transform -- no FakeOrch, no VllmJob.
 
     parse_results already covers the wiring; these pin the vocabulary + math in
-    isolation so distributed/disagg/InferenceMax reuse rests on a tested seam.
+    isolation so distributed/disagg/InferenceX ATOM reuse rests on a tested seam.
     """
 
     def setUp(self):

@@ -21,14 +21,14 @@ class _LegacyVllmInferenceJobPlaceholder:
         )
 
 
-class _LegacyInferenceMaxInferenceJobPlaceholder:
-    """``InferenceJobFactory`` no longer constructs a host+docker InferenceMax ``InferenceBaseJob``."""
+class _LegacyInferenceXAtomInferenceJobPlaceholder:
+    """``InferenceJobFactory`` no longer constructs a host+docker InferenceX ATOM ``InferenceBaseJob``."""
 
     def __init__(self, *args, **kwargs):
         raise NotImplementedError(
-            "InferenceJobFactory no longer builds a host+docker InferenceMax InferenceBaseJob. "
-            "Use ``cvs.lib.inference.inferencemax_orch.InferenceMaxJob`` with "
-            "``ContainerOrchestrator`` from the tests under ``cvs.tests.inference.inferencemax``."
+            "InferenceJobFactory no longer builds a host+docker InferenceX ATOM InferenceBaseJob. "
+            "Use ``cvs.lib.inference.inferencex_atom_orch.InferenceXAtomJob`` with "
+            "``ContainerOrchestrator`` from the tests under ``cvs.tests.inference.inferencex_atom``."
         )
 
 
@@ -38,7 +38,8 @@ class InferenceJobFactory:
     # Registry of supported frameworks
     _FRAMEWORK_CLASSES = {
         'vllm': _LegacyVllmInferenceJobPlaceholder,
-        'inferencemax': _LegacyInferenceMaxInferenceJobPlaceholder,
+        'inferencemax': _LegacyInferenceXAtomInferenceJobPlaceholder,
+        'inferencex_atom': _LegacyInferenceXAtomInferenceJobPlaceholder,
     }
 
     @classmethod
@@ -50,10 +51,10 @@ class InferenceJobFactory:
             inference_config_dict: Infrastructure configuration dictionary
 
         Returns:
-            Detected framework name ('vllm' or 'inferencemax')
+            Detected framework name ('vllm', 'inferencemax', or 'inferencex_atom')
 
         Detection logic:
-            - If 'inferencemax_repo' is present → InferenceMAX
+            - If 'inferencemax_repo' is present → inferencemax (legacy monolithic configs)
             - If 'vllm_script_path' is present → vLLM
             - Otherwise → vLLM (default)
         """
@@ -90,10 +91,10 @@ class InferenceJobFactory:
             hf_token: HuggingFace token
             gpu_type: GPU type (default: 'mi300')
             distributed_inference: Whether to use distributed inference (default: False)
-            framework: Framework type ('vllm', 'inferencemax', or None for auto-detect)
+            framework: Framework type ('vllm', 'inferencemax', 'inferencex_atom', or None for auto-detect)
 
         Returns:
-            Instance of :class:`~cvs.lib.inference.inferencemax_orch.InferenceMaxJob` or the
+            Instance of :class:`~cvs.lib.inference.inferencex_atom_orch.InferenceXAtomJob` or the
             vLLM placeholder (raises if selected).
 
         Raises:
