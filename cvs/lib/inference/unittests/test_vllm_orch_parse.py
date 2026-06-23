@@ -14,15 +14,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
-from cvs.lib.inference.vllm_orch import VllmJob
+from cvs.lib.inference.vllm_single import VllmJob
 
 _HERE = Path(__file__).parent
 _FIXTURES = _HERE / "fixtures"
 _REPO = _HERE.parents[3]  # cvs/lib/inference/unittests -> repo root
 _SHARED = _REPO / "cvs/tests/inference/vllm/_shared.py"
-_THRESHOLD = (
-    _REPO / "cvs/input/config_file/inference/vllm_single/w1_llama31_70b_fp8kv/llama31_70b_fp8_threshold.json"
-)
+_THRESHOLD = _REPO / "cvs/input/config_file/inference/vllm_single/w1_llama31_70b_fp8kv/llama31_70b_fp8_threshold.json"
 
 # isl/tp used to build the job; must match the fixture's run for the derived
 # math assertions to be meaningful (real artifact: isl=128, tp=8).
@@ -172,20 +170,19 @@ class TestKeyConsistency(unittest.TestCase):
     threshold cell key must be a key parse_results actually emits. Catches a
     silent `-` column or a silent threshold skip WITHOUT a hardware run."""
 
-    def _producer_keys(self):
+    @classmethod
+    def setUpClass(cls):
         orch = FakeOrch({"fakehost": _load_fixture("vllm_results_widened.json")})
-        return set(_make_job(orch).parse_results()["fakehost"].keys())
+        cls._produced = set(_make_job(orch).parse_results()["fakehost"].keys())
 
     def test_table_keys_are_produced(self):
-        produced = self._producer_keys()
         shared_src = _SHARED.read_text()
         table_keys = set(re.findall(r'_cell\(m,\s*"(client\.[^"]+)"', shared_src))
         self.assertTrue(table_keys, "no client.* table keys found in _shared.py")
-        missing = table_keys - produced
+        missing = table_keys - self._produced
         self.assertEqual(missing, set(), f"table reads keys parse_results never emits: {missing}")
 
     def test_threshold_keys_are_produced(self):
-        produced = self._producer_keys()
         thr = json.loads(_THRESHOLD.read_text())
         threshold_metric_keys = set()
         for cell, metrics in thr.items():
@@ -193,7 +190,7 @@ class TestKeyConsistency(unittest.TestCase):
                 continue
             threshold_metric_keys.update(metrics.keys())
         self.assertTrue(threshold_metric_keys, "no threshold metric keys found")
-        missing = threshold_metric_keys - produced
+        missing = threshold_metric_keys - self._produced
         self.assertEqual(missing, set(), f"threshold asserts keys parse_results never emits: {missing}")
 
 
@@ -235,37 +232,32 @@ class TestTableCellRendering(unittest.TestCase):
     results table, not the literal "None" (m.get returns None when the key
     exists)."""
 
-    def _cell(self):
+    @classmethod
+    def setUpClass(cls):
         import importlib.util
         import sys as _sys
         from types import ModuleType
 
-        # _shared.py imports tabulate at module scope; the _cell helper does not
-        # need it. Stub it so the module loads in the bare unittest interpreter.
         _sys.modules.setdefault("tabulate", ModuleType("tabulate"))
         if not hasattr(_sys.modules["tabulate"], "tabulate"):
             _sys.modules["tabulate"].tabulate = lambda *a, **k: ""
         spec = importlib.util.spec_from_file_location("_shared_under_test", str(_SHARED))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        return mod._cell
+        cls._cell_fn = staticmethod(mod._cell)
 
     def test_present_but_none_renders_dash(self):
-        cell = self._cell()
-        self.assertEqual(cell({"client.goodput": None}, "client.goodput"), "-")
+        self.assertEqual(self._cell_fn({"client.goodput": None}, "client.goodput"), "-")
 
     def test_absent_key_renders_dash(self):
-        cell = self._cell()
-        self.assertEqual(cell({}, "client.goodput"), "-")
+        self.assertEqual(self._cell_fn({}, "client.goodput"), "-")
 
     def test_real_value_passes_through(self):
-        cell = self._cell()
-        self.assertEqual(cell({"client.goodput": 4.76}, "client.goodput"), 4.76)
+        self.assertEqual(self._cell_fn({"client.goodput": 4.76}, "client.goodput"), 4.76)
 
     def test_zero_is_not_dashed(self):
         # 0.0 is a real measurement, must NOT become '-'.
-        cell = self._cell()
-        self.assertEqual(cell({"client.request_throughput": 0.0}, "client.request_throughput"), 0.0)
+        self.assertEqual(self._cell_fn({"client.request_throughput": 0.0}, "client.request_throughput"), 0.0)
 
 
 class TestVerdictMinRatioReferenceNone(unittest.TestCase):
@@ -285,10 +277,6 @@ class TestVerdictMinRatioReferenceNone(unittest.TestCase):
         with self.assertRaises(ThresholdViolation) as ctx:
             evaluate_all(actuals, thresholds)
         self.assertIn("is None", str(ctx.exception))
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestDerivedMaxModelLen(unittest.TestCase):
@@ -337,7 +325,7 @@ class TestDerivedMaxModelLen(unittest.TestCase):
         self.assertEqual(argv[argv.index("--max-model-len") + 1], "3925")
 
 
-import importlib.util as _ilu_t
+import importlib.util as _ilu_t  # noqa: E402
 
 _VS_PATH = _REPO / "cvs/tests/inference/vllm/vllm_single.py"
 
@@ -390,8 +378,11 @@ class TestMetricTests(unittest.TestCase):
     (cell-missing skip, record-only PASS, enforced violation) with fakes -- no
     hardware, no real pytest collection."""
 
+    @classmethod
+    def setUpClass(cls):
+        cls.vs = _load_vllm_single()
+
     def setUp(self):
-        self.vs = _load_vllm_single()
         # A realistic per-cell actuals dict, as test_vllm_inference would stash.
         orch = FakeOrch({"fakehost": _load_fixture("vllm_results_widened.json")})
         self.actuals = _make_job(orch).parse_results()["fakehost"]
@@ -412,6 +403,7 @@ class TestMetricTests(unittest.TestCase):
         producer would gate a '-', and one absent from _METRICS would assert a
         value that never appears in the report."""
         from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
+
         produced = set(self.actuals.keys())
         displayed = {short for short, _u in self.vs._METRICS}
         no_producer = sorted(m for m in GATED_METRICS if ("client." + m) not in produced)
@@ -421,27 +413,42 @@ class TestMetricTests(unittest.TestCase):
 
     def test_skips_when_cell_absent(self):
         import pytest as _pt
+
         with self.assertRaises(_pt.skip.Exception):
             self.vs.test_metric(
-                self.seq_combo, self.conc, "p99_e2el_ms",
-                {}, _fake_variant_config(), _FakeLifecycle(), _FakeRequest(),
+                self.seq_combo,
+                self.conc,
+                "p99_e2el_ms",
+                {},
+                _fake_variant_config(),
+                _FakeLifecycle(),
+                _FakeRequest(),
             )
 
     def test_skips_when_lifecycle_failed(self):
         import pytest as _pt
+
         with self.assertRaises(_pt.skip.Exception):
             self.vs.test_metric(
-                self.seq_combo, self.conc, "p99_e2el_ms",
+                self.seq_combo,
+                self.conc,
+                "p99_e2el_ms",
                 {self.key: {"fakehost": self.actuals}},
-                _fake_variant_config(), _FakeLifecycle(failed=True), _FakeRequest(),
+                _fake_variant_config(),
+                _FakeLifecycle(failed=True),
+                _FakeRequest(),
             )
 
     def test_record_only_records_value_and_unit(self):
         req = _FakeRequest()
         self.vs.test_metric(
-            self.seq_combo, self.conc, "p99_e2el_ms",
+            self.seq_combo,
+            self.conc,
+            "p99_e2el_ms",
             {self.key: {"fakehost": self.actuals}},
-            _fake_variant_config(enforce=False), _FakeLifecycle(), req,
+            _fake_variant_config(enforce=False),
+            _FakeLifecycle(),
+            req,
         )
         props = dict(req.node.user_properties)
         self.assertEqual(props["metric_value"], self.actuals["client.p99_e2el_ms"])
@@ -453,23 +460,31 @@ class TestMetricTests(unittest.TestCase):
         thr = {cell: {"client.mean_ttft_ms": {"kind": "max_ms", "value": 1.0}}}
         with self.assertRaises(ThresholdViolation):
             self.vs.test_metric(
-                self.seq_combo, self.conc, "mean_ttft_ms",
+                self.seq_combo,
+                self.conc,
+                "mean_ttft_ms",
                 {self.key: {"fakehost": self.actuals}},
-                _fake_variant_config(enforce=True, thresholds=thr), _FakeLifecycle(), _FakeRequest(),
+                _fake_variant_config(enforce=True, thresholds=thr),
+                _FakeLifecycle(),
+                _FakeRequest(),
             )
 
     def test_enforce_no_spec_is_record_only(self):
         # enforce=true but no threshold for this metric -> record-only, no raise.
         req = _FakeRequest()
         self.vs.test_metric(
-            self.seq_combo, self.conc, "p95_tpot_ms",
+            self.seq_combo,
+            self.conc,
+            "p95_tpot_ms",
             {self.key: {"fakehost": self.actuals}},
-            _fake_variant_config(enforce=True, thresholds={}), _FakeLifecycle(), req,
+            _fake_variant_config(enforce=True, thresholds={}),
+            _FakeLifecycle(),
+            req,
         )
         self.assertEqual(dict(req.node.user_properties)["metric_unit"], "ms")
 
 
-from cvs.lib.inference.utils.vllm_parsing import _safe_div, to_client_metrics
+from cvs.lib.inference.utils.vllm_parsing import _safe_div, to_client_metrics  # noqa: E402
 
 
 class TestToClientMetricsPure(unittest.TestCase):
@@ -507,8 +522,13 @@ class TestToClientMetricsPure(unittest.TestCase):
 
     def test_missing_inputs_degrade_to_none_not_raise(self):
         m = to_client_metrics({}, tp=_TP, isl=_ISL)
-        for d in ("per_gpu_throughput", "normalized_ttft_ms_per_tok",
-                  "decode_latency_ratio", "decode_throughput_p50", "success_rate"):
+        for d in (
+            "per_gpu_throughput",
+            "normalized_ttft_ms_per_tok",
+            "decode_latency_ratio",
+            "decode_throughput_p50",
+            "success_rate",
+        ):
             self.assertIsNone(m[f"client.{d}"])
 
 
@@ -525,3 +545,7 @@ class TestSafeDivPure(unittest.TestCase):
 
     def test_non_numeric_is_none(self):
         self.assertIsNone(_safe_div("x", 2))
+
+
+if __name__ == "__main__":
+    unittest.main()
