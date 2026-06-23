@@ -21,11 +21,9 @@ InferenceMAX inputs use per-variant directories under ``cvs/input/config_file/in
 
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
   - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
-  - ``server_script`` is interpreted relative to ``benchmarks/single_node/`` (or ``benchmarks/multi_node/`` when multi-node) inside the cloned ``inferencemax_repo``. It must exist at that path in the repo revision you use; upstream layouts change. Upstream ``InferenceX`` may still ship model-specific names under ``fixed_seq_len/``; CVS bundles a **model-agnostic** ``vllm_serve_mi300x.sh`` (flat under :mod:`cvs.lib.dtni.vllm_benchmark_scripts`). Use ``fixed_seq_len/vllm_serve_mi300x.sh`` in the suite JSON so ``InferenceMaxJob`` strips the prefix and resolves the basename against that tree when ``use_host_mounted_server_script`` is set. If the path is wrong, the server log shows ``No such file or directory``.
-  - InferenceX single-node scripts typically write under ``/workspace`` (e.g. ``server.log``, ``gpu_metrics.csv``). For ``inferencemax_single`` with :class:`~cvs.core.orchestrators.container.ContainerOrchestrator``, keep ``container_config.volume_dict`` to **only** ``"/home/{user-id}": "/home/{user-id}"``: the orchestrator always adds ``/home/<user>:/workspace``, and a second ``-v …:/workspace`` entry (for example ``{log_dir}/inference-max/workspace``) makes Docker fail with duplicate mount points. With the home bind only, ``/workspace`` inside the container is the user home tree, so those artifacts land on the host under your home directory (e.g. ``~/server.log``). For vLLM 0.21+ nightlies, some upstream ``fixed_seq_len/*.sh`` helpers invoke ``vllm serve`` **without** ``--enforce-eager``, so graph capture can still run even when ``vllm_enforce_eager`` adds ``VLLM_ENFORCE_EAGER=1`` to the env; the shipped MI300X suite defaults ``use_host_mounted_server_script`` so the CVS ``vllm_serve_mi300x.sh`` wrapper passes ``--enforce-eager`` on the CLI.
-  - Canonical host-mount ``vllm serve`` wrappers for MI300-class GPUs live under ``cvs/lib/dtni/vllm_benchmark_scripts/`` (checkpoint comes from ``MODEL`` in the server env — the same tree ``vllm_orch`` / vLLM single configs should reference via ``paths.benchmark_scripts_dir`` on the host). Set ``host_benchmark_scripts_relpath`` to ``lib/dtni/vllm_benchmark_scripts`` (**relative to the ``cvs`` package root**; this is the default in ``InferenceMaxJob``). Per-variant ``cvs/input/.../<variant>/benchmark_server_scripts/`` remains optional for forks. With ``benchmark_server_script_path`` ``auto``, CVS reads the entry script from the driver checkout when present, otherwise from that package directory (see :func:`cvs.lib.inference.inferencemax_host_scripts.bundled_script_body`), then writes bytes under ``{log_dir}/inference-max/host_scripts_staged/<variant>/`` on **each** GPU node using ``docker exec`` into the inference container when staging is required. Set an explicit absolute ``benchmark_server_script_path`` to skip deploy and use that directory directly on the nodes.
-  - **Thresholds**: sibling ``*threshold.json`` in the variant directory (exactly one file; multiple files is an error). Loaded by :func:`cvs.lib.inference.utils.inferencemax_config_loader.load_variant`. Cell keys use ``ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>`` with ``client.*`` metric specs (see vLLM threshold examples). Until Phase 3, the pytest suite adapts these into the legacy ``result_dict`` shape for :meth:`~cvs.lib.inference.base.InferenceBaseJob.verify_inference_results`.
-  - **Sweep**: ``sweep.sequence_combinations`` (named ISL/OSL pairs) plus ``sweep.runs`` (explicit ``{combo, concurrency}`` list). The driver still uses legacy ``InferenceMaxJob``; model id comes from ``model.id`` (benchmark key is its basename, e.g. ``gpt-oss-120b``).
+  - **Server**: ``roles.server.serve_args`` and ``roles.server.env`` drive a Python-built ``vllm serve`` command inside the container (same pattern as ``vllm_single``). MI300-class defaults include ``enforce-eager``, ``block-size``, and ``no-enable-prefix-caching``.
+  - **Thresholds**: sibling ``*threshold.json`` in the variant directory (exactly one file; multiple files is an error). Loaded by :func:`cvs.lib.inference.utils.inferencemax_config_loader.load_variant`. Cell keys use ``ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>`` with ``client.*`` metric specs (see vLLM threshold examples). ``test_metric`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all` when ``enforce_thresholds`` is true.
+  - **Sweep**: ``sweep.sequence_combinations`` (named ISL/OSL pairs) plus ``sweep.runs`` (explicit ``{combo, concurrency}`` list). Model id comes from ``model.id``.
 
 Pytest and HTML layout (inferencemax_single)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -41,12 +39,21 @@ Pytest and HTML layout (inferencemax_single)
      - ``test_launch_container``
      - Host ``docker_lib`` launch; records ``container_launch``.
    * - 2
+     - ``test_setup_sshd``
+     - Multinode only; single-node skips sshd probe.
+   * - 3
+     - ``test_model_fetch``
+     - Ensures model bytes are present under ``paths.models_dir``.
+   * - 4
      - ``test_inferencemax_inference``
      - Parametrized cell; records ``server_ready`` then ``client_complete``.
-   * - 3
+   * - 5
+     - ``test_metric``
+     - One HTML row per ``client.*`` metric per cell.
+   * - 6
      - ``test_print_results_table``
      - Session results grid from ``inf_res_dict``.
-   * - 4
+   * - 7
      - ``test_teardown``
      - Explicit teardown; sets ``lifecycle.torn_down`` after verify.
 
