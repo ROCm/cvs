@@ -1,0 +1,156 @@
+{
+
+    "config":
+    {
+        "container_image": "<changeme>",
+        "container_name": "torchtitan_llama3.1",
+        "nnodes": "1",
+        "_example_training_iterations": "30",
+        "training_iterations": "<changeme>",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "shm_size": "128G",
+        "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
+        "data_cache_dir": "/home/{user-id}/cache",
+        "log_dir": "/home/{user-id}/LOG_DIR",
+        "scripts_dir": "/home/{user-id}/SCRIPTS",
+        "rocm_dir": "",
+        "verify_network_errors": "False",
+        "_comments_use_generated_config": "True = generate TOML from model_params and pass to torchrun (recommended). False = use canned TOML at ./torchtitan/models/{module}/train_configs/{config}",
+        "use_generated_config": "False",
+        "_comments_torchtitan_root": "Path inside the container where the torchtitan repo lives",
+        "torchtitan_root": "/workspace/torchtitan",
+        "container_config":
+        {
+            "device_list": [ "/dev/dri", "/dev/kfd" ],
+            "volume_dict":
+            {
+                "/home/{user-id}": "/home/{user-id}"
+            }
+        }
+    },
+    "model_params":
+    {
+        "single_node":
+        {
+            "llama3_1_8b":
+            {
+                "mi300x":
+                {
+                    "tokenizer_path": "meta-llama/Llama-3.1-8B",
+                    "model_size": "8b",
+                    "global_batch_size": "<changeme>",
+                    "micro_batch_size": "<changeme>",
+                    "sequence_length": "8192",
+                    "data_parallel_shard_degree": "8",
+                    "tensor_parallel_degree": "1",
+                    "pipeline_parallel_degree": "1",
+                    "context_parallel_degree": "1",
+                    "expert_parallel_degree": "1",
+                    "activation_checkpointing": "selective",
+                    "compile": "false",
+                    "enable_float8": "true",
+                    "hf_assets_path": "./assets/hf/Llama-3.1-8B",
+                    "converters": "[\"float8\"]",
+                    "dataset": "c4",
+                    "lr": "3e-4",
+                    "warmup_steps": "200",
+                    "enable_async_tensor_parallel": "false",
+                    "precompute_float8_dynamic_scale_for_fsdp": "false",
+                    "result_dict":
+                    {
+                        "_example_tokens_per_sec": "10000.0",
+                        "tokens_per_sec": "<changeme>"
+                    }
+                },
+                "mi325":
+                {
+                    "tokenizer_path": "meta-llama/Llama-3.1-8B",
+                    "model_size": "8b",
+                    "global_batch_size": "<changeme>",
+                    "micro_batch_size": "<changeme>",
+                    "sequence_length": "8192",
+                    "data_parallel_shard_degree": "8",
+                    "tensor_parallel_degree": "1",
+                    "pipeline_parallel_degree": "1",
+                    "context_parallel_degree": "1",
+                    "expert_parallel_degree": "1",
+                    "activation_checkpointing": "selective",
+                    "compile": "false",
+                    "enable_float8": "true",
+                    "hf_assets_path": "./assets/hf/Llama-3.1-8B",
+                    "converters": "[\"float8\"]",
+                    "dataset": "c4",
+                    "lr": "3e-4",
+                    "warmup_steps": "200",
+                    "enable_async_tensor_parallel": "false",
+                    "precompute_float8_dynamic_scale_for_fsdp": "false",
+                    "result_dict":
+                    {
+                        "_example_tokens_per_sec": "11000.0",
+                        "tokens_per_sec": "<changeme>"
+                    }
+                }
+            },
+            "llama3_1_70b":
+            {
+                "mi300x":
+                {
+                    "tokenizer_path": "meta-llama/Llama-3.1-70B",
+                    "model_size": "70b",
+                    "global_batch_size": "<changeme>",
+                    "micro_batch_size": "<changeme>",
+                    "sequence_length": "8192",
+                    "data_parallel_shard_degree": "8",
+                    "tensor_parallel_degree": "1",
+                    "pipeline_parallel_degree": "1",
+                    "context_parallel_degree": "1",
+                    "expert_parallel_degree": "1",
+                    "activation_checkpointing": "selective",
+                    "compile": "false",
+                    "enable_float8": "true",
+                    "hf_assets_path": "./assets/hf/Llama-3.1-70B",
+                    "converters": "[\"float8\"]",
+                    "dataset": "c4",
+                    "lr": "1.5e-4",
+                    "warmup_steps": "200",
+                    "enable_async_tensor_parallel": "false",
+                    "precompute_float8_dynamic_scale_for_fsdp": "false",
+                    "result_dict":
+                    {
+                        "_example_tokens_per_sec": "1000.0",
+                        "tokens_per_sec": "<changeme>"
+                    }
+                },
+                "mi325":
+                {
+                    "tokenizer_path": "meta-llama/Llama-3.1-70B",
+                    "model_size": "70b",
+                    "global_batch_size": "<changeme>",
+                    "micro_batch_size": "<changeme>",
+                    "sequence_length": "8192",
+                    "data_parallel_shard_degree": "8",
+                    "tensor_parallel_degree": "1",
+                    "pipeline_parallel_degree": "1",
+                    "context_parallel_degree": "1",
+                    "expert_parallel_degree": "1",
+                    "activation_checkpointing": "selective",
+                    "compile": "false",
+                    "enable_float8": "true",
+                    "hf_assets_path": "./assets/hf/Llama-3.1-70B",
+                    "converters": "[\"float8\"]",
+                    "dataset": "c4",
+                    "lr": "1.5e-4",
+                    "warmup_steps": "200",
+                    "enable_async_tensor_parallel": "false",
+                    "precompute_float8_dynamic_scale_for_fsdp": "false",
+                    "result_dict":
+                    {
+                        "_example_tokens_per_sec": "1100.0",
+                        "tokens_per_sec": "<changeme>"
+                    }
+                }
+            }
+        }
+    }
+
+}
