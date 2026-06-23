@@ -16,7 +16,7 @@ crept in, it belongs in `cvs/lib/inference/utils/` instead — keep this boundar
 
 - `substitute_config(config_path, cluster_dict) -> (raw_dict, thresholds)`
   Reads a variant `*_config.json` + its sibling `*threshold.json`, resolves all
-  placeholders, strips threshold comment keys. Returns the substituted-but-
+  placeholders, strips config/threshold comment keys. Returns the substituted-but-
   **unvalidated** dict plus the parsed thresholds. A per-framework loader calls
   this, then builds its own typed `VariantConfig(**raw)`.
 - `BaseVariantConfig` — subclass it per framework. Carries the shared fields
@@ -51,8 +51,8 @@ framework (training) does the same: subclass `BaseVariantConfig`, reuse
   `*threshold.json` next to the config. Zero → `FileNotFoundError`; more than one
   → `ValueError` (ambiguous). So config and threshold can share a descriptive
   prefix (`llama31_70b_fp8_config.json` / `…_threshold.json`) but don't have to.
-- **Threshold comment keys** (anything starting with `_`, e.g. `_comment`) are
-  stripped before the coverage check, so you can document a threshold file inline.
+- **Comment keys** (anything starting with `_`, e.g. `_comment`) are stripped from
+  both the config and threshold dicts before validation, so you can document files inline.
 - **`_Forbid` vs `_Allow`**: most schema classes forbid extra keys (a typo fails
   load loudly). `RuntimeSpec` is `_Allow` (orchestrator runtime args are
   open-ended). Don't loosen `_Forbid` to silence a "valid" key — add the field.

@@ -207,7 +207,8 @@ def substitute_config(config_path, cluster_dict):
     flat_map = _flatten_paths({"paths": raw.get("paths", {})})
     raw = _walk_substitute(raw, flat_map)
 
-    # Drop threshold-file comment keys (e.g. "_comment") before coverage check.
+    # Drop comment keys (e.g. "_comment") before framework/threshold validation.
+    raw = {k: v for k, v in raw.items() if not k.startswith("_")}
     thresholds = {k: v for k, v in thresholds.items() if not k.startswith("_")}
 
     return raw, thresholds
