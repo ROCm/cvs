@@ -1,6 +1,6 @@
 {
   "_comment": "PLACEHOLDER thresholds for W1 (Llama 3.1 70B FP8-KV, TP=8, CONC=16) -- record-only run (enforce_thresholds=false). Five ISL/OSL cells matching the sweep matrix. Values are not calibrated. Replace and flip enforce_thresholds=true once real numbers are available.",
-  "ISL=1024,OSL=1024,TP=8,CONC=16": {
+  "ISL=1000,OSL=1000,TP=8,CONC=16": {
     "client.total_token_throughput": { "kind": "min_tok_s", "value": 0 },
     "client.output_throughput":      { "kind": "min_tok_s", "value": 0 },
     "client.mean_ttft_ms":           { "kind": "max_ms",    "value": 1000000 },
@@ -25,7 +25,7 @@
     "client.success_rate":           { "kind": "min",       "value": 0 },
     "client.failed":                 { "kind": "max",       "value": 1000000000 }
   },
-  "ISL=8192,OSL=1024,TP=8,CONC=16": {
+  "ISL=8000,OSL=1000,TP=8,CONC=16": {
     "client.total_token_throughput": { "kind": "min_tok_s", "value": 0 },
     "client.output_throughput":      { "kind": "min_tok_s", "value": 0 },
     "client.mean_ttft_ms":           { "kind": "max_ms",    "value": 1000000 },
@@ -50,7 +50,7 @@
     "client.success_rate":           { "kind": "min",       "value": 0 },
     "client.failed":                 { "kind": "max",       "value": 1000000000 }
   },
-  "ISL=1024,OSL=8192,TP=8,CONC=16": {
+  "ISL=1000,OSL=8000,TP=8,CONC=16": {
     "client.total_token_throughput": { "kind": "min_tok_s", "value": 0 },
     "client.output_throughput":      { "kind": "min_tok_s", "value": 0 },
     "client.mean_ttft_ms":           { "kind": "max_ms",    "value": 1000000 },
@@ -75,7 +75,7 @@
     "client.success_rate":           { "kind": "min",       "value": 0 },
     "client.failed":                 { "kind": "max",       "value": 1000000000 }
   },
-  "ISL=1024,OSL=4096,TP=8,CONC=16": {
+  "ISL=1000,OSL=4000,TP=8,CONC=16": {
     "client.total_token_throughput": { "kind": "min_tok_s", "value": 0 },
     "client.output_throughput":      { "kind": "min_tok_s", "value": 0 },
     "client.mean_ttft_ms":           { "kind": "max_ms",    "value": 1000000 },
