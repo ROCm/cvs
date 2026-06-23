@@ -2,14 +2,11 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Canonical **vLLM benchmark server** shell helpers used by:
-
-* :mod:`cvs.lib.inference.vllm_orch` (``VllmJob`` — ``variant.paths.benchmark_scripts_dir`` should
-  include these files on the host path that is bind-mounted into the container), and
-* :mod:`cvs.lib.inference.inferencemax_orch` (host-mounted / staged server scripts when
-  ``host_benchmark_scripts_relpath`` defaults to ``lib/dtni/vllm_benchmark_scripts``).
-
-Keeping scripts here avoids drift between InferenceMax wrappers and vLLM single orchestration.
+Canonical **vLLM benchmark server** shell helpers retained for legacy
+:class:`~cvs.lib.inference.base.InferenceBaseJob` flows. **InferenceMax** and
+**vllm_single** (:class:`~cvs.lib.inference.vllm_orch.VllmJob`) build
+``vllm serve`` in Python via ``roles.server.serve_args``; they do not stage
+these scripts at runtime.
 
 Client load generation uses the **vLLM install’s** ``benchmarks/<script>`` when present, otherwise
 ``python -m vllm.entrypoints.cli.main bench serve`` (no third-party git clone).
