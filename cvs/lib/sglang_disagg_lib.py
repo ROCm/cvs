@@ -14,14 +14,7 @@ import time
 from typing import Any, Optional
 
 from cvs.lib import globals
-from cvs.lib.model_query_lib import (
-    OPENAI_PROBE_STEP_TITLES,
-    check_lm_eval_results,
-    check_openai_compatible_probe_results,
-    log_openai_probe_results,
-    openai_probe_script,
-    run_lm_eval_openai_benchmark,
-)
+from cvs.lib.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -58,6 +51,7 @@ def _as_node_list(value):
 def _first_float(pattern, text):
     m = re.search(pattern, text, re.I)
     return m.group(1) if m else None
+
 
 class SglangDisaggPD:
     def __init__(
@@ -1417,7 +1411,7 @@ class SglangDisaggPD:
         port = int(self.inf_dict["proxy_router_serv_port"])
         model_name = self.bp_dict["model"]
 
-        probe_src = openai_probe_script(port, model_name)
+        probe_src = OpenAIProbe.probe_script(port, model_name)
         b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                   mkdir -p {self.log_dir}/benchmark_node; \
@@ -1481,62 +1475,26 @@ class SglangDisaggPD:
             fail_test(probe_err)
             return []
 
-        log_openai_probe_results(results, log)
+        OpenAIProbe.log_results(results, log)
 
-        ok, err = check_openai_compatible_probe_results(results, port=port, logger=log)
+        check_kwargs = OpenAIProbe.check_kwargs_from_scoring(scoring)
+        ok, summary, err = OpenAIProbe.check_results(text, **check_kwargs)
         if not ok:
-            summary = self.summarize_results(results, ok, err)
+            summary = OpenAIProbe.summarize_results(results, ok, err)
             fail_test(f"{err}")
             return summary
 
-        summary = self.summarize_results(results, ok, err)
+        summary = OpenAIProbe.summarize_results(results, ok, err)
         return summary
 
  
-    def summarize_results(
-            self,
-            results: dict[str, tuple[int, Any]],
-            ok: bool,
-            err: Optional[str],
-        ) -> list[str]:
-       
-        failure_parts: list[str] = []
-        if not ok and err:
-            marker = "OpenAI-compatible probe failed port="
-            if err.startswith(marker):
-                rest = err[len(marker) :]
-                colon_idx = rest.find(": ")
-                if colon_idx != -1:
-                    failures_blob = rest[colon_idx + 2 :]
-                    failure_parts = [p.strip() for p in failures_blob.split("|")]
-
-        summary: list[str] = []
-        for step, (status, _content) in results.items():
-            title = OPENAI_PROBE_STEP_TITLES.get(step, step)
-            if ok:
-                outcome = "Pass" if status == 200 else "Fail"
-            else:
-                step_failed_check = any(
-                    p.startswith(title) or p.startswith(f"{title} (step=")
-                    for p in failure_parts
-                )
-                if status != 200:
-                    outcome = "Fail"
-                elif step_failed_check:
-                    outcome = "Fail"
-                else:
-                    outcome = "Pass"
-            summary.append(f"{title} -> {outcome} ({status})")
-        return summary
-
-
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type="auto"):
         log.info("#================ * * * =========================#")
         log.info("lm-eval HellaSwag benchmark")
         log.info("#================ * * * =========================#")
 
         i_dict = self.bp_dict["inference_tests"]["lm_eval_hellaswag"]
-        inner_cmd, scoring = run_lm_eval_openai_benchmark(
+        inner_cmd, scoring = LmEvalBenchmark.prepare(
             i_dict,
             port=int(self.inf_dict["proxy_router_serv_port"]),
             model_id=self.bp_dict["model"],
@@ -1558,7 +1516,7 @@ class SglangDisaggPD:
 
         summary = None
         for node, text in out_dict.items():
-            ok, summary, err = check_lm_eval_results(text, **{
+            ok, summary, err = LmEvalBenchmark.check_results(text, **{
                 k: scoring[k]
                 for k in (
                     "task_name", "parse_metric", "expected", "metric_key",
@@ -1577,7 +1535,7 @@ class SglangDisaggPD:
         log.info("#================ * * * =========================#")
 
         i_dict = self.bp_dict["inference_tests"]["lm_eval_gsm8k"]
-        inner_cmd, scoring = run_lm_eval_openai_benchmark(
+        inner_cmd, scoring = LmEvalBenchmark.prepare(
             i_dict,
             port=int(self.inf_dict["proxy_router_serv_port"]),
             model_id=self.bp_dict["model"],
@@ -1599,7 +1557,7 @@ class SglangDisaggPD:
 
         summary = None
         for node, text in out_dict.items():
-            ok, summary, err = check_lm_eval_results(text, **{
+            ok, summary, err = LmEvalBenchmark.check_results(text, **{
                 k: scoring[k]
                 for k in (
                     "task_name", "parse_metric", "expected", "metric_key",
@@ -1618,7 +1576,7 @@ class SglangDisaggPD:
         log.info("#================ * * * =========================#")
 
         i_dict = self.bp_dict["inference_tests"]["lm_eval_mmlu"]
-        inner_cmd, scoring = run_lm_eval_openai_benchmark(
+        inner_cmd, scoring = LmEvalBenchmark.prepare(
             i_dict,
             port=int(self.inf_dict["proxy_router_serv_port"]),
             model_id=self.bp_dict["model"],
@@ -1640,7 +1598,7 @@ class SglangDisaggPD:
 
         summary = None
         for node, text in out_dict.items():
-            ok, summary, err = check_lm_eval_results(text, **{
+            ok, summary, err = LmEvalBenchmark.check_results(text, **{
                 k: scoring[k]
                 for k in (
                     "task_name", "parse_metric", "expected", "metric_key",
