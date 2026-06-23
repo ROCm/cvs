@@ -5,6 +5,8 @@ All rights reserved.
 
 import copy
 import importlib.util as _ilu
+import json
+import os
 import pathlib as _pl
 import time
 
@@ -12,6 +14,7 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.inference.inferencemax_orch import InferenceMaxJob
+from cvs.lib.inference.utils.inferencing_config_loader import validate_sweep_selector
 from cvs.lib.verify_lib import update_test_result
 
 _spec = _ilu.spec_from_file_location("_inferencemax_shared", _pl.Path(__file__).with_name("_shared.py"))
@@ -20,6 +23,30 @@ _spec.loader.exec_module(_mod)
 test_print_results_table = _mod.test_print_results_table  # noqa: F841
 
 log = globals.log
+
+
+def pytest_generate_tests(metafunc):
+    """Parametrize test_inferencemax_inference from the sweep's named-combo + runs selector."""
+    if "seq_combo" not in metafunc.fixturenames or "concurrency" not in metafunc.fixturenames:
+        return
+    config_file = metafunc.config.getoption("config_file")
+    if not config_file or not os.path.isfile(config_file):
+        return
+    with open(config_file) as fp:
+        raw = json.load(fp)
+    sweep = raw.get("sweep", {})
+    combos = sweep.get("sequence_combinations", [])
+    runs = sweep.get("runs", [])
+    validate_sweep_selector([c["name"] for c in combos], [r["combo"] for r in runs])
+    by_name = {c["name"]: c for c in combos}
+    cases = []
+    ids = []
+    for run in runs:
+        combo = by_name[run["combo"]]
+        conc = run["concurrency"]
+        cases.append((combo, conc))
+        ids.append(run["combo"] + "-conc" + str(conc))
+    metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
 
 
 def test_launch_container(orch, lifecycle, request):

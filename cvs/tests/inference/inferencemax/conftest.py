@@ -11,15 +11,16 @@ import pytest
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
 from cvs.lib.inference.utils.inferencemax_config_loader import (
-    inferencemax_benchmark_model_name,
-    load_inferencemax_suite_raw,
+    benchmark_model_key,
+    legacy_benchmark_params_from_variant,
+    legacy_inference_dict_from_variant,
+    load_variant,
+    orchestrator_container_from_variant,
 )
 from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
-    resolve_test_config_placeholders,
 )
-from cvs.lib.verify_lib import update_test_result
 
 log = globals.log
 
@@ -30,34 +31,8 @@ def _deep_merge(base, override):
         return override
     out = dict(base)
     for k, v in override.items():
-        out[k] = _deep_merge(base[k], v) if k in base and isinstance(base[k], dict) and isinstance(v, dict) else v
+        out[k] = _deep_merge(base[k], v) if k in base else v
     return out
-
-
-def _container_block_from_inference(inference_dict, benchmark_params_dict, model_name):
-    """Build a ``container`` dict for :class:`OrchestratorConfig` from legacy InferenceMax suite JSON."""
-    cc = inference_dict["container_config"]
-    bp = benchmark_params_dict.get(model_name, {})
-    image = bp.get("container_image", inference_dict["container_image"])
-    volumes = [f"{h}:{c}" for h, c in cc["volume_dict"].items()]
-    devices = list(cc.get("device_list", []))
-    env = dict(cc.get("env_dict", {}))
-    return {
-        "lifetime": "per_run",
-        "name": inference_dict["container_name"],
-        "image": image,
-        "env": env,
-        "runtime": {
-            "name": "docker",
-            "args": {
-                "volumes": volumes,
-                "devices": devices,
-                "network": "host",
-                "ipc": "host",
-                "privileged": True,
-            },
-        },
-    }
 
 
 class _Lifecycle:
@@ -81,28 +56,28 @@ def cluster_dict(pytestconfig):
 
 
 @pytest.fixture(scope="module")
-def suite_raw(pytestconfig):
+def variant_config(pytestconfig, cluster_dict):
     config_file = pytestconfig.getoption("config_file")
     if not config_file:
         pytest.fail("--config_file is required")
-    return load_inferencemax_suite_raw(config_file)
+    return load_variant(config_file, cluster_dict)
 
 
 @pytest.fixture(scope="module")
-def inference_dict(suite_raw, cluster_dict):
-    cfg = suite_raw["config"]
-    return resolve_test_config_placeholders(cfg, cluster_dict)
+def inference_dict(variant_config):
+    """Legacy ``config`` block for :class:`InferenceMaxJob` (Phase 3 will drop this)."""
+    return legacy_inference_dict_from_variant(variant_config)
 
 
 @pytest.fixture(scope="module")
-def benchmark_params_dict(suite_raw, cluster_dict):
-    bp = suite_raw["benchmark_params"]
-    return resolve_test_config_placeholders(bp, cluster_dict)
+def benchmark_params_dict(variant_config):
+    """Legacy ``benchmark_params`` block for :class:`InferenceMaxJob` (Phase 3 will drop this)."""
+    return legacy_benchmark_params_from_variant(variant_config)
 
 
 @pytest.fixture(scope="module")
-def hf_token(inference_dict):
-    path = inference_dict["hf_token_file"]
+def hf_token(variant_config):
+    path = variant_config.paths.hf_token_file
     if not os.path.isfile(path):
         pytest.skip(f"hf_token file missing: {path}")
     with open(path) as fp:
@@ -115,16 +90,16 @@ def lifecycle():
 
 
 @pytest.fixture(scope="module")
-def model_name(suite_raw):
-    return inferencemax_benchmark_model_name(suite_raw)
+def model_name(variant_config):
+    return benchmark_model_key(variant_config)
 
 
 @pytest.fixture(scope="module")
-def orch(cluster_dict, inference_dict, benchmark_params_dict, lifecycle, model_name):
-    """Container orchestrator: launch/teardown and ``exec`` into the inference container (see vllm_single)."""
+def orch(cluster_dict, variant_config, lifecycle):
+    """Container orchestrator: launch/teardown and ``exec`` into the inference container."""
     container_block = _deep_merge(
         cluster_dict.get("container", {}),
-        _container_block_from_inference(inference_dict, benchmark_params_dict, model_name),
+        orchestrator_container_from_variant(variant_config),
     )
     testsuite_config = {
         "orchestrator": "container",
@@ -149,26 +124,6 @@ def gpu_type(orch):
 @pytest.fixture(scope="session")
 def inf_res_dict():
     return {}
-
-
-def pytest_generate_tests(metafunc):
-    """Single sweep cell derived from ``benchmark_params`` for collection-time parametrization."""
-    if "seq_combo" not in metafunc.fixturenames or "concurrency" not in metafunc.fixturenames:
-        return
-    config_file = metafunc.config.getoption("config_file")
-    if not config_file or not os.path.isfile(config_file):
-        return
-    raw = load_inferencemax_suite_raw(config_file)
-    mname = inferencemax_benchmark_model_name(raw)
-    bp = raw.get("benchmark_params", {}).get(mname, {})
-    combo = {
-        "isl": str(bp.get("input_sequence_length", "8192")),
-        "osl": str(bp.get("output_sequence_length", "1024")),
-        "name": "legacy_profile",
-    }
-    conc = int(bp.get("max_concurrency", "64"))
-    cid = f"{combo['name']}-conc{conc}"
-    metafunc.parametrize("seq_combo,concurrency", [(combo, conc)], ids=[cid])
 
 
 def pytest_collection_modifyitems(items):
