@@ -81,7 +81,7 @@ SGLANG_DISAGG_TEST_ORDER = {
     "test_openai_compatible_http_endpoints": 8,
     "test_run_lm_eval_hellaswag_benchmark_test": 9,
     "test_run_lm_eval_gsm8k_benchmark_test": 10,
-    # "test_run_lm_eval_mmlu_benchmark_test": 11,
+    "test_run_lm_eval_mmlu_benchmark_test": 11,
     "test_run_performance_benchmark_test": 12,
     "test_disagg_gpu_topology": 13,
     "test_print_results_table": 14,
@@ -100,7 +100,7 @@ def test_print_results_table(inf_res_dict):
             )
         
     acc_rows = []
-    for label, key in (("HellaSwag", "accuracy_hellaswag"), ("GSM8K", "accuracy_gsm8k")):
+    for label, key in (("HellaSwag", "accuracy_hellaswag"), ("GSM8K", "accuracy_gsm8k"), ("MMLU", "accuracy_mmlu")):
         e = phase_labels.get(key)
         if isinstance(e, dict) and "task" in e:
             acc_rows.append(
