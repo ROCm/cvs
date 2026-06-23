@@ -1,0 +1,28 @@
+{
+  "_comment": "Smoke variant — loose record-only gates; not calibrated against plan §4.1.",
+  "ISL=1024,OSL=1024,TP=8,CONC=128": {
+    "client.total_token_throughput": {"kind": "min_tok_s", "value": 0},
+    "client.output_throughput": {"kind": "min_tok_s", "value": 0},
+    "client.mean_ttft_ms": {"kind": "max_ms", "value": 1000000},
+    "client.median_ttft_ms": {"kind": "max_ms", "value": 1000000},
+    "client.p90_ttft_ms": {"kind": "max_ms", "value": 1000000},
+    "client.p95_ttft_ms": {"kind": "max_ms", "value": 1000000},
+    "client.p99_ttft_ms": {"kind": "max_ms", "value": 1000000},
+    "client.mean_tpot_ms": {"kind": "max_ms", "value": 1000000},
+    "client.median_tpot_ms": {"kind": "max_ms", "value": 1000000},
+    "client.p90_tpot_ms": {"kind": "max_ms", "value": 1000000},
+    "client.p95_tpot_ms": {"kind": "max_ms", "value": 1000000},
+    "client.p99_tpot_ms": {"kind": "max_ms", "value": 1000000},
+    "client.mean_itl_ms": {"kind": "max_ms", "value": 1000000},
+    "client.median_itl_ms": {"kind": "max_ms", "value": 1000000},
+    "client.p95_itl_ms": {"kind": "max_ms", "value": 1000000},
+    "client.p99_itl_ms": {"kind": "max_ms", "value": 1000000},
+    "client.mean_e2el_ms": {"kind": "max_ms", "value": 1000000},
+    "client.median_e2el_ms": {"kind": "max_ms", "value": 1000000},
+    "client.p90_e2el_ms": {"kind": "max_ms", "value": 1000000},
+    "client.p95_e2el_ms": {"kind": "max_ms", "value": 1000000},
+    "client.p99_e2el_ms": {"kind": "max_ms", "value": 1000000},
+    "client.success_rate": {"kind": "min", "value": 0},
+    "client.failed": {"kind": "max", "value": 1000000000}
+  }
+}
