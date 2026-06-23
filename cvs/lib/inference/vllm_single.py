@@ -254,10 +254,7 @@ class VllmJob:
         # client). The env script (HF token, AITER flags, cache pin) is sourced
         # first; nohup backgrounds the server into its fixed log.
         serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv())
-        inner = (
-            f"source /tmp/server_env_script.sh && "
-            f"nohup {serve_cmd} > {shlex.quote(self.server_log)} 2>&1 &"
-        )
+        inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(self.server_log)} 2>&1 &"
         out = self.orch.exec("bash -c " + shlex.quote(inner))
         for host, output in out.items():
             if self.EARLY_FAILURE_RE.search(output or ""):
