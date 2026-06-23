@@ -16,9 +16,11 @@ from typing import Any, Optional
 from cvs.lib import globals
 from cvs.lib.model_query_lib import (
     OPENAI_PROBE_STEP_TITLES,
+    check_lm_eval_results,
     check_openai_compatible_probe_results,
     log_openai_probe_results,
     openai_probe_script,
+    run_lm_eval_openai_benchmark,
 )
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
@@ -1528,249 +1530,125 @@ class SglangDisaggPD:
         return summary
 
 
-    def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
-        """
-        Run EleutherAI ``lm-eval`` on **hellaswag** against the OpenAI-compatible
-        
-        """
-        log.info('#================ * * * =========================#')
-        log.info('lm-eval HellaSwag benchmark')
-        log.info('#================ * * * =========================#')
+    def run_lm_eval_hellaswag_benchmark_test(self, _d_type="auto"):
+        log.info("#================ * * * =========================#")
+        log.info("lm-eval HellaSwag benchmark")
+        log.info("#================ * * * =========================#")
 
-        i_dict = self.bp_dict['inference_tests']['lm_eval_hellaswag']
-        port = self.inf_dict['proxy_router_serv_port']
-        model_id = self.bp_dict['model']
-        lm_eval_model = i_dict.get('lm_eval_model', 'local-completions')
-        path_suffix = (
-            '/v1/chat/completions'
-            if 'chat' in lm_eval_model.lower()
-            else '/v1/completions'
+        i_dict = self.bp_dict["inference_tests"]["lm_eval_hellaswag"]
+        inner_cmd, scoring = run_lm_eval_openai_benchmark(
+            i_dict,
+            port=int(self.inf_dict["proxy_router_serv_port"]),
+            model_id=self.bp_dict["model"],
+            task_name="hellaswag",
+            default_tasks="hellaswag",
+            default_metric="acc_norm",
+            default_metric_key="acc_norm,none",
+            log_dir=self.log_dir,
+            log_basename="lm_eval_hellaswag.log",
+            default_num_concurrent="1",
         )
-        base_url = f'http://0.0.0.0:{port}{path_suffix}'
-        num_concurrent = i_dict.get('num_concurrent', '4')
-        tasks = i_dict.get('tasks', 'hellaswag')
-        num_fewshot = i_dict.get('num_fewshot', '5')
-        batch_size = i_dict.get('batch_size', 'auto')
-        limit = str(i_dict.get('limit', '')).strip()
-        limit_arg = f' --limit {limit}' if limit else ''
-        extra_model_args = str(i_dict.get('extra_model_args', '')).strip()
-        model_args = (
-            f'model={model_id},base_url={base_url},num_concurrent={num_concurrent},'
-            f'tokenized_requests=False'
-        )
-        if extra_model_args:
-            model_args = f'{model_args},{extra_model_args}'
-        model_args_q = shlex.quote(model_args)
-        exec_timeout = int(i_dict.get('exec_timeout_sec', '7200'))
-        log_path = f'{self.log_dir}/benchmark_node/lm_eval_hellaswag.log'
 
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                  mkdir -p {self.log_dir}/benchmark_node; \
-                  source /tmp/benchmark_env_script.sh && \
-                  pip install -q 'lm-eval[api]' && \
-                  python3 -m lm_eval \
-                  --model {lm_eval_model} \
-                  --model_args {model_args_q} \
-                  --tasks {tasks} \
-                  --num_fewshot {num_fewshot} \
-                  --batch_size {batch_size}{limit_arg} \
-                  2>&1 | tee {log_path}" '''
-        formatted_cmd = textwrap_for_yml(cmd)
-        out_dict = self.b_phdl.exec(formatted_cmd, timeout=exec_timeout)
+                mkdir -p {self.log_dir}/benchmark_node; \\
+                source /tmp/benchmark_env_script.sh && \\
+                {inner_cmd}" '''
+        out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
         time.sleep(5)
-        summary: dict[str, Any] | None = None
+
+        summary = None
         for node, text in out_dict.items():
-            if not text:
-                fail_test(f'lm-eval HellaSwag produced no output on node {node!r}')
-            elif re.search(r'Traceback \(most recent call last\)', text):
-                fail_test(
-                    f'lm-eval HellaSwag failed on node {node!r}: Python traceback in output'
+            ok, summary, err = check_lm_eval_results(text, **{
+                k: scoring[k]
+                for k in (
+                    "task_name", "parse_metric", "expected", "metric_key",
+                    "tasks", "tolerance_frac", "log_path", "label",
                 )
-            elif not re.search(r'hellaswag', text, re.I):
-                fail_test(
-                    f'lm-eval HellaSwag output on node {node!r} missing hellaswag results '
-                    f'(see {log_path})'
-                )
-            else:
-                expected = float(i_dict["expected_results"]["hellaswag"]["acc_norm,none"])
-                actual = self.lm_eval_metric_value(text, "hellaswag", "acc_norm")
-                if actual is None:
-                    fail_test("could not parse lm-eval table score for hellaswag / acc_norm")
-                elif abs(actual - expected) > 0.05 * abs(expected):
-                    fail_test(
-                        f"hellaswag acc_norm {actual:.4f} not within 5% of expected {expected:.4f}"
-                    )
-                summary = {
-                    "task": str(tasks),
-                    "metric_key": "acc_norm,none",
-                    "actual": float(actual),
-                    "expected": float(expected),
-                }
+            })
+            if not ok:
+                fail_test(f"lm-eval HellaSwag on node {node!r}: {err}")
         if summary is None:
             fail_test("lm-eval HellaSwag: no benchmark nodes produced output to score")
         return summary
 
-    def run_lm_eval_gsm8k_benchmark_test(self, _d_type='auto'):
-        """
-        Run EleutherAI ``lm-eval`` on **gsm8k** against the OpenAI-compatible
+    def run_lm_eval_gsm8k_benchmark_test(self, _d_type="auto"):
+        log.info("#================ * * * =========================#")
+        log.info("lm-eval GSM8K benchmark")
+        log.info("#================ * * * =========================#")
 
-        """
-        log.info('#================ * * * =========================#')
-        log.info('lm-eval GSM8K benchmark')
-        log.info('#================ * * * =========================#')
-
-        i_dict = self.bp_dict['inference_tests']['lm_eval_gsm8k']
-        port = self.inf_dict['proxy_router_serv_port']
-        model_id = self.bp_dict['model']
-        lm_eval_model = i_dict.get('lm_eval_model', 'local-completions')
-        path_suffix = (
-            '/v1/chat/completions'
-            if 'chat' in lm_eval_model.lower()
-            else '/v1/completions'
+        i_dict = self.bp_dict["inference_tests"]["lm_eval_gsm8k"]
+        inner_cmd, scoring = run_lm_eval_openai_benchmark(
+            i_dict,
+            port=int(self.inf_dict["proxy_router_serv_port"]),
+            model_id=self.bp_dict["model"],
+            task_name="gsm8k",
+            default_tasks="gsm8k",
+            default_metric="exact_match",
+            default_metric_key="exact_match,flexible-extract",
+            log_dir=self.log_dir,
+            log_basename="lm_eval_gsm8k.log",
+            default_num_concurrent="4",
         )
-        base_url = f'http://0.0.0.0:{port}{path_suffix}'
-        num_concurrent = i_dict.get('num_concurrent', '4')
-        tasks = i_dict.get('tasks', 'gsm8k')
-        num_fewshot = i_dict.get('num_fewshot', '5')
-        batch_size = i_dict.get('batch_size', 'auto')
-        limit = str(i_dict.get('limit', '')).strip()
-        limit_arg = f' --limit {limit}' if limit else ''
-        extra_model_args = str(i_dict.get('extra_model_args', '')).strip()
-        model_args = (
-            f'model={model_id},base_url={base_url},num_concurrent={num_concurrent},'
-            f'tokenized_requests=False'
-        )
-        if extra_model_args:
-            model_args = f'{model_args},{extra_model_args}'
-        model_args_q = shlex.quote(model_args)
-        exec_timeout = int(i_dict.get('exec_timeout_sec', '7200'))
-        log_path = f'{self.log_dir}/benchmark_node/lm_eval_gsm8k.log'
 
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                  mkdir -p {self.log_dir}/benchmark_node; \
-                  source /tmp/benchmark_env_script.sh && \
-                  pip install -q 'lm-eval[api]' && \
-                  python3 -m lm_eval \
-                  --model {lm_eval_model} \
-                  --model_args {model_args_q} \
-                  --tasks {tasks} \
-                  --num_fewshot {num_fewshot} \
-                  --batch_size {batch_size}{limit_arg} \
-                  2>&1 | tee {log_path}" '''
-        formatted_cmd = textwrap_for_yml(cmd)
-        out_dict = self.b_phdl.exec(formatted_cmd, timeout=exec_timeout)
+                mkdir -p {self.log_dir}/benchmark_node; \\
+                source /tmp/benchmark_env_script.sh && \\
+                {inner_cmd}" '''
+        out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
         time.sleep(5)
-        summary: dict[str, Any] | None = None
+
+        summary = None
         for node, text in out_dict.items():
-            if not text:
-                fail_test(f'lm-eval GSM8K produced no output on node {node!r}')
-            elif re.search(r'Traceback \(most recent call last\)', text):
-                fail_test(
-                    f'lm-eval GSM8K failed on node {node!r}: Python traceback in output'
+            ok, summary, err = check_lm_eval_results(text, **{
+                k: scoring[k]
+                for k in (
+                    "task_name", "parse_metric", "expected", "metric_key",
+                    "tasks", "tolerance_frac", "log_path", "label",
                 )
-            elif not re.search(r'gsm8k', text, re.I):
-                fail_test(
-                    f'lm-eval GSM8K output on node {node!r} missing gsm8k results '
-                    f'(see {log_path})'
-                )
-            else:
-                expected = float(
-                    i_dict["expected_results"]["gsm8k"]["exact_match,flexible-extract"]
-                )
-                actual = self.lm_eval_metric_value(text, "gsm8k", "exact_match")
-                if actual is None:
-                    fail_test(
-                        "could not parse lm-eval table score for gsm8k / flexible-extract"
-                    )
-                elif abs(actual - expected) > 0.05 * abs(expected):
-                    fail_test(
-                        f"gsm8k flexible-extract {actual:.4f} not within 5% of expected {expected:.4f}"
-                    )
-                summary = {
-                    "task": str(tasks),
-                    "metric_key": "exact_match,flexible-extract",
-                    "actual": float(actual),
-                    "expected": float(expected),
-                }
+            })
+            if not ok:
+                fail_test(f"lm-eval GSM8K on node {node!r}: {err}")
         if summary is None:
             fail_test("lm-eval GSM8K: no benchmark nodes produced output to score")
         return summary
 
-    def run_lm_eval_mmlu_benchmark_test(self, _d_type='auto'):
-        """
-        Run EleutherAI ``lm-eval`` on **mmlu** against the OpenAI-compatible
+    def run_lm_eval_mmlu_benchmark_test(self, _d_type="auto"):
+        log.info("#================ * * * =========================#")
+        log.info("lm-eval MMLU benchmark")
+        log.info("#================ * * * =========================#")
 
-        """
-        log.info('#================ * * * =========================#')
-        log.info('lm-eval MMLU benchmark')
-        log.info('#================ * * * =========================#')
-
-        i_dict = self.bp_dict['inference_tests']['lm_eval_mmlu']
-        port = self.inf_dict['proxy_router_serv_port']
-        model_id = self.bp_dict['model']
-        lm_eval_model = i_dict.get('lm_eval_model', 'local-completions')
-        path_suffix = (
-            '/v1/chat/completions'
-            if 'chat' in lm_eval_model.lower()
-            else '/v1/completions'
+        i_dict = self.bp_dict["inference_tests"]["lm_eval_mmlu"]
+        inner_cmd, scoring = run_lm_eval_openai_benchmark(
+            i_dict,
+            port=int(self.inf_dict["proxy_router_serv_port"]),
+            model_id=self.bp_dict["model"],
+            task_name="mmlu",
+            default_tasks="mmlu",
+            default_metric="acc",
+            default_metric_key="acc,none",
+            log_dir=self.log_dir,
+            log_basename="lm_eval_mmlu.log",
+            default_num_concurrent="1",
         )
-        base_url = f'http://0.0.0.0:{port}{path_suffix}'
-        num_concurrent = i_dict.get('num_concurrent', '1')
-        tasks = i_dict.get('tasks', 'mmlu')
-        num_fewshot = i_dict.get('num_fewshot', '5')
-        batch_size = i_dict.get('batch_size', 'auto')
-        limit = str(i_dict.get('limit', '')).strip()
-        limit_arg = f' --limit {limit}' if limit else ''
-        extra_model_args = str(i_dict.get('extra_model_args', '')).strip()
-        model_args = (
-            f'model={model_id},base_url={base_url},num_concurrent={num_concurrent},'
-            f'tokenized_requests=False'
-        )
-        if extra_model_args:
-            model_args = f'{model_args},{extra_model_args}'
-        model_args_q = shlex.quote(model_args)
-        exec_timeout = int(i_dict.get('exec_timeout_sec', '7200'))
-        log_path = f'{self.log_dir}/benchmark_node/lm_eval_mmlu.log'
 
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                  mkdir -p {self.log_dir}/benchmark_node; \
-                  source /tmp/benchmark_env_script.sh && \
-                  pip install -q 'lm-eval[api]' && \
-                  python3 -m lm_eval \
-                  --model {lm_eval_model} \
-                  --model_args {model_args_q} \
-                  --tasks {tasks} \
-                  --num_fewshot {num_fewshot} \
-                  --batch_size {batch_size}{limit_arg} \
-                  2>&1 | tee {log_path}" '''
-        formatted_cmd = textwrap_for_yml(cmd)
-        out_dict = self.b_phdl.exec(formatted_cmd, timeout=exec_timeout)
+                mkdir -p {self.log_dir}/benchmark_node; \\
+                source /tmp/benchmark_env_script.sh && \\
+                {inner_cmd}" '''
+        out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
         time.sleep(5)
+
+        summary = None
         for node, text in out_dict.items():
-            if not text:
-                fail_test(f'lm-eval MMLU produced no output on node {node!r}')
-            elif re.search(r'Traceback \(most recent call last\)', text):
-                fail_test(
-                    f'lm-eval MMLU failed on node {node!r}: Python traceback in output'
+            ok, summary, err = check_lm_eval_results(text, **{
+                k: scoring[k]
+                for k in (
+                    "task_name", "parse_metric", "expected", "metric_key",
+                    "tasks", "tolerance_frac", "log_path", "label",
                 )
-            elif not re.search(r'mmlu', text, re.I):
-                fail_test(
-                    f'lm-eval MMLU output on node {node!r} missing mmlu results '
-                    f'(see {log_path})'
-                )
-            else:
-                expected = float(i_dict["expected_results"]["mmlu"]["acc,none"])
-                actual = self.lm_eval_metric_value(text, "mmlu", "acc")
-                if actual is None:
-                    fail_test("could not parse lm-eval table score for mmlu / acc")
-                elif abs(actual - expected) > 0.05 * abs(expected):
-                    fail_test(f"mmlu acc {actual:.4f} not within 5% of expected {expected:.4f}")
-
-
-    def lm_eval_metric_value(self, text: str, task: str, metric: str) -> float | None:
-        m = re.search(
-            rf"{re.escape(metric)}\s*\|\s*[^|\n]+\|\s*([0-9]+(?:\.[0-9]+)?)",
-            text,
-            flags=re.I,
-        )
-        return float(m.group(1)) if m else None
+            })
+            if not ok:
+                fail_test(f"lm-eval MMLU on node {node!r}: {err}")
+        if summary is None:
+            fail_test("lm-eval MMLU: no benchmark nodes produced output to score")
+        return summary
