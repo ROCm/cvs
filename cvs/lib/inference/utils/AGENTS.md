@@ -83,7 +83,7 @@ names and any `run.combo` that names no combo, **at load time**.
   load rather than silently dropping the gate.
 - **`to_client_metrics` is deliberately I/O-free.** Artifact layout is
   job-specific (single-node `cat`, disagg prefill+decode, distributed rank-0);
-  the *fetch* lives in the orchestrator (`vllm_orch.parse_results`), the
+  the *fetch* lives in the orchestrator (`vllm_single.parse_results`), the
   *transform* lives here so every job reuses it. Keep it that way — don't add
   file reads here.
 - **Derived metrics degrade to `None`, never crash.** `_safe_div` returns `None`

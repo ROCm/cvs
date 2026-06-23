@@ -62,7 +62,7 @@ cvs/lib/
     utils/                       # inference-only helpers
       inferencing_config_loader.py   #   sweep selector, Params, VariantConfig, cell_key
       vllm_parsing.py            #   client.* metrics, to_client_metrics
-    vllm_orch.py                 #   the driver (VllmJob)
+    vllm_single.py                 #   the driver (VllmJob)
   training/                      # (future) same shape:
     utils/                       #   training_config_loader.py, <metric>_parsing.py
 ```
@@ -82,7 +82,7 @@ the reusable surface a second suite plugs into.
         |
   orchestrator   ── cvs/core/orchestrators (ContainerOrchestrator; provided)
         |
-  job / driver   ── cvs/lib/inference/vllm_orch.py   (launch server, run client, fetch artifact)
+  job / driver   ── cvs/lib/inference/vllm_single.py   (launch server, run client, fetch artifact)
         |
   suite / pytest ── cvs/tests/inference/vllm/        (lifecycle-as-tests, parametrization, HTML)
         |
@@ -158,7 +158,7 @@ exactly.
 
 ### The job/driver (self-contained, no external .sh)
 
-`vllm_orch.VllmJob` is the reference driver. It talks only to an injected
+`vllm_single.VllmJob` is the reference driver. It talks only to an injected
 orchestrator (`orch.exec`, which routes into the running container) and a typed
 `VariantConfig`. Lifecycle highlights to copy:
 
@@ -262,7 +262,7 @@ Patterns to copy:
 | generic verdict | `cvs/lib/utils/verdict.py` |
 | inference schema + sweep | `cvs/lib/inference/utils/inferencing_config_loader.py` |
 | client metric vocabulary | `cvs/lib/inference/utils/vllm_parsing.py` |
-| driver | `cvs/lib/inference/vllm_orch.py` |
+| driver | `cvs/lib/inference/vllm_single.py` |
 | suite | `cvs/tests/inference/vllm/{vllm_single,conftest,_shared}.py` |
 | config pair | `cvs/input/config_file/inference/vllm_single/w1_llama31_70b_fp8kv/` |
 

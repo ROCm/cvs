@@ -16,7 +16,7 @@ from cvs.lib import globals
 from cvs.lib.inference.utils.inferencing_config_loader import GoodputSlo, validate_sweep_selector
 from cvs.lib.utils.verdict import evaluate_all
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
-from cvs.lib.inference.vllm_orch import VllmJob
+from cvs.lib.inference.vllm_single import VllmJob
 
 import importlib.util as _ilu
 import pathlib as _pl
@@ -34,7 +34,6 @@ log = globals.log
 _FETCH_POLL_COUNT = 80
 _FETCH_POLL_WAIT_S = 30
 _FETCH_PRESENCE_RETRIES = 5
-
 
 
 def pytest_generate_tests(metafunc):
