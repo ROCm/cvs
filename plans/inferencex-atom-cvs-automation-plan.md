@@ -9,7 +9,7 @@ This section records **what exists on the branch today** vs **what this plan tar
 
 | Area                 | Current on branch                                                                                                          | Target (this plan)                                                                                                                                                             |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Suite name**       | `inferencex_atom_single` (renamed from `inferencemax_single`, commit `ca65233`)                                            | Same                                                                                                                                                                           |
+| **Suite name**       | `inferencex_atom_single` (renamed from `inferencemax_single`)                                            | Same                                                                                                                                                                           |
 | **Driver**           | `InferenceXAtomJob` in `inferencex_atom_orch.py` — **vLLM-native** (`vllm serve` + `vllm bench serve`, `client.`* metrics) | **InferenceX ATOM framework** path: IX repo checkout, `framework: atom` server recipes from `amd-master.yaml`, IX bench client / aggregates                                    |
 | **Config layout**    | `cvs/input/config_file/inference/inferencex_atom_single/` (`schema_version: 1`, vLLM-style `roles.server.serve_args`)      | DTNI variant dirs under `cvs/input/dtni/inferencex_atom_single/<variant>/` (`config.json` + `threshold.json`) **plus** parity with existing typed loader where suites converge |
 | **Shipped variants** | `mi300x_gpt_oss_120b_single`, `mi355x_inferencemax_gpt_oss_120b_single` (interim GPT-OSS / vLLM uplift)                    | Tracker workloads **W1–W18** on **MI300X + MI355X** (Section 3.1); GPT-OSS maps to **W2** |
@@ -48,9 +48,9 @@ The DTNI Validation Tracker names many recipes with **MI355X** in the title (e.g
 - **`gpu_arch`:** `mi300x` or `mi355x` in config; **separate `threshold.json` per arch** — never share thresholds across GPUs.
 - **Cluster files:** `input/cluster_file/mi300x_*.json` and `mi355x_*.json` (or equivalent) matched to variant `gpu_arch`.
 - **Implementation:** **MI300X and MI355X in parallel** — every P1 workload gets `_mi300x_` and `_mi355x_` variant dirs, cluster JSON examples, and configs in the same PR wave where possible.
-- **Calibration / lab:** MI300X has reference numbers in Section 4 today; MI355X W1 thresholds are **calibrated separately** when that hardware is exercised — do not copy MI300X numbers. Until an MI355X confirming run exists, `enforce_thresholds: false` on MI355X variants is acceptable; **dirs and recipes still ship alongside MI300X**.
+- **Calibration / lab:** MI300X lab numbers in Section 4.1–4.2; **MI355X W1** numbers from upstream **ROCm/ATOM** nightly benchmark run in Section 4.3. **Never copy MI300X → MI355X** (or vice versa) for thresholds.
 
-**Current milestone scope (M1):** Phase 0 (ATOM backend swap) + Phase A (W1 perf on **both** `*_mi300x_*` and `*_mi355x_*` variant dirs). MI300X thresholds from Section 4; MI355X thresholds record-only until lab calibration.
+**Current milestone scope (M1):** Phase 0 (ATOM backend swap) + Phase A (W1 perf on **both** `*_mi300x_*` and `*_mi355x_*` variant dirs). Threshold seeds: Section 4.1–4.2 (MI300X), Section 4.3 (MI355X).
 
 **Explicitly out of scope for early waves**
 
@@ -191,14 +191,14 @@ The tracker matrix does **not** list MI300X explicitly. **CVS automation does.**
 
 | Platform | Code / config (M1+) | Thresholds / lab |
 |----------|---------------------|------------------|
-| **MI300X** | **Ship alongside MI355X** | Section 4 seeds for W1; `enforce_thresholds: true` after confirming run |
-| **MI355X** | **Ship alongside MI300X** | Separate calibration per arch; record-only until MI355X lab run |
+| **MI300X** | **Ship alongside MI355X** | Section 4.1–4.2 (internal lab reference) |
+| **MI355X** | **Ship alongside MI300X** | Section 4.3 ([ROCm/ATOM run 27912164002](https://github.com/ROCm/ATOM/actions/runs/27912164002)) |
 
 **P1 target — dual variant dirs per workload (MI300X + MI355X)**
 
 | Workload | MI300X variant | MI355X variant | Notes |
 |----------|----------------|----------------|-------|
-| **W1** DeepSeek R1 FP8 | `deepseek_r1_fp8_mi300x_atom_perf` (+ `_atom_mtp3`) | `deepseek_r1_fp8_mi355x_atom_perf` (+ MTP sibling) | MI300X thresholds: Section 4; MI355X: own calibration |
+| **W1** DeepSeek R1 FP8 | `deepseek_r1_fp8_mi300x_atom_perf` (+ `_atom_mtp3`) | `deepseek_r1_fp8_mi355x_atom_perf` (+ MTP sibling) | MI300X: §4.1–4.2; MI355X: §4.3 (`DeepSeek-R1-0528` in ATOM CI) |
 | **W2** GPT-OSS MXFP4 | `gpt_oss_120b_mi300x_atom` | `gpt_oss_120b_mi355x_atom` | Interim `mi300x_gpt_oss_120b_single` is **not** final W2 |
 | **W3** GLM 5.1 BF16 | `glm51_mi300x_atom` | `glm51_mi355x_atom` | Same ISL/OSL as tracker |
 | **W13** Kimi K2.7 Code | `kimi_k27_code_mi300x_atom` | `kimi_k27_code_mi355x_atom` | |
@@ -212,11 +212,22 @@ The tracker matrix does **not** list MI300X explicitly. **CVS automation does.**
 
 ---
 
-## 4. MI300X reference performance (calibration seeds)
+## 4. Reference performance (calibration seeds)
 
-Lab reference on **8× MI300X**, **ATOM**, **DeepSeek R1 FP8** (W1) — TP8, FP8 KV cache. This section exists because **MI300X is a first-class platform in this plan** even though the tracker spreadsheet is MI355X-centric. Use to seed **MI300X-only** `threshold.json` after margin policy is agreed (typically reference × guard band, not raw copy).
+W1 (**DeepSeek R1 FP8**, ISL=OSL=1024, TP8, FP8 KV cache). Use to seed per-arch `threshold.json` after margin policy is agreed (typically reference × guard band, not raw copy).
 
-### 4.1 FP8 (TP8, FP8 KV cache) — ISL=1024, OSL=1024
+**ATOM bench JSON → CVS threshold keys** (from upstream `ROCm/ATOM` `.github/scripts/summarize.py`):
+
+| ATOM artifact field | CVS / threshold metric (P1) |
+|---------------------|-----------------------------|
+| `output_throughput` | `output_throughput` or `client.output_throughput` (namespace TBD in Phase B) |
+| `total_token_throughput` | `total_token_throughput` |
+| `mean_tpot_ms` | `mean_tpot_ms` |
+| `mean_ttft_ms` | `mean_ttft_ms` |
+
+### 4.1 MI300X — FP8 (lab reference)
+
+8× MI300X, ATOM, DeepSeek R1 FP8, TP8, FP8 KV cache.
 
 
 | Concurrency | Output throughput (tok/s) | Total throughput (tok/s) | Mean TPOT (ms) |
@@ -225,7 +236,9 @@ Lab reference on **8× MI300X**, **ATOM**, **DeepSeek R1 FP8** (W1) — TP8, FP8
 | 256         | 6,039                     | 12,071                   | 40.8           |
 
 
-### 4.2 FP8 + MTP3 (TP8, FP8 KV cache, 3 speculative tokens) — ISL=1024, OSL=1024
+### 4.2 MI300X — FP8 + MTP3 (lab reference)
+
+8× MI300X, ATOM, DeepSeek R1 FP8 + MTP3, TP8, FP8 KV cache, 3 speculative tokens.
 
 
 | Concurrency | Output throughput (tok/s) | Total throughput (tok/s) | Mean TPOT (ms) |
@@ -234,12 +247,38 @@ Lab reference on **8× MI300X**, **ATOM**, **DeepSeek R1 FP8** (W1) — TP8, FP8
 | 256         | 7,284                     | 14,583                   | 33.0           |
 
 
+### 4.3 MI355X — from ROCm/ATOM CI (W1 seeds)
+
+Source: [ROCm/ATOM ATOM Benchmark run 27912164002](https://github.com/ROCm/ATOM/actions/runs/27912164002) (also mirrored on [benchmark dashboard](https://rocm.github.io/ATOM/benchmark-dashboard/)). Job summary: [summarize step raw markdown](https://github.com/ROCm/ATOM/actions/runs/27912164002/jobs/65963327389/summary_raw) (GitHub login required).
+
+| Field | Value |
+|-------|-------|
+| Model | `deepseek-ai/DeepSeek-R1-0528` (ATOM display: **DeepSeek-R1-0528**) |
+| GPU | **AMD Instinct MI355X**, 8× GPU, TP8 |
+| Image | `rocm/atom-dev:nightly_202606211542` |
+| ROCm | 7.2.4 |
+| ATOM commit | `ea08015` |
+
+#### 4.3.1 FP8 — ISL=1024, OSL=1024
+
+| Concurrency | Output throughput (tok/s) | Total throughput (tok/s) | Mean TPOT (ms) | Mean TTFT (ms) |
+| ----------- | ------------------------- | ------------------------ | -------------- | -------------- |
+| 128         | 4,449.62                  | 8,909.01                 | 27.64          | 329.25         |
+| 256         | 6,249.73                  | 12,493.43                | 39.46          | 551.66         |
+
+#### 4.3.2 FP8 + MTP3 — ISL=1024, OSL=1024
+
+| Concurrency | Output throughput (tok/s) | Total throughput (tok/s) | Mean TPOT (ms) | Mean TTFT (ms) |
+| ----------- | ------------------------- | ------------------------ | -------------- | -------------- |
+| 128         | 5,101.99                  | 10,208.96                | 23.77          | 570.42         |
+| 256         | 7,168.43                  | 14,321.35                | 34.22          | 606.67         |
+
 **Planning notes**
 
-- Map tracker metrics **output_tput_per_gpu** / **tput_per_gpu** to whatever the ATOM bench artifact exposes after `parse_results` is implemented for IX (Section 8, Phase B).
-- These four cells are the **first MI300X threshold candidates** for W1 (`_atom` and `_atom_mtp3` variants).
-- **MI355X W1** uses the same ISL/OSL (1K/1K) but **must be calibrated separately** on MI355X hardware — do not copy MI300X numbers.
-- As other P1 workloads gain MI300X lab runs, add sibling sections here (or linked variant READMEs) before enabling `enforce_thresholds: true` on those arches.
+- These four cells are the **MI355X W1 threshold candidates** (`deepseek_r1_fp8_mi355x_atom_perf` and `_atom_mtp3` sibling).
+- Re-pull from a newer ATOM nightly when image or `ea08015`+ moves; pin the run URL + docker tag in variant README / run card.
+- MI300X (§4.1–4.2) and MI355X (§4.3) numbers are **close but not identical** — keep separate `threshold.json` per `gpu_arch`.
+- As other P1 workloads appear in ATOM CI, add sibling subsections here before enabling `enforce_thresholds: true` on those variants.
 
 ---
 
@@ -312,9 +351,9 @@ From **IX ATOM Matrix**: every workload row W1–W18 is marked **Y/P** for all c
 
 | Phase | Name                         | Goal                                                                               | Status on branch          |
 | ----- | ---------------------------- | ---------------------------------------------------------------------------------- | ------------------------- |
-| **R** | **Rename + vLLM shell**      | `inferencex_atom_single`, `InferenceXAtomJob`, schema_version 1 configs, docs      | **Done** (`ca65233`)      |
+| **R** | **Rename + vLLM shell**      | `inferencex_atom_single`, `InferenceXAtomJob`, schema_version 1 configs, docs      | **Done**      |
 | **0** | **ATOM backend swap**        | IX repo pin, atom server recipe, IX bench parse; keep pytest/`orch`/`evaluate_all` | Not started               |
-| **A** | **W1 vertical slice**        | W1 on **MI300X + MI355X** variant dirs; MI300X thresholds Section 4; MI355X record-only until calibrated | Not started               |
+| **A** | **W1 vertical slice**        | W1 on **MI300X + MI355X** variant dirs; thresholds from §4.1–4.3 | Not started               |
 | **B** | **Metric namespace**         | Map IX aggregates → threshold keys; document field map                             | Partial (`client.`* only) |
 | **C** | **P1 workloads**             | W1–W17 on **MI300X + MI355X** (Section 3.1) + baselines per arch                     | Not started               |
 | **D** | **Accuracy + CI**            | gsm8k gate Section 5; negative threshold test                                      | Not started               |
@@ -365,10 +404,10 @@ flowchart TB
 
 | ID  | Action                        | Details                                                                                             |
 | --- | ----------------------------- | --------------------------------------------------------------------------------------------------- |
-| A-1 | **MI300X thresholds**         | `threshold.json` for `*_mi300x_*` dirs from Section 4 (FP8 + FP8+MTP3). |
-| A-2 | **MI355X thresholds**         | Sibling `*_mi355x_*` dirs shipped in same wave; placeholder or record-only until MI355X lab calibration — **never copy MI300X numbers**. |
-| A-3 | **Run card**                  | Log IX SHA, image, `gpu_arch` (`mi300x` or `mi355x`), TP8, KV cache mode, MTP off/on. |
-| A-4 | **Flip `enforce_thresholds`** | MI300X after confirming run; MI355X when that arch has its own calibration run. |
+| A-1 | **MI300X thresholds**         | `threshold.json` for `*_mi300x_*` dirs from Section 4.1–4.2. |
+| A-2 | **MI355X thresholds**         | `threshold.json` for `*_mi355x_*` dirs from Section 4.3 (ATOM run 27912164002). |
+| A-3 | **Run card**                  | Log IX/ATOM SHA, image, `gpu_arch`, TP8, KV cache mode, MTP off/on, upstream run URL. |
+| A-4 | **Flip `enforce_thresholds`** | Per arch after one confirming CVS run matches reference band. |
 
 
 ### Phase B — Metrics pipeline
@@ -376,7 +415,7 @@ flowchart TB
 
 | ID  | Action                                     | Details                                                                                    |
 | --- | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| B-1 | **IX → threshold key map**                 | `tput_per_gpu`, `output_tput_per_gpu`, `mean_ttft`, `p99_ttft`, `mean_tpot`, `p95_tpot`, … |
+| B-1 | **IX → threshold key map**                 | Align with Section 4 ATOM fields: `output_throughput`, `total_token_throughput`, `mean_ttft_ms`, `mean_tpot_ms`, … |
 | B-2 | **Deprecate `client.`* for ATOM variants** | May keep for vLLM baseline variant dirs only.                                              |
 | B-3 | **Results table**                          | `test_print_results_table` columns match tracker P1 dashboard.                             |
 
@@ -446,7 +485,7 @@ Unchanged from prior plan: Thor2/AINIC, Optimus, KVMGR, NIXL, MOR-EP, RCCL, MI3X
 | ----------------------------------------------- | -------------------------------------------------------------------- |
 | **vLLM driver mistaken for ATOM done**          | Section 0 + Phase 0 explicitly swap backend                          |
 | **Wrong workload on branch (GPT-OSS TP8 BF16)** | W2 spec is MXFP4 TP4; track as interim in DOC-2                      |
-| **No MI355X lab yet**                           | Ship MI355X dirs/configs alongside MI300X; `enforce_thresholds: false` until calibrated |
+| **Upstream ATOM CI drift**                      | Pin docker tag + run URL in variant README; re-pull §4.3 on image bumps |
 | **MI300X vs MI355X threshold bleed**            | Separate variant dirs + `threshold.json` per `gpu_arch`                |
 | **MTP flakes**                                  | Separate CI job; chat-template checklist                             |
 | **Metric key drift**                            | B-1 single map; forbid thresholds in config                          |
@@ -457,7 +496,7 @@ Unchanged from prior plan: Thor2/AINIC, Optimus, KVMGR, NIXL, MOR-EP, RCCL, MI3X
 
 ## Diagrams — milestones
 
-**Milestone 1 (next implementation):** Phase 0 + Phase A — ATOM backend, W1 variant dirs and thresholds on **MI300X and MI355X** (MI300X calibrated from Section 4; MI355X record-only until lab run).
+**Milestone 1 (next implementation):** Phase 0 + Phase A — ATOM backend, W1 variant dirs and thresholds on **MI300X** (§4.1–4.2) and **MI355X** (§4.3 / ATOM run 27912164002).
 
 ```mermaid
 flowchart TB
