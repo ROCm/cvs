@@ -6,6 +6,8 @@ All rights reserved. ...
 from __future__ import annotations
 
 import json
+import re
+import shlex
 import urllib.error
 import urllib.request
 from typing import Any, Mapping, MutableMapping, Optional, Sequence, Union
@@ -233,3 +235,216 @@ def check_openai_compatible_probe_results(
             f"OpenAI-compatible probe failed port={port!r}: " + " | ".join(failures)
         )
     return True, None
+
+
+# lm-eval functions
+def lm_eval_metric_value(text: str, task: str, metric: str) -> float | None:
+    """Parse a metric value from lm-eval's ASCII results table."""
+    m = re.search(
+        rf"{re.escape(metric)}\s*\|\s*[^|\n]+\|\s*([0-9]+(?:\.[0-9]+)?)",
+        text,
+        flags=re.I,
+    )
+    return float(m.group(1)) if m else None
+def lm_eval_openai_base_url(port: int, lm_eval_model: str) -> str:
+    """Build the OpenAI-compatible base_url for lm-eval's local-* adapters."""
+    path_suffix = (
+        "/v1/chat/completions"
+        if "chat" in lm_eval_model.lower()
+        else "/v1/completions"
+    )
+    return f"http://0.0.0.0:{int(port)}{path_suffix}"
+def build_lm_eval_model_args(
+        *,
+        model_id: str,
+        base_url: str,
+        num_concurrent: str,
+        extra_model_args: str = "",
+    ) -> str:
+    """Comma-separated ``--model_args`` string for lm-eval."""
+    model_args = (
+        f"model={model_id},base_url={base_url},num_concurrent={num_concurrent},"
+        f"tokenized_requests=False"
+    )
+    extra = str(extra_model_args or "").strip()
+    if extra:
+        model_args = f"{model_args},{extra}"
+    return model_args
+def build_lm_eval_command(
+        *,
+        lm_eval_model: str,
+        model_id: str,
+        base_url: str,
+        tasks: str,
+        num_fewshot: str,
+        batch_size: str,
+        num_concurrent: str,
+        limit: str = "",
+        extra_model_args: str = "",
+        log_path: str,
+        pip_install: bool = True,
+    ) -> str:
+    """
+    Inner shell fragment to run lm-eval (no docker/ssh).
+    Caller is responsible for any leading ``mkdir``, ``source ...``, etc.
+    Output is tee'd to ``log_path``.
+    """
+    limit_s = str(limit or "").strip()
+    limit_arg = f" --limit {limit_s}" if limit_s else ""
+    model_args_q = shlex.quote(
+        build_lm_eval_model_args(
+            model_id=model_id,
+            base_url=base_url,
+            num_concurrent=num_concurrent,
+            extra_model_args=extra_model_args,
+        )
+    )
+    parts: list[str] = []
+    if pip_install:
+        parts.append("pip install -q 'lm-eval[api]'")
+    parts.append(
+        "python3 -m lm_eval "
+        f"--model {lm_eval_model} "
+        f"--model_args {model_args_q} "
+        f"--tasks {tasks} "
+        f"--num_fewshot {num_fewshot} "
+        f"--batch_size {batch_size}"
+        f"{limit_arg} "
+        f"2>&1 | tee {shlex.quote(log_path)}"
+    )
+    return " && ".join(parts)
+
+def check_lm_eval_results(
+        text: str,
+        *,
+        task_name: str,
+        parse_metric: str,
+        expected: float,
+        metric_key: str,
+        tasks: str = "",
+        tolerance_frac: float = 0.05,
+        log_path: str = "",
+        label: str = "",
+    ) -> tuple[bool, dict[str, Any] | None, str | None]:
+    """
+    Validate lm-eval stdout after exec.
+    Returns ``(ok, summary, err)`` where ``summary`` is::
+        {"task": ..., "metric_key": ..., "actual": ..., "expected": ...}
+  on success.
+    """
+    display = label or task_name
+    log_hint = f" (see {log_path})" if log_path else ""
+    if not text or not str(text).strip():
+        return False, None, f"lm-eval {display} produced no output"
+    if re.search(r"Traceback \(most recent call last\)", text):
+        return (
+            False,
+            None,
+            f"lm-eval {display} failed: Python traceback in output",
+        )
+    if not re.search(re.escape(task_name), text, re.I):
+        return (
+            False,
+            None,
+            f"lm-eval {display} output missing {task_name!r} results{log_hint}",
+        )
+    actual = lm_eval_metric_value(text, task_name, parse_metric)
+    if actual is None:
+        return (
+            False,
+            None,
+            f"could not parse lm-eval table score for {task_name} / {parse_metric}",
+        )
+    expected_f = float(expected)
+    if abs(actual - expected_f) > tolerance_frac * abs(expected_f):
+        short_metric = parse_metric
+        if "flexible" in metric_key.lower():
+            short_metric = "flexible-extract"
+        return (
+            False,
+            None,
+            (
+                f"{task_name} {short_metric} {actual:.4f} not within "
+                f"{tolerance_frac * 100:.0f}% of expected {expected_f:.4f}"
+            ),
+        )
+    summary = {
+        "task": str(tasks or task_name),
+        "metric_key": metric_key,
+        "actual": float(actual),
+        "expected": expected_f,
+    }
+    return True, summary, None
+
+def run_lm_eval_openai_benchmark(
+        i_dict: Mapping[str, Any],
+        *,
+        port: int,
+        model_id: str,
+        task_name: str,
+        default_tasks: str,
+        default_metric: str,
+        default_metric_key: str,
+        log_dir: str,
+        log_basename: str,
+        default_num_concurrent: str = "4",
+        host: str = "0.0.0.0",
+    ) -> tuple[str, dict[str, Any]]:
+    """
+    Resolve config + build the inner lm-eval shell command.
+    Returns ``(inner_cmd, scoring_config)``. The caller runs ``inner_cmd``
+    (optionally wrapped in docker/ssh) and passes stdout to
+    :func:`check_lm_eval_results` with ``scoring_config``.
+    ``host`` is reserved for future use; base URL currently uses
+    ``0.0.0.0:{port}`` to match existing SGLang bench containers.
+    """
+    del host  # unused for now; keeps signature stable for vLLM/orch callers
+    lm_eval_model = str(i_dict.get("lm_eval_model", "local-completions"))
+    base_url = lm_eval_openai_base_url(port, lm_eval_model)
+    num_concurrent = str(i_dict.get("num_concurrent", default_num_concurrent))
+    tasks = str(i_dict.get("tasks", default_tasks))
+    num_fewshot = str(i_dict.get("num_fewshot", "5"))
+    batch_size = str(i_dict.get("batch_size", "auto"))
+    limit = str(i_dict.get("limit", "")).strip()
+    extra_model_args = str(i_dict.get("extra_model_args", "")).strip()
+    exec_timeout_sec = int(i_dict.get("exec_timeout_sec", 7200))
+    tolerance_frac = float(i_dict.get("tolerance_frac", 0.05))
+    log_path = f"{log_dir.rstrip('/')}/benchmark_node/{log_basename}"
+    expected_block = i_dict.get("expected_results") or {}
+    if not isinstance(expected_block, Mapping):
+        raise ValueError("expected_results must be a mapping")
+    task_expected = expected_block.get(task_name) or {}
+    if not isinstance(task_expected, Mapping):
+        raise ValueError(f"expected_results[{task_name!r}] must be a mapping")
+    if default_metric_key not in task_expected:
+        raise KeyError(
+            f"expected_results[{task_name!r}][{default_metric_key!r}] missing"
+        )
+    expected = float(task_expected[default_metric_key])
+    inner_cmd = build_lm_eval_command(
+        lm_eval_model=lm_eval_model,
+        model_id=model_id,
+        base_url=base_url,
+        tasks=tasks,
+        num_fewshot=num_fewshot,
+        batch_size=batch_size,
+        num_concurrent=num_concurrent,
+        limit=limit,
+        extra_model_args=extra_model_args,
+        log_path=log_path,
+        pip_install=bool(i_dict.get("pip_install", True)),
+    )
+    scoring_config: dict[str, Any] = {
+        "task_name": task_name,
+        "parse_metric": default_metric,
+        "metric_key": default_metric_key,
+        "expected": expected,
+        "tasks": tasks,
+        "tolerance_frac": tolerance_frac,
+        "log_path": log_path,
+        "exec_timeout_sec": exec_timeout_sec,
+        "label": str(i_dict.get("label", task_name)),
+        "lm_eval_model": lm_eval_model,
+        "base_url": base_url,
+    }
+    return inner_cmd, scoring_config
