@@ -1,5 +1,16 @@
 # DTNI suite developer guide
 
+> **⚠️ SUPERSEDED — design doc, not current state.** This guide predates the
+> restructure that shipped. It still references the old `cvs/lib/dtni/` and
+> `cvs/input/dtni/` paths (now `cvs/lib/utils/` + `cvs/lib/inference/utils/`),
+> the `concurrency_levels × sequence_combinations` cartesian (now named combos +
+> a `runs[]` selector), the top-level `image` block (now `container.image`),
+> `OrchestratorConfig.from_dicts` / `container.enabled|launch`, and other
+> pre-merge shapes. For the as-built architecture, read
+> `plans/building-a-cvs-test-suite.md` and each package's `AGENTS.md`. Kept for
+> the design rationale (the §5–§7 *why* behind the seam, the Job split, and the
+> config/threshold split), which is still accurate.
+
 ## 1. Intro and scope
 
 This guide is for CVS developers who already run `cvs run` regularly and have edited a test wrapper or a lib helper, but who haven't worked under the new DTNI (data-center training and inference) layout. The goal is to give you the mental model and the concrete skeleton needed to port an existing suite or author a new one.
