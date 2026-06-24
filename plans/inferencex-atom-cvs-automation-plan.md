@@ -47,10 +47,22 @@ The DTNI Validation Tracker names many recipes with **MI355X** in the title (e.g
 - **Variant naming:** `<workload>_mi300x_<mode>` and `<workload>_mi355x_<mode>` (e.g. `deepseek_r1_fp8_mi300x_atom_perf`, `deepseek_r1_fp8_mi355x_atom_perf`).
 - **`gpu_arch`:** `mi300x` or `mi355x` in config; **separate `threshold.json` per arch** — never share thresholds across GPUs.
 - **Cluster files:** `input/cluster_file/mi300x_*.json` and `mi355x_*.json` (or equivalent) matched to variant `gpu_arch`.
-- **Implementation:** **MI300X and MI355X in parallel** — every P1 workload gets `_mi300x_` and `_mi355x_` variant dirs, cluster JSON examples, and configs in the same PR wave where possible.
+- **Implementation:** Ship `_mi300x_` and `_mi355x_` variant dirs together in code/config PRs when possible. **Lab validation** follows hardware: MI300X runs gate milestones; MI355X lab runs are **pending when hardware is available** and do not block the MI300X spine (see **Section 1.2**).
 - **Calibration / lab:** MI300X lab numbers in Section 4.1–4.2; **MI355X W1** numbers from upstream **ROCm/ATOM** nightly benchmark run in Section 4.3. **Never copy MI300X → MI355X** (or vice versa) for thresholds.
 
-**Current milestone scope (M1):** Phase 0 (ATOM backend swap) + Phase A (W1 perf on **both** `*_mi300x_*` and `*_mi355x_*` variant dirs). Threshold seeds: Section 4.1–4.2 (MI300X), Section 4.3 (MI355X).
+**Current milestone scope (M1):** Phase 0 (ATOM backend swap) + Phase A W1 perf on `*_mi300x_*` variant dirs (Sections 4.1–4.2, `enforce_thresholds: true` after lab confirm). `*_mi355x_*` dirs ship with Section 4.3 threshold **seeds** and `enforce_thresholds: false` until MI355X lab is available — **not a blocker for M1 close or M2+ on MI300X**.
+
+### 1.2 Lab hardware policy — MI355X pending (non-blocking)
+
+When MI355X nodes are **not** available in the lab:
+
+| Track | Policy |
+| ----- | ------ |
+| **MI300X (active)** | Gates milestones: Phase A lab confirm → M1 close on MI300X → M2 gsm8k on MI300X → M3 P1 workloads on MI300X. |
+| **MI355X (pending)** | Keep variant dirs, cluster JSON, and CI-seeded `threshold.json` in tree. Leave `enforce_thresholds: false`. No lab run required to merge PRs or advance M2/M3 on MI300X. |
+| **When MI355X lands** | Run confirming CVS per variant → flip `enforce_thresholds: true` per arch → attach HTML/logs to PR. Does not require re-doing MI300X work. |
+
+**Repo rule:** MI355X configs must never block CI or pytest collection on a machine without MI355X — only the variant you pass to `cvs run` is exercised.
 
 **Explicitly out of scope for early waves**
 
@@ -187,12 +199,12 @@ Authoritative **model / ISL / OSL / precision** mapping from **DTNI Validation T
 
 The tracker matrix does **not** list MI300X explicitly. **CVS automation does.** Every workload in scope ships as **one or more variant dirs per `gpu_arch`** when the model is supported on that hardware.
 
-**Implementation priority — both platforms in parallel**
+**Implementation priority — MI300X leads lab; MI355X code ships in parallel**
 
-| Platform | Code / config (M1+) | Thresholds / lab |
-|----------|---------------------|------------------|
-| **MI300X** | **Ship alongside MI355X** | Section 4.1–4.2 (internal lab reference) |
-| **MI355X** | **Ship alongside MI300X** | Section 4.3 ([ROCm/ATOM run 27912164002](https://github.com/ROCm/ATOM/actions/runs/27912164002)) |
+| Platform | Code / config (M1+) | Thresholds / lab | Lab status |
+|----------|---------------------|------------------|------------|
+| **MI300X** | Ship with every P1 workload | Section 4.1–4.2 (internal lab reference) | **Active** — gates M1/M2/M3 on available hardware |
+| **MI355X** | Ship variant dirs + cluster JSON with MI300X | Section 4.3 ([ROCm/ATOM run 27912164002](https://github.com/ROCm/ATOM/actions/runs/27912164002)) | **Pending** — CI seeds only until nodes available; does not block MI300X milestones |
 
 **P1 target — dual variant dirs per workload (MI300X + MI355X)**
 
@@ -353,7 +365,7 @@ From **IX ATOM Matrix**: every workload row W1–W18 is marked **Y/P** for all c
 | ----- | ---------------------------- | ---------------------------------------------------------------------------------- | ------------------------- |
 | **R** | **Rename + vLLM shell**      | `inferencex_atom_single`, `InferenceXAtomJob`, schema_version 1 configs, docs      | **Done**      |
 | **0** | **ATOM backend swap**        | IX repo pin, atom server recipe, IX bench parse; keep pytest/`orch`/`evaluate_all` | Not started               |
-| **A** | **W1 vertical slice**        | W1 on **MI300X + MI355X** variant dirs; thresholds from Sections 4.1–4.3 | Not started               |
+| **A** | **W1 vertical slice**        | W1 on MI300X (lab-gated) + MI355X dirs (seed thresholds, pending lab) | MI300X in progress |
 | **B** | **Metric namespace**         | Map IX aggregates → threshold keys; document field map                             | Partial (`client.`* only) |
 | **C** | **P1 workloads**             | W1–W17 on **MI300X + MI355X** (Section 3.1) + baselines per arch                     | Not started               |
 | **D** | **Accuracy + CI**            | gsm8k gate Section 5; negative threshold test                                      | Not started               |
@@ -399,15 +411,15 @@ flowchart TB
 | 0-6 | **Cluster configs**           | Example `cluster_file` for 8× MI300X **and** 8× MI355X matched to `gpu_arch`. |
 
 
-### Phase A — W1 calibration (MI300X + MI355X)
+### Phase A — W1 calibration (MI300X lab-gated; MI355X pending)
 
 
-| ID  | Action                        | Details                                                                                             |
-| --- | ----------------------------- | --------------------------------------------------------------------------------------------------- |
-| A-1 | **MI300X thresholds**         | `threshold.json` for `*_mi300x_*` dirs from Section 4.1–4.2. |
-| A-2 | **MI355X thresholds**         | `threshold.json` for `*_mi355x_*` dirs from Section 4.3 (ATOM run 27912164002). |
-| A-3 | **Run card**                  | Log IX/ATOM SHA, image, `gpu_arch`, TP8, KV cache mode, MTP off/on, upstream run URL. |
-| A-4 | **Flip `enforce_thresholds`** | Per arch after one confirming CVS run matches reference band. |
+| ID  | Action                        | Details                                                                                             | Blocker? |
+| --- | ----------------------------- | --------------------------------------------------------------------------------------------------- | -------- |
+| A-1 | **MI300X thresholds**         | `threshold.json` for `*_mi300x_*` dirs from Section 4.1–4.2. | **Yes** — M1 close on MI300X |
+| A-2 | **MI355X thresholds**         | `threshold.json` for `*_mi355x_*` dirs from Section 4.3 (ATOM run 27912164002). | **No** — seeds in tree; lab confirm when hardware available |
+| A-3 | **Run card**                  | Log IX/ATOM SHA, image, `gpu_arch`, TP8, KV cache mode, MTP off/on, upstream run URL. | Per arch |
+| A-4 | **Flip `enforce_thresholds`** | MI300X: after one confirming CVS run. MI355X: same, **when lab available** — not required for M2/M3 on MI300X. | MI300X only for spine |
 
 
 ### Phase B — Metrics pipeline
@@ -496,29 +508,38 @@ Unchanged from prior plan: Thor2/AINIC, Optimus, KVMGR, NIXL, MOR-EP, RCCL, MI3X
 
 ## Diagrams — milestones
 
-**Milestone 1 (next implementation):** Phase 0 + Phase A — ATOM backend, W1 variant dirs and thresholds on **MI300X** (Sections 4.1–4.2) and **MI355X** (Section 4.3 / ATOM run 27912164002).
+**Milestone 1:** Phase 0 + Phase A — ATOM backend, W1 **MI300X** lab-gated (Sections 4.1–4.2). W1 **MI355X** dirs + Section 4.3 seeds ship in repo; lab confirm **pending** (Section 1.2).
 
 ```mermaid
 flowchart TB
   M0["M0: Rename + vLLM shell DONE"]
-  M1["M1: ATOM backend + W1 MI300X + MI355X"]
-  M2["M2: gsm8k accuracy both arches"]
-  M3["M3: P1 workloads W2 W3 W13 W17 both arches"]
+  M1["M1: ATOM backend + W1 MI300X lab-gated"]
+  M1P["M1b: W1 MI355X lab pending"]
+  M2["M2: gsm8k accuracy MI300X"]
+  M2P["M2b: gsm8k MI355X pending"]
+  M3["M3: P1 W2 W3 W13 W17 MI300X"]
   M4["M4: vLLM SGLang baselines parity"]
   M5["M5: MTP + P2 expansion"]
   M6["M6: multi-node + disagg"]
   M0 --> M1 --> M2 --> M3 --> M4 --> M5 --> M6
+  M1 -.-> M1P
+  M2 -.-> M2P
 ```
 
 
 
 ```mermaid
 flowchart TB
-  subgraph spine["P1 spine"]
-    S1["M1: ATOM W1 MI300X + MI355X"]
-    S2["gsm8k accuracy"]
-    S3["P1 W2 W3 W13 W17 both arches"]
+  subgraph spine["P1 spine — MI300X active"]
+    S1["M1: ATOM W1 MI300X"]
+    S2["gsm8k accuracy MI300X"]
+    S3["P1 W2 W3 W13 W17 MI300X"]
     S4["vLLM SGLang baselines"]
+  end
+  subgraph pending["MI355X — pending lab"]
+    P1["W1 perf confirm"]
+    P2["gsm8k"]
+    P3["P1 workloads"]
   end
   subgraph widen["P2 widen"]
     W1["Remaining W4–W18"]
@@ -527,6 +548,9 @@ flowchart TB
   end
   S1 --> S2 --> S3 --> S4
   S4 --> W1 --> W2 --> W3
+  S1 -.-> P1
+  S2 -.-> P2
+  S3 -.-> P3
 ```
 
 
