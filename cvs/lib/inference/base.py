@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import os
 import re
+import shlex
 import time
 
 from cvs.lib import globals
@@ -414,32 +415,55 @@ class InferenceBaseJob:
 
         export_bench = bash_export_bench_script_from_vllm_install(self.bench_serv_script)
 
-        # Launch client benchmark
+        # Launch client benchmark (quote inner bash so $(python3 -c import vllm) runs in-container).
         cmd_list = []
         for i in range(0, int(self.nnodes)):
-            client_cmd = f'''source /tmp/server_env_script.sh; {export_bench}; cd {clone_dir}; \
-                    python3 "$BENCH_SCRIPT" \
-                    --model {self.bp_dict['model']} \
-                    --backend {backend} \
-                    --base-url {self.bp_dict['base_url']}:{self.bp_dict['port_no']} \
-                    --dataset-name {self.bp_dict['dataset_name']} \
-                    --num-prompts {self.bp_dict['num_prompts']} \
-                    --random-input-len {self.bp_dict['input_sequence_length']} \
-                    --random-output-len {self.bp_dict['output_sequence_length']} \
-                    --max-concurrency {self.bp_dict['max_concurrency']} \
-                    --request-rate {self.bp_dict['request_rate']} \
-                    --burstiness {self.bp_dict['burstiness']} \
-                    --tokenizer-mode {self.bp_dict['tokenizer_mode']} \
-                    --seed {self.bp_dict['seed']} \
-                    --random-range-ratio {self.bp_dict['random_range_ratio']} \
-                    --random-prefix-len {self.bp_dict['random_prefix_len']} \
-                    --percentile-metrics {self.bp_dict['percentile_metrics']} \
-                    --ignore-eos \
-                    --save-result \
-                    --result-dir {self.log_dir}/{self.get_log_subdir()}/out-node{i} \
-                    --result-filename {result_filename} \
-                    > {self.log_dir}/{self.get_log_subdir()}/out-node{i}/bench_serv_script.log 2>&1 &'''
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "{client_cmd}" '''
+            out_dir = f"{self.log_dir}/{self.get_log_subdir()}/out-node{i}"
+            client_log = f"{out_dir}/bench_serv_script.log"
+            args = [
+                "--model",
+                self.bp_dict["model"],
+                "--backend",
+                backend,
+                "--base-url",
+                f"{self.bp_dict['base_url']}:{self.bp_dict['port_no']}",
+                "--dataset-name",
+                self.bp_dict["dataset_name"],
+                "--num-prompts",
+                self.bp_dict["num_prompts"],
+                "--random-input-len",
+                self.bp_dict["input_sequence_length"],
+                "--random-output-len",
+                self.bp_dict["output_sequence_length"],
+                "--max-concurrency",
+                self.bp_dict["max_concurrency"],
+                "--request-rate",
+                self.bp_dict["request_rate"],
+                "--burstiness",
+                self.bp_dict["burstiness"],
+                "--tokenizer-mode",
+                self.bp_dict["tokenizer_mode"],
+                "--seed",
+                self.bp_dict["seed"],
+                "--random-range-ratio",
+                self.bp_dict["random_range_ratio"],
+                "--random-prefix-len",
+                self.bp_dict["random_prefix_len"],
+                "--percentile-metrics",
+                self.bp_dict["percentile_metrics"],
+                "--ignore-eos",
+                "--save-result",
+                "--result-dir",
+                out_dir,
+                "--result-filename",
+                result_filename,
+            ]
+            bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
+            client_cmd = (
+                f"source /tmp/server_env_script.sh; {export_bench}; cd {clone_dir}; "
+                f'python3 "$BENCH_SCRIPT" {bench_cmd} > {shlex.quote(client_log)} 2>&1 &'
+            )
+            cmd = f"docker exec {shlex.quote(self.container_name)} bash -c {shlex.quote(client_cmd)}"
             cmd_list.append(cmd)
         self.c_phdl.exec_cmd_list(cmd_list)
 
