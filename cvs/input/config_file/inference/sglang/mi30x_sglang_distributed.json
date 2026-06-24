@@ -62,6 +62,7 @@
         "llama-70b":
              {
 		 "backend": "sglang",
+		 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_llama_70b_threshold.json",
 		 "max_concurrency": "25",
 		 "model": "meta-llama/Llama-3.1-70B-Instruct",
 		 "prefill_policy": "cache_aware",
@@ -174,6 +175,7 @@
         "deepseek-r1":
              {
 		 "backend": "sglang",
+		 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_deepseek_r1_0528_threshold.json",
 		 "max_concurrency": "64",
 		 "_comments_model": "If the model is local, specify the full path of the model",
 		 "model": "/root/models/DeepSeek-R1-0528",
@@ -287,6 +289,7 @@
              "gpt-oss-120b":
              {
 		 "backend": "sglang",
+		 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_gpt_oss_120b_threshold.json",
 		 "max_concurrency": "25",
 		 "model": "openai/gpt-oss-120b",
 		 "prefill_policy": "cache_aware",
