@@ -1,7 +1,10 @@
 import unittest
 from unittest.mock import patch
 import os
+import io
+import json
 import tempfile
+from contextlib import redirect_stdout
 
 from cvs.cli_plugins.list_plugin import ListPlugin
 
@@ -74,6 +77,18 @@ class TestListPlugin(unittest.TestCase):
         """Test get_name returns 'list'"""
         plugin = ListPlugin()
         self.assertEqual(plugin.get_name(), "list")
+
+    def test_list_tests_json_output(self):
+        """`list_tests(as_json=True)` prints the test_map as valid JSON."""
+        plugin = ListPlugin()
+        with redirect_stdout(io.StringIO()) as buf:
+            plugin.list_tests(as_json=True)
+        payload = json.loads(buf.getvalue())
+        # Same nested {package: {test_name: module_path}} shape as test_map.
+        self.assertEqual(payload, plugin.test_map)
+        for tests in payload.values():
+            for test_name, module_path in tests.items():
+                self.assertTrue(module_path.endswith(test_name))
 
 
 class TestListPluginExtension(unittest.TestCase):

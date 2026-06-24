@@ -1,0 +1,155 @@
+<mxfile host="app.diagrams.net" modified="2026-04-16T15:50:00.000Z" agent="5.0" version="24.2.5" etag="SCHEMA-DISCOVERY-FLOW" type="device">
+  <diagram name="Schema Discovery Flow" id="schema-discovery-flow">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- Title -->
+        <mxCell id="title" value="Schema Discovery Flow (Proxy Pattern)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=1;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="350" y="30" width="300" height="30" as="geometry" />
+        </mxCell>
+        
+        <!-- Participants -->
+        <mxCell id="user" value="User" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="80" width="80" height="600" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="ui-frontend" value="UI Frontend" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="80" width="100" height="600" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="ui-backend" value="UI Backend&#xa;(Proxy)" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="350" y="80" width="100" height="600" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="cvs-api" value="CVS API Server" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="80" width="100" height="600" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="schema-registry" value="Schema Registry" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="650" y="80" width="100" height="600" as="geometry" />
+        </mxCell>
+        
+        <!-- Step 1: User requests form -->
+        <mxCell id="step1" value="1. Request test suite form" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="125" y="150" as="sourcePoint" />
+            <mxPoint x="245" y="150" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 2: Frontend to Backend (Proxy API) -->
+        <mxCell id="step2" value="2. GET /api/cvs/v1/suites" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="255" y="180" as="sourcePoint" />
+            <mxPoint x="395" y="180" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 3: Add JWT and proxy to CVS -->
+        <mxCell id="step3" value="3. Add JWT &amp; proxy to CVS" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="400" y="210" as="sourcePoint" />
+            <Array as="points">
+              <mxPoint x="430" y="210" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 4: Backend to CVS API -->
+        <mxCell id="step4" value="4. GET /api/v1/suites (JWT)" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="405" y="240" as="sourcePoint" />
+            <mxPoint x="545" y="240" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 5: CVS to Schema Registry -->
+        <mxCell id="step5" value="5. Get available schemas" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="555" y="270" as="sourcePoint" />
+            <mxPoint x="695" y="270" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 6: Schema Registry response -->
+        <mxCell id="step6" value="6. Schema metadata" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="695" y="300" as="sourcePoint" />
+            <mxPoint x="555" y="300" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 7: CVS to Backend -->
+        <mxCell id="step7" value="7. Suite list response" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="545" y="330" as="sourcePoint" />
+            <mxPoint x="405" y="330" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 8: User selects suite, Frontend requests schema -->
+        <mxCell id="step8" value="8. GET /api/cvs/v1/suites/{suite}/schema" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="255" y="380" as="sourcePoint" />
+            <mxPoint x="395" y="380" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 9: Backend proxies to CVS -->
+        <mxCell id="step9" value="9. GET /api/v1/suites/{suite}/schema (JWT)" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="405" y="410" as="sourcePoint" />
+            <mxPoint x="545" y="410" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 10: CVS returns JSON Schema -->
+        <mxCell id="step10" value="10. JSON Schema response" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="545" y="440" as="sourcePoint" />
+            <mxPoint x="405" y="440" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 11: Transform for UI -->
+        <mxCell id="step11" value="11. Transform schema for UI" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="400" y="470" as="sourcePoint" />
+            <Array as="points">
+              <mxPoint x="430" y="470" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 12: Return form config -->
+        <mxCell id="step12" value="12. Form configuration" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="395" y="500" as="sourcePoint" />
+            <mxPoint x="255" y="500" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 13: Frontend renders form -->
+        <mxCell id="step13" value="13. Render dynamic form" style="html=1;align=left;spacingLeft=2;endArrow=block;rounded=0;edgeStyle=orthogonalEdgeStyle;curved=0;fontSize=10;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="250" y="530" as="sourcePoint" />
+            <Array as="points">
+              <mxPoint x="280" y="530" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Step 14: Display form to user -->
+        <mxCell id="step14" value="14. Display form" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontSize=10;" edge="1" parent="1">
+          <mxGeometry width="80" relative="1" as="geometry">
+            <mxPoint x="245" y="560" as="sourcePoint" />
+            <mxPoint x="125" y="560" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

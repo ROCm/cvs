@@ -1,0 +1,124 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.6.6 Chrome/144.0.7559.236 Electron/40.8.4 Safari/537.36" version="29.6.6">
+  <diagram name="WebSocket Flow" id="websocket-flow">
+    <mxGraphModel dx="2066" dy="1202" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=1;fontSize=16;" value="WebSocket Real-time Communication Flow" vertex="1">
+          <mxGeometry height="30" width="400" x="300" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="acc-frontend" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" value="ACC Frontend" vertex="1">
+          <mxGeometry height="800" width="100" x="150" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="cvs-api-server" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" value="CVS API Server" vertex="1">
+          <mxGeometry height="800" width="100" x="500" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="cvs-lifeline" parent="cvs-api-server" style="html=1;points=[];perimeter=orthogonalPerimeter;outlineConnect=0;targetShapes=umlLifeline;portConstraint=eastwest;" value="" vertex="1">
+          <mxGeometry height="620" width="10" x="45" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="python-cli" parent="1" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" value="Python CVS CLI" vertex="1">
+          <mxGeometry height="800" width="100" x="705" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="cli-lifeline" parent="python-cli" style="html=1;points=[];perimeter=orthogonalPerimeter;outlineConnect=0;targetShapes=umlLifeline;portConstraint=eastwest;" value="" vertex="1">
+          <mxGeometry height="220" width="10" x="45" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="acc-lifeline" parent="1" style="html=1;points=[];perimeter=orthogonalPerimeter;outlineConnect=0;targetShapes=umlLifeline;portConstraint=eastwest;" value="" vertex="1">
+          <mxGeometry height="650" width="10" x="195" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="step1" edge="1" parent="1" source="acc-lifeline" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontStyle=1;fontSize=12;" target="cvs-lifeline" value="1. POST /api/v1/tests/execute">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <Array as="points">
+              <mxPoint x="280" y="190" />
+            </Array>
+            <mxPoint x="205" y="180" as="sourcePoint" />
+            <mxPoint x="445" y="180" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step2" edge="1" parent="1" source="cvs-lifeline" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontStyle=1;fontSize=12;" target="acc-lifeline" value="2. HTTP 202 {execution_id: &quot;exec-123&quot;}">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <Array as="points">
+              <mxPoint x="280" y="240" />
+            </Array>
+            <mxPoint x="445" y="240" as="sourcePoint" />
+            <mxPoint x="205" y="240" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step3" edge="1" parent="1" source="acc-lifeline" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontStyle=1;fontSize=12;" target="cvs-lifeline" value="3. WS connect /ws/executions/exec-123/status">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <Array as="points">
+              <mxPoint x="320" y="310" />
+            </Array>
+            <mxPoint x="205" y="300" as="sourcePoint" />
+            <mxPoint x="445" y="300" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step4" edge="1" parent="1" source="cvs-lifeline" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontStyle=1;fontSize=12;" target="acc-lifeline" value="4. WS: {&quot;type&quot;: &quot;status&quot;, &quot;status&quot;: &quot;running&quot;}">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <Array as="points">
+              <mxPoint x="310" y="360" />
+            </Array>
+            <mxPoint x="445" y="360" as="sourcePoint" />
+            <mxPoint x="205" y="360" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="note" parent="1" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#fff2cc;strokeColor=#d6b656;size=20;fontStyle=1;" value="Test execution begins" vertex="1">
+          <mxGeometry height="40" width="120" x="600" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="step5" edge="1" parent="1" source="cli-lifeline" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontStyle=1;fontSize=12;" target="cvs-lifeline" value="5. Log output (stdout/stderr)">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <Array as="points">
+              <mxPoint x="570" y="430" />
+            </Array>
+            <mxPoint x="695" y="480" as="sourcePoint" />
+            <mxPoint x="455" y="480" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step6" edge="1" parent="1" source="cvs-lifeline" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontStyle=1;fontSize=12;" target="acc-lifeline" value="6. WS: {&quot;type&quot;: &quot;log&quot;, &quot;message&quot;: &quot;Starting RCCL test...&quot;}">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <Array as="points">
+              <mxPoint x="330" y="510" />
+            </Array>
+            <mxPoint x="445" y="540" as="sourcePoint" />
+            <mxPoint x="205" y="540" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step7" edge="1" parent="1" source="cli-lifeline" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontStyle=1;fontSize=12;" target="cvs-lifeline" value="7. Test fails with error">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <Array as="points">
+              <mxPoint x="590" y="560" />
+            </Array>
+            <mxPoint x="695" y="600" as="sourcePoint" />
+            <mxPoint x="455" y="600" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step8" edge="1" parent="1" source="cvs-lifeline" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontStyle=1;fontSize=12;" target="acc-lifeline" value="8. WS: {&quot;type&quot;: &quot;error&quot;, &quot;message&quot;: &quot;RCCL initialization failed&quot;}">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <Array as="points">
+              <mxPoint x="340" y="620" />
+            </Array>
+            <mxPoint x="445" y="660" as="sourcePoint" />
+            <mxPoint x="205" y="660" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step9" edge="1" parent="1" source="cvs-lifeline" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;dashed=1;fontColor=#000000;fontStyle=1;fontSize=12;" target="acc-lifeline" value="9. WS: {&quot;type&quot;: &quot;status&quot;, &quot;status&quot;: &quot;failed&quot;}">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <Array as="points">
+              <mxPoint x="370" y="670" />
+            </Array>
+            <mxPoint x="445" y="720" as="sourcePoint" />
+            <mxPoint x="205" y="720" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="step10" edge="1" parent="1" source="acc-lifeline" style="html=1;verticalAlign=bottom;endArrow=block;curved=0;rounded=0;fontColor=#000000;fontStyle=1;fontSize=12;" target="cvs-lifeline" value="10. WS disconnect">
+          <mxGeometry relative="1" width="80" as="geometry">
+            <Array as="points">
+              <mxPoint x="350" y="730" />
+            </Array>
+            <mxPoint x="205" y="780" as="sourcePoint" />
+            <mxPoint x="445" y="780" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

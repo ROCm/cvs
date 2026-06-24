@@ -1,0 +1,104 @@
+<mxfile host="app.diagrams.net" modified="2026-04-16T15:20:00.000Z" agent="5.0" version="24.2.5" etag="CVS-ARCH-OVERVIEW" type="device">
+  <diagram name="CVS API Architecture" id="cvs-api-architecture">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="800" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- User -->
+        <mxCell id="user" value="User" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="50" y="180" width="30" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- ACC Frontend -->
+        <mxCell id="acc-frontend" value="ACC Frontend" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="140" y="190" width="100" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Docker Containers Group -->
+        <mxCell id="docker-container" value="Docker Containers" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;fontStyle=1;verticalAlign=top;spacingTop=10;" vertex="1" parent="1">
+          <mxGeometry x="300" y="140" width="400" height="120" as="geometry" />
+        </mxCell>
+        
+        <!-- ACC Backend (inside Docker) -->
+        <mxCell id="acc-backend" value="ACC Go Backend" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="320" y="180" width="120" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- CVS API Server (inside Docker) -->
+        <mxCell id="cvs-api" value="CVS Go API Server" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="560" y="180" width="120" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Python CVS CLI -->
+        <mxCell id="python-cvs" value="Python CVS CLI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="760" y="190" width="120" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Test Results -->
+        <mxCell id="test-results" value="Test Results" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="950" y="180" width="80" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- Schema Registry -->
+        <mxCell id="schema-registry" value="Schema Registry" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="560" y="320" width="120" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Config Files -->
+        <mxCell id="config-files" value="Config Files" style="shape=folder;fontStyle=1;spacingTop=10;tabWidth=40;tabHeight=14;tabPosition=left;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="760" y="320" width="80" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- Authentication Layer Group -->
+        <mxCell id="auth-layer" value="Authentication Layer" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;fontStyle=1;verticalAlign=top;spacingTop=10;" vertex="1" parent="1">
+          <mxGeometry x="300" y="420" width="400" height="80" as="geometry" />
+        </mxCell>
+        
+        <!-- JWT Tokens (inside Auth Layer) -->
+        <mxCell id="jwt-tokens" value="JWT Tokens" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="340" y="450" width="100" height="35" as="geometry" />
+        </mxCell>
+        
+        <!-- TLS/SSL (inside Auth Layer) -->
+        <mxCell id="tls-ssl" value="TLS/SSL" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="570" y="450" width="100" height="35" as="geometry" />
+        </mxCell>
+        
+        <!-- Main Flow Connections -->
+        <mxCell id="edge1" edge="1" parent="1" source="user" target="acc-frontend">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="edge2" edge="1" parent="1" source="acc-frontend" target="acc-backend">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="edge3" value="JWT + HTTPS" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;fontColor=#000000;" edge="1" parent="1" source="acc-backend" target="cvs-api">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="440" y="200" as="sourcePoint" />
+            <mxPoint x="560" y="200" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        
+        <mxCell id="edge4" value="JSON Config Files" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;fontColor=#000000;" edge="1" parent="1" source="cvs-api" target="python-cvs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="edge5" value="pytest execution" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;fontColor=#000000;" edge="1" parent="1" source="python-cvs" target="test-results">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Schema Discovery Connections -->
+        <mxCell id="edge6" value="Dynamic Discovery" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;fontColor=#000000;" edge="1" parent="1" source="cvs-api" target="schema-registry">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="edge7" value="Generated from" style="html=1;verticalAlign=middle;endArrow=block;curved=0;rounded=0;fontColor=#000000;" edge="1" parent="1" source="schema-registry" target="config-files">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

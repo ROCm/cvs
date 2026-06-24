@@ -1,0 +1,20 @@
+# Keep the Docker build context small. The build needs api/ + web/ source and
+# the CVS Python package (cvs/, setup.py, requirements.txt, version.txt) for the
+# runtime CLI; caches and venvs below are excluded.
+.git
+**/node_modules
+web/dist
+api/internal/webui/dist/assets
+**/__pycache__
+**/*.pyc
+.cvs_venv
+.ruff_venv
+.test_venv
+.pytest_cache
+.ruff_cache
+dist
+cvs.egg-info
+*.tgz
+*.log
+LOG
+LOGS

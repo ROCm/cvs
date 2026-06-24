@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import importlib.resources as resources
 import re
 import pytest
@@ -88,7 +89,12 @@ class ListPlugin(SubcommandPlugin):
                 return tests[test_name]
         return None
 
-    def list_tests(self, test_name=None, cluster_file=None, config_file=None):
+    def list_tests(self, test_name=None, cluster_file=None, config_file=None, as_json=False):
+        if as_json and not test_name:
+            # test_map is already {package: {test_name: module_path}} and
+            # JSON-serializable; emit it directly.
+            print(json.dumps(self.test_map, indent=2))
+            return
         if test_name:
             # List specific tests within a test file
             module_path = self._find_test(test_name)
@@ -171,6 +177,7 @@ class ListPlugin(SubcommandPlugin):
         parser.add_argument("test", nargs="?", help="Optional: specific test file to list tests from")
         parser.add_argument("--cluster_file", dest="cluster_file", help="Optional: cluster file for test collection")
         parser.add_argument("--config_file", dest="config_file", help="Optional: config file for test collection")
+        parser.add_argument("--json", dest="as_json", action="store_true", help="Output machine-readable JSON")
         parser.set_defaults(_plugin=self)
         return parser
 
@@ -181,4 +188,9 @@ List Commands:
   cvs list agfhc_cvs                 List all tests in agfhc_cvs"""
 
     def run(self, args):
-        self.list_tests(args.test, cluster_file=args.cluster_file, config_file=args.config_file)
+        self.list_tests(
+            args.test,
+            cluster_file=args.cluster_file,
+            config_file=args.config_file,
+            as_json=getattr(args, "as_json", False),
+        )
