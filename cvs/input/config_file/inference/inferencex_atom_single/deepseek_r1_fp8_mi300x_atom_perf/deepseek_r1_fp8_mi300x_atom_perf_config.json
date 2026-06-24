@@ -7,7 +7,7 @@
   "enforce_thresholds": true,
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "MI300X lab reference Section 4.1; set container.image/name before run"
+    "notes": "MI300X lab reference Section 4.1"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -22,7 +22,7 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "<changeme>",
+    "name": "inferencex_atom_mi300x",
     "image": "rocm/atom-dev:latest",
     "runtime": {
       "name": "docker",

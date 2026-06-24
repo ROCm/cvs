@@ -66,6 +66,16 @@ def to_client_metrics(raw, *, tp, isl):
     median_tpot = raw.get("median_tpot_ms")
     completed = raw.get("completed")
     failed = raw.get("failed")
+    num_prompts = raw.get("num_prompts")
+    # ATOM benchmark_serving omits `failed` when every request succeeds; derive it
+    # so success_rate and gated health metrics remain assertable.
+    if failed is None and completed is not None and num_prompts is not None:
+        try:
+            failed = max(0, int(num_prompts) - int(completed))
+        except (TypeError, ValueError):
+            failed = None
+        if failed is not None:
+            m["client.failed"] = failed
 
     m["client.per_gpu_throughput"] = _safe_div(ttot, tp)
     m["client.normalized_ttft_ms_per_tok"] = _safe_div(mean_ttft, isl)

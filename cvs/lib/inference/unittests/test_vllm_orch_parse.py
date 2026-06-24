@@ -483,6 +483,21 @@ class TestMetricTests(unittest.TestCase):
         )
         self.assertEqual(dict(req.node.user_properties)["metric_unit"], "ms")
 
+    def test_enforce_skips_when_metric_not_produced(self):
+        # Placeholder threshold for a percentile the artifact omitted must not fail
+        # with "missing from actuals" when metric_percentiles only emits p99.
+        actuals = dict(self.actuals)
+        del actuals["client.p90_ttft_ms"]
+        cell = f"ISL=128,OSL=2048,TP={_TP},CONC=64"
+        thr = {cell: {"client.p90_ttft_ms": {"kind": "max_ms", "value": 1_000_000}}}
+        req = _FakeRequest()
+        self.vs.test_metric(
+            self.seq_combo, self.conc, "p90_ttft_ms",
+            {self.key: {"fakehost": actuals}},
+            _fake_variant_config(enforce=True, thresholds=thr), _FakeLifecycle(), req,
+        )
+        self.assertIsNone(dict(req.node.user_properties).get("metric_value"))
+
 
 from cvs.lib.inference.utils.vllm_parsing import _safe_div, to_client_metrics  # noqa: E402
 
@@ -530,6 +545,12 @@ class TestToClientMetricsPure(unittest.TestCase):
             "success_rate",
         ):
             self.assertIsNone(m[f"client.{d}"])
+
+    def test_success_rate_when_failed_omitted(self):
+        raw = {"completed": 1000, "num_prompts": 1000}
+        m = to_client_metrics(raw, tp=_TP, isl=_ISL)
+        self.assertEqual(m["client.failed"], 0)
+        self.assertAlmostEqual(m["client.success_rate"], 1.0)
 
 
 class TestSafeDivPure(unittest.TestCase):

@@ -23,7 +23,7 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "<changeme>",
+    "name": "inferencex_atom_mi355x",
     "image": "rocm/atom-dev:nightly_202606211542",
     "runtime": {
       "name": "docker",
