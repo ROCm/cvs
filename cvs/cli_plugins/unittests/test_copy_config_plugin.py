@@ -20,7 +20,6 @@ class TestCopyConfigPlugin(unittest.TestCase):
             os.path.join(cvs_dir, "input", "config_file"),
             os.path.join(cvs_dir, "input", "cluster_file"),
             os.path.join(cvs_dir, "input", "env_file"),
-            os.path.join(cvs_dir, "input", "dtni"),
         ]
 
     def setUp(self):

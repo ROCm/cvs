@@ -17,7 +17,8 @@ from typing import Any, Dict, List, Optional
 _RECIPES_PATH = (
     Path(__file__).resolve().parents[3]
     / "input"
-    / "dtni"
+    / "config_file"
+    / "inference"
     / "inferencex_atom_single"
     / "ix_recipes.json"
 )

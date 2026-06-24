@@ -4,7 +4,7 @@
   "framework": "inferencex_atom_single",
   "gpu_arch": "mi300x",
   "ix_recipe_id": "dsr1-fp8-mi300x-atom",
-  "enforce_thresholds": false,
+  "enforce_thresholds": true,
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
     "notes": "MI300X lab reference §4.1; set container.image/name before run"

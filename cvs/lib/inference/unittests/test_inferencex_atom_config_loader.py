@@ -37,8 +37,8 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
     def test_load_w1_mi300x_atom_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/dtni/inferencex_atom_single/"
-            "deepseek_r1_fp8_mi300x_atom_perf/config.json"
+            "input/config_file/inference/inferencex_atom_single/"
+            "deepseek_r1_fp8_mi300x_atom_perf/deepseek_r1_fp8_mi300x_atom_perf_config.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.gpu_arch, "mi300x")
@@ -56,8 +56,8 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
     def test_load_w1_mi300x_smoke_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/dtni/inferencex_atom_single/"
-            "deepseek_r1_fp8_mi300x_atom_smoke/config.json"
+            "input/config_file/inference/inferencex_atom_single/"
+            "deepseek_r1_fp8_mi300x_atom_smoke/deepseek_r1_fp8_mi300x_atom_smoke_config.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.params.num_prompts, "128")

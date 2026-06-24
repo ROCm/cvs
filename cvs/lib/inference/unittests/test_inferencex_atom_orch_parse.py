@@ -23,8 +23,10 @@ _TP = 8
 class FakeOrch:
     def __init__(self, exec_return=None):
         self.exec_return = exec_return if exec_return is not None else {}
+        self.commands = []
 
     def exec(self, cmd, **kwargs):
+        self.commands.append(cmd)
         return self.exec_return
 
 
@@ -85,6 +87,23 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         self.assertTrue(job._result_artifact.endswith("/results.json"))
         out = job.parse_results()
         self.assertIn("client.output_throughput", out["node0"])
+
+    def test_run_client_clears_stale_result_artifact(self):
+        orch = FakeOrch()
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=1000,
+        )
+        job.run_client()
+        rm_cmds = [c for c in orch.commands if c.startswith("rm -f ")]
+        self.assertEqual(len(rm_cmds), 1)
+        self.assertIn(job._result_artifact, rm_cmds[0])
+        self.assertTrue(any("benchmark_serving" in c for c in orch.commands))
 
 
 if __name__ == "__main__":
