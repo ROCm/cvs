@@ -80,12 +80,32 @@ def pytest_generate_tests(metafunc):
 
 
 def _du_bytes(orch, path):
-    out = orch.exec(f"bash -c {shlex.quote(f'du -sb {shlex.quote(path)} 2>/dev/null | cut -f1')}")
+    """Bytes under ``path`` in the container.
+
+    Returns 0 when the path is absent or empty. Returns ``None`` when ``du``
+    cannot run (permission, missing binary, etc.) so callers do not treat an
+    infrastructure failure as "model not present".
+    """
+    quoted = shlex.quote(path)
+    cmd = (
+        f"if [ ! -e {quoted} ]; then echo __MISSING__; "
+        f"elif bytes=$(du -sb {quoted} 2>/dev/null | cut -f1) && [ -n \"$bytes\" ]; "
+        f"then echo \"$bytes\"; else echo __DU_ERROR__; fi"
+    )
+    out = orch.exec(f"bash -c {shlex.quote(cmd)}")
     total = 0
+    saw_marker = False
     for text in (out or {}).values():
-        for tok in (text or "").split():
-            if tok.isdigit():
-                total = max(total, int(tok))
+        text = (text or "").strip()
+        if text == "__DU_ERROR__":
+            return None
+        if text == "__MISSING__":
+            saw_marker = True
+            continue
+        if text.isdigit():
+            total = max(total, int(text))
+    if saw_marker and total == 0:
+        return 0
     return total
 
 
@@ -101,7 +121,6 @@ def test_launch_container(orch, lifecycle, request):
     if not orch.verify_containers_running(name):
         lifecycle.failed = True
         pytest.fail(f"container {name} not running after setup_containers()")
-    time.sleep(30)
 
 
 def test_setup_sshd(orch, lifecycle, request):
@@ -134,7 +153,11 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
     if not remote:
         final = 0
         for it in range(_FETCH_PRESENCE_RETRIES):
-            final = _du_bytes(orch, models_dir)
+            cur = _du_bytes(orch, models_dir)
+            if cur is None:
+                lifecycle.failed = True
+                pytest.fail(f"could not measure model cache size under {models_dir} (du error)")
+            final = cur
             log.info("[fetch presence %d] size=%.1fGB", it, final / 1e9)
             if final > 0:
                 break
@@ -149,8 +172,14 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
         prev = -1
         stable = 0
         final = _du_bytes(orch, models_dir)
+        if final is None:
+            lifecycle.failed = True
+            pytest.fail(f"could not measure model cache size under {models_dir} (du error)")
         for it in range(_FETCH_POLL_COUNT):
             cur = _du_bytes(orch, models_dir)
+            if cur is None:
+                lifecycle.failed = True
+                pytest.fail(f"could not measure model cache size under {models_dir} (du error)")
             final = cur
             log.info("[fetch poll %d] size=%.1fGB", it, cur / 1e9)
             if cur > 0 and cur == prev:
@@ -208,6 +237,7 @@ def test_inferencex_atom_inference(
         lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
         t_client = time.monotonic()
         job.run_client()
+        # Bounded by variant params: client_poll_count * client_poll_wait_time (+ initial wait).
         job.wait_client_complete()
         results = job.parse_results()
     except Exception:
