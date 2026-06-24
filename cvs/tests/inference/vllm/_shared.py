@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Shared test helpers for the dtni vllm_single suite.
+Shared test helpers for the vllm_single suite.
 
 `test_print_results_table` is exported via `from ._shared import *` so each
 framework-specific suite file picks it up as a sibling test that pytest
@@ -16,6 +16,12 @@ from cvs.lib import globals
 log = globals.log
 
 __all__ = ["test_print_results_table"]
+
+
+def _cell(m, key):
+    """Table cell: a missing OR present-but-None metric renders as '-'."""
+    v = m.get(key)
+    return "-" if v is None else v
 
 
 def test_print_results_table(inf_res_dict):
@@ -33,8 +39,11 @@ def test_print_results_table(inf_res_dict):
         "Req/s",
         "Total tok/s",
         "Mean TTFT (ms)",
+        "P95 TTFT (ms)",
         "Mean TPOT (ms)",
+        "P95 TPOT (ms)",
         "P99 ITL (ms)",
+        "Goodput (req/s)",
     ]
     rows = []
     for key, host_dict in inf_res_dict.items():
@@ -49,11 +58,14 @@ def test_print_results_table(inf_res_dict):
                     policy,
                     conc,
                     host,
-                    m.get("request_throughput_per_sec", "-"),
-                    m.get("total_throughput_per_sec", "-"),
-                    m.get("mean_ttft_ms", "-"),
-                    m.get("mean_tpot_ms", "-"),
-                    m.get("p99_itl_ms", "-"),
+                    _cell(m, "client.request_throughput"),
+                    _cell(m, "client.total_token_throughput"),
+                    _cell(m, "client.mean_ttft_ms"),
+                    _cell(m, "client.p95_ttft_ms"),
+                    _cell(m, "client.mean_tpot_ms"),
+                    _cell(m, "client.p95_tpot_ms"),
+                    _cell(m, "client.p99_itl_ms"),
+                    _cell(m, "client.goodput"),
                 ]
             )
     log.info("\n" + tabulate(rows, headers=headers, tablefmt="github"))

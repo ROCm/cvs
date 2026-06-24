@@ -10,7 +10,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.dtni.config_loader import load_variant
+from cvs.lib.inference.utils.inferencing_config_loader import load_variant
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log
@@ -96,7 +96,6 @@ def orch(cluster_dict, variant_config, lifecycle):
         cluster_dict.get("container", {}),
         variant_config.container.model_dump(),
     )
-    container_block["image"] = variant_config.image.tag
     testsuite_config = {
         "orchestrator": "container",
         "container": container_block,
@@ -137,8 +136,9 @@ def pytest_collection_modifyitems(items):
         "test_setup_sshd": 1,
         "test_model_fetch": 2,
         "test_vllm_inference": 3,
-        "test_print_results_table": 4,
-        "test_teardown": 5,
+        "test_metric": 4,
+        "test_print_results_table": 5,
+        "test_teardown": 6,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
@@ -170,3 +170,31 @@ def pytest_runtest_makereport(item, call):
     extras = getattr(report, "extras", [])
     extras.append(pytest_html.extras.html(html))
     report.extras = extras
+
+
+def pytest_html_results_table_header(cells):
+    """Add Value + Unit columns just before the trailing Links column.
+
+    Populated for test_metric rows; blank for lifecycle/inference rows (they
+    record no metric_value user-property). Scoped to this suite's conftest, so
+    other suites' result tables are unaffected.
+    """
+    cells.insert(-1, "<th>Value</th>")
+    cells.insert(-1, "<th>Unit</th>")
+
+
+def pytest_html_results_table_row(report, cells):
+    props = dict(report.user_properties)
+    has = "metric_value" in props
+    val = props.get("metric_value")
+    unit = props.get("metric_unit", "") if has else ""
+    if not has:
+        shown = ""
+    elif val is None:
+        shown = "-"
+    elif isinstance(val, float):
+        shown = f"{val:.3f}"
+    else:
+        shown = str(val)
+    cells.insert(-1, f"<td>{shown}</td>")
+    cells.insert(-1, f"<td>{unit}</td>")
