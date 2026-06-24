@@ -27,6 +27,12 @@ def _check_one(metric, actual_raw, spec):
         target = _to_float(spec["value"])
         if actual > target:
             return f"{metric}: actual {actual} ms > max {target} ms"
+    elif kind == "max":
+        # Unit-agnostic upper bound, for counts like `failed` where `max_ms`
+        # would be a unit lie. Same comparison, honest message.
+        target = _to_float(spec["value"])
+        if actual > target:
+            return f"{metric}: actual {actual} > max {target}"
     elif kind == "within":
         target = _to_float(spec["value"])
         pct = _to_float(spec["tolerance_pct"])
@@ -43,6 +49,8 @@ def _check_one(metric, actual_raw, spec):
         actuals = spec.get("_actuals", {})
         if ref_metric not in actuals:
             return f"{metric}: reference metric '{ref_metric}' missing from actuals"
+        if actuals[ref_metric] is None:
+            return f"{metric}: reference '{ref_metric}' is None (metric unavailable for this run)"
         ref_actual = _to_float(actuals[ref_metric])
         if ref_actual == 0:
             return f"{metric}: reference '{ref_metric}' is 0; cannot compute ratio"
@@ -59,6 +67,12 @@ def evaluate_all(actuals, thresholds):
     for metric, spec in thresholds.items():
         if metric not in actuals:
             violations.append(f"{metric}: missing from actuals")
+            continue
+        if actuals[metric] is None:
+            # A derived/goodput metric that could not be computed (e.g.
+            # decode_latency_ratio with no p50, or goodput with no SLO run).
+            # Loud violation, not a float(None) TypeError.
+            violations.append(f"{metric}: value is None (metric unavailable for this run)")
             continue
         spec_with_actuals = dict(spec)
         if spec.get("kind") == "min_ratio":
