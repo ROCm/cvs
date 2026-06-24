@@ -360,6 +360,22 @@ class VllmJob:
         client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
         self.orch.exec("bash -c " + shlex.quote(client_cmd))
 
+    def is_client_done(self) -> bool:
+        """Non-raising predicate: True if the client has finished (success or crash)."""
+        try:
+            out = self.orch.exec(f"cat {self.client_log}")
+            for _host, text in out.items():
+                txt = text or ""
+                if (
+                    self.COMPLETION_RE.search(txt)
+                    or self.CLIENT_CRASH_RE.search(txt)
+                    or self.CLIENT_LAUNCH_FAIL_RE.search(txt)
+                ):
+                    return True
+            return False
+        except Exception:
+            return False
+
     def wait_client_complete(self):
         log.info("client initial wait %ds", self._client_initial_wait)
         time.sleep(self._client_initial_wait)
