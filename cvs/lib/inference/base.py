@@ -532,8 +532,6 @@ class InferenceBaseJob:
                 self.bp_dict["percentile_metrics"],
                 "--metric-percentiles",
                 self.bp_dict["metric_percentiles"],
-                "--temperature",
-                "0",
                 "--ignore-eos",
                 "--save-result",
                 "--result-dir",
@@ -566,6 +564,7 @@ class InferenceBaseJob:
                 log_tail = out_dict[node] or ''
                 if re.search(
                     r"can't open file|No such file or directory|can't find '__main__'|"
+                    r'unrecognized arguments:|error: unrecognized arguments|'
                     r'CVS: missing vLLM benchmark|CVS: could not resolve vLLM benchmark|'
                     r'CVS: BENCH_SCRIPT is missing',
                     log_tail,
