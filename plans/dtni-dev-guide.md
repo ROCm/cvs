@@ -8,7 +8,7 @@
 > `OrchestratorConfig.from_dicts` / `container.enabled|launch`, and other
 > pre-merge shapes. For the as-built architecture, read
 > `plans/building-a-cvs-test-suite.md` and each package's `AGENTS.md`. Kept for
-> the design rationale (the §5–§7 *why* behind the seam, the Job split, and the
+> the design rationale (the Sections 5–7 *why* behind the seam, the Job split, and the
 > config/threshold split), which is still accurate.
 
 ## 1. Intro and scope
@@ -330,7 +330,7 @@ Walkthrough:
 3. **Classify each config key.** Each key is "what we run" (config), "did it pass" (threshold), or "cluster scaffolding" (already in the cluster file). If undecided, default to config; thresholds are only for numeric measurements with predicates.
 4. **Lay out variant directories.** One directory per `(model, purpose)` or `(model, mode, purpose)` under `cvs/input/dtni/<suite>/<full-model-id>_<mode>_<perf|accuracy>/`. Full model IDs, no abbreviations. Single-vs-distributed is a *mode*, not a separate wrapper.
 5. **Write the Job.** Standalone class under `cvs/lib/<domain>/<framework>_orch.py`. Constructor takes the typed config and an `orch`. Do not inherit `InferenceBaseJob`. Do not import `globals`.
-6. **Write the wrapper + conftest** following the skeleton in §4. One wrapper per suite.
+6. **Write the wrapper + conftest** following the skeleton in Section 4. One wrapper per suite.
 7. **Verify against the pre-port baseline.** Run the old wrapper and the new one on the same hardware with the same model and confirm metrics are within noise.
 
 ## 9. Verification template

@@ -1,5 +1,5 @@
 {
-  "_comment": "W1 DeepSeek R1 FP8+MTP3 on 8x MI300X. Recipe: dsr1-fp8-mi300x-atom-mtp3. Thresholds: plan §4.2.",
+  "_comment": "W1 DeepSeek R1 FP8+MTP3 on 8x MI300X. Recipe: dsr1-fp8-mi300x-atom-mtp3. Thresholds: plan Section 4.2.",
   "schema_version": 1,
   "framework": "inferencex_atom_single",
   "gpu_arch": "mi300x",
@@ -7,7 +7,7 @@
   "enforce_thresholds": false,
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "MI300X MTP3 lab reference §4.2"
+    "notes": "MI300X MTP3 lab reference Section 4.2"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",

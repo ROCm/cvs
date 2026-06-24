@@ -1,5 +1,5 @@
 {
-  "_comment": "W1 DeepSeek R1 FP8 on 8x MI300X. Recipe: dsr1-fp8-mi300x-atom (IX amd-master.yaml). Thresholds: plan §4.1.",
+  "_comment": "W1 DeepSeek R1 FP8 on 8x MI300X. Recipe: dsr1-fp8-mi300x-atom (IX amd-master.yaml). Thresholds: plan Section 4.1.",
   "schema_version": 1,
   "framework": "inferencex_atom_single",
   "gpu_arch": "mi300x",
@@ -7,7 +7,7 @@
   "enforce_thresholds": true,
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "MI300X lab reference §4.1; set container.image/name before run"
+    "notes": "MI300X lab reference Section 4.1; set container.image/name before run"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
