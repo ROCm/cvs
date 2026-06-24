@@ -4,21 +4,23 @@
 
 ## 0. Branch state (`hnimrama/IX-atom`) — read this first
 
-This section records **what exists on the branch today** vs **what this plan targets**. No further code changes are implied by this section alone.
+This section records **what exists on the branch today** vs **what this plan targets**. Refresh when landing major phases.
 
 
-| Area                 | Current on branch                                                                                                          | Target (this plan)                                                                                                                                                             |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Suite name**       | `inferencex_atom_single` (renamed from `inferencemax_single`)                                            | Same                                                                                                                                                                           |
-| **Driver**           | `InferenceXAtomJob` in `inferencex_atom_orch.py` — **vLLM-native** (`vllm serve` + `vllm bench serve`, `client.`* metrics) | **InferenceX ATOM framework** path: IX repo checkout, `framework: atom` server recipes from `amd-master.yaml`, IX bench client / aggregates                                    |
-| **Config layout**    | `cvs/input/config_file/inference/inferencex_atom_single/` (`schema_version: 1`, vLLM-style `roles.server.serve_args`)      | DTNI variant dirs under `cvs/input/dtni/inferencex_atom_single/<variant>/` (`config.json` + `threshold.json`) **plus** parity with existing typed loader where suites converge |
-| **Shipped variants** | `mi300x_gpt_oss_120b_single`, `mi355x_inferencemax_gpt_oss_120b_single` (interim GPT-OSS / vLLM uplift)                    | Tracker workloads **W1–W18** on **MI300X + MI355X** (Section 3.1); GPT-OSS maps to **W2** |
-| **Thresholds**       | Placeholder / record-only (`enforce_thresholds: false`) on uplift variants                                                 | Calibrated from lab reference runs (Section 5.1–5.2)                                                                                                                           |
-| **Accuracy**         | Not implemented                                                                                                            | **gsm8k** flexible-extract gates (Section 5.2)                                                                                                                                 |
-| **MTP**              | Not implemented                                                                                                            | Separate variant or recipe flag (`atom-mtp`, e.g. MTP3)                                                                                                                        |
+| Area | Current on branch | Target (this plan) |
+| ---- | ----------------- | ------------------ |
+| **Suite name** | `inferencex_atom_single` (legacy `inferencemax_single` removed) | Same |
+| **Driver** | `InferenceXAtomJob` (`inferencex_atom_orch.py`): `params.driver=atom` → `atom.entrypoints.openai_server` + `atom.benchmarks.benchmark_serving`; `parse_results` → `to_client_metrics` (`client.*` namespace) | Same ATOM path; optional `driver=vllm` only for interim uplift variants |
+| **Config layout (canonical)** | `cvs/input/config_file/inference/inferencex_atom_single/<variant>/` — `<variant>_config.json` + `<variant>_threshold.json`; recipe CLI fragments in `ix_recipes.json` | **Source of truth** for lab + `cvs copy-config`. Mirror under `cvs/input/dtni/inferencex_atom_single/` only when DTNI packaging converges — do not fork configs. |
+| **Cluster files** | `cvs/input/cluster_file/mi300x_atom_single.json`, `mi355x_atom_single.json` | Per `gpu_arch`; container names pinned in variant config (`inferencex_atom_mi300x` / `inferencex_atom_mi355x`) |
+| **Shipped W1 variants** | `deepseek_r1_fp8_mi300x_atom_perf`, `_smoke`, `_mtp3`; `deepseek_r1_fp8_mi355x_atom_perf`, `_mtp3` | + remaining W1–W18 dirs (Section 3.1) |
+| **Interim uplift** | `mi300x_gpt_oss_120b_single`, `mi355x_inferencemax_gpt_oss_120b_single` (record-only) | Replaced by W2 ATOM dirs in M3 |
+| **Thresholds** | MI300X W1 perf: calibrated (Section 4.1), `enforce_thresholds: true` after lab confirm. MI355X W1: CI seeds (Section 4.3), `enforce_thresholds: false`. Smoke / MTP3 / GPT-OSS: record-only | Per-arch lab calibration; never cross-arch copy |
+| **Accuracy (gsm8k)** | Not implemented | M2 — Section 5 (ACC-1..7) + Phase D |
+| **Platform metrics** | `lifecycle.record` only (server_ready, client_complete) | `server.*` + sweep summary — Section 6.1, CVS-2/10 |
+| **MTP** | W1 `*_atom_mtp3` dirs + thresholds seeded; server recipe flags may need orch hardening | Recipe-specific serve args; separate from M1 FP8 perf close |
 
-
-**Implication for phasing:** the branch rename and vLLM driver are a **stepping stone** (parity with `vllm_single` plumbing). The next implementation waves must **swap the execution backend** to true ATOM (InferenceX) while keeping the same DTNI pytest + `evaluate_all` shell.
+**Branch implication:** Phase **R** and Phase **0** are **largely done** (ATOM serve + bench + W1 dirs + cluster JSON). Active work is **Phase A** MI300X lab confirmation → **M1 close** → **M2 gsm8k** on MI300X. MI355X lab is **pending** (Section 1.2) and does not block the spine.
 
 ---
 
@@ -35,9 +37,10 @@ This document is the **implementation and action-item plan** for **InferenceX AT
 **In scope (InferenceX focus)**
 
 - **IX paths:** vLLM (ROCm) baseline, SGLang (ROCm) baseline, **ATOM**, **ATOM + MTP**, **ATOM-Disagg** (when orchestration allows).
-- **Workloads:** W1–W18 recipes aligned with `amd-master.yaml` / InferenceX ATOM (Section 5).
-- **Metrics:** Per-GPU throughput, output throughput per GPU, TTFT/TPOT (mean + tails), prefill/E2E, sweep curves, goodput, scaling — full matrix in Section 5.
-- **Quality:** gsm8k accuracy gates; optional MTP health / quant parity (P2).
+- **Workloads:** W1–W18 recipes aligned with `amd-master.yaml` / InferenceX ATOM (Section 3).
+- **Metrics:** Per-GPU throughput, output throughput per GPU, TTFT/TPOT (mean + tails), prefill/E2E, sweep curves, goodput, scaling — Section 6 + **Section 6.1** tiers.
+- **Quality:** gsm8k and MTP accuracy tests — Section 5; optional quant parity (P2).
+- **Platform:** CVS enhancements from inferencex_atom — Section 1.6.
 - **Lab:** **Thor2 NIC first**; AINIC documented when available. See **Section 3.1** — **MI300X and MI355X are both in scope** even though the validation tracker rows are mostly MI355X-labelled.
 
 **GPU platforms (MI300X + MI355X)**
@@ -50,7 +53,7 @@ The DTNI Validation Tracker names many recipes with **MI355X** in the title (e.g
 - **Implementation:** Ship `_mi300x_` and `_mi355x_` variant dirs together in code/config PRs when possible. **Lab validation** follows hardware: MI300X runs gate milestones; MI355X lab runs are **pending when hardware is available** and do not block the MI300X spine (see **Section 1.2**).
 - **Calibration / lab:** MI300X lab numbers in Section 4.1–4.2; **MI355X W1** numbers from upstream **ROCm/ATOM** nightly benchmark run in Section 4.3. **Never copy MI300X → MI355X** (or vice versa) for thresholds.
 
-**Current milestone scope (M1):** Phase 0 (ATOM backend swap) + Phase A W1 perf on `*_mi300x_*` variant dirs (Sections 4.1–4.2, `enforce_thresholds: true` after lab confirm). `*_mi355x_*` dirs ship with Section 4.3 threshold **seeds** and `enforce_thresholds: false` until MI355X lab is available — **not a blocker for M1 close or M2+ on MI300X**.
+**Current milestone scope (M1):** Phase **0 done** on branch; **Phase A** W1 perf on `*_mi300x_*` variant dirs (Sections 4.1–4.2, `enforce_thresholds: true` after lab confirm with branch code — Section 1.5). `*_mi355x_*` dirs ship with Section 4.3 threshold **seeds** and `enforce_thresholds: false` until MI355X lab is available — **not a blocker for M1 close or M2+ on MI300X**.
 
 ### 1.2 Lab hardware policy — MI355X pending (non-blocking)
 
@@ -63,6 +66,83 @@ When MI355X nodes are **not** available in the lab:
 | **When MI355X lands** | Run confirming CVS per variant → flip `enforce_thresholds: true` per arch → attach HTML/logs to PR. Does not require re-doing MI300X work. |
 
 **Repo rule:** MI355X configs must never block CI or pytest collection on a machine without MI355X — only the variant you pass to `cvs run` is exercised.
+
+### 1.3 Config layout — canonical paths
+
+| Path | Role |
+| ---- | ---- |
+| `cvs/input/config_file/inference/inferencex_atom_single/<variant>/` | **Canonical** variant config + threshold for lab and `cvs copy-config` |
+| `cvs/input/config_file/inference/inferencex_atom_single/ix_recipes.json` | IX recipe id → CLI fragments (pin with ATOM image / `amd-master.yaml`) |
+| `cvs/input/config_file/inference/inferencex_atom_single/README.md` | Smoke vs perf runbook, MI355X pending note |
+| `cvs/input/cluster_file/mi300x_atom_single.json` | Example 8× MI300X cluster |
+| `cvs/input/cluster_file/mi355x_atom_single.json` | Example 8× MI355X cluster (pending lab) |
+| `cvs/input/dtni/inferencex_atom_single/` | **Future mirror** only — do not edit in parallel with `config_file/` |
+
+Legacy `inferencemax/` and `inferencemax_single/` under `config_file/inference/` are **removed**; all new work lands under `inferencex_atom_single/`.
+
+### 1.4 ATOM benchmark artifact → CVS metrics contract
+
+ATOM `benchmark_serving` writes a stock JSON results file. CVS maps it through `to_client_metrics` into the `client.*` namespace used by `test_metric` and `evaluate_all`.
+
+| Topic | Behavior |
+| ----- | -------- |
+| **Namespace (interim)** | All ATOM perf scalars are `client.<field>` today (Phase B may add IX-native keys for baselines only). |
+| **`metric_percentiles`** | W1 configs use `"99"`. Benchmark emits **p99** (and mean/median) for ttft/tpot/itl/e2el — **not** p90/p95 unless percentiles string is expanded. |
+| **GATED_METRICS vs artifact** | Loader requires a threshold spec for every `GATED_METRICS` member per cell (including p90/p95 placeholders at `1_000_000` max). `test_metric` **skips enforcement** when the artifact did not emit that scalar — record-only PASS. |
+| **`failed` / `success_rate`** | ATOM JSON often omits `failed` when all prompts succeed. Parser derives `failed = num_prompts - completed` and then `success_rate`. |
+| **Primary M1 gates** | `client.output_throughput`, `client.mean_ttft_ms`, `client.mean_tpot_ms` (+ p99 tails where emitted). |
+
+### 1.5 Lab operations (not optional for valid results)
+
+| Step | Why |
+| ---- | --- |
+| `pip install -e .` (or editable install of branch) on runner | Installed `site-packages/cvs` shadows repo fixes; lab must run the branch under test |
+| `cvs copy-config` variant + threshold + cluster to `~/input/` | Resolves `{user-id}` placeholders; edit cluster IPs locally |
+| Archive `--html`, `--log-file`, and per-test HTML bundle | PR evidence for IX-atom; run card fields in Section 8 A-3 |
+| Rotate HF token if captured in logs | Server env export may appear in verbose pytest capture |
+
+### 1.6 CVS platform enhancements (inferencex_atom backlog)
+
+Work below improves **CVS as a validation platform**, not only W1. Prioritize items that unblock M2/M3 lab velocity and parity with upstream ATOM CI.
+
+| ID | Enhancement | CVS benefit | Phase |
+| ---- | ----------- | ------------- | ----- |
+| **CVS-1** | **`accuracy.*` metric namespace** | Separate quality scalars from `client.*` perf; reuse `evaluate_all` with new threshold kinds (`min_ratio`, `min_exact_match`) | D |
+| **CVS-2** | **`server.*` lifecycle metrics** | Emit `server.time_to_ready_s`, `server.warmup_s`, `server.model_cache_bytes` from existing `lifecycle.record` + model `du` probe — gate regressions in load path | B |
+| **CVS-3** | **Run card in HTML report** | Surface `gpu_arch`, `ix_recipe_id`, `atom_image_pin`, `upstream_run_url` as pytest metadata (today: log-only via `_log_variant_run_card`) | B |
+| **CVS-4** | **Default `params.driver=atom`** | Schema default still `vllm`; flip default to `atom` once interim uplift variants are isolated | 0+ |
+| **CVS-5** | **Recipe + arch validation** | `apply_ix_recipe` already checks `gpu_arch` / `model.id`; extend to warn on image pin mismatch vs `ix_recipes.json` catalog | 0-1 |
+| **CVS-6** | **MTP recipe orch wiring** | `ix_recipes.json` MTP3 server args merged at load; orch must not drop speculative-token flags on serve restart | E |
+| **CVS-7** | **Artifact bundle export** | Zip `results.json`, server log tail, run card JSON per cell into CVS HTML bundle for PR diff vs ATOM CI | A-3 |
+| **CVS-8** | **Upstream parity diff** | Script: compare CVS `client.*` per cell to Section 4 reference within margin; flags threshold drift before merge | A |
+| **CVS-9** | **`placeholder_gated_threshold_cell` generator** | CLI or doc recipe to mint threshold skeletons for new W2–W18 dirs (already in `inferencex_atom_config_loader.py`) | C |
+| **CVS-10** | **Sweep curve aggregation** | Post-run table/chart: throughput vs concurrency per ISL/OSL (tracker metric #30); no new pytest per point | B |
+| **CVS-11** | **Baseline variant pairing** | Same sweep cell for `*_atom_perf` vs `*_vllm_baseline` → parity HTML section (M4) | C / M4 |
+| **CVS-12** | **Secret redaction** | Strip `HF_TOKEN` from captured server env / verbose logs in pytest hooks | 1.5 |
+| **CVS-13** | **Percentile policy switch** | Config `metric_percentiles: "90,95,99"` when tracker gates p90/p95; else keep skip-when-absent (Section 1.4) | B-4 |
+| **CVS-14** | **Multi-node `nnodes` in Job** | Extend `InferenceXAtomJob` for F-class scaling without new suite id | F |
+| **CVS-15** | **DTNI mirror sync** | Single copy step from `config_file/inferencex_atom_single/` → `dtni/` when packaging converges | DOC |
+
+```mermaid
+flowchart LR
+  subgraph perf["Perf path today"]
+    BENCH["benchmark_serving"]
+    CM["client.*"]
+    TM["test_metric"]
+  end
+  subgraph add["CVS additions"]
+    SV["server.* lifecycle"]
+    AC["accuracy.* gsm8k"]
+    RC["run_card HTML"]
+    BD["bundle + CI diff"]
+  end
+  BENCH --> CM --> TM
+  SV --> TM
+  AC --> EVAL["evaluate_all"]
+  CM --> EVAL
+  RC --> HTML["pytest HTML"]
+  BD --> PR["PR evidence"]
+```
 
 **Explicitly out of scope for early waves**
 
@@ -144,22 +224,24 @@ flowchart TB
 | **Job class**           | Standalone job using `**orch` only** — no `InferenceBaseJob` for new ATOM gates.                                           |
 
 
-### 2.1 Execution backend: vLLM interim vs ATOM target
+### 2.1 Execution backend: ATOM (current) vs vLLM fallback
 
 ```mermaid
 flowchart LR
   subgraph today["Today on hnimrama/IX-atom"]
-    VJ["vllm serve + vllm bench serve"]
+    ATOM["atom.entrypoints.openai_server"]
+    BENCH["atom.benchmarks.benchmark_serving"]
     CM["client.* via to_client_metrics"]
   end
-  subgraph target["Target ATOM"]
-    IX["InferenceX repo pin"]
-    ASRV["atom server script / recipe"]
-    ABENCH["IX bench_serving / aggregates"]
-    AM["tput_per_gpu, output_tput_per_gpu, …"]
+  subgraph fallback["Interim only"]
+    VJ["params.driver=vllm → vllm serve + bench"]
   end
-  today -->|"replace backend"| target
-  CM -.->|"metric namespace may converge"| AM
+  subgraph future["Phase B+ optional"]
+    AM["IX-native metric keys for baselines"]
+  end
+  ATOM --> BENCH --> CM
+  VJ -.-> CM
+  CM -.->|"namespace convergence"| AM
 ```
 
 
@@ -210,7 +292,7 @@ The tracker matrix does **not** list MI300X explicitly. **CVS automation does.**
 
 | Workload | MI300X variant | MI355X variant | Notes |
 |----------|----------------|----------------|-------|
-| **W1** DeepSeek R1 FP8 | `deepseek_r1_fp8_mi300x_atom_perf` (+ `_atom_mtp3`) | `deepseek_r1_fp8_mi355x_atom_perf` (+ MTP sibling) | MI300X: Sections 4.1–4.2; MI355X: Section 4.3 (`DeepSeek-R1-0528` in ATOM CI) |
+| **W1** DeepSeek R1 FP8 | `deepseek_r1_fp8_mi300x_atom_perf` (+ `_smoke`, `_mtp3`) | `deepseek_r1_fp8_mi355x_atom_perf` (+ `_mtp3`) | Smoke: 128 prompts pre-gate (Section 8 A-0). MTP3: **post-M1** optional on MI300X |
 | **W2** GPT-OSS MXFP4 | `gpt_oss_120b_mi300x_atom` | `gpt_oss_120b_mi355x_atom` | Interim `mi300x_gpt_oss_120b_single` is **not** final W2 |
 | **W3** GLM 5.1 BF16 | `glm51_mi300x_atom` | `glm51_mi355x_atom` | Same ISL/OSL as tracker |
 | **W13** Kimi K2.7 Code | `kimi_k27_code_mi300x_atom` | `kimi_k27_code_mi355x_atom` | |
@@ -228,14 +310,17 @@ The tracker matrix does **not** list MI300X explicitly. **CVS automation does.**
 
 W1 (**DeepSeek R1 FP8**, ISL=OSL=1024, TP8, FP8 KV cache). Use to seed per-arch `threshold.json` after margin policy is agreed (typically reference × guard band, not raw copy).
 
-**ATOM bench JSON → CVS threshold keys** (from upstream `ROCm/ATOM` `.github/scripts/summarize.py`):
+**ATOM bench JSON → CVS threshold keys** (today: all prefixed `client.` in threshold files; see Section 1.4):
 
-| ATOM artifact field | CVS / threshold metric (P1) |
-|---------------------|-----------------------------|
-| `output_throughput` | `output_throughput` or `client.output_throughput` (namespace TBD in Phase B) |
-| `total_token_throughput` | `total_token_throughput` |
-| `mean_tpot_ms` | `mean_tpot_ms` |
-| `mean_ttft_ms` | `mean_ttft_ms` |
+| ATOM artifact field | CVS threshold key (current) | M1 gate? |
+|---------------------|----------------------------|----------|
+| `output_throughput` | `client.output_throughput` | **Yes** |
+| `total_token_throughput` | `client.total_token_throughput` | Loose / placeholder |
+| `mean_ttft_ms` | `client.mean_ttft_ms` | **Yes** |
+| `mean_tpot_ms` | `client.mean_tpot_ms` | **Yes** |
+| `p99_ttft_ms`, `p99_tpot_ms`, … | `client.p99_*` | Emitted when `metric_percentiles: "99"` |
+| `p90_*`, `p95_*` | `client.p90_*`, `client.p95_*` | Placeholder only unless percentiles expanded |
+| (derived) | `client.failed`, `client.success_rate` | Derived when `failed` omitted |
 
 ### 4.1 MI300X — FP8 (lab reference)
 
@@ -294,9 +379,9 @@ Source: [ROCm/ATOM ATOM Benchmark run 27912164002](https://github.com/ROCm/ATOM/
 
 ---
 
-## 5. Accuracy gates (quality)
+## 5. Accuracy gates and quality tests
 
-Reference accuracy on **8 GPUs**, FP8, FP8 KV cache:
+Reference accuracy on **8 GPUs**, FP8, FP8 KV cache (W1 DeepSeek R1):
 
 
 | Task  | Version | Filter           | n-shot | Metric      | Value  | Stderr |
@@ -314,11 +399,67 @@ Reference accuracy on **8 GPUs**, FP8, FP8 KV cache:
 | MXFP4          | **≥ 0.93**                     |
 
 
-**Automation plan**
+### 5.1 Accuracy test catalog (what CVS should run)
 
-- Accuracy is a **separate test or post-bench hook** (not mixed into perf sweep `test_metric` unless explicitly merged).
-- Threshold kind: propose `min_ratio` or dedicated `min_exact_match` in verdict layer — **design in Phase D**, implement after perf path is green for W1.
-- Run accuracy on a **reduced concurrency** or dedicated variant dir to avoid perf sweep cost.
+Accuracy is **not** a perf sweep cell. Each row is a **separate pytest stage** (or dedicated variant dir) that reuses the same ATOM server container after perf gates pass (or cold-starts once per accuracy job).
+
+| Test id | Task / benchmark | When | Workloads | Gate? | Metric key (proposed) |
+| ------- | ---------------- | ---- | --------- | ----- | --------------------- |
+| **ACC-1** | **gsm8k** flexible-extract, 5-shot | **M2** — after M1 MI300X perf | W1 FP8, W17 MXFP4, other P1 quant paths | **Yes** | `accuracy.gsm8k_exact_match` |
+| **ACC-2** | **gsm8k** strict-match, 5-shot | Same run as ACC-1 | W1+ | Record-only | `accuracy.gsm8k_strict_match` |
+| **ACC-3** | **gsm8k stderr bound** | Optional nightly | W1 | Record-only | `accuracy.gsm8k_stderr` (flag if > 0.02) |
+| **ACC-4** | **MTP acceptance rate** | Post-M1 MTP3 lab | W1 `*_mtp3` | P2 gate | `mtp.acceptance_rate` (min floor TBD) |
+| **ACC-5** | **Degenerate decode check** | MTP variants | W1 MTP3+ | P2 gate | `mtp.empty_or_repeat_ratio` (max ceiling) |
+| **ACC-6** | **MMLU** (5-shot, subset) | P2 nightly | W2–W3 code/reasoning models | Record → gate later | `accuracy.mmlu_acc` |
+| **ACC-7** | **Quant logit parity** vs BF16 ref | P2 optional | FP8/MXFP4 paths | Record-only | `accuracy.logit_max_delta` |
+
+**Per-workload gsm8k floors (tracker-aligned)**
+
+| Workload | Precision | ACC-1 minimum (`flexible-extract`) |
+| -------- | --------- | ---------------------------------- |
+| W1 DeepSeek R1 FP8 | FP8 | **0.94** |
+| W17 DeepSeek R1 MXFP4 | MXFP4 | **0.93** |
+| W2 GPT-OSS MXFP4 | MXFP4 | **0.93** (confirm with IX when W2 lands) |
+| W3 GLM 5.1 BF16 | BF16 | **0.94** (BF16 reference path) |
+
+### 5.2 Accuracy harness design (CVS integration)
+
+**Reference pattern:** SGLang disagg already runs gsm8k via `run_gsm8k_benchmark_test` (`sglang_disagg_lib.py`). InferenceX ATOM should follow the same **DTNI shape**: one job method + one pytest test, not perf parametrization.
+
+| Step | Implementation |
+| ---- | -------------- |
+| 1 | Add `deepseek_r1_fp8_mi300x_atom_accuracy/` variant: single cell, `enforce_thresholds: true`, `num_prompts` N/A (accuracy-only). |
+| 2 | Extend `InferenceXAtomJob` (or sibling `InferenceXAtomAccuracyJob`) with `run_gsm8k_eval()` — invoke **lm-eval** or ATOM-shipped eval inside container against `http://localhost:{port}`. |
+| 3 | Parse eval JSON → flat `accuracy.*` dict; attach to `inf_res_dict` under a fixed accuracy key (not per-conc sweep). |
+| 4 | Add `test_gsm8k_accuracy` in `inferencex_atom_single.py` (or `inferencex_atom_accuracy.py` module) — runs **after** perf tests when chained, or standalone via `--config_file` accuracy variant. |
+| 5 | Threshold file: one global cell or `"accuracy"` key with `accuracy.gsm8k_exact_match: {kind: min, value: 0.94}`. |
+| 6 | HTML row: add `ACCURACY_METRICS` list beside `CLIENT_METRICS` in `vllm_parsing.py` (or new `accuracy_parsing.py`). |
+
+**CI job split**
+
+| Job | Variant | Duration | Blocks merge? |
+| --- | ------- | -------- | ------------- |
+| Perf | `*_atom_perf` | Long (full sweep) | M1 |
+| Smoke | `*_atom_smoke` | Short | Pre-gate only |
+| Accuracy | `*_atom_accuracy` | Medium (~gsm8k full set) | M2 |
+
+### 5.3 Accuracy metrics namespace
+
+| Metric | Unit | Source | Threshold kind |
+| ------ | ---- | ------ | -------------- |
+| `accuracy.gsm8k_exact_match` | ratio 0–1 | lm-eval / ATOM eval | `min` |
+| `accuracy.gsm8k_strict_match` | ratio 0–1 | same run, second filter | record-only |
+| `accuracy.gsm8k_stderr` | ratio | eval stderr | `max` (optional) |
+| `accuracy.samples_completed` | count | eval progress | `min` (= expected N) |
+| `accuracy.eval_duration_s` | s | wall clock | record-only |
+| `mtp.acceptance_rate` | ratio | ATOM MTP stats / log scrape | `min` (P2) |
+| `mtp.speculative_tokens_avg` | count | MTP telemetry | record-only |
+
+**Automation plan (summary)** — action items in **Phase D** (Section 8) and **CVS-1** (Section 1.6).
+
+- Accuracy is a **separate pytest stage** (not mixed into perf `test_metric` rows).
+- Run after **M1** MI300X perf is green; MI355X accuracy pending with hardware (Section 1.2).
+- Use a **dedicated variant dir** (e.g. `deepseek_r1_fp8_mi300x_atom_accuracy`) with low concurrency / fixed eval split to limit wall time.
 
 ---
 
@@ -329,32 +470,105 @@ From **IX ATOM Matrix**: every workload row W1–W18 is marked **Y/P** for all c
 
 | #    | Category    | Test / Metric                                     | Priority     | Automation status     | Notes                                |
 | ---- | ----------- | ------------------------------------------------- | ------------ | --------------------- | ------------------------------------ |
-| 1    | IX Path     | vLLM (ROCm) baseline                              | P1           | In progress           | Same cards as ATOM                   |
-| 2    | IX Path     | SGLang (ROCm) baseline                            | P1           | In progress           | Second open engine                   |
-| 3    | IX Path     | ATOM (`framework: atom`)                          | P1           | Not started (backend) | Primary IX path                      |
-| 4    | IX Path     | ATOM + MTP                                        | P1           | Not started           | EAGLE / MTP3 recipes                 |
+| 1    | IX Path     | vLLM (ROCm) baseline                              | P1           | Not started           | M4; interim GPT-OSS uplift only      |
+| 2    | IX Path     | SGLang (ROCm) baseline                            | P1           | Not started           | M4                                   |
+| 3    | IX Path     | ATOM (`params.driver=atom`)                       | P1           | **W1 in lab**         | `inferencex_atom_orch.py`            |
+| 4    | IX Path     | ATOM + MTP                                        | P1           | **Configs shipped**   | W1 `*_mtp3` dirs; orch recipe TBD    |
 | 5    | IX Path     | ATOM-Disagg                                       | P1           | Blocked               | PD pools; SLURM spike                |
-| 6–23 | Workload    | W1–W18 (Section 3)                                | P1/P2        | Not started           | 192 matrix cells total               |
-| 24   | Performance | Throughput per GPU (`tput_per_gpu`)               | P1           | Partial               | vLLM `client.`* interim only         |
-| 25   | Performance | Output throughput per GPU (`output_tput_per_gpu`) | P1           | Partial               |                                      |
-| 26   | Performance | TTFT mean & p99                                   | P1           | Partial               |                                      |
-| 27   | Performance | TPOT mean & p95                                   | P1           | Partial               |                                      |
+| 6–23 | Workload    | W1–W18 (Section 3)                                | P1/P2        | **W1 only**           | 192 matrix cells total               |
+| 24   | Performance | Throughput per GPU (`tput_per_gpu`)               | P1           | Partial               | `client.per_gpu_throughput` derived  |
+| 25   | Performance | Output throughput per GPU (`output_tput_per_gpu`) | P1           | Partial               | Same as `client.output_throughput` / TP |
+| 26   | Performance | TTFT mean & p99                                   | P1           | **W1 gated**          | p90/p95 record-only (Section 1.4)    |
+| 27   | Performance | TPOT mean & p95                                   | P1           | **W1 mean gated**     | p95 record-only unless percentiles expanded |
 | 28   | Performance | Prefill latency p50 / p95                         | P2           | Not started           |                                      |
-| 29   | Performance | E2E mean / p95 / p99                              | P2           | Not started           |                                      |
+| 29   | Performance | E2E mean / p95 / p99                              | P2           | Partial               | p99 emitted; p90/p95 record-only     |
 | 30   | Performance | Latency vs load (per sweep step)                  | P2           | Not started           |                                      |
 | 31   | Performance | Goodput                                           | P2           | Not started           |                                      |
 | 32   | Performance | Scaling efficiency %                              | P2           | Not started           |                                      |
 | 33   | Performance | Peak GPU memory                                   | P2           | Not started           |                                      |
 | 34   | Performance | KV cache footprint                                | P2           | Not started           |                                      |
-| 35   | Performance | Request success rate & error mix                  | P2           | Not started           |                                      |
+| 35   | Performance | Request success rate & error mix                  | P2           | Partial               | Derived `failed` / `success_rate`      |
 | 36   | Performance | Model load time + memory                          | P2           | Not started           |                                      |
-| 37   | Performance | Time-to-ready                                     | P2           | Partial               | `wait_ready` timing exists on branch |
+| 37   | Performance | Time-to-ready                                     | P2           | Partial               | `wait_ready` + server warmup timing  |
 | 38   | Quality     | MTP acceptance / degenerate decode                | P2           | Not started           | MTP workloads only                   |
 | 39   | Quality     | Quant / logit parity vs BF16                      | P2           | Not started           | Nightly optional                     |
-| 40   | Quality     | **gsm8k accuracy**                                | P1 (W1 gate) | Not started           | Section 5                            |
+| 40   | Quality     | **gsm8k accuracy**                                | P1 (W1 gate) | Not started           | M2 — Section 5 + Phase D             |
 
 
-**Tracker rollup (IX ATOM tab):** 39 framework tests — 14 P1, 25 P2; 0% automated today; 192 workload cases in matrix.
+**Tracker rollup (IX ATOM tab):** 39 framework tests — 14 P1, 25 P2; **W1 ATOM perf path automated on branch**; gsm8k and remaining workloads not yet automated; 192 workload cases in matrix.
+
+### 6.1 Recommended metrics for CVS (tiers and namespaces)
+
+Beyond the tracker matrix above, this is the **practical metric set** CVS should emit, display in HTML, and eventually gate. Maps to code in `vllm_parsing.py` (`CLIENT_METRICS`, `GATED_METRICS`, `to_client_metrics` derivations) and planned namespaces from Section 1.6.
+
+#### Tier 1 — Gate on every perf cell (P1, M1+)
+
+| Metric | Namespace key | Producer today | Gate policy |
+| ------ | ------------- | -------------- | ------------- |
+| Output throughput | `client.output_throughput` | ATOM `results.json` | **min_tok_s** — primary SLO |
+| Mean TTFT | `client.mean_ttft_ms` | ATOM | **max_ms** |
+| Mean TPOT | `client.mean_tpot_ms` | ATOM | **max_ms** |
+| P99 TTFT / TPOT | `client.p99_ttft_ms`, `client.p99_tpot_ms` | ATOM when `metric_percentiles: "99"` | **max_ms** when emitted |
+| Run health | `client.failed`, `client.success_rate` | derived if `failed` omitted | **max** failed, **min** success_rate when enforcing |
+
+#### Tier 2 — Record on every cell; gate when calibrated (P1/P2)
+
+| Metric | Namespace key | Value to CVS | Why useful |
+| ------ | ------------- | ------------ | ---------- |
+| Total token throughput | `client.total_token_throughput` | ATOM | Prefill+decode capacity; parity vs ATOM CI |
+| Per-GPU throughput | `client.per_gpu_throughput` | derived `total / TP` | Normalized cross-TP comparisons |
+| Request throughput | `client.request_throughput` | ATOM if present | Goodput proxy at fixed conc |
+| Goodput | `client.goodput` | ATOM `request_goodput` | SLA under rate limits |
+| Median latencies | `client.median_ttft_ms`, `client.median_tpot_ms` | ATOM | Robust center vs mean skew |
+| P99 ITL / E2E | `client.p99_itl_ms`, `client.p99_e2el_ms` | ATOM | Decode jitter + end-to-end tail |
+| Decode diagnostics | `client.decode_latency_ratio`, `client.decode_throughput_p50` | derived | Spot unstable decode (p99/p50 ITL, median TPOT) |
+| Normalized TTFT | `client.normalized_ttft_ms_per_tok` | derived `mean_ttft / ISL` | Compare across ISL sweep steps |
+| Bench duration | `client.duration` | ATOM | Wall time per cell for CI budgeting |
+| Token totals | `client.total_input_tokens`, `client.total_output_tokens` | ATOM | Sanity vs `num_prompts` × ISL/OSL |
+
+#### Tier 3 — Server / platform metrics (implement CVS-2)
+
+| Metric | Namespace key | Source | Gate? |
+| ------ | ------------- | ------ | ----- |
+| Time to ready | `server.time_to_ready_s` | `lifecycle.record` after `wait_ready` | P2 max regression |
+| Client bench wall time | `server.client_wall_s` | lifecycle `client_complete` | record-only |
+| Model cache size | `server.model_cache_bytes` | `_du_bytes` on `HF_HUB_CACHE` path | record-only |
+| Container launch | `server.container_launch_s` | existing `test_launch_container` lifecycle | P2 |
+| Image / recipe | (metadata) | `run_card` + config | PR audit, not numeric gate |
+
+#### Tier 4 — Accuracy and MTP quality (Section 5)
+
+| Metric | Namespace key | Test id | Gate? |
+| ------ | ------------- | ------- | ----- |
+| gsm8k exact match | `accuracy.gsm8k_exact_match` | ACC-1 | **M2 P1** |
+| gsm8k strict match | `accuracy.gsm8k_strict_match` | ACC-2 | record |
+| MTP acceptance | `mtp.acceptance_rate` | ACC-4 | P2 |
+
+#### Tier 5 — Multi-node / scaling (Phase F)
+
+| Metric | Namespace key | Notes |
+| ------ | ------------- | ----- |
+| Scaling efficiency % | `scaling.efficiency_pct` | actual tput / (single-node × nnodes) |
+| Per-node throughput | `client.output_throughput` per rank | requires multi-node orch |
+| Fabric / NIC metadata | run_card fields | Thor2 vs AINIC comparability |
+
+#### Percentile and gating policy (summary)
+
+| Config | Emitted percentiles | CVS behavior |
+| ------ | ------------------- | -------------- |
+| `metric_percentiles: "99"` (W1 today) | mean, median, **p99** only | p90/p95 in threshold file are placeholders; `test_metric` **skips** if scalar absent |
+| `metric_percentiles: "90,95,99"` (future) | full tails | Can gate p90/p95 per tracker rows #26–27 |
+| Accuracy | N/A | Never mixed into perf `GATED_METRICS` |
+
+#### Sweep-level analytics (CVS-10)
+
+For each variant run, CVS should also produce **one summary row per ISL/OSL pair**:
+
+- `summary.max_output_throughput` — best conc in sweep
+- `summary.conc_at_max_tput` — argmax concurrency
+- `summary.ttft_at_max_tput` — TTFT at that point (latency vs load knee)
+
+These are **post-processing** over `inf_res_dict`, not new container benchmarks.
 
 ---
 
@@ -363,33 +577,36 @@ From **IX ATOM Matrix**: every workload row W1–W18 is marked **Y/P** for all c
 
 | Phase | Name                         | Goal                                                                               | Status on branch          |
 | ----- | ---------------------------- | ---------------------------------------------------------------------------------- | ------------------------- |
-| **R** | **Rename + vLLM shell**      | `inferencex_atom_single`, `InferenceXAtomJob`, schema_version 1 configs, docs      | **Done**      |
-| **0** | **ATOM backend swap**        | IX repo pin, atom server recipe, IX bench parse; keep pytest/`orch`/`evaluate_all` | Not started               |
-| **A** | **W1 vertical slice**        | W1 on MI300X (lab-gated) + MI355X dirs (seed thresholds, pending lab) | MI300X in progress |
-| **B** | **Metric namespace**         | Map IX aggregates → threshold keys; document field map                             | Partial (`client.`* only) |
-| **C** | **P1 workloads**             | W1–W17 on **MI300X + MI355X** (Section 3.1) + baselines per arch                     | Not started               |
-| **D** | **Accuracy + CI**            | gsm8k gate Section 5; negative threshold test                                      | Not started               |
-| **E** | **MTP + P2**                 | `_atom_mtp` variants; W4–W12, W14–W16, W18                                         | Not started               |
+| **R** | **Rename + pytest shell**    | `inferencex_atom_single`, `InferenceXAtomJob`, schema_version 1, DTNI conftest       | **Done**                  |
+| **0** | **ATOM backend**             | ATOM serve + bench + parse; W1 dirs; cluster JSON; legacy `inferencemax/` removed  | **Done** (0-1 image/recipe pin partial) |
+| **A** | **W1 calibration**           | MI300X smoke → perf lab-gated; MI355X seeds pending (Section 1.2)                  | **MI300X in progress**    |
+| **B** | **Metric namespace**         | IX-native keys; `server.*` lifecycle; Section 6.1 tiers | Partial (`client.*` ATOM) |
+| **C** | **P1 workloads**             | W2, W3, W13, W17 on MI300X first; MI355X dirs when hardware available              | Not started               |
+| **D** | **Accuracy + CI**            | gsm8k M2 on MI300X (Section 5 + Phase D below)                                     | Not started               |
+| **E** | **MTP hardening + P2**       | W1 MTP3 lab optional; W4–W12, W14–W16, W18                                       | MTP configs only          |
 | **F** | **Multi-node + scaling**     | `nnodes`, fabric metadata on run card                                              | Not started               |
 | **G** | **Disagg + DI stack**        | Appendix B when infra ready                                                        | Blocked                   |
 
 
 ```mermaid
 flowchart TB
-  PR["R: rename + vLLM shell DONE"]
-  P0["0: ATOM backend swap"]
-  PA["A: W1 MI300X + MI355X dirs + thresholds"]
-  PB["B: IX metric namespace"]
-  PC["C: P1 workloads MI300X + MI355X"]
-  PD["D: gsm8k accuracy CI"]
-  PE["E: MTP + P2 workloads"]
-  PF["F: multi-node scaling"]
+  PR["R: pytest shell DONE"]
+  P0["0: ATOM backend DONE"]
+  PA["A: W1 MI300X lab-gated"]
+  PAP["A: MI355X pending"]
+  PB["B: metric namespace"]
+  PC["C: P1 workloads MI300X"]
+  PD["D: gsm8k M2"]
+  PE["E: MTP + P2"]
+  PF["F: multi-node"]
   PG["G: disagg DI"]
   PR --> P0 --> PA
+  PA -.-> PAP
   P0 --> PB
-  PA --> PC --> PD
+  PA --> PD
   PB --> PC
   PD --> PE --> PF --> PG
+  PC --> PE
 ```
 
 
@@ -398,17 +615,18 @@ flowchart TB
 
 ## 8. Action items (detailed)
 
-### Phase 0 — ATOM backend swap (next code wave)
+### Phase 0 — ATOM backend (complete on branch)
 
 
-| ID  | Action                        | Details                                                                                                                         |
-| --- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 0-1 | **IX repo + recipe pin**      | W1 → `dsr1-fp8-mi300x-atom` **and** `dsr1-fp8-mi355x-atom` (confirm both in IX `amd-master.yaml`). |
-| 0-2 | **Replace vLLM serve path**   | `InferenceXAtomJob.build_server_cmd` runs IX atom server script inside container, not `vllm serve`. |
-| 0-3 | **Replace bench client**      | IX `bench_serving` / stock artifact; `parse_results` reads IX log + optional `agg_bmk` JSON. |
-| 0-4 | **Keep DTNI pytest shell**    | No return to ordered `test_launch_*` tests; `conftest.py` + sweep parametrization unchanged. |
-| 0-5 | **Variant dirs W1**           | `deepseek_r1_fp8_mi300x_atom_perf/` **and** `deepseek_r1_fp8_mi355x_atom_perf/`; same sweep cells (Section 4 ISL/OSL/conc). |
-| 0-6 | **Cluster configs**           | Example `cluster_file` for 8× MI300X **and** 8× MI355X matched to `gpu_arch`. |
+| ID  | Action                        | Details                                                                                                                         | Status |
+| --- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| 0-1 | **IX repo + recipe pin**      | W1 → `dsr1-fp8-mi300x-atom` / `dsr1-fp8-mi355x-atom` in `ix_recipes.json`; image pin in variant `run_card` / container | Partial — image + recipe ids; no IX git checkout in container yet |
+| 0-2 | **ATOM serve path**           | `InferenceXAtomJob.build_server_cmd` → `python -m atom.entrypoints.openai_server` | **Done** |
+| 0-3 | **ATOM bench client**         | `atom.benchmarks.benchmark_serving` → `results.json`; `to_client_metrics` | **Done** |
+| 0-4 | **DTNI pytest shell**         | `conftest.py` + sweep parametrization + per-metric `test_metric` | **Done** |
+| 0-5 | **Variant dirs W1**           | perf + smoke + mtp3 for MI300X and MI355X (Section 3.1) | **Done** |
+| 0-6 | **Cluster configs**           | `mi300x_atom_single.json`, `mi355x_atom_single.json` | **Done** |
+| 0-7 | **Remove legacy configs**     | Delete `inferencemax/`, `inferencemax_single/` under `config_file/inference/` | **Done** |
 
 
 ### Phase A — W1 calibration (MI300X lab-gated; MI355X pending)
@@ -416,10 +634,12 @@ flowchart TB
 
 | ID  | Action                        | Details                                                                                             | Blocker? |
 | --- | ----------------------------- | --------------------------------------------------------------------------------------------------- | -------- |
-| A-1 | **MI300X thresholds**         | `threshold.json` for `*_mi300x_*` dirs from Section 4.1–4.2. | **Yes** — M1 close on MI300X |
-| A-2 | **MI355X thresholds**         | `threshold.json` for `*_mi355x_*` dirs from Section 4.3 (ATOM run 27912164002). | **No** — seeds in tree; lab confirm when hardware available |
-| A-3 | **Run card**                  | Log IX/ATOM SHA, image, `gpu_arch`, TP8, KV cache mode, MTP off/on, upstream run URL. | Per arch |
-| A-4 | **Flip `enforce_thresholds`** | MI300X: after one confirming CVS run. MI355X: same, **when lab available** — not required for M2/M3 on MI300X. | MI300X only for spine |
+| A-0 | **MI300X smoke**              | `deepseek_r1_fp8_mi300x_atom_smoke` — one cell, 128 prompts; validates path before full perf matrix | **Recommended** before A-1 |
+| A-1 | **MI300X perf thresholds**    | `deepseek_r1_fp8_mi300x_atom_perf` thresholds from Section 4.1 (10% margin). Re-run after `ccd1953` parser/`test_metric` fixes — expect 81/81 with editable install (Section 1.5) | **Yes** — M1 close on MI300X |
+| A-2 | **MI355X threshold seeds**    | `*_mi355x_*` dirs from Section 4.3 (ATOM run 27912164002) | **No** — in tree; lab confirm when hardware available |
+| A-3 | **Run card / PR evidence**    | HTML report, log file, bundle zip; log image, `gpu_arch`, TP8, KV mode, `ix_recipe_id` | Per arch |
+| A-4 | **Flip `enforce_thresholds`** | MI300X perf: after confirming CVS run. MI355X: when lab available. Smoke/MTP3: stay record-only until explicitly calibrated | MI300X perf only for M1 |
+| A-5 | **W1 MTP3 (optional)**        | `deepseek_r1_fp8_mi300x_atom_mtp3` lab + Section 4.2 thresholds | **No** — post-M1; does not block M2 |
 
 
 ### Phase B — Metrics pipeline
@@ -427,32 +647,41 @@ flowchart TB
 
 | ID  | Action                                     | Details                                                                                    |
 | --- | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| B-1 | **IX → threshold key map**                 | Align with Section 4 ATOM fields: `output_throughput`, `total_token_throughput`, `mean_ttft_ms`, `mean_tpot_ms`, … |
-| B-2 | **Deprecate `client.`* for ATOM variants** | May keep for vLLM baseline variant dirs only.                                              |
-| B-3 | **Results table**                          | `test_print_results_table` columns match tracker P1 dashboard.                             |
+| B-1 | **IX → threshold key map**                 | Documented in Section 1.4 + Section 4 + Section 6.1; optional IX-native keys for M4 baselines |
+| B-2 | **`client.*` for ATOM perf**                 | Keep for ATOM W1; deprecate only when baselines move to separate namespace |
+| B-3 | **Results table**                          | `test_print_results_table` columns match tracker P1 dashboard |
+| B-4 | **Percentile policy**                      | Either expand `metric_percentiles` to `90,95,99` or keep record-only p90/p95 (Section 6.1) |
+| B-5 | **`server.*` lifecycle**                   | Promote `lifecycle.record` timings to gated/record metrics (CVS-2, Section 6.1 Tier 3) |
+| B-6 | **Sweep summary**                          | Post-run max-tput / knee detection per ISL/OSL (CVS-10, Section 6.1) |
 
 
-### Phase C — P1 workload variants (MI300X + MI355X)
+### Phase C — P1 workload variants (MI300X leads lab)
 
 
 | ID  | Action        | Details                                                                                  |
 | --- | ------------- | ---------------------------------------------------------------------------------------- |
-| C-1 | **W1**        | **Both arches:** `*_mi300x_atom_perf` + `*_mi355x_atom_perf` (+ MTP siblings) |
-| C-2 | **W2**        | **Both arches:** GPT-OSS MXFP4 TP4, ISL 8K / OSL 1K |
-| C-3 | **W3**        | **Both arches:** GLM 5.1 BF16 |
-| C-4 | **W13**       | **Both arches:** Kimi K2.7 Code |
-| C-5 | **W17**       | **Both arches:** DeepSeek R1 MXFP4 |
-| C-6 | **Baselines** | vLLM + SGLang per workload × `gpu_arch` |
+| C-0 | **W1**        | **Done** on branch (perf/smoke/mtp3); MI300X perf lab closes M1 |
+| C-2 | **W2**        | MI300X first: GPT-OSS MXFP4 TP4, ISL 8K / OSL 1K; replace interim `mi300x_gpt_oss_120b_single` |
+| C-3 | **W3**        | MI300X: GLM 5.1 BF16; MI355X dir when hardware available |
+| C-4 | **W13**       | Kimi K2.7 Code — MI300X first |
+| C-5 | **W17**       | DeepSeek R1 MXFP4 — MI300X first |
+| C-6 | **Baselines** | vLLM + SGLang per workload × `gpu_arch` (M4) |
 
 
-### Phase D — Accuracy + CI
+### Phase D — Accuracy + CI (M2)
 
 
 | ID  | Action                  | Details                                    |
 | --- | ----------------------- | ------------------------------------------ |
-| D-1 | **gsm8k harness**       | flexible-extract; FP8 ≥ 0.94, MXFP4 ≥ 0.93 |
-| D-2 | **Job split**           | Perf sweep CI vs accuracy CI (or nightly)  |
-| D-3 | **Threshold ownership** | Who updates on image/kernel bumps          |
+| D-1 | **Variant dir**         | Add `deepseek_r1_fp8_mi300x_atom_accuracy` — separate from perf sweep; `enforce_thresholds: true` (Section 5.2) |
+| D-2 | **Harness**             | `run_gsm8k_eval()` — lm-eval or ATOM eval in container; ACC-1 + ACC-2 filters (Section 5.1) |
+| D-3 | **Metric namespace**    | `accuracy.gsm8k_exact_match` with `min` ≥ 0.94 FP8; add `ACCURACY_METRICS` display list (Section 5.3) |
+| D-4 | **Pytest integration**  | `test_gsm8k_accuracy` — not parametrized per conc cell; optional chain after perf job |
+| D-5 | **CI split**            | Perf job (long) vs accuracy job (medium); smoke stays pre-gate (Section 5.2 table) |
+| D-6 | **Threshold ownership** | Document bump process when ATOM image / model revision changes (variant README + Section 4 re-pull) |
+| D-7 | **Negative test**       | Unit test: `evaluate_all` fails below gsm8k floor |
+| D-8 | **W17 MXFP4 gate**      | Mirror accuracy variant with floor **0.93** when W17 lands (Section 5.1) |
+| D-9 | **MTP quality (P2)**    | ACC-4/ACC-5 metrics when MTP3 orch complete (Section 5.1) |
 
 
 ### Phases E–G
@@ -460,7 +689,7 @@ flowchart TB
 
 | ID  | Action           | Details                                             |
 | --- | ---------------- | --------------------------------------------------- |
-| E-1 | **MTP variants** | Section 4.2 pattern for other MTP-capable workloads |
+| E-1 | **MTP orch**     | Wire recipe-specific serve args for `*_atom_mtp3` (Section 4.2); lab optional post-M1 |
 | E-2 | **P2 dirs**      | W4–W12, W14–W16, W18 per Section 3                  |
 | F-1 | **Multi-node**   | Scaling efficiency metric + fabric metadata         |
 | G-1 | **Disagg spike** | Before W5/W6 disagg promises                        |
@@ -472,15 +701,21 @@ flowchart TB
 | ID    | Action                            | Details                                                                                                 |
 | ----- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | DOC-1 | **Link tracker → plan**           | Point readers to W1–W18 table (Section 3) from `docs/reference/configuration-files/inferencex_atom.rst` |
-| DOC-2 | **Clarify interim vLLM variants** | Mark `mi300x_gpt_oss_120b_single` as uplift placeholder until W2 ATOM lands                             |
-| DOC-3 | **MI300X in user docs**             | State explicitly that `inferencex_atom_single` supports **MI300X and MI355X**; tracker rows may say MI355X only |
+| DOC-2 | **Clarify interim vLLM variants** | Mark `mi300x_gpt_oss_120b_single` as uplift placeholder until W2 ATOM lands |
+| DOC-3 | **MI300X in user docs**           | State explicitly that `inferencex_atom_single` supports **MI300X and MI355X**; MI355X lab pending per Section 1.2 |
+| DOC-4 | **Variant README**                | Keep `inferencex_atom_single/README.md` in sync with smoke/perf commands and Section 1.5 |
+| DOC-5 | **PR checklist**                  | M1 PR: MI300X HTML + logs; note MI355X pending; `pip install -e` called out |
 
 
 ---
 
-## 9. Appendix A — Recipe index (reference)
+## 9. Appendix A — Recipe index
 
-Maintain **W id → IX recipe id → upstream script → CVS paths** map (YAML or variant README). Pin **IX git ref** in each variant **config**, never in **threshold**.
+**Shipped file:** `cvs/input/config_file/inference/inferencex_atom_single/ix_recipes.json`
+
+Maps **IX recipe id** → server CLI fragments for W1 (`dsr1-fp8-mi300x-atom`, `dsr1-fp8-mi355x-atom`, MTP3 siblings). Pin **docker image** and upstream run URL in variant `run_card`, not in `threshold.json`.
+
+Maintain **W id → IX recipe id → CVS variant dir** in variant README tables (Section 3.1). Add a row when each new workload lands in M3+.
 
 ---
 
@@ -495,13 +730,16 @@ Unchanged from prior plan: Thor2/AINIC, Optimus, KVMGR, NIXL, MOR-EP, RCCL, MI3X
 
 | Risk                                            | Mitigation                                                           |
 | ----------------------------------------------- | -------------------------------------------------------------------- |
-| **vLLM driver mistaken for ATOM done**          | Section 0 + Phase 0 explicitly swap backend                          |
+| **Stale installed package on lab runner**       | Section 1.5 — `pip install -e .` before every validation run         |
+| **vLLM driver mistaken for ATOM done**          | Section 0 + Phase 0 status; `params.driver` must be `atom` for W1    |
 | **Wrong workload on branch (GPT-OSS TP8 BF16)** | W2 spec is MXFP4 TP4; track as interim in DOC-2                      |
 | **Upstream ATOM CI drift**                      | Pin docker tag + run URL in variant README; re-pull Section 4.3 on image bumps |
 | **MI300X vs MI355X threshold bleed**            | Separate variant dirs + `threshold.json` per `gpu_arch`                |
-| **MTP flakes**                                  | Separate CI job; chat-template checklist                             |
-| **Metric key drift**                            | B-1 single map; forbid thresholds in config                          |
-| **192 matrix scope creep**                      | Automate P1 workloads × P1 metrics first; matrix `Y/P` is north star |
+| **p90/p95 threshold false failures**            | Section 1.4 — record-only when artifact omits percentiles              |
+| **MTP flakes**                                  | Separate variant dir; post-M1; chat-template checklist                 |
+| **Metric key drift**                            | B-1 / Section 1.4; forbid thresholds in config                       |
+| **192 matrix scope creep**                      | MI300X spine first; MI355X parallel track pending Section 1.2        |
+| **Secrets in verbose logs**                     | Rotate HF token; avoid logging env exports in CI capture when possible |
 
 
 ---
@@ -512,7 +750,7 @@ Unchanged from prior plan: Thor2/AINIC, Optimus, KVMGR, NIXL, MOR-EP, RCCL, MI3X
 
 ```mermaid
 flowchart TB
-  M0["M0: Rename + vLLM shell DONE"]
+  M0["M0: Rename + pytest shell DONE"]
   M1["M1: ATOM backend + W1 MI300X lab-gated"]
   M1P["M1b: W1 MI355X lab pending"]
   M2["M2: gsm8k accuracy MI300X"]
