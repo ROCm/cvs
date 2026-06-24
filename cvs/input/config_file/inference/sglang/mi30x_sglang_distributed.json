@@ -16,6 +16,7 @@
         "nccl_ib_hca_list": "<changeme>",
         "_example_nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
         "nccl_ib_hca": "<changeme>",
+	"hca_id_prefix": "<changeme>",
 	"_example_nccl_socket_ifname": "eno0",
         "nccl_socket_ifname": "<changeme>",
 	"_example_gloo_socket_ifname": "eno0",
@@ -55,6 +56,7 @@
         }
 
     },
+	"active_benchmark": "llama-70b",
     "benchmark_params":
     {
         "llama-70b":
@@ -70,19 +72,6 @@
 		 "inference_poll_iterations": "16",
 		 "inference_tests":
 		  {
-		      "gsm8k":
-	              {
-			  "backend": "sglang",
-			  "num_questions": "1000",
-			  "max_concurrency": "25",
-                          "expected_results":
-		          {
-			       "auto":
-			           {
-			               "tokens_per_sec": "350"
-				   }
-			  }
-	              },
 		      "bench_serv_random":
 		      {
 			  "backend": "sglang",
@@ -91,13 +80,19 @@
 			  "input_length": "1024",
 			  "output_length": "1024",
 			  "random_range_ratio": "0.5",
+			  "model_num_params": "70000000000",
+			  "peak_gpu_tflops": "1300",
                           "expected_results":
 		          {
 			       "auto":
 			           {
-                   		       "output_throughput_per_sec": "1000",
+
+                   		       "output_throughput_per_sec": "900",
                                        "mean_ttft_ms": "60000",
-                                       "mean_tpot_ms": "150"
+                                       "mean_tpot_ms": "150",
+                                       "mean_e2e_latency_ms": "120000",
+                                       "goodput": "0.99",
+                                       "mfu": "0.02"
 				   }
 			  }
 		      },
@@ -115,9 +110,66 @@
 			           {
 				   }
 			  }
-		      }
+		      },
+		      "lm_eval_hellaswag":
+		      {
+			  "backend": "sglang",
+			  "lm_eval_model": "local-completions",
+			  "tasks": "hellaswag",
+			  "num_fewshot": "5",
+			  "batch_size": "auto",
+			  "limit": "100",
+			  "num_concurrent": "1",
+			  "exec_timeout_sec": "7200",
+			  "extra_model_args": "tokenizer_backend=huggingface",
+                          "expected_results":
+		          {
+			       "hellaswag":
+			           {
+					"acc_norm,none": 0.23
+				   }
+			  }
+		      },
+                      "lm_eval_gsm8k":
+                      {
+                          "backend": "sglang",
+                          "lm_eval_model": "local-completions",
+                          "tasks": "gsm8k",
+                          "num_fewshot": "5",
+                          "batch_size": "auto",
+                          "limit": "100",
+                          "num_concurrent": "4",
+                          "exec_timeout_sec": "7200",
+                          "extra_model_args": "tokenizer_backend=huggingface",
+                          "expected_results":
+                          {
+                               "gsm8k":
+                                   {
+                                        "exact_match,flexible-extract": 0.96
+                                   }
+                          }
+                      },
+                      "lm_eval_mmlu":
+                      {
+                          "backend": "sglang",
+                          "lm_eval_model": "local-completions",
+                          "tasks": "mmlu",
+                          "num_fewshot": "5",
+                          "batch_size": "auto",
+                          "limit": "1",
+                          "num_concurrent": "1",
+                          "exec_timeout_sec": "7200",
+                          "extra_model_args": "tokenizer_backend=huggingface",
+                          "expected_results":
+                          {
+                               "mmlu":
+                                   {
+                                         "acc,none": 0.29
+                                   }
+                          }
+                      }
 
-		  }
+                  }
              },
         "deepseek-r1":
              {
@@ -128,24 +180,11 @@
 		 "prefill_policy": "cache_aware",
 		 "decode_policy": "cache_aware",
 		 "tensor_parallelism": "16",
-		 "memory_fraction": "0.85",
+		 "memory_fraction": "0.7",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
 		 "inference_tests":
 		  {
-		      "gsm8k":
-	              {
-			  "backend": "sglang",
-			  "num_questions": "1000",
-			  "max_concurrency": "100",
-                          "expected_results":
-		          {
-			       "auto":
-			           {
-			               "tokens_per_sec": "700"
-				   }
-			  }
-	              },
 		      "bench_serv_random":
 		      {
 			  "backend": "sglang",
@@ -154,13 +193,18 @@
 			  "input_length": "1024",
 			  "output_length": "1024",
 			  "random_range_ratio": "0.5",
+                          "model_num_params": "671000000000",
+                          "peak_gpu_tflops": "1300",
                           "expected_results":
 		          {
 			       "auto":
 			           {
-                   		       "output_throughput_per_sec": "1400",
+                   		       "output_throughput_per_sec": "340",
                                        "mean_ttft_ms": "60000",
-                                       "mean_tpot_ms": "110"
+                                       "mean_tpot_ms": "250",
+                                       "mean_e2e_latency_ms": "120000",
+                                       "goodput": "0.99",
+                                       "mfu": "0.25"
 				   }
 			  }
 		      },
@@ -178,10 +222,182 @@
 			           {
 				   }
 			  }
-		      }
+		      },
+                      "lm_eval_hellaswag":
+		      {
+			  "backend": "sglang",
+			  "lm_eval_model": "local-completions",
+			  "tasks": "hellaswag",
+			  "num_fewshot": "0",
+			  "batch_size": "auto",
+			  "limit": "100",
+			  "num_concurrent": "1",
+			  "exec_timeout_sec": "7200",
+			  "extra_model_args": "tokenizer_backend=huggingface",
+                          "expected_results":
+		          {
+			       "hellaswag":
+			           {
+					"acc_norm,none": 0.82
+				   }
+			  }
+		      },
+                      "lm_eval_gsm8k":
+                      {
+                          "backend": "sglang",
+                          "lm_eval_model": "local-completions",
+                          "tasks": "gsm8k",
+                          "num_fewshot": "5",
+                          "batch_size": "auto",
+                          "limit": "100",
+                          "num_concurrent": "4",
+                          "exec_timeout_sec": "7200",
+                          "extra_model_args": "tokenizer_backend=huggingface",
+                          "expected_results":
+                          {
+                               "gsm8k":
+                                   {
+                                        "exact_match,flexible-extract": 0.23
+                                   }
+                          }
+                      },
+                      "lm_eval_mmlu":
+                      {
+                          "backend": "sglang",
+                          "lm_eval_model": "local-completions",
+                          "tasks": "mmlu",
+                          "num_fewshot": "5",
+                          "batch_size": "auto",
+                          "limit": "1",
+                          "num_concurrent": "1",
+                          "exec_timeout_sec": "7200",
+                          "extra_model_args": "tokenizer_backend=huggingface",
+                          "expected_results":
+                          {
+                               "mmlu":
+                                   {
+                                         "acc,none": 0.5
+                                   }
+                          }
+                      }
+
 
 		  }
+             },
+             "gpt-oss-120b":
+             {
+		 "backend": "sglang",
+		 "max_concurrency": "25",
+		 "model": "openai/gpt-oss-120b",
+		 "prefill_policy": "cache_aware",
+		 "decode_policy": "cache_aware",
+		 "tensor_parallelism": "8",
+		 "memory_fraction": "0.85",
+		 "tokenizer_mode": "auto",
+		 "inference_poll_iterations": "16",
+		 "inference_tests":
+		 {
+		      "bench_serv_random":
+		      {
+			  "backend": "sglang",
+			  "data_set_name": "random",
+			  "num_prompts": "100",
+			  "input_length": "1024",
+			  "output_length": "1024",
+			  "random_range_ratio": "0.5",
+                          "model_num_params": "5130000000",
+                          "peak_gpu_tflops": "1300",
+                          "expected_results":
+		          {
+			       "auto":
+			           {
+
+                   		       "output_throughput_per_sec": "900",
+                                       "mean_ttft_ms": "60000",
+                                       "mean_tpot_ms": "150",
+                                       "mean_e2e_latency_ms": "120000",
+                                       "goodput": "0.99",
+                                       "mfu": "0.25"
+				   }
+			  }
+		      },
+		      "bench_serv_generated_shared_prefix":
+		      {
+			  "backend": "sglang",
+			  "gsp_num_groups": "1",
+			  "gsp_prompts_per_group": "16",
+			  "gsp_system_prompt_len": "0",
+			  "gsp_question_len": "1024",
+			  "gsp_output_len": "1024",
+                          "expected_results":
+		          {
+			       "auto":
+			           {
+				   }
+			  }
+		      },
+		      "lm_eval_hellaswag":
+		      {
+			  "backend": "sglang",
+			  "lm_eval_model": "local-completions",
+			  "tasks": "hellaswag",
+			  "num_fewshot": "5",
+			  "batch_size": "auto",
+			  "limit": "100",
+			  "num_concurrent": "1",
+			  "exec_timeout_sec": "7200",
+			  "extra_model_args": "tokenizer_backend=huggingface",
+                          "expected_results":
+		          {
+			       "hellaswag":
+			           {
+					"acc_norm,none": 0.23
+				   }
+			  }
+		      },
+                      "lm_eval_gsm8k":
+                      {
+                          "backend": "sglang",
+                          "lm_eval_model": "local-completions",
+                          "tasks": "gsm8k",
+                          "num_fewshot": "5",
+                          "batch_size": "auto",
+                          "limit": "100",
+                          "num_concurrent": "4",
+                          "exec_timeout_sec": "7200",
+                          "extra_model_args": "tokenizer_backend=huggingface",
+                          "expected_results":
+                          {
+                               "gsm8k":
+                                   {
+                                        "exact_match,flexible-extract": 0.96
+                                   }
+                          }
+                      },
+		    "lm_eval_mmlu":
+                      {
+                          "backend": "sglang",
+                          "lm_eval_model": "local-completions",
+                          "tasks": "mmlu",
+                          "num_fewshot": "5",
+                          "batch_size": "auto",
+                          "limit": "1",
+                          "num_concurrent": "1",
+                          "exec_timeout_sec": "7200",
+                          "extra_model_args": "tokenizer_backend=huggingface",
+                          "expected_results":
+                          {
+                               "mmlu":
+                                   {
+                                         "acc,none": 0.29
+                                   }
+                          }
+                      }
+
+
+                  }
              }
+
 
         }
 
