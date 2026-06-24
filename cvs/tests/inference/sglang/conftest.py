@@ -14,6 +14,7 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.parallel_ssh_lib import Pssh
+from cvs.lib.inference import sglang_disagg_lib
 from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
@@ -163,8 +164,7 @@ def im_obj(
     benchmark_variant,
     hf_token,
 ):
-    from cvs.lib import sglang_disagg_lib
-
+    
     bp_dict = benchmark_params_dict[benchmark_variant]
     return sglang_disagg_lib.SglangDisaggPD(
         bp_dict["model"],
