@@ -52,6 +52,7 @@
     }
   },
   "params": {
+    "driver": "vllm",
     "backend": "vllm",
     "base_url": "http://0.0.0.0",
     "port_no": "8000",
