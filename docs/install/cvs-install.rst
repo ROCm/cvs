@@ -241,7 +241,6 @@ Health
 
    - Under ``transferbench``: 
 
-     - ``example_tests_path`` 
      - ``git_install_path`` 
 
    - Under ``rvs``:
