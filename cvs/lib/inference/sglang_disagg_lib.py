@@ -14,7 +14,7 @@ import time
 from typing import Any, Optional
 
 from cvs.lib import globals
-from cvs.lib.model_query_lib import LmEvalBenchmark, OpenAIProbe
+from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
