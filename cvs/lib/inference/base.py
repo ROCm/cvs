@@ -11,7 +11,10 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.dtni.vllm_benchmark_scripts import bash_export_bench_script_from_vllm_install
+from cvs.lib.dtni.vllm_benchmark_scripts import (
+    bash_export_bench_script_from_vllm_install,
+    clamped_bench_random_range_ratio_str,
+)
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
@@ -47,7 +50,9 @@ class InferenceBaseJob:
         hf_token,
         gpu_type='mi300',
         distributed_inference=False,
-        server_launch_poll_count=20,
+        # 60 * 60s polls after warmup matches VllmJob: large HF model cache + weight load
+        # on MI300 can exceed 20min with little log churn before Uvicorn prints ready.
+        server_launch_poll_count=60,
     ):
         # Client instance phdl
         self.c_phdl = c_phdl
@@ -93,6 +98,10 @@ class InferenceBaseJob:
         self.if_dict.setdefault('nccl_debug', 'ERROR')
         self.if_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.if_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
+        self.if_dict.setdefault(
+            'benchmark_script_repo',
+            'https://github.com/kimbochen/bench_serving.git',
+        )
 
         log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
         log.info(f'inference_dict = {self.if_dict}')
@@ -140,8 +149,6 @@ class InferenceBaseJob:
             'failed to start|no such file or directory|command not found|cannot access', re.I
         )
         self.default_client_wait_time = 120
-        self.default_client_poll_count = 20
-        self.default_client_poll_wait_time = 60
 
         # Regex/parse defaults that derived classes may override
         self.readiness_pattern = re.compile('Application startup complete|Uvicorn running|Started server', re.I)
@@ -166,6 +173,25 @@ class InferenceBaseJob:
         self.bp_dict.setdefault('tokenizer_mode', 'auto')
         self.bp_dict.setdefault('percentile_metrics', 'ttft,tpot,itl,e2el')
         self.bp_dict.setdefault('metric_percentiles', '99')
+        # Bench client can exceed 20min for large num_prompts × long ISL/OSL; budget is
+        # default_client_wait_time + client_poll_count * client_poll_wait_time.
+        self.bp_dict.setdefault('client_poll_count', '50')
+        self.bp_dict.setdefault('client_poll_wait_time', '60')
+        self.bp_dict.setdefault('bench_max_failed_requests', '0')
+        try:
+            self.default_client_poll_count = max(1, int(float(str(self.bp_dict['client_poll_count']).strip())))
+        except (TypeError, ValueError):
+            self.default_client_poll_count = 50
+        try:
+            self.default_client_poll_wait_time = max(1, int(float(str(self.bp_dict['client_poll_wait_time']).strip())))
+        except (TypeError, ValueError):
+            self.default_client_poll_wait_time = 60
+        try:
+            self.bench_max_failed_requests_cap = max(
+                0, int(float(str(self.bp_dict['bench_max_failed_requests']).strip()))
+            )
+        except (TypeError, ValueError):
+            self.bench_max_failed_requests_cap = 0
 
         # Set server and client scripts
         self.server_script = self.bp_dict['server_script']
@@ -305,10 +331,30 @@ class InferenceBaseJob:
         self.s_phdl.exec_cmd_list(cmd_list)
 
     def clone_bench_serving_repo(self, clone_dir):
-        """No-op: client benchmarks use the installed ``vllm`` package ``benchmarks/<bench_serv_script>``."""
-        log.info(
-            "clone_bench_serving_repo skipped; using vLLM-shipped benchmarks/ (no third-party bench_serving clone)"
+        """Stage ``bench_serving`` in-container when the vLLM wheel omits ``benchmarks/``."""
+        repo = str(self.if_dict.get('benchmark_script_repo', '') or '').strip()
+        if not repo or repo.lower() in ('none', 'false', 'skip'):
+            log.info('clone_bench_serving_repo skipped; benchmark_script_repo not configured')
+            return
+
+        script_rel = f'bench_serving/{self.bench_serv_script}'
+        inner = (
+            f'cd {shlex.quote(clone_dir)} && '
+            f'if [ -f {shlex.quote(script_rel)} ]; then exit 0; fi && '
+            f'git clone {shlex.quote(repo)} bench_serving'
         )
+        cmd = f"docker exec {shlex.quote(str(self.container_name))} /bin/bash -c {shlex.quote(inner)}"
+        out_dict = self.c_phdl.exec(cmd)
+        for node in out_dict.keys():
+            output = out_dict[node] or ''
+            if re.search('error|fail', output, re.I) and not re.search('already exists', output, re.I):
+                fail_test('Errors or failures seen cloning bench_serving repo; see client logs')
+                raise Exception(f'bench_serving clone failed on node {node}: {output[-500:]}')
+        log.info(
+            'bench_serving repo staged at %s/bench_serving (fallback when vLLM package lacks benchmarks/)',
+            clone_dir,
+        )
+        time.sleep(3)
 
     def launch_server(self):
         """Launch inference server."""
@@ -355,10 +401,26 @@ class InferenceBaseJob:
         node_ready = {node: bool(readiness_pattern.search(output or '')) for node, output in out_dict.items()}
         return bool(node_ready) and all(node_ready.values())
 
+    def _readiness_grep_cmd_list(self, log_file: str) -> list[str]:
+        """Remote bash lines: print CVS_SERVER_READY if the full server log matches readiness.
+
+        Uses grep on the whole file (not tail) so the marker is not lost once vLLM logs scroll.
+        """
+        pat = self.readiness_pattern.pattern
+        cmd_list: list[str] = []
+        for i in range(0, int(self.nnodes)):
+            path = f'{self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'.replace('\\', '/')
+            inner = f'grep -qiE {shlex.quote(pat)} {shlex.quote(path)} && echo CVS_SERVER_READY || true'
+            cmd_list.append(f'bash -c {shlex.quote(inner)}')
+        return cmd_list
+
+    @staticmethod
+    def _grep_readiness_outputs_ok(out_dict: dict) -> bool:
+        return bool(out_dict) and all('CVS_SERVER_READY' in (output or '') for output in out_dict.values())
+
     def poll_server_startup(self):
         """Poll for server startup completion."""
         log_file = f'{self.server_script}_server.log'
-        readiness_pattern = self.readiness_pattern
 
         # Do an early check for fast failures before the long wait
         log.info(f'Waiting {self.default_server_precheck_wait_time} secs for server to start writing logs...')
@@ -384,11 +446,10 @@ class InferenceBaseJob:
 
         for j in range(0, self.default_server_poll_count):
             log.info(f'Polling for application startup complete on all nodes, iteration {j}')
-            cmd_list = []
+            tail_cmds = []
             for i in range(0, int(self.nnodes)):
-                cmd = f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}'
-                cmd_list.append(cmd)
-            out_dict = self.s_phdl.exec_cmd_list(cmd_list)
+                tail_cmds.append(f'tail -30 {self.log_dir}/{self.get_log_subdir()}/out-node{i}/{log_file}')
+            out_dict = self.s_phdl.exec_cmd_list(tail_cmds)
 
             for node in out_dict.keys():
                 if self.default_server_error_pattern_poll.search(out_dict[node] or ''):
@@ -396,7 +457,8 @@ class InferenceBaseJob:
                     fail_test(error_msg)
                     raise Exception(error_msg)
 
-            if self.is_server_ready(out_dict, readiness_pattern):
+            grep_out = self.s_phdl.exec_cmd_list(self._readiness_grep_cmd_list(log_file))
+            if self._grep_readiness_outputs_ok(grep_out):
                 log.info('Server startup confirmed on all nodes')
                 return
 
@@ -415,7 +477,24 @@ class InferenceBaseJob:
 
         export_bench = bash_export_bench_script_from_vllm_install(self.bench_serv_script)
 
-        # Launch client benchmark (quote inner bash so $(python3 -c import vllm) runs in-container).
+        rr_str, rr_clamped = clamped_bench_random_range_ratio_str(
+            self.bp_dict["random_range_ratio"],
+            self.bp_dict["input_sequence_length"],
+            self.bp_dict["output_sequence_length"],
+            self.bp_dict["max_model_length"],
+        )
+        if rr_clamped:
+            log.info(
+                "CVS: clamped --random-range-ratio from %s to %s so peak random (ISL+OSL)*(1+r) "
+                "fits max_model_length=%s (ISL=%s OSL=%s)",
+                self.bp_dict["random_range_ratio"],
+                rr_str,
+                self.bp_dict["max_model_length"],
+                self.bp_dict["input_sequence_length"],
+                self.bp_dict["output_sequence_length"],
+            )
+
+        # Launch client benchmark (quote args; _cvs_run_bench is defined by export_bench).
         cmd_list = []
         for i in range(0, int(self.nnodes)):
             out_dir = f"{self.log_dir}/{self.get_log_subdir()}/out-node{i}"
@@ -446,11 +525,15 @@ class InferenceBaseJob:
                 "--seed",
                 self.bp_dict["seed"],
                 "--random-range-ratio",
-                self.bp_dict["random_range_ratio"],
+                rr_str,
                 "--random-prefix-len",
                 self.bp_dict["random_prefix_len"],
                 "--percentile-metrics",
                 self.bp_dict["percentile_metrics"],
+                "--metric-percentiles",
+                self.bp_dict["metric_percentiles"],
+                "--temperature",
+                "0",
                 "--ignore-eos",
                 "--save-result",
                 "--result-dir",
@@ -461,9 +544,9 @@ class InferenceBaseJob:
             bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
             client_cmd = (
                 f"source /tmp/server_env_script.sh; {export_bench}; cd {clone_dir}; "
-                f'python3 "$BENCH_SCRIPT" {bench_cmd} > {shlex.quote(client_log)} 2>&1 &'
+                f"_cvs_run_bench {bench_cmd} > {shlex.quote(client_log)} 2>&1 &"
             )
-            cmd = f"docker exec {shlex.quote(self.container_name)} bash -c {shlex.quote(client_cmd)}"
+            cmd = f"docker exec {shlex.quote(str(self.container_name))} /bin/bash -c {shlex.quote(client_cmd)}"
             cmd_list.append(cmd)
         self.c_phdl.exec_cmd_list(cmd_list)
 
@@ -481,10 +564,31 @@ class InferenceBaseJob:
             done = []
             for node in out_dict.keys():
                 log_tail = out_dict[node] or ''
+                if re.search(
+                    r"can't open file|No such file or directory|can't find '__main__'|"
+                    r'CVS: missing vLLM benchmark|CVS: could not resolve vLLM benchmark|'
+                    r'CVS: BENCH_SCRIPT is missing',
+                    log_tail,
+                    re.I,
+                ):
+                    fail_test(
+                        f'Benchmark script missing or unreadable on node {node} '
+                        f'(see bench_serv_script.log); install vllm[bench], configure '
+                        f'benchmark_script_repo, or use an image with benchmarks/.'
+                    )
+                    return
                 if re.search('Failed', log_tail, re.I):
                     fail_test(f'Failed to run benchmark script on node {node}')
                     return
-                done.append(bool(re.search('End-to-end Latency', log_tail, re.I)))
+                done.append(
+                    bool(
+                        re.search(
+                            r'Serving Benchmark Result|End-to-end Latency',
+                            log_tail,
+                            re.I,
+                        )
+                    )
+                )
             if done and all(done):
                 log.info('Benchmark client complete on all nodes (iter=%d)', j)
                 return
