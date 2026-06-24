@@ -1,5 +1,5 @@
 {
-  "_comment": "Smoke variant — loose record-only gates; not calibrated against plan §4.1.",
+  "_comment": "Smoke variant — loose record-only gates; not calibrated against plan Section 4.1.",
   "ISL=1024,OSL=1024,TP=8,CONC=128": {
     "client.total_token_throughput": {"kind": "min_tok_s", "value": 0},
     "client.output_throughput": {"kind": "min_tok_s", "value": 0},

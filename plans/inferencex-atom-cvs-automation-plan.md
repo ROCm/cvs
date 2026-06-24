@@ -198,7 +198,7 @@ The tracker matrix does **not** list MI300X explicitly. **CVS automation does.**
 
 | Workload | MI300X variant | MI355X variant | Notes |
 |----------|----------------|----------------|-------|
-| **W1** DeepSeek R1 FP8 | `deepseek_r1_fp8_mi300x_atom_perf` (+ `_atom_mtp3`) | `deepseek_r1_fp8_mi355x_atom_perf` (+ MTP sibling) | MI300X: §4.1–4.2; MI355X: §4.3 (`DeepSeek-R1-0528` in ATOM CI) |
+| **W1** DeepSeek R1 FP8 | `deepseek_r1_fp8_mi300x_atom_perf` (+ `_atom_mtp3`) | `deepseek_r1_fp8_mi355x_atom_perf` (+ MTP sibling) | MI300X: Sections 4.1–4.2; MI355X: Section 4.3 (`DeepSeek-R1-0528` in ATOM CI) |
 | **W2** GPT-OSS MXFP4 | `gpt_oss_120b_mi300x_atom` | `gpt_oss_120b_mi355x_atom` | Interim `mi300x_gpt_oss_120b_single` is **not** final W2 |
 | **W3** GLM 5.1 BF16 | `glm51_mi300x_atom` | `glm51_mi355x_atom` | Same ISL/OSL as tracker |
 | **W13** Kimi K2.7 Code | `kimi_k27_code_mi300x_atom` | `kimi_k27_code_mi355x_atom` | |
@@ -277,7 +277,7 @@ Source: [ROCm/ATOM ATOM Benchmark run 27912164002](https://github.com/ROCm/ATOM/
 
 - These four cells are the **MI355X W1 threshold candidates** (`deepseek_r1_fp8_mi355x_atom_perf` and `_atom_mtp3` sibling).
 - Re-pull from a newer ATOM nightly when image or `ea08015`+ moves; pin the run URL + docker tag in variant README / run card.
-- MI300X (§4.1–4.2) and MI355X (§4.3) numbers are **close but not identical** — keep separate `threshold.json` per `gpu_arch`.
+- MI300X (Sections 4.1–4.2) and MI355X (Section 4.3) numbers are **close but not identical** — keep separate `threshold.json` per `gpu_arch`.
 - As other P1 workloads appear in ATOM CI, add sibling subsections here before enabling `enforce_thresholds: true` on those variants.
 
 ---
@@ -353,7 +353,7 @@ From **IX ATOM Matrix**: every workload row W1–W18 is marked **Y/P** for all c
 | ----- | ---------------------------- | ---------------------------------------------------------------------------------- | ------------------------- |
 | **R** | **Rename + vLLM shell**      | `inferencex_atom_single`, `InferenceXAtomJob`, schema_version 1 configs, docs      | **Done**      |
 | **0** | **ATOM backend swap**        | IX repo pin, atom server recipe, IX bench parse; keep pytest/`orch`/`evaluate_all` | Not started               |
-| **A** | **W1 vertical slice**        | W1 on **MI300X + MI355X** variant dirs; thresholds from §4.1–4.3 | Not started               |
+| **A** | **W1 vertical slice**        | W1 on **MI300X + MI355X** variant dirs; thresholds from Sections 4.1–4.3 | Not started               |
 | **B** | **Metric namespace**         | Map IX aggregates → threshold keys; document field map                             | Partial (`client.`* only) |
 | **C** | **P1 workloads**             | W1–W17 on **MI300X + MI355X** (Section 3.1) + baselines per arch                     | Not started               |
 | **D** | **Accuracy + CI**            | gsm8k gate Section 5; negative threshold test                                      | Not started               |
@@ -485,7 +485,7 @@ Unchanged from prior plan: Thor2/AINIC, Optimus, KVMGR, NIXL, MOR-EP, RCCL, MI3X
 | ----------------------------------------------- | -------------------------------------------------------------------- |
 | **vLLM driver mistaken for ATOM done**          | Section 0 + Phase 0 explicitly swap backend                          |
 | **Wrong workload on branch (GPT-OSS TP8 BF16)** | W2 spec is MXFP4 TP4; track as interim in DOC-2                      |
-| **Upstream ATOM CI drift**                      | Pin docker tag + run URL in variant README; re-pull §4.3 on image bumps |
+| **Upstream ATOM CI drift**                      | Pin docker tag + run URL in variant README; re-pull Section 4.3 on image bumps |
 | **MI300X vs MI355X threshold bleed**            | Separate variant dirs + `threshold.json` per `gpu_arch`                |
 | **MTP flakes**                                  | Separate CI job; chat-template checklist                             |
 | **Metric key drift**                            | B-1 single map; forbid thresholds in config                          |
@@ -496,7 +496,7 @@ Unchanged from prior plan: Thor2/AINIC, Optimus, KVMGR, NIXL, MOR-EP, RCCL, MI3X
 
 ## Diagrams — milestones
 
-**Milestone 1 (next implementation):** Phase 0 + Phase A — ATOM backend, W1 variant dirs and thresholds on **MI300X** (§4.1–4.2) and **MI355X** (§4.3 / ATOM run 27912164002).
+**Milestone 1 (next implementation):** Phase 0 + Phase A — ATOM backend, W1 variant dirs and thresholds on **MI300X** (Sections 4.1–4.2) and **MI355X** (Section 4.3 / ATOM run 27912164002).
 
 ```mermaid
 flowchart TB
