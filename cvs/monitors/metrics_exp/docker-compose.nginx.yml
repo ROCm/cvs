@@ -1,0 +1,38 @@
+# Nginx TLS overlay for fleet monitoring stack.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
+# Rollback (nginx only, base stack untouched):
+#   docker compose -f docker-compose.yml -f docker-compose.nginx.yml rm -sf fleet-nginx
+#   docker compose up -d grafana   # restores original GF_SERVER_ROOT_URL
+
+services:
+
+  # Override Grafana root_url so assets load correctly behind the proxy.
+  # Set GRAFANA_ROOT_URL in .env, e.g.:
+  #   GRAFANA_ROOT_URL=https://137.220.56.231.nip.io   (public, nip.io + LE cert)
+  #   GRAFANA_ROOT_URL=https://chi-metrics-exp-mon.amd.com  (production, AMD cert)
+  grafana:
+    environment:
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL}
+      GF_SERVER_SERVE_FROM_SUB_PATH: 'false'
+
+  # Nginx TLS termination proxy
+  nginx:
+    image: nginx:alpine
+    container_name: fleet-nginx
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:443:443"
+      - "0.0.0.0:80:80"
+    volumes:
+      - ./server/config/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./server/config/nginx/ssl:/etc/nginx/ssl:ro
+      # Let's Encrypt certs (mounted when available; fallback to ssl/ self-signed)
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      # Certbot webroot for HTTP-01 ACME challenge
+      - /var/www/certbot:/var/www/certbot:ro
+    networks:
+      - monitoring
+    depends_on:
+      - grafana
+      - fleet-manager
