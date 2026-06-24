@@ -63,6 +63,42 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.num_prompts, "128")
         self.assertEqual(variant.expected_cells(), ["ISL=1024,OSL=1024,TP=8,CONC=128"])
 
+    def test_load_w1_mi355x_atom_perf_variant_and_thresholds(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom_single/"
+            "deepseek_r1_fp8_mi355x_atom_perf/deepseek_r1_fp8_mi355x_atom_perf_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertEqual(variant.ix_recipe_id, "dsr1-fp8-mi355x-atom")
+        self.assertEqual(
+            variant.expected_cells(),
+            ["ISL=1024,OSL=1024,TP=8,CONC=128", "ISL=1024,OSL=1024,TP=8,CONC=256"],
+        )
+        cell = "ISL=1024,OSL=1024,TP=8,CONC=128"
+        self.assertEqual(
+            variant.thresholds[cell]["client.output_throughput"]["value"],
+            4004.66,
+        )
+        self.assertEqual(
+            variant.thresholds[cell]["client.mean_ttft_ms"]["value"],
+            362.18,
+        )
+
+    def test_load_w1_mi355x_atom_mtp3_thresholds(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom_single/"
+            "deepseek_r1_fp8_mi355x_atom_mtp3/deepseek_r1_fp8_mi355x_atom_mtp3_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        cell = "ISL=1024,OSL=1024,TP=8,CONC=256"
+        self.assertEqual(
+            variant.thresholds[cell]["client.output_throughput"]["value"],
+            6451.59,
+        )
+
     def test_orchestrator_container_includes_server_env(self):
         sweep = Sweep(
             sequence_combinations=[SeqCombo(name="legacy_profile", isl="7168", osl="1024")],

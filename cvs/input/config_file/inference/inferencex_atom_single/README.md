@@ -51,4 +51,26 @@ cvs run inferencex_atom_single \
   --html=/tmp/inferencex_atom_w1_mi300x.html -vvv -s
 ```
 
-MI355X: use `mi355x_atom_single.json` and `deepseek_r1_fp8_mi355x_atom_perf/deepseek_r1_fp8_mi355x_atom_perf_config.json`.
+## MI355X W1 (no local lab — ATOM CI seeds)
+
+Thresholds in `deepseek_r1_fp8_mi355x_atom_perf/` and `deepseek_r1_fp8_mi355x_atom_mtp3/` are calibrated from [ROCm/ATOM run 27912164002](https://github.com/ROCm/ATOM/actions/runs/27912164002) (plan Section 4.3) with the same 10% margin as MI300X lab gates. `enforce_thresholds` stays `false` until an MI355X lab run confirms.
+
+```bash
+cvs copy-config inference/inferencex_atom_single/deepseek_r1_fp8_mi355x_atom_perf/deepseek_r1_fp8_mi355x_atom_perf_config.json \
+  --output ~/input/config_file/inference/inferencex_atom_single/deepseek_r1_fp8_mi355x_atom_perf/deepseek_r1_fp8_mi355x_atom_perf_config.json
+cvs copy-config inference/inferencex_atom_single/deepseek_r1_fp8_mi355x_atom_perf/deepseek_r1_fp8_mi355x_atom_perf_threshold.json \
+  --output ~/input/config_file/inference/inferencex_atom_single/deepseek_r1_fp8_mi355x_atom_perf/deepseek_r1_fp8_mi355x_atom_perf_threshold.json
+cvs copy-config mi355x_atom_single.json --output ~/input/cluster_file/mi355x_atom_single.json
+
+cvs run inferencex_atom_single \
+  --cluster_file ~/input/cluster_file/mi355x_atom_single.json \
+  --config_file ~/input/config_file/inference/inferencex_atom_single/deepseek_r1_fp8_mi355x_atom_perf/deepseek_r1_fp8_mi355x_atom_perf_config.json \
+  --html=/tmp/inferencex_atom_w1_mi355x.html -vvv -s
+```
+
+| Cell | Source (ATOM CI) | Gated output min (tok/s) | Gated mean TTFT max (ms) | Gated mean TPOT max (ms) |
+|------|------------------|--------------------------|--------------------------|--------------------------|
+| C=128 FP8 | 4449.62 / 329.25 / 27.64 | 4004.66 | 362.18 | 30.40 |
+| C=256 FP8 | 6249.73 / 551.66 / 39.46 | 5624.76 | 606.83 | 43.41 |
+| C=128 MTP3 | 5101.99 / 570.42 / 23.77 | 4591.79 | 627.46 | 26.15 |
+| C=256 MTP3 | 7168.43 / 606.67 / 34.22 | 6451.59 | 667.34 | 37.64 |
