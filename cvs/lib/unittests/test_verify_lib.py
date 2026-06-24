@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -73,6 +74,66 @@ class TestVerifyGpuPcieErrors(unittest.TestCase):
         result = verify_lib.verify_gpu_pcie_errors(phdl)
         self.assertEqual(len(result["node1"]), 3)
         mock_fail_test.assert_called()
+
+
+class TestFullDmesgScan(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    def test_legacy_path_matches_err_patterns(self, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            "node1": "Mar 1 00:00:00 host kernel: amdgpu page fault segfault at 0",
+        }
+
+        result = verify_lib.full_dmesg_scan(phdl)
+
+        # legacy path collects with human-readable `dmesg -T`
+        self.assertIn("dmesg -T", phdl.exec.call_args[0][0])
+        self.assertTrue(result["node1"])
+        mock_fail_test.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    @patch.object(verify_lib.node_scraper_adapter, "is_available", return_value=True)
+    def test_node_scraper_path_uses_adapter(self, mock_avail, mock_parse, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [
+            {
+                "priority": "ERROR",
+                "category": "SW_DRIVER",
+                "description": "Out of memory error",
+                "match_content": "Out of memory: Killed process 123 (foo)",
+                "count": 1,
+                "timestamps": [],
+                "source": "dmesg",
+            }
+        ]
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw dmesg text"}
+
+        result = verify_lib.full_dmesg_scan(phdl)
+
+        # node-scraper path collects with ISO timestamps + decoded prefix
+        self.assertIn("--time-format iso -x", phdl.exec.call_args[0][0])
+        mock_parse.assert_called_once()
+        self.assertEqual(len(result["node1"]), 1)
+        self.assertIn("Out of memory error", result["node1"][0])
+        mock_fail_test.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "is_available", return_value=False)
+    def test_falls_back_to_legacy_when_unavailable(self, mock_avail, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "nothing interesting here"}
+
+        verify_lib.full_dmesg_scan(phdl)
+
+        # even though node-scraper is requested, missing dep -> legacy `dmesg -T`
+        self.assertIn("dmesg -T", phdl.exec.call_args[0][0])
 
 
 class TestVerifyHostLspci(unittest.TestCase):
