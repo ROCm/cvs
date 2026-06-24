@@ -380,7 +380,13 @@ class InferenceXAtomJob:
             self.result_stem,
         ]
 
+    def _clear_stale_result_artifact(self):
+        """Remove a prior run's result file so poll logic cannot treat it as complete."""
+        artifact = shlex.quote(self._result_artifact)
+        self.orch.exec(f"rm -f {artifact}")
+
     def run_client(self):
+        self._clear_stale_result_artifact()
         args = self._atom_client_argv() if self.driver == "atom" else self._vllm_client_argv()
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
         client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
