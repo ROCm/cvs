@@ -190,7 +190,11 @@ class TestKeyConsistency(unittest.TestCase):
                 continue
             threshold_metric_keys.update(metrics.keys())
         self.assertTrue(threshold_metric_keys, "no threshold metric keys found")
-        missing = threshold_metric_keys - self._produced
+        # gpu.* keys are injected by the test fixture (test_vllm_inference) after
+        # parse_results() returns; they are NOT part of the parse_results contract.
+        # Exclude them from this check so the guard stays focused on client.* metrics.
+        client_threshold_keys = {k for k in threshold_metric_keys if not k.startswith("gpu.")}
+        missing = client_threshold_keys - self._produced
         self.assertEqual(missing, set(), f"threshold asserts keys parse_results never emits: {missing}")
 
 
