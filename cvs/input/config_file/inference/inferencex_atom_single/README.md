@@ -12,7 +12,9 @@ W1 **DeepSeek R1 FP8** (`deepseek-ai/DeepSeek-R1-0528`), ISL=OSL=1024, TP8, FP8 
 
 Recipe CLI fragments live in `ix_recipes.json` (pinned to ROCm/ATOM catalog + IX `amd-master.yaml` ids).
 
-Each variant subdirectory has `<variant>_config.json` + `<variant>_threshold.json`. Set `container.image` / `container.name` and cluster node IPs before the first lab run.
+Each variant subdirectory has `<variant>_config.json` + `<variant>_threshold.json`. W1 configs pin `container.name` (`inferencex_atom_mi300x` / `inferencex_atom_mi355x`); set `container.image` and cluster node IPs before the first lab run.
+
+**Lab runner:** install the branch under test (`pip install -e .` from repo root) so parser/threshold fixes are not shadowed by an older `site-packages/cvs` install.
 
 ## First lab run (smoke — shorter)
 
