@@ -19,7 +19,7 @@ This section records **what exists on the branch today** vs **what this plan tar
 | **MTP**                       | W1 `*_atom_mtp3` dirs + thresholds seeded; server recipe flags may need orch hardening                                                                                                                       | Recipe-specific serve args; separate from M1 FP8 perf close                                                                                                      |
 
 
-**Branch implication:** Phase **R** and Phase **0** are **largely done** (ATOM serve + bench + W1 dirs + cluster JSON). Active work is **Phase A** MI300X lab confirmation → **M1 close** → **M2 gsm8k** on MI300X. MI355X lab is **pending** (Section 1.2) and does not block the spine.
+**Branch implication:** Phase **R** and Phase **0** are **largely done** (ATOM serve + bench + W1 dirs + cluster JSON). **M1** (Phase A W1 MI300X perf, lab-gated) is **closed** on branch. **Next priority: M4** — vLLM + SGLang ROCm parity frameworks and `compare.*` cross-compare cards on the same W1 recipe cells (Section 12.3–12.6). **M2 gsm8k** and **M3 P1 workloads** follow after parity baselines land. MI355X lab is **pending** (Section 1.2) and does not block the spine.
 
 ---
 
@@ -61,7 +61,7 @@ When MI355X nodes are **not** available in the lab:
 
 | Track                 | Policy                                                                                                                                                                   |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **MI300X (active)**   | Gates milestones: Phase A lab confirm → M1 close on MI300X → M2 gsm8k on MI300X → M3 P1 workloads on MI300X.                                                             |
+| **MI300X (active)**   | Gates milestones: M1 close (done) → **M4 vLLM + SGLang parity** on W1 → M2 gsm8k → M3 P1 workloads (W2/W3/W13/W17).                                                       |
 | **MI355X (pending)**  | Keep variant dirs, cluster JSON, and CI-seeded `threshold.json` in tree. Leave `enforce_thresholds: false`. No lab run required to merge PRs or advance M2/M3 on MI300X. |
 | **When MI355X lands** | Run confirming CVS per variant → flip `enforce_thresholds: true` per arch → attach HTML/logs to PR. Does not require re-doing MI300X work.                               |
 
@@ -506,9 +506,9 @@ From **IX ATOM Matrix**: every workload row W1–W18 is marked **Y/P** for all c
 
 | #    | Category    | Test / Metric                                     | Priority     | Automation status   | Notes                                       |
 | ---- | ----------- | ------------------------------------------------- | ------------ | ------------------- | ------------------------------------------- |
-| 1    | IX Path     | vLLM (ROCm) baseline                              | P1           | Not started         | M4; interim GPT-OSS uplift only             |
-| 2    | IX Path     | SGLang (ROCm) baseline                            | P1           | Not started         | M4                                          |
-| 3    | IX Path     | ATOM (`params.driver=atom`)                       | P1           | **W1 in lab**       | `inferencex_atom_orch.py`                   |
+| 1    | IX Path     | vLLM (ROCm) baseline                              | P1           | **Next (M4)**       | `inferencex_atom_vllm_single`; W1 parity sibling |
+| 2    | IX Path     | SGLang (ROCm) baseline                            | P1           | **Next (M4)**       | `inferencex_atom_sglang_single`; same workload cards |
+| 3    | IX Path     | ATOM (`params.driver=atom`)                       | P1           | **M1 done**         | `inferencex_atom_orch.py`; W1 MI300X lab-gated   |
 | 4    | IX Path     | ATOM + MTP                                        | P1           | **Configs shipped** | W1 `*_mtp3` dirs; orch recipe TBD           |
 | 5    | IX Path     | ATOM-Disagg                                       | P1           | Blocked             | PD pools; SLURM spike                       |
 | 6–23 | Workload    | W1–W18 (Section 3)                                | P1/P2        | **W1 only**         | 192 matrix cells total                      |
@@ -708,17 +708,26 @@ flowchart TB
 | B-9 | **Supplemental perf metrics** | Tier Section 12.4 — stddev, `output_tput_per_gpu`, `gpu.*` when INF-7 lands                    |
 
 
-### Phase C — P1 workload variants (MI300X leads lab)
+### Phase C — **M4 next:** vLLM + SGLang parity baselines (MI300X, W1 first)
 
 
 | ID  | Action        | Details                                                                                        |
 | --- | ------------- | ---------------------------------------------------------------------------------------------- |
-| C-0 | **W1**        | **Done** on branch (perf/smoke/mtp3); MI300X perf lab closes M1                                |
+| C-6 | **Parity frameworks** | **Next.** Register `inferencex_atom_vllm_single` + `inferencex_atom_sglang_single`; W1 MI300X triple (Section 12.3) |
+| C-6a | **W1 vLLM sibling** | `deepseek_r1_fp8_mi300x_atom_vllm_perf` — same ISL/OSL/conc/model as ATOM; `params.driver=vllm`; separate thresholds |
+| C-6b | **W1 SGLang sibling** | `deepseek_r1_fp8_mi300x_atom_sglang_perf` — `InferenceXAtomSglangJob`; same sweep cells where comparable |
+| C-6c | **Compare metrics** | `compare.vllm.*` / `compare.sglang.*` vs ATOM reference cell (Section 12.6, M4-3) |
+| C-0 | **W1 ATOM**   | **Done** — perf/smoke/mtp3; MI300X perf lab closed M1 (81/81)                                  |
+
+### Phase C2 — P1 workload variants (after M4)
+
+
+| ID  | Action        | Details                                                                                        |
+| --- | ------------- | ---------------------------------------------------------------------------------------------- |
 | C-2 | **W2**        | MI300X first: GPT-OSS MXFP4 TP4, ISL 8K / OSL 1K; replace interim `mi300x_gpt_oss_120b_single` |
 | C-3 | **W3**        | MI300X: GLM 5.1 BF16; MI355X dir when hardware available                                       |
 | C-4 | **W13**       | Kimi K2.7 Code — MI300X first                                                                  |
 | C-5 | **W17**       | DeepSeek R1 MXFP4 — MI300X first                                                               |
-| C-6 | **Parity frameworks** | Ship `inferencex_atom_vllm_single` + `inferencex_atom_sglang_single` per P1 workload (Section 12.3) |
 
 
 ### Phase D — Accuracy + CI (M2)
@@ -978,7 +987,7 @@ flowchart TB
   M4["M4: atom-vllm + atom-sglang parity"]
   M5["M5: MTP + P2 expansion"]
   M6["M6: multi-node + disagg"]
-  M0 --> M1 --> M2 --> M3 --> M4 --> M5 --> M6
+  M0 --> M1 --> M4 --> M2 --> M3 --> M5 --> M6
   M1 -.-> M1P
   M2 -.-> M2P
 ```
@@ -1003,8 +1012,8 @@ flowchart TB
     W2["Full metric matrix"]
     W3["MTP + disagg"]
   end
-  S1 --> S2 --> S3 --> S4
-  S4 --> W1 --> W2 --> W3
+  S1 --> S4 --> S2 --> S3
+  S3 --> W1 --> W2 --> W3
   S1 -.-> P1
   S2 -.-> P2
   S3 -.-> P3
