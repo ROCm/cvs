@@ -32,6 +32,37 @@ from cvs.tests.inference.inferencex_atom._shared import test_print_results_table
 log = globals.log
 
 
+def test_ix_run_deck(inf_res_dict, variant_config, lifecycle, request):
+    """Experimental: write IX Run Deck HTML when pytest-html is enabled (render-only)."""
+    htmlpath = getattr(request.config.option, "htmlpath", None)
+    if not htmlpath:
+        return
+
+    import importlib.metadata
+    from pathlib import Path
+
+    from cvs.lib.inference.inferencex_atom_run_deck import write_run_deck
+
+    try:
+        cvs_version = importlib.metadata.version("cvs")
+    except importlib.metadata.PackageNotFoundError:
+        cvs_version = "dev"
+
+    deck_path = Path(htmlpath).resolve().parent / "inferencex_atom_run_deck.html"
+    write_run_deck(
+        deck_path,
+        variant_config=variant_config,
+        inf_res_dict=inf_res_dict,
+        lifecycle_report=lifecycle.report,
+        cvs_version=cvs_version,
+    )
+    log.info("IX Run Deck written: %s", deck_path)
+
+    mgr = getattr(request.config, "_html_report_manager", None)
+    if mgr and mgr.is_enabled:
+        mgr.add_html_to_report(deck_path, link_name="IX Run Deck", request=request)
+
+
 def _log_variant_run_card(variant_config):
     rc = variant_config.run_card
     parts = [

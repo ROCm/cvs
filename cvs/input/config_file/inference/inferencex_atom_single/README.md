@@ -108,6 +108,8 @@ echo "HTML: $HTML"
 echo "LOG:  $LOG"
 ```
 
+When `--html` is set, an experimental **IX Run Deck** (`inferencex_atom_run_deck.html`) is written beside the report and linked as **IX Run Deck** in the pytest HTML bundle (render-only; does not affect gates).
+
 ## W1 perf (MI300X)
 
 Two concurrency cells (C=128, C=256), 1000 prompts. Second cell reuses the ATOM server when `reuse_server_across_sweep: true`.

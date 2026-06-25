@@ -32,7 +32,8 @@ LIFECYCLE_RANK = {
     "test_inferencex_atom_inference": 3,
     "test_cell_metrics": 4,
     "test_print_results_table": 5,
-    "test_teardown": 6,
+    "test_ix_run_deck": 6,
+    "test_teardown": 7,
 }
 
 
