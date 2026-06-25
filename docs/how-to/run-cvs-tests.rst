@@ -644,10 +644,20 @@ You can list all available InferenceX ATOM test cases using the CLI:
 
 Use these scripts to run the InferenceX ATOM tests. Supply your own suite JSON
 (``schema_version: 1`` variant config); see :doc:`../reference/configuration-files/inferencex_atom`.
+After ``cvs copy-config``, keep **one** ``*threshold.json`` in the same directory as the
+``--config_file`` you pass (per-variant subdirs under ``~/input/.../inferencex_atom_single/``).
+Copy-paste lab commands: ``cvs/input/config_file/inference/inferencex_atom_single/README.md``.
 
 .. code:: bash
 
-  cvs run inferencex_atom_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencex_atom_single/mi300x_inferencex-atom-single_gpt-oss-120b_bf16_config.json --html=/var/www/html/cvs/inferencex_atom.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencex_atom.log -vvv -s
+  TS=$(date +%Y%m%d_%H%M%S)
+  cvs run inferencex_atom_single \
+    --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
+    --config_file ~/input/config_file/inference/inferencex_atom_single/smoke/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_config.json \
+    --html=~/cvs_results/${TS}_ix-atom-smoke_mi300x.html \
+    --self-contained-html \
+    --log-file=~/cvs_results/${TS}_ix-atom-smoke_mi300x.log \
+    -vvv -s
 
 
 Pytorch xdit test scripts

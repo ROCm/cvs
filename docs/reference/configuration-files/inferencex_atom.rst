@@ -22,11 +22,26 @@ Configs use flat ``*_config.json`` + sibling ``*_threshold.json`` pairs under
 ``cvs/input/config_file/inference/inferencex_atom_single/``. Filename pattern:
 ``{gpu}_inferencex-atom-single_{model}_{precision}[_{mode}]_config.json``.
 Pass ``--config_file`` to the ``*_config.json``; :func:`cvs.lib.utils.config_loader.substitute_config`
-discovers the sole sibling ``*threshold.json`` when ``threshold_json`` is omitted.
+discovers the sole sibling ``*threshold.json`` in the **config file's parent directory** when
+``threshold_json`` is omitted. If that directory contains more than one ``*threshold.json``,
+loading fails with an ambiguous-threshold ``ValueError``.
+
+**Lab ``~/input`` layout:** the repo keeps every variant flat in one tree, but after
+``cvs copy-config`` you should place each run's config + threshold pair in a dedicated
+subdirectory (for example ``~/input/.../inferencex_atom_single/smoke/``) so only one
+threshold file sits beside the config you pass to ``--config_file``. Alternatively set
+``"threshold_json"`` in the config to an explicit path. See the in-tree README at
+``cvs/input/config_file/inference/inferencex_atom_single/README.md`` for copy-paste commands.
 
 **Cluster file:** use ``cvs/input/cluster_file/mi300x_atom_single.json`` (or ``mi355x_atom_single.json``).
 Container ``name`` must match the variant (``inferencex_atom_mi300x`` / ``inferencex_atom_mi355x``);
 the suite deep-merges variant ``container`` over the cluster file.
+
+**Launcher vs GPU node:** pytest and HTML/log output run on the host where you invoke
+``cvs run``. :class:`cvs.core.orchestrators.container.ContainerOrchestrator` SSHes to
+cluster nodes (``cluster_file`` ``mgmt_ip`` / ``node_dict``) and runs ``sudo docker`` there.
+``paths.models_dir`` and the ATOM image must exist on the GPU node; ``priv_key_file`` and
+``paths.hf_token_file`` are read on the launcher. Local Docker on the launcher is not required.
 
 **W1 recipe wiring:** set ``ix_recipe_id`` (e.g. ``dsr1-fp8-mi300x-atom``) to merge server
 ``atom_args`` and client ``bench_extra_args`` from ``ix_recipes.json``.
@@ -67,7 +82,9 @@ Example variant layout
 ======================
 
 Each stem has ``<stem>_config.json`` (``schema_version: 1``, ``framework: inferencex_atom_single``)
-and sibling ``<stem>_threshold.json``. See ``mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json``
+and sibling ``<stem>_threshold.json``. In the CVS source tree many stems share one directory;
+on a lab machine, copy only the pair you need into a per-variant subdirectory (or set
+``threshold_json``). See ``mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json``
 for the W1 MI300X reference.
 
 .. dropdown:: Example ``mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json`` (excerpt)
