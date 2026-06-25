@@ -21,6 +21,12 @@ from cvs.lib.inference.utils.inferencex_atom_config_loader import (
     load_variant,
     orchestrator_container_from_variant,
 )
+from cvs.lib.report.inference_wiring import (
+    attach_inference_suite_report_row_extra,
+    bind_inference_suite_report_session,
+    configure_inference_suite_report,
+)
+from cvs.lib.report.presets.inferencex_atom import INFERENCEX_ATOM_REPORT_CONFIG
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log
@@ -32,8 +38,7 @@ LIFECYCLE_RANK = {
     "test_inferencex_atom_inference": 3,
     "test_cell_metrics": 4,
     "test_print_results_table": 5,
-    "test_ix_run_deck": 6,
-    "test_teardown": 7,
+    "test_teardown": 6,
 }
 
 
@@ -107,6 +112,20 @@ def inf_res_dict():
     return {}
 
 
+def pytest_configure(config):
+    configure_inference_suite_report(config, INFERENCEX_ATOM_REPORT_CONFIG)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _suite_report_session(inf_res_dict, variant_config, lifecycle):
+    bind_inference_suite_report_session(
+        inf_res_dict=inf_res_dict,
+        variant_config=variant_config,
+        lifecycle=lifecycle,
+    )
+    yield
+
+
 def pytest_collection_modifyitems(items):
     sort_lifecycle_items(items, LIFECYCLE_RANK)
 
@@ -114,7 +133,9 @@ def pytest_collection_modifyitems(items):
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
-    attach_lifecycle_html_table(item, outcome.get_result())
+    report = outcome.get_result()
+    attach_lifecycle_html_table(item, report)
+    attach_inference_suite_report_row_extra(item, report)
 
 
 def pytest_html_results_table_header(cells):

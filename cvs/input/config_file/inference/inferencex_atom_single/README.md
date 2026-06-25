@@ -108,12 +108,10 @@ echo "HTML: $HTML"
 echo "LOG:  $LOG"
 ```
 
-When `--html` is set, an **IX Run Deck** is written beside the report:
-
-- `inferencex_atom_run_deck.html` — sweep analytics, gate matrix, concurrency charts, full results table, pass/fail badge
-- `inferencex_atom_run_deck.json` — same payload for scripting or run-to-run diff
-
-Both are linked from the pytest HTML bundle. With `--self-contained-html`, the deck is also embedded inline in the pytest report. Render-only; does not affect gates.
+When `--html` is set, the **IX Suite Report** (`inferencex_atom_report.html` + `.json`) is
+generated automatically at session end and bundled into the pytest zip: sweep analytics,
+gate matrix, concurrency charts, full results table, and pass/fail badge. Open the pytest
+HTML **Reports** section for links. Render-only; does not affect gates.
 
 ## W1 perf (MI300X)
 
