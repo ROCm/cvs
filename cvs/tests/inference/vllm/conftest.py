@@ -11,6 +11,12 @@ import pytest
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
 from cvs.lib.inference.utils.inferencing_config_loader import load_variant
+from cvs.lib.report.inference_wiring import (
+    attach_inference_suite_report_row_extra,
+    bind_inference_suite_report_session,
+    configure_inference_suite_report,
+)
+from cvs.lib.report.presets.inferencex_atom import VLLM_SINGLE_REPORT_CONFIG
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log
@@ -122,6 +128,20 @@ def inf_res_dict():
     return {}
 
 
+def pytest_configure(config):
+    configure_inference_suite_report(config, VLLM_SINGLE_REPORT_CONFIG)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _suite_report_session(inf_res_dict, variant_config, lifecycle):
+    bind_inference_suite_report_session(
+        inf_res_dict=inf_res_dict,
+        variant_config=variant_config,
+        lifecycle=lifecycle,
+    )
+    yield
+
+
 def pytest_collection_modifyitems(items):
     """Pin the lifecycle order explicitly instead of relying on definition order.
 
@@ -155,6 +175,7 @@ def pytest_runtest_makereport(item, call):
     """
     outcome = yield
     report = outcome.get_result()
+    attach_inference_suite_report_row_extra(item, report)
     if report.when != "call":
         return
     lc = item.funcargs.get("lifecycle")
