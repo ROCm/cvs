@@ -52,6 +52,27 @@ def _first_float(pattern, text):
     m = re.search(pattern, text, re.I)
     return m.group(1) if m else None
 
+LM_EVAL_SPECS = {
+    "lm_eval_hellaswag": {
+        "display": "HellaSwag",
+        "default_metric": "acc_norm",
+        "default_metric_key": "acc_norm,none",
+        "default_num_concurrent": "1",
+    },
+    "lm_eval_gsm8k": {
+        "display": "GSM8K",
+        "default_metric": "exact_match",
+        "default_metric_key": "exact_match,flexible-extract",
+        "default_num_concurrent": "4",
+    },
+    "lm_eval_mmlu": {
+        "display": "MMLU",
+        "default_metric": "acc",
+        "default_metric_key": "acc,none",
+        "default_num_concurrent": "1",
+    },
+}
+
 
 class SglangDisaggPD:
     def __init__(
@@ -1496,121 +1517,181 @@ class SglangDisaggPD:
         return summary
 
  
+    # def run_lm_eval_hellaswag_benchmark_test(self, _d_type="auto"):
+    #     log.info("#================ * * * =========================#")
+    #     log.info("lm-eval HellaSwag benchmark")
+    #     log.info("#================ * * * =========================#")
+
+    #     i_dict = self.bp_dict["inference_tests"]["lm_eval_hellaswag"]
+    #     inner_cmd, scoring = LmEvalBenchmark.prepare(
+    #         i_dict,
+    #         port=int(self.inf_dict["proxy_router_serv_port"]),
+    #         model_id=self.bp_dict["model"],
+    #         task_name="hellaswag",
+    #         default_tasks="hellaswag",
+    #         default_metric="acc_norm",
+    #         default_metric_key="acc_norm,none",
+    #         log_dir=self.log_dir,
+    #         log_basename="lm_eval_hellaswag.log",
+    #         default_num_concurrent="1",
+    #     )
+
+    #     cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+    #             mkdir -p {self.log_dir}/benchmark_node; \\
+    #             source /tmp/benchmark_env_script.sh && \\
+    #             {inner_cmd}" '''
+    #     out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
+    #     time.sleep(5)
+
+    #     check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
+    #     summary = None
+    #     errors: list[str] = []
+
+    #     for node, text in out_dict.items():
+    #         ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
+    #         if node_summary is not None:
+    #             summary = node_summary
+    #         if not ok:
+    #             errors.append(f"lm-eval HellaSwag on node {node!r}: {err}")
+
+    #     if summary is None:
+    #         summary = LmEvalBenchmark.fallback_summary(
+    #             scoring,
+    #             error=errors[-1] if errors else "no benchmark nodes produced output to score",
+    #         )
+    #         errors.append("lm-eval HellaSwag: no benchmark nodes produced output to score")
+
+    #     for msg in errors:
+    #         fail_test(msg)
+
+    #     return summary
+
+    # def run_lm_eval_gsm8k_benchmark_test(self, _d_type="auto"):
+    #     log.info("#================ * * * =========================#")
+    #     log.info("lm-eval GSM8K benchmark")
+    #     log.info("#================ * * * =========================#")
+
+    #     i_dict = self.bp_dict["inference_tests"]["lm_eval_gsm8k"]
+    #     inner_cmd, scoring = LmEvalBenchmark.prepare(
+    #         i_dict,
+    #         port=int(self.inf_dict["proxy_router_serv_port"]),
+    #         model_id=self.bp_dict["model"],
+    #         task_name="gsm8k",
+    #         default_tasks="gsm8k",
+    #         default_metric="exact_match",
+    #         default_metric_key="exact_match,flexible-extract",
+    #         log_dir=self.log_dir,
+    #         log_basename="lm_eval_gsm8k.log",
+    #         default_num_concurrent="4",
+    #     )
+
+    #     cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+    #             mkdir -p {self.log_dir}/benchmark_node; \\
+    #             source /tmp/benchmark_env_script.sh && \\
+    #             {inner_cmd}" '''
+    #     out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
+    #     time.sleep(5)
+
+    #     check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
+    #     summary = None
+    #     errors: list[str] = []
+
+    #     for node, text in out_dict.items():
+    #         ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
+    #         if node_summary is not None:
+    #             summary = node_summary
+    #         if not ok:
+    #             errors.append(f"lm-eval GSM8K on node {node!r}: {err}")
+
+    #     if summary is None:
+    #         summary = LmEvalBenchmark.fallback_summary(
+    #             scoring,
+    #             error=errors[-1] if errors else "no benchmark nodes produced output to score",
+    #         )
+    #         errors.append("lm-eval GSM8K: no benchmark nodes produced output to score")
+
+    #     for msg in errors:
+    #         fail_test(msg)
+
+    #     return summary
+
+    # def run_lm_eval_mmlu_benchmark_test(self, _d_type="auto"):
+    #     log.info("#================ * * * =========================#")
+    #     log.info("lm-eval MMLU benchmark")
+    #     log.info("#================ * * * =========================#")
+
+    #     i_dict = self.bp_dict["inference_tests"]["lm_eval_mmlu"]
+    #     inner_cmd, scoring = LmEvalBenchmark.prepare(
+    #         i_dict,
+    #         port=int(self.inf_dict["proxy_router_serv_port"]),
+    #         model_id=self.bp_dict["model"],
+    #         task_name="mmlu",
+    #         default_tasks="mmlu",
+    #         default_metric="acc",
+    #         default_metric_key="acc,none",
+    #         log_dir=self.log_dir,
+    #         log_basename="lm_eval_mmlu.log",
+    #         default_num_concurrent="1",
+    #     )
+
+    #     cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+    #             mkdir -p {self.log_dir}/benchmark_node; \\
+    #             source /tmp/benchmark_env_script.sh && \\
+    #             {inner_cmd}" '''
+    #     out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
+    #     time.sleep(5)
+
+    #     check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
+    #     summary = None
+    #     errors: list[str] = []
+
+    #     for node, text in out_dict.items():
+    #         ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
+    #         if node_summary is not None:
+    #             summary = node_summary
+    #         if not ok:
+    #             errors.append(f"lm-eval MMLU on node {node!r}: {err}")
+
+    #     if summary is None:
+    #         summary = LmEvalBenchmark.fallback_summary(
+    #             scoring,
+    #             error=errors[-1] if errors else "no benchmark nodes produced output to score",
+    #         )
+    #         errors.append("lm-eval MMLU: no benchmark nodes produced output to score")
+
+    #     for msg in errors:
+    #         fail_test(msg)
+
+    #     return summary
+
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type="auto"):
-        log.info("#================ * * * =========================#")
-        log.info("lm-eval HellaSwag benchmark")
-        log.info("#================ * * * =========================#")
-
-        i_dict = self.bp_dict["inference_tests"]["lm_eval_hellaswag"]
-        inner_cmd, scoring = LmEvalBenchmark.prepare(
-            i_dict,
-            port=int(self.inf_dict["proxy_router_serv_port"]),
-            model_id=self.bp_dict["model"],
-            task_name="hellaswag",
-            default_tasks="hellaswag",
-            default_metric="acc_norm",
-            default_metric_key="acc_norm,none",
-            log_dir=self.log_dir,
-            log_basename="lm_eval_hellaswag.log",
-            default_num_concurrent="1",
-        )
-
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                mkdir -p {self.log_dir}/benchmark_node; \\
-                source /tmp/benchmark_env_script.sh && \\
-                {inner_cmd}" '''
-        out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
-        time.sleep(5)
-
-        check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
-        summary = None
-        errors: list[str] = []
-
-        for node, text in out_dict.items():
-            ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
-            if node_summary is not None:
-                summary = node_summary
-            if not ok:
-                errors.append(f"lm-eval HellaSwag on node {node!r}: {err}")
-
-        if summary is None:
-            summary = LmEvalBenchmark.fallback_summary(
-                scoring,
-                error=errors[-1] if errors else "no benchmark nodes produced output to score",
-            )
-            errors.append("lm-eval HellaSwag: no benchmark nodes produced output to score")
-
-        for msg in errors:
-            fail_test(msg)
-
-        return summary
+        return self.run_lm_eval_benchmark_test("lm_eval_hellaswag", _d_type=_d_type)
 
     def run_lm_eval_gsm8k_benchmark_test(self, _d_type="auto"):
-        log.info("#================ * * * =========================#")
-        log.info("lm-eval GSM8K benchmark")
-        log.info("#================ * * * =========================#")
-
-        i_dict = self.bp_dict["inference_tests"]["lm_eval_gsm8k"]
-        inner_cmd, scoring = LmEvalBenchmark.prepare(
-            i_dict,
-            port=int(self.inf_dict["proxy_router_serv_port"]),
-            model_id=self.bp_dict["model"],
-            task_name="gsm8k",
-            default_tasks="gsm8k",
-            default_metric="exact_match",
-            default_metric_key="exact_match,flexible-extract",
-            log_dir=self.log_dir,
-            log_basename="lm_eval_gsm8k.log",
-            default_num_concurrent="4",
-        )
-
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                mkdir -p {self.log_dir}/benchmark_node; \\
-                source /tmp/benchmark_env_script.sh && \\
-                {inner_cmd}" '''
-        out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
-        time.sleep(5)
-
-        check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
-        summary = None
-        errors: list[str] = []
-
-        for node, text in out_dict.items():
-            ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
-            if node_summary is not None:
-                summary = node_summary
-            if not ok:
-                errors.append(f"lm-eval GSM8K on node {node!r}: {err}")
-
-        if summary is None:
-            summary = LmEvalBenchmark.fallback_summary(
-                scoring,
-                error=errors[-1] if errors else "no benchmark nodes produced output to score",
-            )
-            errors.append("lm-eval GSM8K: no benchmark nodes produced output to score")
-
-        for msg in errors:
-            fail_test(msg)
-
-        return summary
+        return self.run_lm_eval_benchmark_test("lm_eval_gsm8k", _d_type=_d_type)
 
     def run_lm_eval_mmlu_benchmark_test(self, _d_type="auto"):
-        log.info("#================ * * * =========================#")
-        log.info("lm-eval MMLU benchmark")
-        log.info("#================ * * * =========================#")
+        return self.run_lm_eval_benchmark_test("lm_eval_mmlu", _d_type=_d_type)
 
-        i_dict = self.bp_dict["inference_tests"]["lm_eval_mmlu"]
+
+    def run_lm_eval_benchmark_test(self, bench_key: str, _d_type="auto"):
+        spec = LM_EVAL_SPECS[bench_key]
+        log.info("#================ * * * =========================#")
+        log.info("lm-eval %s benchmark", spec["display"])
+        log.info("#================ * * * =========================#")
+        task_name = bench_key.removeprefix("lm_eval_")
+        i_dict = self.bp_dict["inference_tests"][bench_key]
         inner_cmd, scoring = LmEvalBenchmark.prepare(
             i_dict,
             port=int(self.inf_dict["proxy_router_serv_port"]),
             model_id=self.bp_dict["model"],
-            task_name="mmlu",
-            default_tasks="mmlu",
-            default_metric="acc",
-            default_metric_key="acc,none",
+            task_name=task_name,
+            default_tasks=task_name,
+            default_metric=spec["default_metric"],
+            default_metric_key=spec["default_metric_key"],
             log_dir=self.log_dir,
-            log_basename="lm_eval_mmlu.log",
-            default_num_concurrent="1",
+            log_basename=f"{bench_key}.log",
+            default_num_concurrent=spec["default_num_concurrent"],
         )
 
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
@@ -1629,14 +1710,14 @@ class SglangDisaggPD:
             if node_summary is not None:
                 summary = node_summary
             if not ok:
-                errors.append(f"lm-eval MMLU on node {node!r}: {err}")
+                errors.append(f"lm-eval {spec['display']} on node {node!r}: {err}")
 
         if summary is None:
             summary = LmEvalBenchmark.fallback_summary(
                 scoring,
                 error=errors[-1] if errors else "no benchmark nodes produced output to score",
             )
-            errors.append("lm-eval MMLU: no benchmark nodes produced output to score")
+            errors.append(f"lm-eval {spec['display']}: no benchmark nodes produced output to score")
 
         for msg in errors:
             fail_test(msg)
