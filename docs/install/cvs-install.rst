@@ -313,8 +313,8 @@ CVS provides comprehensive inference testing configurations for various LLM serv
 
 .. code:: bash
 
-     cvs copy-config inference/inferencex_atom_single/mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json --output ~/my_inferencex_atom_config.json
-     cvs copy-config inference/inferencex_atom_single/mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_threshold.json --output ~/my_inferencex_atom_threshold.json
+     cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_gpt-oss-120b_bf16_config.json --output ~/my_inferencex_atom_config.json
+     cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_gpt-oss-120b_bf16_threshold.json --output ~/my_inferencex_atom_threshold.json
 
 2. Edit the files and modify these parameters:
 

@@ -647,7 +647,7 @@ Use these scripts to run the InferenceX ATOM tests. Supply your own suite JSON
 
 .. code:: bash
 
-  cvs run inferencex_atom_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencex_atom_single/mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json --html=/var/www/html/cvs/inferencex_atom.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencex_atom.log -vvv -s
+  cvs run inferencex_atom_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencex_atom_single/mi300x_inferencex-atom-single_gpt-oss-120b_bf16_config.json --html=/var/www/html/cvs/inferencex_atom.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencex_atom.log -vvv -s
 
 
 Pytorch xdit test scripts

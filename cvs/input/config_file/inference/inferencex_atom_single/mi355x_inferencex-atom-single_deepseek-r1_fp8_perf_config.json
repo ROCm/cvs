@@ -1,13 +1,14 @@
 {
-  "_comment": "W1 DeepSeek R1 FP8+MTP3 on 8x MI300X. Recipe: dsr1-fp8-mi300x-atom-mtp3. Thresholds: plan Section 4.2.",
+  "_comment": "W1 DeepSeek R1 FP8 on 8x MI355X. Recipe: dsr1-fp8-mi355x-atom. Thresholds: plan Section 4.3 (ATOM run 27912164002).",
   "schema_version": 1,
   "framework": "inferencex_atom_single",
-  "gpu_arch": "mi300x",
-  "ix_recipe_id": "dsr1-fp8-mi300x-atom-mtp3",
+  "gpu_arch": "mi355x",
+  "ix_recipe_id": "dsr1-fp8-mi355x-atom",
   "enforce_thresholds": false,
   "run_card": {
-    "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "MI300X MTP3 lab reference Section 4.2"
+    "upstream_run_url": "https://github.com/ROCm/ATOM/actions/runs/27912164002",
+    "atom_image_pin": "rocm/atom-dev:nightly_202606211542",
+    "notes": "ATOM commit ea08015; re-pin on image bumps"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -22,8 +23,8 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "inferencex_atom_mi300x",
-    "image": "rocm/atom-dev:latest",
+    "name": "inferencex_atom_mi355x",
+    "image": "rocm/atom-dev:nightly_202606211542",
     "runtime": {
       "name": "docker",
       "args": {
@@ -55,6 +56,7 @@
     "random_range_ratio": "0.8",
     "num_prompts": "1000",
     "max_model_length": "4096",
+    "metric_percentiles": "95,99",
     "client_poll_count": "80",
     "client_poll_wait_time": "60"
   },

@@ -15,14 +15,14 @@ The InferenceX ATOM tests check:
 - **Benchmarking**: Load testing with various concurrency levels and sequence lengths
 - **Result verification**: Expected throughput and latency metrics
 
-InferenceX ATOM inputs use per-variant directories under ``cvs/input/config_file/inference/inferencex_atom_single/<variant>/`` with a suite JSON passed as ``--config_file`` (typically ``<variant>_config.json``). Pass/fail numbers live in the **sole** ``*threshold.json`` in that directory (loaded by :func:`cvs.lib.inference.utils.inferencex_atom_config_loader.load_variant`). For example, MI300X GPT-OSS 120B single-node uses ``mi300x_gpt_oss_120b_single/mi300x_gpt_oss_120b_single_config.json`` plus ``mi300x_gpt_oss_120b_single_threshold.json``.
+InferenceX ATOM inputs use flat ``*_config.json`` + sibling ``*_threshold.json`` pairs under ``cvs/input/config_file/inference/inferencex_atom_single/`` (same layout and naming as ``vllm_single``). Filename pattern: ``{gpu}_{framework}_{model}_{precision}[_{mode}]_config.json`` (framework ``inferencex_atom_single`` → ``inferencex-atom-single`` in the stem). Pass ``--config_file`` pointing at the ``*_config.json``; the loader discovers the sole sibling ``*threshold.json`` via :func:`cvs.lib.inference.utils.inferencex_atom_config_loader.load_variant`. For example, MI300X GPT-OSS 120B uses ``mi300x_inferencex-atom-single_gpt-oss-120b_bf16_config.json`` plus ``mi300x_inferencex-atom-single_gpt-oss-120b_bf16_threshold.json``.
 
 **InferenceX ATOM / MI300X note:**
 
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
   - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
   - **Server**: ``roles.server.serve_args`` and ``roles.server.env`` drive a Python-built ``vllm serve`` command inside the container (same pattern as ``vllm_single``). MI300-class defaults include ``enforce-eager``, ``block-size``, and ``no-enable-prefix-caching``.
-  - **Thresholds**: sibling ``*threshold.json`` in the variant directory (exactly one file; multiple files is an error). Loaded by :func:`cvs.lib.inference.utils.inferencex_atom_config_loader.load_variant`. Cell keys use ``ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>`` with ``client.*`` metric specs (see vLLM threshold examples). ``test_metric`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all` when ``enforce_thresholds`` is true.
+  - **Thresholds**: sibling ``*threshold.json`` next to the config file (exactly one file; multiple files is an error). Loaded by :func:`cvs.lib.inference.utils.inferencex_atom_config_loader.load_variant`. Cell keys use ``ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>`` with ``client.*`` metric specs (see vLLM threshold examples). ``test_metric`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all` when ``enforce_thresholds`` is true.
   - **Sweep**: ``sweep.sequence_combinations`` (named ISL/OSL pairs) plus ``sweep.runs`` (explicit ``{combo, concurrency}`` list). Model id comes from ``model.id``.
 
 Pytest and HTML layout (inferencex_atom_single)
@@ -60,9 +60,9 @@ Pytest and HTML layout (inferencex_atom_single)
 Example variant layout
 ======================
 
-Each variant directory contains ``<variant>_config.json`` (``schema_version: 1``) and a sibling ``<variant>_threshold.json``. See ``mi300x_gpt_oss_120b_single/`` for a calibrated GPT-OSS 120B reference.
+Each config stem has ``<stem>_config.json`` (``schema_version: 1``) and a sibling ``<stem>_threshold.json``. See ``mi300x_inferencex-atom-single_gpt-oss-120b_bf16_config.json`` for a GPT-OSS 120B reference, or ``mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json`` for W1 DeepSeek R1 FP8.
 
-.. dropdown:: Example ``mi300x_gpt_oss_120b_single_threshold.json`` (excerpt)
+.. dropdown:: Example ``mi300x_inferencex-atom-single_gpt-oss-120b_bf16_threshold.json`` (excerpt)
 
   .. code:: json
 
