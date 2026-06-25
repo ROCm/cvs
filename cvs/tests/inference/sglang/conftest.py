@@ -7,7 +7,7 @@ Fixtures and hooks for ``sglang_disagg_distributed`` (multi-node PSSH + Docker).
 ``--config_file`` must be JSON with top-level ``"config"`` and ``"benchmark_params"``.
 Use ``active_benchmark`` (or ``SGLANG_BENCHMARK_KEY``) when multiple models are defined.
 
-Each ``benchmark_params`` variant may set ``theshold_file`` (or ``threshold_file``) to a
+Each ``benchmark_params`` variant may set ``threshold_file`` to a
 JSON file beside the config; that file supplies pass/fail thresholds for performance
 and lm-eval benchmarks.
 '''
@@ -33,11 +33,10 @@ log = globals.log
 
 
 def _threshold_file_path(bp_dict: Mapping[str, Any]) -> str | None:
-    """Return the threshold file path from a benchmark_params variant (typo-tolerant)."""
-    for key in ("threshold_file"):
-        path = bp_dict.get(key)
-        if path:
-            return str(path).strip()
+    """Return the threshold file path from a benchmark_params variant."""
+    path = bp_dict.get("threshold_file")
+    if path:
+        return str(path).strip()
     return None
 
 def _resolve_threshold_path(threshold_path: str) -> Path:
@@ -181,12 +180,12 @@ def benchmark_params(benchmark_params_dict, benchmark_variant):
 
 @pytest.fixture(scope="module")
 def thresholds_dict(benchmark_params, benchmark_variant):
-    """Load thresholds from the path in ``threshold_file`` / ``theshold_file``."""
+    """Load thresholds from the path in ``threshold_file``."""
     threshold_path_str = _threshold_file_path(benchmark_params)
     if not threshold_path_str:
         pytest.fail(
             f"benchmark_params[{benchmark_variant!r}] missing "
-            "'threshold_file' or 'theshold_file' in --config_file"
+            "'threshold_file' in --config_file"
         )
 
     threshold_path = _resolve_threshold_path(threshold_path_str)
