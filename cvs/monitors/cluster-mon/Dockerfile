@@ -1,5 +1,14 @@
 # Multi-stage build for CVS Cluster Monitor
-# Stage 1: Build React frontend
+# Stage 1: Build Go SSH daemon
+FROM golang:1.22-alpine AS go-builder
+
+WORKDIR /src
+COPY go-collector/go.mod go-collector/go.sum ./
+RUN go mod download
+COPY go-collector/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -o /gpu-collector ./cmd/gpu-collector
+
+# Stage 2: Build React frontend
 FROM node:18-slim AS frontend-builder
 
 WORKDIR /app/frontend
@@ -17,7 +26,7 @@ COPY frontend/ ./
 RUN npm run build
 
 
-# Stage 2: Main application image
+# Stage 3: Main application image
 FROM python:3.10-slim
 
 # Install system dependencies
@@ -39,6 +48,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code
 COPY backend/app/ ./app/
+
+# Copy Go daemon binary from builder stage
+COPY --from=go-builder /gpu-collector /usr/local/bin/gpu-collector
+
+# Raise open-file limit for persistent SSH connections (1 fd per host)
+RUN ulimit -n 65535 2>/dev/null || true
 
 # Copy frontend build from builder stage
 COPY --from=frontend-builder /app/frontend/dist ./static
