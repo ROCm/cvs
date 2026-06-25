@@ -154,7 +154,13 @@ def inference_dict(inference_config_root, cluster_dict):
         cfg = inference_config_root["config"]
     else:
         cfg = inference_config_root
-    return resolve_test_config_placeholders(cfg, cluster_dict)
+    cfg = resolve_test_config_placeholders(cfg, cluster_dict)
+    volume_dict = cfg['container_config']['volume_dict']
+    cfg['mount_vol'] = volume_dict.pop(
+        'mount_vol',
+        '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
+    )
+    return cfg
 
 
 @pytest.fixture(scope="module")
