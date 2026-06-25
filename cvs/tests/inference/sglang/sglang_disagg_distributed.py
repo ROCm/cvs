@@ -6,8 +6,6 @@ Single SGLang disaggregated (PD) benchmark module: model is selected from
 ``benchmark_params`` via ``active_benchmark`` / env / single-key auto (see ``_shared``).
 '''
 
-import importlib.util as _ilu
-import pathlib as _pl
 import re
 import time
 
@@ -15,14 +13,7 @@ import pytest
 
 from cvs.lib import docker_lib, globals
 from cvs.lib.utils_lib import fail_test, update_test_result
-
-_spec = _ilu.spec_from_file_location(
-    "_sglang_disagg_shared", _pl.Path(__file__).with_name("_shared.py")
-)
-_mod = _ilu.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
-
-test_print_results_table = _mod.test_print_results_table
+from cvs.tests.inference.sglang._shared import test_print_results_table
 
 log = globals.log
 
