@@ -12,22 +12,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from cvs.lib.inference.inferencex_atom_orch import InferenceXAtomJob
+from cvs.lib.inference.unittests.fake_orch import FakeOrch
 
 _HERE = Path(__file__).parent
 _FIXTURES = _HERE / "fixtures"
 _ISL = 7168
 _OSL = 1024
 _TP = 8
-
-
-class FakeOrch:
-    def __init__(self, exec_return=None):
-        self.exec_return = exec_return if exec_return is not None else {}
-        self.commands = []
-
-    def exec(self, cmd, **kwargs):
-        self.commands.append(cmd)
-        return self.exec_return
 
 
 def _fake_variant(*, driver="vllm"):
