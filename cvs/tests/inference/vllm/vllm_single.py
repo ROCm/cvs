@@ -295,8 +295,6 @@ def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, li
     spec = (variant_config.thresholds.get(cell) or {}).get(full)
     if spec is None:
         return
-    if full not in actuals or actuals[full] is None:
-        return
     evaluate_all(actuals, {full: spec})
 
 

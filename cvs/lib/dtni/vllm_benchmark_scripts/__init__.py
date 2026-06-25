@@ -4,7 +4,7 @@ All rights reserved.
 
 Canonical **vLLM benchmark server** shell helpers retained for legacy
 :class:`~cvs.lib.inference.base.InferenceBaseJob` flows. **InferenceX ATOM** and
-**vllm_single** (:class:`~cvs.lib.inference.vllm_orch.VllmJob`) build
+**vllm_single** (:class:`~cvs.lib.inference.vllm_single.VllmJob`) build
 ``vllm serve`` in Python via ``roles.server.serve_args``; they do not stage
 these scripts at runtime.
 

@@ -8,7 +8,7 @@
 > `OrchestratorConfig.from_dicts` / `container.enabled|launch`, and other
 > pre-merge shapes. For the as-built architecture, read
 > `plans/building-a-cvs-test-suite.md` and each package's `AGENTS.md`. Kept for
-> the design rationale (the Sections 5–7 *why* behind the seam, the Job split, and the
+> the design rationale (the §5–§7 *why* behind the seam, the Job split, and the
 > config/threshold split), which is still accurate.
 
 ## 1. Intro and scope
@@ -17,7 +17,7 @@ This guide is for CVS developers who already run `cvs run` regularly and have ed
 
 The framing: today every suite is a hand-written pytest module that ships its own container lifecycle, its own config parsing, and its own threshold checks inline. Under DTNI, those concerns move out of the test module into shared machinery — a typed config loader, an `orch` (orchestrator) fixture that owns the container, and a per-framework Job class that bundles the framework-specific verbs — so the test module shrinks to a few phases: load → setup → generated tests → custom tests.
 
-`vllm_single` (inference) and `megatron_*` (training) appear as running examples. The same shape applies to sglang, inferencex_atom, pytorch_xdit, jax.
+`vllm_single` (inference) and `megatron_*` (training) appear as running examples. The same shape applies to sglang, inferencemax, pytorch_xdit, jax.
 
 ## 2. Old lifecycle: `cvs run` to HTML report
 
@@ -69,7 +69,7 @@ flowchart TD
 
 Phase-by-phase:
 
-1. **Load.** Generic substitution and threshold discovery live in `cvs/lib/utils/config_loader.py` (`substitute_config`). Per-suite typed loaders validate the result — for example `cvs/lib/inference/utils/inferencing_config_loader.py` (vLLM) or `cvs/lib/inference/utils/inferencex_atom_config_loader.py` (InferenceX ATOM). Variant configs live under `cvs/input/config_file/inference/<suite>/<variant>/` with a sibling `*threshold.json`. One wrapper per suite, parametrized across variant directories.
+1. **Load.** `cvs/lib/dtni/config_loader.py` reads `cvs/input/dtni/<suite>/<variant>/config.json` and `threshold.json`, validates through Pydantic models (`extra="forbid"` everywhere except the runtime args passthrough), runs placeholder substitution in fixed order (cluster → self-reference → cross-block), and returns typed objects. One wrapper per suite, parametrized across all variant directories.
 2. **Setup.** A pytest fixture builds an `OrchestratorConfig` (`cvs/core/orchestrators/factory.py`) from the loaded config and yields an `orch`. The fixture calls `orch.setup_containers()` on entry and `orch.teardown_containers()` on exit. No `test_cleanup_stale_containers` or `test_launch_*_containers` in suite code — those concerns are gone.
 3. **Generated tests.** `pytest_generate_tests` (in the suite's `conftest.py`) reads sweep dimensions from the typed config — `benchmark_params.concurrency_levels × sequence_combinations` for inference, `model_params` presets for training — and parametrizes the workload test. Each parametrize cell constructs a Job, calls its verbs, gets back a flat `actuals` dict, and runs `evaluate_all(actuals, thresholds)`.
 4. **Custom tests.** Suite-specific assertions that aren't part of the sweep grid: firewall disable, NIC setup probe, results-table printer, smoke checks. These live in the wrapper as plain `def test_*` functions and use `orch.exec`/`orch.exec_on_head` to talk to the cluster — never `phdl.exec` or `docker_lib` directly.
@@ -85,8 +85,8 @@ This is the base layout. Copy and replace the framework-specific bits.
 """<suite> — DTNI layout. Phases: load → setup → generated → custom."""
 
 import pytest
-from cvs.lib.inference.utils.inferencing_config_loader import load_variant
-from cvs.lib.utils.verdict import evaluate_all
+from cvs.lib.dtni.config_loader import load_variant, enumerate_variants
+from cvs.lib.dtni.verdict import evaluate_all
 from cvs.lib.<domain>.<framework>_orch import <Framework>Job
 
 
@@ -134,14 +134,13 @@ And the conftest that backs it:
 ```python
 # cvs/tests/<domain>/<framework>/conftest.py
 import pytest
-from cvs.lib.inference.utils.inferencing_config_loader import load_variant
+from cvs.lib.dtni.config_loader import load_variant, enumerate_variants
 from cvs.core.orchestrators.factory import OrchestratorConfig, build_orchestrator
 
 def pytest_generate_tests(metafunc):
     if "variant_config" in metafunc.fixturenames:
-        # Most suites pass a single --config_file; multi-variant wrappers may
-        # glob cvs/input/config_file/<domain>/<suite>/<variant>/*_config.json.
-        ...
+        variants = enumerate_variants("cvs/input/dtni/<suite>")
+        metafunc.parametrize("variant_config", variants, ids=[v.id for v in variants], indirect=True)
     if "cell" in metafunc.fixturenames:
         # Cross-product of sweep dims from the already-resolved variant_config.
         ...
@@ -330,7 +329,7 @@ Walkthrough:
 3. **Classify each config key.** Each key is "what we run" (config), "did it pass" (threshold), or "cluster scaffolding" (already in the cluster file). If undecided, default to config; thresholds are only for numeric measurements with predicates.
 4. **Lay out variant directories.** One directory per `(model, purpose)` or `(model, mode, purpose)` under `cvs/input/dtni/<suite>/<full-model-id>_<mode>_<perf|accuracy>/`. Full model IDs, no abbreviations. Single-vs-distributed is a *mode*, not a separate wrapper.
 5. **Write the Job.** Standalone class under `cvs/lib/<domain>/<framework>_orch.py`. Constructor takes the typed config and an `orch`. Do not inherit `InferenceBaseJob`. Do not import `globals`.
-6. **Write the wrapper + conftest** following the skeleton in Section 4. One wrapper per suite.
+6. **Write the wrapper + conftest** following the skeleton in §4. One wrapper per suite.
 7. **Verify against the pre-port baseline.** Run the old wrapper and the new one on the same hardware with the same model and confirm metrics are within noise.
 
 ## 9. Verification template

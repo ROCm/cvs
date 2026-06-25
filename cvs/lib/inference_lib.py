@@ -16,7 +16,7 @@ class _LegacyVllmInferenceJobPlaceholder:
     def __init__(self, *args, **kwargs):
         raise NotImplementedError(
             "InferenceJobFactory no longer builds a host+docker vLLM InferenceBaseJob. "
-            "Use ``cvs.lib.inference.vllm_orch.VllmJob`` with ``ContainerOrchestrator`` "
+            "Use ``cvs.lib.inference.vllm_single.VllmJob`` with ``ContainerOrchestrator`` "
             "from the tests under ``cvs.tests.inference.vllm``."
         )
 

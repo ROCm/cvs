@@ -20,7 +20,7 @@ _HERE = Path(__file__).parent
 _FIXTURES = _HERE / "fixtures"
 _REPO = _HERE.parents[3]  # cvs/lib/inference/unittests -> repo root
 _SHARED = _REPO / "cvs/tests/inference/vllm/_shared.py"
-_THRESHOLD = _REPO / "cvs/input/config_file/inference/vllm_single/w1_llama31_70b_fp8kv/llama31_70b_fp8_threshold.json"
+_THRESHOLD = _REPO / "cvs/input/config_file/inference/vllm_single/mi300x_vllm-single_llama31-70b_fp8_threshold.json"
 
 # isl/tp used to build the job; must match the fixture's run for the derived
 # math assertions to be meaningful (real artifact: isl=128, tp=8).
@@ -482,21 +482,6 @@ class TestMetricTests(unittest.TestCase):
             req,
         )
         self.assertEqual(dict(req.node.user_properties)["metric_unit"], "ms")
-
-    def test_enforce_skips_when_metric_not_produced(self):
-        # Placeholder threshold for a percentile the artifact omitted must not fail
-        # with "missing from actuals" when metric_percentiles only emits p99.
-        actuals = dict(self.actuals)
-        del actuals["client.p90_ttft_ms"]
-        cell = f"ISL=128,OSL=2048,TP={_TP},CONC=64"
-        thr = {cell: {"client.p90_ttft_ms": {"kind": "max_ms", "value": 1_000_000}}}
-        req = _FakeRequest()
-        self.vs.test_metric(
-            self.seq_combo, self.conc, "p90_ttft_ms",
-            {self.key: {"fakehost": actuals}},
-            _fake_variant_config(enforce=True, thresholds=thr), _FakeLifecycle(), req,
-        )
-        self.assertIsNone(dict(req.node.user_properties).get("metric_value"))
 
 
 from cvs.lib.inference.utils.vllm_parsing import _safe_div, to_client_metrics  # noqa: E402
