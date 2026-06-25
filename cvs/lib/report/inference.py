@@ -37,6 +37,11 @@ from cvs.lib.report.formatting import link_or_text_html as _link_or_text
 from cvs.lib.report.formatting import status_badge_html as _status_badge
 from cvs.lib.report.provenance import build_inference_report_provenance
 from cvs.lib.report.render.cell_card import render_cell_card_html
+from cvs.lib.report.render.gate_matrix import (
+    gate_heatmap_css,
+    render_gate_heatmap_html,
+    render_gate_matrix_html,
+)
 from cvs.lib.report.viewer.scaffold import viewer_basename_for, write_interactive_viewer
 from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries
 
@@ -403,7 +408,7 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
   body { background: #fff; color: #111; }
   .panel, .cell-card, .summary-card, .chart-panel { box-shadow: none; break-inside: avoid; }
 }
-"""
+""" + gate_heatmap_css()
 
 
 def render_report_html(payload: dict) -> str:
@@ -483,24 +488,8 @@ def render_report_html(payload: dict) -> str:
         else "<p class='muted'>Concurrency charts need two or more sweep cells.</p>"
     )
 
-    matrix_header = "<tr><th>Cell</th>" + "".join(
-        f"<th>{html.escape(t)}</th>" for t in tier_order
-    ) + "</tr>"
-    matrix_rows = "".join(
-        f"<tr><td>{html.escape(row['label'])}</td>"
-        + "".join(
-            f"<td class='matrix-{html.escape(row['tiers'].get(t, 'na'))}'>"
-            f"{html.escape(row['tiers'].get(t, 'na'))}</td>"
-            for t in tier_order
-        )
-        + "</tr>"
-        for row in gate_matrix
-    )
-    matrix_html = (
-        f"<table class='matrix'>{matrix_header}{matrix_rows}</table>"
-        if matrix_rows
-        else "<p class='muted'>No gate matrix (no cells recorded).</p>"
-    )
+    matrix_html = render_gate_matrix_html(gate_matrix, tier_order)
+    heatmap_html = render_gate_heatmap_html(gate_matrix, tier_order)
 
     rt_headers = results_table.get("headers") or []
     rt_rows = results_table.get("rows") or []
@@ -593,7 +582,7 @@ def render_report_html(payload: dict) -> str:
 <section class="panel" id="run-card"><h2>Run card</h2><div class="meta-grid">{hero_html}</div></section>
 <section class="panel" id="lifecycle"><h2>Lifecycle timeline</h2><div class="tl-row">{timeline_html}</div></section>
 <section class="panel" id="sweep"><h2>Sweep analytics</h2><div class="summary-grid">{summary_html}</div>{charts_html}</section>
-<section class="panel" id="gates"><h2>Gate matrix</h2><div class="matrix-wrap">{matrix_html}</div></section>
+<section class="panel" id="gates"><h2>Gate matrix</h2><div class="matrix-wrap">{matrix_html}{heatmap_html}</div></section>
 {scaling_html}
 {prev_run_html}
 <section class="panel" id="cells"><h2>Sweep cells</h2>{cells_banner}<div class="cells">{''.join(cell_cards) or '<p class="muted">No cells.</p>'}</div></section>
