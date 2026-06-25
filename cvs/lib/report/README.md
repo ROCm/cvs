@@ -66,6 +66,7 @@ fields:
 | `interactive_viewer` | Write `*_report_viewer.html` (default `True`) |
 | `viewer_cell_threshold` | Truncate inline cell cards in static HTML above this count |
 | `parity_compare_jsons` | Optional `(framework_id, json_path)` tuples for parity |
+| `prev_run_json` | Optional path to prior suite JSON for run-to-run delta panel |
 
 Copy an existing preset (`inferencex_atom.py`) and adjust columns/tiers.
 
@@ -135,14 +136,22 @@ export CVS_INFERENCE_PARITY_COMPARE=vllm=/path/vllm_report.json,sglang=/path/sgl
 Or set `parity_compare_jsons` on the preset. When all paths exist, the zip also contains
 `inference_parity_report.html` and `.json`.
 
-Standalone merge (no pytest):
+### Optional: run vs baseline (CI regression)
+
+Compare the current run to a prior suite JSON (same `cell_id` + host keys):
 
 ```bash
-python -m cvs.lib.report.parity.inference \
-  --reference ref_report.json --reference-id atom \
-  --compare vllm=/path/vllm_report.json \
-  --out inference_parity_report.html
+export CVS_INFERENCE_PREV_REPORT_JSON=/path/prior_inferencex_atom_report.json
 ```
+
+Or set `prev_run_json` on the inference preset. The static report and JSON include a
+`panels.prev_run` section; the interactive viewer shows delta columns and can load another
+baseline JSON file manually.
+
+### Pytest deep links
+
+Cell cards link to the matching pytest-html row when `--html` is set (same directory in the
+zip). Metric test rows (`test_cell_metrics` / `test_metric`) link to the current test nodeid.
 
 ## Training suites
 

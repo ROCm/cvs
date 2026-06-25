@@ -58,14 +58,14 @@ Prioritized ideas for later work. Not scheduled; pick up when a suite or lab nee
 - [ ] Vendor Chart.js for offline viewer (today loads from CDN; air-gapped labs need local assets)
 - [ ] Richer training report: run card, cluster aggregates (mean/worst throughput, NaN count), PASS badge styling aligned with inference
 - [ ] Multi-host cell cards in static HTML and pytest row extras (all hosts per sweep cell, not first host only)
-- [ ] `compare.prev_run` panel: generic run vs last green JSON (CI artifact path or env), for inference and training
+- [x] `compare.prev_run` panel for inference via `CVS_INFERENCE_PREV_REPORT_JSON` or preset `prev_run_json`
 
 ### Sweeps and CI
 
-- [ ] Viewer run-to-run diff: load two JSON sidecars, highlight cells/metrics beyond a threshold
+- [x] Viewer run-to-run diff: baseline JSON via `CVS_INFERENCE_PREV_REPORT_JSON`, viewer file picker, delta columns
 - [x] Config and provenance block in run card: cluster/config paths, CVS version, git SHA when available
 - [x] Threshold margin on cell cards in record-only mode (when threshold spec exists)
-- [ ] Deep links from suite report cells to matching pytest `test_cell_metrics` rows
+- [x] Deep links from suite report cells to matching pytest metric rows
 - [ ] Accuracy / gsm8k panel when accuracy metrics land in `inf_res_dict` (same optional panel pattern as scaling)
 
 ### Polish
