@@ -5,8 +5,7 @@ from __future__ import annotations
 import html
 from typing import Mapping, Optional
 
-from cvs.lib.report.formatting import fmt_num
-
+from cvs.lib.report.formatting import fmt_num, pytest_row_link_html
 
 def cell_card_css(*, compact: bool = False) -> str:
     base = """
@@ -76,6 +75,7 @@ def render_cell_card_html(
     cell_lifecycle_labels: tuple[str, ...],
     compact: bool = False,
     highlight_metric: Optional[str] = None,
+    pytest_html_basename: Optional[str] = None,
 ) -> str:
     tier_chips = "".join(
         _tier_chip(cell["tiers"].get(t, "na"), t) for t in tier_order
@@ -111,6 +111,10 @@ def render_cell_card_html(
     mini_tl = render_cell_lifecycle_html(cell.get("cell_lifecycle") or {}, cell_lifecycle_labels)
     card_cls = "cell-card cell-card-compact" if compact else "cell-card"
     host_line = f" &middot; {html.escape(str(cell['host']))}" if cell.get("show_host_in_label") else ""
+    pytest_nid = cell.get("pytest_metrics_nodeid") or cell.get("pytest_inference_nodeid")
+    pytest_link = ""
+    if pytest_html_basename and pytest_nid:
+        pytest_link = " &middot; " + pytest_row_link_html(pytest_html_basename, pytest_nid)
 
     return (
         f"<article class='{card_cls}'>"
@@ -120,6 +124,6 @@ def render_cell_card_html(
         f"<div class='headline'>{headline_val}<span class='headline-unit'>tok/s</span></div>"
         f"<div class='tiers'>{tier_chips}</div>"
         f"<div class='metrics'>{''.join(metric_rows)}</div>"
-        f"<footer class='cell-foot'>{html.escape(cell['cell_id'])}{host_line}</footer>"
+        f"<footer class='cell-foot'>{html.escape(cell['cell_id'])}{host_line}{pytest_link}</footer>"
         f"</article>"
     )

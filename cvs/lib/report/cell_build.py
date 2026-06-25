@@ -34,6 +34,29 @@ def tier_status(
     return "pass"
 
 
+def resolve_pytest_nodeids_for_cell(
+    config: InferenceReportConfig,
+    lifecycle_report: Mapping[str, list],
+    concurrency: Any,
+) -> dict[str, str]:
+    """Best-effort pytest nodeids for inference and metric rows matching one sweep cell."""
+    conc_suffix = f"-{concurrency}]"
+    inference_nid = ""
+    metrics_nid = ""
+    for nodeid in lifecycle_report:
+        if conc_suffix not in nodeid:
+            continue
+        if config.inference_test_substring in nodeid:
+            inference_nid = inference_nid or nodeid
+        if "test_cell_metrics" in nodeid or "test_metric" in nodeid:
+            if not metrics_nid or "test_cell_metrics" in nodeid:
+                metrics_nid = nodeid
+    return {
+        "pytest_inference_nodeid": inference_nid,
+        "pytest_metrics_nodeid": metrics_nid,
+    }
+
+
 def lifecycle_for_cell(
     config: InferenceReportConfig,
     lifecycle_report: Mapping[str, list],
@@ -132,6 +155,7 @@ def build_cell_record(
         tier: tier_status(config, actuals, thresholds_cell, tier, enforce)
         for tier in config.metric_tier_order
     }
+    pytest_links = resolve_pytest_nodeids_for_cell(config, lifecycle_report, conc)
 
     return {
         "model": model,
@@ -147,6 +171,7 @@ def build_cell_record(
         "tiers": tiers,
         "actuals": dict(actuals),
         "cell_lifecycle": lifecycle_for_cell(config, lifecycle_report, conc),
+        **pytest_links,
     }
 
 

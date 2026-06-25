@@ -42,6 +42,10 @@ def build_inference_report_provenance(
     commit = git_commit_short()
     if commit:
         provenance["git_commit"] = commit
+    if pytest_html_path:
+        from pathlib import Path
+
+        provenance["pytest_html_basename"] = Path(pytest_html_path).name
     return provenance
 
 

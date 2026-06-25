@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 from cvs.lib.inference.inference_suite_lifecycle import sweep_cell_result_key
@@ -68,8 +69,11 @@ def attach_inference_cell_row_extra(item, report) -> None:
         lifecycle_report=getattr(lifecycle, "report", {}),
         multi_host=len(host_dict) > 1,
     )
+    cell["pytest_metrics_nodeid"] = item.nodeid
     highlight = _highlight_metric(item, report_config, cell)
     enforce = bool(getattr(variant_config, "enforce_thresholds", False))
+    htmlpath = getattr(item.config.option, "htmlpath", None)
+    pytest_basename = Path(htmlpath).name if htmlpath else ""
     card = render_cell_card_html(
         cell,
         tier_order=report_config.metric_tier_order,
@@ -78,6 +82,7 @@ def attach_inference_cell_row_extra(item, report) -> None:
         cell_lifecycle_labels=report_config.cell_lifecycle_labels,
         compact=True,
         highlight_metric=highlight,
+        pytest_html_basename=pytest_basename or None,
     )
     snippet = (
         f"<style>{cell_card_css(compact=True)}</style>"
