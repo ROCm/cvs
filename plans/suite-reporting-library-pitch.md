@@ -12,10 +12,22 @@ report.
 - Session-end generation in `HtmlReportManager.generate_suite_reports()` (root `conftest.py`)
 - Inference wiring: preset + conftest + row extras (`inference_wiring.py`)
 - Training wiring: Megatron 8B single pilot (`training_wiring.py`)
-- Interactive viewer (`*_report_viewer.html`) driven by JSON sidecar
-- Optional inference parity (env `CVS_INFERENCE_PARITY_COMPARE` or preset `parity_compare_jsons`)
-- Optional training parity (`parity_baseline_json` or `CVS_TRAINING_PARITY_BASELINE_JSON`)
 - Reference suite: `inferencex_atom_single`
+
+## Report types
+
+See `cvs/lib/report/README.md` for wiring. Summary:
+
+| Type | Files |
+|------|-------|
+| Pytest HTML | `{run}.html` |
+| Inference suite | `{report_basename}.html`, `.json`, optional `{basename}_viewer.html` |
+| Inference parity | `inference_parity_report.html`, `.json` (optional) |
+| Training suite | `{report_basename}.html`, `.json` (e.g. `megatron_training_report.*`) |
+
+Inference reports include run card, lifecycle, sweep summaries, charts, gate matrix, and
+results table. Training reports include a per-node metrics table. Optional panels: scaling
+(inference), training parity (training), inference parity (cross-run).
 
 ## Artifacts (typical inference run)
 

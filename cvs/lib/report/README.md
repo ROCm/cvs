@@ -6,6 +6,26 @@ as the pytest HTML report.
 
 Reports are **render-only** — they do not change pass/fail or threshold enforcement.
 
+## Report types
+
+When `--html` is set, CVS may produce the following outputs. All suite-specific files use
+the preset `report_basename` (e.g. `inferencex_atom_report`).
+
+| Output | When | Format | Contents |
+|--------|------|--------|----------|
+| **Pytest HTML report** | Always with `--html` | `.html` | Standard pytest-html test log, lifecycle tables, and links to bundled files |
+| **Inference suite report** | Inference suite registered + `inf_res_dict` populated | `.html` + `.json` | Run card, session lifecycle timeline, sweep summaries, concurrency charts, gate matrix, full results table, per-cell cards (inline or summary mode for large sweeps). JSON holds the full payload for tooling and the viewer |
+| **Interactive viewer** | `interactive_viewer=True` on inference preset (default) | `{basename}_viewer.html` | Filterable cell browser, Chart.js concurrency charts, throughput heatmap, gate matrix, CSV export. Reads the JSON sidecar |
+| **Pytest row cell cards** | Inference preset with `row_card_extras` | Embedded in pytest HTML | Compact per-cell metric cards on `test_cell_metrics` / `test_metric` rows |
+| **Embedded suite dashboard** | `--self-contained-html` | Embedded in pytest HTML | Static inference suite report iframe/summary inside the pytest report |
+| **Inference parity report** | `parity_compare_jsons` or `CVS_INFERENCE_PARITY_COMPARE` and all JSON paths exist | `inference_parity_report.html` + `.json` | Side-by-side comparison of aligned sweep cells across framework runs (e.g. ATOM vs vLLM vs SGLang) |
+| **Training suite report** | Training suite registered + `training_res_dict` populated | `.html` + `.json` | Per-node metrics table (throughput, tokens, iteration time, NaN count, memory). Optional **training parity** panel when a baseline JSON is configured |
+| **Scaling panel** | Multi-node run (`nnodes > 1`) or multiple hosts per cell | Section inside inference `.html` / `.json` `panels.scaling` | Cluster throughput breakdown and optional efficiency vs a single-node baseline JSON |
+
+**Results zip** (created at session end): pytest HTML, `{suite}_html/` attachments (suite reports, logs, config copies), and optional `assets/`.
+
+**Training example basename:** `megatron_training_report` (Megatron 8B single pilot).
+
 ## Package layout
 
 ```text

@@ -654,7 +654,7 @@ in the existing code.
 
 **Suite reports (`cvs.lib.report`)**
 
-See ``cvs/lib/report/README.md`` for the full developer guide.
+See ``cvs/lib/report/README.md`` for report types and the full developer guide.
 
 When running with pytest ``--html``, CVS generates a suite dashboard (HTML + JSON)
 alongside the pytest report and bundles everything into the results zip. Inference
