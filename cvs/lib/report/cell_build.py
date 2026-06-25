@@ -124,7 +124,7 @@ def build_cell_record(
                 "bar_pct": bar_pct(float(actual), spec)
                 if spec is not None and actual is not None and enforce
                 else None,
-                "margin": margin_text(actual, spec) if enforce and spec else None,
+                "margin": margin_text(actual, spec) if spec else None,
             }
         )
 
