@@ -16,7 +16,7 @@ from cvs.lib.inference.utils.inferencex_atom_parsing import (
 
 class TestInferenceXAtomParsing(unittest.TestCase):
     def test_gated_metrics_include_w1_ix_extras(self):
-        for name in ("per_gpu_throughput", "output_tput_per_gpu", "p95_tpot_ms", "p99_ttft_ms"):
+        for name in ("per_gpu_throughput", "output_tput_per_gpu", "p99_tpot_ms", "p99_ttft_ms"):
             self.assertIn(name, GATED_METRICS)
 
     def test_enforced_metrics_cover_all_tiers(self):
@@ -31,6 +31,16 @@ class TestInferenceXAtomParsing(unittest.TestCase):
         specs = tier_metric_specs(cell, "throughput")
         self.assertIn("client.output_throughput", specs)
         self.assertNotIn("client.mean_ttft_ms", specs)
+
+    def test_tier_metric_specs_tpot_uses_p99_tail(self):
+        cell = {
+            "client.mean_tpot_ms": {"kind": "max_ms", "value": 46.8},
+            "client.p99_tpot_ms": {"kind": "max_ms", "value": 51.36},
+            "client.p95_tpot_ms": {"kind": "max_ms", "value": 53.76},
+        }
+        specs = tier_metric_specs(cell, "tpot")
+        self.assertIn("client.p99_tpot_ms", specs)
+        self.assertNotIn("client.p95_tpot_ms", specs)
 
     def test_tier_metric_specs_record_includes_non_tiered(self):
         cell = {

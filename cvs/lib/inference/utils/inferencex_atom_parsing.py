@@ -51,7 +51,7 @@ METRIC_TIERS: dict[str, tuple[str, ...]] = {
     ),
     "tpot": (
         "mean_tpot_ms",
-        "p95_tpot_ms",
+        "p99_tpot_ms",
     ),
     "health": (
         "success_rate",

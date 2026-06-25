@@ -59,6 +59,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
             "client.per_gpu_throughput",
             "client.output_tput_per_gpu",
             "client.p99_ttft_ms",
+            "client.p99_tpot_ms",
             "client.p95_tpot_ms",
         ):
             self.assertIn(key, variant.thresholds[cell])

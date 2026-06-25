@@ -183,4 +183,14 @@ def test_cell_metrics(
         return
     if not specs:
         pytest.fail(f"no threshold specs for tier {metric_tier!r} in cell {cell!r}")
+    # ATOM benchmark_serving may omit some tail percentiles even when
+    # metric_percentiles requests them; only gate metrics present in actuals.
+    specs = {
+        k: v for k, v in specs.items() if k in actuals and actuals[k] is not None
+    }
+    if not specs:
+        pytest.fail(
+            f"no assertable threshold specs for tier {metric_tier!r} in cell {cell!r} "
+            f"(metrics missing from benchmark artifact)"
+        )
     evaluate_all(actuals, specs)
