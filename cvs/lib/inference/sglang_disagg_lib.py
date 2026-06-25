@@ -117,6 +117,11 @@ class SglangDisaggPD:
         # Proxy node     : Routes requests between prefill/decode
         # Benchmark node : Generates inference load
         # ------------------------------------------------------------------
+        self.mount_vol = self.inf_dict.get(
+            'mount_vol',
+            '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
+        )
+        
         self.prefill_node_list = self.inf_dict['prefill_node_list']
         self.decode_node_list = self.inf_dict['decode_node_list']
         self.prefill_nnodes = len(self.prefill_node_list)
@@ -287,10 +292,11 @@ class SglangDisaggPD:
         if re.search('broadcom|thor', self.nic_type, re.I):
             # override the gid_index to 3 for broadcom
             self.nccl_ib_gid_index = 3
-            cmd = f'docker exec {self.container_name} /bin/bash -c "sudo \
-                    cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
-                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
-                    sleep 2; ibv_devinfo; sleep 2;" '
+            cmd = (
+                    f'docker exec {self.container_name} /bin/bash -c "sudo '
+                    f'cp {self.mount_vol}.host {self.mount_vol}; '
+                    f'sleep 2; ibv_devinfo; sleep 2;" '
+                )
             pout_dict = self.p_phdl.exec(cmd)
             dout_dict = self.d_phdl.exec(cmd)
             hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
