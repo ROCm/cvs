@@ -278,11 +278,19 @@ def test_vllm_inference(
         job.run_client()
 
         # Poll GPU while client runs.
-        # gpu_poll.log is written locally then copied into the remote out_dir
-        # (which is an NFS path on the node, not mounted on the devbox).
-        import tempfile as _tempfile
-
-        _gpu_log_local = _pl.Path(_tempfile.mkdtemp()) / "gpu_poll.log"
+        # Write gpu_poll.log into the local HTML report dir so it lands in the
+        # zip bundle.  Fall back to a tempfile when --html is not passed.
+        _htmlpath = getattr(request.config.option, "htmlpath", None)
+        _html_dir_name = getattr(request.config, "_test_html_dir", "test_html")
+        if _htmlpath:
+            _gpu_log_local = (
+                _pl.Path(_htmlpath).parent
+                / _html_dir_name
+                / f"gpu_poll_isl{isl}_osl{osl}_conc{concurrency}.log"
+            )
+        else:
+            import tempfile as _tempfile
+            _gpu_log_local = _pl.Path(_tempfile.mkdtemp()) / "gpu_poll.log"
         _gpu_log_remote = f"{job.out_dir}/gpu_poll.log"
         _model_load_mb = (
             (gpu_metrics_snap.get((cell_key, "loaded"), {}).get("gpu.used_vram") or 0)
@@ -298,7 +306,7 @@ def test_vllm_inference(
             model_load_s=_model_load_s,
             model_load_memory_mb=_model_load_mb,
         )
-        # Copy log into the node's out_dir (NFS) so it lands in the bundle.
+        # Also copy the log into the node's out_dir (NFS) for cluster-side access.
         if _gpu_log_local.exists():
             try:
                 import base64 as _b64

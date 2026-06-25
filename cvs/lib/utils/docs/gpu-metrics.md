@@ -62,10 +62,11 @@ at snapshot time — unlike `poll_gpu_metrics`, it can raise.
 **Pattern A — client is backgrounded by the framework (synchronous poll):**
 
 ```python
+import pathlib
 import time
 from cvs.lib.utils.gpu import GPU_METRICS, GPU_METRIC_UNITS, agg_readings, capture_gpu_metrics, poll_gpu_metrics
 
-def test_<framework>_inference(orch, variant_config, inf_res_dict, gpu_metrics_snap, ...):
+def test_<framework>_inference(orch, variant_config, inf_res_dict, gpu_metrics_snap, request, ...):
 
     def _snap():
         try:
@@ -80,10 +81,18 @@ def test_<framework>_inference(orch, variant_config, inf_res_dict, gpu_metrics_s
     load_s = time.monotonic() - t0
     load_mb = ((post_snap.get("gpu.used_vram") or 0) - (pre_snap.get("gpu.used_vram") or 0)) or None
 
+    # Write the log into the local report dir so it lands in the zip bundle.
+    _htmlpath = getattr(request.config.option, "htmlpath", None)
+    _html_dir = getattr(request.config, "_test_html_dir", "test_html")
+    _gpu_log = (
+        pathlib.Path(_htmlpath).parent / _html_dir / "gpu_poll.log"
+        if _htmlpath else None
+    )
+
     poll_readings = poll_gpu_metrics(
         orch,
         is_done_fn=<your done predicate>,  # e.g. job.is_client_done
-        log_path=f"{variant_config.paths.log_dir}/gpu_poll.log",
+        log_path=str(_gpu_log) if _gpu_log else None,
         model_load_s=load_s,
         model_load_memory_mb=load_mb,
     )
@@ -250,8 +259,12 @@ See `docs/threshold-kinds.md` for the full threshold kind reference (`min`, `max
 
 ## The `gpu_poll.log` file
 
-Every run writes a `gpu_poll.log` to the suite's `log_dir`. It contains one line per
-poll and a summary block:
+Every run writes `gpu_poll.log` into the local HTML report directory (the same folder
+as the per-test HTML files, e.g. `vllm_single_html/`). Because the zip bundle includes
+that directory, the log is always available in the run archive. It is also copied to
+the suite's NFS `out_dir` on the head node for cluster-side inspection.
+
+The file contains one line per poll and a summary block:
 
 ```
 [gpu poll 1/?] used_vram=131072 MB  gfx=87%  umc=74%  mm=0%
