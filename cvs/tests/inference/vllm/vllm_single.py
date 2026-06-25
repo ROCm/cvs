@@ -277,9 +277,13 @@ def test_vllm_inference(
         # Background the client, then poll GPU while it runs.
         job.run_client()
 
-        # Poll GPU while client runs
-        _gpu_log = _pl.Path(job.out_dir) / "gpu_poll.log"
-        _gpu_log.parent.mkdir(parents=True, exist_ok=True)
+        # Poll GPU while client runs.
+        # gpu_poll.log is written locally then copied into the remote out_dir
+        # (which is an NFS path on the node, not mounted on the devbox).
+        import tempfile as _tempfile
+
+        _gpu_log_local = _pl.Path(_tempfile.mkdtemp()) / "gpu_poll.log"
+        _gpu_log_remote = f"{job.out_dir}/gpu_poll.log"
         _model_load_mb = (
             (gpu_metrics_snap.get((cell_key, "loaded"), {}).get("gpu.used_vram") or 0)
             - (gpu_metrics_snap.get((cell_key, "preload"), {}).get("gpu.used_vram") or 0)
@@ -290,10 +294,24 @@ def test_vllm_inference(
             is_done_fn=job.is_client_done,
             poll_interval_s=15,
             label="poll",
-            log_path=str(_gpu_log),
+            log_path=str(_gpu_log_local),
             model_load_s=_model_load_s,
             model_load_memory_mb=_model_load_mb,
         )
+        # Copy log into the node's out_dir (NFS) so it lands in the bundle.
+        if _gpu_log_local.exists():
+            try:
+                import base64 as _b64
+
+                _enc = _b64.b64encode(_gpu_log_local.read_bytes()).decode()
+                orch.exec_on_head(
+                    f"mkdir -p {shlex.quote(job.out_dir)} && "
+                    f"printf '%s' {shlex.quote(_enc)} | base64 -d > {shlex.quote(_gpu_log_remote)}"
+                )
+            except Exception as _e:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning("gpu_poll.log upload failed: %s", _e)
         _agg = agg_readings(_poll_readings)
 
         job.wait_client_complete()
