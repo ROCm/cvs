@@ -16,7 +16,8 @@ This section records **what exists on the branch today** vs **what this plan tar
 | **Thresholds**                | MI300X W1 perf: calibrated (Section 4.1), `enforce_thresholds: true` after lab confirm. MI355X W1: CI seeds (Section 4.3), `enforce_thresholds: false`. Smoke / MTP3 / GPT-OSS: record-only                  | Per-arch lab calibration; never cross-arch copy                                                                                                                  |
 | **Accuracy (gsm8k)**          | Not implemented                                                                                                                                                                                              | M2 — Section 5 (ACC-1..7) + Phase D                                                                                                                              |
 | **Platform metrics**          | `lifecycle.record` only (server_ready, client_complete)                                                                                                                                                      | `server.*` + sweep summary — Section 6.1, CVS-2/10                                                                                                               |
-| **MTP**                       | W1 `*_atom_mtp3` dirs + thresholds seeded; server recipe flags may need orch hardening                                                                                                                       | Recipe-specific serve args; separate from M1 FP8 perf close                                                                                                      |
+| **MTP**                       | W1 `*_mtp3` flat stems + thresholds seeded; server recipe flags may need orch hardening                                                                                                                       | Recipe-specific serve args; separate from M1 FP8 perf close                                                                                                      |
+| **Shared suite helpers**      | `inference_suite_lifecycle.py`, `inference_suite_results_table.py`, `unittests/fake_orch.py` (IX uses today; other suites may import)                                                                      | Documented in variant `README.md`                                                                                                                                |
 
 
 **Branch implication:** Phase **R** and Phase **0** are **largely done** (ATOM serve + bench + W1 dirs + cluster JSON). Active work is **Phase A** MI300X lab confirmation → **M1 close** → **M2 gsm8k** on MI300X. MI355X lab is **pending** (Section 1.2) and does not block the spine.
@@ -80,18 +81,19 @@ When MI355X nodes are **not** available in the lab:
 | `cvs/input/cluster_file/mi355x_atom_single.json`                         | Example 8× MI355X cluster (pending lab)                                |
 
 
-Legacy InferenceMax configs and suites are **removed**; all work uses `inferencex_atom_single/`.
+Legacy InferenceMax configs, nested variant subdirs (`deepseek_r1_fp8_*`, `inferencemax/`), and the deprecated `inferencemax` suite are **removed**; all work uses flat `inferencex_atom_single/` stems.
 
 ### 1.4 ATOM benchmark artifact → CVS metrics contract
 
-ATOM `benchmark_serving` writes a stock JSON results file. CVS maps it through `to_client_metrics` into the `client.*` namespace used by `test_metric` and `evaluate_all`.
+ATOM `benchmark_serving` writes a stock JSON results file. CVS maps it through `to_client_metrics` into the `client.*` namespace used by `test_cell_metrics` and `evaluate_all`.
 
 
 | Topic                         | Behavior                                                                                                                                                                                                                           |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Namespace (interim)**       | All ATOM perf scalars are `client.<field>` today (Phase B may add IX-native keys for baselines only).                                                                                                                              |
 | `**metric_percentiles`**      | W1 configs use `"99"`. Benchmark emits **p99** (and mean/median) for ttft/tpot/itl/e2el — **not** p90/p95 unless percentiles string is expanded.                                                                                   |
-| **GATED_METRICS vs artifact** | Loader requires a threshold spec for every `GATED_METRICS` member per cell (including p90/p95 placeholders at `1_000_000` max). `test_metric` **skips enforcement** when the artifact did not emit that scalar — record-only PASS. |
+| **GATED_METRICS vs artifact** | Loader requires a threshold spec for every `GATED_METRICS` member per cell. `test_cell_metrics` batches enforcement by tier (throughput, ttft, tpot, health); `evaluate_all` fails loudly on missing scalars when enforcing. |
+| **Health gates (W1 perf)**      | MI300X perf: `success_rate ≥ 1`, `failed ≤ 0` when `enforce_thresholds: true` (pairs with `bench_max_failed_requests: 0`).                                                                                                  |
 | `**failed` / `success_rate`** | ATOM JSON often omits `failed` when all prompts succeed. Parser derives `failed = num_prompts - completed` and then `success_rate`.                                                                                                |
 | **Primary M1 gates**          | `client.output_throughput`, `client.mean_ttft_ms`, `client.mean_tpot_ms` (+ p99 tails where emitted).                                                                                                                              |
 
@@ -136,7 +138,7 @@ flowchart LR
   subgraph perf["Perf path today"]
     BENCH["benchmark_serving"]
     CM["client.*"]
-    TM["test_metric"]
+    TM["test_cell_metrics"]
   end
   subgraph add["CVS additions"]
     SV["server.* lifecycle"]
@@ -167,10 +169,10 @@ flowchart LR
     CLI["cvs run inferencex_atom_single"]
     CLUSTER["cluster JSON"]
   end
-  subgraph variant["Variant dir"]
-    DIR["inferencex_atom_single / VARIANT /"]
-    CONFIG["config.json or *_config.json"]
-    THRESH["threshold.json"]
+  subgraph variant["Variant (flat)"]
+    DIR["inferencex_atom_single/"]
+    CONFIG["<stem>_config.json"]
+    THRESH["<stem>_threshold.json"]
   end
   subgraph pytest["Pytest"]
     CONFT["conftest: orch + load_variant"]
@@ -491,7 +493,7 @@ Accuracy is **not** a perf sweep cell. Each row is a **separate pytest stage** (
 
 **Automation plan (summary)** — action items in **Phase D** (Section 8) and **CVS-1** (Section 1.6).
 
-- Accuracy is a **separate pytest stage** (not mixed into perf `test_metric` rows).
+- Accuracy is a **separate pytest stage** (not mixed into perf `test_cell_metrics` rows).
 - Run after **M1** MI300X perf is green; MI355X accuracy pending with hardware (Section 1.2).
 - Use a **dedicated variant stem** (e.g. `mi300x_inferencex-atom-single_deepseek-r1_fp8_accuracy`) with low concurrency / fixed eval split to limit wall time.
 - Workload-specific ACC rows (W13 code, W2 long-context, etc.) — **Section 12.2**.
@@ -602,7 +604,7 @@ Beyond the tracker matrix above, this is the **practical metric set** CVS should
 
 | Config                                    | Emitted percentiles        | CVS behavior                                                                         |
 | ----------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------ |
-| `metric_percentiles: "99"` (W1 today)     | mean, median, **p99** only | p90/p95 in threshold file are placeholders; `test_metric` **skips** if scalar absent |
+| `metric_percentiles: "95,99"` (W1 perf) | mean + **p95/p99** tails for TPOT/TTFT | Tier gates: `p99_ttft_ms`, `p95_tpot_ms` enforced in `health` / `ttft` / `tpot` tiers |
 | `metric_percentiles: "90,95,99"` (future) | full tails                 | Can gate p90/p95 per tracker rows #26–27                                             |
 | Accuracy                                  | N/A                        | Never mixed into perf `GATED_METRICS`                                                |
 
@@ -672,10 +674,10 @@ flowchart TB
 | 0-1 | **IX repo + recipe pin**  | W1 → `dsr1-fp8-mi300x-atom` / `dsr1-fp8-mi355x-atom` in `ix_recipes.json`; image pin in variant `run_card` / container | Partial — image + recipe ids; no IX git checkout in container yet |
 | 0-2 | **ATOM serve path**       | `InferenceXAtomJob.build_server_cmd` → `python -m atom.entrypoints.openai_server`                                      | **Done**                                                          |
 | 0-3 | **ATOM bench client**     | `atom.benchmarks.benchmark_serving` → `results.json`; `to_client_metrics`                                              | **Done**                                                          |
-| 0-4 | **DTNI pytest shell**     | `conftest.py` + sweep parametrization + per-metric `test_metric`                                                       | **Done**                                                          |
-| 0-5 | **Variant dirs W1**       | perf + smoke + mtp3 for MI300X and MI355X (Section 3.1)                                                                | **Done**                                                          |
-| 0-6 | **Cluster configs**       | `mi300x_atom_single.json`, `mi355x_atom_single.json`                                                                   | **Done**                                                          |
-| 0-7 | **Remove legacy configs** | Delete `inferencemax/`, `inferencemax_single/` under `config_file/inference/`                                          | **Done**                                                          |
+| 0-4 | **DTNI pytest shell**     | `conftest.py` + sweep parametrization + tiered `test_cell_metrics`; shared `inference_suite_lifecycle.py` | **Done**                                                          |
+| 0-5 | **Variant configs W1**  | Flat perf + smoke + mtp3 stems for MI300X and MI355X (Section 3.1)                                        | **Done**                                                          |
+| 0-6 | **Cluster configs**       | `mi300x_atom_single.json`, `mi355x_atom_single.json` (`inferencex_atom_mi300x` / `mi355x` container names) | **Done**                                                          |
+| 0-7 | **Remove legacy configs** | Delete `inferencemax/`, nested `deepseek_r1_fp8_*` subdirs, old monolithic JSON layouts                  | **Done**                                                          |
 
 
 ### Phase A — W1 calibration (MI300X lab-gated; MI355X pending)
@@ -684,7 +686,7 @@ flowchart TB
 | ID  | Action                        | Details                                                                                                                                                                           | Blocker?                                              |
 | --- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | A-0 | **MI300X smoke**              | `mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke` — one cell, 128 prompts; validates path before full perf matrix                                                                               | **Recommended** before A-1                            |
-| A-1 | **MI300X perf thresholds**    | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` thresholds from Section 4.1 (10% margin). Re-run after `ccd1953` parser/`test_metric` fixes — expect 81/81 with editable install (Section 1.5) | **Yes** — M1 close on MI300X                          |
+| A-1 | **MI300X perf thresholds**    | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` thresholds from Section 4.1 (10% margin). W1 perf run: ~17 pytest rows (tiered gates, server reuse on C=256). | **Yes** — M1 close on MI300X                          |
 | A-2 | **MI355X threshold seeds**    | `*_mi355x_*` dirs from Section 4.3 (ATOM run 27912164002)                                                                                                                         | **No** — in tree; lab confirm when hardware available |
 | A-3 | **Run card / PR evidence**    | HTML report, log file, bundle zip; log image, `gpu_arch`, TP8, KV mode, `ix_recipe_id`                                                                                            | Per arch                                              |
 | A-4 | **Flip `enforce_thresholds`** | MI300X perf: after confirming CVS run. MI355X: when lab available. Smoke/MTP3: stay record-only until explicitly calibrated                                                       | MI300X perf only for M1                               |

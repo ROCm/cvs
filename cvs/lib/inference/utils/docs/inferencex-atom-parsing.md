@@ -24,4 +24,4 @@ same artifact keys.
 
 - `inferencex_atom_orch.InferenceXAtomJob.parse_results`
 - `inferencex_atom_config_loader` threshold coverage (`gated_metrics=GATED_METRICS`)
-- `cvs.tests.inference.inferencex_atom.inferencex_atom_single` HTML rows
+- `cvs.tests.inference.inferencex_atom.inferencex_atom_single` — `test_cell_metrics` tiers (throughput, ttft, tpot, health, record)
