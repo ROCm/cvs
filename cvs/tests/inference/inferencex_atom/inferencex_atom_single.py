@@ -15,7 +15,10 @@ import pytest
 from cvs.lib import globals
 from cvs.lib.inference.inferencex_atom_orch import InferenceXAtomJob
 from cvs.lib.inference.utils.inferencing_config_loader import validate_sweep_selector
-from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
+from cvs.lib.inference.utils.inferencex_atom_parsing import (
+    CLIENT_METRICS as _METRICS,
+    CLIENT_METRIC_UNITS as _METRIC_UNITS,
+)
 from cvs.lib.utils.verdict import evaluate_all
 
 _spec = _ilu.spec_from_file_location("_inferencex_atom_shared", _pl.Path(__file__).with_name("_shared.py"))

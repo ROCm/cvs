@@ -70,8 +70,31 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         )
         out = job.parse_results()
         metrics = out["node0"]
+        w = raw
         self.assertIn("client.output_throughput", metrics)
         self.assertIn("client.mean_ttft_ms", metrics)
+        self.assertAlmostEqual(
+            metrics["client.per_gpu_throughput"], w["total_token_throughput"] / _TP
+        )
+        self.assertAlmostEqual(
+            metrics["client.output_tput_per_gpu"], w["output_throughput"] / _TP
+        )
+        self.assertEqual(metrics["client.p99_ttft_ms"], w["p99_ttft_ms"])
+
+    def test_parse_results_w1_tail_metrics_from_widened_fixture(self):
+        raw = json.loads((_FIXTURES / "vllm_results_widened.json").read_text())
+        job = InferenceXAtomJob(
+            orch=FakeOrch(exec_return={"node0": json.dumps(raw)}),
+            variant=_fake_variant(driver="atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        metrics = job.parse_results()["node0"]
+        self.assertEqual(metrics["client.p95_tpot_ms"], raw["p95_tpot_ms"])
+        self.assertEqual(metrics["client.p99_ttft_ms"], raw["p99_ttft_ms"])
 
     def test_parse_results_atom_json_suffix(self):
         raw = json.loads((_FIXTURES / "vllm_results_sample.json").read_text())

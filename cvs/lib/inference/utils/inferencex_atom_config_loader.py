@@ -22,8 +22,9 @@ from cvs.lib.inference.utils.inferencex_atom_recipes import apply_ix_recipe
 from cvs.lib.inference.utils.inferencing_config_loader import (
     RoleServer,
     Sweep,
+    validate_thresholds_cover_sweep,
 )
-from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
+from cvs.lib.inference.utils.inferencex_atom_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
 
 
@@ -53,7 +54,7 @@ class InferenceXAtomParams(_Forbid):
     tensor_parallelism: str = "8"
     tokenizer_mode: str = "auto"
     percentile_metrics: str = "ttft,tpot,itl,e2el"
-    metric_percentiles: str = "99"
+    metric_percentiles: str = "95,99"
     num_prompts: str = "1000"
     max_model_length: str = "8192"
     client_poll_count: str = "50"
@@ -90,29 +91,12 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
 
     @model_validator(mode="after")
     def _check_thresholds_cover_sweep(self):
-        expected = set(self.expected_cells())
-        present = set(self.thresholds.keys())
-        missing = sorted(expected - present)
-        extra = sorted(present - expected)
-        problems = []
-        if missing:
-            problems.append(f"sweep cells with no threshold entry: {missing}")
-        if extra:
-            problems.append(f"threshold keys matching no sweep cell (typo?): {extra}")
-        gated_keys = [f"client.{m}" for m in sorted(GATED_METRICS)]
-        gated_gaps = {}
-        for cell in sorted(expected & present):
-            specs = self.thresholds.get(cell) or {}
-            absent = [k for k in gated_keys if k not in specs]
-            if absent:
-                gated_gaps[cell] = absent
-        if gated_gaps:
-            problems.append(f"cells missing gated-metric specs: {gated_gaps}")
-        if problems:
-            msg = "threshold.json does not match the sweep matrix; " + "; ".join(problems)
-            if self.enforce_thresholds:
-                raise ValueError(msg)
-            warnings.warn(f"{msg} (enforce_thresholds=false -> record-only)", stacklevel=2)
+        validate_thresholds_cover_sweep(
+            expected_cells=self.expected_cells(),
+            thresholds=self.thresholds,
+            enforce_thresholds=self.enforce_thresholds,
+            gated_metrics=GATED_METRICS,
+        )
         return self
 
 
@@ -127,8 +111,13 @@ def load_variant(config_path, cluster_dict) -> InferenceXAtomVariantConfig:
 def placeholder_gated_threshold_cell(
     *,
     output_throughput_min: float = 0,
+    total_token_throughput_min: float = 0,
+    per_gpu_throughput_min: float = 0,
+    output_tput_per_gpu_min: float = 0,
     mean_ttft_max_ms: float = 1_000_000,
+    p99_ttft_max_ms: float = 1_000_000,
     mean_tpot_max_ms: float = 1_000_000,
+    p95_tpot_max_ms: float = 1_000_000,
     failed_max: int = 1_000_000_000,
     success_rate_min: float = 0,
 ) -> Dict[str, Any]:
@@ -136,17 +125,19 @@ def placeholder_gated_threshold_cell(
     loose_ms = {"kind": "max_ms", "value": 1_000_000}
     loose_tok = {"kind": "min_tok_s", "value": 0}
     return {
-        "client.total_token_throughput": loose_tok,
+        "client.total_token_throughput": {"kind": "min_tok_s", "value": total_token_throughput_min},
         "client.output_throughput": {"kind": "min_tok_s", "value": output_throughput_min},
+        "client.per_gpu_throughput": {"kind": "min_tok_s", "value": per_gpu_throughput_min},
+        "client.output_tput_per_gpu": {"kind": "min_tok_s", "value": output_tput_per_gpu_min},
         "client.mean_ttft_ms": {"kind": "max_ms", "value": mean_ttft_max_ms},
         "client.median_ttft_ms": loose_ms,
         "client.p90_ttft_ms": loose_ms,
         "client.p95_ttft_ms": loose_ms,
-        "client.p99_ttft_ms": loose_ms,
+        "client.p99_ttft_ms": {"kind": "max_ms", "value": p99_ttft_max_ms},
         "client.mean_tpot_ms": {"kind": "max_ms", "value": mean_tpot_max_ms},
         "client.median_tpot_ms": loose_ms,
         "client.p90_tpot_ms": loose_ms,
-        "client.p95_tpot_ms": loose_ms,
+        "client.p95_tpot_ms": {"kind": "max_ms", "value": p95_tpot_max_ms},
         "client.p99_tpot_ms": loose_ms,
         "client.mean_itl_ms": loose_ms,
         "client.median_itl_ms": loose_ms,

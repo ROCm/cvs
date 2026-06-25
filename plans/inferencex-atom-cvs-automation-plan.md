@@ -7,12 +7,12 @@ This section records **what exists on the branch today** vs **what this plan tar
 
 | Area                          | Current on branch                                                                                                                                                                                            | Target (this plan)                                                                                                                                               |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Suite name**                | `inferencex_atom_single` (legacy `inferencemax_single` removed)                                                                                                                                              | Same                                                                                                                                                             |
+| **Suite name**                | `inferencex_atom_single`                                                                                                                                                                                     | Same                                                                                                                                                             |
 | **Driver**                    | `InferenceXAtomJob` (`inferencex_atom_orch.py`): `params.driver=atom` → `atom.entrypoints.openai_server` + `atom.benchmarks.benchmark_serving`; `parse_results` → `to_client_metrics` (`client.*` namespace) | Same ATOM path; optional `driver=vllm` only for interim uplift variants                                                                                          |
-| **Config layout (canonical)** | `cvs/input/config_file/inference/inferencex_atom_single/<variant>/` — `<variant>_config.json` + `<variant>_threshold.json`; recipe CLI fragments in `ix_recipes.json`                                        | **Source of truth** for lab + `cvs copy-config`. Mirror under `cvs/input/dtni/inferencex_atom_single/` only when DTNI packaging converges — do not fork configs. |
+| **Config layout (canonical)** | `cvs/input/config_file/inference/inferencex_atom_single/` — flat `<stem>_config.json` + `<stem>_threshold.json` (same as `vllm_single`); recipe CLI fragments in `ix_recipes.json` | **Source of truth** for lab + `cvs copy-config`. |
 | **Cluster files**             | `cvs/input/cluster_file/mi300x_atom_single.json`, `mi355x_atom_single.json`                                                                                                                                  | Per `gpu_arch`; container names pinned in variant config (`inferencex_atom_mi300x` / `inferencex_atom_mi355x`)                                                   |
-| **Shipped W1 variants**       | `deepseek_r1_fp8_mi300x_atom_perf`, `_smoke`, `_mtp3`; `deepseek_r1_fp8_mi355x_atom_perf`, `_mtp3`                                                                                                           | + remaining W1–W18 dirs (Section 3.1)                                                                                                                            |
-| **Interim uplift**            | `mi300x_gpt_oss_120b_single`, `mi355x_inferencemax_gpt_oss_120b_single` (record-only)                                                                                                                        | Replaced by W2 ATOM dirs in M3                                                                                                                                   |
+| **Shipped W1 variants**       | `mi300x_inferencex-atom-single_deepseek-r1_fp8_{perf,smoke,mtp3}`; `mi355x_inferencex-atom-single_deepseek-r1_fp8_{perf,mtp3}`                                                                                                           | + remaining W1–W18 stems (Section 3.1)                                                                                                                            |
+| **Interim uplift**            | `mi300x_inferencex-atom-single_gpt-oss-120b_bf16`, `mi355x_inferencex-atom-single_gpt-oss-120b_bf16` (record-only)                                                                                                                        | Replaced by W2 ATOM stems in M3                                                                                                                                   |
 | **Thresholds**                | MI300X W1 perf: calibrated (Section 4.1), `enforce_thresholds: true` after lab confirm. MI355X W1: CI seeds (Section 4.3), `enforce_thresholds: false`. Smoke / MTP3 / GPT-OSS: record-only                  | Per-arch lab calibration; never cross-arch copy                                                                                                                  |
 | **Accuracy (gsm8k)**          | Not implemented                                                                                                                                                                                              | M2 — Section 5 (ACC-1..7) + Phase D                                                                                                                              |
 | **Platform metrics**          | `lifecycle.record` only (server_ready, client_complete)                                                                                                                                                      | `server.*` + sweep summary — Section 6.1, CVS-2/10                                                                                                               |
@@ -46,7 +46,7 @@ This document is the **implementation and action-item plan** for **InferenceX AT
 
 The DTNI Validation Tracker names many recipes with **MI355X** in the title (e.g. W1 `dsr1-fp8-mi355x-atom`). **This plan still requires MI300X automation** for the same workload cards wherever the model fits on 8× MI300X. Tracker omission is **not** an out-of-scope signal for MI300X.
 
-- **Variant naming:** `<workload>_mi300x_<mode>` and `<workload>_mi355x_<mode>` (e.g. `deepseek_r1_fp8_mi300x_atom_perf`, `deepseek_r1_fp8_mi355x_atom_perf`).
+- **Variant naming:** Same flat stem as `vllm_single`: `{gpu}_{framework}_{model}_{precision}[_{mode}]` (e.g. `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf`, `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf`; framework `inferencex_atom_single` → `inferencex-atom-single` in the filename).
 - `**gpu_arch`:** `mi300x` or `mi355x` in config; **separate `threshold.json` per arch** — never share thresholds across GPUs.
 - **Cluster files:** `input/cluster_file/mi300x_*.json` and `mi355x_*.json` (or equivalent) matched to variant `gpu_arch`.
 - **Implementation:** Ship `_mi300x_` and `_mi355x_` variant dirs together in code/config PRs when possible. **Lab validation** follows hardware: MI300X runs gate milestones; MI355X lab runs are **pending when hardware is available** and do not block the MI300X spine (see **Section 1.2**).
@@ -73,15 +73,14 @@ When MI355X nodes are **not** available in the lab:
 
 | Path                                                                     | Role                                                                   |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| `cvs/input/config_file/inference/inferencex_atom_single/<variant>/`      | **Canonical** variant config + threshold for lab and `cvs copy-config` |
+| `cvs/input/config_file/inference/inferencex_atom_single/`              | **Canonical** flat `*_config.json` + `*_threshold.json` pairs for lab and `cvs copy-config` |
 | `cvs/input/config_file/inference/inferencex_atom_single/ix_recipes.json` | IX recipe id → CLI fragments (pin with ATOM image / `amd-master.yaml`) |
 | `cvs/input/config_file/inference/inferencex_atom_single/README.md`       | Smoke vs perf runbook, MI355X pending note                             |
 | `cvs/input/cluster_file/mi300x_atom_single.json`                         | Example 8× MI300X cluster                                              |
 | `cvs/input/cluster_file/mi355x_atom_single.json`                         | Example 8× MI355X cluster (pending lab)                                |
-| `cvs/input/dtni/inferencex_atom_single/`                                 | **Future mirror** only — do not edit in parallel with `config_file/`   |
 
 
-Legacy `inferencemax/` and `inferencemax_single/` under `config_file/inference/` are **removed**; all new work lands under `inferencex_atom_single/`.
+Legacy InferenceMax configs and suites are **removed**; all work uses `inferencex_atom_single/`.
 
 ### 1.4 ATOM benchmark artifact → CVS metrics contract
 
@@ -308,8 +307,8 @@ The tracker matrix does **not** list MI300X explicitly. **CVS automation does.**
 
 | Workload                  | MI300X variant                                           | MI355X variant                                 | Notes                                                                             |
 | ------------------------- | -------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------- |
-| **W1** DeepSeek R1 FP8    | `deepseek_r1_fp8_mi300x_atom_perf` (+ `_smoke`, `_mtp3`) | `deepseek_r1_fp8_mi355x_atom_perf` (+ `_mtp3`) | Smoke: 128 prompts pre-gate (Section 8 A-0). MTP3: **post-M1** optional on MI300X |
-| **W2** GPT-OSS MXFP4      | `gpt_oss_120b_mi300x_atom`                               | `gpt_oss_120b_mi355x_atom`                     | Interim `mi300x_gpt_oss_120b_single` is **not** final W2                          |
+| **W1** DeepSeek R1 FP8    | `mi300x_inferencex-atom-single_deepseek-r1_fp8_{perf,smoke,mtp3}` | `mi355x_inferencex-atom-single_deepseek-r1_fp8_{perf,mtp3}` | Smoke: 128 prompts pre-gate (Section 8 A-0). MTP3: **post-M1** optional on MI300X |
+| **W2** GPT-OSS MXFP4      | `mi300x_inferencex-atom-single_gpt-oss-120b_mxfp4` (target)                               | `mi355x_inferencex-atom-single_gpt-oss-120b_mxfp4` (target)                     | Interim `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` is **not** final W2                          |
 | **W3** GLM 5.1 BF16       | `glm51_mi300x_atom`                                      | `glm51_mi355x_atom`                            | Same ISL/OSL as tracker                                                           |
 | **W13** Kimi K2.7 Code    | `kimi_k27_code_mi300x_atom`                              | `kimi_k27_code_mi355x_atom`                    |                                                                                   |
 | **W17** DeepSeek R1 MXFP4 | `deepseek_r1_mxfp4_mi300x_atom`                          | `deepseek_r1_mxfp4_mi355x_atom`                | gsm8k ≥ 0.93 on MXFP4                                                             |
@@ -397,7 +396,7 @@ Source: [ROCm/ATOM ATOM Benchmark run 27912164002](https://github.com/ROCm/ATOM/
 
 **Planning notes**
 
-- These four cells are the **MI355X W1 threshold candidates** (`deepseek_r1_fp8_mi355x_atom_perf` and `_atom_mtp3` sibling).
+- These four cells are the **MI355X W1 threshold candidates** (`mi355x_inferencex-atom-single_deepseek-r1_fp8_perf` and `_mtp3` sibling).
 - Re-pull from a newer ATOM nightly when image or `ea08015`+ moves; pin the run URL + docker tag in variant README / run card.
 - MI300X (Sections 4.1–4.2) and MI355X (Section 4.3) numbers are **close but not identical** — keep separate `threshold.json` per `gpu_arch`.
 - As other P1 workloads appear in ATOM CI, add sibling subsections here before enabling `enforce_thresholds: true` on those variants.
@@ -458,7 +457,7 @@ Accuracy is **not** a perf sweep cell. Each row is a **separate pytest stage** (
 
 | Step | Implementation                                                                                                                                                                                   |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1    | Add `deepseek_r1_fp8_mi300x_atom_accuracy/` variant: single cell, `enforce_thresholds: true`, `num_prompts` N/A (accuracy-only).                                                                 |
+| 1    | Add `mi300x_inferencex-atom-single_deepseek-r1_fp8_accuracy` variant: single cell, `enforce_thresholds: true`, `num_prompts` N/A (accuracy-only).                                                                 |
 | 2    | Extend `InferenceXAtomJob` (or sibling `InferenceXAtomAccuracyJob`) with `run_gsm8k_eval()` — invoke **lm-eval** or ATOM-shipped eval inside container against `http://localhost:{port}`.        |
 | 3    | Parse eval JSON → flat `accuracy.`* dict; attach to `inf_res_dict` under a fixed accuracy key (not per-conc sweep).                                                                              |
 | 4    | Add `test_gsm8k_accuracy` in `inferencex_atom_single.py` (or `inferencex_atom_accuracy.py` module) — runs **after** perf tests when chained, or standalone via `--config_file` accuracy variant. |
@@ -494,7 +493,7 @@ Accuracy is **not** a perf sweep cell. Each row is a **separate pytest stage** (
 
 - Accuracy is a **separate pytest stage** (not mixed into perf `test_metric` rows).
 - Run after **M1** MI300X perf is green; MI355X accuracy pending with hardware (Section 1.2).
-- Use a **dedicated variant dir** (e.g. `deepseek_r1_fp8_mi300x_atom_accuracy`) with low concurrency / fixed eval split to limit wall time.
+- Use a **dedicated variant stem** (e.g. `mi300x_inferencex-atom-single_deepseek-r1_fp8_accuracy`) with low concurrency / fixed eval split to limit wall time.
 - Workload-specific ACC rows (W13 code, W2 long-context, etc.) — **Section 12.2**.
 
 ---
@@ -512,10 +511,10 @@ From **IX ATOM Matrix**: every workload row W1–W18 is marked **Y/P** for all c
 | 4    | IX Path     | ATOM + MTP                                        | P1           | **Configs shipped** | W1 `*_mtp3` dirs; orch recipe TBD           |
 | 5    | IX Path     | ATOM-Disagg                                       | P1           | Blocked             | PD pools; SLURM spike                       |
 | 6–23 | Workload    | W1–W18 (Section 3)                                | P1/P2        | **W1 only**         | 192 matrix cells total                      |
-| 24   | Performance | Throughput per GPU (`tput_per_gpu`)               | P1           | Partial             | `client.per_gpu_throughput` derived         |
-| 25   | Performance | Output throughput per GPU (`output_tput_per_gpu`) | P1           | Partial             | Same as `client.output_throughput` / TP     |
-| 26   | Performance | TTFT mean & p99                                   | P1           | **W1 gated**        | p90/p95 record-only (Section 1.4)           |
-| 27   | Performance | TPOT mean & p95                                   | P1           | **W1 mean gated**   | p95 record-only unless percentiles expanded |
+| 24   | Performance | Throughput per GPU (`tput_per_gpu`)               | P1           | **W1 gated**        | `client.per_gpu_throughput` = total/TP        |
+| 25   | Performance | Output throughput per GPU (`output_tput_per_gpu`) | P1           | **W1 gated**        | `client.output_tput_per_gpu` = output/TP    |
+| 26   | Performance | TTFT mean & p99                                   | P1           | **W1 gated**        | p99 via `metric_percentiles: "95,99"`       |
+| 27   | Performance | TPOT mean & p95                                   | P1           | **W1 gated**        | p95 via `metric_percentiles: "95,99"`       |
 | 28   | Performance | Prefill latency p50 / p95                         | P2           | Not started         |                                             |
 | 29   | Performance | E2E mean / p95 / p99                              | P2           | Partial             | p99 emitted; p90/p95 record-only            |
 | 30   | Performance | Latency vs load (per sweep step)                  | P2           | Not started         |                                             |
@@ -543,9 +542,10 @@ Beyond the tracker matrix above, this is the **practical metric set** CVS should
 | Metric            | Namespace key                              | Producer today                       | Gate policy                                         |
 | ----------------- | ------------------------------------------ | ------------------------------------ | --------------------------------------------------- |
 | Output throughput | `client.output_throughput`                 | ATOM `results.json`                  | **min_tok_s** — primary SLO                         |
+| Per-GPU throughput | `client.per_gpu_throughput`, `client.output_tput_per_gpu` | derived `total/TP`, `output/TP` | **min_tok_s** on W1 perf cells                      |
 | Mean TTFT         | `client.mean_ttft_ms`                      | ATOM                                 | **max_ms**                                          |
 | Mean TPOT         | `client.mean_tpot_ms`                      | ATOM                                 | **max_ms**                                          |
-| P99 TTFT / TPOT   | `client.p99_ttft_ms`, `client.p99_tpot_ms` | ATOM when `metric_percentiles: "99"` | **max_ms** when emitted                             |
+| P99 TTFT / P95 TPOT | `client.p99_ttft_ms`, `client.p95_tpot_ms` | ATOM when `metric_percentiles: "95,99"` | **max_ms** when emitted                        |
 | Run health        | `client.failed`, `client.success_rate`     | derived if `failed` omitted          | **max** failed, **min** success_rate when enforcing |
 
 
@@ -555,7 +555,6 @@ Beyond the tracker matrix above, this is the **practical metric set** CVS should
 | Metric                 | Namespace key                                                 | Value to CVS              | Why useful                                      |
 | ---------------------- | ------------------------------------------------------------- | ------------------------- | ----------------------------------------------- |
 | Total token throughput | `client.total_token_throughput`                               | ATOM                      | Prefill+decode capacity; parity vs ATOM CI      |
-| Per-GPU throughput     | `client.per_gpu_throughput`                                   | derived `total / TP`      | Normalized cross-TP comparisons                 |
 | Request throughput     | `client.request_throughput`                                   | ATOM if present           | Goodput proxy at fixed conc                     |
 | Goodput                | `client.goodput`                                              | ATOM `request_goodput`    | SLA under rate limits                           |
 | Median latencies       | `client.median_ttft_ms`, `client.median_tpot_ms`              | ATOM                      | Robust center vs mean skew                      |
@@ -684,12 +683,12 @@ flowchart TB
 
 | ID  | Action                        | Details                                                                                                                                                                           | Blocker?                                              |
 | --- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| A-0 | **MI300X smoke**              | `deepseek_r1_fp8_mi300x_atom_smoke` — one cell, 128 prompts; validates path before full perf matrix                                                                               | **Recommended** before A-1                            |
-| A-1 | **MI300X perf thresholds**    | `deepseek_r1_fp8_mi300x_atom_perf` thresholds from Section 4.1 (10% margin). Re-run after `ccd1953` parser/`test_metric` fixes — expect 81/81 with editable install (Section 1.5) | **Yes** — M1 close on MI300X                          |
+| A-0 | **MI300X smoke**              | `mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke` — one cell, 128 prompts; validates path before full perf matrix                                                                               | **Recommended** before A-1                            |
+| A-1 | **MI300X perf thresholds**    | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` thresholds from Section 4.1 (10% margin). Re-run after `ccd1953` parser/`test_metric` fixes — expect 81/81 with editable install (Section 1.5) | **Yes** — M1 close on MI300X                          |
 | A-2 | **MI355X threshold seeds**    | `*_mi355x_*` dirs from Section 4.3 (ATOM run 27912164002)                                                                                                                         | **No** — in tree; lab confirm when hardware available |
 | A-3 | **Run card / PR evidence**    | HTML report, log file, bundle zip; log image, `gpu_arch`, TP8, KV mode, `ix_recipe_id`                                                                                            | Per arch                                              |
 | A-4 | **Flip `enforce_thresholds`** | MI300X perf: after confirming CVS run. MI355X: when lab available. Smoke/MTP3: stay record-only until explicitly calibrated                                                       | MI300X perf only for M1                               |
-| A-5 | **W1 MTP3 (optional)**        | `deepseek_r1_fp8_mi300x_atom_mtp3` lab + Section 4.2 thresholds                                                                                                                   | **No** — post-M1; does not block M2                   |
+| A-5 | **W1 MTP3 (optional)**        | `mi300x_inferencex-atom-single_deepseek-r1_fp8_mtp3` lab + Section 4.2 thresholds                                                                                                                   | **No** — post-M1; does not block M2                   |
 
 
 ### Phase B — Metrics pipeline
@@ -714,7 +713,7 @@ flowchart TB
 | ID  | Action        | Details                                                                                        |
 | --- | ------------- | ---------------------------------------------------------------------------------------------- |
 | C-0 | **W1**        | **Done** on branch (perf/smoke/mtp3); MI300X perf lab closes M1                                |
-| C-2 | **W2**        | MI300X first: GPT-OSS MXFP4 TP4, ISL 8K / OSL 1K; replace interim `mi300x_gpt_oss_120b_single` |
+| C-2 | **W2**        | MI300X first: GPT-OSS MXFP4 TP4, ISL 8K / OSL 1K; replace interim `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` |
 | C-3 | **W3**        | MI300X: GLM 5.1 BF16; MI355X dir when hardware available                                       |
 | C-4 | **W13**       | Kimi K2.7 Code — MI300X first                                                                  |
 | C-5 | **W17**       | DeepSeek R1 MXFP4 — MI300X first                                                               |
@@ -726,7 +725,7 @@ flowchart TB
 
 | ID  | Action                  | Details                                                                                                         |
 | --- | ----------------------- | --------------------------------------------------------------------------------------------------------------- |
-| D-1 | **Variant dir**         | Add `deepseek_r1_fp8_mi300x_atom_accuracy` — separate from perf sweep; `enforce_thresholds: true` (Section 5.2) |
+| D-1 | **Variant stem**         | Add `mi300x_inferencex-atom-single_deepseek-r1_fp8_accuracy` — separate from perf sweep; `enforce_thresholds: true` (Section 5.2) |
 | D-2 | **Harness**             | `run_gsm8k_eval()` — lm-eval or ATOM eval in container; ACC-1 + ACC-2 filters (Section 5.1)                     |
 | D-3 | **Metric namespace**    | `accuracy.gsm8k_exact_match` with `min` ≥ 0.94 FP8; add `ACCURACY_METRICS` display list (Section 5.3)           |
 | D-4 | **Pytest integration**  | `test_gsm8k_accuracy` — not parametrized per conc cell; optional chain after perf job                           |
@@ -759,7 +758,7 @@ flowchart TB
 | ID    | Action                            | Details                                                                                                           |
 | ----- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | DOC-1 | **Link tracker → plan**           | Point readers to W1–W18 table (Section 3) from `docs/reference/configuration-files/inferencex_atom.rst`           |
-| DOC-2 | **Clarify interim vLLM variants** | Mark `mi300x_gpt_oss_120b_single` as uplift placeholder until W2 ATOM lands                                       |
+| DOC-2 | **Clarify interim vLLM variants** | Mark `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` as uplift placeholder until W2 ATOM lands                                       |
 | DOC-3 | **MI300X in user docs**           | State explicitly that `inferencex_atom_single` supports **MI300X and MI355X**; MI355X lab pending per Section 1.2 |
 | DOC-4 | **Variant README**                | Keep `inferencex_atom_single/README.md` in sync with smoke/perf commands and Section 1.5                          |
 | DOC-5 | **PR checklist**                  | M1 PR: MI300X HTML + logs; note MI355X pending; `pip install -e` called out                                       |
@@ -867,7 +866,7 @@ Variant naming: `<workload>_mi300x_atom_accuracy` for gsm8k; add `_code_accuracy
 
 | ATOM reference | vLLM parity sibling | SGLang parity sibling |
 | -------------- | ------------------- | --------------------- |
-| `deepseek_r1_fp8_mi300x_atom_perf` | `deepseek_r1_fp8_mi300x_atom_vllm_perf` | `deepseek_r1_fp8_mi300x_atom_sglang_perf` |
+| `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` | `mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf` | `mi300x_inferencex-atom-single_deepseek-r1_fp8_sglang_perf` |
 | `gpt_oss_120b_mi300x_atom` (W2) | `gpt_oss_120b_mi300x_atom_vllm` | `gpt_oss_120b_mi300x_atom_sglang` |
 
 Rules:
@@ -875,7 +874,7 @@ Rules:
 - **Same** sweep cells, `gpu_arch`, and `model.id` as the ATOM reference.
 - **Separate** `threshold.json` per framework — calibrate each engine independently.
 - **Shared** `ix_recipes.json` where applicable; engine-specific args in `roles.server.vllm_args` / `sglang_args`.
-- Interim `mi300x_gpt_oss_120b_single` remains an uplift placeholder until W2 ATOM + parity triple lands.
+- Interim `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` remains an uplift placeholder until W2 ATOM + parity triple lands.
 
 **M4 deliverables:** M4-1 registry + loaders; M4-2 W1 parity triple on MI300X; M4-3 `compare.*` HTML rows (Section 12.6).
 
