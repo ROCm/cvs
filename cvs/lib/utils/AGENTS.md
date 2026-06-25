@@ -3,6 +3,9 @@
 **Boundary**: if every CVS suite (inference, training, ...) needs it, it belongs here.
 Inference-only symbols belong in `cvs/lib/inference/utils/`; single-framework symbols in `cvs/lib/<framework>/utils/`.
 
+> **New in this boundary**: `gpu.py` — GPU metrics polling, usable by any inference suite.
+> See `docs/gpu-metrics.md` for the integration guide.
+
 ---
 
 ## Files
@@ -176,3 +179,192 @@ or substitution. After calling `substitute_config`, attach `thresholds`, then bu
 - **`container.model_dump()` is the orchestrator contract** — serialises to
   `{lifetime, name, image, runtime: {name, args}}` that `OrchestratorConfig.from_configs`
   consumes; do not reshape the dict before passing it.
+
+---
+
+### `gpu.py`
+
+GPU metrics polling library. No side-effects at import time; safe to import in any suite.
+
+**When to use**: add GPU utilisation rows to an inference suite's HTML report.
+Do not copy-paste this logic — import it.
+
+#### Public API
+
+| Symbol | Kind | Purpose |
+|---|---|---|
+| `GPU_METRICS` | `list[tuple[str, str]]` | 5 derived metric keys + units, in display order. Iterate to register `test_gpu_metric` parametrize IDs and threshold keys. |
+| `GPU_METRIC_UNITS` | `dict[str, str]` | `{key: unit}` convenience dict built from `GPU_METRICS`. |
+| `capture_gpu_metrics(orch)` | function | One `amd-smi metric --json` exec on the head node. Returns `{gpu.*: value_or_None}` raw snapshot. |
+| `agg_readings(readings)` | function | Aggregates a list of raw snapshots → `{peak_gpu_memory_mb, gpu_compute_util_pct, gpu_bandwidth_util_pct}`. |
+| `poll_gpu_metrics(orch, is_done_fn, ...)` | function | Polling loop. Returns list of raw snapshots. Never raises. |
+
+#### `poll_gpu_metrics` parameters
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `orch` | — | `ContainerOrchestrator`; must have `.exec_on_head(cmd)` |
+| `is_done_fn` | — | Callable returning `bool`; polling stops when it returns `True` |
+| `poll_interval_s` | `15` | Seconds between polls |
+| `label` | `"poll"` | Log-line prefix tag |
+| `log_path` | `None` | If given, writes `gpu_poll.log` to this path |
+| `max_consecutive_failures` | `3` | Stops early after this many back-to-back `amd-smi` failures |
+| `model_load_s` | `None` | Passed through into the summary block of `gpu_poll.log` |
+| `model_load_memory_mb` | `None` | Passed through into the summary block of `gpu_poll.log` |
+
+`poll_gpu_metrics` returns the raw readings list. The caller computes the 5 derived
+metrics by combining `agg_readings(readings)` with the separately-measured
+`model_load_s` and `model_load_memory_mb` scalars.
+
+#### The 5 derived metrics and how they are computed
+
+| Key | Source | Aggregation |
+|---|---|---|
+| `peak_gpu_memory_mb` | `agg_readings` | `max(used_vram)` over polls, each poll summed across GPUs |
+| `model_load_memory_mb` | caller-measured | `post_load_snap["gpu.used_vram"] - pre_load_snap["gpu.used_vram"]` |
+| `model_load_s` | caller-measured | wall-clock elapsed while server starts |
+| `gpu_bandwidth_util_pct` | `agg_readings` | `mean(umc_activity)` over polls, each poll averaged across GPUs |
+| `gpu_compute_util_pct` | `agg_readings` | `mean(gfx_activity)` over polls, each poll averaged across GPUs |
+
+Store as `inf_res_dict[f"gpu.{key}"]` so `test_gpu_metric` can retrieve them.
+
+#### Required conftest fixtures
+
+Both fixtures must be module-scoped alongside `inf_res_dict`:
+
+```python
+@pytest.fixture(scope="module")
+def inf_res_dict():
+    return {}
+
+@pytest.fixture(scope="module")
+def gpu_metrics_snap():
+    return {}   # stores pre/post-load snapshots keyed by (cell_key, "preload"/"loaded")
+```
+
+`test_vllm_inference` accepts `gpu_metrics_snap` as a function argument to store
+intermediate snapshots. Omitting it causes a collection error even if the test never
+uses the fixture body.
+
+#### Wiring pattern
+
+Two valid patterns depending on how your client is invoked:
+
+**Pattern A — client is backgrounded by caller (synchronous poll):**
+
+```python
+from cvs.lib.utils.gpu import GPU_METRICS, GPU_METRIC_UNITS, capture_gpu_metrics, poll_gpu_metrics, agg_readings
+import time
+
+# --- inside test_<framework>_inference ---
+# Wrap capture_gpu_metrics to degrade gracefully if amd-smi is unavailable at snapshot time
+def _snap():
+    try:
+        return capture_gpu_metrics(orch)
+    except Exception:
+        return {}
+
+pre_snap = _snap()
+t0 = time.monotonic()
+# ... start server (returns immediately; use is_done_fn to signal client completion) ...
+post_snap = _snap()
+load_s = time.monotonic() - t0
+load_mb = ((post_snap.get("gpu.used_vram") or 0) - (pre_snap.get("gpu.used_vram") or 0)) or None
+
+poll_readings = poll_gpu_metrics(
+    orch,
+    is_done_fn=<your done predicate>,  # e.g. job.is_client_done
+    log_path=f"{log_dir}/gpu_poll.log",
+    model_load_s=load_s,
+    model_load_memory_mb=load_mb,
+)
+```
+
+**Pattern B — client runs synchronously in main thread (poll in a thread):**
+
+```python
+import threading
+
+done_flag = threading.Event()
+poll_readings = []
+def _poll():
+    poll_readings.extend(poll_gpu_metrics(
+        orch, done_flag.is_set,
+        log_path=f"{log_dir}/gpu_poll.log",
+        model_load_s=load_s,
+        model_load_memory_mb=load_mb,
+    ))
+poll_thread = threading.Thread(target=_poll, daemon=True)
+poll_thread.start()
+# ... run client synchronously ...
+done_flag.set()
+poll_thread.join()
+```
+
+**After polling (both patterns):**
+
+```python
+agg = agg_readings(poll_readings)
+inf_res_dict["gpu.peak_gpu_memory_mb"]     = agg.get("peak_gpu_memory_mb")
+inf_res_dict["gpu.model_load_memory_mb"]   = load_mb
+inf_res_dict["gpu.model_load_s"]           = load_s
+inf_res_dict["gpu.gpu_bandwidth_util_pct"] = agg.get("gpu_bandwidth_util_pct")
+inf_res_dict["gpu.gpu_compute_util_pct"]   = agg.get("gpu_compute_util_pct")
+```
+
+#### Ordering in `pytest_collection_modifyitems` and `pytest_generate_tests`
+
+**Collection sort** — `test_gpu_metric` must share rank with `test_metric`. Omitting
+it from the rank dict defaults to 99, which runs it after `test_teardown`.
+
+```python
+rank = {
+    ...
+    "test_metric":     4,
+    "test_gpu_metric": 4,   # must be present
+    "test_print_results_table": 5,
+    "test_teardown":   6,
+}
+```
+
+**Parametrize** — `test_gpu_metric` must be parametrized via `pytest_generate_tests`,
+not via a `@pytest.mark.parametrize` decorator. Add an `elif` branch that produces one
+instance per entry in `GPU_METRICS`. The fixture parameter name is `gpu_metric`
+(singular):
+
+```python
+def pytest_generate_tests(metafunc):
+    ...
+    elif "gpu_metric" in metafunc.fixturenames:
+        metafunc.parametrize(
+            "gpu_metric",
+            [k for k, _ in GPU_METRICS],
+            ids=[k for k, _ in GPU_METRICS],
+        )
+```
+
+Without this branch, `test_gpu_metric` collects zero instances and produces no HTML rows.
+
+#### Gotchas
+
+- **`amd-smi` must run on the host, not inside the container.** Always use
+  `orch.exec_on_head(...)`, never `orch.exec_in_container(...)`.
+- **`capture_gpu_metrics` can raise**; only `poll_gpu_metrics` guarantees never-raises.
+  Wrap one-shot snapshot calls in a `try/except` that returns `{}` (see `_snap()` above).
+- **`model_load_memory_mb` should be `None` when VRAM data is unavailable**, not `0`.
+  Use `... or None` after the subtraction so a missing-data case is skipped by
+  `test_gpu_metric` rather than gated as a zero value.
+- **`agg_readings` only returns 3 of the 5 metrics.** `model_load_memory_mb` and
+  `model_load_s` come from the caller's timing and snapshot code, not from the poll loop.
+- **All poll readings use raw `gpu.*` keys** (e.g. `gpu.used_vram`), not derived metric
+  keys (e.g. `peak_gpu_memory_mb`). Do not pass raw snapshots to `evaluate_all`.
+- **Threshold JSON keys use the `gpu.` prefix** (`"gpu.peak_gpu_memory_mb"`, not
+  `"peak_gpu_memory_mb"`). Entries without the prefix never match and silently produce
+  record-only rows even when `enforce_thresholds=True`.
+- **Pass the full cell actuals dict to `evaluate_all`**, not just the single metric's
+  value. `min_ratio` specs look up a reference metric from `actuals`; passing a
+  single-key dict causes a reference-resolution failure.
+- **`GATED_METRICS` coverage check**: if your `VariantConfig` validates that every
+  gated metric has a threshold entry, add all five `gpu.*` keys to your `GATED_METRICS`
+  set. Omitting them causes a silent green PASS with no assertions under
+  `enforce_thresholds=True` when specs are missing.
