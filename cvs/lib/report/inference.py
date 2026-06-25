@@ -222,6 +222,7 @@ def build_inference_report_payload(
         for ch in config.chart_series
     ]
 
+    from cvs.lib.report.panels.prev_run import build_prev_run_panel, resolve_prev_run_json_path
     from cvs.lib.report.panels.scaling import build_scaling_panel
 
     nnodes = int(getattr(getattr(variant_config, "params", None), "nnodes", 1) or 1)
@@ -234,6 +235,12 @@ def build_inference_report_payload(
     panels = {}
     if scaling_panel:
         panels["scaling"] = scaling_panel
+
+    prev_run_path = resolve_prev_run_json_path(config.prev_run_json)
+    if prev_run_path:
+        prev_run_panel = build_prev_run_panel(cells, Path(prev_run_path), headline_metric=config.headline_metric)
+        if prev_run_panel:
+            panels["prev_run"] = prev_run_panel
 
     return {
         "schema_version": 1,
@@ -513,6 +520,7 @@ def render_report_html(payload: dict) -> str:
     cell_lifecycle_labels = tuple(
         report.get("cell_lifecycle_labels") or ("server_ready", "client_complete")
     )
+    pytest_basename = (payload.get("provenance") or {}).get("pytest_html_basename", "")
     cell_cards = [
         render_cell_card_html(
             c,
@@ -520,6 +528,7 @@ def render_report_html(payload: dict) -> str:
             headline_metric=report["headline_metric"],
             enforce=enforce,
             cell_lifecycle_labels=cell_lifecycle_labels,
+            pytest_html_basename=pytest_basename or None,
         )
         for c in cells
     ]
@@ -534,6 +543,7 @@ def render_report_html(payload: dict) -> str:
 
     model_label = next((v for lbl, v, _ in payload.get("run_card_display", []) if lbl == "Model"), "run")
 
+    from cvs.lib.report.panels.prev_run import render_prev_run_panel_html
     from cvs.lib.report.panels.scaling import render_scaling_panel_html
 
     scaling_panel = (payload.get("panels") or {}).get("scaling")
@@ -546,6 +556,16 @@ def render_report_html(payload: dict) -> str:
         )
         scaling_nav = "<a href='#scaling'>Scaling</a>"
 
+    prev_run_panel = (payload.get("panels") or {}).get("prev_run")
+    prev_run_html = ""
+    prev_run_nav = ""
+    if prev_run_panel:
+        prev_run_html = (
+            f"<section class='panel' id='prev-run'><h2>Run vs baseline</h2>"
+            f"{render_prev_run_panel_html(prev_run_panel)}</section>"
+        )
+        prev_run_nav = "<a href='#prev-run'>Prev run</a>"
+
     viewer_nav = ""
     if viewer_name:
         viewer_nav = f"<a href='{html.escape(viewer_name)}'>Viewer</a>"
@@ -557,6 +577,7 @@ def render_report_html(payload: dict) -> str:
         "<a href='#sweep'>Sweep</a>"
         "<a href='#gates'>Gates</a>"
         f"{scaling_nav}"
+        f"{prev_run_nav}"
         "<a href='#cells'>Cells</a>"
         "<a href='#results'>Results</a>"
         f"{viewer_nav}"
@@ -574,6 +595,7 @@ def render_report_html(payload: dict) -> str:
 <section class="panel" id="sweep"><h2>Sweep analytics</h2><div class="summary-grid">{summary_html}</div>{charts_html}</section>
 <section class="panel" id="gates"><h2>Gate matrix</h2><div class="matrix-wrap">{matrix_html}</div></section>
 {scaling_html}
+{prev_run_html}
 <section class="panel" id="cells"><h2>Sweep cells</h2>{cells_banner}<div class="cells">{''.join(cell_cards) or '<p class="muted">No cells.</p>'}</div></section>
 <section class="panel" id="results"><h2>Full results</h2><div class="results-wrap">{results_html}</div></section>
 <footer class="page-foot">{html.escape(report['footer'])}</footer></div></body></html>"""

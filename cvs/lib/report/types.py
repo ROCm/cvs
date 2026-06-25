@@ -60,6 +60,7 @@ class InferenceReportConfig:
     parity_compare_jsons: tuple[tuple[str, str], ...] = ()
     parity_metrics: tuple = ()
     scaling_baseline_json: str = ""
+    prev_run_json: str = ""
     row_card_extras: bool = True
     row_card_test_names: tuple[str, ...] = ("test_metric", "test_cell_metrics")
     interactive_viewer: bool = True

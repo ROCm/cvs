@@ -1,5 +1,8 @@
 '''Panel unit tests.'''
 
+import json
+
+from cvs.lib.report.panels.prev_run import build_prev_run_panel, render_prev_run_panel_html
 from cvs.lib.report.panels.scaling import build_scaling_panel, render_scaling_panel_html
 from cvs.lib.report.panels.training_parity import build_training_parity_panel
 
@@ -40,6 +43,37 @@ def test_scaling_panel_single_host_absent():
         }
     ]
     assert build_scaling_panel(cells=cells, nnodes=1) is None
+
+
+def test_prev_run_panel_flags_regression(tmp_path):
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {
+                "cells": [
+                    {
+                        "cell_id": "ISL=1024,OSL=1024,TP=8,CONC=128",
+                        "host": "10.0.0.1",
+                        "concurrency": 128,
+                        "actuals": {"client.output_throughput": 4000.0},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    current_cells = [
+        {
+            "cell_id": "ISL=1024,OSL=1024,TP=8,CONC=128",
+            "host": "10.0.0.1",
+            "concurrency": 128,
+            "actuals": {"client.output_throughput": 3600.0},
+        }
+    ]
+    panel = build_prev_run_panel(current_cells, baseline, threshold_pct=5.0)
+    assert panel is not None
+    assert panel["rows"][0]["regression"] is True
+    assert "Prev tok/s" in render_prev_run_panel_html(panel)
 
 
 def test_training_parity_panel_ratios(tmp_path):
