@@ -1,29 +1,35 @@
 .. meta::  :description: Configure the variables in the InferenceX ATOM configuration files
-  :keywords: inference, ROCm, install, cvs, InferenceX ATOM, vLLM
+  :keywords: inference, ROCm, install, cvs, InferenceX ATOM, ATOM
 
 ***************************************
 InferenceX ATOM inference configuration file
 ***************************************
 
-InferenceX ATOM tests validate inference performance for large language models (LLMs) using vLLM backend on AMD GPU clusters. These tests ensure optimal inference throughput, latency, and token generation performance for AI serving workloads.
+InferenceX ATOM tests validate LLM serving on AMD GPU clusters using the **ATOM** stack
+(``atom.entrypoints.openai_server`` + ``atom.benchmarks.benchmark_serving``). W1 workloads
+use ``params.driver: atom``. A legacy ``params.driver: vllm`` path (``vllm serve`` +
+``vllm bench serve``) remains for GPT-OSS uplift only.
 
-The InferenceX ATOM tests check:
+The suite checks:
 
-- **Container orchestration**: Docker setup with ROCm for inference workloads
-- **Model serving**: vLLM backend initialization and model loading
-- **Performance metrics**: Output throughput, Time to First Token (TTFT), and Time Per Output Token (TPOT)
-- **Benchmarking**: Load testing with various concurrency levels and sequence lengths
-- **Result verification**: Expected throughput and latency metrics
+- **Container orchestration**: Docker with ROCm; cluster + variant container blocks merged
+- **Model serving**: ATOM OpenAI-compatible server, health + warmup probes
+- **Performance metrics**: Throughput, per-GPU throughput, TTFT/TPOT (including p99/p95 tails)
+- **Benchmarking**: Named ISL/OSL combos with explicit concurrency sweep cells
+- **Result verification**: Tiered ``client.*`` thresholds when ``enforce_thresholds`` is true
 
-InferenceX ATOM inputs use flat ``*_config.json`` + sibling ``*_threshold.json`` pairs under ``cvs/input/config_file/inference/inferencex_atom_single/`` (same layout and naming as ``vllm_single``). Filename pattern: ``{gpu}_{framework}_{model}_{precision}[_{mode}]_config.json`` (framework ``inferencex_atom_single`` → ``inferencex-atom-single`` in the stem). Pass ``--config_file`` pointing at the ``*_config.json``; the loader discovers the sole sibling ``*threshold.json`` via :func:`cvs.lib.inference.utils.inferencex_atom_config_loader.load_variant`. For example, MI300X GPT-OSS 120B uses ``mi300x_inferencex-atom-single_gpt-oss-120b_bf16_config.json`` plus ``mi300x_inferencex-atom-single_gpt-oss-120b_bf16_threshold.json``.
+Configs use flat ``*_config.json`` + sibling ``*_threshold.json`` pairs under
+``cvs/input/config_file/inference/inferencex_atom_single/``. Filename pattern:
+``{gpu}_inferencex-atom-single_{model}_{precision}[_{mode}]_config.json``.
+Pass ``--config_file`` to the ``*_config.json``; :func:`cvs.lib.utils.config_loader.substitute_config`
+discovers the sole sibling ``*threshold.json`` when ``threshold_json`` is omitted.
 
-**InferenceX ATOM / MI300X note:**
+**Cluster file:** use ``cvs/input/cluster_file/mi300x_atom_single.json`` (or ``mi355x_atom_single.json``).
+Container ``name`` must match the variant (``inferencex_atom_mi300x`` / ``inferencex_atom_mi355x``);
+the suite deep-merges variant ``container`` over the cluster file.
 
-  - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
-  - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
-  - **Server**: ``roles.server.serve_args`` and ``roles.server.env`` drive a Python-built ``vllm serve`` command inside the container (same pattern as ``vllm_single``). MI300-class defaults include ``enforce-eager``, ``block-size``, and ``no-enable-prefix-caching``.
-  - **Thresholds**: sibling ``*threshold.json`` next to the config file (exactly one file; multiple files is an error). Loaded by :func:`cvs.lib.inference.utils.inferencex_atom_config_loader.load_variant`. Cell keys use ``ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>`` with ``client.*`` metric specs (see vLLM threshold examples). ``test_metric`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all` when ``enforce_thresholds`` is true.
-  - **Sweep**: ``sweep.sequence_combinations`` (named ISL/OSL pairs) plus ``sweep.runs`` (explicit ``{combo, concurrency}`` list). Model id comes from ``model.id``.
+**W1 recipe wiring:** set ``ix_recipe_id`` (e.g. ``dsr1-fp8-mi300x-atom``) to merge server
+``atom_args`` and client ``bench_extra_args`` from ``ix_recipes.json``.
 
 Pytest and HTML layout (inferencex_atom_single)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -37,49 +43,56 @@ Pytest and HTML layout (inferencex_atom_single)
      - Notes
    * - 1
      - ``test_launch_container``
-     - Host ``docker_lib`` launch; records ``container_launch``.
+     - Host Docker launch; records ``container_launch``.
    * - 2
      - ``test_setup_sshd``
      - Multinode only; single-node skips sshd probe.
    * - 3
      - ``test_model_fetch``
-     - Ensures model bytes are present under ``paths.models_dir``.
+     - Ensures model bytes under ``paths.models_dir``.
    * - 4
      - ``test_inferencex_atom_inference``
-     - Parametrized cell; records ``server_ready`` then ``client_complete``.
+     - One parametrized cell; server start (or reuse), bench, parse ``results.json``.
    * - 5
-     - ``test_metric``
-     - One HTML row per ``client.*`` metric per cell.
+     - ``test_cell_metrics``
+     - One HTML row per **metric tier** per cell (throughput, ttft, tpot, health, record).
    * - 6
      - ``test_print_results_table``
      - Session results grid from ``inf_res_dict``.
    * - 7
      - ``test_teardown``
-     - Explicit teardown; sets ``lifecycle.torn_down`` after verify.
+     - Explicit teardown; sets ``lifecycle.torn_down``.
 
 Example variant layout
 ======================
 
-Each config stem has ``<stem>_config.json`` (``schema_version: 1``) and a sibling ``<stem>_threshold.json``. See ``mi300x_inferencex-atom-single_gpt-oss-120b_bf16_config.json`` for a GPT-OSS 120B reference, or ``mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json`` for W1 DeepSeek R1 FP8.
+Each stem has ``<stem>_config.json`` (``schema_version: 1``, ``framework: inferencex_atom_single``)
+and sibling ``<stem>_threshold.json``. See ``mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json``
+for the W1 MI300X reference.
 
-.. dropdown:: Example ``mi300x_inferencex-atom-single_gpt-oss-120b_bf16_threshold.json`` (excerpt)
+.. dropdown:: Example ``mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json`` (excerpt)
 
   .. code:: json
 
     {
-      "ISL=7168,OSL=1024,TP=8,CONC=64": {
-        "client.output_throughput": {"kind": "min_tok_s", "value": 4200},
-        "client.mean_ttft_ms": {"kind": "max_ms", "value": 500},
-        "client.mean_tpot_ms": {"kind": "max_ms", "value": 15}
+      "ISL=1024,OSL=1024,TP=8,CONC=128": {
+        "client.output_throughput": {"kind": "min_tok_s", "value": 2590.98},
+        "client.per_gpu_throughput": {"kind": "min_tok_s", "value": 648.65},
+        "client.p99_ttft_ms": {"kind": "max_ms", "value": 1834.3},
+        "client.p95_tpot_ms": {"kind": "max_ms", "value": 53.76},
+        "client.success_rate": {"kind": "min", "value": 1},
+        "client.failed": {"kind": "max", "value": 0}
       }
     }
 
-  Every member of ``GATED_METRICS`` needs a spec in each cell (see the shipped file for the full set). Set ``enforce_thresholds: false`` in ``*_config.json`` until numbers are calibrated.
+  Every member of :data:`cvs.lib.inference.utils.inferencex_atom_parsing.GATED_METRICS` needs a
+  spec in each cell when ``enforce_thresholds`` is true. W1 perf gates include
+  ``per_gpu_throughput``, ``output_tput_per_gpu``, ``p99_ttft_ms``, and ``p95_tpot_ms``.
 
 Parameters
 ==========
 
-Top-level blocks match the vLLM single-node schema (see ``plans/building-a-cvs-test-suite.md``). InferenceX ATOM-specific notes:
+Top-level blocks follow the DTNI variant schema. InferenceX ATOM-specific keys:
 
 .. list-table::
    :widths: 3 3 5
@@ -90,48 +103,53 @@ Top-level blocks match the vLLM single-node schema (see ``plans/building-a-cvs-t
      - Description
    * - ``framework``
      - ``inferencex_atom_single``
-     - Suite identifier passed to the loader.
+     - Suite identifier for :func:`load_variant`.
+   * - ``gpu_arch``
+     - ``mi300x``
+     - Must match ``ix_recipe_id`` when a recipe is set.
+   * - ``ix_recipe_id``
+     - ``dsr1-fp8-mi300x-atom``
+     - Merges ``atom_args`` / ``bench_extra_args`` from ``ix_recipes.json``.
    * - ``enforce_thresholds``
-     - ``false``
-     - When false, ``test_metric`` records ``client.*`` values without asserting. Flip to ``true`` after calibrating ``*_threshold.json``.
+     - ``true`` / ``false``
+     - When true, ``test_cell_metrics`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all`.
    * - ``paths.*``
      - ``shared_fs``, ``models_dir``, ``log_dir``, ``hf_token_file``
-     - Placeholder-substituted paths. ``models_dir`` is the HF cache pin for serve and fetch.
+     - Placeholder-substituted paths (``{user-id}`` resolved at load).
    * - ``model.id``
-     - ``openai/gpt-oss-120b``
-     - HuggingFace model id passed to ``vllm serve`` and ``vllm bench serve``.
+     - ``deepseek-ai/DeepSeek-R1-0528``
+     - HuggingFace model id for ATOM server and bench.
    * - ``container.image`` / ``container.name``
-     - ``<changeme>``
-     - Docker image and container name (set per environment).
-   * - ``container.runtime.args``
-     - ``shm_size``, ``volumes``, ``devices``
-     - Bind **only** ``/home/{user-id}:/home/{user-id}`` in ``volumes``; the orchestrator also mounts ``/home/<user>:/workspace``.
-   * - ``roles.server.serve_args``
-     - ``enforce-eager``, ``gpu-memory-utilization``, ``block-size``
-     - Extra ``vllm serve`` flags (Python-built; no host ``.sh`` staging).
+     - ``rocm/atom-dev:latest``, ``inferencex_atom_mi300x``
+     - Docker image and container name (override cluster file defaults).
+   * - ``roles.server.atom_args``
+     - ``-tp``, ``--kv_cache_dtype``
+     - Extra CLI tokens after ``--model`` / ``--server-port`` (ATOM driver).
    * - ``roles.server.env``
-     - ``VLLM_ROCM_USE_AITER``, etc.
-     - Container env merged into ``/tmp/server_env_script.sh`` before launch.
+     - ``ATOM_DISABLE_MMAP``
+     - Merged into ``/tmp/server_env_script.sh`` before server launch.
+   * - ``params.driver``
+     - ``atom`` / ``vllm``
+     - ``atom`` = ATOM server + ``benchmark_serving``; ``vllm`` = interim uplift path.
    * - ``params.tensor_parallelism``
      - ``8``
-     - Tensor-parallel size for serve and bench; appears in threshold cell keys as ``TP``.
-   * - ``params.max_model_length``
-     - ``8192``
-     - Passed to ``vllm serve --max-model-len``. ISL + OSL (with ``random_range_ratio``) must fit.
-   * - ``params.num_prompts``
-     - ``1000``
-     - Prompt count for ``vllm bench serve``.
-   * - ``params.client_poll_count`` / ``client_poll_wait_time``
-     - ``50`` / ``60``
-     - Client completion poll budget.
+     - TP size; appears in threshold cell keys as ``TP``.
+   * - ``params.reuse_server_across_sweep``
+     - ``true``
+     - Skip server restart when only concurrency changes between sweep cells.
+   * - ``params.server_warmup_wait_s`` / ``client_initial_wait_s``
+     - ``330`` / ``120``
+     - Config-driven server warmup and client poll floor (shorter on smoke configs).
+   * - ``params.metric_percentiles``
+     - ``95,99``
+     - Tail percentiles for W1 gates (p95 TPOT, p99 TTFT).
    * - ``params.bench_max_failed_requests``
      - ``0``
-     - After the bench summary, fail when ``Failed requests`` exceeds this cap.
-   * - ``sweep.sequence_combinations``
-     - named ``isl`` / ``osl`` pairs
-     - Named combos referenced by ``sweep.runs``.
-   * - ``sweep.runs``
-     - ``{combo, concurrency}``
-     - Explicit list of cells to run (not a cartesian product).
+     - Runtime cap on bench ``Failed requests``; pair with threshold ``client.failed``.
+   * - ``sweep.sequence_combinations`` / ``sweep.runs``
+     - named ISL/OSL + ``{combo, concurrency}``
+     - Explicit cell list (not a cartesian product).
 
-Legacy monolithic JSON (``config`` + ``benchmark_params``) is no longer supported by ``inferencex_atom_single``.
+Metric tiers and parsing live in :mod:`cvs.lib.inference.utils.inferencex_atom_parsing`
+(see ``cvs/lib/inference/utils/docs/inferencex-atom-parsing.md``). Legacy monolithic JSON
+(``config`` + ``benchmark_params``) and the deprecated ``inferencemax`` suite are not used.
