@@ -165,12 +165,13 @@ def _try_parse(text: str) -> list:
 
 
 def capture_gpu_metrics(orch) -> dict:
-    """One amd-smi exec via orch.exec(). Returns flat {gpu.* metrics} dict.
+    """One amd-smi exec on the host node. Returns flat {gpu.* metrics} dict.
 
-    orch: ContainerOrchestrator (has .exec(cmd) -> {host: str}).
+    orch: ContainerOrchestrator (has .exec_on_head(cmd) -> {host: str}).
+    amd-smi is a host-side tool and must run outside the container.
     Degrades gracefully on empty/unparseable JSON per host (returns all-None dict).
     """
-    out = orch.exec("sudo amd-smi metric --json")
+    out = orch.exec_on_head("amd-smi metric --json")
     all_entries = []
     for _host, text in out.items():
         all_entries.extend(_try_parse(text))

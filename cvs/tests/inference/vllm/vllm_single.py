@@ -279,6 +279,7 @@ def test_vllm_inference(
 
         # Poll GPU while client runs
         _gpu_log = _pl.Path(job.out_dir) / "gpu_poll.log"
+        _gpu_log.parent.mkdir(parents=True, exist_ok=True)
         _model_load_mb = (
             (gpu_metrics_snap.get((cell_key, "loaded"), {}).get("gpu.used_vram") or 0)
             - (gpu_metrics_snap.get((cell_key, "preload"), {}).get("gpu.used_vram") or 0)
