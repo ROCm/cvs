@@ -654,6 +654,8 @@ in the existing code.
 
 **Suite reports (`cvs.lib.report`)**
 
+See ``cvs/lib/report/README.md`` for the full developer guide.
+
 When running with pytest ``--html``, CVS generates a suite dashboard (HTML + JSON)
 alongside the pytest report and bundles everything into the results zip. Inference
 suites opt in via conftest wiring; only the preset is suite-specific.
@@ -700,7 +702,9 @@ def pytest_runtest_makereport(item, call):
 No ``test_*_report`` lifecycle stage is required; root ``pytest_sessionfinish`` calls
 ``generate_suite_reports`` automatically.
 
-**Inference parity (Phase E)** — optional, after the reference suite JSON exists:
+Full guide: ``cvs/lib/report/README.md``.
+
+**Inference parity** (optional) — after the reference suite JSON exists:
 
 - Set ``parity_compare_jsons`` on the inference preset, e.g.
   ``(("vllm", "/path/vllm_report.json"), ("sglang", "/path/sglang_report.json"))``
@@ -709,12 +713,12 @@ No ``test_*_report`` lifecycle stage is required; root ``pytest_sessionfinish`` 
     CVS_INFERENCE_PARITY_COMPARE=vllm=/path/vllm.json,sglang=/path/sglang.json
 
 Session-end hook writes ``inference_parity_report.html/json`` into the zip when all
-paths exist. W1 ``compare.*`` metrics apply automatically for ``vllm``/``sglang`` comparators.
+paths exist.
 
-**Training reports (Phase F)** — Megatron pilot in ``cvs/tests/training/megatron/``:
+**Training reports** — see ``cvs/tests/training/megatron/conftest.py``:
 
 - ``training_res_dict`` module fixture + ``configure_training_suite_report`` in conftest
 - Populate via ``record_megatron_training_results(training_res_dict, mt_obj)`` after training
-- Optional training parity baseline: ``parity_baseline_json`` on preset or env
+- Optional training parity: ``parity_baseline_json`` on preset or env
   ``CVS_TRAINING_PARITY_BASELINE_JSON=/path/prior_report.json``
 

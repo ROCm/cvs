@@ -1,4 +1,4 @@
-'''Generic pytest wiring for training suite reports (Phase F).'''
+'''Generic pytest wiring for training suite reports.'''
 
 from __future__ import annotations
 
