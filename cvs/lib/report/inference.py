@@ -35,10 +35,10 @@ from cvs.lib.report.cell_build import build_all_cells, select_summary_cells
 from cvs.lib.report.formatting import fmt_num as _fmt_num
 from cvs.lib.report.formatting import link_or_text_html as _link_or_text
 from cvs.lib.report.formatting import status_badge_html as _status_badge
+from cvs.lib.report.provenance import build_inference_report_provenance
 from cvs.lib.report.render.cell_card import render_cell_card_html
 from cvs.lib.report.viewer.scaffold import viewer_basename_for, write_interactive_viewer
 from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries
-from cvs.lib.report.viewer.scaffold import viewer_basename_for, write_interactive_viewer
 
 log = globals.log
 
@@ -183,6 +183,7 @@ def build_inference_report_payload(
     cvs_version: str = "unknown",
     pytest_html_path: str = "",
     log_file_path: str = "",
+    provenance: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Structured payload for HTML render, JSON export, and unit tests."""
     enforce = bool(getattr(variant_config, "enforce_thresholds", False))
@@ -193,10 +194,20 @@ def build_inference_report_payload(
         lifecycle_report=lifecycle_report,
     )
 
-    provenance = {
-        "pytest_html_path": pytest_html_path,
-        "log_file_path": log_file_path,
-    }
+    prov = dict(provenance or {})
+    if pytest_html_path:
+        prov.setdefault("pytest_html_path", pytest_html_path)
+    if log_file_path:
+        prov.setdefault("log_file_path", log_file_path)
+    if cvs_version:
+        prov.setdefault("cvs_version", cvs_version)
+
+    from cvs.lib.report.provenance import extend_run_card_display
+
+    run_card_display = extend_run_card_display(
+        config.run_card_display_builder(variant_config, prov),
+        prov,
+    )
     chart_series = _build_chart_series(config, cells)
     legacy_suffix = config.chart_series[0].metric_suffix if config.chart_series else ""
     legacy_chart = chart_series.get(legacy_suffix, [])
@@ -238,8 +249,8 @@ def build_inference_report_payload(
             "headline_metric": config.headline_metric,
             "embed_summary": config.embed_summary,
         },
-        "run_card_display": config.run_card_display_builder(variant_config, provenance),
-        "provenance": provenance,
+        "run_card_display": run_card_display,
+        "provenance": prov,
         "lifecycle": _aggregate_lifecycle(lifecycle_report, config.session_lifecycle_labels),
         "cells": cells,
         "chart_points": legacy_chart,
@@ -595,6 +606,7 @@ def write_report(
     cvs_version: str = "unknown",
     pytest_html_path: str = "",
     log_file_path: str = "",
+    provenance: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Build payload, render HTML + JSON sidecar. Returns artifact paths and payload."""
     payload = build_inference_report_payload(
@@ -605,6 +617,7 @@ def write_report(
         cvs_version=cvs_version,
         pytest_html_path=pytest_html_path,
         log_file_path=log_file_path,
+        provenance=provenance,
     )
     payload["report"]["session_lifecycle_labels"] = config.session_lifecycle_labels
     payload["report"]["cell_lifecycle_labels"] = config.cell_lifecycle_labels
@@ -674,6 +687,12 @@ def publish_inference_suite_report(
 
     html_path = Path(htmlpath).resolve()
     log_file = getattr(pytest_config.option, "log_file", None)
+    provenance = build_inference_report_provenance(
+        pytest_config,
+        cvs_version=cvs_version,
+        pytest_html_path=str(html_path),
+        log_file_path=str(Path(log_file).resolve()) if log_file else "",
+    )
     artifacts = write_report(
         html_path.parent / f"{config.report_basename}.html",
         config=config,
@@ -683,6 +702,7 @@ def publish_inference_suite_report(
         cvs_version=cvs_version,
         pytest_html_path=str(html_path),
         log_file_path=str(Path(log_file).resolve()) if log_file else "",
+        provenance=provenance,
     )
     log.info(
         "Suite report written (%s): %s (json: %s)",
