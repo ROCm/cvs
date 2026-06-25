@@ -5,6 +5,9 @@ All rights reserved.
 from __future__ import annotations
 
 import json
+import logging
+import pathlib
+import time
 
 # Human-readable derived metrics exposed as HTML rows (one row per entry per cell).
 # These are computed in vllm_single.py from the raw amd-smi snapshots and stored
@@ -217,9 +220,6 @@ def poll_gpu_metrics(
     Returns list of raw snapshot dicts (failed polls excluded).
     Never raises. Writes per-poll lines + summary to log_path if given.
     """
-    import time
-    import logging
-
     log = logging.getLogger(__name__)
     readings: list = []
     log_lines: list = []
@@ -286,8 +286,6 @@ def poll_gpu_metrics(
 
     if log_path is not None:
         try:
-            import pathlib
-
             pathlib.Path(log_path).write_text("\n".join(log_lines) + "\n")
         except Exception as exc:
             log.warning("poll_gpu_metrics: failed to write log %s: %s", log_path, exc)
