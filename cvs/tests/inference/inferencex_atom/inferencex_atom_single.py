@@ -14,10 +14,13 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.inference.inferencex_atom_orch import InferenceXAtomJob
-from cvs.lib.inference.utils.inferencing_config_loader import validate_sweep_selector
+from cvs.lib.inference.utils.inferencex_atom_config_loader import expand_sweep
 from cvs.lib.inference.utils.inferencex_atom_parsing import (
-    CLIENT_METRICS as _METRICS,
     CLIENT_METRIC_UNITS as _METRIC_UNITS,
+    METRIC_TIERS,
+    METRIC_TIER_ORDER,
+    RECORD_METRICS,
+    tier_metric_specs,
 )
 from cvs.lib.utils.verdict import evaluate_all
 
@@ -51,33 +54,46 @@ def _log_variant_run_card(variant_config):
     log.info("InferenceX ATOM run card: %s", "; ".join(parts))
 
 
+def _reuse_server_flag(params) -> bool:
+    raw = str(getattr(params, "reuse_server_across_sweep", "true")).strip().lower()
+    return raw in ("true", "1", "yes")
+
+
+def _server_session_key(variant_config, isl, osl):
+    p = variant_config.params
+    return (
+        variant_config.model.id,
+        p.driver,
+        str(isl),
+        str(osl),
+        variant_config.ix_recipe_id or "",
+        p.tensor_parallelism,
+    )
+
+
+def _tier_display_metric(tier):
+    if tier == "record":
+        return RECORD_METRICS[0] if RECORD_METRICS else "output_throughput"
+    names = METRIC_TIERS.get(tier, ())
+    return names[0] if names else tier
+
+
 def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
         return
     with open(config_file) as fp:
         raw = json.load(fp)
-    sweep = raw.get("sweep", {})
-    combos = sweep.get("sequence_combinations", [])
-    runs = sweep.get("runs", [])
-    validate_sweep_selector([c["name"] for c in combos], [r["combo"] for r in runs])
-    by_name = {c["name"]: c for c in combos}
-    cases = []
-    ids = []
-    for run in runs:
-        combo = by_name[run["combo"]]
-        conc = run["concurrency"]
-        cases.append((combo, conc))
-        ids.append(run["combo"] + "-conc" + str(conc))
-    if "metric" in metafunc.fixturenames:
+    cases, ids = expand_sweep(raw.get("sweep", {}))
+    if "metric_tier" in metafunc.fixturenames:
         if cases:
-            metric_cases = []
-            metric_ids = []
+            tier_cases = []
+            tier_ids = []
             for (combo, c), cid in zip(cases, ids):
-                for short, _unit in _METRICS:
-                    metric_cases.append((combo, c, short))
-                    metric_ids.append(cid + "-" + short)
-            metafunc.parametrize("seq_combo,concurrency,metric", metric_cases, ids=metric_ids)
+                for tier in METRIC_TIER_ORDER:
+                    tier_cases.append((combo, c, tier))
+                    tier_ids.append(f"{cid}-{tier}")
+            metafunc.parametrize("seq_combo,concurrency,metric_tier", tier_cases, ids=tier_ids)
     elif "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames and cases:
         metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
 
@@ -208,6 +224,7 @@ def test_inferencex_atom_inference(
     seq_combo,
     concurrency,
     inf_res_dict,
+    server_session,
     lifecycle,
     request,
 ):
@@ -218,29 +235,33 @@ def test_inferencex_atom_inference(
     osl = seq_combo["osl"]
     p = variant_config.params
     _log_variant_run_card(variant_config)
-    job = InferenceXAtomJob(
+    job = InferenceXAtomJob.from_variant(
         orch=orch,
         variant=variant_config,
         hf_token=hf_token,
         isl=isl,
         osl=osl,
         concurrency=concurrency,
-        num_prompts=p.num_prompts,
-        client_poll_count=int(p.client_poll_count),
-        client_poll_wait_s=int(p.client_poll_wait_time),
-        bench_max_failed_requests=int(p.bench_max_failed_requests),
     )
 
+    session_key = _server_session_key(variant_config, isl, osl)
+    reuse = _reuse_server_flag(p) and server_session.get("key") == session_key
+
     try:
-        job.stop_server()
-        job.build_server_cmd()
-        t = time.monotonic()
-        job.start_server()
-        job.wait_ready()
-        lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
+        if not reuse:
+            job.stop_server()
+            job.build_server_cmd()
+            t = time.monotonic()
+            job.start_server()
+            job.wait_ready()
+            lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
+            if _reuse_server_flag(p):
+                server_session["key"] = session_key
+        else:
+            log.info("reusing ATOM server across sweep cell (key=%s)", session_key)
+            job.prepare_cell_out_dir()
         t_client = time.monotonic()
         job.run_client()
-        # Bounded by variant params: client_poll_count * client_poll_wait_time (+ initial wait).
         job.wait_client_complete()
         results = job.parse_results()
     except Exception:
@@ -259,7 +280,16 @@ def test_inferencex_atom_inference(
     lifecycle.record(request.node.nodeid, "client_complete", time.monotonic() - t_client)
 
 
-def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, lifecycle, request):
+def test_cell_metrics(
+    seq_combo,
+    concurrency,
+    metric_tier,
+    inf_res_dict,
+    variant_config,
+    lifecycle,
+    request,
+):
+    """One pytest row per metric tier per sweep cell (W1 gate batches)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     isl = seq_combo["isl"]
@@ -276,21 +306,22 @@ def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, li
         pytest.skip(f"no recorded results for cell {key!r} (inference did not run)")
     host_dict = inf_res_dict[key]
     _host, actuals = next(iter(host_dict.items()))
-    full = "client." + metric
+    cell = variant_config.cell_key(isl, osl, concurrency)
+    thresholds_cell = variant_config.thresholds.get(cell) or {}
+    specs = tier_metric_specs(thresholds_cell, metric_tier)
+
+    display = _tier_display_metric(metric_tier)
+    full = f"client.{display}"
     value = actuals.get(full)
-    unit = _METRIC_UNITS.get(metric, "-")
+    unit = _METRIC_UNITS.get(display, metric_tier)
     request.node.user_properties.append(("metric_value", value))
     request.node.user_properties.append(("metric_unit", unit))
 
-    if not variant_config.enforce_thresholds:
+    if not variant_config.enforce_thresholds or metric_tier == "record":
         return
-    cell = variant_config.cell_key(isl, osl, concurrency)
-    spec = (variant_config.thresholds.get(cell) or {}).get(full)
-    if spec is None:
-        return
-    if full not in actuals or actuals[full] is None:
-        return
-    evaluate_all(actuals, {full: spec})
+    if not specs:
+        pytest.fail(f"no threshold specs for tier {metric_tier!r} in cell {cell!r}")
+    evaluate_all(actuals, specs)
 
 
 def test_teardown(orch, lifecycle, request):

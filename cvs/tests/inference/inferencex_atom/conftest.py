@@ -90,6 +90,11 @@ def hf_token(variant_config):
 
 
 @pytest.fixture(scope="module")
+def server_session():
+    return {"key": None}
+
+
+@pytest.fixture(scope="module")
 def inf_res_dict():
     return {}
 
@@ -100,7 +105,7 @@ def pytest_collection_modifyitems(items):
         "test_setup_sshd": 1,
         "test_model_fetch": 2,
         "test_inferencex_atom_inference": 3,
-        "test_metric": 4,
+        "test_cell_metrics": 4,
         "test_print_results_table": 5,
         "test_teardown": 6,
     }
