@@ -18,9 +18,10 @@ This section records **what exists on the branch today** vs **what this plan tar
 | **Platform metrics**          | `lifecycle.record` only (server_ready, client_complete)                                                                                                                                                      | `server.*` + sweep summary — Section 6.1, CVS-2/10                                                                                                               |
 | **MTP**                       | W1 `*_mtp3` flat stems + thresholds seeded; server recipe flags may need orch hardening                                                                                                                       | Recipe-specific serve args; separate from M1 FP8 perf close                                                                                                      |
 | **Shared suite helpers**      | `inference_suite_lifecycle.py`, `inference_suite_results_table.py`, `unittests/fake_orch.py` (IX uses today; other suites may import)                                                                      | Documented in variant `README.md`                                                                                                                                |
+| **Multi-node**                | `test_setup_sshd` + container sshd path exists; cluster JSON is single-node only                                                                                                                             | **M5** — **P1 immediately after M4 parity** when hardware and IX/ATOM recipe support `nnodes>1` (Section 1.7)                                                  |
 
 
-**Branch implication:** Phase **R** and Phase **0** are **largely done** (ATOM serve + bench + W1 dirs + cluster JSON). Active work is **Phase A** MI300X lab confirmation → **M1 close** → **M2 gsm8k** on MI300X. MI355X lab is **pending** (Section 1.2) and does not block the spine.
+**Branch implication:** Phase **R** and Phase **0** are **largely done** (ATOM serve + bench + W1 dirs + cluster JSON). Active work is **Phase A** MI300X lab confirmation → **M1 close** → **M2 gsm8k** on MI300X. MI355X lab is **pending** (Section 1.2) and does not block the spine. Multi-node is **pending** until M4 parity closes and a multi-node lab is available (Section 1.7).
 
 ---
 
@@ -41,6 +42,7 @@ This document is the **implementation and action-item plan** for **InferenceX AT
 - **Metrics:** Per-GPU throughput, output throughput per GPU, TTFT/TPOT (mean + tails), prefill/E2E, sweep curves, goodput, scaling — Section 6 + **Section 6.1** tiers.
 - **Quality:** gsm8k and MTP accuracy tests — Section 5; optional quant parity (P2).
 - **Platform:** CVS enhancements from inferencex_atom — Section 1.6.
+- **Multi-node scaling:** **P1 milestone M5** — immediately after framework parity (M4), before broad MTP+P2 widen (M6), whenever cluster hardware and the suite’s upstream recipe support `nnodes>1` (Section 1.7).
 - **Lab:** **Thor2 NIC first**; AINIC documented when available. See **Section 3.1** — **MI300X and MI355X are both in scope** even though the validation tracker rows are mostly MI355X-labelled.
 
 **GPU platforms (MI300X + MI355X)**
@@ -62,7 +64,7 @@ When MI355X nodes are **not** available in the lab:
 
 | Track                 | Policy                                                                                                                                                                   |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **MI300X (active)**   | Gates milestones: Phase A lab confirm → M1 close on MI300X → M2 gsm8k on MI300X → M3 P1 workloads on MI300X.                                                             |
+| **MI300X (active)**   | Gates milestones: Phase A lab confirm → M1 close on MI300X → M2 gsm8k on MI300X → M3 P1 workloads on MI300X → M4 parity → **M5 multi-node when hardware available**. |
 | **MI355X (pending)**  | Keep variant dirs, cluster JSON, and CI-seeded `threshold.json` in tree. Leave `enforce_thresholds: false`. No lab run required to merge PRs or advance M2/M3 on MI300X. |
 | **When MI355X lands** | Run confirming CVS per variant → flip `enforce_thresholds: true` per arch → attach HTML/logs to PR. Does not require re-doing MI300X work.                               |
 
@@ -79,6 +81,7 @@ When MI355X nodes are **not** available in the lab:
 | `cvs/input/config_file/inference/inferencex_atom_single/README.md`       | Smoke vs perf runbook, MI355X pending note                             |
 | `cvs/input/cluster_file/mi300x_atom_single.json`                         | Example 8× MI300X cluster                                              |
 | `cvs/input/cluster_file/mi355x_atom_single.json`                         | Example 8× MI355X cluster (pending lab)                                |
+| `cvs/input/cluster_file/mi300x_atom_multi.json` (M5)                     | Example 2+ node MI300X cluster for scaling (Section 1.7)               |
 
 
 Legacy InferenceMax configs, nested variant subdirs (`deepseek_r1_fp8_*`, `inferencemax/`), and the deprecated `inferencemax` suite are **removed**; all work uses flat `inferencex_atom_single/` stems.
@@ -121,7 +124,7 @@ Work below improves **CVS as a validation platform**, not only W1. Prioritize it
 | **CVS-3**  | **Run card in HTML report**                      | Surface `gpu_arch`, `ix_recipe_id`, `atom_image_pin`, `upstream_run_url` as pytest metadata (today: log-only via `_log_variant_run_card`)                        | B      |
 | **CVS-4**  | **Default `params.driver=atom`**                 | Schema default still `vllm`; flip default to `atom` once interim uplift variants are isolated                                                                    | 0+     |
 | **CVS-5**  | **Recipe + arch validation**                     | `apply_ix_recipe` already checks `gpu_arch` / `model.id`; extend to warn on image pin mismatch vs `ix_recipes.json` catalog                                      | 0-1    |
-| **CVS-6**  | **MTP recipe orch wiring**                       | `ix_recipes.json` MTP3 server args merged at load; orch must not drop speculative-token flags on serve restart                                                   | E      |
+| **CVS-6**  | **MTP recipe orch wiring**                       | `ix_recipes.json` MTP3 server args merged at load; orch must not drop speculative-token flags on serve restart                                                   | G      |
 | **CVS-7**  | **Artifact bundle export**                       | Zip `results.json`, server log tail, run card JSON per cell into CVS HTML bundle for PR diff vs ATOM CI                                                          | A-3    |
 | **CVS-8**  | **Upstream parity diff**                         | Script: compare CVS `client.`* per cell to Section 4 reference within margin; flags threshold drift before merge                                                 | A      |
 | **CVS-9**  | `**placeholder_gated_threshold_cell` generator** | CLI or doc recipe to mint threshold skeletons for new W2–W18 dirs (already in `inferencex_atom_config_loader.py`)                                                | C      |
@@ -129,7 +132,7 @@ Work below improves **CVS as a validation platform**, not only W1. Prioritize it
 | **CVS-11** | **Baseline variant pairing**                     | Same sweep cell for `*_atom_perf` vs `*_vllm_baseline` → parity HTML section (M4)                                                                                | C / M4 |
 | **CVS-12** | **Secret redaction**                             | Strip `HF_TOKEN` from captured server env / verbose logs in pytest hooks                                                                                         | 1.5    |
 | **CVS-13** | **Percentile policy switch**                     | Config `metric_percentiles: "90,95,99"` when tracker gates p90/p95; else keep skip-when-absent (Section 1.4)                                                     | B-4    |
-| **CVS-14** | **Multi-node `nnodes` in Job**                   | Extend `InferenceXAtomJob` for F-class scaling without new suite id                                                                                              | F      |
+| **CVS-14** | **Multi-node `nnodes` in Job**                   | Extend `InferenceXAtomJob` (then parity Jobs) for M5 scaling without new suite id; `test_setup_sshd` + `scaling.*` gates                                       | **M5** |
 | **CVS-15** | **DTNI mirror sync**                             | Single copy step from `config_file/inferencex_atom_single/` → `dtni/` when packaging converges                                                                   | DOC    |
 
 
@@ -160,6 +163,20 @@ flowchart LR
 
 - Full **Optimus / KVMGR / NIXL / hipFile / MaaS / Gateway** automation — **Appendix B** only.
 - New gates via legacy `InferenceBaseJob.verify_inference_results`.
+
+### 1.7 Multi-node priority — after parity, when available (non-blocking until M4)
+
+Multi-node automation is a **high-priority P1 requirement** on the MI300X spine: it lands as **milestone M5**, **immediately after M4** (atom-vllm + atom-sglang parity), and **before** the broad MTP+P2 expansion (M6). It does **not** block M1–M4 on single-node labs.
+
+| Track | Policy |
+| ----- | ------ |
+| **When to start** | After M4 parity frameworks are registered and W1 parity triple is green on MI300X single-node — **or in parallel** with late M3/M4 if multi-node hardware is already available and IX recipes expose `nnodes>1`. |
+| **Hardware gate** | Requires a cluster file with **2+ nodes** in `node_dict`, working inter-node SSH (sshd on :2224 inside containers), and fabric/NIC metadata on the run card. No multi-node lab → ship configs/Job hooks in repo; lab confirm deferred (same pattern as MI355X pending). |
+| **Suite scope (order)** | 1) `inferencex_atom_single` when ATOM + IX recipe supports distributed serve. 2) `inferencex_atom_vllm_single` / `inferencex_atom_sglang_single` **after** M4 parity suites exist and upstream supports multi-node for that engine. 3) Legacy `vllm_single` / SGLang disagg — out of scope; use IX parity frameworks only. |
+| **Does not block** | M1–M4 single-node work, gsm8k (M2), or P1 workload stems (M3). MTP hardening (M6) and disagg (M7) remain behind M5 when scaling hardware is available. |
+| **Deliverables (M5)** | `params.nnodes` + head/worker roles in Job; multi-node cluster JSON examples; `test_setup_sshd` enforced; `scaling.efficiency_pct` + Tier 5 metrics (Section 6.1); per-arch `threshold.json` for 2-node (then N-node) reference cells; CVS-14. |
+
+**Repo rule:** Single-node cluster JSON and pytest collection must keep working when `nnodes=1` or multi-node fields are omitted — only the variant + cluster file passed to `cvs run` exercises distributed paths.
 
 ### 1.1 Diagrams — CVS entry and DTNI inputs
 
@@ -521,7 +538,7 @@ From **IX ATOM Matrix**: every workload row W1–W18 is marked **Y/P** for all c
 | 29   | Performance | E2E mean / p95 / p99                              | P2           | Partial             | p99 emitted; p90/p95 record-only            |
 | 30   | Performance | Latency vs load (per sweep step)                  | P2           | Not started         |                                             |
 | 31   | Performance | Goodput                                           | P2           | Not started         |                                             |
-| 32   | Performance | Scaling efficiency %                              | P2           | Not started         |                                             |
+| 32   | Performance | Scaling efficiency %                              | **P1**       | Not started         | **M5** after M4 parity; Section 1.7, 6.1 Tier 5 |
 | 33   | Performance | Peak GPU memory                                   | P2           | Not started         |                                             |
 | 34   | Performance | KV cache footprint                                | P2           | Not started         |                                             |
 | 35   | Performance | Request success rate & error mix                  | P2           | Partial             | Derived `failed` / `success_rate`           |
@@ -589,7 +606,7 @@ Beyond the tracker matrix above, this is the **practical metric set** CVS should
 | MTP acceptance     | `mtp.acceptance_rate`         | ACC-4   | P2        |
 
 
-#### Tier 5 — Multi-node / scaling (Phase F)
+#### Tier 5 — Multi-node / scaling (Milestone M5 — P1 after parity)
 
 
 | Metric                | Namespace key                       | Notes                                |
@@ -634,9 +651,10 @@ See **Section 12** for perf variant modes (PERF-2..8), supplemental metrics (12.
 | **B** | **Metric namespace**      | IX-native keys; `server.`* lifecycle; Section 6.1 tiers                           | Partial (`client.*` ATOM)               |
 | **C** | **P1 workloads**          | W2, W3, W13, W17 on MI300X first; MI355X dirs when hardware available             | Not started                             |
 | **D** | **Accuracy + CI**         | gsm8k M2 on MI300X (Section 5 + Phase D below)                                    | Not started                             |
-| **E** | **MTP hardening + P2**    | W1 MTP3 lab optional; W4–W12, W14–W16, W18                                        | MTP configs only                        |
-| **F** | **Multi-node + scaling**  | `nnodes`, fabric metadata on run card                                             | Not started                             |
-| **G** | **Disagg + DI stack**     | Appendix B when infra ready                                                       | Blocked                                 |
+| **E** | **Framework parity (M4)** | `inferencex_atom_vllm_single` + `inferencex_atom_sglang_single`; W1 parity triple; `compare.*` HTML | Not started                             |
+| **F** | **Multi-node + scaling (M5)** | **P1 after M4** when hardware + recipe support `nnodes>1`; `params.nnodes`, sshd, `scaling.*` (Section 1.7) | Not started — infra hooks only on branch |
+| **G** | **MTP hardening + P2 (M6)** | W1 MTP3 lab optional; W4–W12, W14–W16, W18                                        | MTP configs only                        |
+| **H** | **Disagg + DI stack (M7)**  | Appendix B when infra ready                                                       | Blocked                                 |
 
 
 ```mermaid
@@ -648,16 +666,19 @@ flowchart TB
   PB["B: metric namespace"]
   PC["C: P1 workloads MI300X"]
   PD["D: gsm8k M2"]
-  PE["E: MTP + P2"]
-  PF["F: multi-node"]
-  PG["G: disagg DI"]
+  PE["E: parity M4"]
+  PF["F: multi-node M5 P1"]
+  PFP["F: multi-node lab pending"]
+  PG["G: MTP + P2 M6"]
+  PH["H: disagg M7"]
   PR --> P0 --> PA
   PA -.-> PAP
   P0 --> PB
   PA --> PD
   PB --> PC
-  PD --> PE --> PF --> PG
-  PC --> PE
+  PC --> PE --> PF --> PG --> PH
+  PD --> PE
+  PF -.-> PFP
 ```
 
 
@@ -719,7 +740,7 @@ flowchart TB
 | C-3 | **W3**        | MI300X: GLM 5.1 BF16; MI355X dir when hardware available                                       |
 | C-4 | **W13**       | Kimi K2.7 Code — MI300X first                                                                  |
 | C-5 | **W17**       | DeepSeek R1 MXFP4 — MI300X first                                                               |
-| C-6 | **Parity frameworks** | Ship `inferencex_atom_vllm_single` + `inferencex_atom_sglang_single` per P1 workload (Section 12.3) |
+| C-6 | **Parity frameworks (M4)** | Ship `inferencex_atom_vllm_single` + `inferencex_atom_sglang_single` per P1 workload (Section 12.3); gates M5 multi-node on parity engines |
 
 
 ### Phase D — Accuracy + CI (M2)
@@ -739,19 +760,39 @@ flowchart TB
 | D-10 | **Workload ACC rows**  | ACC-8..ACC-13 per Section 12.2 when W2/W3/W13 land                                                            |
 
 
-### Phases E–G
+### Phase E — Framework parity (M4)
+
+
+| ID   | Action                | Details                                                                               |
+| ---- | --------------------- | ------------------------------------------------------------------------------------- |
+| M4-1 | **Parity frameworks** | Register `inferencex_atom_vllm_single` + `inferencex_atom_sglang_single` (Section 12.3) |
+| M4-2 | **W1 parity triple**  | ATOM + atom-vllm + atom-sglang dirs on MI300X single-node                             |
+| M4-3 | **Compare report**    | `compare.vllm.*` / `compare.sglang.*` in HTML (Section 12.6)                        |
+
+
+### Phase F — Multi-node + scaling (M5 — P1 after parity)
+
+
+| ID   | Action                      | Details                                                                                                           | Blocker?                                      |
+| ---- | --------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| F-1  | **Multi-node cluster JSON** | Example `mi300x_atom_multi.json` (2+ nodes, `node_dict`, volumes, sshd-ready); document launcher vs worker IPs      | Hardware available                            |
+| F-2  | **`params.nnodes` in Job**  | CVS-14: extend `InferenceXAtomJob` serve + bench for head/worker; reuse `test_setup_sshd` gate                      | IX/ATOM recipe supports distributed serve    |
+| F-3  | **W1 multi-node variant**   | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` (or `nnodes` in sweep) — same ISL/OSL/conc as single-node reference cell | M4 not required for ATOM-only path; parity suites follow M4-1 |
+| F-4  | **Scaling metrics**         | Emit `scaling.efficiency_pct`, per-rank throughput; Tier 5 + tracker row #32                                      | F-2                                           |
+| F-5  | **Thresholds**              | Per-arch multi-node `threshold.json` (2-node reference); never copy single-node → multi-node blindly               | Lab confirm                                   |
+| F-6  | **Parity multi-node**       | After M4-1: atom-vllm + atom-sglang multi-node stems when upstream engines support `nnodes>1`                      | M4-1 + engine multi-node support              |
+| F-7  | **Run card / fabric**       | `nnodes`, NIC model, IB/RDMA modules on run card (Thor2 first)                                                      | Lab metadata                                  |
+
+
+### Phases G–H (M6–M7)
 
 
 | ID  | Action           | Details                                                                               |
 | --- | ---------------- | ------------------------------------------------------------------------------------- |
-| E-1 | **MTP orch**     | Wire recipe-specific serve args for `*_mtp3` (Section 4.2); Section 12.5 metrics      |
-| E-2 | **P2 dirs**      | W4–W12, W14–W16, W18 + perf modes PERF-2..8 (Section 12.1)                            |
-| E-3 | **MTP compare**  | `_mtp_compare` variant + `mtp.speedup_vs_fp8` (PERF-8)                              |
-| F-1 | **Multi-node**   | Scaling efficiency metric + fabric metadata                                           |
-| G-1 | **Disagg spike** | Before W5/W6 disagg promises                                                          |
-| M4-1 | **Parity frameworks** | Register `inferencex_atom_vllm_single` + `inferencex_atom_sglang_single` (Section 12.3) |
-| M4-2 | **W1 parity triple** | ATOM + atom-vllm + atom-sglang dirs on MI300X                                         |
-| M4-3 | **Compare report** | `compare.vllm.*` / `compare.sglang.*` in HTML (Section 12.6)                          |
+| G-1 | **MTP orch**     | Wire recipe-specific serve args for `*_mtp3` (Section 4.2); Section 12.5 metrics      |
+| G-2 | **P2 dirs**      | W4–W12, W14–W16, W18 + perf modes PERF-2..8 (Section 12.1)                            |
+| G-3 | **MTP compare**  | `_mtp_compare` variant + `mtp.speedup_vs_fp8` (PERF-8)                              |
+| H-1 | **Disagg spike** | Before W5/W6 disagg promises                                                          |
 
 
 ### Documentation
@@ -764,6 +805,7 @@ flowchart TB
 | DOC-3 | **MI300X in user docs**           | State explicitly that `inferencex_atom_single` supports **MI300X and MI355X**; MI355X lab pending per Section 1.2 |
 | DOC-4 | **Variant README**                | Keep `inferencex_atom_single/README.md` in sync with smoke/perf commands and Section 1.5                          |
 | DOC-5 | **PR checklist**                  | M1 PR: MI300X HTML + logs; note MI355X pending; `pip install -e` called out                                       |
+| DOC-6 | **Multi-node milestone**          | Document M5 ordering (after M4 parity, before M6 MTP); cluster multi JSON when F-1 lands                            |
 
 
 ---
@@ -880,6 +922,8 @@ Rules:
 
 **M4 deliverables:** M4-1 registry + loaders; M4-2 W1 parity triple on MI300X; M4-3 `compare.*` HTML rows (Section 12.6).
 
+**M5 follow-on (P1):** Multi-node stems for each parity framework when hardware and upstream `nnodes>1` support exist (Section 1.7, Phase F).
+
 ```mermaid
 flowchart LR
   REF["Same sweep ISL/OSL/conc"]
@@ -959,6 +1003,8 @@ Regression and **M4 parity** metrics. Use `min_ratio` / `max_ratio` / `within` p
 | **MTP flakes**                                  | Separate variant dir; post-M1; chat-template checklist                         |
 | **Metric key drift**                            | B-1 / Section 1.4; forbid thresholds in config                                 |
 | **192 matrix scope creep**                      | MI300X spine first; MI355X parallel track pending Section 1.2                  |
+| **Multi-node blocked on single-node lab**       | M5 deferred per Section 1.7; ship Job/config hooks without blocking M1–M4      |
+| **Parity before multi-node on vLLM/SGLang**     | M4-1 before F-6; ATOM-only multi-node (F-3) may proceed when recipe allows     |
 | **Secrets in verbose logs**                     | Rotate HF token; avoid logging env exports in CI capture when possible         |
 
 
@@ -977,11 +1023,14 @@ flowchart TB
   M2P["M2b: gsm8k MI355X pending"]
   M3["M3: P1 W2 W3 W13 W17 MI300X"]
   M4["M4: atom-vllm + atom-sglang parity"]
-  M5["M5: MTP + P2 expansion"]
-  M6["M6: multi-node + disagg"]
-  M0 --> M1 --> M2 --> M3 --> M4 --> M5 --> M6
+  M5["M5: multi-node scaling P1"]
+  M5P["M5b: multi-node lab pending"]
+  M6["M6: MTP + P2 expansion"]
+  M7["M7: disagg + DI stack"]
+  M0 --> M1 --> M2 --> M3 --> M4 --> M5 --> M6 --> M7
   M1 -.-> M1P
   M2 -.-> M2P
+  M5 -.-> M5P
 ```
 
 
@@ -992,23 +1041,26 @@ flowchart TB
     S1["M1: ATOM W1 MI300X"]
     S2["gsm8k accuracy MI300X"]
     S3["P1 W2 W3 W13 W17 MI300X"]
-    S4["atom-vllm + atom-sglang parity"]
+    S4["atom-vllm + atom-sglang parity M4"]
+    S5["multi-node scaling M5"]
   end
-  subgraph pending["MI355X — pending lab"]
+  subgraph pending["MI355X / multi-node — pending lab"]
     P1["W1 perf confirm"]
     P2["gsm8k"]
     P3["P1 workloads"]
+    P4["multi-node confirm"]
   end
   subgraph widen["P2 widen"]
     W1["Remaining W4–W18"]
     W2["Full metric matrix"]
-    W3["MTP + disagg"]
+    W3["MTP + disagg M6–M7"]
   end
-  S1 --> S2 --> S3 --> S4
-  S4 --> W1 --> W2 --> W3
+  S1 --> S2 --> S3 --> S4 --> S5
+  S5 --> W1 --> W2 --> W3
   S1 -.-> P1
   S2 -.-> P2
   S3 -.-> P3
+  S5 -.-> P4
 ```
 
 
