@@ -122,6 +122,11 @@ def inf_res_dict():
     return {}
 
 
+@pytest.fixture(scope="module")
+def gpu_metrics_snap():
+    return {}
+
+
 def pytest_collection_modifyitems(items):
     """Pin the lifecycle order explicitly instead of relying on definition order.
 
