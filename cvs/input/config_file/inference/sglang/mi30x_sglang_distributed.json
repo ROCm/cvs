@@ -17,6 +17,7 @@
     "_example_nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
     "nccl_ib_hca": "<changeme>",
 	"hca_id_prefix": "<changeme>",
+	"mount_vol": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so",
 	"_example_nccl_socket_ifname": "eno0",
     "nccl_socket_ifname": "<changeme>",
 	"_example_gloo_socket_ifname": "eno0",
@@ -47,8 +48,7 @@
 	      "/home/{user-id}": "/home/{user-id}",
 	      "/mnt/dtni/models": "/root/models",
 	      "/dev/infiniband": "/dev/infiniband",
-		  "mount_vol": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so",
-	      "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+		  "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
 	      "/lib/libibverbs.d": "/lib/libibverbs.d"
           },
 		"env_dict":
