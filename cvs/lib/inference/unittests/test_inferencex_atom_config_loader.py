@@ -157,6 +157,25 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         self.assertEqual(ids[1], "w1_1k_1k-conc256")
         self.assertEqual(cases[0][1], 128)
 
+    def test_w1_perf_threshold_health_gates_tight_when_enforcing(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom_single/"
+            "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertTrue(variant.enforce_thresholds)
+        cell = "ISL=1024,OSL=1024,TP=8,CONC=128"
+        self.assertEqual(variant.thresholds[cell]["client.success_rate"]["value"], 1)
+        self.assertEqual(variant.thresholds[cell]["client.failed"]["value"], 0)
+
+    def test_placeholder_threshold_cell_covers_gated_metrics(self):
+        cell = placeholder_gated_threshold_cell()
+        from cvs.lib.inference.utils.inferencex_atom_parsing import GATED_METRICS
+
+        for short in GATED_METRICS:
+            self.assertIn(f"client.{short}", cell, short)
+
 
 if __name__ == "__main__":
     unittest.main()

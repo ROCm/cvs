@@ -6,6 +6,7 @@ All rights reserved.
 import unittest
 
 from cvs.lib.inference.utils.inferencex_atom_parsing import (
+    CLIENT_METRICS,
     ENFORCED_METRICS,
     GATED_METRICS,
     METRIC_TIERS,
@@ -39,6 +40,16 @@ class TestInferenceXAtomParsing(unittest.TestCase):
         specs = tier_metric_specs(cell, "record")
         self.assertIn("client.median_ttft_ms", specs)
         self.assertNotIn("client.output_throughput", specs)
+
+    def test_gated_metrics_subset_of_client_metrics(self):
+        client_short = {short for short, _unit in CLIENT_METRICS}
+        missing = GATED_METRICS - client_short
+        self.assertEqual(missing, set(), f"GATED_METRICS not in CLIENT_METRICS: {missing}")
+
+    def test_health_tier_metrics_in_enforced_set(self):
+        for name in ("success_rate", "failed"):
+            self.assertIn(name, ENFORCED_METRICS)
+            self.assertIn(name, METRIC_TIERS["health"])
 
 
 if __name__ == "__main__":
