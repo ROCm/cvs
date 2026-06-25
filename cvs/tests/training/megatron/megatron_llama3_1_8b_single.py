@@ -273,7 +273,7 @@ def test_launch_megatron_containers(phdl, training_dict):
     update_test_result()
 
 
-def test_llama_3_1_fp8_single_node(phdl, gpu_type, training_dict, model_params_dict, hf_token):
+def test_llama_3_1_fp8_single_node(phdl, gpu_type, training_dict, model_params_dict, hf_token, training_res_dict):
     """
     Pytest: Single-node Megatron Llama 3.1 FP8 training lifecycle test.
 
@@ -309,4 +309,7 @@ def test_llama_3_1_fp8_single_node(phdl, gpu_type, training_dict, model_params_d
     mt_obj.start_training_job()
     mt_obj.poll_for_training_completion()
     mt_obj.verify_training_results()
+    from cvs.lib.report.training_collect import record_megatron_training_results
+
+    record_megatron_training_results(training_res_dict, mt_obj)
     update_test_result()
