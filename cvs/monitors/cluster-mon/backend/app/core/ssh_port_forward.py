@@ -2,8 +2,8 @@
 Shared SSH port-forwarding bridge for CVS cluster-mon.
 
 _run_bridge() creates a bidirectional byte-copy between a paramiko Channel
-and a Unix socketpair. Used by both Pssh and JumpHostPssh to implement
-open_port_forward() without ephemeral TCP port allocation.
+and a Unix socketpair. Used by SshManager.open_port_forward() without
+ephemeral TCP port allocation.
 """
 
 import socket

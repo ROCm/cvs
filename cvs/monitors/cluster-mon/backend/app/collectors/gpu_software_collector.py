@@ -206,8 +206,6 @@ class GPUSoftwareCollector:
 
         logger.info("Collecting all GPU software information (optimized)")
 
-        # IMPORTANT: Run commands SEQUENTIALLY to avoid parallel-ssh thread safety issues
-        # asyncio.gather() was causing "munmap_chunk(): invalid pointer" crashes
         version_output = await ssh_manager.exec_async("amd-smi version --json", timeout=60)
         firmware_output = await ssh_manager.exec_async("amd-smi firmware --json", timeout=120)
 
