@@ -1,5 +1,5 @@
 {
-  "_comment": "MI300X W1 calibrated from CVS lab run 2026-06-23. Throughput mins = measured × 0.9; latency maxes = measured × 1.1. Tail gates: p99_ttft = mean_ttft × 2.5 × 1.1 margin; p95_tpot = mean_tpot × 1.15 × 1.1 margin. Per-GPU mins derived from cluster totals / TP8.",
+  "_comment": "MI300X W1 calibrated from CVS lab run 2026-06-23. Throughput mins = measured × 0.9; latency maxes = measured × 1.1. Tail gates: p99_ttft = mean_ttft × 2.5 × 1.1 margin; p95_tpot = mean_tpot × 1.15 × 1.1 margin. Per-GPU mins derived from cluster totals / TP8. Health: success_rate=1, failed=0 (matches params.bench_max_failed_requests).",
   "ISL=1024,OSL=1024,TP=8,CONC=128": {
     "client.total_token_throughput": {"kind": "min_tok_s", "value": 5189.17},
     "client.output_throughput": {"kind": "min_tok_s", "value": 2590.98},
@@ -24,8 +24,8 @@
     "client.p90_e2el_ms": {"kind": "max_ms", "value": 1000000},
     "client.p95_e2el_ms": {"kind": "max_ms", "value": 1000000},
     "client.p99_e2el_ms": {"kind": "max_ms", "value": 1000000},
-    "client.success_rate": {"kind": "min", "value": 0},
-    "client.failed": {"kind": "max", "value": 1000000000}
+    "client.success_rate": {"kind": "min", "value": 1},
+    "client.failed": {"kind": "max", "value": 0}
   },
   "ISL=1024,OSL=1024,TP=8,CONC=256": {
     "client.total_token_throughput": {"kind": "min_tok_s", "value": 7877.7},
@@ -51,7 +51,7 @@
     "client.p90_e2el_ms": {"kind": "max_ms", "value": 1000000},
     "client.p95_e2el_ms": {"kind": "max_ms", "value": 1000000},
     "client.p99_e2el_ms": {"kind": "max_ms", "value": 1000000},
-    "client.success_rate": {"kind": "min", "value": 0},
-    "client.failed": {"kind": "max", "value": 1000000000}
+    "client.success_rate": {"kind": "min", "value": 1},
+    "client.failed": {"kind": "max", "value": 0}
   }
 }
