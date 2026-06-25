@@ -169,6 +169,65 @@
                         "tokens_per_sec": "<changeme>"
                     }
                 }
+            },
+            "llama3_405b":
+            {
+                "mi300x":
+                {
+                    "tokenizer_path": "meta-llama/Llama-3.1-405B",
+                    "model_size": "405b",
+                    "global_batch_size": "<changeme>",
+                    "micro_batch_size": "<changeme>",
+                    "sequence_length": "8192",
+                    "data_parallel_shard_degree": "8",
+                    "tensor_parallel_degree": "8",
+                    "pipeline_parallel_degree": "1",
+                    "context_parallel_degree": "1",
+                    "expert_parallel_degree": "1",
+                    "activation_checkpointing": "selective",
+                    "compile": "false",
+                    "enable_float8": "true",
+                    "hf_assets_path": "./assets/hf/Llama-3.1-405B",
+                    "converters": "[\"float8\"]",
+                    "dataset": "c4",
+                    "lr": "8e-5",
+                    "warmup_steps": "200",
+                    "enable_async_tensor_parallel": "false",
+                    "precompute_float8_dynamic_scale_for_fsdp": "false",
+                    "result_dict":
+                    {
+                        "_example_tokens_per_sec": "500.0",
+                        "tokens_per_sec": "<changeme>"
+                    }
+                },
+                "mi325":
+                {
+                    "tokenizer_path": "meta-llama/Llama-3.1-405B",
+                    "model_size": "405b",
+                    "global_batch_size": "<changeme>",
+                    "micro_batch_size": "<changeme>",
+                    "sequence_length": "8192",
+                    "data_parallel_shard_degree": "8",
+                    "tensor_parallel_degree": "8",
+                    "pipeline_parallel_degree": "1",
+                    "context_parallel_degree": "1",
+                    "expert_parallel_degree": "1",
+                    "activation_checkpointing": "selective",
+                    "compile": "false",
+                    "enable_float8": "true",
+                    "hf_assets_path": "./assets/hf/Llama-3.1-405B",
+                    "converters": "[\"float8\"]",
+                    "dataset": "c4",
+                    "lr": "8e-5",
+                    "warmup_steps": "200",
+                    "enable_async_tensor_parallel": "false",
+                    "precompute_float8_dynamic_scale_for_fsdp": "false",
+                    "result_dict":
+                    {
+                        "_example_tokens_per_sec": "550.0",
+                        "tokens_per_sec": "<changeme>"
+                    }
+                }
             }
         }
     }
