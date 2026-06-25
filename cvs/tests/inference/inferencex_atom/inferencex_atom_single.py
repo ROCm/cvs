@@ -33,7 +33,7 @@ log = globals.log
 
 
 def test_ix_run_deck(inf_res_dict, variant_config, lifecycle, request):
-    """Experimental: write IX Run Deck HTML when pytest-html is enabled (render-only)."""
+    """Write IX Run Deck HTML/JSON when pytest-html is enabled (render-only)."""
     htmlpath = getattr(request.config.option, "htmlpath", None)
     if not htmlpath:
         return
@@ -41,26 +41,40 @@ def test_ix_run_deck(inf_res_dict, variant_config, lifecycle, request):
     import importlib.metadata
     from pathlib import Path
 
-    from cvs.lib.inference.inferencex_atom_run_deck import write_run_deck
+    import pytest_html
+
+    from cvs.lib.inference.inferencex_atom_run_deck import (
+        render_run_deck_embed_html,
+        write_run_deck,
+    )
 
     try:
         cvs_version = importlib.metadata.version("cvs")
     except importlib.metadata.PackageNotFoundError:
         cvs_version = "dev"
 
-    deck_path = Path(htmlpath).resolve().parent / "inferencex_atom_run_deck.html"
-    write_run_deck(
-        deck_path,
+    html_path = Path(htmlpath).resolve()
+    log_file = getattr(request.config.option, "log_file", None)
+    artifacts = write_run_deck(
+        html_path.parent / "inferencex_atom_run_deck.html",
         variant_config=variant_config,
         inf_res_dict=inf_res_dict,
         lifecycle_report=lifecycle.report,
         cvs_version=cvs_version,
+        pytest_html_path=str(html_path),
+        log_file_path=str(Path(log_file).resolve()) if log_file else "",
     )
-    log.info("IX Run Deck written: %s", deck_path)
+    log.info("IX Run Deck written: %s (json: %s)", artifacts["html"], artifacts["json"])
 
     mgr = getattr(request.config, "_html_report_manager", None)
     if mgr and mgr.is_enabled:
-        mgr.add_html_to_report(deck_path, link_name="IX Run Deck", request=request)
+        mgr.add_html_to_report(artifacts["html"], link_name="IX Run Deck", request=request)
+        mgr.add_html_to_report(artifacts["json"], link_name="IX Run Deck JSON", request=request)
+        if getattr(request.config.option, "self_contained_html", False):
+            embed = render_run_deck_embed_html(artifacts["payload"])
+            request.node.user_properties.append(
+                ("pytest_html_extra", pytest_html.extras.html(embed))
+            )
 
 
 def _log_variant_run_card(variant_config):
