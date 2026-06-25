@@ -6,6 +6,9 @@ as the pytest HTML report.
 
 Reports are **render-only** — they do not change pass/fail or threshold enforcement.
 
+Inference reports automatically include **provenance** in the JSON sidecar and run card when
+generated via pytest: CVS version, optional git commit, `--cluster_file`, and `--config_file`.
+
 ## Report types
 
 When `--html` is set, CVS may produce the following outputs. All suite-specific files use
@@ -189,4 +192,4 @@ python -m pytest cvs/lib/report/unittests/ -q
 ## Related docs
 
 - `cvs/lib/inference/ADDING_A_SUITE.md` — checklist entry for new inference suites
-- `plans/suite-reporting-library-pitch.md` — short scope / follow-up list
+- `plans/suite-reporting-library-pitch.md`: scope and future TODO list
