@@ -57,6 +57,7 @@
     "num_prompts": "1000",
     "max_model_length": "4096",
     "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
     "client_poll_count": "80",
     "client_poll_wait_time": "60"
   },
