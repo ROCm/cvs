@@ -108,10 +108,7 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
 
 
 def expand_sweep(sweep):
-    """Expand a sweep definition into ``(cases, ids)`` for pytest parametrization.
-
-    Each case is ``(combo_dict, concurrency)``; each id is ``{combo}-conc{N}``.
-  """
+    """Expand a sweep into ``(cases, ids)`` for pytest parametrization."""
     if hasattr(sweep, "sequence_combinations"):
         combos = [c.model_dump() for c in sweep.sequence_combinations]
         runs = [r.model_dump() for r in sweep.runs]
