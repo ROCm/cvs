@@ -26,9 +26,9 @@ class _LegacyInferenceXAtomInferenceJobPlaceholder:
 
     def __init__(self, *args, **kwargs):
         raise NotImplementedError(
-            "InferenceJobFactory no longer builds a host+docker InferenceX ATOM InferenceBaseJob. "
-            "Use ``cvs.lib.inference.inferencex_atom_orch.InferenceXAtomJob`` with "
-            "``ContainerOrchestrator`` from the tests under ``cvs.tests.inference.inferencex_atom``."
+            "InferenceMax is deprecated. Use ``cvs.lib.inference.inferencex_atom_orch.InferenceXAtomJob`` "
+            "with ``ContainerOrchestrator`` from the tests under ``cvs.tests.inference.inferencex_atom`` "
+            "(``inferencex_atom_single`` suite and schema_version 1 configs)."
         )
 
 
@@ -51,15 +51,19 @@ class InferenceJobFactory:
             inference_config_dict: Infrastructure configuration dictionary
 
         Returns:
-            Detected framework name ('vllm', 'inferencemax', or 'inferencex_atom')
+            Detected framework name ('vllm' or 'inferencex_atom')
 
         Detection logic:
-            - If 'inferencemax_repo' is present → inferencemax (legacy monolithic configs)
+            - If 'inferencemax_repo' is present → inferencex_atom (InferenceMax deprecated)
             - If 'vllm_script_path' is present → vLLM
             - Otherwise → vLLM (default)
         """
         if 'inferencemax_repo' in inference_config_dict:
-            return 'inferencemax'
+            log.warning(
+                "inferencemax_repo detected; InferenceMax is deprecated — "
+                "use the inferencex_atom_single suite instead"
+            )
+            return 'inferencex_atom'
         elif 'vllm_script_path' in inference_config_dict:
             return 'vllm'
         else:
@@ -94,33 +98,10 @@ class InferenceJobFactory:
             framework: Framework type ('vllm', 'inferencemax', 'inferencex_atom', or None for auto-detect)
 
         Returns:
-            Instance of :class:`~cvs.lib.inference.inferencex_atom_orch.InferenceXAtomJob` or the
-            vLLM placeholder (raises if selected).
+            A placeholder that raises — use suite jobs under ``cvs.tests.inference`` instead.
 
         Raises:
             ValueError: If framework is not supported
-
-        Examples:
-            # Auto-detect from config:
-            job = InferenceJobFactory.create_job(
-                c_phdl=client_handle,
-                s_phdl=server_handle,
-                model_name='qwen3-80b',
-                inference_config_dict=config,  # Contains 'inferencemax_repo' or 'vllm_script_path'
-                benchmark_params_dict=params,
-                hf_token=token
-            )
-
-            # Explicit framework:
-            job = InferenceJobFactory.create_job(
-                framework='vllm',
-                c_phdl=client_handle,
-                s_phdl=server_handle,
-                model_name='qwen3-80b',
-                inference_config_dict=config,
-                benchmark_params_dict=params,
-                hf_token=token
-            )
         """
         # Auto-detect framework if not specified
         if framework is None:
@@ -128,6 +109,9 @@ class InferenceJobFactory:
             log.info(f'Auto-detected framework: {framework}')
 
         framework_lower = framework.lower()
+        if framework_lower == 'inferencemax':
+            log.warning("framework='inferencemax' is deprecated; use inferencex_atom_single")
+            framework_lower = 'inferencex_atom'
 
         if framework_lower not in cls._FRAMEWORK_CLASSES:
             supported = ', '.join(cls._FRAMEWORK_CLASSES.keys())
