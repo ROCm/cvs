@@ -118,4 +118,5 @@ def pytest_html_results_summary(prefix, summary, postfix):
 @pytest.hookimpl(hookwrapper=True)
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
     yield  # wait for pytest-html and all other plugins to finish writing the report
+    session.config._html_report_manager.generate_suite_reports(session)
     session.config._html_report_manager.create_zip_bundle(session)

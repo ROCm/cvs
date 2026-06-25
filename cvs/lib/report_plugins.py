@@ -27,6 +27,20 @@ REPORT_STYLE_OVERRIDES = """<style>
 </style>"""
 
 
+def _maybe_publish_inference_parity(report_config, report_manager, pytest_config) -> None:
+    """Optional inference parity attach when compare JSON paths are configured."""
+    from cvs.lib.report.parity.session import publish_session_inference_parity
+    from cvs.lib.report.types import InferenceReportConfig
+
+    if not isinstance(report_config, InferenceReportConfig):
+        return
+    publish_session_inference_parity(
+        report_config,
+        report_manager=report_manager,
+        pytest_config=pytest_config,
+    )
+
+
 class HtmlReportManager:
     """Manages pytest-html report externalization, styling, and zip bundling."""
 
@@ -36,6 +50,7 @@ class HtmlReportManager:
         self._test_html_dir = getattr(config, "_test_html_dir", "test_html")
         self._custom_test_reports = []  # Track reports added via add_html_to_report
         self._config_files = {}  # Track copied config files {original_path: relative_path}
+        self._suite_report_embed = None  # Optional iframe embed for self-contained pytest HTML
 
         # Store reference for access from pytest hooks
         HtmlReportManager._current_instance = self
@@ -353,19 +368,73 @@ class HtmlReportManager:
 
     def generate_reports_section(self):
         """Generate HTML for the Reports section showing added HTML reports only."""
-        if not self._custom_test_reports:
+        embed = getattr(self, "_suite_report_embed", None)
+        if not self._custom_test_reports and not embed:
             return ""
 
-        # Simple Reports section - only test reports, no config files
-        html = '<div><h2>Reports</h2><ul>'
-
-        # Add test reports only
-        for report in self._custom_test_reports:
-            html += f'<li><a href="{report["path"]}" target="_blank">{report["name"]}</a></li>'
-
-        html += '</ul></div>'
+        html = '<div><h2>Reports</h2>'
+        if self._custom_test_reports:
+            html += "<ul>"
+            for report in self._custom_test_reports:
+                html += f'<li><a href="{report["path"]}" target="_blank">{report["name"]}</a></li>'
+            html += "</ul>"
+        if embed:
+            html += embed
+        html += "</div>"
 
         return html
+
+    def generate_suite_reports(self, session):
+        """Write registered suite report HTML/JSON into the pytest bundle before zip."""
+        if not self.is_enabled:
+            return
+
+        from cvs.lib.report.inference import publish_inference_suite_report
+        from cvs.lib.report.registry import get_session_results, get_suite_report_config
+        from cvs.lib.report.training import publish_training_suite_report
+        from cvs.lib.report.types import InferenceReportConfig, TrainingReportConfig
+
+        report_config = get_suite_report_config(session.config)
+        if report_config is None:
+            return
+
+        store = get_session_results()
+
+        if isinstance(report_config, TrainingReportConfig):
+            training_res_dict = store.get("training_res_dict")
+            if not training_res_dict:
+                log.info("Skipping training suite report: no results in session store")
+                return
+            publish_training_suite_report(
+                report_config,
+                training_res_dict=training_res_dict,
+                report_manager=self,
+                pytest_config=session.config,
+            )
+            return
+
+        if not isinstance(report_config, InferenceReportConfig):
+            log.warning("Unknown suite report config type: %s", type(report_config).__name__)
+            return
+
+        inf_res_dict = store.get("inf_res_dict")
+        if not inf_res_dict:
+            log.info("Skipping suite report generation: no results in session store")
+            return
+
+        artifacts = publish_inference_suite_report(
+            report_config,
+            variant_config=store.get("variant_config"),
+            inf_res_dict=inf_res_dict,
+            lifecycle_report=store.get("lifecycle_report") or {},
+            report_manager=self,
+            pytest_config=session.config,
+        )
+        if artifacts and getattr(session.config.option, "self_contained_html", False):
+            from cvs.lib.report.inference import render_report_embed_html
+
+            self._suite_report_embed = render_report_embed_html(artifacts["payload"])
+        _maybe_publish_inference_parity(report_config, self, session.config)
 
     @staticmethod
     def inject_style_overrides(prefix):
