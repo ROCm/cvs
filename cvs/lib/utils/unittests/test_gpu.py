@@ -551,15 +551,17 @@ class TestCaptureGpuMetrics(unittest.TestCase):
     """
 
     def _make_orch(self, raw_gpu_list):
-        """Return a mock orchestrator whose exec result decodes to raw_gpu_list.
+        """Return a mock orchestrator whose exec_on_head result decodes to raw_gpu_list.
 
-        The real ContainerOrchestrator.exec(cmd) returns {host: str}; we mock
-        the same shape so tests are grounded in the actual interface contract.
+        amd-smi is a host-side tool; capture_gpu_metrics uses exec_on_head so
+        the command runs on the bare-metal node, not inside the container.
+        The real ContainerOrchestrator.exec_on_head(cmd) returns {host: str};
+        we mock the same shape so tests are grounded in the actual interface contract.
         """
         import json
 
         orch = MagicMock()
-        orch.exec.return_value = {"node0": json.dumps(raw_gpu_list)}
+        orch.exec_on_head.return_value = {"node0": json.dumps(raw_gpu_list)}
         return orch
 
     def test_happy_path_key_set_matches_all_keys(self):
@@ -571,8 +573,8 @@ class TestCaptureGpuMetrics(unittest.TestCase):
         self.assertIsInstance(out, dict)
         self.assertEqual(set(out.keys()), set(ALL_KEYS))
         mock_parse.assert_called_once_with([_full_gpu_entry()])
-        # Pin the exact command string sent to amd-smi.
-        orch.exec.assert_called_once_with("sudo amd-smi metric --json")
+        # Pin the exact command string sent to amd-smi (host-side, no sudo needed).
+        orch.exec_on_head.assert_called_once_with("amd-smi metric --json")
         # Verify parse result is actually returned, not silently discarded.
         self.assertEqual(out["gpu.gfx_activity"], 30)
         self.assertIsNotNone(out["gpu.total_vram"])
@@ -586,7 +588,7 @@ class TestCaptureGpuMetrics(unittest.TestCase):
         import json
 
         orch = MagicMock()
-        orch.exec.return_value = {
+        orch.exec_on_head.return_value = {
             "node0": json.dumps([_full_gpu_entry(gfx=10)]),
             "node1": json.dumps([_full_gpu_entry(gfx=20)]),
         }
@@ -606,7 +608,7 @@ class TestCaptureGpuMetrics(unittest.TestCase):
     def test_no_raise_on_malformed_orch_output(self):
         """If orch returns non-JSON text, capture_gpu_metrics degrades; never raises."""
         orch = MagicMock()
-        orch.exec.return_value = {"node0": "not valid json at all"}
+        orch.exec_on_head.return_value = {"node0": "not valid json at all"}
         try:
             out = capture_gpu_metrics(orch)
         except Exception as exc:  # noqa: BLE001
@@ -626,7 +628,7 @@ class TestCaptureGpuMetrics(unittest.TestCase):
         for val in non_list_values:
             with self.subTest(decoded_type=type(val).__name__):
                 orch = MagicMock()
-                orch.exec.return_value = {"node0": json.dumps(val)}
+                orch.exec_on_head.return_value = {"node0": json.dumps(val)}
                 try:
                     out = capture_gpu_metrics(orch)
                 except Exception as exc:  # noqa: BLE001
