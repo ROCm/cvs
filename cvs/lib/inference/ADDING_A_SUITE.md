@@ -12,13 +12,15 @@ moment you need it.
 Every concern has exactly one home. Before writing any code, locate your work on
 this table:
 
-| Layer | Directory | What belongs here |
-|---|---|---|
-| Framework-agnostic | `cvs/lib/utils/` | `BaseVariantConfig`, `substitute_config`, `Paths`, `ContainerSpec`, `evaluate_all` |
-| Serving-generic | `cvs/lib/inference/utils/` | `Sweep`, `SeqCombo`, `GoodputSlo`, `Roles`, `validate_sweep_selector` |
-| Framework-specific | `cvs/lib/<framework>/utils/` | `VariantConfig` subclass, `Params`, `load_variant`, metric vocabulary |
-| Test suite | `cvs/tests/inference/<framework>/` | `conftest.py`, test module(s) |
-| Input configs | `cvs/input/config_file/inference/<framework>/` | `_config.json`, `_threshold.json` |
+
+| Layer              | Directory                                      | What belongs here                                                                  |
+| ------------------ | ---------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Framework-agnostic | `cvs/lib/utils/`                               | `BaseVariantConfig`, `substitute_config`, `Paths`, `ContainerSpec`, `evaluate_all` |
+| Serving-generic    | `cvs/lib/inference/utils/`                     | `Sweep`, `SeqCombo`, `GoodputSlo`, `Roles`, `validate_sweep_selector`              |
+| Framework-specific | `cvs/lib/<framework>/utils/`                   | `VariantConfig` subclass, `Params`, `load_variant`, metric vocabulary              |
+| Test suite         | `cvs/tests/inference/<framework>/`             | `conftest.py`, test module(s)                                                      |
+| Input configs      | `cvs/input/config_file/inference/<framework>/` | `_config.json`, `_threshold.json`                                                  |
+
 
 Decision rule at every layer boundary:
 
@@ -121,16 +123,16 @@ and the validator ordering rules.
 Key points:
 
 - `cell_key` is the **single source of truth**. The loader's coverage check
-  (`_check_thresholds_cover_sweep`) calls it to build expected keys; `test_metric`
-  calls it to look up the threshold spec. Change the format in one place and both
-  paths move together. A space, field-order change, or separator difference silently
-  drops the cell (no threshold match, no verdict).
+(`_check_thresholds_cover_sweep`) calls it to build expected keys; `test_metric`
+calls it to look up the threshold spec. Change the format in one place and both
+paths move together. A space, field-order change, or separator difference silently
+drops the cell (no threshold match, no verdict).
 - `_check_thresholds_cover_sweep` must check **both axes**. Without axis 2, a gated
-  metric with no threshold spec falls through the record-only branch of `test_metric`
-  and reports a green PASS with zero assertions even when `enforce_thresholds=True`.
+metric with no threshold spec falls through the record-only branch of `test_metric`
+and reports a green PASS with zero assertions even when `enforce_thresholds=True`.
 - `load_variant` must call `substitute_config` — never reimplement file-read or
-  placeholder substitution. See [substitute_config contract](../utils/AGENTS.md#config_loaderpy)
-  for what it returns and what it does not do (it does not validate or type-coerce).
+placeholder substitution. See [substitute_config contract](../utils/AGENTS.md#config_loaderpy)
+for what it returns and what it does not do (it does not validate or type-coerce).
 
 ---
 
@@ -143,22 +145,19 @@ Reference: `cvs/lib/inference/utils/vllm_parsing.py`.
 This module is a pure-transform layer with no I/O. It contains:
 
 1. **A pure transform function** that maps a raw benchmark artifact dict to a
-   namespaced `{"client.<name>": value}` dict. This function accepts only
+  namespaced `{"client.<name>": value}` dict. This function accepts only
    data structures (no `orch`, no file paths) so it can be unit-tested without
    a running container.
-
-2. **`YOUR_METRICS: list[tuple[str, str]]`** — the display surface: a list of
-   `(short_name, unit)` pairs for every metric the suite surfaces. This list is
+2. `**YOUR_METRICS: list[tuple[str, str]]`** — the display surface: a list of
+  `(short_name, unit)` pairs for every metric the suite surfaces. This list is
    iterated by `pytest_generate_tests` to emit one `test_metric` row per metric
    per cell.
-
-3. **`GATED_METRICS: set[str]`** — the asserted subset: the short names whose
-   threshold specs are required in `threshold.json` for every sweep cell when
+3. `**GATED_METRICS: set[str]**` — the asserted subset: the short names whose
+  threshold specs are required in `threshold.json` for every sweep cell when
    `enforce_thresholds=True`. This set is imported by `VariantConfig`'s
    `_check_thresholds_cover_sweep` to run the axis-2 coverage check at load time.
-
 4. **The gated-vs-record-only decision rule:** gate a metric (add it to
-   `GATED_METRICS`) when you have a calibrated baseline and a regression means a
+  `GATED_METRICS`) when you have a calibrated baseline and a regression means a
    real performance failure. Keep a metric record-only (in `YOUR_METRICS` but not
    in `GATED_METRICS`) for diagnostic or informational metrics (e.g. percentiles
    useful for debugging but not yet part of the SLO contract) or for metrics
@@ -215,21 +214,21 @@ class YourJob:
 **Key patterns from `VllmJob` to carry forward:**
 
 - **Scan the whole server log for readiness**, not `tail -N`. The startup banner
-  scrolls out of a fixed tail once the server gets chatty.
+scrolls out of a fixed tail once the server gets chatty.
 - **Accumulate completion and failure states independently in each poll iteration,
-  then raise on failure before returning on completion.** The benchmark tool
-  always prints an explicit completion marker (`COMPLETION_RE`) — key off that
-  positive signal rather than the absence of an error line.
+then raise on failure before returning on completion.** The benchmark tool
+always prints an explicit completion marker (`COMPLETION_RE`) — key off that
+positive signal rather than the absence of an error line.
 - **Per-cell output directories** keyed by `isl/osl/concurrency`. A multi-cell
-  sweep must not overwrite an earlier cell's artifact; without this,
-  `parse_results` may silently read stale data from a prior cell.
-- **`parse_results` raises on empty/missing/unparseable artifacts.** The test
-  wraps it in `try/except ... raise`, so a hard failure here is the correct
-  behavior — it breaks the cell cleanly rather than recording a silently-green row.
-- **`parse_results` delegates the transform** to the pure function in
-  `<your_framework>_parsing.py`. The fetch (I/O) lives in the job class because
-  artifact layout is job-specific; the metric math lives in `_parsing.py` so
-  other suite variants can reuse it.
+sweep must not overwrite an earlier cell's artifact; without this,
+`parse_results` may silently read stale data from a prior cell.
+- `**parse_results` raises on empty/missing/unparseable artifacts.** The test
+wraps it in `try/except ... raise`, so a hard failure here is the correct
+behavior — it breaks the cell cleanly rather than recording a silently-green row.
+- `**parse_results` delegates the transform** to the pure function in
+`<your_framework>_parsing.py`. The fetch (I/O) lives in the job class because
+artifact layout is job-specific; the metric math lives in `_parsing.py` so
+other suite variants can reuse it.
 
 ---
 
@@ -307,13 +306,14 @@ than `fail` means suites that do not require an HF token can simply omit this
 fixture from their conftest without breaking collection; the inference test that
 accepts it as an argument will be skipped rather than erroring at fixture setup.
 
-**`_Lifecycle`** — cross-test state for the lifecycle-as-tests model. Copy from
+`**_Lifecycle**` — cross-test state for the lifecycle-as-tests model. Copy from
 `cvs/tests/inference/vllm/conftest.py`. It carries three fields:
+
 - `failed: bool` — set when any stage fails; causes remaining stages to skip
 - `torn_down: bool` — set when `test_teardown` succeeds; suppresses the
-  `orch` leak-guard finalizer so teardown never runs twice
+`orch` leak-guard finalizer so teardown never runs twice
 - `report: dict` — maps `nodeid → [(label, value, unit)]`; populated by
-  `lifecycle.record(...)` and rendered by `pytest_runtest_makereport`
+`lifecycle.record(...)` and rendered by `pytest_runtest_makereport`
 
 **The `_deep_merge` pattern:**
 
@@ -448,23 +448,23 @@ fixture body code. Each appears as a timed, independently pass/fail HTML row.
 **Invariants — every suite must enforce these:**
 
 - Every test except `test_launch_container`, `test_print_results_table`, and
-  `test_teardown` checks `lifecycle.failed` and calls `pytest.skip(...)` if
-  `True`. This prevents cascading failures where a broken launch causes every
-  subsequent cell to re-fail instead of skipping cleanly.
-  `test_print_results_table` does not guard on `lifecycle.failed`; instead it
-  checks whether `inf_res_dict` is empty and logs whatever results were
-  recorded (even a partial sweep produces a useful table). This behavior is
-  implemented in `cvs/tests/inference/vllm/_shared.py`; verify the check there
-  if you are adapting the pattern for a new suite.
+`test_teardown` checks `lifecycle.failed` and calls `pytest.skip(...)` if
+`True`. This prevents cascading failures where a broken launch causes every
+subsequent cell to re-fail instead of skipping cleanly.
+`test_print_results_table` does not guard on `lifecycle.failed`; instead it
+checks whether `inf_res_dict` is empty and logs whatever results were
+recorded (even a partial sweep produces a useful table). This behavior is
+implemented in `cvs/tests/inference/vllm/_shared.py`; verify the check there
+if you are adapting the pattern for a new suite.
 - `test_<workload>` wraps its entire body in `try/except`: on any exception, set
-  `lifecycle.failed = True` then re-raise.
+`lifecycle.failed = True` then re-raise.
 - `test_teardown` **never skips** — it must run even when `lifecycle.failed` is
-  `True`. The container must be torn down regardless of what happened in the sweep.
+`True`. The container must be torn down regardless of what happened in the sweep.
 - `test_teardown` sets `lifecycle.torn_down = True` after a successful teardown.
-  This suppresses the `orch` fixture's leak-guard finalizer so the container is
-  not torn down twice.
+This suppresses the `orch` fixture's leak-guard finalizer so the container is
+not torn down twice.
 
-**`test_metric` pattern:**
+`**test_metric` pattern:**
 
 ```python
 def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, lifecycle, request):
@@ -595,16 +595,22 @@ in the existing code.
 - [ ] `VariantConfig` subclasses `BaseVariantConfig`
 - [ ] `VariantConfig` declares `framework: Literal["your_framework"]`, `params`, and `sweep`
 - [ ] `cell_key` is implemented and is the single source of truth used by both
-      `_check_thresholds_cover_sweep` and `test_metric`
+  ```
+  `_check_thresholds_cover_sweep` and `test_metric`
+  ```
 - [ ] `expected_cells` is implemented and returns the full list of cell keys
 - [ ] `_check_thresholds_cover_sweep` is present as a `@model_validator(mode="after")`
-      and checks both axes (cell coverage + gated-metric coverage)
+  ```
+  and checks both axes (cell coverage + gated-metric coverage)
+  ```
 
 **Test fixtures**
 
 - [ ] All fixtures are `scope="module"`
 - [ ] `orch` fixture has a leak-guard finalizer that calls `teardown_containers()` when
-      `lifecycle.torn_down` is `False`
+  ```
+  `lifecycle.torn_down` is `False`
+  ```
 - [ ] `_deep_merge` is used when building the container block (not bare `dict.update`)
 
 **Test lifecycle**
@@ -615,13 +621,15 @@ in the existing code.
 - [ ] `test_teardown` does NOT skip on `lifecycle.failed`
 - [ ] `test_teardown` sets `lifecycle.torn_down = True` after successful teardown
 
-**`pytest_generate_tests`**
+`**pytest_generate_tests`**
 
 - [ ] Calls `validate_sweep_selector` to mirror the typed `Sweep` validator — collection-time
-      and load-time paths enforce the same rules
+  ```
+  and load-time paths enforce the same rules
+  ```
 - [ ] Validates `GoodputSlo` dicts through the `_Forbid` model if your sweep uses goodput SLOs
 
-**`test_metric`**
+`**test_metric**`
 
 - [ ] Passes the full per-cell actuals dict to `evaluate_all`, not just the single metric value
 - [ ] Returns (record-only) when `enforce_thresholds` is `False`
@@ -640,4 +648,73 @@ in the existing code.
 - [ ] Every `GATED_METRICS` member has a spec for every present cell
 - [ ] `enforce_thresholds` starts as `false` until baselines are calibrated
 - [ ] New gated metric → every existing `threshold.json` that covers cells where the
-      metric is defined has a spec for it
+  ```
+  metric is defined has a spec for it
+  ```
+
+**Suite reports (`cvs.lib.report`)**
+
+When running with pytest ``--html``, CVS generates a suite dashboard (HTML + JSON)
+alongside the pytest report and bundles everything into the results zip. Inference
+suites opt in via conftest wiring; only the preset is suite-specific.
+
+- [ ] ``configure_inference_suite_report(config, PRESET)`` in ``pytest_configure``
+- [ ] Autouse ``bind_inference_suite_report_session(inf_res_dict=..., variant_config=..., lifecycle=...)``
+- [ ] ``attach_inference_suite_report_row_extra(item, report)`` in ``pytest_runtest_makereport``
+  (alongside lifecycle table attach)
+- [ ] ``inf_res_dict`` populated by the workload test; ``lifecycle.record`` on inference stages
+- [ ] Preset under ``cvs/lib/report/presets/<suite>.py`` with columns, tiers, ``inference_test_substring``
+- [ ] Run with ``--html=...`` and verify zip contains ``{report_basename}.html``, ``.json``,
+  and Reports links (viewer when cell count exceeds ``viewer_cell_threshold``)
+
+Reference: ``cvs/tests/inference/inferencex_atom/conftest.py``
+
+```python
+from cvs.lib.report.inference_wiring import (
+    attach_inference_suite_report_row_extra,
+    bind_inference_suite_report_session,
+    configure_inference_suite_report,
+)
+from cvs.lib.report.presets.inferencex_atom import INFERENCEX_ATOM_REPORT_CONFIG
+
+def pytest_configure(config):
+    configure_inference_suite_report(config, INFERENCEX_ATOM_REPORT_CONFIG)
+
+@pytest.fixture(scope="module", autouse=True)
+def _suite_report_session(inf_res_dict, variant_config, lifecycle):
+    bind_inference_suite_report_session(
+        inf_res_dict=inf_res_dict,
+        variant_config=variant_config,
+        lifecycle=lifecycle,
+    )
+    yield
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    attach_lifecycle_html_table(item, report)
+    attach_inference_suite_report_row_extra(item, report)
+```
+
+No ``test_*_report`` lifecycle stage is required; root ``pytest_sessionfinish`` calls
+``generate_suite_reports`` automatically.
+
+**Inference parity (Phase E)** — optional, after the reference suite JSON exists:
+
+- Set ``parity_compare_jsons`` on the inference preset, e.g.
+  ``(("vllm", "/path/vllm_report.json"), ("sglang", "/path/sglang_report.json"))``
+- Or export env before the run::
+
+    CVS_INFERENCE_PARITY_COMPARE=vllm=/path/vllm.json,sglang=/path/sglang.json
+
+Session-end hook writes ``inference_parity_report.html/json`` into the zip when all
+paths exist. W1 ``compare.*`` metrics apply automatically for ``vllm``/``sglang`` comparators.
+
+**Training reports (Phase F)** — Megatron pilot in ``cvs/tests/training/megatron/``:
+
+- ``training_res_dict`` module fixture + ``configure_training_suite_report`` in conftest
+- Populate via ``record_megatron_training_results(training_res_dict, mt_obj)`` after training
+- Optional training parity baseline: ``parity_baseline_json`` on preset or env
+  ``CVS_TRAINING_PARITY_BASELINE_JSON=/path/prior_report.json``
+
