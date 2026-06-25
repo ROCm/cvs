@@ -28,6 +28,9 @@ of copying launch / sshd / model-fetch / teardown blocks.
     )
 
 Also provides ``sweep_cell_result_key`` and ``du_bytes`` (robust model-cache probe).
+
+Optional HTML/JSON suite report: register via ``cvs.lib.report.inference_wiring`` (see
+``ADDING_A_SUITE.md``); generated at session end when ``--html`` is set.
 '''
 
 from __future__ import annotations
