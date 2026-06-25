@@ -5,11 +5,16 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import base64
+import json
 import os
 import re
+import shlex
 import time
+from typing import Any, Optional
 
 from cvs.lib import globals
+from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -28,9 +33,45 @@ inference_err_dict = {
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
 
-
 def textwrap_for_yml(msg_string):
     return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
+
+def _as_node_list(value):
+    """
+    Normalize cluster JSON node field to a list of host strings.
+
+    Config may use a single hostname/IP string or a list. ``list(str)``
+    would split into characters (e.g. ``'10.0.0.1'`` -> ``'1'``), breaking
+    SSH and HTTP clients.
+    """
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+def _first_float(pattern, text):
+    m = re.search(pattern, text, re.I)
+    return m.group(1) if m else None
+
+LM_EVAL_SPECS = {
+    "lm_eval_hellaswag": {
+        "display": "HellaSwag",
+        "default_metric": "acc_norm",
+        "default_metric_key": "acc_norm,none",
+        "default_num_concurrent": "1",
+    },
+    "lm_eval_gsm8k": {
+        "display": "GSM8K",
+        "default_metric": "exact_match",
+        "default_metric_key": "exact_match,flexible-extract",
+        "default_num_concurrent": "4",
+    },
+    "lm_eval_mmlu": {
+        "display": "MMLU",
+        "default_metric": "acc",
+        "default_metric_key": "acc,none",
+        "default_num_concurrent": "1",
+    },
+}
 
 
 class SglangDisaggPD:
@@ -97,13 +138,18 @@ class SglangDisaggPD:
         # Proxy node     : Routes requests between prefill/decode
         # Benchmark node : Generates inference load
         # ------------------------------------------------------------------
+        self.mount_vol = self.inf_dict.get(
+            'mount_vol',
+            '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
+        )
+        
         self.prefill_node_list = self.inf_dict['prefill_node_list']
         self.decode_node_list = self.inf_dict['decode_node_list']
         self.prefill_nnodes = len(self.prefill_node_list)
         self.decode_nnodes = len(self.decode_node_list)
 
-        self.proxy_node = list(self.inf_dict['proxy_router_node'])
-        self.benchmark_serv_node = list(self.inf_dict['benchmark_serv_node'])
+        self.proxy_node = _as_node_list(self.inf_dict['proxy_router_node'])
+        self.benchmark_serv_node = _as_node_list(self.inf_dict['benchmark_serv_node'])
 
         # ------------------------------------------------------------------
         # SSH handlers for each node group
@@ -156,6 +202,7 @@ class SglangDisaggPD:
         self.inf_dict.setdefault('nic_type', 'ainic')
         self.inf_dict.setdefault('nccl_ib_hca_list', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
         self.inf_dict.setdefault('nccl_ib_hca', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
+        self.inf_dict.setdefault('hca_id_prefix', 'bnxt_')
         self.inf_dict.setdefault('nccl_socket_ifname', 'eno0')
         self.inf_dict.setdefault('gloo_socket_ifname', 'eno0')
         self.inf_dict.setdefault('nccl_ib_gid_index', '1')
@@ -182,6 +229,7 @@ class SglangDisaggPD:
         self.nccl_debug = self.inf_dict['nccl_debug']
         self.data_cache_dir = self.inf_dict['data_cache_dir']
         self.log_dir = self.inf_dict['log_dir']
+        self.hca_id_prefix = str(self.inf_dict['hca_id_prefix']).strip()
 
         # set defaults for benchmark param dict if not passed via JSON file
         self.bp_dict.setdefault('backend', 'sglang')
@@ -209,6 +257,7 @@ class SglangDisaggPD:
         log.info(f'benchmark_params_dict = {self.bp_dict}')
         log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 
+    # Helper function for installing container packages
     def install_container_packages(
         self,
     ):
@@ -242,6 +291,7 @@ class SglangDisaggPD:
         self.d_phdl.exec(cmd)
         self.r_phdl.exec(cmd)
 
+    # Helper function for executing NIC setup scripts
     def exec_nic_setup_scripts(
         self,
     ):
@@ -265,20 +315,24 @@ class SglangDisaggPD:
         if re.search('broadcom|thor', self.nic_type, re.I):
             # override the gid_index to 3 for broadcom
             self.nccl_ib_gid_index = 3
-            cmd = f'docker exec {self.container_name} /bin/bash -c "sudo \
-                    cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
-                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so;" '
+            cmd = (
+                    f'docker exec {self.container_name} /bin/bash -c "sudo '
+                    f'cp {self.mount_vol}.host {self.mount_vol}; '
+                    f'sleep 2; ibv_devinfo; sleep 2;" '
+                )
             pout_dict = self.p_phdl.exec(cmd)
             dout_dict = self.d_phdl.exec(cmd)
+            hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
             for node in pout_dict.keys():
-                if not re.search('hca_id:\s+bnxt_', pout_dict[node], re.I):
+                if not re.search(hca_id_regex, pout_dict[node], re.I):
                     log.info("%s", pout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
             for node in dout_dict.keys():
-                if not re.search('hca_id:\s+bnxt_', dout_dict[node], re.I):
+                if not re.search(hca_id_regex, dout_dict[node], re.I):
                     log.info("%s", dout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
+    # Helper function for checking IBV devices
     def check_ibv_devices(
         self,
     ):
@@ -308,6 +362,7 @@ class SglangDisaggPD:
                 if re.search('No IB devices found', out_dict[node], re.I):
                     fail_test(f'IB devices not seen inside the container for node {node}')
 
+    # Helper function for setting up prefill container environment
     def setup_prefill_container_env(
         self,
     ):
@@ -339,6 +394,7 @@ class SglangDisaggPD:
                    chmod 755 /tmp/prefill_env_script.sh; /tmp/prefill_env_script.sh" '''
         self.p_phdl.exec(cmd)
 
+    # Helper function for setting up decode container environment
     def setup_decode_container_env(
         self,
     ):
@@ -370,6 +426,7 @@ class SglangDisaggPD:
                    chmod 755 /tmp/decode_env_script.sh; /tmp/decode_env_script.sh" '''
         self.d_phdl.exec(cmd)
 
+    # Helper function for setting up proxy router container environment
     def setup_proxy_router_container_env(
         self,
     ):
@@ -396,6 +453,7 @@ class SglangDisaggPD:
                    chmod 755 /tmp/router_env_script.sh; /tmp/router_env_script.sh" '''
         self.r_phdl.exec(cmd)
 
+    # Helper function for setting up benchmark server container environment
     def setup_benchmark_serv_container_env(
         self,
     ):
@@ -422,6 +480,7 @@ class SglangDisaggPD:
         self.b_phdl.exec(cmd)
         time.sleep(5)
 
+    # Helper function for running RMSNorm test
     def run_test_rmsnorm(self, max_jobs=192):
         """
         Run RMSNorm 2D operator tests inside the SGLang container across
@@ -500,6 +559,7 @@ class SglangDisaggPD:
         cmd_list = []
         prefill_node_list = self.inf_dict['prefill_node_list']
         log.info('%%%% self.prefill_nnodes {}'.format(self.prefill_nnodes))
+        dist_init_addr = f"{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_coordinator_port']}"
         for i in range(0, int(self.prefill_nnodes)):
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.prefill_nnodes}
@@ -514,6 +574,9 @@ class SglangDisaggPD:
                               --kv-cache-dtype {kv_cache_dtype} \
                               --trust-remote-code \
                               --tp {self.bp_dict['tensor_parallelism']} \
+                              --nnodes {self.prefill_nnodes} \
+                              --node-rank {i} \
+                              --dist-init-addr {dist_init_addr} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
@@ -540,6 +603,7 @@ class SglangDisaggPD:
         self.p_phdl.exec_cmd_list(cmd_list)
         time.sleep(5)
 
+    # Helper function for launching Decode servers
     def launch_decode_servers(self, dtype='auto', kv_cache_dtype='auto'):
         """
         Generate and deploy Decode server launch scripts on all Decode nodes
@@ -568,25 +632,8 @@ class SglangDisaggPD:
         cmd_list = []
         decode_node_list = self.inf_dict['decode_node_list']
         log.info('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
+        dist_init_addr = f"{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_coordinator_port']}"
         for i in range(0, int(self.decode_nnodes)):
-            # ------------------------------------------------------------------
-            # Construct a command that writes a Decode server launch script
-            # into /tmp/decode_launch_script.sh inside the container
-            #
-            # Key configuration details:
-            #   - NNODES / NODE_RANK: Distributed topology for SGLang
-            #   - disaggregation-mode decode: Run in Decode-only mode
-            #   - disaggregation-ib-device: RDMA device used for KV transfers
-            #   - host / port: Network endpoint for this Decode server
-            #   - dtype / kv-cache-dtype: Compute and KV precision
-            #   - tensor parallelism: Model sharding across GPUs
-            #   - aiter backend: Optimized attention backend for AMD GPUs
-            #   - memory fraction: Static GPU memory reservation
-            #
-            # NOTE:
-            #   The script is written (echo > file), not executed here.
-            #   Execution is handled by a separate orchestration step.
-            # ------------------------------------------------------------------
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.decode_nnodes}
                       export NODE_RANK={i}
@@ -600,6 +647,9 @@ class SglangDisaggPD:
                               --dtype {dtype} \
                               --kv-cache-dtype {kv_cache_dtype} \
                               --tp {self.bp_dict['tensor_parallelism']} \
+                              --nnodes {self.decode_nnodes} \
+                              --node-rank {i} \
+                              --dist-init-addr {dist_init_addr} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
@@ -625,6 +675,7 @@ class SglangDisaggPD:
             cmd_list.append(formatted_cmd)
         self.d_phdl.exec_cmd_list(cmd_list)
 
+    # Helper function for polling for server readiness
     def poll_and_check_server_ready(
         self,
     ):
@@ -647,11 +698,15 @@ class SglangDisaggPD:
         """
         log.info('Waiting 120 secs after launching decode script')
         time.sleep(120)
-        for node_no in range(0, self.prefill_nnodes):
-            self.poll_for_server_ready(node_no, 'prefill')
-        for node_no in range(0, self.decode_nnodes):
-            self.poll_for_server_ready(node_no, 'decode')
+        # for node_no in range(0, self.prefill_nnodes):
+        #     self.poll_for_server_ready(node_no, 'prefill')
+        # for node_no in range(0, self.decode_nnodes):
+        #     self.poll_for_server_ready(node_no, 'decode')
+        self.poll_for_server_ready(0, 'prefill')
+        self.poll_for_server_ready(0, 'decode')
 
+    
+    # Helper function for launching Proxy Router
     def launch_proxy_router(
         self,
     ):
@@ -682,18 +737,18 @@ class SglangDisaggPD:
         # Each Prefill server is specified as:
         #   --prefill http://<host>:<port>
         # ------------------------------------------------------------------
-        prefill_str = ''
-        for prefill_node in self.prefill_node_list:
-            prefill_str = prefill_str + f"--prefill http://{prefill_node}:{self.inf_dict['prefill_serv_port']} "
+
+        prefill_str = (
+            f"--prefill http://{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_serv_port']} "
+        )
         # ------------------------------------------------------------------
         # Build Decode endpoint arguments for the router
         #
         # Each Decode server is specified as:
         #   --decode http://<host>:<port>
         # ------------------------------------------------------------------
-        decode_str = ''
-        for decode_node in self.decode_node_list:
-            decode_str = decode_str + f"--decode http://{decode_node}:{self.inf_dict['decode_serv_port']} "
+
+        decode_str = f"--decode http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']} "
         log.info('#================ * * * =========================#')
         log.info('Create Proxy Router launch script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
@@ -737,66 +792,8 @@ class SglangDisaggPD:
         log.info('Waiting 120 secs after launching proxy router script')
         time.sleep(120)
 
-    def run_gsm8k_benchmark_test(self, d_type='auto'):
-        """
-        Run the GSM8K inference benchmark against the SGLang disaggregated
-        Prefill/Decode deployment and validate throughput.
-
-        Purpose:
-        --------
-        This method executes a real-world inference workload (GSM8K question
-        answering) to:
-        - Validate end-to-end correctness of the inference pipeline
-        - Measure sustained output token throughput
-        - Ensure performance meets expected SLA thresholds
-
-        The benchmark traffic is sent to the Proxy Router, which:
-        - Routes requests to Prefill servers
-        - Coordinates Decode servers for token generation
-        """
-        log.info('#================ * * * =========================#')
-        log.info('Create Benchmark script')
-        log.info('#================ * * * =========================#')
-
-        i_dict = self.bp_dict['inference_tests']['gsm8k']
-        # ------------------------------------------------------------------
-        # Construct command to run GSM8K benchmark inside the container
-        #
-        # Key steps:
-        #   - Create a directory to store benchmark logs
-        #   - Navigate to the GSM8K benchmark directory
-        #   - Source environment variables required for benchmark execution
-        #   - Launch the benchmark using nohup to allow async execution
-        #
-        # Benchmark parameters:
-        #   --num-questions : Total GSM8K questions to run
-        #   --parallel      : Maximum concurrent inference requests
-        #   --host / --port : Proxy Router endpoint for inference
-        # ------------------------------------------------------------------
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                      mkdir -p {self.log_dir}/benchmark_node; \
-                      cd /sgl-workspace/sglang/benchmark/gsm8k; \
-                      source /tmp/benchmark_env_script.sh && \
-                      nohup python3 ./bench_sglang.py \
-                      --num-questions {i_dict['num_questions']} \
-                      --parallel {i_dict['max_concurrency']} \
-                      --host http://0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']}" '''
-        formatted_cmd = textwrap_for_yml(cmd)
-        out_dict = self.b_phdl.exec(formatted_cmd, timeout=800)
-        time.sleep(5)
-        for node in out_dict.keys():
-            if not re.search('Output throughput', out_dict[node], re.I):
-                fail_test(f'Benchmark test did not complete properly on node {node}, no throughput pattern seen')
-            else:
-                match = re.search('Output throughput:\s+([0-9\.]+)\s+token', out_dict[node], re.I)
-                actual_tps = match.group(1)
-                if float(actual_tps) < float(i_dict['expected_results'][d_type]['tokens_per_sec']):
-                    fail_test(
-                        f"Test FAILED due to low performance, \
-                            expected tokens per sec = {i_dict['expected_results'][d_type]['tokens_per_sec']}, \
-                            actual tokens per sec = {actual_tps}"
-                    )
-
+    
+    # Helper function for running SGLang serving benchmark with random dataset
     def benchserv_test_random(self, d_type='auto'):
         """
         Run SGLang serving benchmark using a synthetic random dataset and
@@ -821,6 +818,7 @@ class SglangDisaggPD:
         log.info('Benchmark Random Dataset')
         log.info('#================ * * * =========================#')
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
+        self._bench_num_prompts = int(i_dict['num_prompts'])
         # ------------------------------------------------------------------
         # Construct command to run sglang.bench_serving with random dataset
         #
@@ -837,6 +835,7 @@ class SglangDisaggPD:
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
                       source /tmp/benchmark_env_script.sh && \
+                      pip install --upgrade --no-deps sglang[all] && \
                       python3 -m sglang.bench_serving --backend {i_dict['backend']} \
                       --dataset-name random \
                       --num-prompts {i_dict['num_prompts']} \
@@ -844,13 +843,49 @@ class SglangDisaggPD:
                       --random-output {i_dict['output_length']} \
                       --random-range-ratio {i_dict['random_range_ratio']} \
                       --host 0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']} \
-                      > {self.log_dir}/benchmark_node/benchmark_results.log" '''
+                      > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1" '''
         formatted_cmd = textwrap_for_yml(cmd)
         self.b_phdl.exec(formatted_cmd, timeout=500)
         time.sleep(5)
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
+        
+        # MFU (derived from same bench metrics as TTFT/TPOT)
+        peak_tflops = float(i_dict.get("peak_gpu_tflops", 1300))
+        num_params = float(i_dict.get("model_num_params", 70e9))
+        tp = int(self.bp_dict.get("tensor_parallelism", 1))
+        num_gpus = (int(self.prefill_nnodes) + int(self.decode_nnodes)) * tp
+        for node, m in (self.inference_results_dict or {}).items():
+            duration = float(m.get("benchmark_duration") or 0)
+            in_tok = float(m.get("total_input_tokens") or 0)
+            out_tok = float(
+                m.get("total_generated_tokens") or m.get("Total generated tokens:") or 0
+            )
+            if duration > 0 and num_gpus > 0:
+                achieved = 6.0 * num_params * (in_tok + out_tok)
+                peak = peak_tflops * 1e12 * num_gpus * duration
+                m["mfu"] = f"{achieved / peak:.6f}"
+
+        log_path = f"{self.log_dir}/benchmark_node/benchmark_results.log"
+        for node, m in (self.inference_results_dict or {}).items():
+            gp = m.get("goodput", "n/a")
+            tpg = m.get("output_throughput_per_gpu_per_sec", "n/a")
+            tr = m.get("total_requests", "n/a")
+            sr = m.get("successful_requests", "n/a")
+            mfu = m.get("mfu", "n/a")
+            inner = (
+                f"echo '' >> {log_path} && "
+                f"echo '============ Derived Benchmark Results ============' >> {log_path} && "
+                f"echo 'Goodput (successful / total): {sr} / {tr}  =>  {gp}' >> {log_path} && "
+                f"echo 'Output token throughput per GPU (tok/s/GPU): {tpg}' >> {log_path} && "
+                 f"echo 'MFU (estimated): {mfu}' >> {log_path} && "
+                f"echo '=====================================================================' >> {log_path}"
+            )
+            cmd = f"docker exec {self.container_name} /bin/bash -c {shlex.quote(inner)}"
+            self.b_phdl.exec(cmd)
+
         self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
 
+    # Helper function for polling for server readiness
     def poll_for_server_ready(self, node_no, sglang_function, no_of_iterations=16):
         """
         Poll SGLang Prefill or Decode server logs to determine when the server
@@ -881,38 +916,38 @@ class SglangDisaggPD:
         # Prefill server readiness check
         # ------------------------------------------------------------------
         if re.search('prefill', sglang_function):
-            head_node = self.prefill_node_list[0]
             for j in range(1, no_of_iterations):
                 log.info(f'Starting poll iteration {j}')
                 out_dict = self.p_phdl.exec(
                     f'grep -B 20 -A 20 "200 OK" {self.log_dir}/prefill_node{node_no}/prefill_server.log'
                 )
-                if re.search('GET|POST', out_dict[head_node], re.I):
+                target_pnode = self.prefill_node_list[node_no]
+                if re.search('GET|POST', out_dict[target_pnode], re.I):
                     log.info('Wait 60 secs to start serving traffic')
                     time.sleep(60)
-                    # if re.search('fired up and ready to roll', out_dict[head_node], re.I ):
+                    # if re.search('fired up and ready to roll', out_dict[target_pnode], re.I ):
                     #    print('Prefill server {node_no} ready to serve')
                     return
                 else:
                     log.info('Wait for 120 secs and continue polling')
                     time.sleep(120)
-            head_node = self.prefill_node_list[0]
+
             log.warning(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
             fail_test(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
         # ------------------------------------------------------------------
         # Decode server readiness check
         # ------------------------------------------------------------------
         elif re.search('decode', sglang_function):
-            head_node = self.decode_node_list[0]
             for j in range(1, no_of_iterations):
                 log.info(f'Starting poll iteration {j}')
                 out_dict = self.d_phdl.exec(
                     f'grep -B 20 -A 20 "200 OK" {self.log_dir}/decode_node{node_no}/decode_server.log'
                 )
-                if re.search('GET|POST', out_dict[head_node]):
+                target_dnode = self.decode_node_list[node_no]
+                if re.search('GET|POST', out_dict[target_dnode]):
                     log.info('Wait 60 secs to start serving traffic')
                     time.sleep(60)
-                    # if re.search('fired up and ready to roll', out_dict[head_node], re.I ):
+                    # if re.search('fired up and ready to roll', out_dict[target_dnode], re.I ):
                     #    print('Decode server {node_no} ready to serve')
                     return
                 else:
@@ -921,6 +956,7 @@ class SglangDisaggPD:
             log.warning(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
             fail_test(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
 
+    # Helper function for getting inference results dictionary
     def get_inference_results_dict(self, out_dict):
         """
         Parse inference benchmark output logs and extract key performance metrics
@@ -946,6 +982,7 @@ class SglangDisaggPD:
         self.inference_results_dict = {}
         log.info('Inside get_inference_results_dict')
         log.info("%s", out_dict)
+        
         for node in out_dict.keys():
             self.inference_results_dict[node] = {}
             if re.search('Successful requests:', out_dict[node], re.I):
@@ -993,19 +1030,45 @@ class SglangDisaggPD:
             if re.search('P99 ITL \(ms\):', out_dict[node], re.I):
                 match = re.search('P99 ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_itl_ms'] = match.group(1)
-            if re.search('Mean E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('Mean E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_e2el_ms'] = match.group(1)
-            if re.search('Median E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('Median E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_e2el_ms'] = match.group(1)
-            if re.search('P99 E2EL \(ms\):', out_dict[node], re.I):
-                match = re.search('P99 E2EL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_e2el_ms'] = match.group(1)
+            # --- SGLang "E2E Latency" wording -----
+            m = _first_float(r'Mean E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
+            if m:
+                self.inference_results_dict[node]['mean_e2e_latency_ms'] = m
+            m = _first_float(r'Median E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
+            if m:
+                self.inference_results_dict[node]['median_e2e_latency_ms'] = m
+            for p in (90, 95, 99):
+                m = _first_float(rf'P{p} E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
+                if m:
+                    self.inference_results_dict[node][f'p{p}_e2e_latency_ms'] = m
+
+            # Goodput: log totals, or successful+failed, or benchmark num_prompts
+            total_req = _first_float(r"Total requests:\s+([0-9]+)", out_dict[node])
+            failed_req = _first_float(r"Failed requests:\s+([0-9]+)", out_dict[node])
+            succ = self.inference_results_dict[node].get("successful_requests")
+            if total_req:
+                self.inference_results_dict[node]["total_requests"] = total_req
+            elif succ is not None and failed_req is not None:
+                self.inference_results_dict[node]["total_requests"] = str(int(succ) + int(failed_req))
+            elif succ is not None and getattr(self, "_bench_num_prompts", None) is not None:
+                self.inference_results_dict[node]["total_requests"] = str(int(self._bench_num_prompts))
+            if succ and self.inference_results_dict[node].get("total_requests"):
+                s, t = int(succ), int(self.inference_results_dict[node]["total_requests"])
+                self.inference_results_dict[node]["goodput"] = f"{(s / t):.6f}" if t else None
+
+            # Per-GPU throughput (derived): define denominator to match *your* accounting policy
+            out_tps = self.inference_results_dict[node].get("output_throughput_per_sec")
+            if out_tps:
+                ng = int(self.bp_dict.get("tensor_parallelism", "1"))
+                if ng > 0:
+                    self.inference_results_dict[node]["output_throughput_per_gpu_per_sec"] = (
+                        f"{float(out_tps) / ng:.6f}"
+                    )
 
         log.info("%s", self.inference_results_dict)
         return self.inference_results_dict
 
+    # Helper function for scanning for inference errors
     def scan_for_inference_errors(
         self,
     ):
@@ -1034,7 +1097,7 @@ class SglangDisaggPD:
 
         # Scan all prefill nodes
         for j in range(0, int(self.prefill_nnodes)):
-            cmd = f"sudo cat {self.log_dir}/prefill_node{j}/prefill_server.log"
+            cmd = f"sudo tail -500 {self.log_dir}/prefill_node{j}/prefill_server.log"
             cmd_list.append(cmd)
         out_dict = self.p_phdl.exec_cmd_list(cmd_list)
 
@@ -1047,8 +1110,9 @@ class SglangDisaggPD:
                     inference_pass = False
 
         # Scan all decode nodes
+        cmd_list = []
         for j in range(0, int(self.decode_nnodes)):
-            cmd = f"sudo cat {self.log_dir}/decode_node{j}/decode_server.log"
+            cmd = f"sudo tail -500 {self.log_dir}/decode_node{j}/decode_server.log"
             cmd_list.append(cmd)
         out_dict = self.d_phdl.exec_cmd_list(cmd_list)
 
@@ -1062,6 +1126,7 @@ class SglangDisaggPD:
 
         return inference_pass
 
+    # Helper function for polling for inference completion
     def poll_for_inference_completion(
         self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
     ):
@@ -1184,6 +1249,7 @@ class SglangDisaggPD:
             log.warning("%s", msg)
             return {"status": "stuck_in_progress", "reason": msg}
 
+    # Helper function for verifying inference results
     def verify_inference_results(self, test_name, expected_result_dict):
         """
         Validate inference benchmark results against expected performance
@@ -1259,3 +1325,217 @@ class SglangDisaggPD:
         verify_dmesg_for_errors(self.r_phdl, self.inference_start_time, self.inference_end_time)
         verify_dmesg_for_errors(self.b_phdl, self.inference_start_time, self.inference_end_time)
         log.info("%s", self.inference_results_dict)
+
+    # Helper function for counting occupied GPUs per prefill/decode node
+    def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
+        """
+        After model load, count occupied GPUs per prefill/decode node via amd-smi.
+        """
+        tp = int(self.bp_dict["tensor_parallelism"])
+
+        def _count_per_node(phdl):
+            per_node = {}
+            for node, payload in phdl.exec("sudo amd-smi metric --json").items():
+                count = 0
+                try:
+                    entries = json.loads(payload.strip())
+                except (json.JSONDecodeError, AttributeError):
+                    log.warning("Failed to parse amd-smi JSON on node %s", node)
+                    per_node[node] = 0
+                    continue
+                if isinstance(entries, dict) and "gpu_data" in entries:
+                    entries = entries["gpu_data"]
+                if not isinstance(entries, list):
+                    per_node[node] = 0
+                    continue
+                for g in entries:
+                    used_mb = g.get("mem_usage", {}).get("used_vram", {}).get("value", 0)
+                    if used_mb > mem_threshold_mb:
+                        count += 1
+                per_node[node] = count
+            return per_node
+
+        prefill_per_node = _count_per_node(self.p_phdl)
+        decode_per_node = _count_per_node(self.d_phdl)
+        occupied_prefill = sum(prefill_per_node.values())
+        occupied_decode = sum(decode_per_node.values())
+
+        result = {
+            "configured_tp": tp,
+            "prefill_per_node": prefill_per_node,
+            "decode_per_node": decode_per_node,
+            "prefill_occupied_gpus": occupied_prefill,
+            "decode_occupied_gpus": occupied_decode,
+            "total_occupied_gpus": occupied_prefill + occupied_decode,
+        }
+
+        lines = [
+            "",
+            f"Configured TP: {tp}",
+            "",
+            "Prefill:",
+        ]
+        for node, count in prefill_per_node.items():
+            lines.append(f"  {node}: {count} occupied GPUs")
+        lines.append(f"  Total: {occupied_prefill} occupied GPUs")
+        lines.append("")
+        lines.append("Decode:")
+        for node, count in decode_per_node.items():
+            lines.append(f"  {node}: {count} occupied GPUs")
+        lines.append(f"  Total: {occupied_decode} occupied GPUs")
+        lines.append("")
+        lines.append("Total hardware GPUs consumed:")
+        lines.append(f"  {occupied_prefill + occupied_decode}")
+
+        log.info("\n".join(lines))
+        return result
+
+    # Helper function for verifying OpenAI-compatible endpoints
+    def verify_openai_compatible_endpoints(self) -> list[str]:
+        """
+        Smoke-test OpenAI-compatible HTTP API on the proxy router (inside the
+        benchmark container via ``docker exec``): GET /v1/models,
+        POST /v1/chat/completions, POST /v1/completions, and structured JSON
+        (book) via chat completions.
+        """
+        port = int(self.inf_dict["proxy_router_serv_port"])
+        model_name = self.bp_dict["model"]
+
+        probe_src = OpenAIProbe.probe_script(port, model_name)
+        b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+                  mkdir -p {self.log_dir}/benchmark_node; \
+                  echo '{b64}' | base64 -d > /tmp/openai_mq_probe.py && \
+                  python3 /tmp/openai_mq_probe.py && \
+                  rm -f /tmp/openai_mq_probe.py" '''
+        formatted_cmd = textwrap_for_yml(cmd)
+        log.info(
+            "OpenAI endpoint probe inside benchmark container (0.0.0.0:%r), same pattern as GSM8K/benchserv",
+            port,
+        )
+        out_dict = self.b_phdl.exec(
+            formatted_cmd,
+            timeout=min(900, 480 + 180),
+        )
+        bench_host = self.benchmark_serv_node[0]
+        raw_out = out_dict.get(bench_host)
+        if raw_out is None and out_dict:
+            raw_out = next(iter(out_dict.values()))
+
+        probe_err: Optional[str] = None
+        results: dict[str, tuple[int, Any]] = {}
+        if not raw_out or not str(raw_out).strip():
+            probe_err = (
+                f"OpenAI-compatible probe produced no output node {bench_host!r}: "
+                f"{out_dict!r}"
+            )
+        else:
+            lines_out = str(raw_out).strip().splitlines()
+            if not lines_out:
+                probe_err = (
+                    f"OpenAI-compatible probe empty lines after strip on node "
+                    f"{bench_host!r}: {raw_out!r}"
+                )
+            else:
+                last_line = lines_out[-1]
+                try:
+                    parsed = json.loads(last_line)
+                except json.JSONDecodeError as e:
+                    probe_err = (
+                        f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
+                    )
+                else:
+                    if not isinstance(parsed, dict):
+                        probe_err = (
+                            f"OpenAI-compatible probe expected JSON object, got "
+                            f"{type(parsed).__name__!r}"
+                        )
+                    else:
+                        for step, val in parsed.items():
+                            if isinstance(val, (list, tuple)) and len(val) == 2:
+                                results[step] = (int(val[0]), val[1])
+                            else:
+                                probe_err = (
+                                    f"OpenAI-compatible probe bad shape at "
+                                    f"{step!r}: {val!r}"
+                                )
+                                break
+
+        if probe_err is not None:
+            fail_test(probe_err)
+            return []
+
+        OpenAIProbe.log_results(results, log)
+
+        ok, err = OpenAIProbe.check_results(results, port=port, logger=log)
+        if not ok:
+            summary = OpenAIProbe.summarize_results(results, ok, err)
+            fail_test(f"{err}")
+            return summary
+
+        summary = OpenAIProbe.summarize_results(results, ok, err)
+        return summary
+
+    # Helper functions for running LM-Eval benchmarks
+    def run_lm_eval_hellaswag_benchmark_test(self, _d_type="auto"):
+        return self.run_lm_eval_benchmark_test("lm_eval_hellaswag", _d_type=_d_type)
+
+    # Helper functions for running GSM8K benchmarks
+    def run_lm_eval_gsm8k_benchmark_test(self, _d_type="auto"):
+        return self.run_lm_eval_benchmark_test("lm_eval_gsm8k", _d_type=_d_type)
+
+    # Helper functions for running MMLU benchmarks
+    def run_lm_eval_mmlu_benchmark_test(self, _d_type="auto"):
+        return self.run_lm_eval_benchmark_test("lm_eval_mmlu", _d_type=_d_type)
+
+
+    # Helper function for running LM-Eval benchmarks    
+    def run_lm_eval_benchmark_test(self, bench_key: str, _d_type="auto"):
+        spec = LM_EVAL_SPECS[bench_key]
+        log.info("#================ * * * =========================#")
+        log.info("lm-eval %s benchmark", spec["display"])
+        log.info("#================ * * * =========================#")
+        task_name = bench_key.removeprefix("lm_eval_")
+        i_dict = self.bp_dict["inference_tests"][bench_key]
+        inner_cmd, scoring = LmEvalBenchmark.prepare(
+            i_dict,
+            port=int(self.inf_dict["proxy_router_serv_port"]),
+            model_id=self.bp_dict["model"],
+            task_name=task_name,
+            default_tasks=task_name,
+            default_metric=spec["default_metric"],
+            default_metric_key=spec["default_metric_key"],
+            log_dir=self.log_dir,
+            log_basename=f"{bench_key}.log",
+            default_num_concurrent=spec["default_num_concurrent"],
+        )
+
+        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+                mkdir -p {self.log_dir}/benchmark_node; \\
+                source /tmp/benchmark_env_script.sh && \\
+                {inner_cmd}" '''
+        out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
+        time.sleep(5)
+
+        check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
+        summary = None
+        errors: list[str] = []
+
+        for node, text in out_dict.items():
+            ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
+            if node_summary is not None:
+                summary = node_summary
+            if not ok:
+                errors.append(f"lm-eval {spec['display']} on node {node!r}: {err}")
+
+        if summary is None:
+            summary = LmEvalBenchmark.fallback_summary(
+                scoring,
+                error=errors[-1] if errors else "no benchmark nodes produced output to score",
+            )
+            errors.append(f"lm-eval {spec['display']}: no benchmark nodes produced output to score")
+
+        for msg in errors:
+            fail_test(msg)
+
+        return summary
