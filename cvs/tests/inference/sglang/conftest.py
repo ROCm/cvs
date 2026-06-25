@@ -34,7 +34,7 @@ log = globals.log
 
 def _threshold_file_path(bp_dict: Mapping[str, Any]) -> str | None:
     """Return the threshold file path from a benchmark_params variant (typo-tolerant)."""
-    for key in ("theshold_file", "threshold_file"):
+    for key in ("threshold_file", "threshold_file"):
         path = bp_dict.get(key)
         if path:
             return str(path).strip()
