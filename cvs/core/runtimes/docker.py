@@ -121,6 +121,14 @@ class DockerRuntime:
             else:
                 self.log.info(f"Image {container_config['image']} already exists, skipping tar load")
 
+        if not self.check_image_exists(image):
+            self.log.info(f"Image {image} not present on all hosts; pulling before start")
+            pull_result = self.pull_image(image, timeout=600)
+            failed_pull = [host for host, res in pull_result.items() if res.get('exit_code') != 0]
+            if failed_pull:
+                self.log.error(f"Failed to pull image on hosts: {failed_pull}")
+                return False
+
         cmd = f"sudo docker run -d --name {container_name} {all_args_str} {image} sleep infinity"
 
         self.log.info(f"Starting long-running containers on {len(self.orchestrator.hosts)} nodes: {container_name}")
@@ -130,7 +138,7 @@ class DockerRuntime:
         remove_cmd = f"sudo docker rm -f {container_name} || true"
         self.orchestrator.all.exec(remove_cmd, timeout=30, print_console=False)
 
-        result = self.orchestrator.all.exec(cmd, timeout=60, detailed=True)
+        result = self.orchestrator.all.exec(cmd, timeout=120, detailed=True)
 
         # Check if all hosts started successfully
         success = all(output['exit_code'] == 0 for output in result.values())
@@ -277,6 +285,13 @@ class DockerRuntime:
             args.append('--privileged')
 
         return args
+
+    def pull_image(self, image_name, timeout=None):
+        """Pull container image on all hosts."""
+        timeout = timeout or 600
+        cmd = f"sudo docker pull {shlex.quote(image_name)}"
+        self.log.info(f"Pulling image on all hosts: {image_name}")
+        return self.orchestrator.all.exec(cmd, timeout=timeout, detailed=True)
 
     def load_image(self, tar_path, timeout=None):
         """Load container image from tar file on all hosts."""
