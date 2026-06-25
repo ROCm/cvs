@@ -28,9 +28,15 @@ def recipes_path() -> Path:
     return _RECIPES_PATH
 
 
+_RECIPES_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+
+
 def load_recipes() -> Dict[str, Dict[str, Any]]:
-    data = json.loads(_RECIPES_PATH.read_text(encoding="utf-8"))
-    return {k: v for k, v in data.items() if not k.startswith("_")}
+    global _RECIPES_CACHE
+    if _RECIPES_CACHE is None:
+        data = json.loads(_RECIPES_PATH.read_text(encoding="utf-8"))
+        _RECIPES_CACHE = {k: v for k, v in data.items() if not k.startswith("_")}
+    return _RECIPES_CACHE
 
 
 def get_recipe(recipe_id: str) -> Dict[str, Any]:

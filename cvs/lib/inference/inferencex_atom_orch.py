@@ -126,6 +126,44 @@ class InferenceXAtomJob:
         self._bench_max_failed_requests = int(bench_max_failed_requests)
 
     @classmethod
+    def from_variant(cls, orch, variant, hf_token, isl, osl, concurrency, **overrides):
+        """Construct a job with server/client timing from ``variant.params``."""
+        p = variant.params
+
+        def _int_attr(name, default):
+            raw = getattr(p, name, None)
+            if raw is None or str(raw).strip() == "":
+                return default
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return default
+
+        kw = dict(
+            orch=orch,
+            variant=variant,
+            hf_token=hf_token,
+            isl=isl,
+            osl=osl,
+            concurrency=concurrency,
+            num_prompts=p.num_prompts,
+            server_precheck_wait_s=_int_attr("server_precheck_wait_s", 30),
+            server_warmup_wait_s=_int_attr("server_warmup_wait_s", 330),
+            server_poll_count=_int_attr("server_poll_count", 60),
+            server_poll_wait_s=_int_attr("server_poll_wait_time", 60),
+            client_initial_wait_s=_int_attr("client_initial_wait_s", 120),
+            client_poll_count=_int_attr("client_poll_count", 50),
+            client_poll_wait_s=_int_attr("client_poll_wait_time", 60),
+            bench_max_failed_requests=_int_attr("bench_max_failed_requests", 0),
+        )
+        kw.update(overrides)
+        return cls(**kw)
+
+    def prepare_cell_out_dir(self):
+        """Create per-cell output directory without touching server env or cache."""
+        self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
+
+    @classmethod
     def _merged_serve_args(cls, variant):
         merged = dict(cls._DEFAULT_SERVE_ARGS)
         merged.update(variant.roles.server.serve_args)
@@ -151,7 +189,7 @@ class InferenceXAtomJob:
                 argv.extend([opt, str(value)])
         return argv
 
-    def build_server_cmd(self):
+    def build_server_cmd(self, *, clear_atom_cache=True):
         env_lines = [
             f"export HF_TOKEN={shlex.quote(self.hf_token)}",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
@@ -171,7 +209,7 @@ class InferenceXAtomJob:
         env_script = "\n".join(env_lines) + "\n"
         self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
         self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
-        if self.driver == "atom":
+        if self.driver == "atom" and clear_atom_cache:
             self.orch.exec("bash -c 'rm -rf ~/.cache/atom/* 2>/dev/null || true'")
 
     def _server_argv(self):
@@ -396,40 +434,66 @@ class InferenceXAtomJob:
         out = self.orch.exec(f"test -s {shlex.quote(self._result_artifact)} && echo OK || echo NO")
         return bool(out) and all("OK" in (v or "") for v in out.values())
 
+    def _client_log_failures(self, tail_lines=2000):
+        out = self.orch.exec(f"tail -{tail_lines} {shlex.quote(self.client_log)}")
+        failed = []
+        for host, output in out.items():
+            txt = output or ""
+            if self.CLIENT_CRASH_RE.search(txt) or self.CLIENT_LAUNCH_FAIL_RE.search(txt):
+                failed.append((host, txt[-500:]))
+                continue
+            fm = self.FAILED_REQUESTS_RE.search(txt)
+            if fm:
+                fc = int(fm.group(1))
+                cap = self._bench_max_failed_requests
+                if fc > cap:
+                    failed.append((host, f"Failed requests: {fc} (cap {cap}) -- {txt[-500:]}"))
+                elif fc > 0:
+                    log.warning(
+                        "client on %s completed with %d failed requests (allowed up to %d)",
+                        host,
+                        fc,
+                        cap,
+                    )
+        return failed
+
     def wait_client_complete(self):
-        log.info("client initial wait %ds", self._client_initial_wait)
-        time.sleep(self._client_initial_wait)
-        cap = self._bench_max_failed_requests
+        if self.driver == "atom":
+            log.info(
+                "client initial wait (atom: polling for result artifact, up to %ds)",
+                self._client_initial_wait,
+            )
+            deadline = time.monotonic() + self._client_initial_wait
+            poll_s = 15
+            while time.monotonic() < deadline:
+                failed = self._client_log_failures(tail_lines=500)
+                if failed:
+                    raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
+                if self._atom_result_ready():
+                    log.info("client result artifact ready during initial wait")
+                    return
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(poll_s, remaining))
+        else:
+            log.info("client initial wait %ds", self._client_initial_wait)
+            time.sleep(self._client_initial_wait)
+
         for it in range(self._client_poll_count):
-            out = self.orch.exec(f"tail -2000 {shlex.quote(self.client_log)}")
-            failed = []
-            done = []
-            for host, output in out.items():
-                txt = output or ""
-                if self.driver == "atom":
-                    done.append(self._atom_result_ready())
-                else:
-                    done.append(bool(self.COMPLETION_RE.search(txt)))
-                if self.CLIENT_CRASH_RE.search(txt) or self.CLIENT_LAUNCH_FAIL_RE.search(txt):
-                    failed.append((host, txt[-500:]))
-                else:
-                    fm = self.FAILED_REQUESTS_RE.search(txt)
-                    if fm:
-                        fc = int(fm.group(1))
-                        if fc > cap:
-                            failed.append((host, f"Failed requests: {fc} (cap {cap}) -- {txt[-500:]}"))
-                        elif fc > 0:
-                            log.warning(
-                                "client on %s completed with %d failed requests (allowed up to %d)",
-                                host,
-                                fc,
-                                cap,
-                            )
+            failed = self._client_log_failures()
             if failed:
                 raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
-            if done and all(done):
-                log.info("client complete (iter=%d)", it)
-                return
+            if self.driver == "atom":
+                if self._atom_result_ready():
+                    log.info("client complete (iter=%d)", it)
+                    return
+            else:
+                out = self.orch.exec(f"tail -2000 {shlex.quote(self.client_log)}")
+                done = [bool(self.COMPLETION_RE.search(txt or "")) for txt in out.values()]
+                if done and all(done):
+                    log.info("client complete (iter=%d)", it)
+                    return
             time.sleep(self._client_poll_wait)
         raise RuntimeError("client did not complete before poll cap")
 

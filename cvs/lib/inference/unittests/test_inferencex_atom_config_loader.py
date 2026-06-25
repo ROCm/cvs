@@ -10,6 +10,7 @@ from pathlib import Path
 
 from cvs.lib.inference.utils.inferencex_atom_config_loader import (
     InferenceXAtomVariantConfig,
+    expand_sweep,
     load_variant,
     orchestrator_container_from_variant,
     placeholder_gated_threshold_cell,
@@ -140,6 +141,21 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         )
         block = orchestrator_container_from_variant(variant)
         self.assertEqual(block["env"]["VLLM_ROCM_USE_AITER"], "1")
+
+    def test_expand_sweep_matches_w1_perf(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom_single/"
+            "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json"
+        )
+        import json
+
+        raw = json.loads(config.read_text())
+        cases, ids = expand_sweep(raw["sweep"])
+        self.assertEqual(len(cases), 2)
+        self.assertEqual(ids[0], "w1_1k_1k-conc128")
+        self.assertEqual(ids[1], "w1_1k_1k-conc256")
+        self.assertEqual(cases[0][1], 128)
 
 
 if __name__ == "__main__":

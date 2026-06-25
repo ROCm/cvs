@@ -22,6 +22,7 @@ from cvs.lib.inference.utils.inferencex_atom_recipes import apply_ix_recipe
 from cvs.lib.inference.utils.inferencing_config_loader import (
     RoleServer,
     Sweep,
+    validate_sweep_selector,
     validate_thresholds_cover_sweep,
 )
 from cvs.lib.inference.utils.inferencex_atom_parsing import GATED_METRICS
@@ -59,6 +60,12 @@ class InferenceXAtomParams(_Forbid):
     max_model_length: str = "8192"
     client_poll_count: str = "50"
     client_poll_wait_time: str = "60"
+    client_initial_wait_s: str = "120"
+    server_precheck_wait_s: str = "30"
+    server_warmup_wait_s: str = "330"
+    server_poll_count: str = "60"
+    server_poll_wait_time: str = "60"
+    reuse_server_across_sweep: str = "true"
     bench_max_failed_requests: str = "0"
     bench_extra_args: str = ""
     result_filename: str = "results"
@@ -100,8 +107,30 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
         return self
 
 
+def expand_sweep(sweep):
+    """Expand a sweep definition into ``(cases, ids)`` for pytest parametrization.
+
+    Each case is ``(combo_dict, concurrency)``; each id is ``{combo}-conc{N}``.
+  """
+    if hasattr(sweep, "sequence_combinations"):
+        combos = [c.model_dump() for c in sweep.sequence_combinations]
+        runs = [r.model_dump() for r in sweep.runs]
+    else:
+        combos = sweep.get("sequence_combinations", [])
+        runs = sweep.get("runs", [])
+    validate_sweep_selector([c["name"] for c in combos], [r["combo"] for r in runs])
+    by_name = {c["name"]: c for c in combos}
+    cases = []
+    ids = []
+    for run in runs:
+        combo = by_name[run["combo"]]
+        conc = run["concurrency"]
+        cases.append((combo, conc))
+        ids.append(f"{run['combo']}-conc{conc}")
+    return cases, ids
+
+
 def load_variant(config_path, cluster_dict) -> InferenceXAtomVariantConfig:
-    """Load and validate an InferenceX ATOM variant config + sibling ``*threshold.json``."""
     raw, thresholds = substitute_config(config_path, cluster_dict)
     raw = apply_ix_recipe(raw)
     raw["thresholds"] = thresholds
