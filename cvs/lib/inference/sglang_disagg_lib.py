@@ -257,6 +257,7 @@ class SglangDisaggPD:
         log.info(f'benchmark_params_dict = {self.bp_dict}')
         log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 
+    # Helper function for installing container packages
     def install_container_packages(
         self,
     ):
@@ -290,6 +291,7 @@ class SglangDisaggPD:
         self.d_phdl.exec(cmd)
         self.r_phdl.exec(cmd)
 
+    # Helper function for executing NIC setup scripts
     def exec_nic_setup_scripts(
         self,
     ):
@@ -330,6 +332,7 @@ class SglangDisaggPD:
                     log.info("%s", dout_dict[node])
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
+    # Helper function for checking IBV devices
     def check_ibv_devices(
         self,
     ):
@@ -359,6 +362,7 @@ class SglangDisaggPD:
                 if re.search('No IB devices found', out_dict[node], re.I):
                     fail_test(f'IB devices not seen inside the container for node {node}')
 
+    # Helper function for setting up prefill container environment
     def setup_prefill_container_env(
         self,
     ):
@@ -390,6 +394,7 @@ class SglangDisaggPD:
                    chmod 755 /tmp/prefill_env_script.sh; /tmp/prefill_env_script.sh" '''
         self.p_phdl.exec(cmd)
 
+    # Helper function for setting up decode container environment
     def setup_decode_container_env(
         self,
     ):
@@ -421,6 +426,7 @@ class SglangDisaggPD:
                    chmod 755 /tmp/decode_env_script.sh; /tmp/decode_env_script.sh" '''
         self.d_phdl.exec(cmd)
 
+    # Helper function for setting up proxy router container environment
     def setup_proxy_router_container_env(
         self,
     ):
@@ -447,6 +453,7 @@ class SglangDisaggPD:
                    chmod 755 /tmp/router_env_script.sh; /tmp/router_env_script.sh" '''
         self.r_phdl.exec(cmd)
 
+    # Helper function for setting up benchmark server container environment
     def setup_benchmark_serv_container_env(
         self,
     ):
@@ -473,6 +480,7 @@ class SglangDisaggPD:
         self.b_phdl.exec(cmd)
         time.sleep(5)
 
+    # Helper function for running RMSNorm test
     def run_test_rmsnorm(self, max_jobs=192):
         """
         Run RMSNorm 2D operator tests inside the SGLang container across
@@ -595,6 +603,7 @@ class SglangDisaggPD:
         self.p_phdl.exec_cmd_list(cmd_list)
         time.sleep(5)
 
+    # Helper function for launching Decode servers
     def launch_decode_servers(self, dtype='auto', kv_cache_dtype='auto'):
         """
         Generate and deploy Decode server launch scripts on all Decode nodes
@@ -666,6 +675,7 @@ class SglangDisaggPD:
             cmd_list.append(formatted_cmd)
         self.d_phdl.exec_cmd_list(cmd_list)
 
+    # Helper function for polling for server readiness
     def poll_and_check_server_ready(
         self,
     ):
@@ -695,6 +705,8 @@ class SglangDisaggPD:
         self.poll_for_server_ready(0, 'prefill')
         self.poll_for_server_ready(0, 'decode')
 
+    
+    # Helper function for launching Proxy Router
     def launch_proxy_router(
         self,
     ):
@@ -780,66 +792,8 @@ class SglangDisaggPD:
         log.info('Waiting 120 secs after launching proxy router script')
         time.sleep(120)
 
-    def run_gsm8k_benchmark_test(self, d_type='auto'):
-        """
-        Run the GSM8K inference benchmark against the SGLang disaggregated
-        Prefill/Decode deployment and validate throughput.
-
-        Purpose:
-        --------
-        This method executes a real-world inference workload (GSM8K question
-        answering) to:
-        - Validate end-to-end correctness of the inference pipeline
-        - Measure sustained output token throughput
-        - Ensure performance meets expected SLA thresholds
-
-        The benchmark traffic is sent to the Proxy Router, which:
-        - Routes requests to Prefill servers
-        - Coordinates Decode servers for token generation
-        """
-        log.info('#================ * * * =========================#')
-        log.info('Create Benchmark script')
-        log.info('#================ * * * =========================#')
-
-        i_dict = self.bp_dict['inference_tests']['gsm8k']
-        # ------------------------------------------------------------------
-        # Construct command to run GSM8K benchmark inside the container
-        #
-        # Key steps:
-        #   - Create a directory to store benchmark logs
-        #   - Navigate to the GSM8K benchmark directory
-        #   - Source environment variables required for benchmark execution
-        #   - Launch the benchmark using nohup to allow async execution
-        #
-        # Benchmark parameters:
-        #   --num-questions : Total GSM8K questions to run
-        #   --parallel      : Maximum concurrent inference requests
-        #   --host / --port : Proxy Router endpoint for inference
-        # ------------------------------------------------------------------
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                      mkdir -p {self.log_dir}/benchmark_node; \
-                      cd /sgl-workspace/sglang/benchmark/gsm8k; \
-                      source /tmp/benchmark_env_script.sh && \
-                      nohup python3 ./bench_sglang.py \
-                      --num-questions {i_dict['num_questions']} \
-                      --parallel {i_dict['max_concurrency']} \
-                      --host http://0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']}" '''
-        formatted_cmd = textwrap_for_yml(cmd)
-        out_dict = self.b_phdl.exec(formatted_cmd, timeout=800)
-        time.sleep(5)
-        for node in out_dict.keys():
-            if not re.search('Output throughput', out_dict[node], re.I):
-                fail_test(f'Benchmark test did not complete properly on node {node}, no throughput pattern seen')
-            else:
-                match = re.search('Output throughput:\s+([0-9\.]+)\s+token', out_dict[node], re.I)
-                actual_tps = match.group(1)
-                if float(actual_tps) < float(i_dict['expected_results'][d_type]['tokens_per_sec']):
-                    fail_test(
-                        f"Test FAILED due to low performance, \
-                            expected tokens per sec = {i_dict['expected_results'][d_type]['tokens_per_sec']}, \
-                            actual tokens per sec = {actual_tps}"
-                    )
-
+    
+    # Helper function for running SGLang serving benchmark with random dataset
     def benchserv_test_random(self, d_type='auto'):
         """
         Run SGLang serving benchmark using a synthetic random dataset and
@@ -931,6 +885,7 @@ class SglangDisaggPD:
 
         self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
 
+    # Helper function for polling for server readiness
     def poll_for_server_ready(self, node_no, sglang_function, no_of_iterations=16):
         """
         Poll SGLang Prefill or Decode server logs to determine when the server
@@ -1001,6 +956,7 @@ class SglangDisaggPD:
             log.warning(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
             fail_test(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
 
+    # Helper function for getting inference results dictionary
     def get_inference_results_dict(self, out_dict):
         """
         Parse inference benchmark output logs and extract key performance metrics
@@ -1112,6 +1068,7 @@ class SglangDisaggPD:
         log.info("%s", self.inference_results_dict)
         return self.inference_results_dict
 
+    # Helper function for scanning for inference errors
     def scan_for_inference_errors(
         self,
     ):
@@ -1169,6 +1126,7 @@ class SglangDisaggPD:
 
         return inference_pass
 
+    # Helper function for polling for inference completion
     def poll_for_inference_completion(
         self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
     ):
@@ -1291,6 +1249,7 @@ class SglangDisaggPD:
             log.warning("%s", msg)
             return {"status": "stuck_in_progress", "reason": msg}
 
+    # Helper function for verifying inference results
     def verify_inference_results(self, test_name, expected_result_dict):
         """
         Validate inference benchmark results against expected performance
@@ -1367,6 +1326,7 @@ class SglangDisaggPD:
         verify_dmesg_for_errors(self.b_phdl, self.inference_start_time, self.inference_end_time)
         log.info("%s", self.inference_results_dict)
 
+    # Helper function for counting occupied GPUs per prefill/decode node
     def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
         """
         After model load, count occupied GPUs per prefill/decode node via amd-smi.
@@ -1430,7 +1390,7 @@ class SglangDisaggPD:
         log.info("\n".join(lines))
         return result
 
-    
+    # Helper function for verifying OpenAI-compatible endpoints
     def verify_openai_compatible_endpoints(self) -> list[str]:
         """
         Smoke-test OpenAI-compatible HTTP API on the proxy router (inside the
@@ -1516,164 +1476,20 @@ class SglangDisaggPD:
         summary = OpenAIProbe.summarize_results(results, ok, err)
         return summary
 
- 
-    # def run_lm_eval_hellaswag_benchmark_test(self, _d_type="auto"):
-    #     log.info("#================ * * * =========================#")
-    #     log.info("lm-eval HellaSwag benchmark")
-    #     log.info("#================ * * * =========================#")
-
-    #     i_dict = self.bp_dict["inference_tests"]["lm_eval_hellaswag"]
-    #     inner_cmd, scoring = LmEvalBenchmark.prepare(
-    #         i_dict,
-    #         port=int(self.inf_dict["proxy_router_serv_port"]),
-    #         model_id=self.bp_dict["model"],
-    #         task_name="hellaswag",
-    #         default_tasks="hellaswag",
-    #         default_metric="acc_norm",
-    #         default_metric_key="acc_norm,none",
-    #         log_dir=self.log_dir,
-    #         log_basename="lm_eval_hellaswag.log",
-    #         default_num_concurrent="1",
-    #     )
-
-    #     cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-    #             mkdir -p {self.log_dir}/benchmark_node; \\
-    #             source /tmp/benchmark_env_script.sh && \\
-    #             {inner_cmd}" '''
-    #     out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
-    #     time.sleep(5)
-
-    #     check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
-    #     summary = None
-    #     errors: list[str] = []
-
-    #     for node, text in out_dict.items():
-    #         ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
-    #         if node_summary is not None:
-    #             summary = node_summary
-    #         if not ok:
-    #             errors.append(f"lm-eval HellaSwag on node {node!r}: {err}")
-
-    #     if summary is None:
-    #         summary = LmEvalBenchmark.fallback_summary(
-    #             scoring,
-    #             error=errors[-1] if errors else "no benchmark nodes produced output to score",
-    #         )
-    #         errors.append("lm-eval HellaSwag: no benchmark nodes produced output to score")
-
-    #     for msg in errors:
-    #         fail_test(msg)
-
-    #     return summary
-
-    # def run_lm_eval_gsm8k_benchmark_test(self, _d_type="auto"):
-    #     log.info("#================ * * * =========================#")
-    #     log.info("lm-eval GSM8K benchmark")
-    #     log.info("#================ * * * =========================#")
-
-    #     i_dict = self.bp_dict["inference_tests"]["lm_eval_gsm8k"]
-    #     inner_cmd, scoring = LmEvalBenchmark.prepare(
-    #         i_dict,
-    #         port=int(self.inf_dict["proxy_router_serv_port"]),
-    #         model_id=self.bp_dict["model"],
-    #         task_name="gsm8k",
-    #         default_tasks="gsm8k",
-    #         default_metric="exact_match",
-    #         default_metric_key="exact_match,flexible-extract",
-    #         log_dir=self.log_dir,
-    #         log_basename="lm_eval_gsm8k.log",
-    #         default_num_concurrent="4",
-    #     )
-
-    #     cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-    #             mkdir -p {self.log_dir}/benchmark_node; \\
-    #             source /tmp/benchmark_env_script.sh && \\
-    #             {inner_cmd}" '''
-    #     out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
-    #     time.sleep(5)
-
-    #     check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
-    #     summary = None
-    #     errors: list[str] = []
-
-    #     for node, text in out_dict.items():
-    #         ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
-    #         if node_summary is not None:
-    #             summary = node_summary
-    #         if not ok:
-    #             errors.append(f"lm-eval GSM8K on node {node!r}: {err}")
-
-    #     if summary is None:
-    #         summary = LmEvalBenchmark.fallback_summary(
-    #             scoring,
-    #             error=errors[-1] if errors else "no benchmark nodes produced output to score",
-    #         )
-    #         errors.append("lm-eval GSM8K: no benchmark nodes produced output to score")
-
-    #     for msg in errors:
-    #         fail_test(msg)
-
-    #     return summary
-
-    # def run_lm_eval_mmlu_benchmark_test(self, _d_type="auto"):
-    #     log.info("#================ * * * =========================#")
-    #     log.info("lm-eval MMLU benchmark")
-    #     log.info("#================ * * * =========================#")
-
-    #     i_dict = self.bp_dict["inference_tests"]["lm_eval_mmlu"]
-    #     inner_cmd, scoring = LmEvalBenchmark.prepare(
-    #         i_dict,
-    #         port=int(self.inf_dict["proxy_router_serv_port"]),
-    #         model_id=self.bp_dict["model"],
-    #         task_name="mmlu",
-    #         default_tasks="mmlu",
-    #         default_metric="acc",
-    #         default_metric_key="acc,none",
-    #         log_dir=self.log_dir,
-    #         log_basename="lm_eval_mmlu.log",
-    #         default_num_concurrent="1",
-    #     )
-
-    #     cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-    #             mkdir -p {self.log_dir}/benchmark_node; \\
-    #             source /tmp/benchmark_env_script.sh && \\
-    #             {inner_cmd}" '''
-    #     out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
-    #     time.sleep(5)
-
-    #     check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
-    #     summary = None
-    #     errors: list[str] = []
-
-    #     for node, text in out_dict.items():
-    #         ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
-    #         if node_summary is not None:
-    #             summary = node_summary
-    #         if not ok:
-    #             errors.append(f"lm-eval MMLU on node {node!r}: {err}")
-
-    #     if summary is None:
-    #         summary = LmEvalBenchmark.fallback_summary(
-    #             scoring,
-    #             error=errors[-1] if errors else "no benchmark nodes produced output to score",
-    #         )
-    #         errors.append("lm-eval MMLU: no benchmark nodes produced output to score")
-
-    #     for msg in errors:
-    #         fail_test(msg)
-
-    #     return summary
-
+    # Helper functions for running LM-Eval benchmarks
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type="auto"):
         return self.run_lm_eval_benchmark_test("lm_eval_hellaswag", _d_type=_d_type)
 
+    # Helper functions for running GSM8K benchmarks
     def run_lm_eval_gsm8k_benchmark_test(self, _d_type="auto"):
         return self.run_lm_eval_benchmark_test("lm_eval_gsm8k", _d_type=_d_type)
 
+    # Helper functions for running MMLU benchmarks
     def run_lm_eval_mmlu_benchmark_test(self, _d_type="auto"):
         return self.run_lm_eval_benchmark_test("lm_eval_mmlu", _d_type=_d_type)
 
 
+    # Helper function for running LM-Eval benchmarks    
     def run_lm_eval_benchmark_test(self, bench_key: str, _d_type="auto"):
         spec = LM_EVAL_SPECS[bench_key]
         log.info("#================ * * * =========================#")
