@@ -27,7 +27,7 @@ Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc
 | Variant | IX recipe | GPU | Notes |
 |---------|-----------|-----|-------|
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke` | `dsr1-fp8-mi300x-atom` | MI300X | Quick path check (C=128, 128 prompts) |
-| `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` | `dsr1-fp8-mi300x-atom` | MI300X | W1 perf, calibrated thresholds, server reuse across sweep |
+| `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` | `dsr1-fp8-mi300x-atom` | MI300X | W1 perf, portable min-SLO thresholds, server reuse across sweep |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | `dsr1-fp8-mi300x-atom-mtp3` | MI300X | W1 FP8+MTP3 |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf` | `dsr1-fp8-mi355x-atom` | MI355X | W1 perf (CI seeds, `enforce_thresholds: false`) |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | `dsr1-fp8-mi355x-atom-mtp3` | MI355X | W1 FP8+MTP3 |
