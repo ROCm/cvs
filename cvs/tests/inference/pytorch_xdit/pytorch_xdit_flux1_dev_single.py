@@ -568,9 +568,11 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     # Remove stale outputs before this run
     clean_cmds = []
     for node in s_phdl.host_list:
-    label = cluster_target_output_label(node)
-    odq = shlex.quote(f"{output_base_dir}/flux_{label}_outputs/results")
-    clean_cmds.append(f"rm -rf {odq}")
+        label = cluster_target_output_label(node)
+        odq = shlex.quote(f"{output_base_dir}/flux_{label}_outputs/results")
+        clean_cmds.append(f"rm -rf {odq}")
+    log.info(f"Removing stale results/ on {len(clean_cmds)} node(s)")
+    s_phdl.exec_cmd_list(clean_cmds, print_console=False)
 
     # Build common docker command components
     device_list = inference_dict['container_config']['device_list']
@@ -619,8 +621,8 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     docker_cmds = []
 
     for node in s_phdl.host_list:
-        hostname = node_to_hostname[node]
-        output_dir = f"{output_base_dir}/flux_{hostname}_outputs"
+        label = cluster_target_output_label(node)
+        output_dir = f"{output_base_dir}/flux_{label}_outputs"
 
         # Create output directory command
         mkdir_cmds.append(f"mkdir -p {output_dir}")
@@ -654,7 +656,7 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
             f"{torchrun_cmd}"
         )
         docker_cmds.append(docker_cmd)
-        log.info(f"Node {node} ({hostname}) will write to: {output_dir}")
+        log.info(f"Node {node} ({label}) will write to: {output_dir}")
 
     # Create output directories on all nodes in parallel
     log.info(f"Creating output directories on {len(s_phdl.host_list)} node(s)")
@@ -696,7 +698,7 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     # picking up stale outputs from previous runs on other hosts.
     if len(getattr(s_phdl, "host_list", []) or []) == 1:
         only_node = s_phdl.host_list[0]
-        inference_dict["_test_output_dir"] = f"{output_base_dir}/flux_{node_to_hostname[only_node]}_outputs"
+        inference_dict["_test_output_dir"] = f"{output_base_dir}/flux_{cluster_target_output_label(only_node)}_outputs"
 
     update_test_result()
 
@@ -734,28 +736,16 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
     if inference_dict.get("_test_output_dir"):
         output_dirs = [inference_dict["_test_output_dir"]]
     else:
-        # Otherwise, derive expected output dirs from the current nodes' hostnames.
-        try:
-            head_node = s_phdl.host_list[0]
-            hostname_out = s_phdl.exec('hostname', print_console=False)
-            expected_hostnames = []
-            for node in s_phdl.host_list:
-                hn = (hostname_out.get(node, "") or "").strip() or node
-                expected_hostnames.append(hn)
-        except Exception:
-            # Fallback to head node only
-            expected_hostnames = [head_node] if 'head_node' in locals() else []
-
-        if not expected_hostnames:
-            fail_test("Could not determine node hostnames to locate Flux outputs")
+        expected_labels = [cluster_target_output_label(n) for n in s_phdl.host_list]
+        if not expected_labels:
+            fail_test("Could not determine cluster node keys to locate Flux outputs")
             update_test_result()
             return
 
-        # Single-node: parse only that node's directory.
         if node_count <= 1:
-            output_dirs = [f"{output_base_dir}/flux_{expected_hostnames[0]}_outputs"]
+            output_dirs = [f"{output_base_dir}/flux_{expected_labels[0]}_outputs"]
         else:
-            output_dirs = [f"{output_base_dir}/flux_{hn}_outputs" for hn in expected_hostnames]
+            output_dirs = [f"{output_base_dir}/flux_{lab}_outputs" for lab in expected_labels]
 
     log.info(f"Found {len(output_dirs)} output directory(ies) to parse")
 
