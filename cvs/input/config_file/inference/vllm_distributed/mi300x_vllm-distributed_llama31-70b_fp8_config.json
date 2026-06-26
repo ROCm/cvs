@@ -3,7 +3,7 @@
   "framework": "vllm_distributed",
   "gpu_arch": "mi300x",
   "enforce_thresholds": false,
-  "threshold_json": "/data/atnair/repos/cvs_worktrees/vllm-distributed/cvs/input/config_file/inference/vllm_distributed/mi300x_vllm-distributed_llama31-70b_fp8_threshold.json",
+  "threshold_json": "<changeme>",
   "paths": {
     "shared_fs": "/mnt/dtni/{user-id}",
     "models_dir": "{shared_fs}/models",
@@ -41,9 +41,9 @@
       "env": {
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
-        "GLOO_SOCKET_IFNAME": "enp159s0np0",
-        "TP_SOCKET_IFNAME": "enp159s0np0",
-        "NCCL_SOCKET_IFNAME": "enp159s0np0"
+        "GLOO_SOCKET_IFNAME": "<changeme>",
+        "TP_SOCKET_IFNAME": "<changeme>",
+        "NCCL_SOCKET_IFNAME": "<changeme>"
       }
     }
   },
@@ -60,7 +60,7 @@
     "tensor_parallelism": "8",
     "pipeline_parallel_size": "2",
     "nnodes": "2",
-    "master_addr": "10.245.135.15",
+    "master_addr": "<changeme>",
     "master_port": "29501",
     "tokenizer_mode": "auto",
     "percentile_metrics": "ttft,tpot,itl,e2el",

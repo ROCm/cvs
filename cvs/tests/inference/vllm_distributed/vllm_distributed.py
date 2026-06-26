@@ -16,7 +16,7 @@ from cvs.lib import globals
 from cvs.lib.inference.utils.inferencing_config_loader import GoodputSlo, validate_sweep_selector
 from cvs.lib.utils.verdict import evaluate_all
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
-from cvs.lib.inference.vllm_distributed import VllmDistributedJob as VllmJob
+from cvs.lib.inference.vllm_distributed import VllmDistributedJob
 
 import importlib.util as _ilu
 import pathlib as _pl
@@ -208,7 +208,7 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         pytest.skip("a prior lifecycle stage failed")
     isl = seq_combo["isl"]
     osl = seq_combo["osl"]
-    job = VllmJob(
+    job = VllmDistributedJob(
         orch=orch,
         variant=variant_config,
         hf_token=hf_token,
