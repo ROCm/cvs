@@ -363,7 +363,9 @@ class VllmJob:
     def is_client_done(self) -> bool:
         """Non-raising predicate: True if the client has finished (success or crash)."""
         try:
-            out = self.orch.exec(f"cat {self.client_log}")
+            # test -f guards against cat's stderr ("No such file or directory") matching
+            # CLIENT_LAUNCH_FAIL_RE before the log file is created.
+            out = self.orch.exec(f"test -f {shlex.quote(self.client_log)} && cat {shlex.quote(self.client_log)} || true")
             for _host, text in out.items():
                 txt = text or ""
                 if (
