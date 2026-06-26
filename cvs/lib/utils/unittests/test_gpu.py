@@ -899,5 +899,212 @@ class TestPollGpuMetrics(unittest.TestCase):
         self.assertEqual(len(readings), 2)
 
 
+class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
+    """Tests for capture_gpu_metrics with the nodes= parameter."""
+
+    def _make_gpu_json(self, used_vram: int, gfx: float = 80.0) -> str:
+        import json
+        return json.dumps([{
+            "usage": {
+                "gfx_activity": {"value": gfx},
+                "umc_activity": {"value": 10.0},
+                "mm_activity": {"value": "N/A"},
+            },
+            "mem_usage": {
+                "used_vram": {"value": used_vram},
+                "total_vram": {"value": used_vram + 1000},
+                "free_vram": {"value": 1000},
+            },
+            "energy": {"total_energy_consumption": {"value": 50.0}},
+        }])
+
+    def _make_phdl(self, host: str, used_vram: int, gfx: float = 80.0):
+        phdl = MagicMock()
+        phdl.exec.return_value = {host: self._make_gpu_json(used_vram, gfx)}
+        return phdl
+
+    def test_nodes_none_calls_exec_on_head(self):
+        """nodes=None must call orch.exec_on_head (regression guard)."""
+        orch = MagicMock()
+        orch.exec_on_head.return_value = {"host0": self._make_gpu_json(1000)}
+        from cvs.lib.utils.gpu import capture_gpu_metrics
+        result = capture_gpu_metrics(orch, nodes=None)
+        orch.exec_on_head.assert_called_once_with("amd-smi metric --json")
+        self.assertEqual(result["gpu.used_vram"], 1000)
+
+    def test_nodes_provided_calls_phdl_exec_not_exec_on_head(self):
+        """nodes provided: phdl.exec is called, orch.exec_on_head is NOT."""
+        orch = MagicMock()
+        p0 = self._make_phdl("prefill-host", 2000)
+        d0 = self._make_phdl("decode-host", 3000)
+        from cvs.lib.utils.gpu import capture_gpu_metrics
+        capture_gpu_metrics(orch, nodes=[("prefill-0", p0), ("decode-0", d0)])
+        orch.exec_on_head.assert_not_called()
+        p0.exec.assert_called_once_with("amd-smi metric --json")
+        d0.exec.assert_called_once_with("amd-smi metric --json")
+
+    def test_nodes_vram_summed_across_nodes(self):
+        """VRAM from all nodes is summed in the merged result."""
+        p0 = self._make_phdl("p", 2000)
+        d0 = self._make_phdl("d", 3000)
+        from cvs.lib.utils.gpu import capture_gpu_metrics
+        result = capture_gpu_metrics(None, nodes=[("prefill-0", p0), ("decode-0", d0)])
+        self.assertEqual(result["gpu.used_vram"], 5000)
+
+    def test_nodes_activity_averaged_across_nodes(self):
+        """GFX activity from all nodes is averaged."""
+        p0 = self._make_phdl("p", 1000, gfx=60.0)
+        d0 = self._make_phdl("d", 1000, gfx=100.0)
+        from cvs.lib.utils.gpu import capture_gpu_metrics
+        result = capture_gpu_metrics(None, nodes=[("prefill-0", p0), ("decode-0", d0)])
+        self.assertAlmostEqual(result["gpu.gfx_activity"], 80.0)
+
+    def test_nodes_exception_propagates(self):
+        """Exception from phdl.exec propagates (not swallowed)."""
+        p0 = MagicMock()
+        p0.exec.side_effect = RuntimeError("ssh failed")
+        from cvs.lib.utils.gpu import capture_gpu_metrics
+        with self.assertRaises(RuntimeError):
+            capture_gpu_metrics(None, nodes=[("prefill-0", p0)])
+
+
+class TestPollGpuMetricsMultiNode(unittest.TestCase):
+    """Tests for poll_gpu_metrics with the nodes= parameter."""
+
+    def _make_snap(self, used_vram: int = 1000):
+        return {
+            "gpu.used_vram": used_vram,
+            "gpu.gfx_activity": 90.0,
+            "gpu.umc_activity": 20.0,
+            "gpu.mm_activity": None,
+            "gpu.free_vram": 500,
+            "gpu.total_vram": 1500,
+            "gpu.energy_j": 50.0,
+        }
+
+    def _make_phdl_vram(self, host: str, used_vram: int):
+        import json
+        phdl = MagicMock()
+        phdl.exec.return_value = {host: json.dumps([{
+            "usage": {
+                "gfx_activity": {"value": 90.0},
+                "umc_activity": {"value": 20.0},
+                "mm_activity": {"value": "N/A"},
+            },
+            "mem_usage": {
+                "used_vram": {"value": used_vram},
+                "total_vram": {"value": used_vram + 500},
+                "free_vram": {"value": 500},
+            },
+            "energy": {"total_energy_consumption": {"value": 25.0}},
+        }])}
+        return phdl
+
+    def test_log_line_tagged_with_node_labels(self):
+        """When nodes provided, log lines include '[label1+label2] ' tag."""
+        import tempfile, os
+        snap = self._make_snap()
+        p0 = self._make_phdl_vram("p", 2000)
+        d0 = self._make_phdl_vram("d", 3000)
+        nodes = [("prefill-0", p0), ("decode-0", d0)]
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
+            log_path = f.name
+        try:
+            with (
+                patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
+                patch("time.sleep"),
+            ):
+                from cvs.lib.utils.gpu import poll_gpu_metrics
+                poll_gpu_metrics(
+                    None, is_done_fn=lambda: True,
+                    poll_interval_s=0, log_path=log_path, nodes=nodes,
+                )
+            with open(log_path) as _f:
+                content = _f.read()
+            self.assertIn("[prefill-0+decode-0]", content)
+        finally:
+            os.unlink(log_path)
+
+    def test_summary_contains_per_node_vram(self):
+        """Summary block includes node_vram_mb lines for each label."""
+        import tempfile, os
+        snap = self._make_snap(1000)
+        p0 = self._make_phdl_vram("p", 2000)
+        d0 = self._make_phdl_vram("d", 3000)
+        nodes = [("prefill-0", p0), ("decode-0", d0)]
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
+            log_path = f.name
+        try:
+            with (
+                patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
+                patch("time.sleep"),
+            ):
+                from cvs.lib.utils.gpu import poll_gpu_metrics
+                poll_gpu_metrics(
+                    None, is_done_fn=lambda: True,
+                    poll_interval_s=0, log_path=log_path, nodes=nodes,
+                )
+            content = open(log_path).read()
+            self.assertIn("node_vram_mb [prefill-0]", content)
+            self.assertIn("node_vram_mb [decode-0]", content)
+            self.assertIn("per-node vram", content)
+        finally:
+            os.unlink(log_path)
+
+    def test_no_node_tag_when_nodes_none(self):
+        """Without nodes, log lines have no '[...]' node tag."""
+        import tempfile, os
+        snap = self._make_snap()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
+            log_path = f.name
+        try:
+            with (
+                patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
+                patch("time.sleep"),
+            ):
+                from cvs.lib.utils.gpu import poll_gpu_metrics
+                poll_gpu_metrics(
+                    MagicMock(), is_done_fn=lambda: True,
+                    poll_interval_s=0, log_path=log_path, nodes=None,
+                )
+            content = open(log_path).read()
+            self.assertNotIn("per-node vram", content)
+        finally:
+            os.unlink(log_path)
+
+    def test_inline_vram_failure_degrades_gracefully(self):
+        """If per-label inline phdl.exec raises, that label gets None; aggregate unaffected."""
+        import tempfile, os
+        snap = self._make_snap(5000)
+        p0 = MagicMock()
+        p0.exec.side_effect = RuntimeError("network error")
+        d0 = self._make_phdl_vram("d", 3000)
+        nodes = [("prefill-0", p0), ("decode-0", d0)]
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
+            log_path = f.name
+        try:
+            with (
+                patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
+                patch("time.sleep"),
+            ):
+                from cvs.lib.utils.gpu import poll_gpu_metrics
+                readings = poll_gpu_metrics(
+                    None, is_done_fn=lambda: True,
+                    poll_interval_s=0, log_path=log_path, nodes=nodes,
+                )
+            # Aggregate reading was not aborted
+            self.assertEqual(len(readings), 1)
+            self.assertEqual(readings[0]["gpu.used_vram"], 5000)
+            content = open(log_path).read()
+            # decode-0 has vram, prefill-0 is "-" (None)
+            self.assertIn("node_vram_mb [decode-0]: 3000 MB", content)
+            self.assertIn("node_vram_mb [prefill-0]: - MB", content)
+        finally:
+            os.unlink(log_path)
+
+
 if __name__ == "__main__":
     unittest.main()
