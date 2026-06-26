@@ -6,13 +6,22 @@ Single SGLang disaggregated (PD) benchmark module: model is selected from
 ``benchmark_params`` via ``active_benchmark`` / env / single-key auto (see ``_shared``).
 '''
 
+import pathlib
 import re
+import threading
 import time
 
 import pytest
 
 from cvs.lib import docker_lib, globals
 from cvs.lib.utils_lib import fail_test, update_test_result
+from cvs.lib.utils.gpu import (
+    GPU_METRICS,
+    GPU_METRIC_UNITS,
+    agg_readings,
+    capture_gpu_metrics,
+    poll_gpu_metrics,
+)
 from cvs.tests.inference.sglang._shared import test_print_results_table
 
 log = globals.log
@@ -147,11 +156,72 @@ def test_run_lm_eval_mmlu_benchmark_test(im_obj, inf_res_dict):
     update_test_result()
 
 
-def test_run_performance_benchmark_test(im_obj, inf_res_dict):
+def test_run_performance_benchmark_test(im_obj, inf_res_dict, gpu_metrics_snap, request):
     globals.error_list = []
     im_obj.setup_benchmark_serv_container_env()
-    im_obj.benchserv_test_random(d_type="auto")
 
+    # --- GPU polling setup (Pattern B: client runs synchronously, poll in thread) ---
+    nodes = [("prefill-0", im_obj.p_phdl), ("decode-0", im_obj.d_phdl)]
+    bench_log = f"{im_obj.log_dir}/benchmark_node/benchmark_results.log"
+
+    def _is_done() -> bool:
+        try:
+            out = im_obj.b_phdl.exec(f"cat {bench_log}")
+            return any(
+                "Serving Benchmark Result" in (text or "")
+                for text in out.values()
+            )
+        except Exception:
+            return False
+
+    def _snap():
+        try:
+            return capture_gpu_metrics(None, nodes=nodes)
+        except Exception:
+            return {}
+
+    # Pre-load snapshot (before client starts)
+    pre_snap = _snap()
+
+    _htmlpath = getattr(request.config.option, "htmlpath", None)
+    _html_dir = getattr(request.config, "_test_html_dir", "test_html")
+    _gpu_log = (
+        pathlib.Path(_htmlpath).parent / _html_dir / "gpu_poll_disagg.log"
+        if _htmlpath else None
+    )
+
+    poll_readings: list = []
+    done_flag = threading.Event()
+
+    def _poll_thread():
+        poll_readings.extend(
+            poll_gpu_metrics(
+                None,
+                is_done_fn=done_flag.is_set,
+                nodes=nodes,
+                log_path=str(_gpu_log) if _gpu_log else None,
+            )
+        )
+
+    poll_t = threading.Thread(target=_poll_thread, daemon=True)
+    poll_t.start()
+
+    # --- Run client (synchronous, blocks until done) ---
+    im_obj.benchserv_test_random(d_type="auto")
+    done_flag.set()
+    poll_t.join(timeout=60)
+
+    # --- Store GPU metrics ---
+    agg = agg_readings(poll_readings)
+    gpu_metrics_snap["pre_snap"] = pre_snap
+    inf_res_dict["gpu.peak_gpu_memory_mb"] = agg.get("peak_gpu_memory_mb")
+    inf_res_dict["gpu.model_load_memory_mb"] = (
+        ((pre_snap.get("gpu.used_vram") or 0)) or None
+    )
+    inf_res_dict["gpu.gpu_bandwidth_util_pct"] = agg.get("gpu_bandwidth_util_pct")
+    inf_res_dict["gpu.gpu_compute_util_pct"] = agg.get("gpu_compute_util_pct")
+
+    # --- Existing results wiring ---
     bench = (im_obj.bp_dict.get("inference_tests") or {}).get("bench_serv_random") or {}
     expected = (bench.get("expected_results") or {}).get("auto") or {}
 
@@ -169,6 +239,17 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict):
 
     inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
     update_test_result()
+
+
+def test_gpu_metric(gpu_metric, inf_res_dict, request):
+    val = inf_res_dict.get(gpu_metric)
+    unit = GPU_METRIC_UNITS.get(gpu_metric, "")
+
+    request.node.user_properties.append(("metric_value", val))
+    request.node.user_properties.append(("metric_unit", unit))
+
+    if val is None:
+        pytest.skip(f"{gpu_metric}: no value recorded (amd-smi unavailable or polling failed)")
 
 
 def test_disagg_gpu_topology(im_obj):

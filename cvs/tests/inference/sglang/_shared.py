@@ -86,7 +86,8 @@ SGLANG_DISAGG_TEST_ORDER = {
     "test_run_lm_eval_mmlu_benchmark_test": 11,
     "test_run_performance_benchmark_test": 12,
     "test_disagg_gpu_topology": 13,
-    "test_print_results_table": 14,
+    "test_gpu_metric": 14,
+    "test_print_results_table": 15,
 }
 
 
