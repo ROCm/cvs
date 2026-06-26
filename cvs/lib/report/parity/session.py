@@ -73,19 +73,17 @@ def publish_session_inference_parity(
     reference_json_path: Optional[Path] = None,
 ) -> Optional[dict]:
     """Publish inference parity HTML/JSON when compare paths are configured."""
-    compare = resolve_parity_compare_jsons(
-        report_config,
-        Path(htmlpath).resolve().parent,
-    )
-    if not compare:
-        return None
-
     htmlpath = getattr(pytest_config.option, "htmlpath", None)
     if not htmlpath:
         return None
 
+    report_dir = Path(htmlpath).resolve().parent
+    compare = resolve_parity_compare_jsons(report_config, report_dir)
+    if not compare:
+        return None
+
     if reference_json_path is None:
-        reference_json_path = Path(htmlpath).resolve().parent / f"{report_config.report_basename}.json"
+        reference_json_path = report_dir / f"{report_config.report_basename}.json"
     if not reference_json_path.is_file():
         log.warning("Skipping inference parity: reference JSON not found: %s", reference_json_path)
         return None

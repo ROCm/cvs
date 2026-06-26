@@ -74,6 +74,52 @@ def test_resolve_parity_compare_jsons_discovers_siblings(tmp_path):
     assert resolved["vllm"] == str(vllm)
 
 
+def test_publish_session_inference_parity_with_sibling_json(tmp_path):
+    """Sibling vllm_report.json discovery must not raise UnboundLocalError on htmlpath."""
+    ref = tmp_path / "inferencex_atom_report.json"
+    vllm = tmp_path / "vllm_report.json"
+    _sample_cell_report(ref, "atom", 5000.0)
+    _sample_cell_report(vllm, "vllm", 4500.0)
+
+    from cvs.lib.report.presets.inference_parity import W1_INFERENCE_PARITY_METRICS
+
+    cfg = InferenceReportConfig(
+        suite_id="inferencex_atom",
+        report_basename="inferencex_atom_report",
+        title="IX",
+        subtitle="",
+        footer="",
+        link_name="IX",
+        embed_summary="",
+        results_columns=(),
+        metric_tier_order=("throughput",),
+        tier_metric_specs=lambda *_: {},
+        metric_units={},
+        parity_reference_framework_id="atom",
+        parity_metrics=W1_INFERENCE_PARITY_METRICS,
+    )
+
+    class Opt:
+        htmlpath = str(tmp_path / "pytest.html")
+
+    class Cfg:
+        option = Opt()
+
+    class Mgr:
+        is_enabled = True
+
+        def add_html_to_report(self, html_file, link_name=None, request=None):
+            pass
+
+    artifacts = publish_session_inference_parity(
+        cfg,
+        report_manager=Mgr(),
+        pytest_config=Cfg(),
+    )
+    assert artifacts is not None
+    assert artifacts["html"].is_file()
+
+
 def test_publish_session_inference_parity_writes_artifacts(tmp_path, monkeypatch):
     ref = tmp_path / "inferencex_atom_report.json"
     vllm = tmp_path / "vllm.json"
