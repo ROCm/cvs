@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import html
-import json
 from pathlib import Path
 from typing import Any, List, Mapping, Optional
 
-from cvs.lib.report.formatting import status_badge_html
+from cvs.lib.report.formatting import status_badge_css, status_badge_html
+from cvs.lib.report.json_io import load_report_json
+from cvs.lib.report.metrics import HEADLINE_THROUGHPUT_METRIC
 from cvs.lib.report.types import InferenceReportConfig
 
 _PARITY_JSON = "inference_parity_report.json"
@@ -24,7 +25,7 @@ def _cell_worst_score(cell: dict, gated_tiers: tuple[str, ...]) -> tuple:
     regressions = 1 if any(t == "fail" for t in cell.get("tiers", {}).values()) else 0
     if regressions:
         return (1, 0, cell.get("cell_id", ""))
-    headline = (cell.get("actuals") or {}).get("client.output_throughput")
+    headline = (cell.get("actuals") or {}).get(HEADLINE_THROUGHPUT_METRIC)
     try:
         tput = float(headline) if headline is not None else float("inf")
     except (TypeError, ValueError):
@@ -51,9 +52,8 @@ def _parity_summary(report_dir: Path) -> Optional[dict]:
     path = report_dir / _PARITY_JSON
     if not path.is_file():
         return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    data = load_report_json(path)
+    if not data:
         return None
     rows = data.get("rows") or []
     failed = 0
@@ -140,11 +140,7 @@ h1 {{ margin: 0 0 0.25rem; font-size: 1.35rem; }}
 .meta {{ font-size: 0.85rem; color: #666; margin-bottom: 1rem; }}
 .panel {{ border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }}
 .highlights {{ margin: 0.5rem 0 0; padding-left: 1.25rem; }}
-.status-badge {{ font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.55rem; border-radius: 999px; }}
-.status-pass {{ background: #d4edda; color: #155724; }}
-.status-fail {{ background: #f8d7da; color: #721c24; }}
-.status-record {{ background: #d1ecf1; color: #0c5460; }}
-.status-na {{ background: #e2e3e5; color: #383d41; }}
+{status_badge_css(light=True)}
 a {{ color: #0b5fff; }}
 </style></head><body>
 <h1>{html.escape(title)}</h1>
