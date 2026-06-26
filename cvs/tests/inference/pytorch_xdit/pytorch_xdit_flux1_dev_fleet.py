@@ -702,6 +702,55 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
 
     update_test_result()
 
+def test_verify_generated_images(s_phdl, inference_dict):
+    """
+    Verify at least one non-empty flux_*.png was generated on every cluster node.
+
+    Runs over SSH on each node's benchmark output directory (fleet parallel).
+    """
+    globals.error_list = []
+
+    output_base_dir = inference_dict.get("output_base_dir")
+    if not output_base_dir:
+        fail_test("output_base_dir not set in config; cannot locate benchmark outputs")
+        update_test_result()
+        return
+
+    verify_cmds = []
+    for node in s_phdl.host_list:
+        if inference_dict.get("_test_output_dir") and len(s_phdl.host_list) == 1:
+            output_dir = inference_dict["_test_output_dir"]
+        else:
+            label = cluster_target_output_label(node)
+            output_dir = f"{output_base_dir}/flux_{label}_outputs"
+
+        odq = shlex.quote(output_dir)
+        verify_cmds.append(
+            f'img=$(find {odq} -type f -name \'flux_*.png\' 2>/dev/null | head -1); '
+            f'test -n "$img" && test -s "$img" && echo IMG_OK || echo IMG_MISSING'
+        )
+        log.info(f"Will verify flux_*.png on {node} under {output_dir}")
+
+    log.info(f"Verifying generated images on {len(s_phdl.host_list)} node(s)")
+    verify_results = s_phdl.exec_cmd_list(verify_cmds, print_console=False)
+
+    missing_nodes = []
+    for node, output in verify_results.items():
+        if "IMG_OK" in (output or ""):
+            log.info(f"Generated image verified on {node}")
+        else:
+            log.error(f"No non-empty flux_*.png found on {node}")
+            missing_nodes.append(node)
+
+    if missing_nodes:
+        fail_test(
+            f"Expected at least one non-empty flux_*.png under each node's "
+            f"flux_<cluster_target>_outputs directory; missing on "
+            f"{len(missing_nodes)} node(s): {', '.join(missing_nodes)}"
+        )
+
+    log.info(f"Image verification passed on all {len(s_phdl.host_list)} node(s)")
+    update_test_result()
 
 def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dict, gpu_type):
     """
