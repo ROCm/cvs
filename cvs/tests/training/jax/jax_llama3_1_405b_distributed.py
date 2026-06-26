@@ -290,6 +290,5 @@ def test_llama_3_1_405b_distributed(phdl, training_dict, model_params_dict, hf_t
     jx_obj.build_training_job_cmd()
     jx_obj.start_training_job()
     jx_obj.poll_for_training_completion()
-    jx_obj.get_training_results_dict()
     jx_obj.verify_training_results()
     update_test_result()
