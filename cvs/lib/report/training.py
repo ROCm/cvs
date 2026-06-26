@@ -15,10 +15,9 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from cvs.lib import globals
-from cvs.lib.report.panels.training_parity import (
-    build_training_parity_panel,
-    render_training_parity_panel_html,
-)
+from cvs.lib.report.artifacts import export_payload, write_html_json_artifacts
+from cvs.lib.report.panels.training_parity import render_training_parity_panel_html
+from cvs.lib.report.render.panel_shell import render_panel_section, render_results_table_html
 from cvs.lib.report.types import TrainingReportConfig
 
 log = globals.log
@@ -70,19 +69,18 @@ def render_training_report_html(payload: dict) -> str:
     col_specs = payload.get("node_metric_columns") or []
     headers = ["Node"] + [spec["label"] for spec in col_specs]
     keys = [spec["key"] for spec in col_specs]
-    body = "".join(
-        "<tr>"
-        + f"<td>{html.escape(str(row.get('node', '')))}</td>"
-        + "".join(f"<td>{html.escape(str(row.get(k, '')))}</td>" for k in keys)
-        + "</tr>"
-        for row in columns
+    table_html = render_results_table_html(
+        headers,
+        ([row.get("node", "")] + [row.get(k, "") for k in keys] for row in columns),
+        table_class="",
+        empty_message="No nodes recorded.",
     )
     parity_html = ""
     parity_panel = (payload.get("panels") or {}).get("training_parity")
     if parity_panel and parity_panel.get("rows"):
-        parity_html = (
-            f"<section class='panel'><h2>Training parity</h2>"
-            f"{render_training_parity_panel_html(parity_panel)}</section>"
+        parity_html = render_panel_section(
+            "Training parity",
+            render_training_parity_panel_html(parity_panel),
         )
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><title>{html.escape(report['title'])}</title>
@@ -90,7 +88,7 @@ def render_training_report_html(payload: dict) -> str:
 td,th{{border:1px solid #ddd;padding:0.5rem}}</style></head><body>
 <h1>{html.escape(report['title'])}</h1>
 <p>{html.escape(report['subtitle'])}</p>
-<table><tr>{''.join(f'<th>{html.escape(h)}</th>' for h in headers)}</tr>{body}</table>
+{table_html}
 {parity_html}
 <footer><p>{html.escape(report['footer'])}</p></footer>
 </body></html>"""
@@ -113,17 +111,18 @@ def write_training_report(
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     json_path = path.with_suffix(".json")
-    export = {k: v for k, v in payload.items() if not k.startswith("_")}
-    json_path.write_text(json.dumps(export, indent=2, default=str), encoding="utf-8")
+    json_path.write_text(json.dumps(export_payload(payload), indent=2, default=str), encoding="utf-8")
 
     from cvs.lib.report.training_parity_session import attach_training_parity_panel
 
     attach_training_parity_panel(payload, config, candidate_json_path=json_path)
 
-    path.write_text(render_training_report_html(payload), encoding="utf-8")
-    export = {k: v for k, v in payload.items() if not k.startswith("_")}
-    json_path.write_text(json.dumps(export, indent=2, default=str), encoding="utf-8")
-    return {"html": path, "json": json_path, "payload": payload}
+    html_path, json_path = write_html_json_artifacts(
+        path,
+        payload=payload,
+        render_html=render_training_report_html,
+    )
+    return {"html": html_path, "json": json_path, "payload": payload}
 
 
 def publish_training_suite_report(

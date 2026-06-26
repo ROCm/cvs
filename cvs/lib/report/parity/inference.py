@@ -37,6 +37,8 @@ from typing import Dict, List, Mapping, Optional
 from cvs.lib import globals
 from cvs.lib.report.compare import metric_ratio
 from cvs.lib.report.formatting import fmt_num
+from cvs.lib.report.artifacts import write_html_json_artifacts
+from cvs.lib.report.render.panel_shell import render_panel_section
 from cvs.lib.report.types import (
     InferenceParityConfig,
     InferenceParityMetric,
@@ -268,9 +270,9 @@ def _render_metric_table(
         )
 
     title = specs[0].get("title") or metric if specs else metric
-    return (
-        f"<section class='panel'><h2>{html.escape(title)}</h2>"
-        f"<table class='parity-table'><thead>{header}</thead><tbody>{''.join(body_parts)}</tbody></table></section>"
+    return render_panel_section(
+        str(title),
+        f"<table class='parity-table'><thead>{header}</thead><tbody>{''.join(body_parts)}</tbody></table>",
     )
 
 
@@ -321,12 +323,13 @@ def write_inference_parity_report(
         raise ValueError("InferenceParityConfig.sources must include at least one JSON path")
     payload = build_inference_parity_payload(config)
     out_html = Path(out_html)
-    out_html.parent.mkdir(parents=True, exist_ok=True)
-    out_html.write_text(render_inference_parity_html(payload), encoding="utf-8")
-    json_path = out_html.with_suffix(".json")
-    json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-    log.info("Inference parity report written: %s (json: %s)", out_html, json_path)
-    return {"html": out_html, "json": json_path, "payload": payload}
+    html_path, json_path = write_html_json_artifacts(
+        out_html,
+        payload=payload,
+        render_html=render_inference_parity_html,
+    )
+    log.info("Inference parity report written: %s (json: %s)", html_path, json_path)
+    return {"html": html_path, "json": json_path, "payload": payload}
 
 
 def publish_inference_parity_report(
