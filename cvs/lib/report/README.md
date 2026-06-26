@@ -193,14 +193,31 @@ Set `parity_baseline_json` on `TrainingReportConfig`, or:
 export CVS_TRAINING_PARITY_BASELINE_JSON=/path/prior_megatron_training_report.json
 ```
 
+## JSON sidecar (`schema_version: 1`)
+
+Written as `{report_basename}.json` next to the HTML dashboard. External tools should read
+`schema_version` first and ignore unknown keys.
+
+| Field | Description |
+|-------|-------------|
+| `suite_id`, `generated_at`, `cvs_version`, `overall_status` | Run identity and gate summary |
+| `report` | Title, subtitle, tier order, headline metric |
+| `run_card_display`, `provenance` | Run card rows and paths (pytest HTML, cluster/config, git) |
+| `lifecycle` | Session stage → seconds |
+| `cells` | Per sweep cell: `actuals`, `tiers`, `metrics`, optional pytest nodeids |
+| `chart_series`, `sweep_summaries`, `gate_matrix`, `results_table` | Charts and tabular export |
+| `panels` | Optional `scaling`, `prev_run`, … |
+| `summary` | Truncation mode and viewer basename when cell count is large |
+
+Training JSON uses `report_kind: "training"` with `nodes` / `node_rows`. Parity and CI
+summary artifacts are separate files (`inference_parity_report.json`, `{basename}_summary.html`).
+
 ## Unit tests
 
 ```bash
 python -m pytest cvs/lib/report/unittests/ -q
 ```
 
-## Related docs
+## See also
 
-- `cvs/lib/report/SCHEMA.md`: JSON sidecar field reference (`schema_version: 1`)
 - `cvs/lib/inference/ADDING_A_SUITE.md` — checklist entry for new inference suites
-- `plans/suite-reporting-library-pitch.md`: scope and future TODO list
