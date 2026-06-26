@@ -3,39 +3,30 @@
 from __future__ import annotations
 
 import html
-import json
 import os
 from pathlib import Path
 from typing import Any, List, Mapping, Optional
 
-THROUGHPUT_METRIC = "client.output_throughput"
+from cvs.lib.report.compare import metric_delta_pct, metric_ratio, prev_run_change_flags
+from cvs.lib.report.formatting import fmt_num
+from cvs.lib.report.json_io import cell_id_host_key, index_cells_by_id_host, load_report_json
+from cvs.lib.report.metrics import HEADLINE_THROUGHPUT_METRIC
+
+# Backward-compatible alias for callers importing from this module.
+THROUGHPUT_METRIC = HEADLINE_THROUGHPUT_METRIC
 PREV_RUN_ENV = "CVS_INFERENCE_PREV_REPORT_JSON"
 DEFAULT_THRESHOLD_PCT = 5.0
 
 
-def _fmt_num(value: Any, digits: int = 1) -> str:
-    if value is None:
-        return "\u2014"
-    try:
-        return f"{float(value):,.{digits}f}"
-    except (TypeError, ValueError):
-        return html.escape(str(value))
-
-
 def cell_lookup_key(cell: Mapping[str, Any]) -> tuple[str, str]:
-    return (str(cell.get("cell_id", "")), str(cell.get("host", "")))
+    return cell_id_host_key(cell)
 
 
 def load_cell_index(path: Path) -> dict[tuple[str, str], dict]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    data = load_report_json(path)
+    if not data:
         return {}
-    index: dict[tuple[str, str], dict] = {}
-    for cell in data.get("cells") or []:
-        if isinstance(cell, dict):
-            index[cell_lookup_key(cell)] = cell
-    return index
+    return index_cells_by_id_host(data)
 
 
 def resolve_prev_run_json_path(config_prev_run_json: str = "") -> str:
@@ -46,7 +37,7 @@ def build_prev_run_panel(
     cells: List[dict],
     baseline_json_path: Path,
     *,
-    headline_metric: str = THROUGHPUT_METRIC,
+    headline_metric: str = HEADLINE_THROUGHPUT_METRIC,
     threshold_pct: float = DEFAULT_THRESHOLD_PCT,
 ) -> Optional[dict]:
     if not baseline_json_path.is_file():
@@ -70,11 +61,9 @@ def build_prev_run_panel(
             try:
                 cur_f = float(current)
                 prev_f = float(previous)
-                if prev_f != 0:
-                    ratio = cur_f / prev_f
-                    delta_pct = 100.0 * (cur_f - prev_f) / prev_f
-                    changed = abs(delta_pct) > threshold_pct
-                    regression = changed and delta_pct < 0
+                ratio = metric_ratio(cur_f, prev_f)
+                delta_pct = metric_delta_pct(cur_f, prev_f)
+                changed, regression = prev_run_change_flags(delta_pct, threshold_pct)
             except (TypeError, ValueError):
                 pass
         rows.append(
@@ -113,8 +102,8 @@ def render_prev_run_panel_html(panel: dict) -> str:
             f"<tr class='{row_cls}'><td>{html.escape(str(row.get('cell_id', '')))}</td>"
             f"<td>{html.escape(str(row.get('host', '')))}</td>"
             f"<td>{row.get('concurrency', '')}</td>"
-            f"<td>{_fmt_num(row.get('previous_throughput'))}</td>"
-            f"<td>{_fmt_num(row.get('current_throughput'))}</td>"
+            f"<td>{fmt_num(row.get('previous_throughput'))}</td>"
+            f"<td>{fmt_num(row.get('current_throughput'))}</td>"
             f"<td>{html.escape(delta_s)}</td></tr>"
         )
     baseline = html.escape(str(panel.get("baseline_json", "")))

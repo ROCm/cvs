@@ -11,39 +11,21 @@ hosts or ``nnodes > 1``; optional single-node baseline JSON enables efficiency %
 from __future__ import annotations
 
 import html
-import json
 from pathlib import Path
-from typing import Any, List, Mapping, Optional
+from typing import List, Optional
 
-THROUGHPUT_METRIC = "client.output_throughput"
+from cvs.lib.report.formatting import fmt_num
+from cvs.lib.report.json_io import load_report_json, max_metric_from_cells, sum_metric_from_cells
+from cvs.lib.report.metrics import HEADLINE_THROUGHPUT_METRIC
 
-
-def _fmt_num(value: Any, digits: int = 1) -> str:
-    if value is None:
-        return "\u2014"
-    try:
-        return f"{float(value):,.{digits}f}"
-    except (TypeError, ValueError):
-        return html.escape(str(value))
-
-
-def _cluster_throughput(cells: List[dict]) -> Optional[float]:
-    """Sum headline throughput across hosts (one row per host per cell)."""
-    values = []
-    for cell in cells:
-        tput = cell.get("actuals", {}).get(THROUGHPUT_METRIC)
-        if tput is not None:
-            try:
-                values.append(float(tput))
-            except (TypeError, ValueError):
-                continue
-    return sum(values) if values else None
+# Backward-compatible alias.
+THROUGHPUT_METRIC = HEADLINE_THROUGHPUT_METRIC
 
 
 def _per_node_rows(cells: List[dict]) -> List[dict]:
     rows = []
     for cell in cells:
-        tput = cell.get("actuals", {}).get(THROUGHPUT_METRIC)
+        tput = cell.get("actuals", {}).get(HEADLINE_THROUGHPUT_METRIC)
         rows.append(
             {
                 "host": cell.get("host"),
@@ -58,23 +40,10 @@ def _per_node_rows(cells: List[dict]) -> List[dict]:
 
 
 def _baseline_throughput_from_json(path: Path) -> Optional[float]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    data = load_report_json(path)
+    if not data:
         return None
-    cells = data.get("cells") or []
-    if not cells:
-        return None
-    values = []
-    for cell in cells:
-        actuals = cell.get("actuals") or {}
-        tput = actuals.get(THROUGHPUT_METRIC)
-        if tput is not None:
-            try:
-                values.append(float(tput))
-            except (TypeError, ValueError):
-                continue
-    return max(values) if values else None
+    return max_metric_from_cells(data.get("cells") or [], HEADLINE_THROUGHPUT_METRIC)
 
 
 def build_scaling_panel(
@@ -82,7 +51,7 @@ def build_scaling_panel(
     cells: List[dict],
     nnodes: int = 1,
     baseline_json_path: Optional[str] = None,
-    headline_metric: str = THROUGHPUT_METRIC,
+    headline_metric: str = HEADLINE_THROUGHPUT_METRIC,
 ) -> Optional[dict]:
     """Build scaling panel payload; returns None when single-node single-host."""
     hosts = {c.get("host") for c in cells if c.get("host")}
@@ -91,7 +60,7 @@ def build_scaling_panel(
         return None
 
     per_node = _per_node_rows(cells)
-    cluster_total = _cluster_throughput(cells)
+    cluster_total = sum_metric_from_cells(cells, HEADLINE_THROUGHPUT_METRIC)
     baseline_single = None
     efficiency_pct = None
     if baseline_json_path:
@@ -116,7 +85,7 @@ def build_scaling_panel(
 def render_scaling_panel_html(panel: dict) -> str:
     eff = panel.get("compare.scaling.efficiency_pct")
     eff_html = (
-        f"<div class='summary-stat'>{_fmt_num(eff, 0)}<span class='headline-unit'>%</span></div>"
+        f"<div class='summary-stat'>{fmt_num(eff, 0)}<span class='headline-unit'>%</span></div>"
         f"<div class='summary-meta'>Scaling efficiency vs single-node baseline</div>"
         if eff is not None
         else "<p class='muted'>No single-node baseline JSON — per-node breakdown only.</p>"
@@ -126,7 +95,7 @@ def render_scaling_panel_html(panel: dict) -> str:
         f"<tr><td>{html.escape(str(r.get('host', '')))}</td>"
         f"<td>{html.escape(str(r.get('policy', '')))}</td>"
         f"<td>{r.get('concurrency', '')}</td>"
-        f"<td>{_fmt_num(r.get('throughput'))}</td></tr>"
+        f"<td>{fmt_num(r.get('throughput'))}</td></tr>"
         for r in rows
     )
     table = (
@@ -139,7 +108,7 @@ def render_scaling_panel_html(panel: dict) -> str:
     return (
         f"<div class='summary-grid'><article class='summary-card'>"
         f"<h3>Cluster ({panel.get('nnodes', '?')} nodes)</h3>"
-        f"<div class='summary-stat'>{_fmt_num(panel.get('cluster_throughput'))}"
+        f"<div class='summary-stat'>{fmt_num(panel.get('cluster_throughput'))}"
         f"<span class='headline-unit'>tok/s aggregate</span></div>"
         f"{eff_html}</article></div>"
         f"<div class='results-wrap'>{table}</div>"

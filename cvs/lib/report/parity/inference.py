@@ -35,6 +35,8 @@ from pathlib import Path
 from typing import Dict, List, Mapping, Optional
 
 from cvs.lib import globals
+from cvs.lib.report.compare import metric_ratio
+from cvs.lib.report.formatting import fmt_num
 from cvs.lib.report.types import (
     InferenceParityConfig,
     InferenceParityMetric,
@@ -79,23 +81,6 @@ def _metric_value(cell: Optional[dict], metric: str) -> Optional[float]:
         return float(raw)
     except (TypeError, ValueError):
         return None
-
-
-def _ratio(candidate: Optional[float], reference: Optional[float]) -> Optional[float]:
-    if candidate is None or reference is None:
-        return None
-    if reference == 0:
-        return None
-    return candidate / reference
-
-
-def _fmt(value) -> str:
-    if value is None:
-        return "\u2014"
-    try:
-        return f"{float(value):,.2f}"
-    except (TypeError, ValueError):
-        return html.escape(str(value))
 
 
 def _cell_label(key: tuple) -> str:
@@ -216,7 +201,7 @@ def build_inference_parity_payload(
             spec_ref = spec.reference_framework_id or ref_id
             ref_val = values.get(spec_ref, {}).get(spec.metric)
             cmp_val = values.get(spec.compare_framework_id, {}).get(spec.metric)
-            compare[spec.ratio_key] = _ratio(cmp_val, ref_val)
+            compare[spec.ratio_key] = metric_ratio(cmp_val, ref_val)
 
         rows.append(
             {
@@ -273,9 +258,11 @@ def _render_metric_table(
         values = row.get("values") or {}
         compare = row.get("compare") or {}
         cells_html = "".join(
-            f"<td>{_fmt((values.get(fid) or {}).get(metric))}</td>" for fid in fw_ids
+            f"<td>{fmt_num((values.get(fid) or {}).get(metric), digits=2)}</td>" for fid in fw_ids
         )
-        ratio_html = "".join(f"<td>{_fmt(compare.get(s['ratio_key']))}</td>" for s in specs)
+        ratio_html = "".join(
+            f"<td>{fmt_num(compare.get(s['ratio_key']), digits=2)}</td>" for s in specs
+        )
         body_parts.append(
             f"<tr><td>{html.escape(row.get('cell_label', ''))}</td>{cells_html}{ratio_html}</tr>"
         )

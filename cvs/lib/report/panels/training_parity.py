@@ -10,33 +10,12 @@ Independent of inference framework parity (M4) and of multi-node scaling panels.
 from __future__ import annotations
 
 import html
-import json
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import List
 
-
-def _load_training_nodes(path: Path) -> dict[str, dict]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    nodes = data.get("nodes") or {}
-    if nodes:
-        return nodes
-    # Fallback: training report may store rows list
-    rows = data.get("node_rows") or []
-    out = {}
-    for row in rows:
-        node_id = row.get("node") or row.get("host")
-        if node_id:
-            out[str(node_id)] = row
-    return out
-
-
-def _fmt(value: Any) -> str:
-    if value is None:
-        return "\u2014"
-    try:
-        return f"{float(value):,.2f}"
-    except (TypeError, ValueError):
-        return html.escape(str(value))
+from cvs.lib.report.compare import metric_ratio
+from cvs.lib.report.formatting import fmt_num
+from cvs.lib.report.json_io import load_training_nodes
 
 
 def build_training_parity_panel(
@@ -48,8 +27,8 @@ def build_training_parity_panel(
     metric_key: str = "throughput_per_gpu",
 ) -> dict:
     """Merge two training report JSON files into a parity panel payload."""
-    ref_nodes = _load_training_nodes(Path(reference_json_path))
-    cand_nodes = _load_training_nodes(Path(candidate_json_path))
+    ref_nodes = load_training_nodes(Path(reference_json_path))
+    cand_nodes = load_training_nodes(Path(candidate_json_path))
     all_nodes = sorted(set(ref_nodes) | set(cand_nodes))
     rows: List[dict] = []
     for node in all_nodes:
@@ -58,9 +37,7 @@ def build_training_parity_panel(
         ratio = None
         if ref_val is not None and cand_val is not None:
             try:
-                ref_f = float(ref_val)
-                if ref_f > 0:
-                    ratio = float(cand_val) / ref_f
+                ratio = metric_ratio(float(cand_val), float(ref_val))
             except (TypeError, ValueError):
                 ratio = None
         rows.append(
@@ -88,9 +65,9 @@ def render_training_parity_panel_html(panel: dict) -> str:
     ratio_key = f"compare.prev_run.{panel.get('metric_key', 'metric')}_ratio"
     body = "".join(
         f"<tr><td>{html.escape(str(r['node']))}</td>"
-        f"<td>{_fmt(r.get('reference'))}</td>"
-        f"<td>{_fmt(r.get('candidate'))}</td>"
-        f"<td>{_fmt(r.get(ratio_key))}</td></tr>"
+        f"<td>{fmt_num(r.get('reference'), digits=2)}</td>"
+        f"<td>{fmt_num(r.get('candidate'), digits=2)}</td>"
+        f"<td>{fmt_num(r.get(ratio_key), digits=2)}</td></tr>"
         for r in panel.get("rows") or []
     )
     return (
