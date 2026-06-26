@@ -24,6 +24,7 @@ the preset `report_basename` (e.g. `inferencex_atom_report`).
 | **Inference parity report** | `parity_compare_jsons` or `CVS_INFERENCE_PARITY_COMPARE` and all JSON paths exist | `inference_parity_report.html` + `.json` | Side-by-side comparison of aligned sweep cells across framework runs (e.g. ATOM vs vLLM vs SGLang) |
 | **Training suite report** | Training suite registered + `training_res_dict` populated | `.html` + `.json` | Per-node metrics table (throughput, tokens, iteration time, NaN count, memory). Optional **training parity** panel when a baseline JSON is configured |
 | **Scaling panel** | Multi-node run (`nnodes > 1`) or multiple hosts per cell | Section inside inference `.html` / `.json` `panels.scaling` | Cluster throughput breakdown and optional efficiency vs a single-node baseline JSON |
+| **CI summary** | Inference suite with `--html` | `{report_basename}_summary.html` | One-page status: overall badge, worst cells, baseline regressions, parity link, link to full report |
 
 **Results zip** (created at session end): pytest HTML, `{suite}_html/` attachments (suite reports, logs, config copies), and optional `assets/`.
 
@@ -200,5 +201,6 @@ python -m pytest cvs/lib/report/unittests/ -q
 
 ## Related docs
 
+- `cvs/lib/report/SCHEMA.md`: JSON sidecar field reference (`schema_version: 1`)
 - `cvs/lib/inference/ADDING_A_SUITE.md` — checklist entry for new inference suites
 - `plans/suite-reporting-library-pitch.md`: scope and future TODO list

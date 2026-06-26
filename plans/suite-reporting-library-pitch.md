@@ -70,9 +70,10 @@ Prioritized ideas for later work. Not scheduled; pick up when a suite or lab nee
 
 ### Polish
 
-- [ ] Gate matrix heatmap in static HTML (viewer already has heatmap)
-- [ ] One-page CI summary HTML: overall status, worst cells, parity pass/fail, link to full report
-- [ ] Short JSON schema reference for `schema_version` and payload fields (external tooling)
+- [x] Gate matrix heatmap in static HTML (viewer already has heatmap)
+- [x] Threshold margin column on cell cards (record-only floor + margin column)
+- [x] One-page CI summary HTML: overall status, worst cells, parity pass/fail, link to full report
+- [x] Short JSON schema reference for `schema_version` and payload fields (`SCHEMA.md`)
 
 ### Suite rollout
 
