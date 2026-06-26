@@ -145,7 +145,7 @@ def build_cell_record(
                 "spec": spec,
                 "status": metric_pass(full, actual, spec) if enforce and spec else "record",
                 "bar_pct": bar_pct(float(actual), spec)
-                if spec is not None and actual is not None and enforce
+                if spec is not None and actual is not None
                 else None,
                 "margin": margin_text(actual, spec) if spec else None,
             }

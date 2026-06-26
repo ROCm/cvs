@@ -35,6 +35,11 @@ def cell_card_css(*, compact: bool = False) -> str:
 .metric-row-highlight { outline: 1px solid #6b9fff; border-radius: 6px; padding: 0.25rem; }
 .margin { font-size: 0.7rem; color: #3dd68c; display: block; }
 .margin-fail { color: #ff5c6a; }
+.headline-margin { font-size: 0.85rem; color: #3dd68c; margin-top: 0.15rem; }
+.headline-margin-fail { color: #ff5c6a; }
+.metric-val { font-weight: 600; }
+.metric-margin-col { font-size: 0.75rem; color: #9aa3b5; min-width: 5rem; text-align: right; }
+.metric-row-grid { display: grid; grid-template-columns: 1fr auto auto; gap: 0.35rem 0.75rem; align-items: baseline; }
 """
     return base
 
@@ -94,20 +99,39 @@ def render_cell_card_html(
                 f"style='width:{m['bar_pct']:.0f}%'></div></div>"
             )
         target = ""
-        if m["spec"] is not None and enforce:
-            target = f"<span class='target'>gate {fmt_num(m['spec'].get('value'))}</span>"
+        if m["spec"] is not None:
+            gate_label = "gate" if enforce else "floor"
+            target = f"<span class='target'>{gate_label} {fmt_num(m['spec'].get('value'))}</span>"
         margin = ""
+        margin_col = ""
         if m.get("margin"):
             cls = "margin-fail" if m["status"] == "fail" else "margin"
             margin = f"<span class='{cls}'>{html.escape(m['margin'])}</span>"
-        metric_rows.append(
-            f"<div class='{row_cls}'><div class='metric-label'>{html.escape(m['label'])}</div>"
-            f"<div class='metric-val'>{fmt_num(m['actual'])} {html.escape(m['unit'])}</div>"
-            f"{bar}{target}{margin}</div>"
-        )
+            margin_col = f"<span class='metric-margin-col {cls}'>{html.escape(m['margin'])}</span>"
+        na_margin = "<span class='metric-margin-col'>\u2014</span>"
+        if compact:
+            metric_rows.append(
+                f"<div class='{row_cls}'><div class='metric-label'>{html.escape(m['label'])}</div>"
+                f"<div class='metric-val'>{fmt_num(m['actual'])} {html.escape(m['unit'])}</div>"
+                f"{bar}{target}{margin}</div>"
+            )
+        else:
+            metric_rows.append(
+                f"<div class='{row_cls} metric-row-grid'>"
+                f"<div class='metric-label'>{html.escape(m['label'])}</div>"
+                f"<div class='metric-val'>{fmt_num(m['actual'])} {html.escape(m['unit'])}</div>"
+                f"{margin_col or na_margin}"
+                f"<div class='metric-extra' style='grid-column:1/-1'>{bar}{target}</div></div>"
+            )
 
     headline = next((m for m in cell["metrics"] if m["metric"] == headline_metric), None)
     headline_val = fmt_num(headline["actual"]) if headline else "\u2014"
+    headline_margin_html = ""
+    if headline and headline.get("margin"):
+        hm_cls = "headline-margin-fail" if headline.get("status") == "fail" else "headline-margin"
+        headline_margin_html = (
+            f"<div class='{hm_cls}'>{html.escape(headline['margin'])}</div>"
+        )
     mini_tl = render_cell_lifecycle_html(cell.get("cell_lifecycle") or {}, cell_lifecycle_labels)
     card_cls = "cell-card cell-card-compact" if compact else "cell-card"
     host_line = f" &middot; {html.escape(str(cell['host']))}" if cell.get("show_host_in_label") else ""
@@ -122,6 +146,7 @@ def render_cell_card_html(
         f"<div class='cell-sub'>ISL={cell['isl']} OSL={cell['osl']} &middot; C={cell['concurrency']}</div></header>"
         f"{mini_tl if not compact else ''}"
         f"<div class='headline'>{headline_val}<span class='headline-unit'>tok/s</span></div>"
+        f"{headline_margin_html}"
         f"<div class='tiers'>{tier_chips}</div>"
         f"<div class='metrics'>{''.join(metric_rows)}</div>"
         f"<footer class='cell-foot'>{html.escape(cell['cell_id'])}{host_line}{pytest_link}</footer>"
