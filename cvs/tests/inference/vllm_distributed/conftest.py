@@ -131,18 +131,17 @@ def pytest_collection_modifyitems(items):
 
     `test_print_results_table` is an imported function (its source line points
     into _shared.py), so default ordering collects it FIRST -- which would log an
-    empty table before any cell ran. Sort deterministically: launch, sshd, fetch,
+    empty table before any cell ran. Sort deterministically: launch, fetch,
     the benchmark cells, the results table, then teardown last. Items from other
     modules keep their relative order.
     """
     rank = {
         "test_launch_container": 0,
-        "test_setup_sshd": 1,
-        "test_model_fetch": 2,
-        "test_vllm_inference": 3,
-        "test_metric": 4,
-        "test_print_results_table": 5,
-        "test_teardown": 6,
+        "test_model_fetch": 1,
+        "test_vllm_inference": 2,
+        "test_metric": 3,
+        "test_print_results_table": 4,
+        "test_teardown": 5,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
