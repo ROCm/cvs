@@ -20,7 +20,7 @@ _HERE = Path(__file__).parent
 _FIXTURES = _HERE / "fixtures"
 _REPO = _HERE.parents[3]  # cvs/lib/inference/unittests -> repo root
 _SHARED = _REPO / "cvs/tests/inference/vllm/_shared.py"
-_THRESHOLD = _REPO / "cvs/input/config_file/inference/vllm_single/w1_llama31_70b_fp8kv/llama31_70b_fp8_threshold.json"
+_THRESHOLD = _REPO / "cvs/input/config_file/inference/vllm_single/mi300x_vllm-single_llama31-70b_fp8_threshold.json"
 
 # isl/tp used to build the job; must match the fixture's run for the derived
 # math assertions to be meaningful (real artifact: isl=128, tp=8).

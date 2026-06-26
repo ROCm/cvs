@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from cvs.lib import globals
 from cvs.lib.inference_max_lib import InferenceMaxJob, VllmJob
+from cvs.lib.inference.vllm_distributed import VllmDistributedJob
 
 log = globals.log
 
@@ -17,6 +18,7 @@ class InferenceJobFactory:
     # Registry of supported frameworks
     _FRAMEWORK_CLASSES = {
         'vllm': VllmJob,
+        'vllm_distributed': VllmDistributedJob,
         'inferencemax': InferenceMaxJob,
     }
 
