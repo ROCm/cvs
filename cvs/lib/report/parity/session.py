@@ -18,15 +18,25 @@ log = globals.log
 
 _ENV_COMPARE = "CVS_INFERENCE_PARITY_COMPARE"
 
+# Sibling JSON basenames discovered beside the pytest HTML output directory.
+_PARITY_SIBLING_JSON = {
+    "vllm": ("vllm_report.json", "vllm_single_report.json"),
+    "sglang": ("sglang_report.json", "sglang_single_report.json"),
+}
+
 
 def resolve_parity_compare_jsons(
     report_config: InferenceReportConfig,
+    report_dir: Path | None = None,
 ) -> tuple[tuple[str, str], ...]:
     """Merge preset ``parity_compare_jsons`` with optional ``CVS_INFERENCE_PARITY_COMPARE`` env.
 
     Env format (comma-separated)::
 
         vllm=/path/vllm_report.json,sglang=/path/sglang_report.json
+
+    When ``report_dir`` is set, also picks up ``vllm_report.json`` / ``sglang_report.json``
+    (or ``*_single_report.json`` variants) sitting next to the pytest HTML output.
     """
     merged: dict[str, str] = dict(report_config.parity_compare_jsons)
     raw = os.environ.get(_ENV_COMPARE, "").strip()
@@ -42,6 +52,16 @@ def resolve_parity_compare_jsons(
                 merged[fw_id] = path
             else:
                 log.warning("Ignoring invalid %s entry: %r", _ENV_COMPARE, item)
+    if report_dir is not None:
+        report_dir = Path(report_dir)
+        for fw_id, names in _PARITY_SIBLING_JSON.items():
+            if fw_id in merged:
+                continue
+            for name in names:
+                candidate = report_dir / name
+                if candidate.is_file():
+                    merged[fw_id] = str(candidate)
+                    break
     return tuple(merged.items())
 
 
@@ -53,7 +73,10 @@ def publish_session_inference_parity(
     reference_json_path: Optional[Path] = None,
 ) -> Optional[dict]:
     """Publish inference parity HTML/JSON when compare paths are configured."""
-    compare = resolve_parity_compare_jsons(report_config)
+    compare = resolve_parity_compare_jsons(
+        report_config,
+        Path(htmlpath).resolve().parent,
+    )
     if not compare:
         return None
 

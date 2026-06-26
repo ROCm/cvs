@@ -61,6 +61,7 @@ def write_report(
     provenance: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """Build payload, render HTML + JSON sidecar. Returns artifact paths and payload."""
+    out_path = Path(path)
     payload = build_inference_report_payload(
         config=config,
         variant_config=variant_config,
@@ -70,11 +71,12 @@ def write_report(
         pytest_html_path=pytest_html_path,
         log_file_path=log_file_path,
         provenance=provenance,
+        report_dir=out_path.parent,
     )
     payload["report"]["session_lifecycle_labels"] = config.session_lifecycle_labels
     payload["report"]["cell_lifecycle_labels"] = config.cell_lifecycle_labels
 
-    path = Path(path)
+    path = out_path
     total_cells = len(payload["cells"])
     viewer_path = None
     if config.interactive_viewer:

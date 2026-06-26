@@ -29,8 +29,20 @@ def load_cell_index(path: Path) -> dict[tuple[str, str], dict]:
     return index_cells_by_id_host(data)
 
 
-def resolve_prev_run_json_path(config_prev_run_json: str = "") -> str:
-    return (config_prev_run_json or os.environ.get(PREV_RUN_ENV, "")).strip()
+def resolve_prev_run_json_path(
+    config_prev_run_json: str = "",
+    *,
+    report_basename: str = "",
+    report_dir: Path | None = None,
+) -> str:
+    explicit = (config_prev_run_json or os.environ.get(PREV_RUN_ENV, "")).strip()
+    if explicit:
+        return explicit
+    if report_basename and report_dir:
+        sibling = Path(report_dir) / f"{report_basename}_prev.json"
+        if sibling.is_file():
+            return str(sibling)
+    return ""
 
 
 def build_prev_run_panel(

@@ -135,6 +135,7 @@ def build_inference_report_payload(
     pytest_html_path: str = "",
     log_file_path: str = "",
     provenance: Optional[Mapping[str, str]] = None,
+    report_dir: Optional[Path] = None,
 ) -> dict:
     """Structured payload for HTML render, JSON export, and unit tests."""
     enforce = bool(getattr(variant_config, "enforce_thresholds", False))
@@ -187,7 +188,11 @@ def build_inference_report_payload(
     if scaling_panel:
         panels["scaling"] = scaling_panel
 
-    prev_run_path = resolve_prev_run_json_path(config.prev_run_json)
+    prev_run_path = resolve_prev_run_json_path(
+        config.prev_run_json,
+        report_basename=config.report_basename,
+        report_dir=report_dir,
+    )
     if prev_run_path:
         prev_run_panel = build_prev_run_panel(cells, Path(prev_run_path), headline_metric=config.headline_metric)
         if prev_run_panel:
