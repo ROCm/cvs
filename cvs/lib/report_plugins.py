@@ -435,6 +435,22 @@ class HtmlReportManager:
 
             self._suite_report_embed = render_report_embed_html(artifacts["payload"])
         _maybe_publish_inference_parity(report_config, self, session.config)
+        if artifacts:
+            from pathlib import Path
+
+            from cvs.lib.report.ci_summary import write_inference_ci_summary
+
+            htmlpath = getattr(session.config.option, "htmlpath", None)
+            if htmlpath:
+                summary_path = write_inference_ci_summary(
+                    artifacts["payload"],
+                    report_config,
+                    Path(htmlpath).resolve().parent,
+                )
+                self.add_html_to_report(
+                    summary_path,
+                    link_name=f"{report_config.link_name} summary",
+                )
 
     @staticmethod
     def inject_style_overrides(prefix):
