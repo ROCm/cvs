@@ -20,6 +20,7 @@ from cvs.lib.inference.utils.inferencex_atom_parsing import (
     tier_metric_specs,
 )
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRIC_UNITS as VLLM_METRIC_UNITS
+from cvs.lib.report.presets.inference_parity import W1_INFERENCE_PARITY_METRICS
 from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries
 
 _SESSION_LIFECYCLE = (
@@ -86,6 +87,10 @@ INFERENCEX_ATOM_REPORT_CONFIG = InferenceReportConfig(
     session_lifecycle_labels=_SESSION_LIFECYCLE,
     cell_lifecycle_labels=_CELL_LIFECYCLE,
     parity_reference_framework_id="atom",
+    parity_metrics=W1_INFERENCE_PARITY_METRICS,
+    row_card_extras=True,
+    row_card_test_names=("test_cell_metrics",),
+    interactive_viewer=True,
     viewer_cell_threshold=16,
     run_card_display_builder=_atom_run_card_display,
 )
