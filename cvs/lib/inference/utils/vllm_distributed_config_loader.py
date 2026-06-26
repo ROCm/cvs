@@ -37,6 +37,7 @@ class _Allow(BaseModel):
 
 class ContainerConfig(_Allow):
     """Loose container block — passes through to the orchestrator as-is."""
+
     lifetime: str = "per_run"
     name: str = ""
     image: str = ""
@@ -170,17 +171,12 @@ class VariantConfig(_Forbid):
     def expected_cells(self):
         """Every (isl, osl, conc) cell the sweep's `runs` selector picks."""
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
-        return [
-            self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency)
-            for r in self.sweep.runs
-        ]
+        return [self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency) for r in self.sweep.runs]
 
     @model_validator(mode="after")
     def _check_remote_not_implemented(self):
         if self.model.remote == 1:
-            raise NotImplementedError(
-                "model.remote=1 (remote model download) is not implemented. "
-            )
+            raise NotImplementedError("model.remote=1 (remote model download) is not implemented. ")
         return self
 
     @model_validator(mode="after")

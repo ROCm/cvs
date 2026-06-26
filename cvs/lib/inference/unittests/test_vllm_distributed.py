@@ -59,8 +59,8 @@ class FakeOrch:
         self.hosts = list(hosts) if hosts is not None else list(_HOSTS)
         self._exec_return = exec_return
         self._head_return = head_return
-        self.exec_calls = []          # list of (cmd, kwargs)
-        self.head_calls = []          # list of (cmd, kwargs)
+        self.exec_calls = []  # list of (cmd, kwargs)
+        self.head_calls = []  # list of (cmd, kwargs)
 
     def exec(self, cmd, **kwargs):
         self.exec_calls.append((cmd, kwargs))
@@ -187,11 +187,9 @@ class TestServerArgv(unittest.TestCase):
         for rank in range(1, 4):
             with self.subTest(rank=rank):
                 ar = self.job._server_argv(rank)
-                self.assertEqual(len(a0), len(ar),
-                                  "argv length must be identical for all ranks")
+                self.assertEqual(len(a0), len(ar), "argv length must be identical for all ranks")
                 diffs = [(x, y) for x, y in zip(a0, ar) if x != y]
-                self.assertEqual(len(diffs), 1,
-                                  f"only --node-rank value should differ for rank {rank}")
+                self.assertEqual(len(diffs), 1, f"only --node-rank value should differ for rank {rank}")
                 self.assertEqual(diffs[0], ("0", str(rank)))
 
     def test_serve_args_appended(self):
@@ -199,8 +197,13 @@ class TestServerArgv(unittest.TestCase):
         v = _fake_variant()
         v.roles.server.serve_args = {"kv-cache-dtype": "fp8"}
         job = VllmDistributedJob(
-            orch=FakeOrch(), variant=v, hf_token="tok",
-            isl=_ISL, osl=2048, concurrency=256, num_prompts=12800,
+            orch=FakeOrch(),
+            variant=v,
+            hf_token="tok",
+            isl=_ISL,
+            osl=2048,
+            concurrency=256,
+            num_prompts=12800,
         )
         argv = job._server_argv(0)
         self.assertEqual(_argv_after(argv, "--kv-cache-dtype"), "fp8")
@@ -208,8 +211,9 @@ class TestServerArgv(unittest.TestCase):
     def test_serve_args_bare_flag(self):
         v = _fake_variant()
         v.roles.server.serve_args = {"trust-remote-code": True}
-        job = VllmDistributedJob(orch=FakeOrch(), variant=v, hf_token="tok",
-                                 isl=_ISL, osl=2048, concurrency=256, num_prompts=12800)
+        job = VllmDistributedJob(
+            orch=FakeOrch(), variant=v, hf_token="tok", isl=_ISL, osl=2048, concurrency=256, num_prompts=12800
+        )
         argv = job._server_argv(0)
         self.assertIn("--trust-remote-code", argv)
         idx = argv.index("--trust-remote-code")
@@ -223,8 +227,9 @@ class TestServerArgv(unittest.TestCase):
     def test_serve_args_list_value(self):
         v = _fake_variant()
         v.roles.server.serve_args = {"lora-modules": ["mod-a", "mod-b"]}
-        job = VllmDistributedJob(orch=FakeOrch(), variant=v, hf_token="tok",
-                                 isl=_ISL, osl=2048, concurrency=256, num_prompts=12800)
+        job = VllmDistributedJob(
+            orch=FakeOrch(), variant=v, hf_token="tok", isl=_ISL, osl=2048, concurrency=256, num_prompts=12800
+        )
         argv = job._server_argv(0)
         # list renders as --flag v1 --flag v2
         indices = [i for i, a in enumerate(argv) if a == "--lora-modules"]
@@ -239,8 +244,9 @@ class TestServerArgv(unittest.TestCase):
         v = _fake_variant()
         v.params.pipeline_parallel_size = "4"
         v.params.nnodes = "4"
-        job = VllmDistributedJob(orch=FakeOrch(), variant=v, hf_token="tok",
-                                 isl=_ISL, osl=2048, concurrency=256, num_prompts=12800)
+        job = VllmDistributedJob(
+            orch=FakeOrch(), variant=v, hf_token="tok", isl=_ISL, osl=2048, concurrency=256, num_prompts=12800
+        )
         argv = job._server_argv(0)
         self.assertEqual(_argv_after(argv, "--pipeline-parallel-size"), "4")
         self.assertEqual(_argv_after(argv, "--nnodes"), "4")
@@ -249,25 +255,27 @@ class TestServerArgv(unittest.TestCase):
         v2 = _fake_variant()
         v2.params.pipeline_parallel_size = "1"
         v2.params.nnodes = "1"
-        job2 = VllmDistributedJob(orch=FakeOrch(), variant=v2, hf_token="tok",
-                                  isl=_ISL, osl=2048, concurrency=256, num_prompts=12800)
+        job2 = VllmDistributedJob(
+            orch=FakeOrch(), variant=v2, hf_token="tok", isl=_ISL, osl=2048, concurrency=256, num_prompts=12800
+        )
         argv2 = job2._server_argv(0)
         self.assertEqual(_argv_after(argv2, "--pipeline-parallel-size"), "1")
         self.assertEqual(_argv_after(argv2, "--nnodes"), "1")
-        self.assertNotEqual(_argv_after(argv2, "--pipeline-parallel-size"), "2",
-                            "pp=1 variant must not emit the default '2'")
+        self.assertNotEqual(
+            _argv_after(argv2, "--pipeline-parallel-size"), "2", "pp=1 variant must not emit the default '2'"
+        )
 
     def test_serve_args_tuple_value(self):
         """F3: tuple values in serve_args must render the same as list values —
         --flag v1 --flag v2."""
         v = _fake_variant()
         v.roles.server.serve_args = {"lora-modules": ("mod-a", "mod-b")}
-        job = VllmDistributedJob(orch=FakeOrch(), variant=v, hf_token="tok",
-                                 isl=_ISL, osl=2048, concurrency=256, num_prompts=12800)
+        job = VllmDistributedJob(
+            orch=FakeOrch(), variant=v, hf_token="tok", isl=_ISL, osl=2048, concurrency=256, num_prompts=12800
+        )
         argv = job._server_argv(0)
         indices = [i for i, a in enumerate(argv) if a == "--lora-modules"]
-        self.assertEqual(len(indices), 2,
-                         "--lora-modules must appear twice for a tuple with two values")
+        self.assertEqual(len(indices), 2, "--lora-modules must appear twice for a tuple with two values")
         self.assertEqual(argv[indices[0] + 1], "mod-a")
         self.assertEqual(argv[indices[1] + 1], "mod-b")
 
@@ -280,12 +288,12 @@ class TestDerivedMaxModelLen(unittest.TestCase):
         # (random_range_ratio, random_prefix_len) -> expected string.
         # base cell: isl=128, osl=2048 => isl+osl = 2176.
         cases = [
-            ("0.8", "0",  "3925"),   # ceil(2176*1.8)=3917 +0  +8
-            ("0.1", "0",  "2402"),   # ceil(2176*1.1)=2394 +0  +8
-            ("0.0", "0",  "2184"),   # 2176              +0  +8 (boundary: no jitter)
-            ("0.0", "64", "2248"),   # 2176              +64 +8 (prefix only)
-            ("0.8", "64", "3989"),   # ceil(2176*1.8)=3917 +64 +8 (ratio AND prefix combined)
-            ("1.0", "0",  "4360"),   # ceil(2176*2.0)=4352 +0 +8 (boundary: full-width doubling)
+            ("0.8", "0", "3925"),  # ceil(2176*1.8)=3917 +0  +8
+            ("0.1", "0", "2402"),  # ceil(2176*1.1)=2394 +0  +8
+            ("0.0", "0", "2184"),  # 2176              +0  +8 (boundary: no jitter)
+            ("0.0", "64", "2248"),  # 2176              +64 +8 (prefix only)
+            ("0.8", "64", "3989"),  # ceil(2176*1.8)=3917 +64 +8 (ratio AND prefix combined)
+            ("1.0", "0", "4360"),  # ceil(2176*2.0)=4352 +0 +8 (boundary: full-width doubling)
         ]
         for ratio, prefix, expected in cases:
             with self.subTest(ratio=ratio, prefix=prefix):
@@ -309,12 +317,18 @@ class TestDerivedMaxModelLen(unittest.TestCase):
     def test_derive_max_model_len_varies_isl(self):
         # isl=512, osl=1024, ratio=0.8: ceil((512+1024)*1.8) + 0 + 8 = ceil(2764.8)+8 = 2773
         job = VllmDistributedJob(
-            orch=FakeOrch(), variant=_fake_variant(), hf_token="tok",
-            isl=512, osl=1024, concurrency=16, num_prompts=800,
+            orch=FakeOrch(),
+            variant=_fake_variant(),
+            hf_token="tok",
+            isl=512,
+            osl=1024,
+            concurrency=16,
+            num_prompts=800,
         )
         job.random_range_ratio = "0.8"
         job.random_prefix_len = "0"
         import math
+
         expected = str(math.ceil((512 + 1024) * 1.8) + 8)
         self.assertEqual(job._derive_max_model_len(), expected)
 
@@ -337,12 +351,12 @@ class TestBuildServerCmdBroadcast(unittest.TestCase):
         job = _make_job(orch)
         job.build_server_cmd()
 
-        self.assertGreaterEqual(len(orch.exec_calls), 2,
-                                "expected at least env-script write + mkdir")
+        self.assertGreaterEqual(len(orch.exec_calls), 2, "expected at least env-script write + mkdir")
         # Every exec issued by build_server_cmd is a broadcast (hosts unset/None).
         for cmd, kwargs in orch.exec_calls:
-            self.assertIsNone(kwargs.get("hosts"),
-                              f"build_server_cmd must broadcast, got hosts={kwargs.get('hosts')!r} for {cmd!r}")
+            self.assertIsNone(
+                kwargs.get("hosts"), f"build_server_cmd must broadcast, got hosts={kwargs.get('hosts')!r} for {cmd!r}"
+            )
         # It does not touch the head-only channel.
         self.assertEqual(orch.head_calls, [])
         joined = " ".join(c for c, _ in orch.exec_calls)
@@ -365,44 +379,52 @@ class TestBuildServerCmdBroadcast(unittest.TestCase):
             "VLLM_ROCM_USE_AITER_MHA=0",
             "VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
         ):
-            self.assertRegex(env_cmd, r'\bexport\s+' + re.escape(token),
-                             f"env script must export '{token}'")
+            self.assertRegex(env_cmd, r'\bexport\s+' + re.escape(token), f"env script must export '{token}'")
 
     def test_out_dir_encodes_cell_parameters(self):
         """F8: out_dir must encode (isl, osl, concurrency) so that distinct cells
         write to distinct directories. Verifies both uniqueness and substring presence."""
         orch_a = FakeOrch()
         job_a = VllmDistributedJob(
-            orch=orch_a, variant=_fake_variant(), hf_token="tok",
-            isl=128, osl=2048, concurrency=16, num_prompts=800,
+            orch=orch_a,
+            variant=_fake_variant(),
+            hf_token="tok",
+            isl=128,
+            osl=2048,
+            concurrency=16,
+            num_prompts=800,
         )
         orch_b = FakeOrch()
         job_b = VllmDistributedJob(
-            orch=orch_b, variant=_fake_variant(), hf_token="tok",
-            isl=512, osl=1024, concurrency=32, num_prompts=800,
+            orch=orch_b,
+            variant=_fake_variant(),
+            hf_token="tok",
+            isl=512,
+            osl=1024,
+            concurrency=32,
+            num_prompts=800,
         )
-        self.assertNotEqual(job_a.out_dir, job_b.out_dir,
-                            "distinct (isl, osl, concurrency) must produce distinct out_dir values")
+        self.assertNotEqual(
+            job_a.out_dir, job_b.out_dir, "distinct (isl, osl, concurrency) must produce distinct out_dir values"
+        )
         # Each out_dir must contain its cell parameters as substrings.
         for val in ("128", "2048", "16"):
-            self.assertIn(val, job_a.out_dir,
-                          f"job_a.out_dir must contain '{val}' (isl/osl/concurrency)")
+            self.assertIn(val, job_a.out_dir, f"job_a.out_dir must contain '{val}' (isl/osl/concurrency)")
         for val in ("512", "1024", "32"):
-            self.assertIn(val, job_b.out_dir,
-                          f"job_b.out_dir must contain '{val}' (isl/osl/concurrency)")
+            self.assertIn(val, job_b.out_dir, f"job_b.out_dir must contain '{val}' (isl/osl/concurrency)")
 
     def test_env_script_carries_server_env_overrides(self):
         v = _fake_variant()
         v.roles.server.env = {"CUSTOM_VAR": "custom_val"}
         orch = FakeOrch()
-        job = VllmDistributedJob(orch=orch, variant=v, hf_token="tok",
-                                 isl=_ISL, osl=2048, concurrency=256, num_prompts=12800)
+        job = VllmDistributedJob(
+            orch=orch, variant=v, hf_token="tok", isl=_ISL, osl=2048, concurrency=256, num_prompts=12800
+        )
         job.build_server_cmd()
         # Find the env-script write among the broadcast calls (order-independent).
         env_cmd = next((c for c, _ in orch.exec_calls if "/tmp/server_env_script.sh" in c), None)
         self.assertIsNotNone(env_cmd, "no env-script write found in exec_calls")
-        self.assertRegex(env_cmd, r'\bexport\s+CUSTOM_VAR=custom_val',
-                         "env script must export CUSTOM_VAR=custom_val")
+        self.assertRegex(env_cmd, r'\bexport\s+CUSTOM_VAR=custom_val', "env script must export CUSTOM_VAR=custom_val")
 
 
 class TestStartServerPerHost(unittest.TestCase):
@@ -431,8 +453,7 @@ class TestStartServerPerHost(unittest.TestCase):
                     self.assertIsNotNone(m, f"launch for {host} has no --node-rank: {cmd!r}")
                     seen[host] = int(m.group(1))
                     # Per-host command must source env script and carry distributed flags.
-                    self.assertIn("source /tmp/server_env_script.sh", cmd,
-                                  "per-host launch must source the env script")
+                    self.assertIn("source /tmp/server_env_script.sh", cmd, "per-host launch must source the env script")
                     self.assertIn("--distributed-executor-backend", cmd)
                     self.assertIn("--master-addr", cmd)
                     self.assertIn("--pipeline-parallel-size", cmd)
@@ -457,11 +478,14 @@ class TestStartServerPerHost(unittest.TestCase):
         ]
         for failure_text in early_failure_strings:
             with self.subTest(failure=failure_text):
+
                 def make_fail(ft=failure_text):
                     def fail(cmd, kwargs):
                         host = kwargs.get("hosts", [None])[0]
                         return {host: (ft if host == _HOSTS[1] else "")}
+
                     return fail
+
                 orch = FakeOrch(hosts=_HOSTS, exec_return=make_fail())
                 job = _make_job(orch)
                 with self.assertRaises(RuntimeError):
@@ -469,9 +493,11 @@ class TestStartServerPerHost(unittest.TestCase):
 
     def test_start_server_raises_on_head_failure(self):
         """Rank-0 (head) failure must also raise — not silently ignored."""
+
         def head_fails(cmd, kwargs):
             host = kwargs.get("hosts", [None])[0]
             return {host: ("command not found: vllm" if host == _HOSTS[0] else "")}
+
         orch = FakeOrch(hosts=_HOSTS, exec_return=head_fails)
         job = _make_job(orch)
         with self.assertRaises(RuntimeError):
@@ -507,8 +533,7 @@ class TestRunClientHeadOnly(unittest.TestCase):
         self.assertEqual(orch.exec_calls, [])
         client_cmd = orch.head_calls[0][0]
         self.assertIn("bench serve", client_cmd)
-        self.assertIn("source /tmp/server_env_script.sh", client_cmd,
-                      "run_client must source the env script")
+        self.assertIn("source /tmp/server_env_script.sh", client_cmd, "run_client must source the env script")
         self.assertIn(job.client_log, client_cmd)
         self.assertIn("2>&1 &", client_cmd, "run_client must background the bench client with 2>&1 &")
         self.assertIn("--result-dir", client_cmd)
@@ -521,11 +546,13 @@ class TestRunClientHeadOnly(unittest.TestCase):
         self.assertIn("--base-url", client_cmd)
         self.assertIn(f"{job.base_url}:{job.port_no}", client_cmd)
         self.assertIn("--num-prompts", client_cmd)
+
         # Use regex to verify each flag is paired with its correct value,
         # preventing false passes from substring collisions (e.g. 128 in 12800).
         def _flag_val(flag):
             m = re.search(re.escape(flag) + r'\s+(\S+)', client_cmd)
             return m.group(1) if m else None
+
         self.assertEqual(_flag_val("--result-filename"), "results")
         self.assertEqual(_flag_val("--random-input-len"), str(_ISL))
         self.assertEqual(_flag_val("--random-output-len"), str(2048))
@@ -578,10 +605,7 @@ class TestWaitClientCompleteHeadOnly(unittest.TestCase):
     def _job_with_head(self, head_text):
         orch = FakeOrch(head_return={_HEAD: head_text})
         # Pass timing overrides via constructor kwargs (F4: constructor path).
-        job = _make_job(orch,
-                        client_initial_wait_s=0,
-                        client_poll_wait_s=0,
-                        client_poll_count=1)
+        job = _make_job(orch, client_initial_wait_s=0, client_poll_wait_s=0, client_poll_count=1)
         # Belt-and-suspenders: also set private attrs so the test works regardless
         # of whether the impl reads constructor kwargs or private attrs.
         job._client_initial_wait = 0
@@ -659,10 +683,7 @@ class TestWaitClientCompleteHeadOnly(unittest.TestCase):
 
         orch = FakeOrch(head_return=deferred)
         # Pass timing overrides via constructor kwargs (F4: constructor path).
-        job = _make_job(orch,
-                        client_initial_wait_s=0,
-                        client_poll_wait_s=0,
-                        client_poll_count=3)
+        job = _make_job(orch, client_initial_wait_s=0, client_poll_wait_s=0, client_poll_count=3)
         # Belt-and-suspenders: also set private attrs.
         job._client_initial_wait = 0
         job._client_poll_wait = 0
@@ -679,11 +700,9 @@ class TestWaitReadyBroadcast(unittest.TestCase):
     def _job_ready(self, exec_return):
         orch = FakeOrch(hosts=_HOSTS, exec_return=exec_return)
         # Pass timing overrides via constructor kwargs (F4: constructor path).
-        job = _make_job(orch,
-                        server_precheck_wait_s=0,
-                        server_warmup_wait_s=0,
-                        server_poll_count=3,
-                        server_poll_wait_s=0)
+        job = _make_job(
+            orch, server_precheck_wait_s=0, server_warmup_wait_s=0, server_poll_count=3, server_poll_wait_s=0
+        )
         # Belt-and-suspenders: also set private attrs.
         job._precheck_wait = 0
         job._warmup_wait = 0
@@ -711,6 +730,7 @@ class TestWaitReadyBroadcast(unittest.TestCase):
                 return {h: {"exit_code": code} for h in _HOSTS}
             # tail / other precheck: return benign string output
             return {h: "" for h in _HOSTS}
+
         return dispatch
 
     def test_is_ready_uses_broadcast_exec(self):
@@ -725,8 +745,7 @@ class TestWaitReadyBroadcast(unittest.TestCase):
         self.assertIsNotNone(grep_cmd, "is_ready must issue a grep command")
         self.assertIn(job.server_log, grep_cmd, "is_ready must grep job.server_log")
         for arm in ("Application startup complete", "Uvicorn running", "Started server"):
-            self.assertIn(arm.lower(), grep_cmd.lower(),
-                          f"READINESS_RE arm '{arm}' missing from grep command")
+            self.assertIn(arm.lower(), grep_cmd.lower(), f"READINESS_RE arm '{arm}' missing from grep command")
 
     def test_wait_ready_returns_when_all_nodes_ready(self):
         """wait_ready returns normally when is_ready() reports all nodes up."""
@@ -735,8 +754,7 @@ class TestWaitReadyBroadcast(unittest.TestCase):
         self.assertTrue(orch.exec_calls, "wait_ready must have issued at least one exec")
         tail_cmd = next((c for c, _ in orch.exec_calls if "tail" in c), None)
         if tail_cmd is not None:
-            self.assertIn(job.server_log, tail_cmd,
-                          "wait_ready precheck must tail job.server_log")
+            self.assertIn(job.server_log, tail_cmd, "wait_ready precheck must tail job.server_log")
 
     def test_wait_ready_raises_on_timeout(self):
         """wait_ready raises RuntimeError when poll cap is exhausted without readiness."""
@@ -747,6 +765,7 @@ class TestWaitReadyBroadcast(unittest.TestCase):
     def test_wait_ready_raises_when_one_node_not_ready(self):
         """Distributed-specific: a single not-ready node must hold the entire
         cluster in the not-ready state. Distinguishes all() from any()."""
+
         def one_lagging(cmd, kwargs):
             if "grep" in cmd:
                 # node-a ready, node-b not — partial cluster case
@@ -779,6 +798,7 @@ class TestWaitReadyBroadcast(unittest.TestCase):
         Pins the distributed-specific contract: every shard is inspected."""
         for failure_text in ("command not found: vllm", "no such file or directory: vllm"):
             with self.subTest(failure=failure_text):
+
                 def non_head_fail(cmd, kwargs, _ft=failure_text):
                     if "tail" in cmd:
                         # node-a (head) is clean; node-b (rank-1) reports the failure
@@ -787,11 +807,9 @@ class TestWaitReadyBroadcast(unittest.TestCase):
 
                 orch = FakeOrch(hosts=_HOSTS, exec_return=non_head_fail)
                 # Pass timing overrides via constructor kwargs (F4: constructor path).
-                job = _make_job(orch,
-                                server_precheck_wait_s=0,
-                                server_warmup_wait_s=0,
-                                server_poll_count=1,
-                                server_poll_wait_s=0)
+                job = _make_job(
+                    orch, server_precheck_wait_s=0, server_warmup_wait_s=0, server_poll_count=1, server_poll_wait_s=0
+                )
                 # Belt-and-suspenders: also set private attrs.
                 job._precheck_wait = 0
                 job._warmup_wait = 0
@@ -811,6 +829,7 @@ class TestWaitReadyBroadcast(unittest.TestCase):
         ]
         for failure_text in early_failure_strings:
             with self.subTest(failure=failure_text):
+
                 def early_fail(cmd, kwargs, _ft=failure_text):
                     if "tail" in cmd:
                         return {"node-a": _ft, "node-b": ""}
@@ -818,11 +837,9 @@ class TestWaitReadyBroadcast(unittest.TestCase):
 
                 orch = FakeOrch(hosts=_HOSTS, exec_return=early_fail)
                 # Pass timing overrides via constructor kwargs (F4: constructor path).
-                job = _make_job(orch,
-                                server_precheck_wait_s=0,
-                                server_warmup_wait_s=0,
-                                server_poll_count=1,
-                                server_poll_wait_s=0)
+                job = _make_job(
+                    orch, server_precheck_wait_s=0, server_warmup_wait_s=0, server_poll_count=1, server_poll_wait_s=0
+                )
                 # Belt-and-suspenders: also set private attrs.
                 job._precheck_wait = 0
                 job._warmup_wait = 0
@@ -853,8 +870,7 @@ class TestParseResultsHeadOnly(unittest.TestCase):
         fetch_cmd = orch.head_calls[-1][0]
         self.assertIn(job.out_dir, fetch_cmd, "parse_results must cat from out_dir")
         # Verify exact artifact name 'results' (not a superstring like 'results.json').
-        self.assertRegex(fetch_cmd, r'(?<!\w)results(?![\w.])',
-                         "parse_results must cat the bare 'results' artifact")
+        self.assertRegex(fetch_cmd, r'(?<!\w)results(?![\w.])', "parse_results must cat the bare 'results' artifact")
 
     def test_parse_results_derived_metrics_exact(self):
         orch, job = self._parse(_load_fixture("vllm_results_widened.json"))
@@ -899,8 +915,13 @@ class TestParseResultsHeadOnly(unittest.TestCase):
                 v.params.tensor_parallelism = str(tp)
                 orch = FakeOrch(head_return={_HEAD: fixture_text})
                 job = VllmDistributedJob(
-                    orch=orch, variant=v, hf_token="tok",
-                    isl=isl, osl=1024, concurrency=16, num_prompts=800,
+                    orch=orch,
+                    variant=v,
+                    hf_token="tok",
+                    isl=isl,
+                    osl=1024,
+                    concurrency=16,
+                    num_prompts=800,
                 )
                 m = job.parse_results()[_HEAD]
                 self.assertAlmostEqual(
@@ -916,12 +937,13 @@ class TestParseResultsHeadOnly(unittest.TestCase):
         """On real vllm bench serve artifacts p50_itl_ms is absent (only median_itl_ms
         is emitted). decode_latency_ratio must be None in that case, not a fallback value."""
         w = json.loads(_load_fixture("vllm_results_widened.json"))
-        w.pop("p50_itl_ms", None)   # simulate a real artifact
+        w.pop("p50_itl_ms", None)  # simulate a real artifact
         orch = FakeOrch(head_return={_HEAD: json.dumps(w)})
         job = _make_job(orch)
         m = job.parse_results()[_HEAD]
-        self.assertIsNone(m.get("client.decode_latency_ratio"),
-                          "decode_latency_ratio must be None when p50_itl_ms is absent")
+        self.assertIsNone(
+            m.get("client.decode_latency_ratio"), "decode_latency_ratio must be None when p50_itl_ms is absent"
+        )
 
     def test_parse_results_empty_raises(self):
         orch, job = self._parse("")
@@ -991,14 +1013,16 @@ class TestVllmDistributedJobLifecycle(unittest.TestCase):
             head_return=stateful_head,
         )
         # Pass all timing overrides via constructor kwargs (F4: constructor path).
-        job = _make_job(orch,
-                        client_initial_wait_s=0,
-                        client_poll_wait_s=0,
-                        client_poll_count=1,
-                        server_precheck_wait_s=0,
-                        server_warmup_wait_s=0,
-                        server_poll_count=1,
-                        server_poll_wait_s=0)
+        job = _make_job(
+            orch,
+            client_initial_wait_s=0,
+            client_poll_wait_s=0,
+            client_poll_count=1,
+            server_precheck_wait_s=0,
+            server_warmup_wait_s=0,
+            server_poll_count=1,
+            server_poll_wait_s=0,
+        )
         # Belt-and-suspenders: also set private attrs.
         job._client_initial_wait = 0
         job._client_poll_wait = 0
@@ -1043,8 +1067,7 @@ class TestVllmDistributedJobLifecycle(unittest.TestCase):
         self.assertTrue(orch.exec_calls, "stop_server issued no command")
         self.assertEqual(orch.head_calls, [], "stop_server must not use exec_on_head")
         for cmd, kwargs in orch.exec_calls:
-            self.assertIsNone(kwargs.get("hosts"),
-                              "stop_server must broadcast to all nodes")
+            self.assertIsNone(kwargs.get("hosts"), "stop_server must broadcast to all nodes")
             self.assertIn("pkill", cmd)
             self.assertIn("-f", cmd, "pkill must use -f for full-cmdline match")
             self.assertIn("vllm serve", cmd, "pkill must target 'vllm serve' process")
@@ -1059,8 +1082,7 @@ class TestVllmDistributedJobLifecycle(unittest.TestCase):
             after_first = len(orch.exec_calls)
             self.assertGreater(after_first, 0, "first stop_server issued no exec")
             job.stop_server()
-        self.assertGreater(len(orch.exec_calls), after_first,
-                           "second stop_server must still broadcast pkill")
+        self.assertGreater(len(orch.exec_calls), after_first, "second stop_server must still broadcast pkill")
         self.assertEqual(orch.head_calls, [], "stop_server must not use exec_on_head")
         for cmd, kwargs in orch.exec_calls:
             self.assertIn("pkill", cmd)
@@ -1088,6 +1110,7 @@ class TestVllmDistributedJobLifecycle(unittest.TestCase):
 class TestCellKeyFormat(unittest.TestCase):
     def _variant_config(self):
         from cvs.lib.inference.utils.vllm_distributed_config_loader import VariantConfig
+
         return VariantConfig(**self._raw_config())
 
     @staticmethod
@@ -1099,8 +1122,12 @@ class TestCellKeyFormat(unittest.TestCase):
             "framework": "vllm_distributed",
             "gpu_arch": "mi300x",
             "enforce_thresholds": False,
-            "paths": {"shared_fs": "/tmp", "models_dir": "/tmp/models",
-                      "log_dir": "/tmp/LOGS", "hf_token_file": "/tmp/tok"},
+            "paths": {
+                "shared_fs": "/tmp",
+                "models_dir": "/tmp/models",
+                "log_dir": "/tmp/LOGS",
+                "hf_token_file": "/tmp/tok",
+            },
             "model": {"id": "amd/Llama-3.1-70B-Instruct-FP8-KV", "remote": 0},
             "roles": {"server": {"serve_args": {}}},
             "params": {"master_addr": "node-head"},
@@ -1126,6 +1153,7 @@ class TestCellKeyFormat(unittest.TestCase):
         raw["params"]["tensor_parallelism"] = "2"
         raw["params"]["pipeline_parallel_size"] = "1"
         from cvs.lib.inference.utils.vllm_distributed_config_loader import VariantConfig
+
         vc = VariantConfig(**raw)
         key = vc.cell_key("8000", "1024", 16)
         self.assertIn("TP=2", key)
@@ -1142,6 +1170,7 @@ class TestCellKeyFormat(unittest.TestCase):
         raw["params"]["tensor_parallelism"] = "4"
         raw["params"]["pipeline_parallel_size"] = "4"
         from cvs.lib.inference.utils.vllm_distributed_config_loader import VariantConfig
+
         vc = VariantConfig(**raw)
         key = vc.cell_key("1000", "1000", 16)
         self.assertIn("TP=4", key)
