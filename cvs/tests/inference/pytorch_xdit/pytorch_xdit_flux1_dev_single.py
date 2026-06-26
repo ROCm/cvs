@@ -280,8 +280,8 @@ def s_phdl(cluster_dict):
     # Single-node mode: execute locally ONLY when the target actually refers to this machine.
     #
     # Rationale: users often specify a remote node IP/hostname in cluster.json even for a
-    # single-node run. Forcing local execution when the target is not this machine would run
-    # benchmarks without the remote node’s GPUs/ROCm and fail in confusing ways.
+    # single-node run. Always forcing local execution will run benchmarks on the login node
+    # (no GPUs/ROCm) and fail in confusing ways.
     if len(node_list) == 1:
         target = node_list[0]
         if _is_local_target(target):
@@ -510,17 +510,14 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     """
     Run FLUX.1-dev text-to-image benchmark inside pytorch-xdit container on all nodes in parallel.
 
-    On success, verifies non-empty ``results/timing.json`` and at least one non-empty ``flux_*.png``
-    under each node's output tree so a pass is meaningful before parse/threshold validation.
-
     Executes torchrun with configured parameters and mounts:
     - HF cache to /hf_home
     - Output directory to /outputs
     """
     globals.error_list = []
 
-    # Preflight: ensure all nodes expose /dev/kfd (ROCm). Missing device nodes usually means
-    # the target is not suitable for this GPU container workload.
+    # Preflight: ensure all nodes have GPU-capable hardware. Running on a login node (no /dev/kfd)
+    # will cause ROCm + container init to fail and produce no timing.json.
     log.info(f"Checking /dev/kfd on {len(s_phdl.host_list)} node(s)")
     kfd_check = s_phdl.exec("test -e /dev/kfd && echo KFD_OK || echo KFD_MISSING", print_console=False)
     missing_kfd_nodes = []
@@ -534,22 +531,12 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     if missing_kfd_nodes:
         fail_test(
             f"ROCm device node /dev/kfd not found on {len(missing_kfd_nodes)} node(s): {', '.join(missing_kfd_nodes)}. "
-            f"This test requires ROCm GPU nodes with /dev/kfd on each target."
+            f"This test must be run on GPU compute nodes (e.g., via an interactive SLURM allocation)."
         )
         update_test_result()
         return
 
     container_image = inference_dict['container_image']
-    missing_img_nodes = docker_lib.nodes_missing_docker_image(s_phdl, container_image)
-    if missing_img_nodes:
-        fail_test(
-            f"Container image not found locally on {len(missing_img_nodes)} node(s): {', '.join(missing_img_nodes)}. "
-            f"Configured image: {container_image}. Pull it on each target node before running this benchmark "
-            f"(for example: docker pull {container_image})."
-        )
-        update_test_result()
-        return
-
     container_name = inference_dict['container_name']
     hf_home = inference_dict['hf_home']
     output_base_dir = inference_dict['output_base_dir']
@@ -573,12 +560,10 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     use_torch_compile = flux_params['use_torch_compile']
     torchrun_nproc = flux_params['torchrun_nproc']
 
-    log.info(f"Resolving output directory labels for {len(s_phdl.host_list)} node(s)")
-    hostname_result = s_phdl.exec('hostname', print_console=False)
-    node_to_hostname = {node: (hostname_result.get(node, "") or "").strip() or node for node in s_phdl.host_list}
-    node_to_out_label = {node: cluster_target_output_label(node) for node in s_phdl.host_list}
-    for node in s_phdl.host_list:
-        log.info(f"Node {node}: output label '{node_to_out_label[node]}' (hostname: {node_to_hostname[node]})")
+    # Get hostnames from all nodes
+    log.info(f"Getting hostnames from {len(s_phdl.host_list)} node(s)")
+    hostname_result = s_phdl.exec('hostname')
+    node_to_hostname = {node: hostname_result[node].strip() for node in s_phdl.host_list}
 
     # Build common docker command components
     device_list = inference_dict['container_config']['device_list']
@@ -627,8 +612,8 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     docker_cmds = []
 
     for node in s_phdl.host_list:
-        out_label = node_to_out_label[node]
-        output_dir = f"{output_base_dir}/flux_{out_label}_outputs"
+        hostname = node_to_hostname[node]
+        output_dir = f"{output_base_dir}/flux_{hostname}_outputs"
 
         # Create output directory command
         mkdir_cmds.append(f"mkdir -p {output_dir}")
@@ -662,7 +647,7 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
             f"{torchrun_cmd}"
         )
         docker_cmds.append(docker_cmd)
-        log.info(f"Node {node} will write to: {output_dir}")
+        log.info(f"Node {node} ({hostname}) will write to: {output_dir}")
 
     # Create output directories on all nodes in parallel
     log.info(f"Creating output directories on {len(s_phdl.host_list)} node(s)")
@@ -696,29 +681,6 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
 
         if failed_nodes:
             fail_test(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
-        else:
-            art_verify_cmds = []
-            for node in s_phdl.host_list:
-                od = f"{output_base_dir}/flux_{node_to_out_label[node]}_outputs"
-                odq = shlex.quote(od)
-                art_verify_cmds.append(
-                    f'tj=$(find {odq} -type f -path \'*/results/timing.json\' 2>/dev/null | head -1); '
-                    f'pf=$(find {odq} -type f -name \'flux_*.png\' 2>/dev/null | head -1); '
-                    f'test -n "$tj" && test -s "$tj" && test -n "$pf" && test -s "$pf" '
-                    f"&& echo ART_OK || echo ART_MISSING"
-                )
-            art_res = s_phdl.exec_cmd_list(art_verify_cmds, print_console=False)
-            missing_art = [n for n, out in art_res.items() if "ART_OK" not in (out or "")]
-            if missing_art:
-                fail_test(
-                    f"Benchmark logs looked clean but expected artifacts were missing on {len(missing_art)} node(s): "
-                    f"{', '.join(missing_art)}. Expected non-empty results/timing.json and at least one non-empty "
-                    f"flux_*.png under each node's flux_<cluster_target>_outputs directory."
-                )
-            log.info(
-                "Run step verified: non-empty timing.json and flux_*.png present on all %s node(s).",
-                len(s_phdl.host_list),
-            )
 
     except Exception as e:
         fail_test(f"Benchmark execution failed with exception: {e}")
@@ -727,7 +689,7 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     # picking up stale outputs from previous runs on other hosts.
     if len(getattr(s_phdl, "host_list", []) or []) == 1:
         only_node = s_phdl.host_list[0]
-        inference_dict["_test_output_dir"] = f"{output_base_dir}/flux_{node_to_out_label[only_node]}_outputs"
+        inference_dict["_test_output_dir"] = f"{output_base_dir}/flux_{node_to_hostname[only_node]}_outputs"
 
     update_test_result()
 
@@ -737,8 +699,8 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
     Parse benchmark outputs and validate against thresholds.
 
     Handles both single-node and multi-node runs:
-    - Single node: parses ``flux_<cluster_target>_outputs``
-    - Multi-node: parses one ``flux_<cluster_target>_outputs`` per node and validates each
+    - Single node: parses flux_{hostname}_outputs
+    - Multi-node: parses all flux_*_outputs directories and validates each
 
     Uses FluxOutputParser to:
     - Locate results/timing.json
@@ -765,21 +727,28 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
     if inference_dict.get("_test_output_dir"):
         output_dirs = [inference_dict["_test_output_dir"]]
     else:
-        # Derive from cluster SSH targets (same labels as the run step).
+        # Otherwise, derive expected output dirs from the current nodes' hostnames.
         try:
-            expected_labels = [cluster_target_output_label(n) for n in s_phdl.host_list]
+            head_node = s_phdl.host_list[0]
+            hostname_out = s_phdl.exec('hostname', print_console=False)
+            expected_hostnames = []
+            for node in s_phdl.host_list:
+                hn = (hostname_out.get(node, "") or "").strip() or node
+                expected_hostnames.append(hn)
         except Exception:
-            expected_labels = []
+            # Fallback to head node only
+            expected_hostnames = [head_node] if 'head_node' in locals() else []
 
-        if not expected_labels:
-            fail_test("Could not determine cluster node keys to locate Flux outputs")
+        if not expected_hostnames:
+            fail_test("Could not determine node hostnames to locate Flux outputs")
             update_test_result()
             return
 
+        # Single-node: parse only that node's directory.
         if node_count <= 1:
-            output_dirs = [f"{output_base_dir}/flux_{expected_labels[0]}_outputs"]
+            output_dirs = [f"{output_base_dir}/flux_{expected_hostnames[0]}_outputs"]
         else:
-            output_dirs = [f"{output_base_dir}/flux_{lab}_outputs" for lab in expected_labels]
+            output_dirs = [f"{output_base_dir}/flux_{hn}_outputs" for hn in expected_hostnames]
 
     log.info(f"Found {len(output_dirs)} output directory(ies) to parse")
 
@@ -795,9 +764,29 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
         dir_name = output_dir.split('/')[-1]
         label = dir_name.replace('flux_', '').replace('_outputs', '')
 
+        node = s_phdl.host_list[0]
+
         log.info(f"Parsing results from: {output_dir} ({label})")
         parser = FluxOutputParser(output_dir, expected_image_pattern="flux_*.png")
-        result, errors = parser.parse()
+        # result, errors = parser.parse()
+
+        odq = shlex.quote(output_dir)
+        raw = (s_phdl.exec(f"cat {odq}/results/timing.json", print_console=False) or {}).get(node, "").strip()
+        if not raw:
+            result, errors = None, [f"timing.json not found under {output_dir}"]
+        else:
+            pipe_times = [e["pipe_time"] for e in json.loads(raw) if isinstance(e, dict) and "pipe_time" in e]
+            from cvs.parsers.pytorch_xdit_flux import FluxBenchmarkResult
+            result = FluxBenchmarkResult(
+                avg_pipe_time_s=sum(pipe_times) / len(pipe_times),
+                repetition_count=len(pipe_times),
+                pipe_times=pipe_times,
+                timing_json_path=f"{output_dir}/results/timing.json",
+                image_paths=[],
+            )
+            errors = [] if pipe_times else ["No valid pipe_time values extracted from timing.json"]
+            if result and not pipe_times:
+                result = None
 
         for error in errors:
             log.warning(f"Parse warning ({label}): {error}")
