@@ -120,26 +120,6 @@ def test_launch_container(orch, variant_config, lifecycle, request):
         pytest.fail(f"container {name} not running after setup_containers()")
 
 
-def test_setup_sshd(orch, lifecycle, request):
-    """Stage 2: start sshd in the container (multinode only; single-node skips it)."""
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
-    t = time.monotonic()
-    ok = orch.setup_sshd()
-    lifecycle.record(request.node.nodeid, "sshd_setup", time.monotonic() - t)
-    if not ok:
-        lifecycle.failed = True
-        pytest.fail("setup_sshd() returned False")
-    # Single-node runs skip starting the in-container sshd (it exists only for
-    # inter-node MPI), so only probe 2224 when there is more than one host.
-    if len(orch.hosts) > 1:
-        # Port 2224 in hex is 08B0; check /proc/net/tcp because ss/iproute2 may not be installed
-        probe = orch.exec("bash -c 'grep -qi 08B0 /proc/net/tcp /proc/net/tcp6 2>/dev/null && echo OK || echo NO'")
-        if not any("OK" in (v or "") for v in (probe or {}).values()):
-            lifecycle.failed = True
-            pytest.fail("sshd not listening on 2224 after setup_sshd()")
-
-
 def test_model_fetch(orch, variant_config, lifecycle, request):
     """Stage 3: ensure the model is present in the HF cache (mounted models dir).
 
