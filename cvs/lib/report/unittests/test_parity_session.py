@@ -54,6 +54,26 @@ def test_resolve_parity_compare_jsons_merges_env(monkeypatch):
     assert resolved["sglang"] == "/env/sglang.json"
 
 
+def test_resolve_parity_compare_jsons_discovers_siblings(tmp_path):
+    vllm = tmp_path / "vllm_report.json"
+    vllm.write_text("{}", encoding="utf-8")
+    cfg = InferenceReportConfig(
+        suite_id="inferencex_atom",
+        report_basename="inferencex_atom_report",
+        title="t",
+        subtitle="",
+        footer="",
+        link_name="l",
+        embed_summary="",
+        results_columns=(),
+        metric_tier_order=(),
+        tier_metric_specs=lambda *_: {},
+        metric_units={},
+    )
+    resolved = dict(resolve_parity_compare_jsons(cfg, tmp_path))
+    assert resolved["vllm"] == str(vllm)
+
+
 def test_publish_session_inference_parity_writes_artifacts(tmp_path, monkeypatch):
     ref = tmp_path / "inferencex_atom_report.json"
     vllm = tmp_path / "vllm.json"

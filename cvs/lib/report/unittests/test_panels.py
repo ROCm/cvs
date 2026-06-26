@@ -2,7 +2,7 @@
 
 import json
 
-from cvs.lib.report.panels.prev_run import build_prev_run_panel, render_prev_run_panel_html
+from cvs.lib.report.panels.prev_run import build_prev_run_panel, render_prev_run_panel_html, resolve_prev_run_json_path
 from cvs.lib.report.panels.scaling import build_scaling_panel, render_scaling_panel_html
 from cvs.lib.report.panels.training_parity import build_training_parity_panel
 
@@ -93,3 +93,14 @@ def test_training_parity_panel_ratios(tmp_path):
     )
     assert len(panel["rows"]) == 2
     assert panel["rows"][0]["compare.prev_run.throughput_per_gpu_ratio"] == 1.1
+
+
+def test_resolve_prev_run_json_path_sibling(tmp_path):
+    sibling = tmp_path / "inferencex_atom_report_prev.json"
+    sibling.write_text("{}", encoding="utf-8")
+    resolved = resolve_prev_run_json_path(
+        "",
+        report_basename="inferencex_atom_report",
+        report_dir=tmp_path,
+    )
+    assert resolved == str(sibling)

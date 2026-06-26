@@ -128,26 +128,25 @@ static dashboard can also be embedded in the pytest report.
 
 ### Optional: inference parity
 
-Compare the reference suite JSON to other framework runs (same sweep cells):
+Compare the reference suite JSON to other framework runs (same sweep cells). Place
+`vllm_report.json` and/or `sglang_report.json` (or `*_single_report.json` variants)
+beside the pytest HTML output, set `parity_compare_jsons` on the preset, or export::
 
 ```bash
 export CVS_INFERENCE_PARITY_COMPARE=vllm=/path/vllm_report.json,sglang=/path/sglang_report.json
 ```
 
-Or set `parity_compare_jsons` on the preset. When all paths exist, the zip also contains
-`inference_parity_report.html` and `.json`.
+When all comparator paths exist, the zip also contains `inference_parity_report.html` and `.json`.
 
 ### Optional: run vs baseline (CI regression)
 
-Compare the current run to a prior suite JSON (same `cell_id` + host keys):
+Compare the current run to a prior suite JSON (same `cell_id` + host keys)::
+`{report_basename}_prev.json` beside the pytest HTML output, set `prev_run_json` on the
+preset, or export::
 
 ```bash
 export CVS_INFERENCE_PREV_REPORT_JSON=/path/prior_inferencex_atom_report.json
 ```
-
-Or set `prev_run_json` on the inference preset. The static report and JSON include a
-`panels.prev_run` section; the interactive viewer shows delta columns and can load another
-baseline JSON file manually.
 
 ### Pytest deep links
 

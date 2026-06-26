@@ -108,10 +108,20 @@ echo "HTML: $HTML"
 echo "LOG:  $LOG"
 ```
 
-When `--html` is set, the **IX suite report** (`inferencex_atom_report.html`, `.json`, and
-`_viewer.html`) is generated at session end and bundled into the pytest zip. See
-`cvs/lib/report/README.md` for wiring other suites. Open the pytest HTML **Reports** section
+When `--html` is set, the **IX suite report** (`inferencex_atom_report.html`, `.json`,
+`_viewer.html`, and `_summary.html`) is generated at session end and bundled into the pytest zip.
+See `cvs/lib/report/README.md` for wiring other suites. Open the pytest HTML **Reports** section
 for links. Render-only; does not affect gates.
+
+Optional sibling JSON files in the same directory as `--html` (no env vars required):
+
+| File | Report |
+|------|--------|
+| `inferencex_atom_report_prev.json` | Run-vs-baseline (`panels.prev_run`) |
+| `vllm_report.json` or `vllm_single_report.json` | Framework parity vs ATOM |
+| `sglang_report.json` or `sglang_single_report.json` | Framework parity vs ATOM |
+
+Or use `CVS_INFERENCE_PREV_REPORT_JSON` / `CVS_INFERENCE_PARITY_COMPARE` (see report README).
 
 ## W1 perf (MI300X)
 
