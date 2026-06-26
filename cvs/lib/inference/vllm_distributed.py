@@ -124,10 +124,7 @@ class VllmDistributedJob:
         self.models_dir = variant.paths.models_dir
 
         # Per-cell output directory, keyed by (isl/osl/conc).
-        self.out_dir = (
-            f"{self.log_dir}/{self.log_subdir}/out-node0"
-            f"/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
-        )
+        self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
         self.server_log = f"{self.out_dir}/vllm_serve_server.log"
         self.client_log = f"{self.out_dir}/client.log"
 
@@ -220,11 +217,7 @@ class VllmDistributedJob:
             env_lines.append(f"export {k}={shlex.quote(str(v))}")
         env_script = "\n".join(env_lines) + "\n"
         # Broadcast: no hosts kwarg -> all nodes get the env script.
-        self.orch.exec(
-            "bash -c " + shlex.quote(
-                f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"
-            )
-        )
+        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
         # Create a per-rank out-dir for every node so logs never share a path.
         for rank in range(int(self.nnodes)):
             rank_dir = self.out_dir.replace("out-node0", f"out-node{rank}")
@@ -242,10 +235,7 @@ class VllmDistributedJob:
                 "/opt/python/lib/python3.12/site-packages/vllm/v1/executor/"
                 "__pycache__/multiproc_executor.cpython-312.pyc"
             ),
-            (
-                "/opt/python/lib/python3.12/site-packages/vllm/v1/engine/"
-                "__pycache__/core.cpython-312.pyc"
-            ),
+            ("/opt/python/lib/python3.12/site-packages/vllm/v1/engine/__pycache__/core.cpython-312.pyc"),
         ]
         for _pyc in _stale_pycs:
             self.orch.exec(f"rm -f {shlex.quote(_pyc)}")
@@ -255,29 +245,30 @@ class VllmDistributedJob:
         # The image's .py has `assert self.rpc_broadcast_mq is not None` which
         # fires on follower nodes. Replace with a guard that returns [] (or None
         # for single-return calls) so followers silently skip the broadcast.
-        _mpexec_script = "\n".join([
-            "import pathlib",
-            "p = pathlib.Path('/opt/python/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py')",
-            "src = p.read_text()",
-            "if 'if self.rpc_broadcast_mq is None' in src:",
-            "    print('ALREADY_PATCHED')",
-            "else:",
-            "    old = ('        assert self.rpc_broadcast_mq is not None, (\\n'",
-            "           '            \"collective_rpc should not be called on follower node\"\\n'",
-            "           '        )')",
-            "    new = ('        if self.rpc_broadcast_mq is None:\\n'",
-            "           '            return None if (unique_reply_rank is not None or kv_output_aggregator is not None) else []')",
-            "    if old in src:",
-            "        p.write_text(src.replace(old, new, 1))",
-            "        print('PATCHED')",
-            "    else:",
-            "        print('NOT_FOUND')",
-        ]) + "\n"
-        self.orch.exec(
-            "bash -c " + shlex.quote(
-                f"printf '%s' {shlex.quote(_mpexec_script)} > /tmp/vllm_patch0b.py"
+        _mpexec_script = (
+            "\n".join(
+                [
+                    "import pathlib",
+                    "p = pathlib.Path('/opt/python/lib/python3.12/site-packages/vllm/v1/executor/multiproc_executor.py')",
+                    "src = p.read_text()",
+                    "if 'if self.rpc_broadcast_mq is None' in src:",
+                    "    print('ALREADY_PATCHED')",
+                    "else:",
+                    "    old = ('        assert self.rpc_broadcast_mq is not None, (\\n'",
+                    "           '            \"collective_rpc should not be called on follower node\"\\n'",
+                    "           '        )')",
+                    "    new = ('        if self.rpc_broadcast_mq is None:\\n'",
+                    "           '            return None if (unique_reply_rank is not None or kv_output_aggregator is not None) else []')",
+                    "    if old in src:",
+                    "        p.write_text(src.replace(old, new, 1))",
+                    "        print('PATCHED')",
+                    "    else:",
+                    "        print('NOT_FOUND')",
+                ]
             )
+            + "\n"
         )
+        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(_mpexec_script)} > /tmp/vllm_patch0b.py"))
         patch_out0b = self.orch.exec("python3 /tmp/vllm_patch0b.py")
         for host, out in (patch_out0b or {}).items():
             log.info("vllm multiproc_executor.py patch0b on %s: %s", host, (out or "").strip())
@@ -285,30 +276,33 @@ class VllmDistributedJob:
         # Patch 1: Guard _initialize_kv_caches for follower nodes (node_rank > 0).
         # collective_rpc requires rpc_broadcast_mq which is None on followers;
         # skip to a dummy KVCacheConfig so init can proceed.
-        _patch1_script = "\n".join([
-            "import pathlib",
-            "p = pathlib.Path('/opt/python/lib/python3.12/site-packages/vllm/v1/engine/core.py')",
-            "src = p.read_text()",
-            "old = '        kv_cache_config = self._initialize_kv_caches(vllm_config)\\n'",
-            "new = (",
-            "    '        if vllm_config.parallel_config.node_rank_within_dp == 0:\\n'",
-            "    '            kv_cache_config = self._initialize_kv_caches(vllm_config)\\n'",
-            "    '        else:\\n'",
-            "    '            vllm_config.cache_config.num_gpu_blocks = 1\\n'",
-            "    '            kv_cache_config = KVCacheConfig(num_blocks=1, kv_cache_tensors=[], kv_cache_groups=[])\\n'",
-            ")",
-            "already = 'vllm_config.cache_config.num_gpu_blocks = 1'",
-            "if already in src:",
-            "    print('ALREADY_PATCHED')",
-            "elif old in src:",
-            "    p.write_text(src.replace(old, new, 1))",
-            "    print('PATCHED')",
-            "else:",
-            "    print('NOT_FOUND')",
-        ]) + "\n"
-        self.orch.exec("bash -c " + shlex.quote(
-            f"printf '%s' {shlex.quote(_patch1_script)} > /tmp/vllm_patch1.py"
-        ))
+        _patch1_script = (
+            "\n".join(
+                [
+                    "import pathlib",
+                    "p = pathlib.Path('/opt/python/lib/python3.12/site-packages/vllm/v1/engine/core.py')",
+                    "src = p.read_text()",
+                    "old = '        kv_cache_config = self._initialize_kv_caches(vllm_config)\\n'",
+                    "new = (",
+                    "    '        if vllm_config.parallel_config.node_rank_within_dp == 0:\\n'",
+                    "    '            kv_cache_config = self._initialize_kv_caches(vllm_config)\\n'",
+                    "    '        else:\\n'",
+                    "    '            vllm_config.cache_config.num_gpu_blocks = 1\\n'",
+                    "    '            kv_cache_config = KVCacheConfig(num_blocks=1, kv_cache_tensors=[], kv_cache_groups=[])\\n'",
+                    ")",
+                    "already = 'vllm_config.cache_config.num_gpu_blocks = 1'",
+                    "if already in src:",
+                    "    print('ALREADY_PATCHED')",
+                    "elif old in src:",
+                    "    p.write_text(src.replace(old, new, 1))",
+                    "    print('PATCHED')",
+                    "else:",
+                    "    print('NOT_FOUND')",
+                ]
+            )
+            + "\n"
+        )
+        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(_patch1_script)} > /tmp/vllm_patch1.py"))
         patch_out = self.orch.exec("python3 /tmp/vllm_patch1.py")
         for host, out in (patch_out or {}).items():
             log.info("vllm core.py patch1 on %s: %s", host, (out or "").strip())
@@ -317,33 +311,36 @@ class VllmDistributedJob:
         # Scheduler.__init__ → KVCacheManager → HybridKVCacheCoordinator asserts
         # len(attention_groups) > 1, but followers have kv_cache_groups=[].
         # Stub it out with _F: follower EngineCore only needs workers running.
-        _patch2_script = "\n".join([
-            "import pathlib",
-            "p = pathlib.Path('/opt/python/lib/python3.12/site-packages/vllm/v1/engine/core.py')",
-            "src = p.read_text()",
-            "old = '        self.scheduler: SchedulerInterface = Scheduler(\\n'",
-            "new = (",
-            "    '        if vllm_config.parallel_config.node_rank_within_dp != 0:\\n'",
-            "    '            class _F:\\n'",
-            "    '                connector = None\\n'",
-            "    '                def get_kv_connector(self): return None\\n'",
-            "    '                def __getattr__(self, n): return lambda *a, **k: None\\n'",
-            "    '            self.scheduler = _F()\\n'",
-            "    '        else:\\n'",
-            "    '            self.scheduler: SchedulerInterface = Scheduler(\\n'",
-            ")",
-            "already = 'class _F:'",
-            "if already in src:",
-            "    print('ALREADY_PATCHED')",
-            "elif old in src:",
-            "    p.write_text(src.replace(old, new, 1))",
-            "    print('PATCHED')",
-            "else:",
-            "    print('NOT_FOUND')",
-        ]) + "\n"
-        self.orch.exec("bash -c " + shlex.quote(
-            f"printf '%s' {shlex.quote(_patch2_script)} > /tmp/vllm_patch2.py"
-        ))
+        _patch2_script = (
+            "\n".join(
+                [
+                    "import pathlib",
+                    "p = pathlib.Path('/opt/python/lib/python3.12/site-packages/vllm/v1/engine/core.py')",
+                    "src = p.read_text()",
+                    "old = '        self.scheduler: SchedulerInterface = Scheduler(\\n'",
+                    "new = (",
+                    "    '        if vllm_config.parallel_config.node_rank_within_dp != 0:\\n'",
+                    "    '            class _F:\\n'",
+                    "    '                connector = None\\n'",
+                    "    '                def get_kv_connector(self): return None\\n'",
+                    "    '                def __getattr__(self, n): return lambda *a, **k: None\\n'",
+                    "    '            self.scheduler = _F()\\n'",
+                    "    '        else:\\n'",
+                    "    '            self.scheduler: SchedulerInterface = Scheduler(\\n'",
+                    ")",
+                    "already = 'class _F:'",
+                    "if already in src:",
+                    "    print('ALREADY_PATCHED')",
+                    "elif old in src:",
+                    "    p.write_text(src.replace(old, new, 1))",
+                    "    print('PATCHED')",
+                    "else:",
+                    "    print('NOT_FOUND')",
+                ]
+            )
+            + "\n"
+        )
+        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(_patch2_script)} > /tmp/vllm_patch2.py"))
         patch_out2 = self.orch.exec("python3 /tmp/vllm_patch2.py")
         for host, out in (patch_out2 or {}).items():
             log.info("vllm core.py patch2 on %s: %s", host, (out or "").strip())
@@ -355,33 +352,34 @@ class VllmDistributedJob:
         #   A) Image has guard but uses SupportedTask.GENERATE (Literal, not Enum)
         #      → replace the bad return value.
         #   B) Image has bare form (no guard at all) → insert the guard block.
-        _patch3_script = "\n".join([
-            "import pathlib",
-            "p = pathlib.Path('/opt/python/lib/python3.12/site-packages/vllm/v1/engine/core.py')",
-            "src = p.read_text()",
-            "case_a_old = '            return (SupportedTask.GENERATE,)'",
-            "case_b_old = '    def get_supported_tasks(self) -> tuple[SupportedTask, ...]:\\n        return self.model_executor.supported_tasks\\n'",
-            "case_b_new = ('    def get_supported_tasks(self) -> tuple[SupportedTask, ...]:\\n'",
-            "              '        if self.vllm_config.parallel_config.node_rank_within_dp != 0:\\n'",
-            "              '            return (\"generate\",)\\n'",
-            "              '        return self.model_executor.supported_tasks\\n')",
-            "if '\"generate\"' in src and 'node_rank_within_dp != 0' in src:",
-            "    print('ALREADY_PATCHED')",
-            "elif case_a_old in src:",
-            "    p.write_text(src.replace(case_a_old, '            return (\"generate\",)', 1))",
-            "    print('PATCHED_A')",
-            "elif case_b_old in src:",
-            "    p.write_text(src.replace(case_b_old, case_b_new, 1))",
-            "    print('PATCHED_B')",
-            "else:",
-            "    idx = src.find('def get_supported_tasks')",
-            "    print('NOT_FOUND ctx:', src[idx:idx+150] if idx != -1 else 'fn absent')",
-        ]) + "\n"
-        self.orch.exec(
-            "bash -c " + shlex.quote(
-                f"printf '%s' {shlex.quote(_patch3_script)} > /tmp/vllm_patch3.py"
+        _patch3_script = (
+            "\n".join(
+                [
+                    "import pathlib",
+                    "p = pathlib.Path('/opt/python/lib/python3.12/site-packages/vllm/v1/engine/core.py')",
+                    "src = p.read_text()",
+                    "case_a_old = '            return (SupportedTask.GENERATE,)'",
+                    "case_b_old = '    def get_supported_tasks(self) -> tuple[SupportedTask, ...]:\\n        return self.model_executor.supported_tasks\\n'",
+                    "case_b_new = ('    def get_supported_tasks(self) -> tuple[SupportedTask, ...]:\\n'",
+                    "              '        if self.vllm_config.parallel_config.node_rank_within_dp != 0:\\n'",
+                    "              '            return (\"generate\",)\\n'",
+                    "              '        return self.model_executor.supported_tasks\\n')",
+                    "if '\"generate\"' in src and 'node_rank_within_dp != 0' in src:",
+                    "    print('ALREADY_PATCHED')",
+                    "elif case_a_old in src:",
+                    "    p.write_text(src.replace(case_a_old, '            return (\"generate\",)', 1))",
+                    "    print('PATCHED_A')",
+                    "elif case_b_old in src:",
+                    "    p.write_text(src.replace(case_b_old, case_b_new, 1))",
+                    "    print('PATCHED_B')",
+                    "else:",
+                    "    idx = src.find('def get_supported_tasks')",
+                    "    print('NOT_FOUND ctx:', src[idx:idx+150] if idx != -1 else 'fn absent')",
+                ]
             )
+            + "\n"
         )
+        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(_patch3_script)} > /tmp/vllm_patch3.py"))
         patch_out3 = self.orch.exec("python3 /tmp/vllm_patch3.py")
         for host, out in (patch_out3 or {}).items():
             log.info("vllm core.py patch3 on %s: %s", host, (out or "").strip())
@@ -395,16 +393,11 @@ class VllmDistributedJob:
         for rank, host in enumerate(self.orch.hosts):
             serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(rank))
             rank_log = self._rank_log(rank)
-            inner = (
-                f"source /tmp/server_env_script.sh && "
-                f"nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
-            )
+            inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
             out = self.orch.exec("bash -c " + shlex.quote(inner), hosts=[host])
             for h, output in out.items():
                 if self.EARLY_FAILURE_RE.search(output or ""):
-                    raise RuntimeError(
-                        f"vllm server failed to launch on {h} (rank {rank}): {output[-500:]}"
-                    )
+                    raise RuntimeError(f"vllm server failed to launch on {h} (rank {rank}): {output[-500:]}")
 
     def is_ready(self):
         """Broadcast grep to ALL nodes; ready only when every node's exit_code == 0."""
@@ -435,9 +428,7 @@ class VllmDistributedJob:
         )
         for host, r in (out or {}).items():
             if r.get("exit_code") == 0 and r.get("stdout", "").strip():
-                raise RuntimeError(
-                    f"vllm server fatal error on {host}: {r['stdout'].strip()[-500:]}"
-                )
+                raise RuntimeError(f"vllm server fatal error on {host}: {r['stdout'].strip()[-500:]}")
 
         for it in range(self._server_poll_count):
             if self.is_ready():
@@ -506,10 +497,7 @@ class VllmDistributedJob:
                 if val is not None:
                     args.append(f"{metric}:{val}")
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
-        client_cmd = (
-            f"source /tmp/server_env_script.sh && "
-            f"{bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
-        )
+        client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
         self.orch.exec_on_head("bash -c " + shlex.quote(client_cmd))
 
     def wait_client_complete(self):
@@ -549,8 +537,6 @@ class VllmDistributedJob:
             try:
                 raw = json.loads(text)
             except (json.JSONDecodeError, ValueError) as e:
-                raise RuntimeError(
-                    f"unparseable results artifact on {host}: {artifact}: {e}"
-                ) from e
+                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}") from e
             results[host] = to_client_metrics(raw, tp=self.tp, isl=self.isl)
         return results
