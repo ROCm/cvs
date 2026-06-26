@@ -565,6 +565,16 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     hostname_result = s_phdl.exec('hostname')
     node_to_hostname = {node: hostname_result[node].strip() for node in s_phdl.host_list}
 
+     # Remove stale timing.json before this run
+    clean_cmds = []
+    for node in s_phdl.host_list:
+        hostname = node_to_hostname[node]
+        odq = shlex.quote(
+            f"{output_base_dir}/flux_{hostname}_outputs/results/timing.json"
+        )
+        clean_cmds.append(f"rm -f {odq}")
+    s_phdl.exec_cmd_list(clean_cmds, print_console=False)
+
     # Build common docker command components
     device_list = inference_dict['container_config']['device_list']
     volume_dict = inference_dict['container_config']['volume_dict']
