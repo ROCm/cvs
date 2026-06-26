@@ -79,16 +79,6 @@ def write_report(
     path = out_path
     total_cells = len(payload["cells"])
     viewer_path = None
-    if config.interactive_viewer:
-        viewer_name = viewer_basename_for(config.report_basename)
-        viewer_path = path.parent / viewer_name
-        write_interactive_viewer(
-            viewer_path,
-            json_basename=f"{config.report_basename}.json",
-            title=config.title,
-            subtitle=config.subtitle,
-            tier_order=config.metric_tier_order,
-        )
     summary_mode = config.interactive_viewer and total_cells > config.viewer_cell_threshold
     if summary_mode:
         payload["summary"] = {
@@ -100,7 +90,7 @@ def write_report(
         }
     else:
         payload["summary"] = {"mode": "full", "total_cells": total_cells}
-        if viewer_path is not None:
+        if config.interactive_viewer:
             payload["summary"]["viewer_html"] = viewer_basename_for(config.report_basename)
 
     html_path, json_path = write_html_json_artifacts(
@@ -108,6 +98,18 @@ def write_report(
         payload=payload,
         render_html=render_report_html,
     )
+
+    if config.interactive_viewer:
+        viewer_name = viewer_basename_for(config.report_basename)
+        viewer_path = path.parent / viewer_name
+        write_interactive_viewer(
+            viewer_path,
+            json_basename=f"{config.report_basename}.json",
+            title=config.title,
+            subtitle=config.subtitle,
+            tier_order=config.metric_tier_order,
+            embed_payload=payload,
+        )
     result = {"html": html_path, "json": json_path, "payload": payload}
     if viewer_path is not None:
         result["viewer"] = viewer_path

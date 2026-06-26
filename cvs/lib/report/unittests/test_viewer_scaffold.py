@@ -51,9 +51,12 @@ def test_write_interactive_viewer(tmp_path):
         json_basename="suite_report.json",
         title="Suite viewer",
         tier_order=("throughput", "record"),
+        embed_payload={"schema_version": 1, "cells": [{"cell_id": "c1", "host": "h1"}]},
     )
     text = out.read_text(encoding="utf-8")
     assert "suite_report.json" in text
+    assert "embedded-report-json" in text
+    assert '"cell_id":"c1"' in text or '"cell_id": "c1"' in text
     assert "f-isl" in text
     assert "chart.js" in text
     assert "heatmap-section" in text
@@ -72,6 +75,9 @@ def test_viewer_written_when_interactive_enabled(tmp_path):
     )
     assert artifacts.get("viewer") is not None
     assert artifacts["viewer"].is_file()
+    viewer_text = artifacts["viewer"].read_text(encoding="utf-8")
+    assert "embedded-report-json" in viewer_text
+    assert len(viewer_text) > 500
 
 
 def test_summary_mode_truncates_static_html(tmp_path):

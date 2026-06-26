@@ -92,6 +92,8 @@ tr.changed td { background: rgba(255,107,53,0.1); }
   </div>
 </section>
 
+__EMBEDDED_JSON__
+
 <script>
 const JSON_PATH = __JSON_PATH__;
 const tierOrder = __TIER_ORDER__;
@@ -454,7 +456,18 @@ document.getElementById('f-baseline').addEventListener('change', ev => {
   reader.readAsText(file);
 });
 
-fetch(JSON_PATH).then(r => r.json()).then(data => {
+function loadReportData() {
+  const embedded = document.getElementById('embedded-report-json');
+  if (embedded && embedded.textContent.trim()) {
+    return Promise.resolve(JSON.parse(embedded.textContent));
+  }
+  return fetch(JSON_PATH).then(r => {
+    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+    return r.json();
+  });
+}
+
+loadReportData().then(data => {
   reportData = data;
   allCells = data.cells || [];
   if (data.panels && data.panels.prev_run) {
