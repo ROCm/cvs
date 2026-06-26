@@ -31,7 +31,6 @@ from cvs.lib.inference.xdit.pytorch_xdit_flux import FluxOutputParser, FluxBench
 
 log = globals.log
 
-
 class _SecretValue:
     """
     Wrapper to avoid leaking secrets in pytest tracebacks.
@@ -108,6 +107,135 @@ def _is_local_target(target: str) -> bool:
             return True
 
     return False
+
+def _flux_smoke_output_dir(output_base_dir: str, node: str) -> str:
+    label = cluster_target_output_label(node)
+    return f"{output_base_dir}/flux_{label}_smoke_outputs"
+def _flux_benchmark_output_dir(output_base_dir: str, node: str) -> str:
+    label = cluster_target_output_label(node)
+    return f"{output_base_dir}/flux_{label}_outputs"
+
+def _build_flux_docker_cmds(
+    s_phdl,
+    inference_dict,
+    hf_token,
+    *,
+    output_dir_for_node,
+    num_repetitions,
+    warmup_calls,
+    warmup_steps,
+    use_torch_compile,
+    flux_params,
+    container_name_suffix="",
+):
+    """
+    Build per-node mkdir and docker run commands for FLUX xDiT.
+
+    Args:
+        s_phdl: Pssh handle (uses host_list order).
+        inference_dict: Resolved config dict.
+        hf_token: HF token (_SecretValue or str).
+        output_dir_for_node: callable(node) -> host output directory path.
+        num_repetitions: torchrun --num_repetitions override.
+        warmup_calls: torchrun --warmup_calls override.
+        warmup_steps: torchrun --warmup_steps override.
+        use_torch_compile: whether to pass --use-torch-compile.
+        flux_params: benchmark_params['flux1_dev_t2i'] dict.
+        container_name_suffix: appended to container_name (e.g. "-smoke").
+
+    Returns:
+        (mkdir_cmds, docker_cmds) lists aligned with s_phdl.host_list.
+    """
+    container_image = inference_dict["container_image"]
+    container_name = inference_dict["container_name"] + container_name_suffix
+    hf_home = inference_dict["hf_home"]
+    model_repo = inference_dict.get("_resolved_model_path_container") or inference_dict["model_repo"]
+
+    prompt = flux_params["prompt"]
+    seed = flux_params["seed"]
+    num_inference_steps = flux_params["num_inference_steps"]
+    max_sequence_length = flux_params["max_sequence_length"]
+    no_use_resolution_binning = flux_params["no_use_resolution_binning"]
+    height = flux_params["height"]
+    width = flux_params["width"]
+    ulysses_degree = flux_params["ulysses_degree"]
+    ring_degree = flux_params["ring_degree"]
+    torchrun_nproc = flux_params["torchrun_nproc"]
+
+    device_list = inference_dict["container_config"]["device_list"]
+    volume_dict = inference_dict["container_config"]["volume_dict"]
+    env_dict = inference_dict["container_config"]["env_dict"]
+
+    device_args = " ".join([f"--device={dev}" for dev in device_list])
+
+    env_dict_full = env_dict.copy()
+    env_dict_full["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
+    env_dict_full["OMP_NUM_THREADS"] = "16"
+    env_dict_full["HF_HOME"] = "/hf_home"
+    if hf_token:
+        env_dict_full["HF_TOKEN"] = hf_token
+    env_args = " ".join([f"-e {key}={value}" for key, value in env_dict_full.items()])
+
+    resolution_binning_flag = "--no_use_resolution_binning" if no_use_resolution_binning else ""
+    compile_flag = "--use-torch-compile" if use_torch_compile else ""
+
+    torchrun_cmd = (
+        f"torchrun --nproc_per_node={torchrun_nproc} /app/Flux/run_usp.py "
+        f'--model "{model_repo}" '
+        f'--prompt "{prompt}" '
+        f"--seed {seed} "
+        f"--num_inference_steps {num_inference_steps} "
+        f"--max_sequence_length {max_sequence_length} "
+        f"{resolution_binning_flag} "
+        f"--warmup_steps {warmup_steps} "
+        f"--warmup_calls {warmup_calls} "
+        f"--num_repetitions {num_repetitions} "
+        f"--height {height} --width {width} "
+        f"--ulysses_degree {ulysses_degree} "
+        f"--ring_degree {ring_degree} "
+        f"{compile_flag} "
+        f"--benchmark_output_directory /outputs"
+    )
+
+    mkdir_cmds = []
+    docker_cmds = []
+
+    for node in s_phdl.host_list:
+        output_dir = output_dir_for_node(node)
+        label = cluster_target_output_label(node)
+
+        mkdir_cmds.append(f"mkdir -p {shlex.quote(output_dir)}")
+
+        volume_dict_full = volume_dict.copy()
+        volume_dict_full[output_dir] = "/outputs"
+        volume_dict_full[hf_home] = "/hf_home"
+        if inference_dict.get("_resolved_model_mount_host"):
+            volume_dict_full[inference_dict["_resolved_model_mount_host"]] = "/model"
+
+        volume_args = " ".join(
+            [f"--mount type=bind,source={src},target={dst}" for src, dst in volume_dict_full.items()]
+        )
+
+        docker_cmd = (
+            f"docker run "
+            f"--cap-add=SYS_PTRACE "
+            f"--security-opt seccomp=unconfined "
+            f"--user root "
+            f"{device_args} "
+            f"--ipc=host "
+            f"--network host "
+            f"--rm "
+            f"--privileged "
+            f"--name {container_name} "
+            f"{volume_args} "
+            f"{env_args} "
+            f"{container_image} "
+            f"{torchrun_cmd}"
+        )
+        docker_cmds.append(docker_cmd)
+        log.info(f"Node {node} ({label}) will write to: {output_dir}")
+
+    return mkdir_cmds, docker_cmds
 
 
 class LocalPssh:
@@ -339,6 +467,7 @@ def test_cleanup_stale_containers(s_phdl, inference_dict):
 
     # Cleanup runs on all nodes in parallel via Pssh
     docker_lib.kill_docker_container(s_phdl, container_name)
+    docker_lib.kill_docker_container(s_phdl, container_name + "-smoke")
     docker_lib.delete_all_containers_and_volumes(s_phdl)
 
     log.info("Container cleanup completed on all nodes")
@@ -505,180 +634,127 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
 
     update_test_result()
 
+def test_generate_and_verify_image(s_phdl, inference_dict, benchmark_params_dict, hf_token):
+    """
+    Quick smoke run on all nodes: one inference into flux_{label}_smoke_outputs,
+    then verify a non-empty flux_*.png exists on each node.
+    """
+    globals.error_list = []
+
+    output_base_dir = inference_dict["output_base_dir"]
+    flux_params = benchmark_params_dict["flux1_dev_t2i"]
+
+    # Clean + mkdir smoke dirs
+    clean_cmds = []
+    for node in s_phdl.host_list:
+        smoke_dir = _flux_smoke_output_dir(output_base_dir, node)
+        clean_cmds.append(f"rm -rf {shlex.quote(smoke_dir)}")
+    s_phdl.exec_cmd_list(clean_cmds, print_console=False)
+
+    mkdir_cmds, docker_cmds = _build_flux_docker_cmds(
+        s_phdl, inference_dict, hf_token,
+        output_dir_for_node=lambda n: _flux_smoke_output_dir(output_base_dir, n),
+        num_repetitions=1,
+        warmup_calls=0,
+        warmup_steps=0,
+        use_torch_compile=False,   # faster smoke; optional
+        flux_params=flux_params,
+        container_name_suffix="-smoke",  # e.g. flux-benchmark-smoke
+    )
+
+    s_phdl.exec_cmd_list(mkdir_cmds)
+    run_results = s_phdl.exec_cmd_list(docker_cmds, timeout=900)
+
+    # Verify PNG in smoke dirs
+    verify_cmds = []
+    for node in s_phdl.host_list:
+        odq = shlex.quote(_flux_smoke_output_dir(output_base_dir, node))
+        verify_cmds.append(
+            f'img=$(find {odq} -type f -name \'flux_*.png\' 2>/dev/null | head -1); '
+            f'test -n "$img" && test -s "$img" && echo IMG_OK || echo IMG_MISSING'
+        )
+
+    verify_results = s_phdl.exec_cmd_list(verify_cmds, print_console=False)
+    missing = [n for n, out in verify_results.items() if "IMG_OK" not in (out or "")]
+    if missing:
+        fail_test(
+            f"No non-empty flux_*.png under flux_<label>_smoke_outputs on "
+            f"{len(missing)} node(s): {', '.join(missing)}"
+        )
+
+    log.info(f"Smoke image generation verified on all {len(s_phdl.host_list)} node(s)")
+    update_test_result()
+
 
 def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_token):
     """
     Run FLUX.1-dev text-to-image benchmark inside pytorch-xdit container on all nodes in parallel.
 
-    Executes torchrun with configured parameters and mounts:
-    - HF cache to /hf_home
-    - Output directory to /outputs
+    Writes timing results to flux_{label}_outputs on each node (separate from smoke dirs).
     """
     globals.error_list = []
 
-    # Preflight: ensure all nodes have GPU-capable hardware. Running on a login node (no /dev/kfd)
-    # will cause ROCm + container init to fail and produce no timing.json.
+    # Preflight: ensure all nodes have GPU-capable hardware.
     log.info(f"Checking /dev/kfd on {len(s_phdl.host_list)} node(s)")
     kfd_check = s_phdl.exec("test -e /dev/kfd && echo KFD_OK || echo KFD_MISSING", print_console=False)
-    missing_kfd_nodes = []
-    for node, output in kfd_check.items():
-        if "KFD_OK" not in (output or ""):
-            missing_kfd_nodes.append(node)
-            log.error(f"ROCm device node /dev/kfd not found on {node}")
-        else:
-            log.info(f"/dev/kfd found on {node}")
+    missing_kfd_nodes = [
+        node for node, output in kfd_check.items() if "KFD_OK" not in (output or "")
+    ]
+    for node in missing_kfd_nodes:
+        log.error(f"ROCm device node /dev/kfd not found on {node}")
+    for node in set(s_phdl.host_list) - set(missing_kfd_nodes):
+        log.info(f"/dev/kfd found on {node}")
 
     if missing_kfd_nodes:
         fail_test(
-            f"ROCm device node /dev/kfd not found on {len(missing_kfd_nodes)} node(s): {', '.join(missing_kfd_nodes)}. "
+            f"ROCm device node /dev/kfd not found on {len(missing_kfd_nodes)} node(s): "
+            f"{', '.join(missing_kfd_nodes)}. "
             f"This test must be run on GPU compute nodes (e.g., via an interactive SLURM allocation)."
         )
         update_test_result()
         return
 
-    container_image = inference_dict['container_image']
-    container_name = inference_dict['container_name']
-    hf_home = inference_dict['hf_home']
-    output_base_dir = inference_dict['output_base_dir']
-    # Prefer the resolved container model path computed in test_verify_hf_cache_or_download.
-    model_repo = inference_dict.get('_resolved_model_path_container') or inference_dict['model_repo']
+    output_base_dir = inference_dict["output_base_dir"]
+    flux_params = benchmark_params_dict["flux1_dev_t2i"]
 
-    # Get benchmark parameters
-    flux_params = benchmark_params_dict['flux1_dev_t2i']
-    prompt = flux_params['prompt']
-    seed = flux_params['seed']
-    num_inference_steps = flux_params['num_inference_steps']
-    max_sequence_length = flux_params['max_sequence_length']
-    no_use_resolution_binning = flux_params['no_use_resolution_binning']
-    warmup_steps = flux_params['warmup_steps']
-    warmup_calls = flux_params['warmup_calls']
-    num_repetitions = flux_params['num_repetitions']
-    height = flux_params['height']
-    width = flux_params['width']
-    ulysses_degree = flux_params['ulysses_degree']
-    ring_degree = flux_params['ring_degree']
-    use_torch_compile = flux_params['use_torch_compile']
-    torchrun_nproc = flux_params['torchrun_nproc']
-
-    # Get hostnames from all nodes
-    log.info(f"Getting hostnames from {len(s_phdl.host_list)} node(s)")
-    hostname_result = s_phdl.exec('hostname')
-    node_to_hostname = {node: hostname_result[node].strip() for node in s_phdl.host_list}
-
-    # Remove stale outputs before this run
+    # Remove stale timing results before this run (leave smoke dirs untouched).
     clean_cmds = []
     for node in s_phdl.host_list:
-        label = cluster_target_output_label(node)
-        odq = shlex.quote(f"{output_base_dir}/flux_{label}_outputs/results")
-        clean_cmds.append(f"rm -rf {odq}")
+        benchmark_dir = _flux_benchmark_output_dir(output_base_dir, node)
+        clean_cmds.append(f"rm -rf {shlex.quote(benchmark_dir + '/results')}")
     log.info(f"Removing stale results/ on {len(clean_cmds)} node(s)")
     s_phdl.exec_cmd_list(clean_cmds, print_console=False)
 
-    # Build common docker command components
-    device_list = inference_dict['container_config']['device_list']
-    volume_dict = inference_dict['container_config']['volume_dict']
-    env_dict = inference_dict['container_config']['env_dict']
-
-    # Build device arguments
-    device_args = " ".join([f"--device={dev}" for dev in device_list])
-
-    # Build environment arguments (common to all nodes)
-    env_dict_full = env_dict.copy()
-    env_dict_full['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
-    env_dict_full['OMP_NUM_THREADS'] = '16'
-    env_dict_full['HF_HOME'] = '/hf_home'
-    if hf_token:
-        env_dict_full['HF_TOKEN'] = hf_token
-    env_args = " ".join([f"-e {key}={value}" for key, value in env_dict_full.items()])
-
-    # Build torchrun command (common to all nodes)
-    resolution_binning_flag = "" if no_use_resolution_binning else ""
-    if no_use_resolution_binning:
-        resolution_binning_flag = "--no_use_resolution_binning"
-
-    compile_flag = "--use-torch-compile" if use_torch_compile else ""
-
-    torchrun_cmd = (
-        f"torchrun --nproc_per_node={torchrun_nproc} /app/Flux/run_usp.py "
-        f"--model \"{model_repo}\" "
-        f"--prompt \"{prompt}\" "
-        f"--seed {seed} "
-        f"--num_inference_steps {num_inference_steps} "
-        f"--max_sequence_length {max_sequence_length} "
-        f"{resolution_binning_flag} "
-        f"--warmup_steps {warmup_steps} "
-        f"--warmup_calls {warmup_calls} "
-        f"--num_repetitions {num_repetitions} "
-        f"--height {height} --width {width} "
-        f"--ulysses_degree {ulysses_degree} "
-        f"--ring_degree {ring_degree} "
-        f"{compile_flag} "
-        f"--benchmark_output_directory /outputs"
+    mkdir_cmds, docker_cmds = _build_flux_docker_cmds(
+        s_phdl,
+        inference_dict,
+        hf_token,
+        output_dir_for_node=lambda n: _flux_benchmark_output_dir(output_base_dir, n),
+        num_repetitions=flux_params["num_repetitions"],
+        warmup_calls=flux_params["warmup_calls"],
+        warmup_steps=flux_params["warmup_steps"],
+        use_torch_compile=flux_params["use_torch_compile"],
+        flux_params=flux_params,
     )
 
-    # Create per-node output directories and build per-node docker commands
-    mkdir_cmds = []
-    docker_cmds = []
-
-    for node in s_phdl.host_list:
-        label = cluster_target_output_label(node)
-        output_dir = f"{output_base_dir}/flux_{label}_outputs"
-
-        # Create output directory command
-        mkdir_cmds.append(f"mkdir -p {output_dir}")
-
-        # Build volume arguments with per-node output directory
-        volume_dict_full = volume_dict.copy()
-        volume_dict_full[output_dir] = "/outputs"
-        volume_dict_full[hf_home] = "/hf_home"
-        # If user provided an explicit local model path, mount it consistently to /model.
-        if inference_dict.get("_resolved_model_mount_host"):
-            volume_dict_full[inference_dict["_resolved_model_mount_host"]] = "/model"
-        volume_args = " ".join(
-            [f"--mount type=bind,source={src},target={dst}" for src, dst in volume_dict_full.items()]
-        )
-
-        # Full docker command for this node
-        docker_cmd = (
-            f"docker run "
-            f"--cap-add=SYS_PTRACE "
-            f"--security-opt seccomp=unconfined "
-            f"--user root "
-            f"{device_args} "
-            f"--ipc=host "
-            f"--network host "
-            f"--rm "
-            f"--privileged "
-            f"--name {container_name} "
-            f"{volume_args} "
-            f"{env_args} "
-            f"{container_image} "
-            f"{torchrun_cmd}"
-        )
-        docker_cmds.append(docker_cmd)
-        log.info(f"Node {node} ({label}) will write to: {output_dir}")
-
-    # Create output directories on all nodes in parallel
     log.info(f"Creating output directories on {len(s_phdl.host_list)} node(s)")
     s_phdl.exec_cmd_list(mkdir_cmds)
 
     log.info(f"Running FLUX.1-dev benchmark on {len(s_phdl.host_list)} node(s) in parallel")
     log.debug(f"Docker command (sample): {_redact_secrets(docker_cmds[0])}")
 
+    fatal_patterns = [
+        r"\bTraceback\b",
+        r"\bModuleNotFoundError\b",
+        r"\bChildFailedError\b",
+        r"\bOSError:\b",
+    ]
+
     try:
-        # Run benchmarks on all nodes in parallel
         log.info("Starting benchmarks (this may take several minutes)...")
-        benchmark_results = s_phdl.exec_cmd_list(docker_cmds, timeout=1800)  # 30 min timeout
+        benchmark_results = s_phdl.exec_cmd_list(docker_cmds, timeout=1800)
 
         log.info("Benchmarks completed on all nodes")
-
-        # Check for common failure patterns on each node and fail fast.
-        fatal_patterns = [
-            r"\bTraceback\b",
-            r"\bModuleNotFoundError\b",
-            r"\bChildFailedError\b",
-            r"\bOSError:\b",
-        ]
 
         failed_nodes = []
         for node, output in benchmark_results.items():
@@ -694,63 +770,12 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     except Exception as e:
         fail_test(f"Benchmark execution failed with exception: {e}")
 
-    # For convenience, store the single-node output dir so parsing can be strict and avoid
-    # picking up stale outputs from previous runs on other hosts.
     if len(getattr(s_phdl, "host_list", []) or []) == 1:
         only_node = s_phdl.host_list[0]
-        inference_dict["_test_output_dir"] = f"{output_base_dir}/flux_{cluster_target_output_label(only_node)}_outputs"
+        inference_dict["_test_output_dir"] = _flux_benchmark_output_dir(output_base_dir, only_node)
 
     update_test_result()
 
-def test_verify_generated_images(s_phdl, inference_dict):
-    """
-    Verify at least one non-empty flux_*.png was generated on every cluster node.
-
-    Runs over SSH on each node's benchmark output directory (fleet parallel).
-    """
-    globals.error_list = []
-
-    output_base_dir = inference_dict.get("output_base_dir")
-    if not output_base_dir:
-        fail_test("output_base_dir not set in config; cannot locate benchmark outputs")
-        update_test_result()
-        return
-
-    verify_cmds = []
-    for node in s_phdl.host_list:
-        if inference_dict.get("_test_output_dir") and len(s_phdl.host_list) == 1:
-            output_dir = inference_dict["_test_output_dir"]
-        else:
-            label = cluster_target_output_label(node)
-            output_dir = f"{output_base_dir}/flux_{label}_outputs"
-
-        odq = shlex.quote(output_dir)
-        verify_cmds.append(
-            f'img=$(find {odq} -type f -name \'flux_*.png\' 2>/dev/null | head -1); '
-            f'test -n "$img" && test -s "$img" && echo IMG_OK || echo IMG_MISSING'
-        )
-        log.info(f"Will verify flux_*.png on {node} under {output_dir}")
-
-    log.info(f"Verifying generated images on {len(s_phdl.host_list)} node(s)")
-    verify_results = s_phdl.exec_cmd_list(verify_cmds, print_console=False)
-
-    missing_nodes = []
-    for node, output in verify_results.items():
-        if "IMG_OK" in (output or ""):
-            log.info(f"Generated image verified on {node}")
-        else:
-            log.error(f"No non-empty flux_*.png found on {node}")
-            missing_nodes.append(node)
-
-    if missing_nodes:
-        fail_test(
-            f"Expected at least one non-empty flux_*.png under each node's "
-            f"flux_<cluster_target>_outputs directory; missing on "
-            f"{len(missing_nodes)} node(s): {', '.join(missing_nodes)}"
-        )
-
-    log.info(f"Image verification passed on all {len(s_phdl.host_list)} node(s)")
-    update_test_result()
 
 def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dict, gpu_type):
     """
@@ -820,20 +845,29 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
 
         odq = shlex.quote(output_dir)
         raw = (s_phdl.exec(f"cat {odq}/results/timing.json", print_console=False) or {}).get(node, "").strip()
-        if not raw:
+
+        if not raw or raw.startswith("cat:"):
             result, errors = None, [f"timing.json not found under {output_dir}"]
         else:
-            pipe_times = [e["pipe_time"] for e in json.loads(raw) if isinstance(e, dict) and "pipe_time" in e]
-            result = FluxBenchmarkResult(
-                avg_pipe_time_s=sum(pipe_times) / len(pipe_times),
-                repetition_count=len(pipe_times),
-                pipe_times=pipe_times,
-                timing_json_path=f"{output_dir}/results/timing.json",
-                image_paths=[],
-            )
-            errors = [] if pipe_times else ["No valid pipe_time values extracted from timing.json"]
-            if result and not pipe_times:
-                result = None
+            try:
+                pipe_times = [
+                    e["pipe_time"]
+                    for e in json.loads(raw)
+                    if isinstance(e, dict) and "pipe_time" in e
+                ]
+            except json.JSONDecodeError:
+                result, errors = None, [f"Invalid timing.json under {output_dir}"]
+            else:
+                result = FluxBenchmarkResult(
+                    avg_pipe_time_s=sum(pipe_times) / len(pipe_times),
+                    repetition_count=len(pipe_times),
+                    pipe_times=pipe_times,
+                    timing_json_path=f"{output_dir}/results/timing.json",
+                    image_paths=[],
+                )
+                errors = [] if pipe_times else ["No valid pipe_time values extracted from timing.json"]
+                if result and not pipe_times:
+                    result = None
 
         for error in errors:
             log.warning(f"Parse warning ({label}): {error}")
@@ -842,11 +876,6 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
             log.error(f"Failed to parse benchmark results for {label}: {errors}")
             all_passed = False
             continue
-
-        if not result.image_paths:
-            log.warning(f"No images (flux_*.png) found under {output_dir}")
-        else:
-            log.info(f"Found {len(result.image_paths)} generated images for {label}")
 
         log.info(f"Benchmark results ({label}):")
         log.info(f"  Repetitions parsed: {result.repetition_count}")
