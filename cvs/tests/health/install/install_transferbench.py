@@ -202,6 +202,11 @@ def test_install_transferbench(orch, config_dict):
     log.info('Testcase install transferbench')
     git_install_path = config_dict['git_install_path']
     git_url = config_dict['git_url']
+    git_tag = config_dict.get('git_tag')
+    if not git_tag:
+        fail_test('TransferBench config is missing the required "git_tag" field')
+        update_test_result()
+        return
 
     out_dict = orch.exec(f'ls -ld {git_install_path}')
     for node in out_dict.keys():
@@ -216,11 +221,25 @@ def test_install_transferbench(orch, config_dict):
     )
 
     tb_src = f'{git_install_path}/TransferBench'
-    git_tag = config_dict['git_tag']
     out_dict = orch.exec(
         f"bash -c 'cd {tb_src} && git checkout {git_tag}'",
         timeout=120,
     )
+    scan_test_results(out_dict)
+    for node, output in out_dict.items():
+        if re.search(r'error:|fatal:', output, re.I):
+            fail_test(f'git checkout {git_tag} failed on node {node}: {output.strip()}')
+
+    out_dict = orch.exec(
+        f"bash -c 'cd {tb_src} && git describe --tags --exact-match'",
+        timeout=60,
+    )
+    for node, output in out_dict.items():
+        actual_tag = output.strip()
+        if actual_tag != git_tag:
+            fail_test(
+                f'TransferBench not at git tag {git_tag} on node {node} after checkout (git describe: {actual_tag!r})'
+            )
 
     # Detect ROCm path and compiler
     rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
