@@ -6,6 +6,43 @@ import html
 from typing import Iterable, List, Mapping
 
 
+def gate_cell_label(cell: Mapping[str, object]) -> str:
+    base = f"{cell['policy']} \u00b7 C={cell['concurrency']}"
+    if cell.get("show_host_in_label"):
+        return f"{base} \u00b7 {cell['host']}"
+    return base
+
+
+def build_gate_matrix_rows(cells: List[dict]) -> List[dict]:
+    return [
+        {
+            "label": gate_cell_label(cell),
+            "cell_id": cell["cell_id"],
+            "concurrency": cell["concurrency"],
+            "tiers": cell["tiers"],
+        }
+        for cell in cells
+    ]
+
+
+def gate_matrix_table_css() -> str:
+    return """
+.matrix-wrap, .results-wrap { overflow-x: auto; }
+.matrix, .results-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.matrix th, .matrix td, .results-table th, .results-table td {
+  border: 1px solid var(--border); padding: 0.5rem 0.65rem; text-align: center; }
+.matrix th, .results-table th { background: rgba(255,255,255,0.04); color: var(--muted);
+  font-size: 0.7rem; text-transform: uppercase; }
+.matrix td:first-child { text-align: left; font-weight: 500; }
+.matrix-pass { background: rgba(61,214,140,0.12); color: var(--pass); }
+.matrix-fail { background: rgba(255,92,106,0.12); color: var(--fail); }
+.matrix-record { background: rgba(107,159,255,0.08); color: var(--record); }
+.results-table { font-size: 0.8rem; }
+.results-table td { text-align: right; white-space: nowrap; }
+.results-table td:nth-child(-n+7) { text-align: left; }
+"""
+
+
 def render_gate_matrix_html(gate_matrix: List[dict], tier_order: Iterable[str]) -> str:
     tiers = tuple(tier_order)
     if not gate_matrix:

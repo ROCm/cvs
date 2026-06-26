@@ -44,6 +44,31 @@ def cell_card_css(*, compact: bool = False) -> str:
     return base
 
 
+def cell_card_report_css() -> str:
+    """Cell card rules using report theme CSS variables (static inference HTML)."""
+    return """
+.cells { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+.cell-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.headline { font-size: 2.25rem; font-weight: 700; color: var(--accent); line-height: 1; }
+.headline-unit { font-size: 0.9rem; color: var(--muted); margin-left: 0.35rem; }
+.cell-sub { font-size: 0.8rem; color: var(--muted); }
+.cell-mini-tl { display: flex; gap: 4px; min-height: 36px; border-radius: 6px; overflow: hidden; font-size: 0.65rem; }
+.cell-mini-seg { display: flex; flex-direction: column; justify-content: center; align-items: center;
+  padding: 0.25rem; background: rgba(255,255,255,0.05); min-width: 40px; }
+.chip { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; padding: 0.2rem 0.5rem; border-radius: 999px; }
+.chip-pass { background: rgba(61,214,140,0.15); color: var(--pass); }
+.chip-fail { background: rgba(255,92,106,0.15); color: var(--fail); }
+.chip-record { background: rgba(107,159,255,0.12); color: var(--record); }
+.chip-na { background: rgba(92,99,112,0.2); color: var(--na); }
+.bar-track { height: 4px; background: var(--border); border-radius: 2px; margin-top: 0.35rem; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 2px; }
+.bar-pass { background: var(--pass); } .bar-fail { background: var(--fail); } .bar-record { background: var(--record); }
+.target, .metric-label, .cell-foot { font-size: 0.7rem; color: var(--muted); }
+.margin { font-size: 0.7rem; color: var(--pass); display: block; } .margin-fail { color: var(--fail); }
+"""
+
+
 def render_cell_lifecycle_html(
     cell_lifecycle: Mapping[str, float],
     labels: tuple[str, ...],
