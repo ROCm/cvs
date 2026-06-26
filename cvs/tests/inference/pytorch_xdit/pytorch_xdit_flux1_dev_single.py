@@ -27,7 +27,7 @@ from cvs.lib.utils_lib import (
 from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditFluxConfigFile
-from cvs.parsers.pytorch_xdit_flux import FluxOutputParser
+from cvs.lib.inference.xdit.pytorch_xdit_flux import FluxOutputParser, FluxBenchmarkResult
 
 log = globals.log
 
@@ -773,7 +773,6 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
             result, errors = None, [f"timing.json not found under {output_dir}"]
         else:
             pipe_times = [e["pipe_time"] for e in json.loads(raw) if isinstance(e, dict) and "pipe_time" in e]
-            from cvs.parsers.pytorch_xdit_flux import FluxBenchmarkResult
             result = FluxBenchmarkResult(
                 avg_pipe_time_s=sum(pipe_times) / len(pipe_times),
                 repetition_count=len(pipe_times),
