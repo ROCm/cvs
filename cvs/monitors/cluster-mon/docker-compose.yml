@@ -53,7 +53,16 @@ services:
       # Redis connection (uses Docker service name as hostname)
       - STORAGE__REDIS__URL=redis://redis:6379
       - STORAGE__REDIS__PASSWORD=${REDIS_PASSWORD:-cvs_cluster_mon}
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
     # Health check disabled - uncomment if needed
     # healthcheck:
     #   test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8001/health', timeout=5)"]

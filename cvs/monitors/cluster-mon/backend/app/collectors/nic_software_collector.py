@@ -24,33 +24,43 @@ class NICSoftwareCollector:
         """
         logger.info("Collecting NIC firmware versions")
 
-        # First get list of interfaces
         ip_output = await ssh_manager.exec_async(
             "bash -c \"ip -o link show | awk -F': ' '{print \\$2}' | grep -v lo\"", timeout=60
         )
 
-        firmware_info = {}
+        # Build per-host interface list and a deduplicated set of all interface
+        # names seen across the fleet so we can run ethtool once per unique name
+        # rather than once per (host, interface) pair.
+        host_ifaces: Dict[str, list] = {}
+        all_ifaces: set = set()
+        firmware_info: Dict[str, Any] = {}
 
         for host, ifaces_str in ip_output.items():
             if ifaces_str.startswith("ERROR") or ifaces_str.startswith("ABORT"):
                 firmware_info[host] = {"error": ifaces_str}
                 continue
-
+            ifaces = [i.strip() for i in ifaces_str.split("\n")
+                      if i.strip() and "@" not in i][:10]
+            host_ifaces[host] = ifaces
+            all_ifaces.update(ifaces)
             firmware_info[host] = {}
-            interfaces = [i.strip() for i in ifaces_str.split("\n") if i.strip() and "@" not in i]
 
-            for iface in interfaces[:10]:  # Limit to first 10 interfaces
-                cmd = f"sudo ethtool -i {iface} 2>/dev/null"
-                output = await ssh_manager.exec_async(cmd, timeout=60)
+        # One fleet-wide exec per unique interface name instead of per (host, iface).
+        iface_outputs: Dict[str, Dict[str, str]] = {}
+        for iface in sorted(all_ifaces):
+            iface_outputs[iface] = await ssh_manager.exec_async(
+                f"sudo ethtool -i {iface} 2>/dev/null", timeout=60
+            )
 
-                if host in output and output[host]:
+        for host, ifaces in host_ifaces.items():
+            for iface in ifaces:
+                raw = iface_outputs.get(iface, {}).get(host, "")
+                if raw:
                     info = {}
-                    for line in output[host].split("\n"):
+                    for line in raw.split("\n"):
                         if ":" in line:
                             key, value = line.split(":", 1)
-                            key = key.strip().lower().replace(" ", "_")
-                            info[key] = value.strip()
-
+                            info[key.strip().lower().replace(" ", "_")] = value.strip()
                     if info:
                         firmware_info[host][iface] = info
 
@@ -73,43 +83,36 @@ class NICSoftwareCollector:
             "modinfo amd-ainic 2>/dev/null | grep -E '^version|^firmware' | head -3 || echo 'Not loaded'",
         ]
 
-        driver_info = {}
+        # Run each command once fleet-wide — do NOT call exec_async inside the
+        # per-host loop; that would repeat the fleet-wide sweep len(hosts) times.
+        mlx_output  = await ssh_manager.exec_async(commands[0], timeout=60)
+        bnxt_output = await ssh_manager.exec_async(commands[1], timeout=60)
+        amd_output  = await ssh_manager.exec_async(commands[2], timeout=60)
 
+        driver_info = {}
         for host in ssh_manager.reachable_hosts:
             driver_info[host] = {}
 
-            # Check Mellanox (NVIDIA CX7)
-            output = await ssh_manager.exec_async(commands[0], timeout=60)
-            if host in output and output[host] and "modinfo" not in output[host]:
-                mlx_info = {}
-                for line in output[host].split("\n"):
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        mlx_info[key.strip()] = value.strip()
-                if mlx_info:
-                    driver_info[host]["mlx5_core"] = mlx_info
+            raw = mlx_output.get(host, "")
+            if raw and "modinfo" not in raw:
+                info = {k.strip(): v.strip() for line in raw.split("\n")
+                        if ":" in line for k, v in [line.split(":", 1)]}
+                if info:
+                    driver_info[host]["mlx5_core"] = info
 
-            # Check Broadcom (Thor2)
-            output = await ssh_manager.exec_async(commands[1], timeout=60)
-            if host in output and output[host] and "modinfo" not in output[host]:
-                bnxt_info = {}
-                for line in output[host].split("\n"):
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        bnxt_info[key.strip()] = value.strip()
-                if bnxt_info:
-                    driver_info[host]["bnxt_en"] = bnxt_info
+            raw = bnxt_output.get(host, "")
+            if raw and "modinfo" not in raw:
+                info = {k.strip(): v.strip() for line in raw.split("\n")
+                        if ":" in line for k, v in [line.split(":", 1)]}
+                if info:
+                    driver_info[host]["bnxt_en"] = info
 
-            # Check AMD AINIC
-            output = await ssh_manager.exec_async(commands[2], timeout=60)
-            if host in output and output[host] and "Not loaded" not in output[host]:
-                amd_info = {}
-                for line in output[host].split("\n"):
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        amd_info[key.strip()] = value.strip()
-                if amd_info:
-                    driver_info[host]["amd-ainic"] = amd_info
+            raw = amd_output.get(host, "")
+            if raw and "Not loaded" not in raw:
+                info = {k.strip(): v.strip() for line in raw.split("\n")
+                        if ":" in line for k, v in [line.split(":", 1)]}
+                if info:
+                    driver_info[host]["amd-ainic"] = info
 
         return driver_info
 
@@ -174,33 +177,41 @@ class NICSoftwareCollector:
         """
         logger.info("Collecting detailed ethtool statistics")
 
-        # Get list of interfaces first
         ip_output = await ssh_manager.exec_async(
             "bash -c \"ip -o link show | awk -F': ' '{print \\$2}' | grep -v lo\"", timeout=60
         )
 
-        eth_stats = {}
+        # Deduplicate interface names across the fleet — run ethtool -S once per
+        # unique name rather than once per (host, interface) pair.
+        host_ifaces: Dict[str, list] = {}
+        all_ifaces: set = set()
+        eth_stats: Dict[str, Any] = {}
 
         for host, ifaces_str in ip_output.items():
             if ifaces_str.startswith("ERROR") or ifaces_str.startswith("ABORT"):
                 eth_stats[host] = {"error": ifaces_str}
                 continue
-
+            ifaces = [i.strip() for i in ifaces_str.split("\n")
+                      if i.strip() and "@" not in i][:10]
+            host_ifaces[host] = ifaces
+            all_ifaces.update(ifaces)
             eth_stats[host] = {}
-            interfaces = [i.strip() for i in ifaces_str.split("\n") if i.strip() and "@" not in i]
 
-            for iface in interfaces[:10]:  # Limit to first 10
-                cmd = f"sudo ethtool -S {iface} 2>/dev/null"
-                output = await ssh_manager.exec_async(cmd, timeout=60)
+        iface_outputs: Dict[str, Dict[str, str]] = {}
+        for iface in sorted(all_ifaces):
+            iface_outputs[iface] = await ssh_manager.exec_async(
+                f"sudo ethtool -S {iface} 2>/dev/null", timeout=60
+            )
 
-                if host in output and output[host] and "NOT_AVAILABLE" not in output[host]:
+        for host, ifaces in host_ifaces.items():
+            for iface in ifaces:
+                raw = iface_outputs.get(iface, {}).get(host, "")
+                if raw and "NOT_AVAILABLE" not in raw:
                     stats = {}
-                    for line in output[host].split("\n"):
-                        # Parse "     stat_name: value"
+                    for line in raw.split("\n"):
                         match = re.search(r"^\s+([\w_]+):\s+(\d+)", line)
                         if match:
                             stats[match.group(1)] = int(match.group(2))
-
                     if stats:
                         eth_stats[host][iface] = stats
 
@@ -242,8 +253,6 @@ class NICSoftwareCollector:
 
         logger.info("Collecting all NIC software information")
 
-        # IMPORTANT: Run commands SEQUENTIALLY to avoid parallel-ssh thread safety issues
-        # asyncio.gather() was causing "munmap_chunk(): invalid pointer" crashes
         nic_firmware = await self.collect_nic_firmware_version(ssh_manager)
         nic_drivers = await self.collect_nic_driver_version(ssh_manager)
         rdma_statistics = await self.collect_rdma_statistics_detailed(ssh_manager)

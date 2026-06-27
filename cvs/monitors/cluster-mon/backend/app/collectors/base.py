@@ -53,7 +53,7 @@ class BaseCollector(ABC):
     async def collect(self, ssh_manager) -> CollectorResult:
         """
         One collection cycle. Must NOT raise — all errors go into CollectorResult.
-        ssh_manager is Union[Pssh, JumpHostPssh].
+        ssh_manager is SshManager.
         Must call ssh_manager.exec_async() (not exec()) to avoid blocking the event loop.
         """
         ...
