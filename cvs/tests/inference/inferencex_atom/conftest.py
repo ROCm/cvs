@@ -25,6 +25,31 @@ from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log
 
+
+def _log_variant_run_card(variant_config):
+    rc = variant_config.run_card
+    parts = [
+        f"gpu_arch={variant_config.gpu_arch}",
+        f"driver={variant_config.params.driver}",
+        f"model={variant_config.model.id}",
+    ]
+    if variant_config.ix_recipe_id:
+        parts.append(f"ix_recipe_id={variant_config.ix_recipe_id}")
+    if rc.atom_image_pin:
+        parts.append(f"image_pin={rc.atom_image_pin}")
+    if rc.upstream_run_url:
+        parts.append(f"upstream_run={rc.upstream_run_url}")
+    if rc.notes:
+        parts.append(f"notes={rc.notes}")
+    log.info("InferenceX ATOM run card: %s", "; ".join(parts))
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _emit_variant_run_card(variant_config):
+    """Log the variant run card once per module (not once per sweep cell)."""
+    _log_variant_run_card(variant_config)
+
+
 LIFECYCLE_RANK = {
     "test_launch_container": 0,
     "test_setup_sshd": 1,
@@ -73,6 +98,7 @@ def lifecycle():
 def orch(cluster_dict, variant_config, lifecycle):
     container_block = _deep_merge(
         cluster_dict.get("container", {}),
+        # also injects roles.server.env — do not replace with .container.model_dump()
         orchestrator_container_from_variant(variant_config),
     )
     testsuite_config = {
@@ -98,6 +124,7 @@ def hf_token(variant_config):
 
 @pytest.fixture(scope="module")
 def server_session():
+    """Tracks the active server session key to allow reuse across sweep cells when reuse_server_across_sweep=true."""
     return {"key": None}
 
 

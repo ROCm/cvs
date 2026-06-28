@@ -20,15 +20,15 @@ from cvs.lib.inference.utils.vllm_parsing import (
 )
 
 _METRIC_INSERT = ("output_tput_per_gpu", "tok/s")
-CLIENT_METRICS: list[tuple[str, str]] = []
-_inserted = False
-for _name, _unit in _VLLM_CLIENT_METRICS:
-    CLIENT_METRICS.append((_name, _unit))
-    if _name == "per_gpu_throughput" and not _inserted:
-        CLIENT_METRICS.append(_METRIC_INSERT)
-        _inserted = True
-if not _inserted:
-    CLIENT_METRICS.append(_METRIC_INSERT)
+_idx = next(
+    (i for i, (n, _) in enumerate(_VLLM_CLIENT_METRICS) if n == "per_gpu_throughput"),
+    None,
+)
+CLIENT_METRICS = list(_VLLM_CLIENT_METRICS)
+CLIENT_METRICS.insert(
+    (_idx + 1) if _idx is not None else len(CLIENT_METRICS),
+    _METRIC_INSERT,
+)
 CLIENT_METRIC_UNITS = dict(CLIENT_METRICS)
 
 # IX W1 perf gates: vLLM baseline set plus per-GPU throughput derivations.
