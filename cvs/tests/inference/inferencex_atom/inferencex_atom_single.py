@@ -18,11 +18,14 @@ from cvs.lib.inference.inference_suite_lifecycle import (
     test_teardown,
 )
 from cvs.lib.inference.inferencex_atom_orch import InferenceXAtomJob
-from cvs.lib.inference.utils.inferencex_atom_config_loader import expand_sweep
+from cvs.lib.inference.utils.inferencex_atom_config_loader import (
+    expand_sweep_parametrize,
+    reuse_server_flag,
+    server_session_key,
+)
 from cvs.lib.inference.utils.inferencex_atom_parsing import (
     CLIENT_METRIC_UNITS as _METRIC_UNITS,
     METRIC_TIERS,
-    METRIC_TIER_ORDER,
     RECORD_METRICS,
     tier_metric_specs,
 )
@@ -30,41 +33,6 @@ from cvs.lib.utils.verdict import evaluate_all
 from cvs.tests.inference.inferencex_atom._shared import test_print_results_table  # noqa: F401
 
 log = globals.log
-
-
-def _log_variant_run_card(variant_config):
-    rc = variant_config.run_card
-    parts = [
-        f"gpu_arch={variant_config.gpu_arch}",
-        f"driver={variant_config.params.driver}",
-        f"model={variant_config.model.id}",
-    ]
-    if variant_config.ix_recipe_id:
-        parts.append(f"ix_recipe_id={variant_config.ix_recipe_id}")
-    if rc.atom_image_pin:
-        parts.append(f"image_pin={rc.atom_image_pin}")
-    if rc.upstream_run_url:
-        parts.append(f"upstream_run={rc.upstream_run_url}")
-    if rc.notes:
-        parts.append(f"notes={rc.notes}")
-    log.info("InferenceX ATOM run card: %s", "; ".join(parts))
-
-
-def _reuse_server_flag(params) -> bool:
-    raw = str(getattr(params, "reuse_server_across_sweep", "true")).strip().lower()
-    return raw in ("true", "1", "yes")
-
-
-def _server_session_key(variant_config, isl, osl):
-    p = variant_config.params
-    return (
-        variant_config.model.id,
-        p.driver,
-        str(isl),
-        str(osl),
-        variant_config.ix_recipe_id or "",
-        p.tensor_parallelism,
-    )
 
 
 def _tier_display_metric(tier):
@@ -77,21 +45,15 @@ def _tier_display_metric(tier):
 def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
-        return
+        raise pytest.UsageError(
+            f"--config_file not found or not specified: {config_file!r}"
+        )
     with open(config_file) as fp:
         raw = json.load(fp)
-    cases, ids = expand_sweep(raw.get("sweep", {}))
-    if "metric_tier" in metafunc.fixturenames:
-        if cases:
-            tier_cases = []
-            tier_ids = []
-            for (combo, c), cid in zip(cases, ids):
-                for tier in METRIC_TIER_ORDER:
-                    tier_cases.append((combo, c, tier))
-                    tier_ids.append(f"{cid}-{tier}")
-            metafunc.parametrize("seq_combo,concurrency,metric_tier", tier_cases, ids=tier_ids)
-    elif "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames and cases:
-        metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
+    spec = expand_sweep_parametrize(raw.get("sweep", {}), metafunc.fixturenames)
+    if spec:
+        argnames, argvalues, ids = spec
+        metafunc.parametrize(argnames, argvalues, ids=ids)
 
 
 def test_inferencex_atom_inference(
@@ -111,7 +73,6 @@ def test_inferencex_atom_inference(
     isl = seq_combo["isl"]
     osl = seq_combo["osl"]
     p = variant_config.params
-    _log_variant_run_card(variant_config)
     job = InferenceXAtomJob.from_variant(
         orch=orch,
         variant=variant_config,
@@ -121,8 +82,8 @@ def test_inferencex_atom_inference(
         concurrency=concurrency,
     )
 
-    session_key = _server_session_key(variant_config, isl, osl)
-    reuse = _reuse_server_flag(p) and server_session.get("key") == session_key
+    session_key = server_session_key(variant_config, isl, osl)
+    reuse = reuse_server_flag(p) and server_session.get("key") == session_key
 
     try:
         if not reuse:
@@ -132,7 +93,7 @@ def test_inferencex_atom_inference(
             job.start_server()
             job.wait_ready()
             lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
-            if _reuse_server_flag(p):
+            if reuse_server_flag(p):
                 server_session["key"] = session_key
         else:
             log.info("reusing ATOM server across sweep cell (key=%s)", session_key)
@@ -158,7 +119,13 @@ def test_cell_metrics(
     lifecycle,
     request,
 ):
-    """One pytest row per metric tier per sweep cell (W1 gate batches)."""
+    """One pytest row per metric tier per sweep cell (W1 gate batches).
+
+    Fails when ``enforce_thresholds`` is on and either (1) the cell has no
+    threshold specs for the requested tier, or (2) specs exist but every gated
+    metric for that tier is missing from the benchmark artifact (ATOM may omit
+    tail percentiles even when ``metric_percentiles`` requests them).
+    """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     isl = seq_combo["isl"]

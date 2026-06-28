@@ -65,7 +65,7 @@ class InferenceXAtomParams(_Forbid):
     server_warmup_wait_s: str = "330"
     server_poll_count: str = "60"
     server_poll_wait_time: str = "60"
-    reuse_server_across_sweep: str = "true"
+    reuse_server_across_sweep: str = "false"
     bench_max_failed_requests: str = "0"
     bench_extra_args: str = ""
     result_filename: str = "results"
@@ -106,6 +106,16 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
         )
         return self
 
+    @model_validator(mode="after")
+    def _warn_vllm_driver_with_ix_recipe(self):
+        if self.ix_recipe_id and self.params.driver == "vllm":
+            warnings.warn(
+                f"ix_recipe_id={self.ix_recipe_id!r} but params.driver='vllm'; "
+                "set driver='atom' for the ATOM openai_server + benchmark_serving path",
+                stacklevel=2,
+            )
+        return self
+
 
 def expand_sweep(sweep):
     """Expand a sweep into ``(cases, ids)`` for pytest parametrization."""
@@ -125,6 +135,45 @@ def expand_sweep(sweep):
         cases.append((combo, conc))
         ids.append(f"{run['combo']}-conc{conc}")
     return cases, ids
+
+
+def reuse_server_flag(params) -> bool:
+    """Return True when ``params.reuse_server_across_sweep`` is a truthy string."""
+    raw = str(getattr(params, "reuse_server_across_sweep", "false")).strip().lower()
+    return raw in ("true", "1", "yes")
+
+
+def server_session_key(variant_config, isl, osl):
+    """Stable key for server reuse across sweep cells with identical model/shape."""
+    p = variant_config.params
+    return (
+        variant_config.model.id,
+        p.driver,
+        str(isl),
+        str(osl),
+        variant_config.ix_recipe_id or "",
+        p.tensor_parallelism,
+    )
+
+
+def expand_sweep_parametrize(sweep, fixturenames):
+    """Build pytest parametrize args for inference or metric-tier collection."""
+    from cvs.lib.inference.utils.inferencex_atom_parsing import METRIC_TIER_ORDER
+
+    cases, ids = expand_sweep(sweep)
+    if "metric_tier" in fixturenames:
+        if not cases:
+            return None
+        tier_cases = []
+        tier_ids = []
+        for (combo, c), cid in zip(cases, ids):
+            for tier in METRIC_TIER_ORDER:
+                tier_cases.append((combo, c, tier))
+                tier_ids.append(f"{cid}-{tier}")
+        return ("seq_combo,concurrency,metric_tier", tier_cases, tier_ids)
+    if "seq_combo" in fixturenames and "concurrency" in fixturenames and cases:
+        return ("seq_combo,concurrency", cases, ids)
+    return None
 
 
 def load_variant(config_path, cluster_dict) -> InferenceXAtomVariantConfig:

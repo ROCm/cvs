@@ -27,7 +27,7 @@ of copying launch / sshd / model-fetch / teardown blocks.
         sort_lifecycle_items,
     )
 
-Also provides ``sweep_cell_result_key`` and ``du_bytes`` (robust model-cache probe).
+Also provides ``sweep_cell_result_key``; see :mod:`cvs.lib.inference.cache_probe` for ``du_bytes``.
 '''
 
 from __future__ import annotations
@@ -36,6 +36,11 @@ import shlex
 import time
 
 import pytest
+
+try:
+    import pytest_html
+except ImportError:
+    pytest_html = None
 
 from cvs.lib import globals
 
@@ -70,36 +75,7 @@ def sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency):
     )
 
 
-def du_bytes(orch, path):
-    """Bytes under ``path`` in the container.
-
-    Returns 0 when absent or empty. Returns ``None`` when ``du`` cannot run so
-    callers do not treat infrastructure failure as "model not present".
-    """
-    quoted = shlex.quote(path)
-    cmd = (
-        f"if [ ! -e {quoted} ]; then echo __MISSING__; "
-        f"elif bytes=$(du -sb {quoted} 2>/dev/null | cut -f1) && [ -n \"$bytes\" ]; "
-        f"then echo \"$bytes\"; else echo __DU_ERROR__; fi"
-    )
-    out = orch.exec(f"bash -c {shlex.quote(cmd)}")
-    total = 0
-    saw_marker = False
-    for text in (out or {}).values():
-        text = (text or "").strip()
-        if text == "__DU_ERROR__":
-            return None
-        if text == "__MISSING__":
-            saw_marker = True
-            continue
-        if text.isdigit():
-            total = max(total, int(text))
-    if saw_marker and total == 0:
-        return 0
-    return total
-
-
-def test_launch_container(orch, lifecycle, request):
+from cvs.lib.inference.cache_probe import du_bytes
     t = time.monotonic()
     ok = orch.setup_containers()
     lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
@@ -209,9 +185,7 @@ def attach_lifecycle_html_table(item, report):
     rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
     if not rows:
         return
-    try:
-        import pytest_html
-    except ImportError:
+    if pytest_html is None:
         return
     body = "".join(
         f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>"

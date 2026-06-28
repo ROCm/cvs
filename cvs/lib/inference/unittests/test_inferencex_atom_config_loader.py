@@ -5,15 +5,19 @@ All rights reserved.
 Unit tests for cvs.lib.inference.utils.inferencex_atom_config_loader.
 '''
 
+import warnings
 import unittest
 from pathlib import Path
 
 from cvs.lib.inference.utils.inferencex_atom_config_loader import (
     InferenceXAtomVariantConfig,
     expand_sweep,
+    expand_sweep_parametrize,
     load_variant,
     orchestrator_container_from_variant,
     placeholder_gated_threshold_cell,
+    reuse_server_flag,
+    server_session_key,
 )
 from cvs.lib.inference.utils.inferencing_config_loader import Run, SeqCombo, Sweep
 
@@ -42,6 +46,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
             "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json"
         )
         variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.threshold_json, "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json")
         self.assertEqual(variant.gpu_arch, "mi300x")
         self.assertEqual(variant.ix_recipe_id, "dsr1-fp8-mi300x-atom")
         self.assertEqual(variant.params.driver, "atom")
@@ -176,6 +181,57 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
 
         for short in GATED_METRICS:
             self.assertIn(f"client.{short}", cell, short)
+
+    def test_ix_recipe_with_vllm_driver_warns(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="w1", isl="1024", osl="1024")],
+            runs=[Run(combo="w1", concurrency=128)],
+        )
+        thresholds = {"ISL=1024,OSL=1024,TP=8,CONC=128": placeholder_gated_threshold_cell()}
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            InferenceXAtomVariantConfig(
+                schema_version=1,
+                framework="inferencex_atom_single",
+                gpu_arch="mi300x",
+                ix_recipe_id="dsr1-fp8-mi300x-atom",
+                enforce_thresholds=False,
+                paths={
+                    "shared_fs": "/home/x",
+                    "models_dir": "/home/x/models",
+                    "log_dir": "/home/x/LOGS",
+                    "hf_token_file": "/home/x/.hf",
+                },
+                model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
+                container={
+                    "name": "c",
+                    "image": "img",
+                    "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
+                },
+                params={"driver": "vllm", "tensor_parallelism": "8"},
+                sweep=sweep,
+                thresholds=thresholds,
+            )
+        self.assertTrue(any("params.driver='vllm'" in str(w.message) for w in caught))
+
+    def test_reuse_server_flag_and_session_key_helpers(self):
+        from types import SimpleNamespace
+
+        self.assertFalse(reuse_server_flag(SimpleNamespace()))
+        variant = SimpleNamespace(
+            model=SimpleNamespace(id="m"),
+            params=SimpleNamespace(driver="atom", tensor_parallelism="8"),
+            ix_recipe_id="r",
+        )
+        self.assertNotEqual(server_session_key(variant, "1", "2"), server_session_key(variant, "3", "4"))
+
+    def test_expand_sweep_parametrize_tier_ids(self):
+        sweep = {
+            "sequence_combinations": [{"name": "w1", "isl": "1024", "osl": "1024"}],
+            "runs": [{"combo": "w1", "concurrency": 128}],
+        }
+        _, _, ids = expand_sweep_parametrize(sweep, ("metric_tier",))
+        self.assertIn("w1-conc128-throughput", ids)
 
 
 if __name__ == "__main__":
