@@ -5,6 +5,7 @@
   "gpu_arch": "mi355x",
   "ix_recipe_id": "dsr1-fp8-mi355x-atom-mtp3",
   "enforce_thresholds": false,
+  "threshold_json": "mi355x_inferencex-atom-single_deepseek-r1_fp8_mtp3_threshold.json",
   "run_card": {
     "upstream_run_url": "https://github.com/ROCm/ATOM/actions/runs/27912164002",
     "atom_image_pin": "rocm/atom-dev:nightly_202606211542",

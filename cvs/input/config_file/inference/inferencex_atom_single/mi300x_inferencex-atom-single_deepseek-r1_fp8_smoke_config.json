@@ -5,6 +5,7 @@
   "gpu_arch": "mi300x",
   "ix_recipe_id": "dsr1-fp8-mi300x-atom",
   "enforce_thresholds": false,
+  "threshold_json": "mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
     "notes": "Smoke test only — validates ATOM server+bench path; run mi300x_inferencex-atom-single_deepseek-r1_fp8_perf for calibration"

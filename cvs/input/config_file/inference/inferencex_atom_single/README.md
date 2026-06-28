@@ -18,7 +18,7 @@ W1 **DeepSeek R1 FP8** on 8× GPU, ISL=OSL=1024, TP8.
 ~/input/.../inferencex_atom_single/perf/    # perf config + perf threshold only
 ```
 
-Alternatively set `"threshold_json"` in the config to an explicit path (vLLM-style).
+Each shipped config sets `"threshold_json"` to the sibling threshold filename (resolved relative to the config directory). You may also use an absolute path (vLLM-style).
 
 Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc.) are **removed** from the repo tree. Use only the flat stems below.
 

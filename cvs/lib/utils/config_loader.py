@@ -183,6 +183,8 @@ def substitute_config(config_path, cluster_dict):
     threshold_json = (raw.get("threshold_json") or "").strip()
     if threshold_json:
         threshold_path = Path(threshold_json)
+        if not threshold_path.is_absolute():
+            threshold_path = (config_path.parent / threshold_path).resolve()
         if not threshold_path.is_file():
             raise FileNotFoundError(f"threshold_json not found: {threshold_path}")
     else:

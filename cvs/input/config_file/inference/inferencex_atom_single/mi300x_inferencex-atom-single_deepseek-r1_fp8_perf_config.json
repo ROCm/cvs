@@ -5,6 +5,7 @@
   "gpu_arch": "mi300x",
   "ix_recipe_id": "dsr1-fp8-mi300x-atom",
   "enforce_thresholds": true,
+  "threshold_json": "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
     "notes": "MI300X lab reference Section 4.1"
