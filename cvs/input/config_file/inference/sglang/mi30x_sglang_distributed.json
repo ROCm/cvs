@@ -340,7 +340,7 @@
 				   }
 			  }
 		      },
-                      "lm_eval_hellaswag":
+			"lm_eval_hellaswag":
 		      {
 			  "backend": "sglang",
 			  "lm_eval_model": "local-completions",
@@ -350,7 +350,7 @@
 			  "limit": "100",
 			  "num_concurrent": "1",
 			  "exec_timeout_sec": "7200",
-			  "extra_model_args": "tokenizer_backend=huggingface",
+			  "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True",
                           "expected_results":
 		          {
 			       "hellaswag":
@@ -369,7 +369,7 @@
                           "limit": "100",
                           "num_concurrent": "4",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
+                          "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True",
                           "expected_results":
                           {
                                "gsm8k":
@@ -388,7 +388,7 @@
                           "limit": "1",
                           "num_concurrent": "1",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
+                          "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True",
                           "expected_results":
                           {
                                "mmlu":
