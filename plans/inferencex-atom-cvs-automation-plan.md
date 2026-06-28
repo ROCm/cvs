@@ -9,14 +9,14 @@ This section records **what exists on the branch today** vs **what this plan tar
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Suite name**                | `inferencex_atom_single`                                                                                                                                                                                     | Same                                                                                                                                                             |
 | **Driver**                    | `InferenceXAtomJob` (`inferencex_atom_orch.py`): `params.driver=atom` → `atom.entrypoints.openai_server` + `atom.benchmarks.benchmark_serving`; `parse_results` → `to_client_metrics` (`client.*` namespace) | Same ATOM path; optional `driver=vllm` only for interim uplift variants                                                                                          |
-| **Config layout (canonical)** | `cvs/input/config_file/inference/inferencex_atom_single/` — flat `<stem>_config.json` + `<stem>_threshold.json` (same as `vllm_single`); recipe CLI fragments in `ix_recipes.json` | **Source of truth** for lab + `cvs copy-config`. |
+| **Config layout (canonical)** | `cvs/input/config_file/inference/inferencex_atom_single/` — flat `<stem>_config.json` + `<stem>_threshold.json` (same as `vllm_single`); inline `roles.server.atom_args` / `params.bench_extra_args` (vLLM-style, no recipe registry) | **Source of truth** for lab + `cvs copy-config`. |
 | **Cluster files**             | `cvs/input/cluster_file/mi300x_atom_single.json`, `mi355x_atom_single.json`                                                                                                                                  | Per `gpu_arch`; container names pinned in variant config (`inferencex_atom_mi300x` / `inferencex_atom_mi355x`)                                                   |
 | **Shipped W1 variants**       | `mi300x_inferencex-atom-single_deepseek-r1_fp8_{perf,smoke,mtp3}`; `mi355x_inferencex-atom-single_deepseek-r1_fp8_{perf,mtp3}`                                                                                                           | + remaining W1–W18 stems (Section 3.1)                                                                                                                            |
 | **Interim uplift**            | `mi300x_inferencex-atom-single_gpt-oss-120b_bf16`, `mi355x_inferencex-atom-single_gpt-oss-120b_bf16` (record-only)                                                                                                                        | Replaced by W2 ATOM stems in M3                                                                                                                                   |
 | **Thresholds**                | MI300X W1 perf: calibrated (Section 4.1), `enforce_thresholds: true` after lab confirm. MI355X W1: CI seeds (Section 4.3), `enforce_thresholds: false`. Smoke / MTP3 / GPT-OSS: record-only                  | Per-arch lab calibration; never cross-arch copy                                                                                                                  |
 | **Accuracy (gsm8k)**          | Not implemented                                                                                                                                                                                              | M2 — Section 5 (ACC-1..7) + Phase D                                                                                                                              |
 | **Platform metrics**          | `lifecycle.record` only (server_ready, client_complete)                                                                                                                                                      | `server.*` + sweep summary — Section 6.1, CVS-2/10                                                                                                               |
-| **MTP**                       | W1 `*_mtp3` flat stems + thresholds seeded; server recipe flags may need orch hardening                                                                                                                       | Recipe-specific serve args; separate from M1 FP8 perf close                                                                                                      |
+| **MTP**                       | W1 `*_mtp3` flat stems + thresholds seeded; MTP3 `atom_args` and `bench_extra_args` inline in config                                                                                                                       | Speculative-token flags preserved on serve restart via inline config |
 | **Shared suite helpers**      | `inference_suite_lifecycle.py`, `inference_suite_results_table.py`, `unittests/fake_orch.py` (IX uses today; other suites may import)                                                                      | Documented in variant `README.md`                                                                                                                                |
 | **Multi-node**                | `test_setup_sshd` + container sshd path exists; cluster JSON is single-node only                                                                                                                             | **M5** — **P1 immediately after M4 parity** when hardware and IX/ATOM recipe support `nnodes>1` (Section 1.7)                                                  |
 
@@ -77,7 +77,6 @@ When MI355X nodes are **not** available in the lab:
 | Path                                                                     | Role                                                                   |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
 | `cvs/input/config_file/inference/inferencex_atom_single/`              | **Canonical** flat `*_config.json` + `*_threshold.json` pairs for lab and `cvs copy-config` |
-| `cvs/input/config_file/inference/inferencex_atom_single/ix_recipes.json` | IX recipe id → CLI fragments (pin with ATOM image / `amd-master.yaml`) |
 | `cvs/input/config_file/inference/inferencex_atom_single/README.md`       | Smoke vs perf runbook, MI355X pending note                             |
 | `cvs/input/cluster_file/mi300x_atom_single.json`                         | Example 8× MI300X cluster                                              |
 | `cvs/input/cluster_file/mi355x_atom_single.json`                         | Example 8× MI355X cluster (pending lab)                                |
@@ -121,10 +120,10 @@ Work below improves **CVS as a validation platform**, not only W1. Prioritize it
 | ---------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
 | **CVS-1**  | `**accuracy.*` metric namespace**                | Separate quality scalars from `client.*` perf; reuse `evaluate_all` with new threshold kinds (`min_ratio`, `min_exact_match`)                                    | D      |
 | **CVS-2**  | `**server.*` lifecycle metrics**                 | Emit `server.time_to_ready_s`, `server.warmup_s`, `server.model_cache_bytes` from existing `lifecycle.record` + model `du` probe — gate regressions in load path | B      |
-| **CVS-3**  | **Run card in HTML report**                      | Surface `gpu_arch`, `ix_recipe_id`, `atom_image_pin`, `upstream_run_url` as pytest metadata (today: log-only via `_log_variant_run_card`)                        | B      |
+| **CVS-3**  | **Run card in HTML report**                      | Surface `gpu_arch`, `atom_args` summary, `atom_image_pin`, `upstream_run_url` as pytest metadata (today: log-only via `_log_variant_run_card`)                        | B      |
 | **CVS-4**  | **Default `params.driver=atom`**                 | Schema default still `vllm`; flip default to `atom` once interim uplift variants are isolated                                                                    | 0+     |
-| **CVS-5**  | **Recipe + arch validation**                     | `apply_ix_recipe` already checks `gpu_arch` / `model.id`; extend to warn on image pin mismatch vs `ix_recipes.json` catalog                                      | 0-1    |
-| **CVS-6**  | **MTP recipe orch wiring**                       | `ix_recipes.json` MTP3 server args merged at load; orch must not drop speculative-token flags on serve restart                                                   | G      |
+| **CVS-5**  | **Inline config validation**                     | Schema requires `roles.server.atom_args` when `driver=atom`; extend to warn on image pin mismatch vs `run_card.atom_image_pin`                                      | 0-1    |
+| **CVS-6**  | **MTP orch wiring**                       | MTP3 `atom_args` / `bench_extra_args` inline in variant config; orch must not drop speculative-token flags on serve restart                                                   | G      |
 | **CVS-7**  | **Artifact bundle export**                       | Zip `results.json`, server log tail, run card JSON per cell into CVS HTML bundle for PR diff vs ATOM CI                                                          | A-3    |
 | **CVS-8**  | **Upstream parity diff**                         | Script: compare CVS `client.`* per cell to Section 4 reference within margin; flags threshold drift before merge                                                 | A      |
 | **CVS-9**  | `**placeholder_gated_threshold_cell` generator** | CLI or doc recipe to mint threshold skeletons for new W2–W18 dirs (already in `inferencex_atom_config_loader.py`)                                                | C      |
@@ -692,7 +691,7 @@ flowchart TB
 
 | ID  | Action                    | Details                                                                                                                | Status                                                            |
 | --- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| 0-1 | **IX repo + recipe pin**  | W1 → `dsr1-fp8-mi300x-atom` / `dsr1-fp8-mi355x-atom` in `ix_recipes.json`; image pin in variant `run_card` / container | Partial — image + recipe ids; no IX git checkout in container yet |
+| 0-1 | **IX image + inline CLI pin**  | W1 configs inline `roles.server.atom_args` (and MTP3 `params.bench_extra_args`); image pin in variant `run_card` / container | **Done** — removed `ix_recipes.json` / `ix_recipe_id` indirection |
 | 0-2 | **ATOM serve path**       | `InferenceXAtomJob.build_server_cmd` → `python -m atom.entrypoints.openai_server`                                      | **Done**                                                          |
 | 0-3 | **ATOM bench client**     | `atom.benchmarks.benchmark_serving` → `results.json`; `to_client_metrics`                                              | **Done**                                                          |
 | 0-4 | **DTNI pytest shell**     | `conftest.py` + sweep parametrization + tiered `test_cell_metrics`; shared `inference_suite_lifecycle.py` | **Done**                                                          |
@@ -709,7 +708,7 @@ flowchart TB
 | A-0 | **MI300X smoke**              | `mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke` — one cell, 128 prompts; validates path before full perf matrix                                                                               | **Recommended** before A-1                            |
 | A-1 | **MI300X perf thresholds**    | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` thresholds from Section 4.1 (10% margin). W1 perf run: ~17 pytest rows (tiered gates, server reuse on C=256). | **Yes** — M1 close on MI300X                          |
 | A-2 | **MI355X threshold seeds**    | `*_mi355x_*` dirs from Section 4.3 (ATOM run 27912164002)                                                                                                                         | **No** — in tree; lab confirm when hardware available |
-| A-3 | **Run card / PR evidence**    | HTML report, log file, bundle zip; log image, `gpu_arch`, TP8, KV mode, `ix_recipe_id`                                                                                            | Per arch                                              |
+| A-3 | **Run card / PR evidence**    | HTML report, log file, bundle zip; log image, `gpu_arch`, TP8, KV mode, inline `atom_args`                                                                                            | Per arch                                              |
 | A-4 | **Flip `enforce_thresholds`** | MI300X perf: after confirming CVS run. MI355X: when lab available. Smoke/MTP3: stay record-only until explicitly calibrated                                                       | MI300X perf only for M1                               |
 | A-5 | **W1 MTP3 (optional)**        | `mi300x_inferencex-atom-single_deepseek-r1_fp8_mtp3` lab + Section 4.2 thresholds                                                                                                                   | **No** — post-M1; does not block M2                   |
 
@@ -810,13 +809,19 @@ flowchart TB
 
 ---
 
-## 9. Appendix A — Recipe index
+## 9. Appendix A — W1 inline server CLI reference
 
-**Shipped file:** `cvs/input/config_file/inference/inferencex_atom_single/ix_recipes.json`
+W1 DeepSeek R1 FP8 configs set **`roles.server.atom_args`** inline (vLLM-style, same role as `roles.server.serve_args` on `vllm_single`). Example base FP8 block:
 
-Maps **IX recipe id** → server CLI fragments for W1 (`dsr1-fp8-mi300x-atom`, `dsr1-fp8-mi355x-atom`, MTP3 siblings). Pin **docker image** and upstream run URL in variant `run_card`, not in `threshold.json`.
+```json
+"atom_args": ["-tp", "8", "--kv_cache_dtype", "fp8", "--trust-remote-code"]
+```
 
-Maintain **W id → IX recipe id → CVS variant dir** in variant README tables (Section 3.1). Add a row when each new workload lands in M3+.
+MTP3 variants append `--method mtp --num-speculative-tokens 3` to `atom_args` and set `params.bench_extra_args` to `--use-chat-template`.
+
+Pin **docker image** and upstream run URL in variant `run_card`, not in `threshold.json`.
+
+Maintain **W id → CVS variant stem** in variant README tables (Section 3.1). IX / ATOM catalog names (e.g. `dsr1-fp8-mi300x-atom`) remain documentation labels only — not a CVS config field.
 
 ---
 
@@ -843,7 +848,7 @@ Beyond `_perf`, `_smoke`, `_mtp3`, and `_accuracy`, CVS should support **variant
 | `_prefix_cache` | **PERF-4** | Enable prefix caching in serve args; shared-prefix bench | P2 | `cache.prefix_hit_rate` vs W1 default (no prefix cache) |
 | `_rate_sweep` | **PERF-5** | Multiple `request_rate` values per conc (sub-sweep or extra `runs[]`) | P2 | Latency vs offered load (tracker #30) |
 | `_longctx` | **PERF-6** | ISL at tracker max (e.g. W5 5000, W2 8192) | P2 | OOM / TTFT tail stress |
-| `_mtp3` | **PERF-7** | MTP recipe in `ix_recipes.json` | Post-M1 | Speculative decode perf |
+| `_mtp3` | **PERF-7** | Inline MTP3 `atom_args` + `bench_extra_args` in variant config | Post-M1 | Speculative decode perf |
 | `_mtp_compare` | **PERF-8** | Paired run: same cell as `_perf` FP8 sibling | P2 | Emits `mtp.speedup_vs_fp8` (Section 12.5) |
 | `_api_smoke` | **FUNC-1** | Single chat + completion curl after `wait_ready` | P2 | API contract / chat template sanity |
 | `_health` | **FUNC-2** | `/health`, model list, max_tokens=1 | Record | Liveness distinct from bench throughput |
@@ -917,7 +922,7 @@ Rules:
 
 - **Same** sweep cells, `gpu_arch`, and `model.id` as the ATOM reference.
 - **Separate** `threshold.json` per framework — calibrate each engine independently.
-- **Shared** `ix_recipes.json` where applicable; engine-specific args in `roles.server.vllm_args` / `sglang_args`.
+- **Shared** sweep/model/threshold layout across parity triples; engine-specific args in `roles.server.atom_args` (ATOM), `roles.server.serve_args` (vLLM), or future `sglang_args`.
 - Interim `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` remains an uplift placeholder until W2 ATOM + parity triple lands.
 
 **M4 deliverables:** M4-1 registry + loaders; M4-2 W1 parity triple on MI300X; M4-3 `compare.*` HTML rows (Section 12.6).
