@@ -1401,6 +1401,10 @@ class SglangDisaggPD:
         port = int(self.inf_dict["proxy_router_serv_port"])
         model_name = self.bp_dict["model"]
 
+        host_path = model_name.replace("/root/models", "/mnt/dtni/models", 1)
+        info = OpenAIProbe.resolve_local_model_identity(host_path)
+        log.info("Model info: %s", info)
+
         probe_src = OpenAIProbe.probe_script(port, model_name)
         b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
