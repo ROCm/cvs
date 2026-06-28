@@ -1,5 +1,5 @@
 {
-    "_comment": "DeepSeek-R1-0528 thresholds for MI30X SGLang disaggregated. Performance from bench_serv_random expected_results.auto; accuracy from lm_eval_* expected_results in mi30x_sglang_distributed.json.",
+    "_comment": "Kimi-K2.6 thresholds for MI30X SGLang disaggregated. Performance from bench_serv_random expected_results.auto; accuracy from lm_eval_* expected_results in mi30x_sglang_distributed.json.",
     "ISL=1024,OSL=1024,TP=16,CONC=64": {
       "output_throughput_per_sec": {
         "kind": "min_tok_s",
