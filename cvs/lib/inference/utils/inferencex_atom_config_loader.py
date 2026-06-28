@@ -11,13 +11,10 @@ Generic paths/model/container/threshold plumbing lives in
 
 from __future__ import annotations
 
-import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from pydantic import model_validator
 from typing_extensions import Literal
-
-from cvs.lib.inference.utils.inferencex_atom_recipes import apply_ix_recipe
 
 from cvs.lib.inference.utils.inferencing_config_loader import (
     RoleServer,
@@ -80,7 +77,6 @@ class InferenceXAtomRunCard(_Forbid):
 class InferenceXAtomVariantConfig(BaseVariantConfig):
     framework: Literal["inferencex_atom_single"]
     gpu_arch: str
-    ix_recipe_id: Optional[str] = None
     run_card: InferenceXAtomRunCard = InferenceXAtomRunCard()
     roles: InferenceXAtomRoles = InferenceXAtomRoles()
     params: InferenceXAtomParams
@@ -107,12 +103,11 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
         return self
 
     @model_validator(mode="after")
-    def _warn_vllm_driver_with_ix_recipe(self):
-        if self.ix_recipe_id and self.params.driver == "vllm":
-            warnings.warn(
-                f"ix_recipe_id={self.ix_recipe_id!r} but params.driver='vllm'; "
-                "set driver='atom' for the ATOM openai_server + benchmark_serving path",
-                stacklevel=2,
+    def _atom_driver_requires_inline_server_args(self):
+        if self.params.driver == "atom" and not self.roles.server.atom_args:
+            raise ValueError(
+                "params.driver='atom' requires roles.server.atom_args "
+                "(inline ATOM openai_server CLI tokens, vLLM-style)"
             )
         return self
 
@@ -151,7 +146,7 @@ def server_session_key(variant_config, isl, osl):
         p.driver,
         str(isl),
         str(osl),
-        variant_config.ix_recipe_id or "",
+        tuple(variant_config.roles.server.atom_args),
         p.tensor_parallelism,
     )
 
@@ -178,7 +173,6 @@ def expand_sweep_parametrize(sweep, fixturenames):
 
 def load_variant(config_path, cluster_dict) -> InferenceXAtomVariantConfig:
     raw, thresholds = substitute_config(config_path, cluster_dict)
-    raw = apply_ix_recipe(raw)
     raw["thresholds"] = thresholds
     return InferenceXAtomVariantConfig(**raw)
 

@@ -43,8 +43,9 @@ cluster nodes (``cluster_file`` ``mgmt_ip`` / ``node_dict``) and runs ``sudo doc
 ``paths.models_dir`` and the ATOM image must exist on the GPU node; ``priv_key_file`` and
 ``paths.hf_token_file`` are read on the launcher. Local Docker on the launcher is not required.
 
-**W1 recipe wiring:** set ``ix_recipe_id`` (e.g. ``dsr1-fp8-mi300x-atom``) to merge server
-``atom_args`` and client ``bench_extra_args`` from ``ix_recipes.json``.
+**ATOM server CLI:** set ``roles.server.atom_args`` inline in the config (vLLM-style, analogous to
+``roles.server.serve_args`` on ``vllm_single``). When ``params.driver`` is ``atom``, ``atom_args``
+is required. MTP3 variants also set ``params.bench_extra_args`` (for example ``--use-chat-template``).
 
 Pytest and HTML layout (inferencex_atom_single)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -123,10 +124,13 @@ Top-level blocks follow the DTNI variant schema. InferenceX ATOM-specific keys:
      - Suite identifier for :func:`load_variant`.
    * - ``gpu_arch``
      - ``mi300x``
-     - Must match ``ix_recipe_id`` when a recipe is set.
-   * - ``ix_recipe_id``
-     - ``dsr1-fp8-mi300x-atom``
-     - Merges ``atom_args`` / ``bench_extra_args`` from ``ix_recipes.json``.
+     - Hardware profile for the variant.
+   * - ``roles.server.atom_args``
+     - ``["-tp", "8", "--kv_cache_dtype", "fp8"]``
+     - Inline ATOM ``openai_server`` CLI tokens after ``--model`` / ``--server-port``.
+   * - ``roles.server.serve_args``
+     - ``{"enforce-eager": true}``
+     - vLLM uplift path only (``params.driver: vllm``).
    * - ``enforce_thresholds``
      - ``true`` / ``false``
      - When true, ``test_cell_metrics`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all`.

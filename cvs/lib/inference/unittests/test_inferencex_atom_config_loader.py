@@ -5,7 +5,6 @@ All rights reserved.
 Unit tests for cvs.lib.inference.utils.inferencex_atom_config_loader.
 '''
 
-import warnings
 import unittest
 from pathlib import Path
 
@@ -48,7 +47,6 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.threshold_json, "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json")
         self.assertEqual(variant.gpu_arch, "mi300x")
-        self.assertEqual(variant.ix_recipe_id, "dsr1-fp8-mi300x-atom")
         self.assertEqual(variant.params.driver, "atom")
         self.assertEqual(variant.params.metric_percentiles, "95,99")
         self.assertEqual(
@@ -87,7 +85,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.gpu_arch, "mi355x")
-        self.assertEqual(variant.ix_recipe_id, "dsr1-fp8-mi355x-atom")
+        self.assertIn("--trust-remote-code", variant.roles.server.atom_args)
         self.assertEqual(
             variant.expected_cells(),
             ["ISL=1024,OSL=1024,TP=8,CONC=128", "ISL=1024,OSL=1024,TP=8,CONC=256"],
@@ -101,6 +99,16 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
             variant.thresholds[cell]["client.mean_ttft_ms"]["value"],
             362.18,
         )
+
+    def test_load_w1_mi355x_atom_mtp3_inline_bench_args(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom_single/"
+            "mi355x_inferencex-atom-single_deepseek-r1_fp8_mtp3_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertIn("--method", variant.roles.server.atom_args)
+        self.assertEqual(variant.params.bench_extra_args, "--use-chat-template")
 
     def test_load_w1_mi355x_atom_mtp3_thresholds(self):
         root = Path(__file__).resolve().parents[3]
@@ -182,19 +190,17 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         for short in GATED_METRICS:
             self.assertIn(f"client.{short}", cell, short)
 
-    def test_ix_recipe_with_vllm_driver_warns(self):
+    def test_atom_driver_requires_inline_atom_args(self):
         sweep = Sweep(
             sequence_combinations=[SeqCombo(name="w1", isl="1024", osl="1024")],
             runs=[Run(combo="w1", concurrency=128)],
         )
         thresholds = {"ISL=1024,OSL=1024,TP=8,CONC=128": placeholder_gated_threshold_cell()}
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+        with self.assertRaises(ValueError):
             InferenceXAtomVariantConfig(
                 schema_version=1,
                 framework="inferencex_atom_single",
                 gpu_arch="mi300x",
-                ix_recipe_id="dsr1-fp8-mi300x-atom",
                 enforce_thresholds=False,
                 paths={
                     "shared_fs": "/home/x",
@@ -208,11 +214,11 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
                     "image": "img",
                     "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
                 },
-                params={"driver": "vllm", "tensor_parallelism": "8"},
+                roles={"server": {"env": {}}},
+                params={"driver": "atom", "tensor_parallelism": "8"},
                 sweep=sweep,
                 thresholds=thresholds,
             )
-        self.assertTrue(any("params.driver='vllm'" in str(w.message) for w in caught))
 
     def test_reuse_server_flag_and_session_key_helpers(self):
         from types import SimpleNamespace
@@ -221,7 +227,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         variant = SimpleNamespace(
             model=SimpleNamespace(id="m"),
             params=SimpleNamespace(driver="atom", tensor_parallelism="8"),
-            ix_recipe_id="r",
+            roles=SimpleNamespace(server=SimpleNamespace(atom_args=("-tp", "8"))),
         )
         self.assertNotEqual(server_session_key(variant, "1", "2"), server_session_key(variant, "3", "4"))
 

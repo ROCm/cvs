@@ -3,7 +3,6 @@
   "schema_version": 1,
   "framework": "inferencex_atom_single",
   "gpu_arch": "mi355x",
-  "ix_recipe_id": "dsr1-fp8-mi355x-atom",
   "enforce_thresholds": false,
   "threshold_json": "mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json",
   "run_card": {
@@ -45,6 +44,13 @@
   },
   "roles": {
     "server": {
+      "atom_args": [
+        "-tp",
+        "8",
+        "--kv_cache_dtype",
+        "fp8",
+        "--trust-remote-code"
+      ],
       "env": {
         "ATOM_DISABLE_MMAP": "true"
       }

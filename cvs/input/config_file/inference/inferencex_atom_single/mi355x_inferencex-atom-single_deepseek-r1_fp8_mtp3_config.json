@@ -3,7 +3,6 @@
   "schema_version": 1,
   "framework": "inferencex_atom_single",
   "gpu_arch": "mi355x",
-  "ix_recipe_id": "dsr1-fp8-mi355x-atom-mtp3",
   "enforce_thresholds": false,
   "threshold_json": "mi355x_inferencex-atom-single_deepseek-r1_fp8_mtp3_threshold.json",
   "run_card": {
@@ -45,6 +44,17 @@
   },
   "roles": {
     "server": {
+      "atom_args": [
+        "-tp",
+        "8",
+        "--kv_cache_dtype",
+        "fp8",
+        "--trust-remote-code",
+        "--method",
+        "mtp",
+        "--num-speculative-tokens",
+        "3"
+      ],
       "env": {
         "ATOM_DISABLE_MMAP": "true"
       }
@@ -58,6 +68,7 @@
     "num_prompts": "1000",
     "max_model_length": "4096",
     "metric_percentiles": "95,99",
+    "bench_extra_args": "--use-chat-template",
     "client_poll_count": "80",
     "client_poll_wait_time": "60"
   },

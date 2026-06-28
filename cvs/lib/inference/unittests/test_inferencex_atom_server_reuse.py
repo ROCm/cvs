@@ -34,12 +34,12 @@ class TestServerReuseHelpers(unittest.TestCase):
         base = SimpleNamespace(
             model=SimpleNamespace(id="model-a"),
             params=SimpleNamespace(driver="atom", tensor_parallelism="8"),
-            ix_recipe_id="recipe-a",
+            roles=SimpleNamespace(server=SimpleNamespace(atom_args=("-tp", "8"))),
         )
         other = SimpleNamespace(
             model=SimpleNamespace(id="model-b"),
             params=SimpleNamespace(driver="atom", tensor_parallelism="8"),
-            ix_recipe_id="recipe-a",
+            roles=SimpleNamespace(server=SimpleNamespace(atom_args=("-tp", "8"))),
         )
         k1 = server_session_key(base, "1024", "1024")
         k2 = server_session_key(other, "1024", "1024")
@@ -49,7 +49,7 @@ class TestServerReuseHelpers(unittest.TestCase):
         variant = SimpleNamespace(
             model=SimpleNamespace(id="model-a"),
             params=SimpleNamespace(driver="atom", tensor_parallelism="8"),
-            ix_recipe_id="recipe-a",
+            roles=SimpleNamespace(server=SimpleNamespace(atom_args=("-tp", "8"))),
         )
         self.assertNotEqual(
             server_session_key(variant, "1024", "1024"),

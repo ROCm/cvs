@@ -33,8 +33,9 @@ def _log_variant_run_card(variant_config):
         f"driver={variant_config.params.driver}",
         f"model={variant_config.model.id}",
     ]
-    if variant_config.ix_recipe_id:
-        parts.append(f"ix_recipe_id={variant_config.ix_recipe_id}")
+    atom_args = variant_config.roles.server.atom_args
+    if atom_args:
+        parts.append(f"atom_args={len(atom_args)} tokens")
     if rc.atom_image_pin:
         parts.append(f"image_pin={rc.atom_image_pin}")
     if rc.upstream_run_url:
