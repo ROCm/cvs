@@ -162,14 +162,11 @@ async def update_configuration(config: ClusterConfigUpdate) -> Dict[str, Any]:
             # Normalize jump host key path (for container)
             jump_key_file = normalize_ssh_key_path(config.jump_host.key_file_path or "~/.ssh/id_rsa")
 
-            # Node key file is ALWAYS on the jump host - NEVER normalize it
-            # Use default based on node username if not provided
-            if config.jump_host.node_key_file:
-                node_key_file = config.jump_host.node_key_file
-            else:
-                # Default: /home/{username}/.ssh/id_rsa on jump host
-                node_user = config.jump_host.node_username or config.username
-                node_key_file = f"/home/{node_user}/.ssh/id_rsa"
+            # node_key_file is a path ON THE JUMP HOST (not in the container).
+            # The backend fetches it via SFTP and streams it to the Go daemon
+            # via stdin — it is never written inside the container.
+            # Store verbatim so the user's ~ path is preserved exactly.
+            node_key_file = config.jump_host.node_key_file or "~/.ssh/id_ed25519"
 
             cluster_config["cluster"]["ssh"]["jump_host"] = {
                 "enabled": True,

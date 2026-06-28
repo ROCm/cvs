@@ -9,14 +9,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from typing import List, Union, Optional
+from typing import List, Optional
 import os
 import time
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.cvs_parallel_ssh_reliable import Pssh
-from app.core.jump_host_pssh import JumpHostPssh
+from app.core.ssh_manager import SshManager
+import app.core.go_collector as go_collector
 from app.collectors.gpu_collector import GPUMetricsCollector
 from app.collectors.nic_collector import NICMetricsCollector
 from app.collectors.rccl_collector import RCCLCollector
@@ -51,15 +51,10 @@ logging.basicConfig(
     handlers=[rotating_handler, console_handler],
 )
 
-# Suppress verbose logging from parallel-ssh library unless in DEBUG mode
+# Suppress paramiko's ERROR-level "Secsh channel N open FAILED: Connection refused"
+# messages. These fire when rcclras (port 28028) is not listening (i.e. no active
+# RCCL job), which is normal/expected.
 if not DEBUG_MODE:
-    logging.getLogger("pssh").setLevel(logging.WARNING)
-    logging.getLogger("pssh.host_logger").setLevel(logging.WARNING)
-    logging.getLogger("pssh.clients.base.parallel").setLevel(logging.WARNING)
-    # Suppress paramiko's ERROR-level "Secsh channel N open FAILED: Connection refused"
-    # messages. These fire when rcclras (port 28028) is not listening (i.e. no active
-    # RCCL job), which is normal/expected. The ChannelException is caught upstream and
-    # results in a NO_JOB state transition — not an error worth logging.
     logging.getLogger("paramiko.transport").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
@@ -72,7 +67,9 @@ class AppState:
 
     def __init__(self):
         # SSH manager
-        self.ssh_manager: Optional[Union[Pssh, JumpHostPssh]] = None
+        self.ssh_manager: Optional[SshManager] = None
+        # Go daemon lifecycle task
+        self.lifecycle_task: Optional[asyncio.Task] = None
 
         # Unified collector registry (BaseCollector pattern)
         self.collectors: dict[str, BaseCollector] = {}
@@ -101,9 +98,15 @@ class AppState:
         self.nic_advanced_cache_time: float = 0
         self.software_cache_ttl: int = 180
 
-        # SECURITY: Passwords stored in memory only
+        # SECURITY: Passwords and keys stored in memory only — never persisted to disk.
         self.ssh_password: str = None
         self.jump_host_password: str = None
+        # node_key_bytes: PEM bytes of the node SSH private key fetched from the
+        # jump host via SFTP. Delivered to the Go daemon in-memory via the UDS
+        # refresh_nodes message (key_bytes field) — never written to the container
+        # filesystem. Retained across daemon crash-restarts so each new process
+        # receives the key immediately after its socket opens.
+        self.node_key_bytes: Optional[bytes] = None
 
         # Periodic host probe
         self.probe_task: Optional[asyncio.Task] = None
@@ -127,13 +130,227 @@ app_state = AppState()
 
 _reload_lock = asyncio.Lock()
 
+# ─── Go daemon lifecycle ───────────────────────────────────────────────────────
 
-# SSH Transport Scaling Note:
-# The SSH-based collection transport has a practical limit of ~500-800 nodes at
-# 60-second poll intervals. Known constraints at 600 nodes: 3-5GB RSS, pool_size
-# reduced to 50, global threading lock serializes SSH batches. For clusters
-# significantly larger, consider deploying lightweight push agents (Telegraf
-# amd_rocm_smi plugin or rocm-smi-exporter) on compute nodes.
+_GO_BINARY = os.environ.get("GPU_COLLECTOR_BIN", "/usr/local/bin/gpu-collector")
+_HOSTS_FILE = "/tmp/go-collector-hosts.txt"
+_daemon_stopping = False
+_MAX_DAEMON_RESTARTS = 10
+
+# Set by _run_daemon_lifecycle() the moment the socket file appears.
+# lifespan() awaits this instead of polling the socket itself — removes the
+# duplicate _wait_socket_ready race where both coroutines watched simultaneously.
+_daemon_ready_event: Optional[asyncio.Event] = None
+
+
+def _write_hosts_file(hosts: list) -> None:
+    with open(_HOSTS_FILE, "w") as f:
+        f.write("\n".join(hosts))
+
+
+def _build_daemon_args(ssh_manager: SshManager) -> list:
+    args = [
+        _GO_BINARY,
+        "--socket",
+        go_collector._SOCKET_PATH,
+        "--ssh-user",
+        ssh_manager.user,
+        "--hosts-file",
+        _HOSTS_FILE,
+    ]
+    if ssh_manager.pkey:
+        args += ["--ssh-key", ssh_manager.pkey]
+    if ssh_manager.jump_host:
+        args += ["--jump-host", ssh_manager.jump_host, "--jump-user", ssh_manager.jump_user]
+        if ssh_manager.jump_pkey:
+            args += ["--jump-key", ssh_manager.jump_pkey]
+        if ssh_manager.jump_password:
+            args += ["--jump-password", ssh_manager.jump_password]
+    return args
+
+
+async def _fetch_node_key_from_jump_host(
+    host: str,
+    jump_user: str,
+    jump_key_path: Optional[str],
+    jump_password: Optional[str],
+    remote_key_path: str,
+) -> bytes:
+    """
+    Fetch the node SSH private key from the jump host via SFTP.
+
+    The key is returned as raw PEM bytes and never written to the container's
+    filesystem. The caller stores the result in app_state.node_key_bytes and
+    delivers it to the running daemon via a refresh_nodes UDS message.
+    """
+    import paramiko
+
+    def _do_fetch() -> bytes:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        connect_kw: dict = {"timeout": 30, "banner_timeout": 60}
+        if jump_key_path:
+            connect_kw["key_filename"] = jump_key_path
+        if jump_password:
+            connect_kw["password"] = jump_password
+        client.connect(host, username=jump_user, **connect_kw)
+        # Expand leading ~ relative to the jump user's home directory.
+        path = remote_key_path
+        if path == "~" or path.startswith("~/"):
+            path = f"/home/{jump_user}" + path[1:]
+        sftp = client.open_sftp()
+        try:
+            with sftp.open(path, "rb") as fh:
+                return fh.read()
+        finally:
+            sftp.close()
+            client.close()
+
+    return await asyncio.to_thread(_do_fetch)
+
+
+async def _wait_socket_ready(timeout: float = 30.0, poll: float = 0.1) -> bool:
+    """Poll until the daemon's socket file appears or timeout expires."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if os.path.exists(go_collector._SOCKET_PATH):
+            return True
+        await asyncio.sleep(poll)
+    return False
+
+
+async def _run_daemon_lifecycle(ssh_manager: SshManager) -> None:
+    """
+    Spawn the Go daemon and respawn it immediately on unexpected exit.
+
+    Uses asyncio.create_subprocess_exec + await proc.wait() so crash detection
+    is sub-100 ms (OS SIGCHLD, not polling).  Exponential backoff (2 → 4 → …
+    → 120 s) prevents restart storms on repeated failures.
+    """
+    global _daemon_stopping
+    restart_count = 0
+    backoff = 0.0
+
+    while True:
+        if backoff > 0:
+            logger.warning("Daemon restart #%d: waiting %.0fs backoff", restart_count, backoff)
+            await asyncio.sleep(backoff)
+
+        try:
+            _write_hosts_file(ssh_manager.host_list)
+            args = _build_daemon_args(ssh_manager)
+
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                # Inherit stdout/stderr so Go daemon logs appear in `docker logs`
+                # without needing a separate reader coroutine.
+                stdin=None,
+                stdout=None,
+                stderr=None,
+            )
+            go_collector._daemon_proc = proc
+            logger.info("Daemon process started (pid=%d)", proc.pid)
+
+            ready = await _wait_socket_ready(timeout=30.0)
+            if not ready:
+                logger.error("Daemon did not open socket within 30 s — killing pid=%d", proc.pid)
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            else:
+                # Socket is up — deliver node key in-memory if we have it.
+                # This covers both the initial start and crash-recovery restarts.
+                if app_state.node_key_bytes:
+                    try:
+                        await asyncio.to_thread(
+                            go_collector._refresh_nodes_in_daemon,
+                            ssh_manager.host_list,
+                            key_bytes=app_state.node_key_bytes,
+                        )
+                        logger.info(
+                            "Node SSH key delivered to daemon via UDS (%d bytes)",
+                            len(app_state.node_key_bytes),
+                        )
+                    except Exception as exc:
+                        logger.warning("Failed to deliver node key via UDS: %s", exc)
+
+                if _daemon_ready_event is not None and not _daemon_ready_event.is_set():
+                    # Signal lifespan (and reload) that the daemon is up.
+                    _daemon_ready_event.set()
+
+            if restart_count > 0:
+                logger.info("Daemon process running (restart attempt #%d)", restart_count)
+
+            # Wait for the child to exit. Use a poll-based fallback in case
+            # asyncio's child watcher fails to deliver the exit event (seen on
+            # some Linux container runtimes with inherited stdio).
+            try:
+                exit_code = await asyncio.wait_for(proc.wait(), timeout=None)
+            except Exception:
+                # If wait() itself raises (shouldn't happen), poll manually.
+                exit_code = proc.returncode
+                if exit_code is None:
+                    while True:
+                        await asyncio.sleep(1.0)
+                        exit_code = proc.returncode
+                        if exit_code is not None:
+                            break
+            go_collector._daemon_proc = None
+
+        except asyncio.CancelledError:
+            logger.info("Daemon lifecycle task cancelled")
+            raise
+        except Exception as exc:
+            logger.exception("Unexpected exception in daemon lifecycle loop: %s", exc)
+            go_collector._daemon_proc = None
+            exit_code = -1
+
+        if _daemon_stopping:
+            logger.info("Daemon stopped intentionally, not restarting")
+            break
+
+        restart_count += 1
+        logger.error(
+            "Daemon exited unexpectedly (code=%s), restart #%d/%d",
+            exit_code,
+            restart_count,
+            _MAX_DAEMON_RESTARTS,
+        )
+
+        if restart_count > _MAX_DAEMON_RESTARTS:
+            logger.critical("Go daemon restart limit exceeded — crashing container for Docker restart")
+            await asyncio.sleep(5)  # flush RotatingFileHandler before os._exit bypasses shutdown
+            os._exit(1)
+
+        backoff = min(2.0**restart_count, 120.0)
+
+    logger.info("Daemon lifecycle task exiting")
+
+
+async def _stop_daemon() -> None:
+    """
+    Signal the daemon to stop and wait for it.
+
+    Sets _daemon_stopping so _run_daemon_lifecycle does not respawn.
+    """
+    global _daemon_stopping
+    _daemon_stopping = True
+    proc = go_collector._daemon_proc
+    if proc is not None and proc.returncode is None:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Daemon did not stop in 5 s, sending SIGKILL")
+            proc.kill()
+            await proc.wait()
+    # Remove stale socket so next start doesn't find a ghost file.
+    try:
+        os.remove(go_collector._SOCKET_PATH)
+    except OSError:
+        pass
+
 
 REGISTERED_COLLECTORS: list[type[BaseCollector]] = [
     GPUMetricsCollector,
@@ -208,6 +425,17 @@ async def _reload_configuration_inner():
         rccl_changed = old_settings.rccl.model_dump() != new_config.rccl.model_dump()
         polling_changed = old_settings.polling.model_dump() != new_config.polling.model_dump()
 
+        # In-memory passwords are not stored in YAML, so the diff above won't
+        # catch them. Compare against the password the active SshManager has.
+        old_jump_pw = app_state.ssh_manager.jump_password if app_state.ssh_manager else None
+        old_ssh_pw = app_state.ssh_manager.password if app_state.ssh_manager else None
+        if app_state.jump_host_password != old_jump_pw or app_state.ssh_password != old_ssh_pw:
+            ssh_changed = True
+            logger.info("In-memory SSH password changed — treating as ssh_changed")
+
+        # Node list diff (computed after loading new nodes below)
+        old_nodes = set(old_settings.load_nodes_from_file())
+
         logger.info(
             f"Config diff: ssh_changed={ssh_changed}, rccl_changed={rccl_changed}, polling_changed={polling_changed}"
         )
@@ -222,7 +450,7 @@ async def _reload_configuration_inner():
             collectors_to_restart = {cls.name for cls in REGISTERED_COLLECTORS}
         else:
             if ssh_changed:
-                collectors_to_restart.update({"gpu", "nic"})  # SSH-dependent
+                collectors_to_restart.update({"gpu", "nic", "rccl"})  # All use ssh_manager
             if rccl_changed:
                 collectors_to_restart.add("rccl")
 
@@ -233,9 +461,10 @@ async def _reload_configuration_inner():
             return {"success": False, "error": "No nodes configured in nodes.txt", "nodes_count": 0}
 
         logger.info(f"Loaded {len(nodes)} nodes from configuration")
+        nodes_changed = set(nodes) != old_nodes
 
         # 6. Check if SSH keys exist (only if using key-based auth, not password)
-        using_jump_password = new_config.ssh.jump_host.enabled and new_config.ssh.jump_host.password
+        using_jump_password = new_config.ssh.jump_host.enabled and app_state.jump_host_password
         using_direct_password = not new_config.ssh.jump_host.enabled and app_state.ssh_password
 
         if not using_jump_password and not using_direct_password:
@@ -289,9 +518,48 @@ async def _reload_configuration_inner():
                 except asyncio.CancelledError:
                     pass
 
-        # If nothing changed, we can skip SSH and collector restart
-        if not collectors_to_restart and not ssh_changed:
-            logger.info("No config sections changed — nothing to restart")
+        if not collectors_to_restart and not ssh_changed and not nodes_changed:
+            # No structural changes. Always send a reprobe nudge so the daemon
+            # retries any currently unreachable nodes.
+            #
+            # Special case: if jump host is active but we don't yet have the node
+            # key in memory (e.g. SFTP fetch failed at startup because the jump
+            # key wasn't uploaded yet), try to fetch it now and deliver via UDS —
+            # no daemon restart required.
+            node_key_missing = (
+                new_config.ssh.jump_host.enabled
+                and new_config.ssh.jump_host.host
+                and new_config.ssh.jump_host.node_key_file
+                and app_state.node_key_bytes is None
+            )
+            if node_key_missing:
+                logger.info("Node key not in memory — fetching from jump host and delivering via UDS")
+                try:
+                    app_state.node_key_bytes = await _fetch_node_key_from_jump_host(
+                        host=new_config.ssh.jump_host.host,
+                        jump_user=new_config.ssh.jump_host.username,
+                        jump_key_path=new_config.ssh.jump_host.key_file if not app_state.jump_host_password else None,
+                        jump_password=app_state.jump_host_password,
+                        remote_key_path=new_config.ssh.jump_host.node_key_file,
+                    )
+                    logger.info(
+                        "Node SSH key fetched (%d bytes) — delivering to daemon via UDS", len(app_state.node_key_bytes)
+                    )
+                    await asyncio.to_thread(
+                        go_collector._refresh_nodes_in_daemon,
+                        nodes,
+                        key_bytes=app_state.node_key_bytes,
+                    )
+                except Exception as exc:
+                    logger.warning("Could not fetch/deliver node key: %s", exc)
+                    app_state.node_key_bytes = None
+            else:
+                # Still send a reprobe nudge: if a key file was just uploaded to
+                # the already-configured path, the Go pool reads keys lazily and
+                # will succeed on the next conn() attempt — but only if reprobe is
+                # triggered.
+                logger.info("No config sections changed — sending reprobe nudge to daemon")
+                await asyncio.to_thread(go_collector._refresh_nodes_in_daemon, nodes)
             return {
                 "success": True,
                 "message": "Configuration reloaded (no changes detected)",
@@ -299,83 +567,137 @@ async def _reload_configuration_inner():
                 "jump_host_enabled": new_config.ssh.jump_host.enabled,
             }
 
-        # 8. Recreate SSH manager only if SSH config changed
+        # 8. Handle SSH config changes.
+        #
+        # Jump-host change: the Go daemon's dialFunc is baked in at startup and
+        # cannot be updated in-place — full daemon restart required.
+        #
+        # Direct-SSH change (username or key file path): update the running pool
+        # in-place via refresh_nodes with the new credentials. The pool drops all
+        # cached connections and re-dials with the new credentials immediately.
+        # No daemon restart, no downtime.
         if ssh_changed:
-            # Stop probe task — it depends on the SSH manager
-            if app_state.probe_task:
-                app_state.probe_task.cancel()
-                try:
-                    await app_state.probe_task
-                except asyncio.CancelledError:
-                    pass
+            if new_config.ssh.jump_host.enabled and new_config.ssh.jump_host.host:
+                # Jump-host change: full daemon restart.
+                if app_state.probe_task:
+                    app_state.probe_task.cancel()
+                    try:
+                        await app_state.probe_task
+                    except asyncio.CancelledError:
+                        pass
 
-            if app_state.ssh_manager:
-                logger.info("Closing existing SSH connections (ssh config changed)...")
-                app_state.ssh_manager.destroy_clients()
-                app_state.ssh_manager = None
+                if app_state.lifecycle_task:
+                    await _stop_daemon()
+                    app_state.lifecycle_task.cancel()
+                    try:
+                        await app_state.lifecycle_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    app_state.lifecycle_task = None
 
-            # Clear cached data (node topology may have changed)
-            app_state.latest_metrics = {}
-            app_state.node_failure_count = {}
-            app_state.node_health_status = {}
-            app_state.cached_gpu_software = {}
-            app_state.cached_nic_software = {}
-            app_state.cached_nic_advanced = {}
-            app_state.gpu_software_cache_time = 0
-            app_state.nic_software_cache_time = 0
-            app_state.nic_advanced_cache_time = 0
+                if app_state.ssh_manager:
+                    app_state.ssh_manager.destroy_clients()
+                    app_state.ssh_manager = None
 
-            try:
-                if new_config.ssh.jump_host.enabled and new_config.ssh.jump_host.host:
-                    num_nodes = len(nodes)
-                    min(num_nodes, 5)
+                app_state.latest_metrics = {}
+                app_state.node_failure_count = {}
+                app_state.node_health_status = {}
+                app_state.cached_gpu_software = {}
+                app_state.cached_nic_software = {}
+                app_state.cached_nic_advanced = {}
+                app_state.gpu_software_cache_time = 0
+                app_state.nic_software_cache_time = 0
+                app_state.nic_advanced_cache_time = 0
 
-                    logger.info(f"Reinitializing with jump host: {new_config.ssh.jump_host.host}")
-                    logger.info(f"Jump Host Username: {new_config.ssh.jump_host.username}")
-                    logger.info(f"Cluster Nodes: {len(nodes)} nodes")
-                    logger.info(f"Cluster Username: {new_config.ssh.jump_host.node_username}")
+                logger.info("Reinitializing with jump host: %s", new_config.ssh.jump_host.host)
 
-                    # Use JumpHostPssh - working approach from test_auth_script.py
-                    app_state.ssh_manager = JumpHostPssh(
-                        jump_host=new_config.ssh.jump_host.host,
-                        jump_user=new_config.ssh.jump_host.username,
-                        jump_password=new_config.ssh.jump_host.password,
-                        jump_pkey=new_config.ssh.jump_host.key_file if not new_config.ssh.jump_host.password else None,
-                        target_hosts=nodes,
-                        target_user=new_config.ssh.jump_host.node_username,
-                        target_pkey=new_config.ssh.jump_host.node_key_file,
-                        max_parallel=min(
-                            len(nodes), 5
-                        ),  # Limit to 5 to avoid exhausting paramiko channels (conservative)
-                        timeout=new_config.ssh.timeout,
-                    )
-                    logger.info("JumpHostPssh initialized successfully")
+                # Fetch node key from jump host via SFTP (in-memory, never written to disk).
+                if new_config.ssh.jump_host.node_key_file:
+                    try:
+                        app_state.node_key_bytes = await _fetch_node_key_from_jump_host(
+                            host=new_config.ssh.jump_host.host,
+                            jump_user=new_config.ssh.jump_host.username,
+                            jump_key_path=new_config.ssh.jump_host.key_file
+                            if not app_state.jump_host_password
+                            else None,
+                            jump_password=app_state.jump_host_password,
+                            remote_key_path=new_config.ssh.jump_host.node_key_file,
+                        )
+                        logger.info("Node SSH key fetched from jump host (%d bytes)", len(app_state.node_key_bytes))
+                    except Exception as exc:
+                        logger.warning("Could not fetch node key from jump host: %s", exc)
+                        app_state.node_key_bytes = None
                 else:
-                    logger.info("Reinitializing with direct SSH (no jump host)")
-                    logger.info(f"Username: {new_config.ssh.username}")
-                    logger.info(f"Nodes: {len(nodes)} nodes")
+                    app_state.node_key_bytes = None
 
-                    app_state.ssh_manager = Pssh(
-                        log=logger,
-                        host_list=nodes,
-                        user=new_config.ssh.username,
-                        password=app_state.ssh_password,  # Use in-memory password
-                        pkey=new_config.ssh.key_file,
-                        timeout=new_config.ssh.timeout,
-                        stop_on_errors=False,
-                    )
-                    logger.info("Direct SSH manager reinitialized")
-            except Exception as e:
-                logger.error(f"Failed to reinitialize SSH manager: {e}")
-                return {
-                    "success": False,
-                    "error": f"Failed to initialize SSH manager: {str(e)}",
-                    "nodes_count": len(nodes),
-                }
+                app_state.ssh_manager = SshManager(
+                    host_list=nodes,
+                    user=new_config.ssh.jump_host.node_username,
+                    pkey=None,  # Key delivered in-memory via UDS refresh_nodes; not a container path
+                    timeout=new_config.ssh.timeout,
+                    jump_host=new_config.ssh.jump_host.host,
+                    jump_user=new_config.ssh.jump_host.username,
+                    jump_pkey=new_config.ssh.jump_host.key_file if not app_state.jump_host_password else None,
+                    jump_password=app_state.jump_host_password,
+                )
+                logger.info("SshManager (jump host) initialized")
 
-            # Restart probe task with new SSH manager
-            app_state.probe_requested = asyncio.Event()
-            app_state.probe_task = asyncio.create_task(periodic_host_probe())
+                global _daemon_stopping, _daemon_ready_event
+                _daemon_stopping = False
+                _daemon_ready_event = asyncio.Event()
+                app_state.lifecycle_task = asyncio.create_task(
+                    _run_daemon_lifecycle(app_state.ssh_manager),
+                    name="daemon-lifecycle",
+                )
+                try:
+                    await asyncio.wait_for(_daemon_ready_event.wait(), timeout=35.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Daemon socket did not appear within 35 s after reload")
+
+                app_state.probe_requested = asyncio.Event()
+                app_state.probe_task = asyncio.create_task(periodic_host_probe())
+
+            else:
+                # Direct-SSH change: update credentials in-place — no restart.
+                # The Go pool drops all connections and re-dials with new creds.
+                logger.info("Direct-SSH credentials changed — updating daemon in-place")
+                diff = await asyncio.to_thread(
+                    go_collector._refresh_nodes_in_daemon,
+                    nodes,
+                    user=new_config.ssh.username,
+                    key_path=new_config.ssh.key_file,
+                )
+                logger.info(
+                    "Daemon credential update: +%d -%d (total %d)",
+                    len(diff.get("added", [])),
+                    len(diff.get("removed", [])),
+                    diff.get("total", len(nodes)),
+                )
+
+                # Switching to direct SSH — discard any in-memory node key.
+                app_state.node_key_bytes = None
+                # Recreate the paramiko SshManager for Python collectors.
+                if app_state.ssh_manager:
+                    app_state.ssh_manager.destroy_clients()
+                app_state.ssh_manager = SshManager(
+                    host_list=nodes,
+                    user=new_config.ssh.username,
+                    pkey=new_config.ssh.key_file,
+                    password=app_state.ssh_password,
+                    timeout=new_config.ssh.timeout,
+                )
+                logger.info("SshManager (direct) reinitialized")
+
+        elif nodes_changed:
+            # Node list changed but SSH credentials unchanged — update in-place.
+            app_state.ssh_manager._host_list = nodes
+            diff = await asyncio.to_thread(go_collector._refresh_nodes_in_daemon, nodes)
+            logger.info(
+                "Daemon node list refreshed: +%d -%d (total %d)",
+                len(diff.get("added", [])),
+                len(diff.get("removed", [])),
+                diff.get("total", len(nodes)),
+            )
 
         # 9. Restart only the affected collectors
         if app_state.ssh_manager and nodes:
@@ -634,45 +956,48 @@ async def lifespan(app: FastAPI):
         logger.info(f"Configuration found: {len(nodes)} nodes")
         logger.info("Auto-initializing SSH manager on startup...")
 
-        # Auto-initialize SSH manager if configuration exists
-        try:
-            if settings.ssh.jump_host.enabled and settings.ssh.jump_host.host:
-                logger.info(f"Initializing with jump host: {settings.ssh.jump_host.host}")
-                logger.info(f"Jump Host Username: {settings.ssh.jump_host.username}")
-                logger.info(f"Cluster Nodes: {len(nodes)} nodes")
-                logger.info(f"Cluster Username: {settings.ssh.jump_host.node_username}")
+        if settings.ssh.jump_host.enabled and settings.ssh.jump_host.host:
+            logger.info(f"Initializing with jump host: {settings.ssh.jump_host.host}")
+            # Seed in-memory password from YAML on cold start (YAML is the only
+            # time it can come from config; reloads use app_state.jump_host_password).
+            if settings.ssh.jump_host.password and not app_state.jump_host_password:
+                app_state.jump_host_password = settings.ssh.jump_host.password
 
-                app_state.ssh_manager = JumpHostPssh(
-                    jump_host=settings.ssh.jump_host.host,
-                    jump_user=settings.ssh.jump_host.username,
-                    jump_password=settings.ssh.jump_host.password,
-                    jump_pkey=settings.ssh.jump_host.key_file if not settings.ssh.jump_host.password else None,
-                    target_hosts=nodes,
-                    target_user=settings.ssh.jump_host.node_username,
-                    target_pkey=settings.ssh.jump_host.node_key_file,
-                    max_parallel=min(len(nodes), 5),
-                    timeout=settings.ssh.timeout,
-                )
-                logger.info("✅ JumpHostPssh initialized successfully")
-            else:
-                logger.info("Initializing with direct SSH (no jump host)")
-                logger.info(f"Username: {settings.ssh.username}")
-                logger.info(f"Nodes: {len(nodes)} nodes")
+            # Fetch node key from jump host via SFTP so it is never stored in the container.
+            if settings.ssh.jump_host.node_key_file:
+                try:
+                    app_state.node_key_bytes = await _fetch_node_key_from_jump_host(
+                        host=settings.ssh.jump_host.host,
+                        jump_user=settings.ssh.jump_host.username,
+                        jump_key_path=settings.ssh.jump_host.key_file if not app_state.jump_host_password else None,
+                        jump_password=app_state.jump_host_password,
+                        remote_key_path=settings.ssh.jump_host.node_key_file,
+                    )
+                    logger.info("✅ Node SSH key fetched from jump host (%d bytes)", len(app_state.node_key_bytes))
+                except Exception as exc:
+                    logger.warning("Could not fetch node key from jump host: %s — nodes may be unreachable", exc)
 
-                app_state.ssh_manager = Pssh(
-                    log=logger,
-                    host_list=nodes,
-                    user=settings.ssh.username,
-                    password=settings.ssh.password,
-                    pkey=settings.ssh.key_file,
-                    timeout=settings.ssh.timeout,
-                    stop_on_errors=False,
-                )
-                logger.info("✅ Direct SSH manager initialized")
-
-        except Exception as e:
-            logger.error(f"Failed to auto-initialize SSH manager: {e}", exc_info=True)
-            logger.warning("Will wait for manual configuration via web UI")
+            app_state.ssh_manager = SshManager(
+                host_list=nodes,
+                user=settings.ssh.jump_host.node_username,
+                pkey=None,  # Key delivered in-memory via UDS refresh_nodes; not a container path
+                timeout=settings.ssh.timeout,
+                jump_host=settings.ssh.jump_host.host,
+                jump_user=settings.ssh.jump_host.username,
+                jump_pkey=settings.ssh.jump_host.key_file if not app_state.jump_host_password else None,
+                jump_password=app_state.jump_host_password,
+            )
+            logger.info("✅ SshManager (jump host) initialized")
+        else:
+            logger.info(f"Initializing with direct SSH (no jump host), user={settings.ssh.username}")
+            app_state.ssh_manager = SshManager(
+                host_list=nodes,
+                user=settings.ssh.username,
+                pkey=settings.ssh.key_file,
+                password=settings.ssh.password,
+                timeout=settings.ssh.timeout,
+            )
+            logger.info("✅ SshManager (direct) initialized")
 
     # Initialize Redis (optional — app continues without it)
     try:
@@ -701,9 +1026,9 @@ async def lifespan(app: FastAPI):
         event_max=settings.storage.redis.event_max_entries,
     )
 
-    # Start metrics collection using unified collector registry
+    # Start Go daemon + metrics collection
     if app_state.ssh_manager:
-        logger.info("Starting metrics collection (BaseCollector pattern)...")
+        logger.info("Starting Go SSH daemon and metrics collection...")
 
         # Pre-seed node_health_status so RCCL collector can pick a leader on its
         # first poll cycle, before any GPU/NIC poll has completed.
@@ -713,6 +1038,23 @@ async def lifespan(app: FastAPI):
                 app_state.node_health_status[node] = "healthy"
                 app_state.node_failure_count[node] = 0
 
+        # Launch daemon lifecycle task — spawns daemon and respawns on crash.
+        global _daemon_stopping, _daemon_ready_event
+        _daemon_stopping = False
+        _daemon_ready_event = asyncio.Event()
+        app_state.lifecycle_task = asyncio.create_task(
+            _run_daemon_lifecycle(app_state.ssh_manager),
+            name="daemon-lifecycle",
+        )
+        # Lifecycle task is the sole socket watcher and sets _daemon_ready_event
+        # when the socket appears.  Awaiting the event here (not _wait_socket_ready)
+        # eliminates the dual-poll race where both coroutines woke simultaneously.
+        try:
+            await asyncio.wait_for(_daemon_ready_event.wait(), timeout=35.0)
+            logger.info("Go daemon ready")
+        except asyncio.TimeoutError:
+            logger.warning("Go daemon socket did not appear within 35 s — collectors starting anyway")
+
         app_state.is_collecting = True
 
         for cls in REGISTERED_COLLECTORS:
@@ -721,29 +1063,18 @@ async def lifespan(app: FastAPI):
             app_state.collector_tasks[c.name] = _start_collector_task(c)
 
         app_state.probe_task = asyncio.create_task(periodic_host_probe())
-        logger.info("✅ Metrics collection started")
+        logger.info("✅ Daemon and metrics collection started")
 
     yield
 
     # Shutdown
     logger.info("Shutting down CVS Cluster Monitor")
 
-    # 1. Signal all background loops to stop accepting new work
+    # 1. Signal all background loops to stop accepting new work.
     app_state.is_collecting = False
 
-    # 2. Destroy SSH client first — this closes libssh2 sessions and unblocks any
-    #    thread currently blocked in pssh's gevent poll loop (stdout _unread_data.wait).
-    #    Without this, asyncio.to_thread tasks block until read_timeout expires (~22s).
-    #    Set client to None before destroy so any thread that finishes between now and
-    #    destroy_clients() gets the "no client" early-return instead of an AttributeError.
-    if app_state.ssh_manager:
-        app_state.ssh_manager.client = None  # type: ignore[assignment]
-        app_state.ssh_manager.destroy_clients()
-
-    # 3. Cancel collector tasks and wait with a short deadline.
-    #    asyncio.to_thread tasks cannot be interrupted mid-thread, but destroying the
-    #    SSH client above should unblock the blocking pssh read.  The 5s deadline is a
-    #    safety net for any thread that is still in teardown.
+    # 2. Cancel collector tasks. _exec_one calls will fail immediately
+    #    once the daemon stops; 5 s deadline catches any in-flight thread.
     for task in app_state.collector_tasks.values():
         task.cancel()
     if app_state.collector_tasks:
@@ -753,7 +1084,7 @@ async def lifespan(app: FastAPI):
                 timeout=5.0,
             )
         except asyncio.TimeoutError:
-            logger.warning("Collector tasks did not finish within 5s — forcing shutdown")
+            logger.warning("Collector tasks did not finish within 5 s — forcing shutdown")
 
     if app_state.probe_task:
         app_state.probe_task.cancel()
@@ -762,7 +1093,20 @@ async def lifespan(app: FastAPI):
         except (asyncio.CancelledError, asyncio.TimeoutError):
             pass
 
-    # 4. Close Redis
+    # 3. Stop Go daemon (SIGTERM → wait 5 s → SIGKILL).
+    await _stop_daemon()
+    if app_state.lifecycle_task:
+        app_state.lifecycle_task.cancel()
+        try:
+            await asyncio.wait_for(app_state.lifecycle_task, timeout=3.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+
+    # 4. Clean up paramiko port-forward clients.
+    if app_state.ssh_manager:
+        app_state.ssh_manager.destroy_clients()
+
+    # 5. Close Redis
     if app_state.redis:
         await app_state.redis.aclose()
 
