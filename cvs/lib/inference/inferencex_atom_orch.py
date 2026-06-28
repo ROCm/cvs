@@ -291,20 +291,28 @@ class InferenceXAtomJob:
         log.info("waiting %ds for server log to materialise", self._precheck_wait)
         time.sleep(self._precheck_wait)
 
-        if self.driver != "atom":
-            out = self.orch.exec(f"tail -30 {shlex.quote(self.server_log)}")
-            for host, output in out.items():
-                if self.EARLY_FAILURE_RE.search(output or ""):
-                    raise RuntimeError(f"vllm server early failure on {host}: {output[-500:]}")
+        out = self.orch.exec(f"tail -30 {shlex.quote(self.server_log)}")
+        for host, output in out.items():
+            if self.EARLY_FAILURE_RE.search(output or ""):
+                label = "atom" if self.driver == "atom" else "vllm"
+                raise RuntimeError(f"{label} server early failure on {host}: {output[-500:]}")
 
         log.info("warmup wait %ds", self._warmup_wait)
         time.sleep(self._warmup_wait)
 
         for it in range(self._server_poll_count):
-            if self.is_ready():
-                log.info("server health ready (iter=%d)", it)
-                break
-            time.sleep(self._server_poll_wait)
+            if not self.is_ready():
+                if self.driver == "atom":
+                    poll_out = self.orch.exec(f"tail -30 {shlex.quote(self.server_log)}")
+                    for host, output in poll_out.items():
+                        if self.EARLY_FAILURE_RE.search(output or ""):
+                            raise RuntimeError(
+                                f"atom server early failure on {host}: {output[-500:]}"
+                            )
+                time.sleep(self._server_poll_wait)
+                continue
+            log.info("server health ready (iter=%d)", it)
+            break
         else:
             raise RuntimeError("server did not become ready before timeout")
 
