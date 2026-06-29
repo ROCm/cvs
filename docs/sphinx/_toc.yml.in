@@ -46,8 +46,8 @@ subtrees:
         title: MORI
       - file: reference/configuration-files/aorta
         title: Aorta
-      - file: reference/configuration-files/inferencemax
-        title: InferenceMAX
+      - file: reference/configuration-files/inferencex_atom
+        title: InferenceX ATOM
       - file: reference/configuration-files/vllm_singlenode_mi355x
         title: vLLM Single-Node MI355X
       - file: reference/configuration-files/sglang

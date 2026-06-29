@@ -63,6 +63,7 @@ class Paths(_Forbid):
 class ModelSpec(_Forbid):
     id: str
     remote: Literal[0, 1]
+    precision: str = ""
 
 
 class RuntimeSpec(_Allow):
@@ -93,7 +94,7 @@ class BaseVariantConfig(_Forbid):
     # numbers are curves, not tabulated values). Default true keeps the gate
     # strict for calibrated configs -- no regression to the remediation work.
     enforce_thresholds: bool = True
-    threshold_json: str
+    threshold_json: str = ""
     paths: Paths
     model: ModelSpec
     # The container image is declared once, on container.image (ContainerSpec).
@@ -163,13 +164,15 @@ def substitute_config(config_path, cluster_dict):
 
     Returns `(raw_dict, thresholds)`: the substituted config dict (NOT yet
     validated -- the caller's per-framework `VariantConfig(**raw)` does that)
-    and the parsed, comment-stripped threshold dict. The threshold file path is
-    read from the `threshold_json` field in the config (a literal absolute path;
-    no placeholder substitution is applied to it).
+    and the parsed, comment-stripped threshold dict.
+
+    Threshold discovery supports both layouts:
+    - ``threshold_json`` in the config (literal path; vllm_single style), or
+    - a sole ``*threshold.json`` sibling next to the config (inferencex_atom style).
 
     This is the framework-neutral body of the old `load_variant`: file read +
     3-pass substitution + threshold read. Per-framework loaders call it, attach
-    `thresholds`, then build their typed config.
+    ``thresholds``, then build their typed config.
     """
     config_path = Path(config_path)
     if not config_path.is_file():
@@ -177,9 +180,20 @@ def substitute_config(config_path, cluster_dict):
 
     raw = json.loads(config_path.read_text())
 
-    threshold_path = Path(raw["threshold_json"])
-    if not threshold_path.is_file():
-        raise FileNotFoundError(f"threshold_json not found: {threshold_path}")
+    threshold_json = (raw.get("threshold_json") or "").strip()
+    if threshold_json:
+        threshold_path = Path(threshold_json)
+        if not threshold_path.is_absolute():
+            threshold_path = (config_path.parent / threshold_path).resolve()
+        if not threshold_path.is_file():
+            raise FileNotFoundError(f"threshold_json not found: {threshold_path}")
+    else:
+        threshold_candidates = sorted(config_path.parent.glob("*threshold.json"))
+        if not threshold_candidates:
+            raise FileNotFoundError(f"no *threshold.json next to config: {config_path.parent}")
+        if len(threshold_candidates) > 1:
+            raise ValueError(f"multiple *threshold.json files next to config (ambiguous): {threshold_candidates}")
+        threshold_path = threshold_candidates[0]
     thresholds = json.loads(threshold_path.read_text())
 
     # Pass 1: cluster placeholders ({user-id}) everywhere.
@@ -203,7 +217,8 @@ def substitute_config(config_path, cluster_dict):
     flat_map = _flatten_paths({"paths": raw.get("paths", {})})
     raw = _walk_substitute(raw, flat_map)
 
-    # Drop threshold-file comment keys (e.g. "_comment") before coverage check.
+    # Drop comment keys (e.g. "_comment") before framework/threshold validation.
+    raw = {k: v for k, v in raw.items() if not k.startswith("_")}
     thresholds = {k: v for k, v in thresholds.items() if not k.startswith("_")}
 
     return raw, thresholds
