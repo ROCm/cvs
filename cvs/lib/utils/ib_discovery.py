@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-InfiniBand HCA discovery via ibv_devinfo.
+InfiniBand HCA discovery via ibv_devinfo or /sys/class/infiniband fallback.
 
 Shared across suites (vllm, rccl, inferencemax). Infrastructure step, not
 a benchmark step: topology is stable within a run and should be probed once.
@@ -18,14 +18,24 @@ log = globals.log
 
 _HCA_RE = re.compile(r"hca_id:\s*(\S+)")
 
+_SYSFS_CMD = (
+    "ls /sys/class/infiniband/ 2>/dev/null | tr '\\n' ' '"
+)
+_IBVDEVINFO_CMD = "ibv_devinfo -l 2>/dev/null"
+
+
+def _parse_sysfs(output: str) -> list[str]:
+    return [tok for tok in (output or "").split() if tok]
+
 
 def discover_ib_hca_names(orch) -> dict[str, list[str]]:
     """Return {host: [hca_name, ...]} for all hosts in orch.
 
-    Runs `ibv_devinfo -l` inside the container on every host and parses
-    the `hca_id:` lines. Returns HCA names (e.g. ``rdma0``, ``mlx5_0``),
-    which are correct for ``NCCL_IB_HCA``. These are NOT Linux netdev names
-    (``ens51f1np1``) -- those belong in ``ib_netdev`` in the suite config.
+    Tries ``ibv_devinfo -l`` first; falls back to listing
+    ``/sys/class/infiniband/`` when ibv_devinfo is absent from the image.
+    Returns HCA names (e.g. ``rocep28s0``, ``mlx5_0``), correct for
+    ``NCCL_IB_HCA``. These are NOT Linux netdev names (``ens51f1np1``) --
+    those belong in ``ib_netdev`` in the suite config.
 
     Raises ``RuntimeError`` if:
     - any host returns an empty HCA list (indicates missing driver or no IB
@@ -33,12 +43,28 @@ def discover_ib_hca_names(orch) -> dict[str, list[str]]:
     - the HCA lists are asymmetric across nodes (a hardware/driver mismatch
       must surface loudly, not be silently papered over by intersection).
     """
-    raw = orch.exec("ibv_devinfo -l")
+    # Try ibv_devinfo first.
+    raw = orch.exec(_IBVDEVINFO_CMD)
     result: dict[str, list[str]] = {}
+    use_sysfs = False
     for host, output in (raw or {}).items():
         hcas = _HCA_RE.findall(output or "")
-        log.info("ib_discovery: %s -> %s", host, hcas)
+        if not hcas:
+            use_sysfs = True
+            break
         result[host] = hcas
+
+    if use_sysfs:
+        log.info("ib_discovery: ibv_devinfo unavailable or empty; falling back to /sys/class/infiniband")
+        raw = orch.exec(_SYSFS_CMD)
+        result = {}
+        for host, output in (raw or {}).items():
+            hcas = _parse_sysfs(output)
+            log.info("ib_discovery (sysfs): %s -> %s", host, hcas)
+            result[host] = hcas
+    else:
+        for host, hcas in result.items():
+            log.info("ib_discovery: %s -> %s", host, hcas)
 
     # Fail loudly on any empty node.
     empty = [h for h, devs in result.items() if not devs]
