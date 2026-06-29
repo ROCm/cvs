@@ -1,0 +1,87 @@
+{
+  "_comment": "MI300X W1 smoke: one cell (C=128), num_prompts=128. Record-only; do not use for threshold calibration.",
+  "schema_version": 1,
+  "framework": "inferencex_atom_single",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_threshold.json",
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:latest",
+    "notes": "Smoke test only — validates ATOM server+bench path; run mi300x_inferencex-atom-single_deepseek-r1_fp8_perf for calibration"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "{shared_fs}/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "deepseek-ai/DeepSeek-R1-0528",
+    "remote": 0,
+    "precision": "fp8"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "inferencex_atom_mi300x",
+    "image": "rocm/atom-dev:latest",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": [
+        "-tp",
+        "8",
+        "--kv_cache_dtype",
+        "fp8",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true"
+      }
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "8",
+    "random_range_ratio": "0.8",
+    "num_prompts": "128",
+    "max_model_length": "4096",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "false",
+    "server_warmup_wait_s": "120",
+    "client_initial_wait_s": "60",
+    "client_poll_count": "60",
+    "client_poll_wait_time": "60"
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "name": "w1_smoke_1k_1k",
+        "isl": "1024",
+        "osl": "1024"
+      }
+    ],
+    "runs": [
+      {
+        "combo": "w1_smoke_1k_1k",
+        "concurrency": 128
+      }
+    ]
+  }
+}
