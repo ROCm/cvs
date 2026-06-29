@@ -270,40 +270,54 @@ class VllmJob:
                     )
 
     def is_ready(self):
-        """Broadcast grep to ALL nodes; ready only when every node's exit_code == 0."""
+        """Check readiness on each node using its own per-rank log path."""
         pattern = self.READINESS_RE.pattern
-        out = self.orch.exec(
-            f"grep -qiE {shlex.quote(pattern)} {shlex.quote(self.server_log)}",
-            detailed=True,
-        )
-        return bool(out) and all(r["exit_code"] == 0 for r in out.values())
+        for rank, host in enumerate(self.orch.hosts):
+            rank_log = self._rank_log(rank)
+            out = self.orch.exec(
+                f"grep -qiE {shlex.quote(pattern)} {shlex.quote(rank_log)}",
+                detailed=True,
+                hosts=[host],
+            )
+            if not out or not all(r["exit_code"] == 0 for r in out.values()):
+                return False
+        return True
+
+    def _check_early_failure(self):
+        """Check per-rank logs on each host for early failure / fatal patterns."""
+        for rank, host in enumerate(self.orch.hosts):
+            rank_log = self._rank_log(rank)
+            out = self.orch.exec(f"tail -30 {shlex.quote(rank_log)}", hosts=[host])
+            for h, output in (out or {}).items():
+                if self.EARLY_FAILURE_RE.search(output or ""):
+                    raise RuntimeError(f"vllm server early failure on {h} (rank {rank}): {(output or '')[-500:]}")
+            out = self.orch.exec(
+                f"grep -m1 -iE {shlex.quote(self.FATAL_LOG_RE.pattern)} {shlex.quote(rank_log)}",
+                detailed=True,
+                hosts=[host],
+            )
+            for h, r in (out or {}).items():
+                if r.get("exit_code") == 0 and r.get("stdout", "").strip():
+                    raise RuntimeError(
+                        f"vllm server fatal error on {h} (rank {rank}): {r['stdout'].strip()[-500:]}"
+                    )
 
     def wait_ready(self):
         log.info("waiting %ds for server log to materialise", self._precheck_wait)
         time.sleep(self._precheck_wait)
 
-        out = self.orch.exec(f"tail -30 {shlex.quote(self.server_log)}")
-        for host, output in out.items():
-            if self.EARLY_FAILURE_RE.search(output or ""):
-                raise RuntimeError(f"vllm server early failure on {host}: {output[-500:]}")
+        self._check_early_failure()
 
         log.info("warmup wait %ds", self._warmup_wait)
         time.sleep(self._warmup_wait)
 
-        out = self.orch.exec(
-            f"grep -m1 -iE {shlex.quote(self.FATAL_LOG_RE.pattern)} {shlex.quote(self.server_log)}",
-            detailed=True,
-        )
-        for host, r in (out or {}).items():
-            if r.get("exit_code") == 0 and r.get("stdout", "").strip():
-                raise RuntimeError(
-                    f"vllm server fatal error on {host}: {r['stdout'].strip()[-500:]}"
-                )
+        self._check_early_failure()
 
         for it in range(self._server_poll_count):
             if self.is_ready():
                 log.info("server ready (iter=%d)", it)
                 return
+            self._check_early_failure()
             time.sleep(self._server_poll_wait)
         raise RuntimeError("vllm server did not become ready before timeout")
 

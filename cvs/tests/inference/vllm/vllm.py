@@ -116,20 +116,8 @@ def test_launch_container(orch, variant_config, lifecycle, request):
 
 
 def test_setup_sshd(orch, lifecycle, request):
-    """Stage 2: start sshd in the container (multinode only; single-node skips it)."""
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
-    t = time.monotonic()
-    ok = orch.setup_sshd()
-    lifecycle.record(request.node.nodeid, "sshd_setup", time.monotonic() - t)
-    if not ok:
-        lifecycle.failed = True
-        pytest.fail("setup_sshd() returned False")
-    if len(orch.hosts) > 1:
-        probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
-        if not any("OK" in (v or "") for v in (probe or {}).values()):
-            lifecycle.failed = True
-            pytest.fail("sshd not listening on 2224 after setup_sshd()")
+    """Stage 2: no-op for vllm — distributed execution uses NCCL/gloo over host network, not MPI/sshd."""
+    pytest.skip("vllm uses --distributed-executor-backend mp + NCCL; no inter-container sshd needed")
 
 
 def test_discover_topology(orch, variant_config, lifecycle, request):
