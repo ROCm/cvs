@@ -80,6 +80,40 @@ class Run(_Forbid):
     concurrency: int
 
 
+def validate_thresholds_cover_sweep(
+    *,
+    expected_cells,
+    thresholds,
+    enforce_thresholds: bool,
+    gated_metrics=None,
+) -> None:
+    """Shared sweep/threshold coverage check for inference variant configs."""
+    expected = set(expected_cells)
+    present = set(thresholds.keys())
+    missing = sorted(expected - present)
+    extra = sorted(present - expected)
+    problems = []
+    if missing:
+        problems.append(f"sweep cells with no threshold entry: {missing}")
+    if extra:
+        problems.append(f"threshold keys matching no sweep cell (typo?): {extra}")
+    gated = gated_metrics if gated_metrics is not None else GATED_METRICS
+    gated_keys = [f"client.{m}" for m in sorted(gated)]
+    gated_gaps = {}
+    for cell in sorted(expected & present):
+        specs = thresholds.get(cell) or {}
+        absent = [k for k in gated_keys if k not in specs]
+        if absent:
+            gated_gaps[cell] = absent
+    if gated_gaps:
+        problems.append(f"cells missing gated-metric specs: {gated_gaps}")
+    if problems:
+        msg = "threshold.json does not match the sweep matrix; " + "; ".join(problems)
+        if enforce_thresholds:
+            raise ValueError(msg)
+        warnings.warn(f"{msg} (enforce_thresholds=false -> record-only)", stacklevel=3)
+
+
 def validate_sweep_selector(combo_names, run_combo_refs):
     """The sweep-selector rule: combo names unique, every run.combo names one.
 
@@ -160,45 +194,12 @@ class VariantConfig(BaseVariantConfig):
 
     @model_validator(mode="after")
     def _check_thresholds_cover_sweep(self):
-        """Fail at load time if any sweep cell lacks a threshold entry.
-
-        Two axes are checked. (1) Cell coverage: every sweep cell has a
-        threshold entry, and no threshold key names a cell the sweep does not
-        run. (2) Gated-metric coverage: every present cell carries a spec for
-        every GATED_METRICS member -- the SLO contract. Without (2) a gated
-        metric with no spec falls through `test_metric`'s `spec is None`
-        record-only branch and reports a green PASS with zero assertions, even
-        under enforce_thresholds=true.
-
-        When `enforce_thresholds` is false the same mismatch is reported as a
-        warning rather than an error -- the config loads as a record-only
-        scaffold (metrics captured, no assertions) instead of failing.
-        """
-        expected = set(self.expected_cells())
-        present = set(self.thresholds.keys())
-        missing = sorted(expected - present)
-        extra = sorted(present - expected)
-        problems = []
-        if missing:
-            problems.append(f"sweep cells with no threshold entry: {missing}")
-        if extra:
-            problems.append(f"threshold keys matching no sweep cell (typo?): {extra}")
-        # Gated-metric coverage, only for cells that are present (a wholly
-        # missing cell is already reported above -- do not double-report it).
-        gated_keys = [f"client.{m}" for m in sorted(GATED_METRICS)]
-        gated_gaps = {}
-        for cell in sorted(expected & present):
-            specs = self.thresholds.get(cell) or {}
-            absent = [k for k in gated_keys if k not in specs]
-            if absent:
-                gated_gaps[cell] = absent
-        if gated_gaps:
-            problems.append(f"cells missing gated-metric specs: {gated_gaps}")
-        if problems:
-            msg = "threshold.json does not match the sweep matrix; " + "; ".join(problems)
-            if self.enforce_thresholds:
-                raise ValueError(msg)
-            warnings.warn(f"{msg} (enforce_thresholds=false -> record-only)", stacklevel=2)
+        """Fail at load time if any sweep cell lacks a threshold entry."""
+        validate_thresholds_cover_sweep(
+            expected_cells=self.expected_cells(),
+            thresholds=self.thresholds,
+            enforce_thresholds=self.enforce_thresholds,
+        )
         return self
 
 

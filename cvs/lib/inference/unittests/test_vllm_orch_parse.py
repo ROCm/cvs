@@ -20,7 +20,7 @@ _HERE = Path(__file__).parent
 _FIXTURES = _HERE / "fixtures"
 _REPO = _HERE.parents[3]  # cvs/lib/inference/unittests -> repo root
 _SHARED = _REPO / "cvs/tests/inference/vllm/_shared.py"
-_THRESHOLD = _REPO / "cvs/input/config_file/inference/vllm_single/w1_llama31_70b_fp8kv/llama31_70b_fp8_threshold.json"
+_THRESHOLD = _REPO / "cvs/input/config_file/inference/vllm_single/mi300x_vllm-single_llama31-70b_fp8_threshold.json"
 
 # isl/tp used to build the job; must match the fixture's run for the derived
 # math assertions to be meaningful (real artifact: isl=128, tp=8).
@@ -491,7 +491,7 @@ class TestToClientMetricsPure(unittest.TestCase):
     """Direct tests of the pure transform -- no FakeOrch, no VllmJob.
 
     parse_results already covers the wiring; these pin the vocabulary + math in
-    isolation so distributed/disagg/InferenceMax reuse rests on a tested seam.
+    isolation so distributed/disagg/InferenceX ATOM reuse rests on a tested seam.
     """
 
     def setUp(self):
@@ -530,6 +530,12 @@ class TestToClientMetricsPure(unittest.TestCase):
             "success_rate",
         ):
             self.assertIsNone(m[f"client.{d}"])
+
+    def test_success_rate_when_failed_omitted(self):
+        raw = {"completed": 1000, "num_prompts": 1000}
+        m = to_client_metrics(raw, tp=_TP, isl=_ISL)
+        self.assertEqual(m["client.failed"], 0)
+        self.assertAlmostEqual(m["client.success_rate"], 1.0)
 
 
 class TestSafeDivPure(unittest.TestCase):
