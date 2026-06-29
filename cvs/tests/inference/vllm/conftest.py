@@ -10,7 +10,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.inference.utils.inferencing_config_loader import load_variant
+from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log
@@ -112,6 +112,10 @@ def orch(cluster_dict, variant_config, lifecycle):
 def hf_token(variant_config):
     path = variant_config.paths.hf_token_file
     if not os.path.isfile(path):
+        if variant_config.model.remote == 0:
+            # Pre-staged model: token not needed for download; server env sets
+            # HF_HUB_OFFLINE=1 to skip Hub auth checks entirely.
+            return ""
         pytest.skip(f"hf_token file missing: {path}")
     with open(path) as fp:
         return fp.read().strip()
@@ -134,11 +138,12 @@ def pytest_collection_modifyitems(items):
     rank = {
         "test_launch_container": 0,
         "test_setup_sshd": 1,
-        "test_model_fetch": 2,
-        "test_vllm_inference": 3,
-        "test_metric": 4,
-        "test_print_results_table": 5,
-        "test_teardown": 6,
+        "test_discover_topology": 2,
+        "test_model_fetch": 3,
+        "test_vllm_inference": 4,
+        "test_metric": 5,
+        "test_print_results_table": 6,
+        "test_teardown": 7,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
