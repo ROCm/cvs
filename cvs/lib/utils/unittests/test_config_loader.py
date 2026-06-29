@@ -5,14 +5,13 @@ All rights reserved.
 Unit tests for cvs.lib.utils.config_loader.
 
 Covers the public contract described in the spec:
-  - ModelSpec forbids a `precision` field (extra=forbid, precision removed).
-  - BaseVariantConfig requires a `threshold_json: str` field.
-  - substitute_config reads the threshold file from raw['threshold_json'] as a
-    literal absolute path — NOT by globbing the sibling directory.
-  - substitute_config raises FileNotFoundError when threshold_json names a
-    non-existent file.
-  - A sibling *threshold.json present in the same directory must NOT be
-    auto-discovered; only the explicit threshold_json path is used.
+  - ModelSpec accepts an optional ``precision`` field (defaults to empty string).
+  - BaseVariantConfig accepts an optional ``threshold_json`` field (defaults to "").
+  - substitute_config reads the threshold file from ``threshold_json`` when set
+    (literal absolute path), or discovers a sole sibling ``*threshold.json``.
+  - substitute_config raises FileNotFoundError when ``threshold_json`` names a
+    non-existent file, or when no sibling threshold exists and the field is empty.
+  - Multiple sibling ``*threshold.json`` files raise ValueError (ambiguous).
 
 Framework: unittest.TestCase + self.subTest + unittest.mock (no pytest).
 '''
@@ -46,7 +45,7 @@ def _paths_dict():
 
 
 def _model_dict():
-    """A valid ModelSpec payload (no precision field per new spec)."""
+    """A valid ModelSpec payload."""
     return {"id": "amd/Llama-3.1-70B-Instruct", "remote": 0}
 
 
@@ -58,15 +57,17 @@ def _container_dict():
     }
 
 
-def _base_config_dict(threshold_json: str = "/tmp/threshold.json"):
-    """Minimal dict that satisfies BaseVariantConfig with the new required field."""
-    return {
+def _base_config_dict(threshold_json: str = ""):
+    """Minimal dict that satisfies BaseVariantConfig."""
+    d = {
         "schema_version": 1,
         "paths": _paths_dict(),
         "model": _model_dict(),
         "container": _container_dict(),
-        "threshold_json": threshold_json,
     }
+    if threshold_json:
+        d["threshold_json"] = threshold_json
+    return d
 
 
 # ---------------------------------------------------------------------------
@@ -92,12 +93,14 @@ class TestModelSpecLifecycle(unittest.TestCase):
 
     # --- illegal transitions (extra fields forbidden) ---
 
-    def test_precision_field_is_rejected(self):
-        """ModelSpec must NOT accept a precision field (removed from schema)."""
-        with self.assertRaises(ValidationError) as ctx:
-            ModelSpec(id="amd/llama", remote=0, precision="fp8")
-        err_str = str(ctx.exception)
-        self.assertIn("precision", err_str)
+    def test_precision_field_is_optional(self):
+        """ModelSpec may carry an optional precision label (e.g. fp8 in filenames)."""
+        spec = ModelSpec(id="amd/llama", remote=0, precision="fp8")
+        self.assertEqual(spec.precision, "fp8")
+
+    def test_precision_defaults_empty(self):
+        spec = ModelSpec(id="amd/llama", remote=0)
+        self.assertEqual(spec.precision, "")
 
     def test_arbitrary_extra_field_is_rejected(self):
         with self.assertRaises(ValidationError):
@@ -133,13 +136,17 @@ class TestModelSpecLifecycle(unittest.TestCase):
 
 
 class TestBaseVariantConfigLifecycle(unittest.TestCase):
-    """BaseVariantConfig requires threshold_json and forbids extra fields."""
+    """BaseVariantConfig optional threshold_json and forbid extra fields."""
 
     # --- legal transitions ---
 
     def test_valid_construction_with_threshold_json(self):
         cfg = BaseVariantConfig(**_base_config_dict("/abs/path/threshold.json"))
         self.assertEqual(cfg.threshold_json, "/abs/path/threshold.json")
+
+    def test_threshold_json_defaults_empty(self):
+        cfg = BaseVariantConfig(**_base_config_dict())
+        self.assertEqual(cfg.threshold_json, "")
 
     def test_threshold_json_preserved_verbatim(self):
         """threshold_json is stored as-is; no substitution or normalization."""
@@ -163,13 +170,12 @@ class TestBaseVariantConfigLifecycle(unittest.TestCase):
 
     # --- illegal transitions ---
 
-    def test_missing_threshold_json_raises(self):
-        """threshold_json is required; omitting it must fail validation."""
+    def test_missing_threshold_json_is_optional(self):
+        """threshold_json defaults to empty when omitted."""
         d = _base_config_dict()
-        del d["threshold_json"]
-        with self.assertRaises(ValidationError) as ctx:
-            BaseVariantConfig(**d)
-        self.assertIn("threshold_json", str(ctx.exception))
+        self.assertNotIn("threshold_json", d)
+        cfg = BaseVariantConfig(**d)
+        self.assertEqual(cfg.threshold_json, "")
 
     def test_extra_field_is_rejected(self):
         d = _base_config_dict()
@@ -278,7 +284,7 @@ class TestContainerSpecLifecycle(unittest.TestCase):
 
 
 class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
-    """substitute_config must read threshold from raw['threshold_json'] path."""
+    """substitute_config threshold discovery: explicit path or sibling glob."""
 
     def _write_config(self, tmp_dir: Path, config_dict: dict) -> Path:
         config_path = tmp_dir / "variant_config.json"
@@ -295,12 +301,37 @@ class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             threshold_path = self._write_threshold(tmp_dir)
-            cfg = dict(_base_config_dict(str(threshold_path)))
+            cfg = _base_config_dict(str(threshold_path))
             config_path = self._write_config(tmp_dir, cfg)
             cluster_dict = {}
             raw, thresholds = substitute_config(config_path, cluster_dict)
-            # The returned raw dict must reflect the loaded config
             self.assertEqual(raw["schema_version"], 1)
+
+    def test_sibling_threshold_discovered_when_threshold_json_empty(self):
+        """When threshold_json is omitted, a sole sibling *threshold.json is used."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            self._write_threshold(tmp_dir, "mi300x_variant_threshold.json")
+            cfg = _base_config_dict()
+            config_path = self._write_config(tmp_dir, cfg)
+            raw, thresholds = substitute_config(config_path, {})
+            self.assertIsInstance(thresholds, dict)
+            self.assertIn("ISL=128,OSL=2048,TP=8,CONC=16", thresholds)
+
+    def test_sibling_threshold_ambiguous_raises_value_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            self._write_threshold(tmp_dir, "a_threshold.json")
+            self._write_threshold(tmp_dir, "b_threshold.json")
+            config_path = self._write_config(tmp_dir, _base_config_dict())
+            with self.assertRaises(ValueError):
+                substitute_config(config_path, {})
+
+    def test_no_sibling_and_empty_threshold_json_raises_file_not_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = self._write_config(Path(tmp), _base_config_dict())
+            with self.assertRaises(FileNotFoundError):
+                substitute_config(config_path, {})
 
     def test_threshold_json_as_absolute_path_no_sibling_glob(self):
         """The threshold file must be read from the explicit path, not discovered
@@ -321,34 +352,21 @@ class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
     def test_missing_threshold_file_raises_file_not_found(self):
         """If threshold_json names a non-existent file, FileNotFoundError is raised."""
         with tempfile.TemporaryDirectory() as tmp:
-            cfg = dict(_base_config_dict("/nonexistent/path/threshold.json"))
+            cfg = _base_config_dict("/nonexistent/path/threshold.json")
             config_path = self._write_config(Path(tmp), cfg)
             cluster_dict = {}
             with self.assertRaises(FileNotFoundError):
                 substitute_config(config_path, cluster_dict)
 
-    def test_sibling_threshold_file_not_auto_discovered(self):
-        """A sibling *threshold.json in the config directory must NOT be used
-        automatically. Only the explicit threshold_json field path is read.
-
-        Old glob behavior: config_path.parent.glob('*threshold.json').
-        New behavior: read raw['threshold_json'] as literal absolute path.
-        """
+    def test_explicit_threshold_json_ignores_sibling_when_path_missing(self):
+        """An explicit but missing threshold_json path fails even if a sibling exists."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
-            # Write a sibling threshold file — old behavior would pick this up
-            sibling = tmp_dir / "sibling_threshold.json"
-            sibling.write_text(json.dumps({"cell": {}}))
-
-            # threshold_json points to a NON-EXISTENT file — if glob were still
-            # active the sibling would be found and no error raised.
-            cfg = dict(_base_config_dict("/does/not/exist/threshold.json"))
+            self._write_threshold(tmp_dir, "sibling_threshold.json")
+            cfg = _base_config_dict("/does/not/exist/threshold.json")
             config_path = self._write_config(tmp_dir, cfg)
-            cluster_dict = {}
-            # Must raise because the explicit path doesn't exist, even though
-            # a sibling threshold file is present.
             with self.assertRaises(FileNotFoundError):
-                substitute_config(config_path, cluster_dict)
+                substitute_config(config_path, {})
 
     def test_threshold_json_value_not_placeholder_substituted(self):
         """The threshold_json value is a literal absolute path; placeholders in it
@@ -362,7 +380,7 @@ class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
             literal_path.write_text(json.dumps({}))
             # Use a path that contains no placeholders — the real contract is
             # the path is used verbatim. The test confirms successful load.
-            cfg = dict(_base_config_dict(str(literal_path)))
+            cfg = _base_config_dict(str(literal_path))
             config_path = self._write_config(tmp_dir, cfg)
             raw, thresholds = substitute_config(config_path, {})
             self.assertIsInstance(thresholds, dict)
