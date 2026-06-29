@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from pathlib import Path
 from typing import Any, Mapping, Optional
 
 JsonDict = dict[str, Any]
@@ -56,38 +55,6 @@ class OpenAIProbe:
     }
 
     _FAILURE_MARKER = "OpenAI-compatible probe failed port="
-
-    @classmethod
-    def resolve_local_model_identity(cls, model_dir: str) -> str:
-        """Config grep highlights + first 20 README lines for a local model dir."""
-        root = Path(model_dir)
-        parts: list[str] = [f"path={root}"]
-        key_re = re.compile(
-            r"model_type|quantization|quant|dtype|torch_dtype|architectures", re.I
-        )
-
-        cfg_path = root / "config.json"
-        if cfg_path.is_file():
-            try:
-                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-                hits = [
-                    ln
-                    for ln in json.dumps(cfg, indent=2).splitlines()
-                    if key_re.search(ln)
-                ]
-                parts.append("config.json:\n" + ("\n".join(hits) if hits else "(no matches)"))
-            except (OSError, json.JSONDecodeError) as e:
-                parts.append(f"config.json: error ({e})")
-
-        readme_path = root / "README.md"
-        if readme_path.is_file():
-            try:
-                head = readme_path.read_text(encoding="utf-8").splitlines()[:20]
-                parts.append("README.md (first 20 lines):\n" + "\n".join(head))
-            except OSError as e:
-                parts.append(f"README.md: error ({e})")
-
-        return "\n\n".join(parts)
 
     @classmethod
     def probe_script(
