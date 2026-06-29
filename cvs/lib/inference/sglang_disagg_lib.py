@@ -402,22 +402,58 @@ class SglangDisaggPD:
 
     # Helper function for setting up AITER Kimi-K2.6-MXFP4 configuration
     def setup_aiter_kimik2_fp4_config(self) -> None:
-        """Copy pre-staged tuned AITER CSV into aiter model_configs before model load."""
-        src = "/root/models/Kimi-K2.6-MXFP4/kimik2_fp4_tuned_fmoe.csv"
-        dst_dir = "/usr/local/lib/python3.10/dist-packages/aiter/configs/model_configs"
-        dst = f"{dst_dir}/kimik2_fp4_tuned_fmoe.csv"
-        inner = (
-            f"mkdir -p {dst_dir} "
-            f"&& cp {src} {dst} "
-            f"&& ls -la {dst}"
+        """Copy pre-staged tuned AITER CSV and AFP4WFP4 JSON configs into aiter before model load."""
+        model_dir = "/root/models/Kimi-K2.6-MXFP4"
+        csv_src = f"{model_dir}/kimik2_fp4_tuned_fmoe.csv"
+        csv_dst_dir = "/usr/local/lib/python3.10/dist-packages/aiter/configs/model_configs"
+        csv_dst = f"{csv_dst_dir}/kimik2_fp4_tuned_fmoe.csv"
+        gemm_cfg_dir = "/sgl-workspace/aiter/aiter/ops/triton/configs/gemm"
+
+        # AFP4WFP4 JSON patterns to copy from gfx950 → gfx942
+        afp4_patterns = [
+            "GEMM-AFP4WFP4",
+            "GEMM-AFP4WFP4_PRESHUFFLED",
+            "BATCHED_GEMM-AFP4WFP4",
+            "BATCHED_GEMM_PREQUANT-AFP4WFP4",
+            "GEMM_PREQUANT-AFP4WFP4",
+            "FUSED-GEMM-AFP4WFP4",
+            "FUSED-GEMM-AFP4WFP4_PRESHUFFLED-A16W16",
+        ]
+
+        # Build the cp commands for all gfx950 AFP4WFP4 configs → gfx942
+        json_copy_cmds = " && ".join(
+            f'[ -f {gemm_cfg_dir}/gfx950-{p}.json ] && '
+            f'cp {gemm_cfg_dir}/gfx950-{p}.json {gemm_cfg_dir}/gfx942-{p}.json || true'
+            for p in afp4_patterns
         )
+
+        # Also copy all gfx950-GEMM-AFP4WFP4-N=*-K=*.json shape-specific configs
+        glob_copy_cmd = (
+            f'for f in {gemm_cfg_dir}/gfx950-GEMM-AFP4WFP4*.json '
+            f'{gemm_cfg_dir}/gfx950-BATCHED_GEMM*AFP4WFP4*.json '
+            f'{gemm_cfg_dir}/gfx950-GEMM_PREQUANT*AFP4WFP4*.json; do '
+            f'  [ -f "$f" ] && cp "$f" "${{f/gfx950/gfx942}}" || true; '
+            f'done'
+        )
+
+        inner = (
+            f"mkdir -p {csv_dst_dir} "
+            f"&& cp {csv_src} {csv_dst} "
+            f"&& ls -la {csv_dst} "
+            f"&& {json_copy_cmds} "
+            f"&& {glob_copy_cmd} "
+            f"&& ls {gemm_cfg_dir}/gfx942-GEMM-AFP4WFP4.json"
+        )
+
         cmd = f'docker exec {self.container_name} /bin/bash -c {shlex.quote(inner)}'
         for hdl in (self.p_phdl, self.d_phdl):
             out = hdl.exec(cmd)
             for node, text in (out or {}).items():
-                log.info("aiter CSV copy on %s:\n%s", node, text)
+                log.info("aiter config setup on %s:\n%s", node, text)
                 if "kimik2_fp4_tuned_fmoe.csv" not in (text or ""):
                     fail_test(f"Failed to copy kimik2_fp4_tuned_fmoe.csv on {node}")
+                if "gfx942-GEMM-AFP4WFP4.json" not in (text or ""):
+                    fail_test(f"Failed to create gfx942-GEMM-AFP4WFP4.json on {node}")
     
     
     # Helper function for setting up decode container environment
