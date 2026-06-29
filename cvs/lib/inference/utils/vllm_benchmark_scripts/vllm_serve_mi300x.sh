@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Model-agnostic vLLM server entrypoint for CVS benchmark flows on MI300-class GPUs.
 # Pass the checkpoint via MODEL (from server env); extra vLLM CLI flags via "$@".
-# Shared canonical copy: cvs.lib.dtni.vllm_benchmark_scripts (see README.md).
+# Shared canonical copy: cvs.lib.inference.utils.vllm_benchmark_scripts (see README.md).
 # CVS runs: source /tmp/server_env_script.sh; nohup bash this_script ...
 # The load client is started separately by CVS (vLLM benchmarks/ driver).
 #

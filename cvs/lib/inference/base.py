@@ -11,7 +11,7 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.dtni.vllm_benchmark_scripts import (
+from cvs.lib.inference.utils.vllm_benchmark_scripts import (
     bash_export_bench_script_from_vllm_install,
     clamped_bench_random_range_ratio_str,
 )
@@ -555,7 +555,7 @@ class InferenceBaseJob:
     ):
         log.info('Start Client side benchmark script on all Nodes')
 
-        # Resolve benchmark driver from the installed vllm package (see dtni.vllm_benchmark_scripts)
+        # Resolve benchmark driver from the installed vllm package (see inference.utils.vllm_benchmark_scripts)
         self.clone_bench_serving_repo('/app')
 
         if self.distributed_inference:
