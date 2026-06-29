@@ -17,7 +17,7 @@ This guide is for CVS developers who already run `cvs run` regularly and have ed
 
 The framing: today every suite is a hand-written pytest module that ships its own container lifecycle, its own config parsing, and its own threshold checks inline. Under DTNI, those concerns move out of the test module into shared machinery — a typed config loader, an `orch` (orchestrator) fixture that owns the container, and a per-framework Job class that bundles the framework-specific verbs — so the test module shrinks to a few phases: load → setup → generated tests → custom tests.
 
-`vllm_single` (inference) and `megatron_*` (training) appear as running examples. The same shape applies to sglang, inferencemax, pytorch_xdit, jax.
+`vllm_single` (inference) and `megatron_*` (training) appear as running examples. The same shape applies to sglang, inferencex_atom, pytorch_xdit, jax.
 
 ## 2. Old lifecycle: `cvs run` to HTML report
 

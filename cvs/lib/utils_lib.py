@@ -364,14 +364,12 @@ def resolve_cluster_config_placeholders(cluster_dict):
     # Get username from environment (fallback chain: USER -> LOGNAME -> USERNAME -> 'root')
     username = os.getenv('USER') or os.getenv('LOGNAME') or os.getenv('USERNAME') or 'root'
 
-    log.info(f'Resolving cluster path placeholders with system username: {username}')
-
     # Define replacement mapping - only resolve {user-id} in cluster config
     replacements = {
         '{user-id}': username,
     }
 
-    resolved_cluster = _resolve_placeholders_in_dict(cluster_dict, replacements, context_name="cluster config")
+    resolved_cluster = _resolve_placeholders_in_dict(cluster_dict, replacements)
 
     return resolved_cluster
 
