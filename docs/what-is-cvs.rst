@@ -23,7 +23,7 @@ Here are the tests available in the CVS:
 - **RDMA performance tests**: Validate RDMA (Remote Direct Memory Access) bandwidth and latency with MORI for high-speed inter-node communication using AMD Pensando AINIC and other RDMA-capable devices.
 - **Inference tests**: Validate LLM serving performance and generative AI workloads across AMD GPU clusters.
 
-  - InferenceMAX benchmarks vLLM inference performance for models like GPT-OSS-120B, measuring throughput, TTFT (Time to First Token), and TPOT (Time Per Output Token).
+  - InferenceX ATOM benchmarks vLLM inference performance for models like GPT-OSS-120B, measuring throughput, TTFT (Time to First Token), and TPOT (Time Per Output Token).
   - vLLM single-node tests support multiple models (GPT-OSS-120B, Qwen3-235B, Qwen3-80B, DeepSeek-V3.1) with various workload scenarios on MI355X GPUs.
   - SGLang disaggregated prefill-decode architecture tests optimize LLM serving by separating prefill and decode phases across different nodes.
   - Flux.1 text-to-image generation tests validate distributed image generation using xDiT with Ulysses and Ring parallelization.
