@@ -57,87 +57,37 @@ class OpenAIProbe:
 
     _FAILURE_MARKER = "OpenAI-compatible probe failed port="
 
-    _HF_ID_RE = re.compile(r"^[^/]+/[^/]+$")
-    _README_FM_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
-    _README_PRETRAINED_RE = re.compile(r"pretrained=([\w.-]+/[\w.-]+)")
-    _README_OUTPUT_DIR_RE = re.compile(r"output_dir\s+([\w.-]+/[\w.-]+)")
-
     @classmethod
-    def resolve_local_model_identity(cls, model_dir: str) -> dict[str, str | None]:
-        """
-        Best-effort identity for a local HF-format checkpoint directory.
-
-        Reads config.json and README.md when present. Returns:
-        local_path, model_id, base_model, architecture, model_class, quant_method
-
-        - model_id: Hub-style id (e.g. amd/Kimi-K2.6-MXFP4) when discoverable
-        - base_model: upstream model from README frontmatter (e.g. moonshotai/Kimi-K2.6)
-        - architecture: config model_type (e.g. kimi_k25)
-        """
+    def resolve_local_model_identity(cls, model_dir: str) -> str:
+        """Config grep highlights + first 20 README lines for a local model dir."""
         root = Path(model_dir)
-        out: dict[str, str | None] = {
-            "local_path": str(root),
-            "model_id": None,
-            "base_model": None,
-            "architecture": None,
-            "model_class": None,
-            "quant_method": None,
-        }
+        parts: list[str] = [f"path={root}"]
+        key_re = re.compile(
+            r"model_type|quantization|quant|dtype|torch_dtype|architectures", re.I
+        )
 
         cfg_path = root / "config.json"
         if cfg_path.is_file():
             try:
                 cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                cfg = {}
-            out["architecture"] = cfg.get("model_type") or None
-            archs = cfg.get("architectures") or []
-            out["model_class"] = archs[0] if archs else None
-            name = (cfg.get("_name_or_path") or cfg.get("name_or_path") or "").strip()
-            if name and cls._HF_ID_RE.fullmatch(name):
-                out["model_id"] = name
-            qcfg = cfg.get("quantization_config") or {}
-            out["quant_method"] = qcfg.get("quant_method") or None
+                hits = [
+                    ln
+                    for ln in json.dumps(cfg, indent=2).splitlines()
+                    if key_re.search(ln)
+                ]
+                parts.append("config.json:\n" + ("\n".join(hits) if hits else "(no matches)"))
+            except (OSError, json.JSONDecodeError) as e:
+                parts.append(f"config.json: error ({e})")
 
         readme_path = root / "README.md"
         if readme_path.is_file():
             try:
-                text = readme_path.read_text(encoding="utf-8")
-            except OSError:
-                text = ""
-            fm = cls._README_FM_RE.match(text)
-            if fm:
-                in_base = False
-                base_models: list[str] = []
-                for line in fm.group(1).splitlines():
-                    stripped = line.strip()
-                    if stripped.startswith("base_model:"):
-                        in_base = True
-                        continue
-                    if in_base:
-                        if stripped.startswith("- "):
-                            base_models.append(stripped[2:].strip())
-                        elif stripped and not line.startswith((" ", "\t")):
-                            in_base = False
-                    if stripped.startswith("base_model:") and not in_base:
-                        # base_model: moonshotai/Kimi-K2.6  (scalar form)
-                        val = stripped.split(":", 1)[1].strip()
-                        if val:
-                            base_models.append(val)
-                if base_models:
-                    out["base_model"] = base_models[0]
+                head = readme_path.read_text(encoding="utf-8").splitlines()[:20]
+                parts.append("README.md (first 20 lines):\n" + "\n".join(head))
+            except OSError as e:
+                parts.append(f"README.md: error ({e})")
 
-            for pat in (cls._README_PRETRAINED_RE, cls._README_OUTPUT_DIR_RE):
-                m = pat.search(text)
-                if m:
-                    out["model_id"] = m.group(1)
-                    break
-
-        if out["model_id"] is None and root.name:
-            # e.g. Kimi-K2.6-MXFP4 -> amd/Kimi-K2.6-MXFP4 (AMD bundles)
-            out["model_id"] = f"amd/{root.name}"
-
-        return out
+        return "\n\n".join(parts)
 
     @classmethod
     def probe_script(
