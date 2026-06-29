@@ -12,7 +12,7 @@ lays its artifacts out differently -- single-node `cat`, disagg prefill+decode,
 distributed rank-0 vs all-ranks) and hand the parsed/raw payload in here.
 
 Keeping the transforms pure makes them reusable across jobs (single-node,
-distributed, disaggregated, InferenceMax) and unit-testable with plain
+distributed, disaggregated, InferenceX ATOM) and unit-testable with plain
 dict/string fixtures -- no fake orchestrator required.
 
 Namespacing contract:
@@ -66,6 +66,16 @@ def to_client_metrics(raw, *, tp, isl):
     median_tpot = raw.get("median_tpot_ms")
     completed = raw.get("completed")
     failed = raw.get("failed")
+    num_prompts = raw.get("num_prompts")
+    # ATOM benchmark_serving omits `failed` when every request succeeds; derive it
+    # so success_rate and gated health metrics remain assertable.
+    if failed is None and completed is not None and num_prompts is not None:
+        try:
+            failed = max(0, int(num_prompts) - int(completed))
+        except (TypeError, ValueError):
+            failed = None
+        if failed is not None:
+            m["client.failed"] = failed
 
     m["client.per_gpu_throughput"] = _safe_div(ttot, tp)
     m["client.normalized_ttft_ms_per_tok"] = _safe_div(mean_ttft, isl)
@@ -81,7 +91,7 @@ def to_client_metrics(raw, *, tp, isl):
 # dict to_client_metrics returns. request_rate is omitted (stock emits the
 # string "inf"). This is the *display surface* of the client.* vocabulary above
 # -- it lives here, beside to_client_metrics, so every vLLM flavor (single-node,
-# distributed, disaggregated, InferenceMax) shares one definition instead of
+# distributed, disaggregated, InferenceX ATOM) shares one definition instead of
 # each suite re-listing the rows.
 CLIENT_METRICS = [
     ("max_concurrency", "-"),

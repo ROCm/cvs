@@ -130,6 +130,29 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
                     f"[{label}] '--gpus all' must never appear in docker cmd:\n{captured[0]}",
                 )
 
+    def test_pulls_image_when_missing_before_run(self):
+        calls = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            calls.append(cmd)
+            if "docker images" in cmd and "grep" in cmd:
+                return {"host1": {"output": "", "exit_code": 1}}
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        result = rt.setup_containers(
+            container_config=_container_config(),
+            container_name="cvs_iter_test",
+            volumes=["/home/u:/workspace"],
+        )
+        self.assertTrue(result)
+        self.assertTrue(any("docker pull" in c for c in calls))
+        self.assertTrue(any(c.startswith("sudo docker run") for c in calls))
+
 
 if __name__ == "__main__":
     unittest.main()

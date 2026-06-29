@@ -32,7 +32,7 @@ The following list provides a link to code snippets and the parameters for each 
 - :doc:`Megatron </reference/configuration-files/megatron>`
 - :doc:`MORI (RDMA Performance) </reference/configuration-files/mori>`
 - :doc:`Aorta (Distributed Training) </reference/configuration-files/aorta>`
-- :doc:`InferenceMAX (vLLM Benchmarking) </reference/configuration-files/inferencemax>`
+- :doc:`InferenceX ATOM (vLLM Benchmarking) </reference/configuration-files/inferencex_atom>`
 - :doc:`vLLM Single-Node (MI355X) </reference/configuration-files/vllm_singlenode_mi355x>`
 - :doc:`SGLang Disaggregated Prefill-Decode </reference/configuration-files/sglang_disagg_pd>`
 - :doc:`Flux.1 Text-to-Image </reference/configuration-files/flux1_t2i>`
