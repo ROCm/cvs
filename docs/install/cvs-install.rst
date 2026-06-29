@@ -315,7 +315,7 @@ CVS provides comprehensive inference testing configurations for various LLM serv
      cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_gpt-oss-120b_bf16_config.json --output ~/my_inferencex_atom_config.json
      cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_gpt-oss-120b_bf16_threshold.json --output ~/my_inferencex_atom_threshold.json
 
-2. Edit the file and modify these parameters:
+2. Edit the files and modify these parameters:
 
    - ``container_image``: Docker image with vLLM
    - ``nnodes``: Number of nodes in the cluster
