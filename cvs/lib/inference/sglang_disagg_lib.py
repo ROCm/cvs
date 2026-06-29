@@ -379,12 +379,6 @@ class SglangDisaggPD:
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
 
-                    export SGLANG_USE_AITER=1
-                    export AMDGCN_USE_BUFFER_OPS=1
-                    export HIP_FORCE_DEV_KERNARG=1
-                    export HSA_NO_SCRATCH_RECLAIM=1
-                    export MOE_PADDING=1
-
                     export MASTER_PREFILL_ADDR={self.inf_dict['prefill_coordinator_addr']}
                     export MASTER_PREFILL_PORT={self.inf_dict['prefill_coordinator_port']}
 
@@ -400,62 +394,6 @@ class SglangDisaggPD:
                    chmod 755 /tmp/prefill_env_script.sh; /tmp/prefill_env_script.sh" '''
         self.p_phdl.exec(cmd)
 
-    # Helper function for setting up AITER Kimi-K2.6-MXFP4 configuration
-    def setup_aiter_kimik2_fp4_config(self) -> None:
-        """Copy pre-staged tuned AITER CSV and AFP4WFP4 JSON configs into aiter before model load."""
-        model_dir = "/root/models/Kimi-K2.6-MXFP4"
-        csv_src = f"{model_dir}/kimik2_fp4_tuned_fmoe.csv"
-        csv_dst_dir = "/usr/local/lib/python3.10/dist-packages/aiter/configs/model_configs"
-        csv_dst = f"{csv_dst_dir}/kimik2_fp4_tuned_fmoe.csv"
-        gemm_cfg_dir = "/sgl-workspace/aiter/aiter/ops/triton/configs/gemm"
-
-        # AFP4WFP4 JSON patterns to copy from gfx950 → gfx942
-        afp4_patterns = [
-            "GEMM-AFP4WFP4",
-            "GEMM-AFP4WFP4_PRESHUFFLED",
-            "BATCHED_GEMM-AFP4WFP4",
-            "BATCHED_GEMM_PREQUANT-AFP4WFP4",
-            "GEMM_PREQUANT-AFP4WFP4",
-            "FUSED-GEMM-AFP4WFP4",
-            "FUSED-GEMM-AFP4WFP4_PRESHUFFLED-A16W16",
-        ]
-
-        # Build the cp commands for all gfx950 AFP4WFP4 configs → gfx942
-        json_copy_cmds = " && ".join(
-            f'[ -f {gemm_cfg_dir}/gfx950-{p}.json ] && '
-            f'cp {gemm_cfg_dir}/gfx950-{p}.json {gemm_cfg_dir}/gfx942-{p}.json || true'
-            for p in afp4_patterns
-        )
-
-        # Also copy all gfx950-GEMM-AFP4WFP4-N=*-K=*.json shape-specific configs
-        glob_copy_cmd = (
-            f'for f in {gemm_cfg_dir}/gfx950-GEMM-AFP4WFP4*.json '
-            f'{gemm_cfg_dir}/gfx950-BATCHED_GEMM*AFP4WFP4*.json '
-            f'{gemm_cfg_dir}/gfx950-GEMM_PREQUANT*AFP4WFP4*.json; do '
-            f'  [ -f "$f" ] && cp "$f" "${{f/gfx950/gfx942}}" || true; '
-            f'done'
-        )
-
-        inner = (
-            f"mkdir -p {csv_dst_dir} "
-            f"&& cp {csv_src} {csv_dst} "
-            f"&& ls -la {csv_dst} "
-            f"&& {json_copy_cmds} "
-            f"&& {glob_copy_cmd} "
-            f"&& ls {gemm_cfg_dir}/gfx942-GEMM-AFP4WFP4.json"
-        )
-
-        cmd = f'docker exec {self.container_name} /bin/bash -c {shlex.quote(inner)}'
-        for hdl in (self.p_phdl, self.d_phdl):
-            out = hdl.exec(cmd)
-            for node, text in (out or {}).items():
-                log.info("aiter config setup on %s:\n%s", node, text)
-                if "kimik2_fp4_tuned_fmoe.csv" not in (text or ""):
-                    fail_test(f"Failed to copy kimik2_fp4_tuned_fmoe.csv on {node}")
-                if "gfx942-GEMM-AFP4WFP4.json" not in (text or ""):
-                    fail_test(f"Failed to create gfx942-GEMM-AFP4WFP4.json on {node}")
-    
-    
     # Helper function for setting up decode container environment
     def setup_decode_container_env(
         self,
@@ -472,12 +410,6 @@ class SglangDisaggPD:
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
-
-                    export SGLANG_USE_AITER=1
-                    export AMDGCN_USE_BUFFER_OPS=1
-                    export HIP_FORCE_DEV_KERNARG=1
-                    export HSA_NO_SCRATCH_RECLAIM=1
-                    export MOE_PADDING=1
 
                     export MASTER_DECODE_ADDR={self.inf_dict['decode_coordinator_addr']}
                     export MASTER_DECODE_PORT={self.inf_dict['decode_coordinator_port']}
@@ -1469,8 +1401,7 @@ class SglangDisaggPD:
         port = int(self.inf_dict["proxy_router_serv_port"])
         model_name = self.bp_dict["model"]
 
-        host_path = model_name.replace("/root/models", "/mnt/dtni/models", 1)
-        info = OpenAIProbe.resolve_local_model_identity(host_path)
+        info = OpenAIProbe.resolve_local_model_identity(model_name)
         log.info("Model info:\n%s", info)
 
         probe_src = OpenAIProbe.probe_script(port, model_name)
