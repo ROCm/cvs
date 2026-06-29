@@ -379,6 +379,15 @@ class SglangDisaggPD:
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
 
+                    export SGLANG_USE_AITER=1
+                    export VLLM_ROCM_USE_AITER=1
+                    export AMDGCN_USE_BUFFER_OPS=1
+                    export VLLM_ROCM_USE_AITER_MLA_PS=1
+                    export VLLM_ROCM_QUICK_REDUCE_QUANTIZATION=INT4
+                    export VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS=1
+                    export VLLM_ROCM_USE_AITER_TUNED_UNQUANTIZED_GEMM=1
+                    export VLLM_ROCM_DISABLE_ATTENTION_LINEAR_LAYER_DYNAMIC_MXFP4_QUANT=1
+
                     export MASTER_PREFILL_ADDR={self.inf_dict['prefill_coordinator_addr']}
                     export MASTER_PREFILL_PORT={self.inf_dict['prefill_coordinator_port']}
 
@@ -410,6 +419,15 @@ class SglangDisaggPD:
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
+
+                    export SGLANG_USE_AITER=1
+                    export VLLM_ROCM_USE_AITER=1
+                    export AMDGCN_USE_BUFFER_OPS=1
+                    export VLLM_ROCM_USE_AITER_MLA_PS=1
+                    export VLLM_ROCM_QUICK_REDUCE_QUANTIZATION=INT4
+                    export VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS=1
+                    export VLLM_ROCM_USE_AITER_TUNED_UNQUANTIZED_GEMM=1
+                    export VLLM_ROCM_DISABLE_ATTENTION_LINEAR_LAYER_DYNAMIC_MXFP4_QUANT=1
 
                     export MASTER_DECODE_ADDR={self.inf_dict['decode_coordinator_addr']}
                     export MASTER_DECODE_PORT={self.inf_dict['decode_coordinator_port']}
@@ -1403,7 +1421,7 @@ class SglangDisaggPD:
 
         host_path = model_name.replace("/root/models", "/mnt/dtni/models", 1)
         info = OpenAIProbe.resolve_local_model_identity(host_path)
-        log.info("Model info: %s", info)
+        log.info("Model info:\n%s", info)
 
         probe_src = OpenAIProbe.probe_script(port, model_name)
         b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
