@@ -380,13 +380,10 @@ class SglangDisaggPD:
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
 
                     export SGLANG_USE_AITER=1
-                    export VLLM_ROCM_USE_AITER=1
                     export AMDGCN_USE_BUFFER_OPS=1
-                    export VLLM_ROCM_USE_AITER_MLA_PS=1
-                    export VLLM_ROCM_QUICK_REDUCE_QUANTIZATION=INT4
-                    export VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS=1
-                    export VLLM_ROCM_USE_AITER_TUNED_UNQUANTIZED_GEMM=1
-                    export VLLM_ROCM_DISABLE_ATTENTION_LINEAR_LAYER_DYNAMIC_MXFP4_QUANT=1
+                    export HIP_FORCE_DEV_KERNARG=1
+                    export HSA_NO_SCRATCH_RECLAIM=1
+                    export MOE_PADDING=1
 
                     export MASTER_PREFILL_ADDR={self.inf_dict['prefill_coordinator_addr']}
                     export MASTER_PREFILL_PORT={self.inf_dict['prefill_coordinator_port']}
@@ -403,6 +400,26 @@ class SglangDisaggPD:
                    chmod 755 /tmp/prefill_env_script.sh; /tmp/prefill_env_script.sh" '''
         self.p_phdl.exec(cmd)
 
+    # Helper function for setting up AITER Kimi-K2.6-MXFP4 configuration
+    def setup_aiter_kimik2_fp4_config(self) -> None:
+        """Copy pre-staged tuned AITER CSV into aiter model_configs before model load."""
+        src = "/root/models/Kimi-K2.6-MXFP4/kimik2_fp4_tuned_fmoe.csv"
+        dst_dir = "/usr/local/lib/python3.10/dist-packages/aiter/configs/model_configs"
+        dst = f"{dst_dir}/kimik2_fp4_tuned_fmoe.csv"
+        inner = (
+            f"mkdir -p {dst_dir} "
+            f"&& cp {src} {dst} "
+            f"&& ls -la {dst}"
+        )
+        cmd = f'docker exec {self.container_name} /bin/bash -c {shlex.quote(inner)}'
+        for hdl in (self.p_phdl, self.d_phdl):
+            out = hdl.exec(cmd)
+            for node, text in (out or {}).items():
+                log.info("aiter CSV copy on %s:\n%s", node, text)
+                if "kimik2_fp4_tuned_fmoe.csv" not in (text or ""):
+                    fail_test(f"Failed to copy kimik2_fp4_tuned_fmoe.csv on {node}")
+    
+    
     # Helper function for setting up decode container environment
     def setup_decode_container_env(
         self,
@@ -421,13 +438,10 @@ class SglangDisaggPD:
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
 
                     export SGLANG_USE_AITER=1
-                    export VLLM_ROCM_USE_AITER=1
                     export AMDGCN_USE_BUFFER_OPS=1
-                    export VLLM_ROCM_USE_AITER_MLA_PS=1
-                    export VLLM_ROCM_QUICK_REDUCE_QUANTIZATION=INT4
-                    export VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS=1
-                    export VLLM_ROCM_USE_AITER_TUNED_UNQUANTIZED_GEMM=1
-                    export VLLM_ROCM_DISABLE_ATTENTION_LINEAR_LAYER_DYNAMIC_MXFP4_QUANT=1
+                    export HIP_FORCE_DEV_KERNARG=1
+                    export HSA_NO_SCRATCH_RECLAIM=1
+                    export MOE_PADDING=1
 
                     export MASTER_DECODE_ADDR={self.inf_dict['decode_coordinator_addr']}
                     export MASTER_DECODE_PORT={self.inf_dict['decode_coordinator_port']}
