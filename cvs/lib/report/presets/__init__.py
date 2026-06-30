@@ -1,0 +1,1 @@
+'''Per-suite report presets.'''

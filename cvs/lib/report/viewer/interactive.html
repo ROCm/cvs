@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>__TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<style>
+:root {
+  --bg: #0f1117; --panel: #1a1d27; --border: #2a2f3d; --text: #e8eaef;
+  --muted: #9aa3b5; --accent: #ff6b35; --pass: #3dd68c; --fail: #ff5c6a; --record: #6b9fff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg);
+  color: var(--text); padding: 1.25rem; line-height: 1.45; }
+h1 { margin: 0 0 0.25rem; font-size: 1.5rem; }
+h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  margin: 0 0 0.75rem; }
+.subtitle { color: var(--muted); margin: 0 0 1rem; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 1rem; margin-bottom: 1rem; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
+.toolbar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; color: var(--muted); }
+.toolbar select, .toolbar input, .toolbar button {
+  background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.5rem; min-width: 7rem; font-size: 0.85rem; }
+.toolbar button { cursor: pointer; min-width: auto; }
+.toolbar button:hover { border-color: var(--accent); }
+.meta { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.75rem; }
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+.chart-wrap { position: relative; height: 260px; }
+table.data { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+table.data th, table.data td { border: 1px solid var(--border); padding: 0.45rem 0.55rem; text-align: right; }
+table.data th { background: rgba(255,255,255,0.04); color: var(--muted); font-size: 0.7rem; text-transform: uppercase; }
+table.data td:first-child, table.data th:first-child { text-align: left; }
+tr.fail td { background: rgba(255,92,106,0.08); }
+tr.regression td { background: rgba(255,92,106,0.14); }
+tr.changed td { background: rgba(255,107,53,0.1); }
+.status-pass { color: var(--pass); } .status-fail { color: var(--fail); } .status-record { color: var(--record); }
+.heat td { text-align: center; font-size: 0.75rem; min-width: 3rem; }
+.matrix-pass { background: rgba(61,214,140,0.15); color: var(--pass); }
+.matrix-fail { background: rgba(255,92,106,0.15); color: var(--fail); }
+.matrix-record { background: rgba(107,159,255,0.1); color: var(--record); }
+.matrix-na { color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>__TITLE__</h1>
+<p class="subtitle">__SUBTITLE__</p>
+
+<section class="panel">
+  <h2>Filters</h2>
+  <div class="toolbar">
+    <label>ISL <select id="f-isl"><option value="">All</option></select></label>
+    <label>OSL <select id="f-osl"><option value="">All</option></select></label>
+    <label>Policy <select id="f-policy"><option value="">All</option></select></label>
+    <label>Host <select id="f-host"><option value="">All</option></select></label>
+    <label>Tier fail <select id="f-tier"><option value="">Any</option></select></label>
+    <label>Search <input id="f-search" type="search" placeholder="cell id, host…"/></label>
+    <label>Baseline JSON <input id="f-baseline" type="file" accept=".json,application/json"/></label>
+    <label>Delta % <input id="f-delta-threshold" type="number" min="0" step="0.5" value="5" style="min-width:4rem"/></label>
+    <button type="button" id="btn-export">Export CSV</button>
+    <button type="button" id="btn-reset-zoom">Reset chart zoom</button>
+  </div>
+  <p class="meta" id="meta">Loading…</p>
+</section>
+
+<section class="panel" id="charts-section" style="display:none">
+  <h2>Concurrency charts</h2>
+  <p class="meta">Filtered sweep slice · drag to pan, scroll to zoom</p>
+  <div class="chart-grid" id="chart-grid"></div>
+</section>
+
+<section class="panel" id="heatmap-section" style="display:none">
+  <h2>Throughput heatmap</h2>
+  <p class="meta">Concurrency columns · cell color = output tok/s</p>
+  <div style="overflow-x:auto" id="heatmap-wrap"></div>
+</section>
+
+<section class="panel" id="gates-section" style="display:none">
+  <h2>Gate matrix</h2>
+  <div style="overflow-x:auto" id="gate-wrap"></div>
+</section>
+
+<section class="panel">
+  <h2>Cells</h2>
+  <div style="overflow-x:auto">
+    <table class="data"><thead><tr id="cells-header">
+      <th>Cell</th><th>Host</th><th>C</th><th>Throughput</th><th>TTFT</th><th>TPOT</th><th>Status</th>
+    </tr></thead><tbody id="rows"></tbody></table>
+  </div>
+</section>
+
+__EMBEDDED_JSON__
+
+<script>
+const JSON_PATH = __JSON_PATH__;
+const tierOrder = __TIER_ORDER__;
+let reportData = null;
+let allCells = [];
+let chartInstances = [];
+let prevRunByKey = null;
+let deltaThresholdPct = 5;
+
+function cellMapKey(c) {
+  return String(c.cell_id || '') + '\0' + String(c.host || '');
+}
+
+function applyPrevRunPanel(panel) {
+  if (!panel || !panel.rows) {
+    prevRunByKey = null;
+    return;
+  }
+  prevRunByKey = new Map();
+  panel.rows.forEach(r => {
+    prevRunByKey.set(String(r.cell_id || '') + '\0' + String(r.host || ''), r);
+  });
+  if (panel.threshold_pct != null) {
+    deltaThresholdPct = Number(panel.threshold_pct);
+    document.getElementById('f-delta-threshold').value = String(deltaThresholdPct);
+  }
+}
+
+function buildPrevRunFromBaseline(data) {
+  const headline = (reportData.report || {}).headline_metric || 'client.output_throughput';
+  const threshold = Number(document.getElementById('f-delta-threshold').value) || deltaThresholdPct;
+  const baseMap = new Map();
+  (data.cells || []).forEach(c => baseMap.set(cellMapKey(c), c));
+  prevRunByKey = new Map();
+  allCells.forEach(c => {
+    const prev = baseMap.get(cellMapKey(c));
+    const current = metricNum(c, headline);
+    const previous = prev ? metricNum(prev, headline) : null;
+    let delta_pct = null;
+    let regression = false;
+    let changed = false;
+    if (current != null && previous != null && previous !== 0) {
+      delta_pct = 100.0 * (current - previous) / previous;
+      changed = Math.abs(delta_pct) > threshold;
+      regression = changed && delta_pct < 0;
+    }
+    prevRunByKey.set(cellMapKey(c), {
+      previous_throughput: previous,
+      'compare.prev_run.throughput_delta_pct': delta_pct,
+      regression,
+      changed,
+    });
+  });
+}
+
+function updateCellsHeader() {
+  const header = document.getElementById('cells-header');
+  const base = ['Cell', 'Host', 'C', 'Throughput', 'TTFT', 'TPOT'];
+  if (prevRunByKey) {
+    base.push('Prev tok/s', 'Delta %');
+  }
+  base.push('Status');
+  header.innerHTML = base.map(h => '<th>' + h + '</th>').join('');
+}
+
+function cellStatus(cell) {
+  for (const t of tierOrder) {
+    if (cell.tiers && cell.tiers[t] === 'fail') return 'fail';
+  }
+  return 'pass';
+}
+
+function metricVal(cell, key) {
+  const v = (cell.actuals || {})[key];
+  if (v == null) return '—';
+  return Math.abs(v) >= 1000
+    ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 })
+    : Number(v).toFixed(1);
+}
+
+function metricNum(cell, key) {
+  const v = (cell.actuals || {})[key];
+  return v == null ? null : Number(v);
+}
+
+function filteredCells() {
+  const isl = document.getElementById('f-isl').value;
+  const osl = document.getElementById('f-osl').value;
+  const policy = document.getElementById('f-policy').value;
+  const host = document.getElementById('f-host').value;
+  const tier = document.getElementById('f-tier').value;
+  const q = document.getElementById('f-search').value.trim().toLowerCase();
+  return allCells.filter(c => {
+    if (isl && String(c.isl) !== isl) return false;
+    if (osl && String(c.osl) !== osl) return false;
+    if (policy && String(c.policy) !== policy) return false;
+    if (host && String(c.host) !== host) return false;
+    if (tier && (c.tiers || {})[tier] !== 'fail') return false;
+    if (q) {
+      const hay = [c.cell_id, c.host, c.policy, c.isl, c.osl, c.concurrency].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function populateFilters() {
+  const uniq = (key) => [...new Set(allCells.map(c => String(c[key] ?? '')))].filter(Boolean).sort();
+  for (const [id, key] of [['f-isl','isl'],['f-osl','osl'],['f-policy','policy'],['f-host','host']]) {
+    const sel = document.getElementById(id);
+    uniq(key).forEach(v => {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = v; sel.appendChild(o);
+    });
+  }
+  const tierSel = document.getElementById('f-tier');
+  tierOrder.forEach(t => {
+    const o = document.createElement('option');
+    o.value = t; o.textContent = t + ' fail'; tierSel.appendChild(o);
+  });
+}
+
+function destroyCharts() {
+  chartInstances.forEach(ch => ch.destroy());
+  chartInstances = [];
+  document.getElementById('chart-grid').innerHTML = '';
+}
+
+function buildCharts(rows) {
+  destroyCharts();
+  const chartConfig = reportData.chart_config || [];
+  if (!chartConfig.length || rows.length < 2) {
+    document.getElementById('charts-section').style.display = 'none';
+    return;
+  }
+  document.getElementById('charts-section').style.display = 'block';
+  const colors = ['#ff6b35', '#6b9fff', '#c77dff'];
+  chartConfig.forEach((spec, idx) => {
+    const byConc = new Map();
+    rows.forEach(c => {
+      const conc = Number(c.concurrency);
+      const val = metricNum(c, spec.metric);
+      if (val == null || Number.isNaN(conc)) return;
+      byConc.set(conc, Math.max(byConc.get(conc) ?? -Infinity, val));
+    });
+    const points = [...byConc.entries()].sort((a, b) => a[0] - b[0]);
+    if (points.length < 2) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'chart-wrap';
+    const canvas = document.createElement('canvas');
+    wrap.appendChild(canvas);
+    document.getElementById('chart-grid').appendChild(wrap);
+    const color = colors[idx % colors.length];
+    const ch = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: points.map(p => 'C=' + p[0]),
+        datasets: [{
+          label: spec.title + ' (' + spec.unit + ')',
+          data: points.map(p => p[1]),
+          borderColor: color,
+          backgroundColor: color + '33',
+          tension: 0.2,
+          fill: true,
+          pointRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#e8eaef' } },
+          zoom: {
+            pan: { enabled: true, mode: 'x' },
+            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+          },
+        },
+        scales: {
+          x: { ticks: { color: '#9aa3b5' }, grid: { color: '#2a2f3d' } },
+          y: { ticks: { color: '#9aa3b5' }, grid: { color: '#2a2f3d' } },
+        },
+      },
+    });
+    chartInstances.push(ch);
+  });
+  if (!chartInstances.length) {
+    document.getElementById('charts-section').style.display = 'none';
+  }
+}
+
+function buildHeatmap(rows) {
+  const wrap = document.getElementById('heatmap-wrap');
+  const headline = (reportData.report || {}).headline_metric || 'client.output_throughput';
+  const groups = new Map();
+  rows.forEach(c => {
+    const key = c.isl + '|' + c.osl + '|' + c.policy;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(c);
+  });
+  if (!groups.size) {
+    document.getElementById('heatmap-section').style.display = 'none';
+    return;
+  }
+  const allConcs = [...new Set(rows.map(c => Number(c.concurrency)))].sort((a, b) => a - b);
+  let maxT = 0;
+  groups.forEach(cells => cells.forEach(c => {
+    const v = metricNum(c, headline);
+    if (v != null) maxT = Math.max(maxT, v);
+  }));
+  let html = '<table class="data heat"><thead><tr><th>ISL / OSL</th>';
+  allConcs.forEach(c => { html += '<th>C=' + c + '</th>'; });
+  html += '</tr></thead><tbody>';
+  [...groups.entries()].sort().forEach(([key, cells]) => {
+    const [isl, osl, policy] = key.split('|');
+    html += '<tr><td>ISL=' + isl + ' OSL=' + osl + ' ' + policy + '</td>';
+    allConcs.forEach(conc => {
+      const cell = cells.find(c => Number(c.concurrency) === conc);
+      const v = cell ? metricNum(cell, headline) : null;
+      if (v == null) {
+        html += '<td class="matrix-na">—</td>';
+      } else {
+        const pct = maxT > 0 ? v / maxT : 0;
+        const r = Math.round(255 - pct * 120);
+        const g = Math.round(80 + pct * 120);
+        html += '<td style="background:rgba(' + r + ',' + g + ',100,0.35)">' + metricVal(cell, headline) + '</td>';
+      }
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+  document.getElementById('heatmap-section').style.display = 'block';
+}
+
+function buildGateMatrix() {
+  const matrix = reportData.gate_matrix || [];
+  const wrap = document.getElementById('gate-wrap');
+  if (!matrix.length) {
+    document.getElementById('gates-section').style.display = 'none';
+    return;
+  }
+  let html = '<table class="data"><thead><tr><th>Cell</th>';
+  tierOrder.forEach(t => { html += '<th>' + t + '</th>'; });
+  html += '</tr></thead><tbody>';
+  matrix.forEach(row => {
+    html += '<tr><td>' + (row.label || row.cell_id || '') + '</td>';
+    tierOrder.forEach(t => {
+      const st = (row.tiers || {})[t] || 'na';
+      html += '<td class="matrix-' + st + '">' + st + '</td>';
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+  document.getElementById('gates-section').style.display = 'block';
+}
+
+function renderTable(rows) {
+  document.getElementById('meta').textContent =
+    'Showing ' + rows.length + ' of ' + allCells.length + ' cells'
+    + (prevRunByKey ? ' · baseline comparison active' : '');
+  updateCellsHeader();
+  const tbody = document.getElementById('rows');
+  tbody.innerHTML = rows.map(c => {
+    const st = cellStatus(c);
+    const prev = prevRunByKey ? prevRunByKey.get(cellMapKey(c)) : null;
+    let rowCls = st;
+    if (prev && prev.regression) rowCls = 'regression';
+    else if (prev && prev.changed) rowCls = 'changed';
+    let deltaCol = '';
+    if (prevRunByKey) {
+      const prevVal = prev && prev.previous_throughput != null
+        ? Number(prev.previous_throughput).toLocaleString(undefined, { maximumFractionDigits: 1 })
+        : '—';
+      const delta = prev && prev['compare.prev_run.throughput_delta_pct'] != null
+        ? (prev['compare.prev_run.throughput_delta_pct'] >= 0 ? '+' : '')
+          + Number(prev['compare.prev_run.throughput_delta_pct']).toFixed(1) + '%'
+        : '—';
+      deltaCol = '<td>' + prevVal + '</td><td>' + delta + '</td>';
+    }
+    return '<tr class="' + rowCls + '"><td>' + (c.cell_id || '') + '</td><td>' + (c.host || '') + '</td>'
+      + '<td>' + c.concurrency + '</td>'
+      + '<td>' + metricVal(c, 'client.output_throughput') + '</td>'
+      + '<td>' + metricVal(c, 'client.mean_ttft_ms') + '</td>'
+      + '<td>' + metricVal(c, 'client.mean_tpot_ms') + '</td>'
+      + deltaCol
+      + '<td class="status-' + st + '">' + st.toUpperCase() + '</td></tr>';
+  }).join('');
+}
+
+function render() {
+  const rows = filteredCells();
+  renderTable(rows);
+  buildCharts(rows);
+  buildHeatmap(rows);
+}
+
+function exportCsv() {
+  const rows = filteredCells();
+  const header = ['cell_id', 'host', 'isl', 'osl', 'policy', 'concurrency', 'throughput', 'ttft_ms', 'tpot_ms'];
+  if (prevRunByKey) header.push('prev_throughput', 'delta_pct');
+  header.push('status');
+  const lines = [header.join(',')];
+  rows.forEach(c => {
+    const st = cellStatus(c);
+    const prev = prevRunByKey ? prevRunByKey.get(cellMapKey(c)) : null;
+    const row = [
+      c.cell_id, c.host, c.isl, c.osl, c.policy, c.concurrency,
+      metricNum(c, 'client.output_throughput') ?? '',
+      metricNum(c, 'client.mean_ttft_ms') ?? '',
+      metricNum(c, 'client.mean_tpot_ms') ?? '',
+    ];
+    if (prevRunByKey) {
+      row.push(prev && prev.previous_throughput != null ? prev.previous_throughput : '');
+      row.push(prev && prev['compare.prev_run.throughput_delta_pct'] != null
+        ? prev['compare.prev_run.throughput_delta_pct'] : '');
+    }
+    row.push(st);
+    lines.push(row.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(','));
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (reportData.suite_id || 'suite') + '_filtered.csv';
+  a.click();
+}
+
+document.getElementById('btn-export').addEventListener('click', exportCsv);
+document.getElementById('btn-reset-zoom').addEventListener('click', () => {
+  chartInstances.forEach(ch => { if (ch.resetZoom) ch.resetZoom(); });
+});
+document.getElementById('f-delta-threshold').addEventListener('change', () => {
+  const input = document.getElementById('f-baseline');
+  if (input.files && input.files[0]) {
+    input.dispatchEvent(new Event('change'));
+  } else if (reportData && reportData.panels && reportData.panels.prev_run) {
+    applyPrevRunPanel(reportData.panels.prev_run);
+    render();
+  }
+});
+document.getElementById('f-baseline').addEventListener('change', ev => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) {
+    prevRunByKey = null;
+    if (reportData && reportData.panels && reportData.panels.prev_run) {
+      applyPrevRunPanel(reportData.panels.prev_run);
+    }
+    render();
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      buildPrevRunFromBaseline(JSON.parse(reader.result));
+      render();
+    } catch (err) {
+      document.getElementById('meta').textContent = 'Invalid baseline JSON: ' + err;
+    }
+  };
+  reader.readAsText(file);
+});
+
+function loadReportData() {
+  const embedded = document.getElementById('embedded-report-json');
+  if (embedded && embedded.textContent.trim()) {
+    return Promise.resolve(JSON.parse(embedded.textContent));
+  }
+  return fetch(JSON_PATH).then(r => {
+    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+    return r.json();
+  });
+}
+
+loadReportData().then(data => {
+  reportData = data;
+  allCells = data.cells || [];
+  if (data.panels && data.panels.prev_run) {
+    applyPrevRunPanel(data.panels.prev_run);
+  }
+  populateFilters();
+  buildGateMatrix();
+  ['f-isl','f-osl','f-policy','f-host','f-tier','f-search'].forEach(id => {
+    document.getElementById(id).addEventListener('input', render);
+    document.getElementById(id).addEventListener('change', render);
+  });
+  render();
+}).catch(err => {
+  document.getElementById('meta').textContent = 'Failed to load report JSON: ' + err;
+});
+</script>
+</body>
+</html>

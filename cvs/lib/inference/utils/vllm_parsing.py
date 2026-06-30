@@ -171,3 +171,107 @@ GATED_METRICS = {
     "success_rate",
     "failed",
 }
+
+
+# ---------------------------------------------------------------------------
+# Report-library bindings (cvs.lib.report). Render-only: these describe how the
+# vLLM client.* metric vocabulary maps onto the generic inference report's
+# results table, tier gate matrix, and per-tier threshold lookup. They do NOT
+# change pass/fail enforcement -- that lives in the suite + GATED_METRICS.
+# ---------------------------------------------------------------------------
+
+# Results-table column preset for cvs.lib.report.inference_payload.build_results_table.
+# CONTRACT: the first seven entries MUST be the fixed positional columns
+# (Model, GPU, ISL, OSL, Policy, Conc, Host) with a None key -- build_results_table
+# emits those from the cell key/host directly and only looks up metric_keys[7:]
+# in each host's metric dict. Pinned by test_vllm_report_preset.
+VLLM_RESULTS_COLUMNS = (
+    ("Model", None),
+    ("GPU", None),
+    ("ISL", None),
+    ("OSL", None),
+    ("Policy", None),
+    ("Conc", None),
+    ("Host", None),
+    ("Req/s", "client.request_throughput"),
+    ("Total tok/s", "client.total_token_throughput"),
+    ("Output tok/s", "client.output_throughput"),
+    ("Mean TTFT (ms)", "client.mean_ttft_ms"),
+    ("P95 TTFT (ms)", "client.p95_ttft_ms"),
+    ("Mean TPOT (ms)", "client.mean_tpot_ms"),
+    ("P95 TPOT (ms)", "client.p95_tpot_ms"),
+    ("P99 ITL (ms)", "client.p99_itl_ms"),
+    ("Goodput (req/s)", "client.goodput"),
+)
+
+# Tier partition of the gated metrics for the report's gate matrix. Every name
+# in GATED_METRICS lands in exactly one tier here (pinned by a unit test), so the
+# matrix reflects real enforcement. Latency is split per family (ttft/tpot/itl/
+# e2el) for a readable matrix; "record" is appended by METRIC_TIER_ORDER below.
+METRIC_TIERS: dict[str, tuple[str, ...]] = {
+    "throughput": (
+        "total_token_throughput",
+        "output_throughput",
+    ),
+    "ttft": (
+        "mean_ttft_ms",
+        "median_ttft_ms",
+        "p90_ttft_ms",
+        "p95_ttft_ms",
+        "p99_ttft_ms",
+    ),
+    "tpot": (
+        "mean_tpot_ms",
+        "median_tpot_ms",
+        "p90_tpot_ms",
+        "p95_tpot_ms",
+        "p99_tpot_ms",
+    ),
+    "itl": (
+        "mean_itl_ms",
+        "median_itl_ms",
+        "p95_itl_ms",
+        "p99_itl_ms",
+    ),
+    "e2el": (
+        "mean_e2el_ms",
+        "median_e2el_ms",
+        "p90_e2el_ms",
+        "p95_e2el_ms",
+        "p99_e2el_ms",
+    ),
+    "health": (
+        "success_rate",
+        "failed",
+    ),
+}
+
+METRIC_TIER_ORDER: tuple[str, ...] = tuple(METRIC_TIERS) + ("record",)
+
+_TIERED_METRICS = frozenset(m for names in METRIC_TIERS.values() for m in names)
+
+# Record-only metrics: everything emitted that is not a pass/fail gate.
+RECORD_METRICS: tuple[str, ...] = tuple(
+    short for short, _unit in CLIENT_METRICS if short not in _TIERED_METRICS
+)
+
+
+def tier_metric_specs(thresholds_cell: dict, tier: str) -> dict[str, dict]:
+    """Return ``client.*`` threshold specs for one tier in a sweep cell.
+
+    For a gated tier, returns the specs present in ``thresholds_cell`` for that
+    tier's metrics; for ``"record"``, returns specs for the non-tiered metrics
+    (usually none -- record metrics are display-only). Mirrors the shape the
+    report engine's ``cell_build.tier_status`` expects.
+    """
+    if tier == "record":
+        names = RECORD_METRICS
+    else:
+        names = METRIC_TIERS.get(tier, ())
+    specs = {}
+    for short in names:
+        full = f"client.{short}"
+        spec = thresholds_cell.get(full)
+        if spec is not None:
+            specs[full] = spec
+    return specs

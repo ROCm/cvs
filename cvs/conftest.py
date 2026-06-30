@@ -11,7 +11,10 @@ from pathlib import Path
 
 import pytest
 
+from cvs.lib import globals as _cvs_globals
 from cvs.lib.report_plugins import HtmlReportManager
+
+log = _cvs_globals.log
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -25,6 +28,41 @@ def pytest_configure(config):
     config._suite_name = suite_name
     config._test_html_dir = f"{suite_name}_html"
     config._html_report_manager = HtmlReportManager(config)
+
+    # Auto-register a per-suite inference report preset, if one exists for this
+    # run stem (cvs/lib/report/presets/<suite_name>.py). No-op for suites without
+    # a preset, so non-inference suites are unaffected. Must run AFTER
+    # _suite_name is set above.
+    from cvs.lib.report.auto_register import try_auto_register_inference_suite_report
+
+    try_auto_register_inference_suite_report(config)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _cvs_inference_suite_report_session(request):
+    """Bind ``inf_res_dict`` / ``variant_config`` / ``lifecycle`` for session-end
+    report generation, only when an inference report preset is registered."""
+    from cvs.lib.report.registry import bind_session_results, get_suite_report_config
+    from cvs.lib.report.types import InferenceReportConfig
+
+    if not isinstance(get_suite_report_config(request.config), InferenceReportConfig):
+        yield
+        return
+
+    try:
+        inf_res_dict = request.getfixturevalue("inf_res_dict")
+        variant_config = request.getfixturevalue("variant_config")
+        lifecycle = request.getfixturevalue("lifecycle")
+    except pytest.FixtureLookupError:
+        yield
+        return
+
+    bind_session_results(
+        inf_res_dict=inf_res_dict,
+        variant_config=variant_config,
+        lifecycle=lifecycle,
+    )
+    yield
 
 
 # Add all additional cmd line arguments for the script
@@ -93,6 +131,11 @@ def pytest_metadata(metadata):
 
 # Prepare a clean per-run log directory before tests start.
 def pytest_sessionstart(session):
+    # Clear any session-global suite-report state left over from a prior session
+    # in the same process (e.g. multi-suite runs, --reruns, xdist workers).
+    from cvs.lib.report.registry import clear_session_results
+
+    clear_session_results()
     session.config._html_report_manager.setup_log_dir()
 
 
@@ -102,6 +145,18 @@ def pytest_runtest_makereport(item, call):  # noqa: ARG001
     outcome = yield
     report = outcome.get_result()
     report.extras = item.config._html_report_manager.write_test_log(report, item.originalname)
+
+    # When an inference report preset is active, attach the compact per-cell card
+    # to metric rows. NOTE: we deliberately do NOT attach a lifecycle stage table
+    # here -- the inference suite conftest (e.g. tests/inference/vllm/conftest.py)
+    # already renders one per test, and attaching it here too would duplicate it.
+    from cvs.lib.report.registry import get_suite_report_config
+    from cvs.lib.report.types import InferenceReportConfig
+
+    if isinstance(get_suite_report_config(item.config), InferenceReportConfig):
+        from cvs.lib.report.inference_wiring import attach_inference_suite_report_row_extra
+
+        attach_inference_suite_report_row_extra(item, report)
 
 
 # Replace inline pytest-html log content with a short externalized-log message.
@@ -118,4 +173,11 @@ def pytest_html_results_summary(prefix, summary, postfix):
 @pytest.hookimpl(hookwrapper=True)
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
     yield  # wait for pytest-html and all other plugins to finish writing the report
-    session.config._html_report_manager.create_zip_bundle(session)
+    mgr = session.config._html_report_manager
+    # Render-only suite reports must never gate the results archive: a render
+    # failure is logged and swallowed so create_zip_bundle always runs.
+    try:
+        mgr.generate_suite_reports(session)
+    except Exception:
+        log.exception("suite report generation failed; continuing to zip bundle")
+    mgr.create_zip_bundle(session)

@@ -367,6 +367,55 @@ class HtmlReportManager:
 
         return html
 
+    def generate_suite_reports(self, session):
+        """Write registered suite report HTML/JSON into the pytest bundle before zip."""
+        if not self.is_enabled:
+            return
+
+        from cvs.lib.report.inference import publish_inference_suite_report
+        from cvs.lib.report.registry import get_session_results, get_suite_report_config
+        from cvs.lib.report.types import InferenceReportConfig
+
+        report_config = get_suite_report_config(session.config)
+        if report_config is None:
+            return
+
+        store = get_session_results()
+
+        if not isinstance(report_config, InferenceReportConfig):
+            log.warning("Unknown suite report config type: %s", type(report_config).__name__)
+            return
+
+        inf_res_dict = store.get("inf_res_dict")
+        if not inf_res_dict:
+            log.info("Skipping suite report generation: no results in session store")
+            return
+
+        artifacts = publish_inference_suite_report(
+            report_config,
+            variant_config=store.get("variant_config"),
+            inf_res_dict=inf_res_dict,
+            lifecycle_report=store.get("lifecycle_report") or {},
+            report_manager=self,
+            pytest_config=session.config,
+        )
+        if artifacts:
+            from pathlib import Path
+
+            from cvs.lib.report.ci_summary import write_inference_ci_summary
+
+            htmlpath = getattr(session.config.option, "htmlpath", None)
+            if htmlpath:
+                summary_path = write_inference_ci_summary(
+                    artifacts["payload"],
+                    report_config,
+                    Path(htmlpath).resolve().parent,
+                )
+                self.add_html_to_report(
+                    summary_path,
+                    link_name=f"{report_config.link_name} summary",
+                )
+
     @staticmethod
     def inject_style_overrides(prefix):
         """Inject CSS to hide show/hide details UI elements."""
