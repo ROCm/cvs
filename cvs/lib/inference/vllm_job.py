@@ -373,6 +373,11 @@ class VllmJob:
         broadcast would launch N competing clients, each connecting to the same
         server endpoint and inflating load.
         """
+        # Ensure this cell's head output dir exists. build_server_cmd creates it
+        # on a fresh bringup, but the server-reuse path skips build_server_cmd,
+        # so the client (which writes client.log + results here) must guarantee
+        # the directory itself.
+        self.orch.exec_on_head(f"mkdir -p {shlex.quote(self.out_dir)}")
         args = [
             "vllm",
             "bench",
