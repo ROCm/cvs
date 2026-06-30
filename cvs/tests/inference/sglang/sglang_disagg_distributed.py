@@ -6,13 +6,12 @@ Single SGLang disaggregated (PD) benchmark module: model is selected from
 ``benchmark_params`` via ``active_benchmark`` / env / single-key auto (see ``_shared``).
 '''
 
-import re
 import time
 
 import pytest
 
-from cvs.lib import docker_lib, globals
-from cvs.lib.utils_lib import fail_test, update_test_result
+from cvs.lib import globals
+from cvs.lib.utils_lib import update_test_result
 from cvs.tests.inference.sglang._shared import test_print_results_table
 
 log = globals.log
@@ -30,71 +29,24 @@ def _complete_stage(lifecycle, request, label, t0):
     update_test_result()
 
 
-def _container_launch_handles(inference_dict):
-    """Return the PSSH handle list needed to launch inference containers."""
-    hdl_list = ["p_phdl", "d_phdl"]
-    proxy = inference_dict["proxy_router_node"]
-    bench = inference_dict["benchmark_serv_node"]
-    prefill = inference_dict["prefill_node_list"]
-    decode = inference_dict["decode_node_list"]
-
-    if proxy == bench:
-        if proxy not in prefill and proxy not in decode:
-            hdl_list.append("r_phdl")
-    else:
-        if proxy not in prefill and proxy not in decode:
-            hdl_list.append("r_phdl")
-        if bench not in prefill and bench not in decode:
-            hdl_list.append("b_phdl")
-    return hdl_list
-
-
-def test_cleanup_stale_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict, lifecycle, request):
+def test_cleanup_stale_containers(orch, lifecycle, request):
     """Stage 0: remove stale containers and logs from a prior run."""
     globals.error_list = []
     t0 = time.monotonic()
-    container_name = inference_dict["container_name"]
-    for a_phdl in (p_phdl, d_phdl, r_phdl, b_phdl):
-        docker_lib.kill_docker_container(a_phdl, container_name)
-        docker_lib.delete_all_containers_and_volumes(a_phdl)
-    log.info("Cleaning up log directory")
-    r_phdl.exec(f"sudo rm -rf {inference_dict['log_dir']}")
+    orch.teardown_containers()
+    orch.cleanup_log_dir()
     time.sleep(5)
     _complete_stage(lifecycle, request, "stale_cleanup", t0)
 
 
-def test_launch_inference_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict, lifecycle, request):
+def test_launch_inference_containers(orch, lifecycle, request):
     """Stage 1: launch SGLang containers on prefill/decode/router/bench nodes."""
     _skip_if_prior_failure(lifecycle)
     log.info("Testcase launch SGLang containers")
     globals.error_list = []
     t0 = time.monotonic()
-    container_name = inference_dict["container_name"]
-    handles = {
-        "p_phdl": p_phdl,
-        "d_phdl": d_phdl,
-        "r_phdl": r_phdl,
-        "b_phdl": b_phdl,
-    }
-    for key in _container_launch_handles(inference_dict):
-        a_phdl = handles[key]
-        docker_lib.launch_docker_container(
-            a_phdl,
-            container_name,
-            inference_dict["container_image"],
-            inference_dict["container_config"]["device_list"],
-            inference_dict["container_config"]["volume_dict"],
-            inference_dict["container_config"]["env_dict"],
-            shm_size="48G",
-            timeout=60 * 20,
-        )
-    time.sleep(30)
-    log.info("Verify if the containers have been launched properly")
-    for a_phdl in (p_phdl, d_phdl, r_phdl, b_phdl):
-        out_dict = a_phdl.exec("docker ps")
-        for node, out in out_dict.items():
-            if not re.search(re.escape(container_name), out or "", re.I):
-                fail_test(f"Failed to launch container on node {node}")
+    if not orch.setup_containers():
+        lifecycle.failed = True
     _complete_stage(lifecycle, request, "container_launch", t0)
 
 
@@ -223,14 +175,10 @@ def test_disagg_gpu_topology(im_obj, lifecycle, request):
     _complete_stage(lifecycle, request, "gpu_topology", t0)
 
 
-def test_teardown(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict, lifecycle, request):
+def test_teardown(orch, lifecycle, request):
     """Final stage: tear down containers and logs. Runs even if a prior stage failed."""
-    container_name = inference_dict["container_name"]
     t0 = time.monotonic()
-    for a_phdl in (p_phdl, d_phdl, r_phdl, b_phdl):
-        docker_lib.kill_docker_container(a_phdl, container_name)
-        docker_lib.delete_all_containers_and_volumes(a_phdl)
-    log.info("Teardown: cleaning up log directory")
-    r_phdl.exec(f"sudo rm -rf {inference_dict['log_dir']}")
+    orch.teardown_containers()
+    orch.cleanup_log_dir()
     lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t0)
     lifecycle.torn_down = True
