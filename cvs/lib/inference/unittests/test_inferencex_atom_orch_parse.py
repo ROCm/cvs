@@ -254,6 +254,47 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         self.assertTrue(job.CLIENT_CRASH_RE.search("Traceback (most recent call last)"))
         self.assertTrue(job.CLIENT_LAUNCH_FAIL_RE.search("unrecognized arguments: --bad"))
         self.assertTrue(job.EARLY_FAILURE_RE.search("No such file or directory"))
+        self.assertTrue(job.ATOM_SERVER_FATAL_RE.search("load model runner failed"))
+        self.assertTrue(job.ATOM_SERVER_FATAL_RE.search("ModelRunner2/8] proc died unexpectedly"))
+
+    def test_atom_server_argv_includes_max_model_len(self):
+        job = InferenceXAtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        argv = job._atom_server_argv()
+        self.assertIn("--max-model-len", argv)
+        self.assertEqual(argv[argv.index("--max-model-len") + 1], "8192")
+
+    def test_atom_server_argv_forwards_shared_serve_args(self):
+        variant = _fake_variant(driver="atom")
+        variant.roles.server.serve_args = {
+            "gpu-memory-utilization": "0.78",
+            "level": 0,
+            "enforce-eager": True,
+            "block-size": 64,
+        }
+        job = InferenceXAtomJob(
+            orch=FakeOrch(),
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        argv = job._atom_server_argv()
+        self.assertIn("--gpu-memory-utilization", argv)
+        self.assertEqual(argv[argv.index("--gpu-memory-utilization") + 1], "0.78")
+        self.assertIn("--level", argv)
+        self.assertEqual(argv[argv.index("--level") + 1], "0")
+        self.assertIn("--enforce-eager", argv)
+        self.assertNotIn("--block-size", argv)
 
 
 if __name__ == "__main__":

@@ -40,6 +40,25 @@ class InferenceXAtomJob:
         r"no such file or directory|command not found|cannot access|failed to start",
         re.I,
     )
+    # ATOM openai_server log signatures that mean the server will never become healthy.
+    ATOM_SERVER_FATAL_RE = re.compile(
+        r"proc died unexpectedly|load model runner failed|"
+        r"Failed to initialize all EngineCores|Engine Core Mgr:|"
+        r"Couldn't instantiate the backend tokenizer|is not pickleable|"
+        r"Unsupported quant dtype|CUDA out of memory|HIP out of memory|OutOfMemoryError|"
+        r"Traceback \(most recent call last\)",
+        re.I,
+    )
+
+    # serve_args keys forwarded to ``atom.entrypoints.openai_server`` (vLLM names where shared).
+    _ATOM_SHARED_SERVE_ARG_KEYS = frozenset(
+        {
+            "gpu-memory-utilization",
+            "enforce-eager",
+            "level",
+            "cudagraph-capture-sizes",
+        }
+    )
 
     _DEFAULT_SERVE_ARGS = {
         "block-size": 64,
@@ -229,6 +248,14 @@ class InferenceXAtomJob:
         argv.extend(self._flatten_serve_args(self.serve_args))
         return argv
 
+    def _atom_shared_serve_argv(self):
+        argv = []
+        for key in self._ATOM_SHARED_SERVE_ARG_KEYS:
+            if key not in self.serve_args:
+                continue
+            argv.extend(self._flatten_serve_args({key: self.serve_args[key]}))
+        return argv
+
     def _atom_server_argv(self):
         argv = [
             "python",
@@ -238,9 +265,17 @@ class InferenceXAtomJob:
             self.model_id,
             "--server-port",
             str(self.port_no),
+            "--max-model-len",
+            self.max_model_length,
         ]
         argv.extend(self.atom_server_args)
+        argv.extend(self._atom_shared_serve_argv())
         return argv
+
+    def _atom_server_log_fatal(self, output):
+        if not output:
+            return False
+        return bool(self.ATOM_SERVER_FATAL_RE.search(output))
 
     def start_server(self):
         if self.driver == "atom":
@@ -293,6 +328,8 @@ class InferenceXAtomJob:
 
         out = self.orch.exec(f"tail -30 {shlex.quote(self.server_log)}")
         for host, output in out.items():
+            if self.driver == "atom" and self._atom_server_log_fatal(output):
+                raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
             if self.EARLY_FAILURE_RE.search(output or ""):
                 label = "atom" if self.driver == "atom" else "vllm"
                 raise RuntimeError(f"{label} server early failure on {host}: {output[-500:]}")
@@ -305,6 +342,10 @@ class InferenceXAtomJob:
                 if self.driver == "atom":
                     poll_out = self.orch.exec(f"tail -30 {shlex.quote(self.server_log)}")
                     for host, output in poll_out.items():
+                        if self._atom_server_log_fatal(output):
+                            raise RuntimeError(
+                                f"atom server early failure on {host}: {output[-500:]}"
+                            )
                         if self.EARLY_FAILURE_RE.search(output or ""):
                             raise RuntimeError(
                                 f"atom server early failure on {host}: {output[-500:]}"

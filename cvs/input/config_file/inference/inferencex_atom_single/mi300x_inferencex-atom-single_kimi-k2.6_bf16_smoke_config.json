@@ -1,0 +1,110 @@
+{
+  "_comment": "Kimi K2.6 on MI300X (DTNI lab). Native 555G BF16 safetensors at /mnt/dtni/models/Kimi-K2.6 OOM at FusedMoE create_weights (~182 GiB/GPU, +2.7 GiB short) even with -tp 8 --enable-expert-parallel. This variant uses ATOM online MXFP4 on expert layers at load from that tree; fp8 KV. Fallback: /mnt/dtni/models/Kimi-K2.6-MXFP4 (pre-quant, proven on this node). 15 sweep cells, max_model_length=16896.",
+  "schema_version": 1,
+  "framework": "inferencex_atom_single",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi300x_inferencex-atom-single_kimi-k2.6_bf16_smoke_threshold.json",
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:latest",
+    "notes": "Kimi K2.6 MI300X — online MXFP4 experts from /mnt/dtni/models/Kimi-K2.6 (BF16 weights do not fit TP8 on 192GB)"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/mnt/dtni/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "/mnt/dtni/models/Kimi-K2.6",
+    "remote": 0,
+    "precision": "bf16"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "inferencex_atom_mi300x",
+    "image": "rocm/atom-dev:latest",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/mnt/dtni/models:/mnt/dtni/models"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": [
+        "-tp",
+        "8",
+        "--enable-expert-parallel",
+        "--kv_cache_dtype",
+        "fp8",
+        "--trust-remote-code",
+        "--online_quant_config",
+        "{\"layer_quant_config\": {\"*experts*\": \"mxfp4\"}, \"exclude_layer\": [\"lm_head\", \"*.gate.*\", \"*shared_experts*\", \"*self_attn*\"]}"
+      ],
+      "serve_args": {
+        "level": 0,
+        "enforce-eager": true,
+        "gpu-memory-utilization": "0.85"
+      },
+      "env": {
+        "ATOM_USE_TRITON_GEMM": "1",
+        "ATOM_USE_TRITON_MOE": "1",
+        "ATOM_USE_TRITON_MXFP4_BMM": "1",
+        "ATOM_ENABLE_ALLREDUCE_RMSNORM_FUSION": "0",
+        "ATOM_LOADER_USE_THREADPOOL": "0",
+        "TORCH_COMPILE_DISABLE": "1"
+      }
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "8",
+    "random_range_ratio": "0.0",
+    "num_prompts": "128",
+    "max_model_length": "16896",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
+    "server_warmup_wait_s": "900",
+    "client_initial_wait_s": "120",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60"
+  },
+  "sweep": {
+    "sequence_combinations": [
+      { "name": "w1_isl=1024_osl=1024", "isl": "1024", "osl": "1024" },
+      { "name": "w1_isl=1024_osl=8192", "isl": "1024", "osl": "8192" },
+      { "name": "w1_isl=8192_osl=1024", "isl": "8192", "osl": "1024" }
+    ],
+    "runs": [
+      { "combo": "w1_isl=1024_osl=1024", "concurrency": 4 },
+      { "combo": "w1_isl=1024_osl=1024", "concurrency": 8 },
+      { "combo": "w1_isl=1024_osl=1024", "concurrency": 16 },
+      { "combo": "w1_isl=1024_osl=1024", "concurrency": 32 },
+      { "combo": "w1_isl=1024_osl=1024", "concurrency": 64 },
+      { "combo": "w1_isl=1024_osl=8192", "concurrency": 4 },
+      { "combo": "w1_isl=1024_osl=8192", "concurrency": 8 },
+      { "combo": "w1_isl=1024_osl=8192", "concurrency": 16 },
+      { "combo": "w1_isl=1024_osl=8192", "concurrency": 32 },
+      { "combo": "w1_isl=1024_osl=8192", "concurrency": 64 },
+      { "combo": "w1_isl=8192_osl=1024", "concurrency": 4 },
+      { "combo": "w1_isl=8192_osl=1024", "concurrency": 8 },
+      { "combo": "w1_isl=8192_osl=1024", "concurrency": 16 },
+      { "combo": "w1_isl=8192_osl=1024", "concurrency": 32 },
+      { "combo": "w1_isl=8192_osl=1024", "concurrency": 64 }
+    ]
+  }
+}
