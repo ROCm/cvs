@@ -140,10 +140,7 @@ class VllmJob:
         self.models_dir = variant.paths.models_dir
         self.ib_netdev = variant.roles.server.ib_netdev
 
-        self.out_dir = (
-            f"{self.log_dir}/{self.log_subdir}/out-node0"
-            f"/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
-        )
+        self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
         self.server_log = f"{self.out_dir}/vllm_serve_server.log"
         self.client_log = f"{self.out_dir}/client.log"
 
@@ -271,9 +268,7 @@ class VllmJob:
         for k, v in self.server_env.items():
             env_lines.append(f"export {k}={shlex.quote(str(v))}")
         env_script = "\n".join(env_lines) + "\n"
-        self.orch.exec(
-            "bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh")
-        )
+        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
         for rank in range(int(self.nnodes)):
             rank_dir = self.out_dir.replace("out-node0", f"out-node{rank}")
             self.orch.exec(f"mkdir -p {shlex.quote(rank_dir)}")
@@ -287,16 +282,11 @@ class VllmJob:
         for rank, host in enumerate(self.orch.hosts):
             serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(rank))
             rank_log = self._rank_log(rank)
-            inner = (
-                f"source /tmp/server_env_script.sh && "
-                f"nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
-            )
+            inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
             out = self.orch.exec("bash -c " + shlex.quote(inner), hosts=[host])
             for h, output in out.items():
                 if self.EARLY_FAILURE_RE.search(output or ""):
-                    raise RuntimeError(
-                        f"vllm server failed to launch on {h} (rank {rank}): {output[-500:]}"
-                    )
+                    raise RuntimeError(f"vllm server failed to launch on {h} (rank {rank}): {output[-500:]}")
 
     def is_ready(self):
         """Check readiness on each node using its own per-rank log path.
@@ -335,9 +325,7 @@ class VllmJob:
             )
             for h, r in (out or {}).items():
                 if r.get("exit_code") == 0 and r.get("stdout", "").strip():
-                    raise RuntimeError(
-                        f"vllm server fatal error on {h} (rank {rank}): {r['stdout'].strip()[-500:]}"
-                    )
+                    raise RuntimeError(f"vllm server fatal error on {h} (rank {rank}): {r['stdout'].strip()[-500:]}")
 
     def wait_ready(self):
         log.info("waiting %ds for server log to materialise", self._precheck_wait)
@@ -434,10 +422,7 @@ class VllmJob:
                 if val is not None:
                     args.append(f"{metric}:{val}")
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
-        client_cmd = (
-            f"source /tmp/server_env_script.sh && "
-            f"{bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
-        )
+        client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
         self.orch.exec_on_head("bash -c " + shlex.quote(client_cmd))
 
     def wait_client_complete(self):
@@ -470,7 +455,11 @@ class VllmJob:
                         else:
                             log.warning(
                                 "%s: %d/%d requests failed (%.2f%%) — within tolerance (<=%.0f%%), continuing",
-                                host, n_failed, total, frac * 100, self.MAX_FAILED_REQUEST_FRACTION * 100,
+                                host,
+                                n_failed,
+                                total,
+                                frac * 100,
+                                self.MAX_FAILED_REQUEST_FRACTION * 100,
                             )
             if failed:
                 self.dump_client_log()
@@ -502,8 +491,6 @@ class VllmJob:
             try:
                 raw = json.loads(text)
             except (json.JSONDecodeError, ValueError) as e:
-                raise RuntimeError(
-                    f"unparseable results artifact on {host}: {artifact}: {e}"
-                ) from e
+                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}") from e
             results[host] = to_client_metrics(raw, tp=self.tp, isl=self.isl)
         return results

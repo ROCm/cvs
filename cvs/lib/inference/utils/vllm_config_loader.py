@@ -181,13 +181,9 @@ class VariantConfig(_Forbid):
         nn = int(self.params.nnodes)
         pp = int(self.params.pipeline_parallel_size)
         if nn > 1 and pp == 1:
-            raise ValueError(
-                f"nnodes={nn} > 1 requires pipeline_parallel_size > 1 (got pp={pp})"
-            )
+            raise ValueError(f"nnodes={nn} > 1 requires pipeline_parallel_size > 1 (got pp={pp})")
         if pp > 1 and nn == 1:
-            raise ValueError(
-                f"pipeline_parallel_size={pp} > 1 requires nnodes > 1 (got nnodes={nn})"
-            )
+            raise ValueError(f"pipeline_parallel_size={pp} > 1 requires nnodes > 1 (got nnodes={nn})")
         if nn > 1 and not self.roles.server.ib_netdev:
             raise ValueError(
                 "ib_netdev is required in roles.server when nnodes > 1. "
@@ -218,10 +214,7 @@ class VariantConfig(_Forbid):
 
     def expected_cells(self):
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
-        return [
-            self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency)
-            for r in self.sweep.runs
-        ]
+        return [self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency) for r in self.sweep.runs]
 
     @model_validator(mode="after")
     def _check_thresholds_cover_sweep(self):

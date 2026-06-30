@@ -18,9 +18,7 @@ log = globals.log
 
 _HCA_RE = re.compile(r"hca_id:\s*(\S+)")
 
-_SYSFS_CMD = (
-    "ls /sys/class/infiniband/ 2>/dev/null | tr '\\n' ' '"
-)
+_SYSFS_CMD = "ls /sys/class/infiniband/ 2>/dev/null | tr '\\n' ' '"
 _IBVDEVINFO_CMD = "ibv_devinfo -l 2>/dev/null"
 
 
@@ -99,6 +97,5 @@ def validate_ib_hca_preflight(discovered: dict[str, list[str]], requested: list[
         missing = [d for d in requested if d not in devs]
         if missing:
             raise RuntimeError(
-                f"ib_discovery preflight: requested HCA devices {missing} not found on {host}. "
-                f"Available: {devs}"
+                f"ib_discovery preflight: requested HCA devices {missing} not found on {host}. Available: {devs}"
             )
