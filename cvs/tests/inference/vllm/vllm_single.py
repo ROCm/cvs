@@ -17,6 +17,13 @@ from cvs.lib.inference.utils.inferencing_config_loader import GoodputSlo, valida
 from cvs.lib.utils.verdict import evaluate_all
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
 from cvs.lib.inference.vllm_single import VllmJob
+from cvs.lib.utils.gpu import (
+    capture_gpu_metrics,
+    poll_gpu_metrics,
+    agg_readings,
+    GPU_METRICS as _GPU_METRICS,
+    GPU_METRIC_UNITS as _GPU_METRIC_UNITS,
+)
 
 import importlib.util as _ilu
 import pathlib as _pl
@@ -86,6 +93,14 @@ def pytest_generate_tests(metafunc):
                     metric_cases.append((combo, c, short))
                     metric_ids.append(cid + "-" + short)
             metafunc.parametrize("seq_combo,concurrency,metric", metric_cases, ids=metric_ids)
+    elif "gpu_metric" in metafunc.fixturenames and cases:
+        gpu_metric_cases = []
+        gpu_metric_ids = []
+        for (combo, c), cid in zip(cases, ids):
+            for short, _unit in _GPU_METRICS:
+                gpu_metric_cases.append((combo, c, short))
+                gpu_metric_ids.append(cid + "-gpu." + short)
+        metafunc.parametrize("seq_combo,concurrency,gpu_metric", gpu_metric_cases, ids=gpu_metric_ids)
     elif "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames and cases:
         metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
 
@@ -202,7 +217,18 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
         pytest.fail(f"no model bytes under {models_dir} after fetch")
 
 
-def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, inf_res_dict, lifecycle, request):
+def _snap(orch, label):
+    """Capture GPU metrics; return {} and log a warning on any failure."""
+    try:
+        return capture_gpu_metrics(orch)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("GPU snapshot %r failed (ignored): %s", label, exc)
+        return {}
+
+
+def test_vllm_inference(
+    orch, variant_config, hf_token, seq_combo, concurrency, inf_res_dict, gpu_metrics_snap, lifecycle, request
+):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     isl = seq_combo["isl"]
@@ -219,25 +245,7 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         client_poll_count=int(variant_config.params.client_poll_count),
     )
 
-    # A failure mid-sweep flips lifecycle.failed so the remaining cells skip
-    # cleanly (instead of each re-failing) AND the orch leak-guard finalizer
-    # still tears the container down. The explicit teardown row may not run on
-    # the failure path, which is exactly what the finalizer covers.
-    try:
-        job.stop_server()
-        job.build_server_cmd()
-        t = time.monotonic()
-        job.start_server()
-        job.wait_ready()
-        lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
-        job.run_client()
-        job.wait_client_complete()
-        results = job.parse_results()
-    except Exception:
-        lifecycle.failed = True
-        raise
-
-    key = (
+    cell_key = (
         variant_config.model.id,
         variant_config.gpu_arch,
         isl,
@@ -245,10 +253,102 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         seq_combo.get("name", "default"),
         concurrency,
     )
-    inf_res_dict[key] = results
-    # Verdict is no longer asserted here: each metric is its own test (test_metric,
-    # one HTML row per metric per cell). This test only runs the benchmark and
-    # records the cell's results into the module-scoped inf_res_dict.
+
+    # A failure mid-sweep flips lifecycle.failed so the remaining cells skip
+    # cleanly (instead of each re-failing) AND the orch leak-guard finalizer
+    # still tears the container down. The explicit teardown row may not run on
+    # the failure path, which is exactly what the finalizer covers.
+    try:
+        job.stop_server()
+        job.build_server_cmd()
+
+        # Preload snapshot: baseline VRAM before the model is loaded into GPU HBM.
+        gpu_metrics_snap[(cell_key, "preload")] = _snap(orch, "preload")
+
+        t = time.monotonic()
+        job.start_server()
+        job.wait_ready()
+        model_load_s = time.monotonic() - t
+        lifecycle.record(request.node.nodeid, "server_ready", model_load_s)
+
+        # Post-load snapshot: weights are resident, KV cache not yet allocated.
+        gpu_metrics_snap[(cell_key, "loaded")] = _snap(orch, "loaded")
+
+        # Background the client, then poll GPU while it runs.
+        job.run_client()
+
+        # Poll GPU while client runs.
+        # Write gpu_poll.log into the local HTML report dir so it lands in the
+        # zip bundle.  Fall back to a tempfile when --html is not passed.
+        _htmlpath = getattr(request.config.option, "htmlpath", None)
+        _html_dir_name = getattr(request.config, "_test_html_dir", "test_html")
+        if _htmlpath:
+            _gpu_log_local = (
+                _pl.Path(_htmlpath).parent
+                / _html_dir_name
+                / f"gpu_poll_isl{isl}_osl{osl}_conc{concurrency}.log"
+            )
+        else:
+            import tempfile as _tempfile
+            _gpu_log_local = _pl.Path(_tempfile.mkdtemp()) / "gpu_poll.log"
+        _gpu_log_remote = f"{job.out_dir}/gpu_poll.log"
+        _model_load_mb = (
+            (gpu_metrics_snap.get((cell_key, "loaded"), {}).get("gpu.used_vram") or 0)
+            - (gpu_metrics_snap.get((cell_key, "preload"), {}).get("gpu.used_vram") or 0)
+        ) or None
+        _model_load_s = model_load_s
+        _poll_readings = poll_gpu_metrics(
+            orch,
+            is_done_fn=job.is_client_done,
+            poll_interval_s=15,
+            label="poll",
+            log_path=str(_gpu_log_local),
+            model_load_s=_model_load_s,
+            model_load_memory_mb=_model_load_mb,
+        )
+        # Also copy the log into the node's out_dir (NFS) for cluster-side access.
+        if _gpu_log_local.exists():
+            try:
+                import base64 as _b64
+
+                _enc = _b64.b64encode(_gpu_log_local.read_bytes()).decode()
+                orch.exec_on_head(
+                    f"mkdir -p {shlex.quote(job.out_dir)} && "
+                    f"printf '%s' {shlex.quote(_enc)} | base64 -d > {shlex.quote(_gpu_log_remote)}"
+                )
+            except Exception as _e:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning("gpu_poll.log upload failed: %s", _e)
+        _agg = agg_readings(_poll_readings)
+
+        job.wait_client_complete()
+
+        results = job.parse_results()
+    except Exception:
+        lifecycle.failed = True
+        raise
+
+    # Compute the five human-readable derived metrics from the poll aggregation.
+    gpu_actuals = {
+        # Peak VRAM = max used_vram across poll readings.
+        "gpu.peak_gpu_memory_mb": _agg.get("peak_gpu_memory_mb"),
+        # Model load memory = VRAM increase from before start_server to after wait_ready.
+        "gpu.model_load_memory_mb": _model_load_mb,
+        # Model load wall-clock time.
+        "gpu.model_load_s": _model_load_s,
+        # Memory bandwidth utilisation (UMC activity) averaged over poll readings.
+        "gpu.gpu_bandwidth_util_pct": _agg.get("gpu_bandwidth_util_pct"),
+        # Compute utilisation (GFX activity) averaged over poll readings.
+        "gpu.gpu_compute_util_pct": _agg.get("gpu_compute_util_pct"),
+    }
+    for _host, client_m in results.items():
+        client_m.update(gpu_actuals)
+
+    inf_res_dict[cell_key] = results
+    # Verdict is no longer asserted here: each metric is its own test (test_metric /
+    # test_gpu_metric, one HTML row per metric per cell). This test only runs the
+    # benchmark and records the cell's results into the module-scoped inf_res_dict.
 
 
 def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, lifecycle, request):
@@ -286,6 +386,43 @@ def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, li
     full = "client." + metric
     value = actuals.get(full)
     unit = _METRIC_UNITS.get(metric, "-")
+    request.node.user_properties.append(("metric_value", value))
+    request.node.user_properties.append(("metric_unit", unit))
+
+    if not variant_config.enforce_thresholds:
+        return
+    cell = variant_config.cell_key(isl, osl, concurrency)
+    spec = (variant_config.thresholds.get(cell) or {}).get(full)
+    if spec is None:
+        return
+    evaluate_all(actuals, {full: spec})
+
+
+def test_gpu_metric(seq_combo, concurrency, gpu_metric, inf_res_dict, variant_config, lifecycle, request):
+    """One pytest test (= one HTML row) per GPU metric per cell.
+
+    Mirrors test_metric exactly: reads a single cached metric from the
+    module-scoped inf_res_dict and surfaces it as its own pass/fail row.
+    GPU metrics are merged into the actuals dict by test_vllm_inference.
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    isl = seq_combo["isl"]
+    osl = seq_combo["osl"]
+    key = (
+        variant_config.model.id,
+        variant_config.gpu_arch,
+        isl,
+        osl,
+        seq_combo.get("name", "default"),
+        concurrency,
+    )
+    if key not in inf_res_dict:
+        pytest.skip(f"no recorded results for cell {key!r}")
+    _host, actuals = next(iter(inf_res_dict[key].items()))
+    full = f"gpu.{gpu_metric}"
+    value = actuals.get(full)
+    unit = _GPU_METRIC_UNITS.get(gpu_metric, "-")
     request.node.user_properties.append(("metric_value", value))
     request.node.user_properties.append(("metric_unit", unit))
 
