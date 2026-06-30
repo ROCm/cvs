@@ -33,6 +33,7 @@ Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | MI355X | W1 FP8+MTP3 |
 | `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` | MI300X | GPT-OSS uplift placeholder (`driver: vllm`, inline `serve_args`) |
 | `mi355x_inferencex-atom-single_gpt-oss-120b_bf16` | MI355X | GPT-OSS uplift placeholder |
+| `mi300x_inferencex-atom-single_kimi-k2.6_bf16_smoke` | MI300X | Kimi K2.6 BF16 smoke — local checkpoint `/mnt/dtni/models/Kimi-K2.6`; sweep C=128,256 |
 
 ATOM server CLI is inline in each config under `roles.server.atom_args` (vLLM-style, same as `roles.server.serve_args` on `vllm_single`). MTP3 variants also set `params.bench_extra_args`.
 
@@ -112,6 +113,51 @@ When `--html` is set, the **IX Run Deck** (`inferencex_atom_run_deck.html`, `.js
 `_viewer.html`) is generated at session end and bundled into the pytest zip.
 See `cvs/lib/report/README.md` for wiring other suites. Open the pytest HTML **Reports**
 section for links. Render-only; does not affect gates.
+
+## Kimi K2.6 smoke (MI300X, DTNI lab)
+
+Local checkpoint at `/mnt/dtni/models/Kimi-K2.6`. The variant config mounts `/mnt/dtni/models`
+into the container. Two sweep cells (C=128, 256), 128 prompts each, server reused — expect
+**~17** pytest rows with `--html` (IX Run Deck included).
+
+**Preflight (GPU node must have non-zero model dir):**
+
+```bash
+ssh -i ~/.ssh/<key> <user>@<gpu-node> \
+  'du -sh /mnt/dtni/models/Kimi-K2.6; ls /mnt/dtni/models/Kimi-K2.6/config.json; sudo docker images | grep atom-dev'
+```
+
+`du` must not show `0`. If empty, stage the checkpoint on the node before running.
+
+```bash
+cd ~/cvs && source .cvs_venv/bin/activate
+mkdir -p ~/input/cluster_file
+
+KIMI_DIR=~/input/config_file/inference/inferencex_atom_single/kimi_k26_smoke
+mkdir -p "$KIMI_DIR"
+
+cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_kimi-k2.6_bf16_smoke_config.json \
+  --output "$KIMI_DIR/mi300x_inferencex-atom-single_kimi-k2.6_bf16_smoke_config.json" --force
+cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_kimi-k2.6_bf16_smoke_threshold.json \
+  --output "$KIMI_DIR/mi300x_inferencex-atom-single_kimi-k2.6_bf16_smoke_threshold.json" --force
+cvs copy-config mi300x_atom_single.json --output ~/input/cluster_file/mi300x_atom_single.json
+
+TS=$(date +%Y%m%d_%H%M%S)
+HTML="$HOME/cvs_results/${TS}_kimi-k26-smoke_mi300x.html"
+LOG="$HOME/cvs_results/${TS}_kimi-k26-smoke_mi300x.log"
+
+cvs run inferencex_atom_single \
+  --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
+  --config_file "$KIMI_DIR/mi300x_inferencex-atom-single_kimi-k2.6_bf16_smoke_config.json" \
+  --html="$HTML" \
+  --self-contained-html \
+  --log-file="$LOG" \
+  -vvv -s
+
+echo "HTML: $HTML"
+echo "LOG:  $LOG"
+echo "Run deck: $HOME/cvs_results/inferencex_atom_run_deck.html"
+```
 
 ## W1 perf (MI300X)
 
