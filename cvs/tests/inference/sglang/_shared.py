@@ -87,6 +87,7 @@ SGLANG_DISAGG_TEST_ORDER = {
     "test_run_performance_benchmark_test": 12,
     "test_disagg_gpu_topology": 13,
     "test_print_results_table": 14,
+    "test_teardown": 15,
 }
 
 

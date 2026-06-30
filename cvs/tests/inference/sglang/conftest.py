@@ -12,7 +12,11 @@ JSON file beside the config; that file supplies pass/fail thresholds for perform
 and lm-eval benchmarks.
 '''
 
+from __future__ import annotations
+
 import json
+import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -32,15 +36,17 @@ from cvs.tests.inference.sglang._shared import SGLANG_DISAGG_TEST_ORDER, resolve
 log = globals.log
 
 
+# ---------- threshold helpers (unchanged) ----------
+
+
 def _threshold_file_path(bp_dict: Mapping[str, Any]) -> str | None:
-    """Return the threshold file path from a benchmark_params variant."""
     path = bp_dict.get("threshold_file")
     if path:
         return str(path).strip()
     return None
 
+
 def _resolve_threshold_path(threshold_path: str) -> Path:
-    """Resolve an absolute or repo-relative threshold path from config."""
     path = Path(threshold_path)
     if path.is_absolute():
         return path
@@ -48,7 +54,6 @@ def _resolve_threshold_path(threshold_path: str) -> Path:
 
 
 def _load_thresholds_file(path: Path) -> dict[str, Any]:
-    """Load threshold JSON and drop comment keys (e.g. ``_comment``)."""
     try:
         with open(path, encoding="utf-8") as fp:
             raw = json.load(fp)
@@ -66,7 +71,6 @@ def _load_thresholds_file(path: Path) -> dict[str, Any]:
 
 
 def perf_cell_key(bp_dict: Mapping[str, Any]) -> str:
-    """Build the performance threshold cell key, e.g. ``ISL=1024,OSL=1024,TP=8,CONC=25``."""
     bench = (bp_dict.get("inference_tests") or {}).get("bench_serv_random") or {}
     return (
         f"ISL={bench.get('input_length', '-')},"
@@ -77,12 +81,10 @@ def perf_cell_key(bp_dict: Mapping[str, Any]) -> str:
 
 
 def bench_cell_key(bench_name: str) -> str:
-    """Build an lm-eval threshold cell key, e.g. ``BENCH=lm_eval_hellaswag``."""
     return f"BENCH={bench_name}"
 
 
 def flat_expected_from_specs(specs: Mapping[str, Any]) -> dict[str, float]:
-    """Convert ``{metric: {kind, value}}`` threshold specs to flat floats for legacy checks."""
     out: dict[str, float] = {}
     for metric, spec in specs.items():
         if isinstance(spec, dict) and "value" in spec:
@@ -93,7 +95,6 @@ def flat_expected_from_specs(specs: Mapping[str, Any]) -> dict[str, float]:
 
 
 def _inject_thresholds_into_bp_dict(bp_dict: dict[str, Any], thresholds: Mapping[str, Any]) -> None:
-    """Merge external thresholds into ``inference_tests.*.expected_results`` in-place."""
     inference_tests = bp_dict.setdefault("inference_tests", {})
 
     perf_key = perf_cell_key(bp_dict)
@@ -118,6 +119,124 @@ def _inject_thresholds_into_bp_dict(bp_dict: dict[str, Any], thresholds: Mapping
         log.info("Loaded accuracy thresholds from cell %r", cell)
 
 
+# ---------- variant config (SGLang analogue of vLLM's load_variant) ----------
+
+
+@dataclass(frozen=True)
+class SglangVariantConfig:
+    """Typed bundle for one SGLang disagg benchmark variant.
+
+    Mirrors the role of vLLM's ``VariantConfig``: single entry point for tests
+    and fixtures. SGLang keeps its legacy JSON shape (``config`` + ``benchmark_params``)
+    rather than ``BaseVariantConfig`` schema.
+    """
+
+    config_path: str
+    variant_key: str
+    inference: dict[str, Any]
+    benchmark_params: dict[str, Any]
+    thresholds: dict[str, Any]
+    enforce_thresholds: bool = True
+
+    @property
+    def hf_token_file(self) -> str:
+        return self.inference["hf_token_file"]
+
+    @property
+    def model(self) -> str:
+        return self.benchmark_params["model"]
+
+    def perf_cell_key(self) -> str:
+        return perf_cell_key(self.benchmark_params)
+
+
+def load_sglang_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangVariantConfig:
+    """Load, resolve placeholders, pick variant, load thresholds, inject expected_results."""
+    with open(config_path, encoding="utf-8") as fp:
+        root = json.load(fp)
+
+    variant_key = resolve_benchmark_variant_key(root, config_path)
+
+    if isinstance(root, dict) and "config" in root:
+        cfg = root["config"]
+    else:
+        cfg = root
+
+    inference = resolve_test_config_placeholders(cfg, cluster_dict)
+    bp_all = resolve_test_config_placeholders(root["benchmark_params"], cluster_dict)
+    bp = dict(bp_all[variant_key])
+
+    threshold_path_str = _threshold_file_path(bp)
+    if not threshold_path_str:
+        pytest.fail(
+            f"benchmark_params[{variant_key!r}] missing "
+            "'threshold_file' in --config_file"
+        )
+
+    threshold_path = _resolve_threshold_path(threshold_path_str)
+    thresholds = _load_thresholds_file(threshold_path)
+    log.info("Loaded thresholds from %s (%d cells)", threshold_path, len(thresholds))
+    _inject_thresholds_into_bp_dict(bp, thresholds)
+
+    return SglangVariantConfig(
+        config_path=config_path,
+        variant_key=variant_key,
+        inference=inference,
+        benchmark_params=bp,
+        thresholds=thresholds,
+        enforce_thresholds=bool(root.get("enforce_thresholds", True)),
+    )
+
+
+# ---------- lifecycle (same model as vLLM conftest) ----------
+
+
+class _Lifecycle:
+    """Cross-test state for the lifecycle-as-tests model."""
+
+    def __init__(self):
+        self.failed = False
+        self.torn_down = False
+        self.report: dict[str, list[tuple[str, float, str]]] = {}
+
+    def record(self, nodeid: str, label: str, value: float, unit: str = "s") -> None:
+        self.report.setdefault(nodeid, []).append((label, value, unit))
+
+
+# ---------- fixtures ----------
+
+
+@pytest.fixture(scope="module")
+def cluster_dict(pytestconfig):
+    cluster_file = pytestconfig.getoption("cluster_file")
+    if not cluster_file:
+        pytest.fail("--cluster_file is required")
+    with open(cluster_file, encoding="utf-8") as fp:
+        d = json.load(fp)
+    return resolve_cluster_config_placeholders(d)
+
+
+@pytest.fixture(scope="module")
+def variant_config(pytestconfig, cluster_dict) -> SglangVariantConfig:
+    config_file = pytestconfig.getoption("config_file")
+    if not config_file:
+        pytest.fail("--config_file is required")
+    return load_sglang_variant(config_file, cluster_dict)
+
+
+@pytest.fixture(scope="module")
+def lifecycle():
+    return _Lifecycle()
+
+
+# Backward-compatible aliases (existing tests/fixtures can keep using these names)
+
+
+@pytest.fixture(scope="module")
+def inference_config_file(variant_config):
+    return variant_config.config_path
+
+
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
     path = pytestconfig.getoption("cluster_file")
@@ -127,33 +246,14 @@ def cluster_file(pytestconfig):
 
 
 @pytest.fixture(scope="module")
-def inference_config_file(pytestconfig):
-    path = pytestconfig.getoption("config_file")
-    if not path:
-        pytest.fail("--config_file is required")
-    return path
-
-
-@pytest.fixture(scope="module")
-def cluster_dict(cluster_file):
-    with open(cluster_file, encoding="utf-8") as fp:
-        d = json.load(fp)
-    return resolve_cluster_config_placeholders(d)
-
-
-@pytest.fixture(scope="module")
 def inference_config_root(inference_config_file):
     with open(inference_config_file, encoding="utf-8") as fp:
         return json.load(fp)
 
 
 @pytest.fixture(scope="module")
-def inference_dict(inference_config_root, cluster_dict):
-    if isinstance(inference_config_root, dict) and "config" in inference_config_root:
-        cfg = inference_config_root["config"]
-    else:
-        cfg = inference_config_root
-    return resolve_test_config_placeholders(cfg, cluster_dict)
+def inference_dict(variant_config):
+    return variant_config.inference
 
 
 @pytest.fixture(scope="module")
@@ -163,41 +263,27 @@ def benchmark_params_dict(inference_config_root, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def benchmark_variant(inference_config_root, inference_config_file):
-    return resolve_benchmark_variant_key(inference_config_root, inference_config_file)
+def benchmark_variant(variant_config):
+    return variant_config.variant_key
 
 
 @pytest.fixture(scope="module")
-def benchmark_params(benchmark_params_dict, benchmark_variant):
-    return benchmark_params_dict[benchmark_variant]
+def benchmark_params(variant_config):
+    return variant_config.benchmark_params
 
 
 @pytest.fixture(scope="module")
-def thresholds_dict(benchmark_params, benchmark_variant):
-    """Load thresholds from the path in ``threshold_file``."""
-    threshold_path_str = _threshold_file_path(benchmark_params)
-    if not threshold_path_str:
-        pytest.fail(
-            f"benchmark_params[{benchmark_variant!r}] missing "
-            "'threshold_file' in --config_file"
-        )
-
-    threshold_path = _resolve_threshold_path(threshold_path_str)
-    thresholds = _load_thresholds_file(threshold_path)
-    log.info("Loaded thresholds from %s (%d cells)", threshold_path, len(thresholds))
-    return thresholds
+def thresholds_dict(variant_config):
+    return variant_config.thresholds
 
 
 @pytest.fixture(scope="module")
-def hf_token(inference_dict):
-    hf_token_file = inference_dict["hf_token_file"]
-    try:
-        with open(hf_token_file, encoding="utf-8") as fp:
-            return fp.read().rstrip("\n")
-    except FileNotFoundError:
-        pytest.fail(f"hf_token file not found: {hf_token_file}")
-    except OSError as e:
-        pytest.fail(f"cannot read hf_token file {hf_token_file}: {e}")
+def hf_token(variant_config):
+    path = variant_config.hf_token_file
+    if not os.path.isfile(path):
+        pytest.skip(f"hf_token file missing: {path}")
+    with open(path, encoding="utf-8") as fp:
+        return fp.read().strip()
 
 
 @pytest.fixture(scope="module")
@@ -268,18 +354,13 @@ def im_obj(
     r_phdl,
     b_phdl,
     gpu_type,
-    inference_dict,
-    benchmark_params,
-    thresholds_dict,
+    variant_config,
     hf_token,
 ):
-    bp_dict = dict(benchmark_params)
-    _inject_thresholds_into_bp_dict(bp_dict, thresholds_dict)
-
     return sglang_disagg_lib.SglangDisaggPD(
-        bp_dict["model"],
-        inference_dict,
-        bp_dict,
+        variant_config.model,
+        variant_config.inference,
+        variant_config.benchmark_params,
         hf_token,
         p_phdl,
         d_phdl,
@@ -289,6 +370,55 @@ def im_obj(
     )
 
 
+# ---------- pytest hooks ----------
+
+
 def pytest_collection_modifyitems(items):
     rank = SGLANG_DISAGG_TEST_ORDER
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call":
+        return
+    lc = item.funcargs.get("lifecycle")
+    rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
+    if not rows:
+        return
+    try:
+        import pytest_html
+    except ImportError:
+        return
+    body = "".join(
+        f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>"
+        for label, value, unit in rows
+    )
+    html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
+    extras = getattr(report, "extras", [])
+    extras.append(pytest_html.extras.html(html))
+    report.extras = extras
+
+
+def pytest_html_results_table_header(cells):
+    cells.insert(-1, "<th>Value</th>")
+    cells.insert(-1, "<th>Unit</th>")
+
+
+def pytest_html_results_table_row(report, cells):
+    props = dict(report.user_properties)
+    has = "metric_value" in props
+    val = props.get("metric_value")
+    unit = props.get("metric_unit", "") if has else ""
+    if not has:
+        shown = ""
+    elif val is None:
+        shown = "-"
+    elif isinstance(val, float):
+        shown = f"{val:.3f}"
+    else:
+        shown = str(val)
+    cells.insert(-1, f"<td>{shown}</td>")
+    cells.insert(-1, f"<td>{unit}</td>")
