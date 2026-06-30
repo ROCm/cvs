@@ -108,6 +108,11 @@ echo "HTML: $HTML"
 echo "LOG:  $LOG"
 ```
 
+When `--html` is set, the **IX Run Deck** (`inferencex_atom_run_deck.html`, `.json`,
+`_viewer.html`) is generated at session end and bundled into the pytest zip.
+See `cvs/lib/report/README.md` for wiring other suites. Open the pytest HTML **Reports**
+section for links. Render-only; does not affect gates.
+
 ## W1 perf (MI300X)
 
 Two concurrency cells (C=128, C=256), 1000 prompts. Second cell reuses the ATOM server when `reuse_server_across_sweep: true`.
