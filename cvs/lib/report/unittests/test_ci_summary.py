@@ -1,6 +1,6 @@
 '''Unit tests for CI summary and gate heatmap rendering.'''
 
-from cvs.lib.report.ci_summary import render_ci_summary_html, worst_cells, write_inference_ci_summary
+from cvs.lib.report.ci_summary import worst_cells, write_inference_ci_summary
 from cvs.lib.report.render.gate_matrix import render_gate_heatmap_html, render_gate_matrix_html
 from cvs.lib.report.unittests._fixtures import generic_inference_report_config, generic_variant, two_cell_inf_res
 from cvs.lib.report.inference import build_inference_report_payload

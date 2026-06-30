@@ -2,7 +2,6 @@
 
 from types import SimpleNamespace
 
-import pytest
 
 from cvs.lib.report.auto_register import try_auto_register_inference_suite_report
 from cvs.lib.report.presets.builder import make_inference_report_config

@@ -7,6 +7,7 @@ from typing import Mapping, Optional
 
 from cvs.lib.report.formatting import fmt_num, pytest_row_link_html
 
+
 def cell_card_css(*, compact: bool = False) -> str:
     base = """
 .cell-card { background: #1a1d27; border: 1px solid #2a2f3d; border-radius: 12px;
@@ -107,9 +108,7 @@ def render_cell_card_html(
     highlight_metric: Optional[str] = None,
     pytest_html_basename: Optional[str] = None,
 ) -> str:
-    tier_chips = "".join(
-        _tier_chip(cell["tiers"].get(t, "na"), t) for t in tier_order
-    )
+    tier_chips = "".join(_tier_chip(cell["tiers"].get(t, "na"), t) for t in tier_order)
     metric_rows = []
     for m in cell["metrics"]:
         if m["actual"] is None:
@@ -154,9 +153,7 @@ def render_cell_card_html(
     headline_margin_html = ""
     if headline and headline.get("margin"):
         hm_cls = "headline-margin-fail" if headline.get("status") == "fail" else "headline-margin"
-        headline_margin_html = (
-            f"<div class='{hm_cls}'>{html.escape(headline['margin'])}</div>"
-        )
+        headline_margin_html = f"<div class='{hm_cls}'>{html.escape(headline['margin'])}</div>"
     mini_tl = render_cell_lifecycle_html(cell.get("cell_lifecycle") or {}, cell_lifecycle_labels)
     card_cls = "cell-card cell-card-compact" if compact else "cell-card"
     host_line = f" &middot; {html.escape(str(cell['host']))}" if cell.get("show_host_in_label") else ""

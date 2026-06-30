@@ -60,9 +60,7 @@ class InferenceReportConfig:
     row_card_test_names: tuple[str, ...] = ("test_metric", "test_cell_metrics")
     interactive_viewer: bool = True
     viewer_cell_threshold: int = 24
-    run_card_display_builder: RunCardDisplayFn = field(
-        default=lambda _variant, _prov: [("Suite", "inference", False)]
-    )
+    run_card_display_builder: RunCardDisplayFn = field(default=lambda _variant, _prov: [("Suite", "inference", False)])
 
     @property
     def gated_tiers(self) -> tuple[str, ...]:

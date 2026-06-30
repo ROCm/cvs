@@ -41,9 +41,7 @@ def overall_status(config: InferenceReportConfig, cells: List[dict], enforce: bo
     return "pass"
 
 
-def build_chart_series(
-    config: InferenceReportConfig, cells: List[dict]
-) -> Dict[str, List[Tuple[int, float]]]:
+def build_chart_series(config: InferenceReportConfig, cells: List[dict]) -> Dict[str, List[Tuple[int, float]]]:
     series: Dict[str, List[Tuple[int, float]]] = {}
     for chart in config.chart_series:
         points: List[Tuple[int, float]] = []
@@ -166,11 +164,7 @@ def build_inference_report_payload(
         run_card_rows.append((label, value, is_link))
 
     run_card_display = extend_run_card_display(run_card_rows, prov)
-    run_card_display = [
-        (label, value, is_link)
-        for label, value, is_link in run_card_display
-        if label != "CVS version"
-    ]
+    run_card_display = [(label, value, is_link) for label, value, is_link in run_card_display if label != "CVS version"]
     display_labels = {label for label, _value, _link in run_card_display}
     if prov.get("cvs_version") and "CVS" not in display_labels:
         run_card_display.append(("CVS", str(prov["cvs_version"]), False))

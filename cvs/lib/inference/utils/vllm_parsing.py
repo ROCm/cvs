@@ -251,9 +251,7 @@ METRIC_TIER_ORDER: tuple[str, ...] = tuple(METRIC_TIERS) + ("record",)
 _TIERED_METRICS = frozenset(m for names in METRIC_TIERS.values() for m in names)
 
 # Record-only metrics: everything emitted that is not a pass/fail gate.
-RECORD_METRICS: tuple[str, ...] = tuple(
-    short for short, _unit in CLIENT_METRICS if short not in _TIERED_METRICS
-)
+RECORD_METRICS: tuple[str, ...] = tuple(short for short, _unit in CLIENT_METRICS if short not in _TIERED_METRICS)
 
 
 def tier_metric_specs(thresholds_cell: dict, tier: str) -> dict[str, dict]:

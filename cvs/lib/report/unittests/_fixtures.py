@@ -43,9 +43,7 @@ def generic_inference_report_config() -> InferenceReportConfig:
         ),
         metric_tier_order=("throughput", "record"),
         tier_metric_specs=lambda _cell, tier: (
-            {"client.output_throughput": {"kind": "min_tok_s", "value": 1000.0}}
-            if tier == "throughput"
-            else {}
+            {"client.output_throughput": {"kind": "min_tok_s", "value": 1000.0}} if tier == "throughput" else {}
         ),
         metric_units={"output_throughput": "tok/s"},
         cell_highlights=(("output_throughput", "Output tok/s"),),

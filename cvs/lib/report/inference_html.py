@@ -19,9 +19,7 @@ from cvs.lib.report.render.gate_matrix import (
 )
 from cvs.lib.report.render.panel_shell import render_panel_section, render_results_table_html
 
-SESSION_FALLBACK = (
-    "container_launch", "sshd_setup", "model_fetch", "server_ready", "client_complete", "teardown"
-)
+SESSION_FALLBACK = ("container_launch", "sshd_setup", "model_fetch", "server_ready", "client_complete", "teardown")
 
 
 def _render_bar_chart(
@@ -59,7 +57,8 @@ def _render_bar_chart(
 
 
 def report_css() -> str:
-    return """
+    return (
+        """
 :root {
   --bg: #0f1117; --panel: #1a1d27; --border: #2a2f3d; --text: #e8eaef; --muted: #9aa3b5;
   --accent: #ff6b35; --accent2: #6b9fff; --accent3: #c77dff;
@@ -74,7 +73,9 @@ body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
   justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
 h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: -0.02em; }
 .subtitle { color: var(--muted); margin: 0; font-size: 0.95rem; }
-""" + status_badge_css() + """
+"""
+        + status_badge_css()
+        + """
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
   padding: 1.25rem 1.5rem; margin-bottom: 1.25rem; box-shadow: 0 8px 32px rgba(0,0,0,0.35); }
 .panel h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em;
@@ -110,7 +111,10 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .chart-x { font-size: 0.75rem; margin-top: 0.5rem; color: var(--muted); }
 .chart-y { font-size: 0.7rem; font-weight: 600; margin-top: 0.2rem; }
 .chart-unit { text-align: center; font-size: 0.7rem; color: var(--muted); margin-top: 0.35rem; }
-""" + gate_matrix_table_css() + cell_card_report_css() + """
+"""
+        + gate_matrix_table_css()
+        + cell_card_report_css()
+        + """
 .cell-title { font-weight: 600; font-size: 1.05rem; }
 .metric-row { margin-bottom: 0.65rem; }
 .metric-label { font-size: 0.75rem; color: var(--muted); }
@@ -148,7 +152,9 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
   }
   a { color: #06c; }
 }
-""" + gate_heatmap_css()
+"""
+        + gate_heatmap_css()
+    )
 
 
 def render_report_html(payload: dict) -> str:
@@ -169,11 +175,7 @@ def render_report_html(payload: dict) -> str:
     gate_matrix = payload.get("gate_matrix") or []
     results_table = payload.get("results_table") or {}
     overall = payload.get("overall_status", "na")
-    enforce = any(
-        row[1] == "enforced"
-        for row in payload.get("run_card_display", [])
-        if row[0] == "Thresholds"
-    )
+    enforce = any(row[1] == "enforced" for row in payload.get("run_card_display", []) if row[0] == "Thresholds")
 
     hero_html = "".join(
         f"<div class='meta-item'><span class='meta-k'>{html.escape(label)}</span>"
@@ -183,9 +185,7 @@ def render_report_html(payload: dict) -> str:
         for label, value, is_link in payload.get("run_card_display", [])
     )
     run_card_notes = payload.get("run_card_notes") or ""
-    notes_html = (
-        f"<p class='notes'>{html.escape(run_card_notes)}</p>" if run_card_notes else ""
-    )
+    notes_html = f"<p class='notes'>{html.escape(run_card_notes)}</p>" if run_card_notes else ""
 
     timeline_total = sum(lifecycle.values()) or 1.0
     timeline_parts = []
@@ -201,16 +201,19 @@ def render_report_html(payload: dict) -> str:
         )
     timeline_html = "".join(timeline_parts) or "<p class='muted'>No lifecycle timings recorded.</p>"
 
-    summary_html = "".join(
-        f"<article class='summary-card'><h3>ISL={html.escape(str(s['isl']))} "
-        f"\u00b7 OSL={html.escape(str(s['osl']))}</h3>"
-        f"<div class='summary-stat'>{fmt_num(s['max_output_throughput'])} "
-        f"<span class='headline-unit'>tok/s</span></div>"
-        f"<div class='summary-meta'>Peak at C={s['conc_at_max_tput']}"
-        f" &middot; TTFT {fmt_num(s.get('ttft_at_max_tput'))} ms"
-        f"{' &middot; saturated at max C' if s.get('saturated') else ''}</div></article>"
-        for s in summaries
-    ) or "<p class='muted'>No sweep summary (no throughput data).</p>"
+    summary_html = (
+        "".join(
+            f"<article class='summary-card'><h3>ISL={html.escape(str(s['isl']))} "
+            f"\u00b7 OSL={html.escape(str(s['osl']))}</h3>"
+            f"<div class='summary-stat'>{fmt_num(s['max_output_throughput'])} "
+            f"<span class='headline-unit'>tok/s</span></div>"
+            f"<div class='summary-meta'>Peak at C={s['conc_at_max_tput']}"
+            f" &middot; TTFT {fmt_num(s.get('ttft_at_max_tput'))} ms"
+            f"{' &middot; saturated at max C' if s.get('saturated') else ''}</div></article>"
+            for s in summaries
+        )
+        or "<p class='muted'>No sweep summary (no throughput data).</p>"
+    )
 
     chart_cfg = payload.get("chart_config") or []
     chart_accent = ("accent", "accent2", "accent3")
@@ -248,9 +251,7 @@ def render_report_html(payload: dict) -> str:
         empty_message="No results table rows.",
     )
 
-    cell_lifecycle_labels = tuple(
-        report.get("cell_lifecycle_labels") or ("server_ready", "client_complete")
-    )
+    cell_lifecycle_labels = tuple(report.get("cell_lifecycle_labels") or ("server_ready", "client_complete"))
     pytest_basename = (payload.get("provenance") or {}).get("pytest_html_basename", "")
     cell_cards = [
         render_cell_card_html(

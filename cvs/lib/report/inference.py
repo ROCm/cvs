@@ -167,13 +167,9 @@ def publish_inference_suite_report(
 
     if report_manager and report_manager.is_enabled:
         report_manager.add_html_to_report(artifacts["html"], link_name=config.link_name)
-        report_manager.add_html_to_report(
-            artifacts["json"], link_name=f"{config.link_name} JSON"
-        )
+        report_manager.add_html_to_report(artifacts["json"], link_name=f"{config.link_name} JSON")
         viewer = artifacts.get("viewer")
         if viewer is not None:
-            report_manager.add_html_to_report(
-                viewer, link_name=f"{config.link_name} viewer"
-            )
+            report_manager.add_html_to_report(viewer, link_name=f"{config.link_name} viewer")
 
     return artifacts

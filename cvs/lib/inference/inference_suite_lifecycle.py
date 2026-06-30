@@ -61,10 +61,7 @@ def attach_lifecycle_html_table(item, report):
         return
     if pytest_html is None:
         return
-    body = "".join(
-        f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>"
-        for label, value, unit in rows
-    )
+    body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
     html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
     extras = getattr(report, "extras", [])
     extras.append(pytest_html.extras.html(html))
