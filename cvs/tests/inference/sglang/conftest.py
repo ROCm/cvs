@@ -24,7 +24,8 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.parallel_ssh_lib import Pssh
-from cvs.lib.inference import sglang_disagg_lib
+from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
+from cvs.lib.inference.sglang.sglang_disagg_orchestrator import SglangDisaggOrchestrator
 from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
@@ -357,7 +358,7 @@ def im_obj(
     variant_config,
     hf_token,
 ):
-    return sglang_disagg_lib.SglangDisaggPD(
+    return SglangDisaggPD(
         variant_config.model,
         variant_config.inference,
         variant_config.benchmark_params,
@@ -368,6 +369,15 @@ def im_obj(
         b_phdl,
         gpu_type,
     )
+
+@pytest.fixture(scope="module")
+def orch(p_phdl, d_phdl, r_phdl, b_phdl, variant_config, lifecycle):
+    o = SglangDisaggOrchestrator(variant_config.inference, p_phdl, d_phdl, r_phdl, b_phdl)
+    yield o
+    if not lifecycle.torn_down:
+        log.info("orch leak-guard: tearing down containers")
+        o.teardown_containers()
+        o.cleanup_log_dir()
 
 
 # ---------- pytest hooks ----------
