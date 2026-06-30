@@ -168,11 +168,13 @@ Re-run after that. Long-term fix belongs in ATOM (`QuarkParser` should treat
 Also remove nested `text_config.quantization_config` if present (same Quark metadata
 issue; backup `config.json` first, use `sudo` when the tree is owned by another user).
 
-**`HIP out of memory` during `FusedMoE` / `create_weights`** — the ~555G BF16 checkpoint
-does **not** fit when `ATOM_DISABLE_MMAP=true` (each GPU pins ~183 GiB of weights before
-MoE buffers allocate). The shipped Kimi config omits `ATOM_DISABLE_MMAP`, uses
+**`HIP out of memory` during `FusedMoE` / `create_weights`** — on a ~555G BF16 MoE checkpoint,
+**`-tp 8` alone is not enough**: TP-only keeps every expert table on each GPU (~183 GiB
+before the last `torch.empty`, then OOM on +2.6 GiB). Use **`-tp 8 --enable-expert-parallel`**
+(same pattern as ATOM `Qwen3-235B` on MI300X). Also omit `ATOM_DISABLE_MMAP`, keep
 `serve_args.level=0`, `gpu-memory-utilization=0.78`, and `ATOM_LOADER_USE_THREADPOOL=0`.
-Confirm a single server process and idle GPUs (`rocm-smi` ~300 MiB/GPU) before launch.
+Run **one** server only; idle GPUs should show ~300 MiB/GPU in `rocm-smi`. If KV is tight
+after load, try `--kv_cache_dtype fp8` in `atom_args`.
 
 **`hipIpcGetMemHandle` / custom all-reduce** — if this reappears, use
 `ATOM_ENABLE_ALLREDUCE_RMSNORM_FUSION=0` and `--level 0` (already in the Kimi config).
