@@ -130,6 +130,11 @@ ssh -i ~/.ssh/<key> <user>@<gpu-node> \
 
 `du` must not show `0`. If empty, stage the checkpoint on the node before running.
 
+If the server log shows `load model runner failed` / `ModelRunner.*proc died`, check
+`~/LOGS/.../atom_server.log` on the GPU node. Common causes: empty model path, missing
+`tiktoken`, or `max_model_length` too small for the sweep (this variant uses
+`max_model_length=16896` with `random_range_ratio=0` for ISL+OSL up to 8192+8192).
+
 ```bash
 cd ~/cvs && source .cvs_venv/bin/activate
 mkdir -p ~/input/cluster_file
