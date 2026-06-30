@@ -1,5 +1,5 @@
 {
-  "_comment": "Kimi K2.6 smoke on MI300X (DTNI lab). Local checkpoint /mnt/dtni/models/Kimi-K2.6. Two cells C=128,256; 128 prompts. Record-only thresholds. Mounts /mnt/dtni/models into container.",
+  "_comment": "Kimi K2.6 smoke on MI300X (DTNI lab). Local checkpoint /mnt/dtni/models/Kimi-K2.6. Three ISL/OSL combos x C=4,8,16,32,64 (15 cells). Record-only thresholds.",
   "schema_version": 1,
   "framework": "inferencex_atom_single",
   "gpu_arch": "mi300x",
@@ -64,7 +64,7 @@
     "tensor_parallelism": "8",
     "random_range_ratio": "0.8",
     "num_prompts": "128",
-    "max_model_length": "4096",
+    "max_model_length": "16384",
     "metric_percentiles": "95,99",
     "reuse_server_across_sweep": "true",
     "server_warmup_wait_s": "900",
@@ -74,15 +74,26 @@
   },
   "sweep": {
     "sequence_combinations": [
-      {
-        "name": "kimi_smoke_1k_1k",
-        "isl": "1024",
-        "osl": "1024"
-      }
+      { "name": "w1_isl=1024_osl=1024", "isl": "1024", "osl": "1024" },
+      { "name": "w1_isl=1024_osl=8192", "isl": "1024", "osl": "8192" },
+      { "name": "w1_isl=8192_osl=1024", "isl": "8192", "osl": "1024" }
     ],
     "runs": [
-      { "combo": "kimi_smoke_1k_1k", "concurrency": 128 },
-      { "combo": "kimi_smoke_1k_1k", "concurrency": 256 }
+      { "combo": "w1_isl=1024_osl=1024", "concurrency": 4 },
+      { "combo": "w1_isl=1024_osl=1024", "concurrency": 8 },
+      { "combo": "w1_isl=1024_osl=1024", "concurrency": 16 },
+      { "combo": "w1_isl=1024_osl=1024", "concurrency": 32 },
+      { "combo": "w1_isl=1024_osl=1024", "concurrency": 64 },
+      { "combo": "w1_isl=1024_osl=8192", "concurrency": 4 },
+      { "combo": "w1_isl=1024_osl=8192", "concurrency": 8 },
+      { "combo": "w1_isl=1024_osl=8192", "concurrency": 16 },
+      { "combo": "w1_isl=1024_osl=8192", "concurrency": 32 },
+      { "combo": "w1_isl=1024_osl=8192", "concurrency": 64 },
+      { "combo": "w1_isl=8192_osl=1024", "concurrency": 4 },
+      { "combo": "w1_isl=8192_osl=1024", "concurrency": 8 },
+      { "combo": "w1_isl=8192_osl=1024", "concurrency": 16 },
+      { "combo": "w1_isl=8192_osl=1024", "concurrency": 32 },
+      { "combo": "w1_isl=8192_osl=1024", "concurrency": 64 }
     ]
   }
 }

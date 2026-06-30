@@ -33,7 +33,7 @@ Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | MI355X | W1 FP8+MTP3 |
 | `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` | MI300X | GPT-OSS uplift placeholder (`driver: vllm`, inline `serve_args`) |
 | `mi355x_inferencex-atom-single_gpt-oss-120b_bf16` | MI355X | GPT-OSS uplift placeholder |
-| `mi300x_inferencex-atom-single_kimi-k2.6_bf16_smoke` | MI300X | Kimi K2.6 BF16 smoke — local checkpoint `/mnt/dtni/models/Kimi-K2.6`; sweep C=128,256 |
+| `mi300x_inferencex-atom-single_kimi-k2.6_bf16_smoke` | MI300X | Kimi K2.6 BF16 — `/mnt/dtni/models/Kimi-K2.6`; 3 ISL/OSL combos × C=4,8,16,32,64 |
 
 ATOM server CLI is inline in each config under `roles.server.atom_args` (vLLM-style, same as `roles.server.serve_args` on `vllm_single`). MTP3 variants also set `params.bench_extra_args`.
 
@@ -117,8 +117,9 @@ section for links. Render-only; does not affect gates.
 ## Kimi K2.6 smoke (MI300X, DTNI lab)
 
 Local checkpoint at `/mnt/dtni/models/Kimi-K2.6`. The variant config mounts `/mnt/dtni/models`
-into the container. Two sweep cells (C=128, 256), 128 prompts each, server reused — expect
-**~17** pytest rows with `--html` (IX Run Deck included).
+into the container. **15 sweep cells** — three ISL/OSL pairs (`1024/1024`, `1024/8192`,
+`8192/1024`) × concurrency `4, 8, 16, 32, 64`, server reused across cells — expect
+**~95** pytest rows with `--html` (IX Run Deck included). Long run; plan several hours.
 
 **Preflight (GPU node must have non-zero model dir):**
 
