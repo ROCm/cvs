@@ -143,5 +143,25 @@ class TestRunClientEnsuresOutDir(unittest.TestCase):
         )
 
 
+class TestRunClientTrustRemoteCode(unittest.TestCase):
+    """Models with a custom tokenizer (e.g. Kimi-K2.6's auto_map) need the bench
+    client to pass --trust-remote-code, mirroring the server's serve_args, or the
+    client's tokenizer load raises ValueError before any request is sent."""
+
+    def _bench_cmd(self, job):
+        job.run_client()
+        bench = [c for c in job.orch.head_cmds if "vllm" in c and "bench" in c]
+        self.assertTrue(bench, f"no bench client command issued; head cmds: {job.orch.head_cmds}")
+        return bench[-1]
+
+    def test_trust_remote_code_passed_when_server_enables_it(self):
+        job = _job("1024", "1024", 8, serve_args={"max-model-len": "16384", "trust-remote-code": True})
+        self.assertIn("--trust-remote-code", self._bench_cmd(job))
+
+    def test_trust_remote_code_absent_when_server_omits_it(self):
+        job = _job("1024", "1024", 8, serve_args={"max-model-len": "16384"})
+        self.assertNotIn("--trust-remote-code", self._bench_cmd(job))
+
+
 if __name__ == "__main__":
     unittest.main()
