@@ -15,7 +15,6 @@ from cvs.lib.verify_lib import *
 
 log = globals.log
 
-
 def get_running_docker_containers(phdl):
     cont_dict = {}
     out_dict = phdl.exec('docker ps --format="{{json .}}"')

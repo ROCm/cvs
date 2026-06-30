@@ -148,7 +148,6 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request
 
 
 def test_disagg_gpu_topology(im_obj, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.sglang_disagg_gpu_counts()
