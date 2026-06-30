@@ -239,17 +239,31 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
     )
 
     try:
-        job.stop_server()
-        job.build_server_cmd()
-        t = time.monotonic()
-        job.start_server()
-        job.wait_ready()
-        lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
+        # Reuse the already-running server when this cell needs an identical one
+        # (cells that differ only in concurrency share a server signature, since
+        # concurrency is a client-only knob). This skips a full stop + weight
+        # reload + warmup between such cells. The server keeps serving on the
+        # same port; only the client args change.
+        sig = job.server_signature()
+        if getattr(lifecycle, "live_server_sig", None) == sig:
+            log.info("reusing running vllm server (same server args); skipping restart")
+            lifecycle.record(request.node.nodeid, "server_ready", 0.0)
+        else:
+            job.stop_server()
+            job.build_server_cmd()
+            t = time.monotonic()
+            job.start_server()
+            job.wait_ready()
+            lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
+            lifecycle.live_server_sig = sig
         job.run_client()
         job.wait_client_complete()
         results = job.parse_results()
     except Exception:
         lifecycle.failed = True
+        # A failed cell may have left the server in a bad state; force the next
+        # cell to do a clean bringup rather than reuse a possibly-dead server.
+        lifecycle.live_server_sig = None
         raise
 
     key = (
