@@ -1,5 +1,5 @@
 {
-  "_comment": "Kimi K2.6 BF16 smoke on MI300X (DTNI lab). Local checkpoint /mnt/dtni/models/Kimi-K2.6. TP8 + expert parallel required (TP-only loads all MoE experts on every GPU and OOMs at ~183 GiB). Three ISL/OSL combos x C=4,8,16,32,64 (15 cells). random_range_ratio=0 for max_model_length=16896. Record-only thresholds.",
+  "_comment": "Kimi K2.6 on MI300X (DTNI lab). Native 555G BF16 safetensors at /mnt/dtni/models/Kimi-K2.6 OOM at FusedMoE create_weights (~182 GiB/GPU, +2.7 GiB short) even with -tp 8 --enable-expert-parallel. This variant uses ATOM online MXFP4 on expert layers at load from that tree; fp8 KV. Fallback: /mnt/dtni/models/Kimi-K2.6-MXFP4 (pre-quant, proven on this node). 15 sweep cells, max_model_length=16896.",
   "schema_version": 1,
   "framework": "inferencex_atom_single",
   "gpu_arch": "mi300x",
@@ -7,7 +7,7 @@
   "threshold_json": "mi300x_inferencex-atom-single_kimi-k2.6_bf16_smoke_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "Kimi K2.6 BF16 smoke — local model /mnt/dtni/models/Kimi-K2.6"
+    "notes": "Kimi K2.6 MI300X — online MXFP4 experts from /mnt/dtni/models/Kimi-K2.6 (BF16 weights do not fit TP8 on 192GB)"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -49,17 +49,20 @@
         "8",
         "--enable-expert-parallel",
         "--kv_cache_dtype",
-        "bf16",
-        "--trust-remote-code"
+        "fp8",
+        "--trust-remote-code",
+        "--online_quant_config",
+        "{\"layer_quant_config\": {\"*experts*\": \"mxfp4\"}, \"exclude_layer\": [\"lm_head\", \"*.gate.*\", \"*shared_experts*\", \"*self_attn*\"]}"
       ],
       "serve_args": {
         "level": 0,
         "enforce-eager": true,
-        "gpu-memory-utilization": "0.78"
+        "gpu-memory-utilization": "0.85"
       },
       "env": {
         "ATOM_USE_TRITON_GEMM": "1",
         "ATOM_USE_TRITON_MOE": "1",
+        "ATOM_USE_TRITON_MXFP4_BMM": "1",
         "ATOM_ENABLE_ALLREDUCE_RMSNORM_FUSION": "0",
         "ATOM_LOADER_USE_THREADPOOL": "0",
         "TORCH_COMPILE_DISABLE": "1"

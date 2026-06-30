@@ -168,13 +168,23 @@ Re-run after that. Long-term fix belongs in ATOM (`QuarkParser` should treat
 Also remove nested `text_config.quantization_config` if present (same Quark metadata
 issue; backup `config.json` first, use `sudo` when the tree is owned by another user).
 
-**`HIP out of memory` during `FusedMoE` / `create_weights`** — on a ~555G BF16 MoE checkpoint,
-**`-tp 8` alone is not enough**: TP-only keeps every expert table on each GPU (~183 GiB
-before the last `torch.empty`, then OOM on +2.6 GiB). Use **`-tp 8 --enable-expert-parallel`**
-(same pattern as ATOM `Qwen3-235B` on MI300X). Also omit `ATOM_DISABLE_MMAP`, keep
-`serve_args.level=0`, `gpu-memory-utilization=0.78`, and `ATOM_LOADER_USE_THREADPOOL=0`.
-Run **one** server only; idle GPUs should show ~300 MiB/GPU in `rocm-smi`. If KV is tight
-after load, try `--kv_cache_dtype fp8` in `atom_args`.
+**`HIP out of memory` during `FusedMoE` / `create_weights`** — the ~555G **BF16 safetensor**
+tree at `/mnt/dtni/models/Kimi-K2.6` does **not** fit on 8× MI300X (192 GiB) with
+`rocm/atom-dev:latest`. smoke8/smoke9 show ~181.7 GiB/GPU allocated before a final
++2.7 GiB `torch.empty` in `FusedMoE.create_weights`; `-tp 8 --enable-expert-parallel`
+barely changes usage (~1 GiB). This is a **capacity limit**, not mmap or custom-AR.
+
+**MI300X paths that work today:**
+
+| Path | Model dir | Notes |
+|------|-----------|--------|
+| Pre-quant MXFP4 (fastest) | `/mnt/dtni/models/Kimi-K2.6-MXFP4` | Proven on this lab node (~521G) |
+| Online quant (shipped config) | `/mnt/dtni/models/Kimi-K2.6` | `--online_quant_config` MXFP4 on `*experts*`, `fp8` KV, `ATOM_USE_TRITON_MXFP4_BMM=1` |
+
+Pure BF16 weight residency on TP8 needs an ATOM/load fix or more aggregate VRAM (e.g. MI355X
+recipe). vLLM’s Kimi K2.6 MI300X recipe uses **INT4/MXFP4**, not raw BF16 safetensors.
+
+Also omit `ATOM_DISABLE_MMAP`, keep `serve_args.level=0`, one server only (~300 MiB/GPU idle).
 
 **`hipIpcGetMemHandle` / custom all-reduce** — if this reappears, use
 `ATOM_ENABLE_ALLREDUCE_RMSNORM_FUSION=0` and `--level 0` (already in the Kimi config).
