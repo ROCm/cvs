@@ -421,6 +421,12 @@ class VllmJob:
             "--result-filename",
             "results",
         ]
+        # The bench client loads the tokenizer from --model to count tokens. Some
+        # models (e.g. Kimi-K2.6) ship a custom tokenizer via tokenizer_config
+        # auto_map, which transformers refuses to load without trust-remote-code.
+        # Mirror the server's setting so the client can load the same tokenizer.
+        if self.serve_args.get("trust-remote-code") is True:
+            args.append("--trust-remote-code")
         if self.goodput_slo:
             args.append("--goodput")
             for metric, key in (("ttft", "ttft_ms"), ("tpot", "tpot_ms"), ("e2el", "e2el_ms")):
