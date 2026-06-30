@@ -14,6 +14,7 @@ import time
 from typing import Any, Optional
 
 from cvs.lib import globals
+from cvs.lib.docker_lib import get_docker_cmd
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
@@ -282,7 +283,7 @@ class SglangDisaggPD:
 
         log.info('Run pre inference tasks')
         # Install ip tools
-        cmd = f'docker exec {self.container_name} /bin/bash -c " \
+        cmd = f'{get_docker_cmd()} exec {self.container_name} /bin/bash -c " \
             sudo apt -y update; \
             sudo apt install -y iputils-ping; \
             sudo apt install -y iproute2; \
@@ -316,7 +317,7 @@ class SglangDisaggPD:
             # override the gid_index to 3 for broadcom
             self.nccl_ib_gid_index = 3
             cmd = (
-                    f'docker exec {self.container_name} /bin/bash -c "sudo '
+                    f'{get_docker_cmd()} exec {self.container_name} /bin/bash -c "sudo '
                     f'cp {self.mount_vol}.host {self.mount_vol}; '
                     f'sleep 2; ibv_devinfo; sleep 2;" '
                 )
@@ -356,7 +357,7 @@ class SglangDisaggPD:
         Proxy and benchmark nodes typically do not require RDMA access.
         """
         for hdl in [self.p_phdl, self.d_phdl]:
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "ibv_devinfo" '''
+            cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "ibv_devinfo" '''
             out_dict = hdl.exec(cmd)
             for node in out_dict.keys():
                 if re.search('No IB devices found', out_dict[node], re.I):
@@ -367,7 +368,7 @@ class SglangDisaggPD:
         self,
     ):
         # Env setup for Prefill Nodes ..
-        p_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
+        p_cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "echo '
 
                     export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
@@ -390,7 +391,7 @@ class SglangDisaggPD:
         time.sleep(3)
         formatted_p_cmd = textwrap_for_yml(p_cmd)
         self.p_phdl.exec(formatted_p_cmd)
-        cmd = f'''docker exec {self.container_name} /bin/bash -c " \
+        cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c " \
                    chmod 755 /tmp/prefill_env_script.sh; /tmp/prefill_env_script.sh" '''
         self.p_phdl.exec(cmd)
 
@@ -399,7 +400,7 @@ class SglangDisaggPD:
         self,
     ):
         # Env setup for Decode Nodes ..
-        d_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
+        d_cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "echo '
 
                     export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
@@ -422,7 +423,7 @@ class SglangDisaggPD:
         time.sleep(3)
         formatted_d_cmd = textwrap_for_yml(d_cmd)
         self.d_phdl.exec(formatted_d_cmd)
-        cmd = f'''docker exec {self.container_name} /bin/bash -c " \
+        cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c " \
                    chmod 755 /tmp/decode_env_script.sh; /tmp/decode_env_script.sh" '''
         self.d_phdl.exec(cmd)
 
@@ -431,7 +432,7 @@ class SglangDisaggPD:
         self,
     ):
         # Env setup for Proxy Router Node ..
-        r_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
+        r_cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "echo '
 
                     export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
@@ -449,7 +450,7 @@ class SglangDisaggPD:
         time.sleep(3)
         formatted_r_cmd = textwrap_for_yml(r_cmd)
         self.r_phdl.exec(formatted_r_cmd)
-        cmd = f'''docker exec {self.container_name} /bin/bash -c " \
+        cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c " \
                    chmod 755 /tmp/router_env_script.sh; /tmp/router_env_script.sh" '''
         self.r_phdl.exec(cmd)
 
@@ -458,7 +459,7 @@ class SglangDisaggPD:
         self,
     ):
         # Env setup for Benchserv node ..
-        b_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
+        b_cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "echo '
 
                     export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
@@ -475,7 +476,7 @@ class SglangDisaggPD:
         time.sleep(3)
         formatted_b_cmd = textwrap_for_yml(b_cmd)
         self.b_phdl.exec(formatted_b_cmd)
-        cmd = f'''docker exec {self.container_name} /bin/bash -c " \
+        cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c " \
                    chmod 755 /tmp/benchmark_env_script.sh; /tmp/benchmark_env_script.sh" '''
         self.b_phdl.exec(cmd)
         time.sleep(5)
@@ -513,14 +514,14 @@ class SglangDisaggPD:
         #   - Output is redirected to a per-container log file
         #   - Command is executed in the background to allow parallel execution
         # ------------------------------------------------------------------
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "MAX_JOBS={max_jobs} \
+        cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c  "MAX_JOBS={max_jobs} \
                 python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py > /tmp/rsmnorm_test.log 2>&1 &" '''
         for hdl in [self.p_phdl, self.d_phdl, self.r_phdl]:
             out_dict = hdl.exec(cmd)
         log.info('Wait 180 secs for tests to complete')
         time.sleep(180)
         for hdl in [self.p_phdl, self.d_phdl, self.r_phdl]:
-            cmd = f'''docker exec {self.container_name} /bin/bash -c  "cat /tmp/rsmnorm_test.log" '''
+            cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c  "cat /tmp/rsmnorm_test.log" '''
             out_dict = hdl.exec(cmd)
             for node in out_dict.keys():
                 if re.search('fail', out_dict[node], re.I):
@@ -561,7 +562,7 @@ class SglangDisaggPD:
         log.info('%%%% self.prefill_nnodes {}'.format(self.prefill_nnodes))
         dist_init_addr = f"{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_coordinator_port']}"
         for i in range(0, int(self.prefill_nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
+            cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.prefill_nnodes}
                       export NODE_RANK={i}
                       export SGLANG_USE_AITER=1
@@ -592,7 +593,7 @@ class SglangDisaggPD:
         log.info('#================ * * * =========================#')
         cmd_list = []
         for i in range(0, int(self.prefill_nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c " \
+            cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c " \
                    chmod 755 /tmp/prefill_launch_script.sh; \
                    mkdir -p {self.log_dir}/prefill_node{i}; \
                    source /tmp/prefill_env_script.sh && \
@@ -634,7 +635,7 @@ class SglangDisaggPD:
         log.info('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
         dist_init_addr = f"{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_coordinator_port']}"
         for i in range(0, int(self.decode_nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
+            cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.decode_nnodes}
                       export NODE_RANK={i}
                       export SGLANG_USE_AITER=1
@@ -665,7 +666,7 @@ class SglangDisaggPD:
         log.info('#================ * * * =========================#')
         cmd_list = []
         for i in range(0, int(self.decode_nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c " \
+            cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c " \
                    chmod 755 /tmp/decode_launch_script.sh; \
                    mkdir -p {self.log_dir}/decode_node{i}; \
                    source /tmp/decode_env_script.sh && \
@@ -766,7 +767,7 @@ class SglangDisaggPD:
         # NOTE:
         #   The script is written to disk but not executed here.
         # ------------------------------------------------------------------
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
+        cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c  "echo  '
                       python3 -m sglang_router.launch_router \
                               --pd-disaggregation \
                               {prefill_str} \
@@ -781,7 +782,7 @@ class SglangDisaggPD:
         log.info('#================ * * * =========================#')
         log.info('Launch Proxy Router script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
-        cmd = f'''docker exec {self.container_name} /bin/bash -c " \
+        cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c " \
                    chmod 755 /tmp/proxy_router_launch_script.sh; \
                    mkdir -p {self.log_dir}/proxy_router_node; \
                    source /tmp/router_env_script.sh && \
@@ -832,7 +833,7 @@ class SglangDisaggPD:
         #
         # Output is redirected to a log file for later inspection.
         # ------------------------------------------------------------------
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+        cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
                       source /tmp/benchmark_env_script.sh && \
                       pip install --upgrade --no-deps sglang[all] && \
@@ -880,7 +881,7 @@ class SglangDisaggPD:
                  f"echo 'MFU (estimated): {mfu}' >> {log_path} && "
                 f"echo '=====================================================================' >> {log_path}"
             )
-            cmd = f"docker exec {self.container_name} /bin/bash -c {shlex.quote(inner)}"
+            cmd = f"{get_docker_cmd()} exec {self.container_name} /bin/bash -c {shlex.quote(inner)}"
             self.b_phdl.exec(cmd)
 
         self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
@@ -1394,7 +1395,7 @@ class SglangDisaggPD:
     def verify_openai_compatible_endpoints(self) -> list[str]:
         """
         Smoke-test OpenAI-compatible HTTP API on the proxy router (inside the
-        benchmark container via ``docker exec``): GET /v1/models,
+        benchmark container via ``{get_docker_cmd()} exec``): GET /v1/models,
         POST /v1/chat/completions, POST /v1/completions, and structured JSON
         (book) via chat completions.
         """
@@ -1403,7 +1404,7 @@ class SglangDisaggPD:
 
         probe_src = OpenAIProbe.probe_script(port, model_name)
         b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+        cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c  "
                   mkdir -p {self.log_dir}/benchmark_node; \
                   echo '{b64}' | base64 -d > /tmp/openai_mq_probe.py && \
                   python3 /tmp/openai_mq_probe.py && \
@@ -1510,7 +1511,7 @@ class SglangDisaggPD:
             default_num_concurrent=spec["default_num_concurrent"],
         )
 
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
+        cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c  "
                 mkdir -p {self.log_dir}/benchmark_node; \\
                 source /tmp/benchmark_env_script.sh && \\
                 {inner_cmd}" '''
