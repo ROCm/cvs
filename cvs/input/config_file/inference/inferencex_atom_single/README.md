@@ -135,6 +135,36 @@ If the server log shows `load model runner failed` / `ModelRunner.*proc died`, c
 `tiktoken`, or `max_model_length` too small for the sweep (this variant uses
 `max_model_length=16896` with `random_range_ratio=0` for ISL+OSL up to 8192+8192).
 
+**`ValueError: Unsupported quant dtype: torch.bfloat16`** — the decompressed BF16
+checkpoint at `/mnt/dtni/models/Kimi-K2.6` still carries a Quark `quantization_config`
+where `weight.dtype` is `bfloat16` (Quark’s “do not quantize” spec). `rocm/atom-dev:latest`
+mis-reads that as a quantized dtype and aborts during weight load. One-time fix on the GPU
+node (back up first, then remove the metadata block; weights stay BF16 safetensors):
+
+```bash
+ssh -i ~/.ssh/<key> <user>@<gpu-node> 'python3 - <<'"'"'PY'"'"'
+import json, shutil
+from pathlib import Path
+p = Path("/mnt/dtni/models/Kimi-K2.6/config.json")
+cfg = json.loads(p.read_text())
+qc = cfg.get("quantization_config")
+if not qc:
+    print("no quantization_config — nothing to do")
+    raise SystemExit(0)
+bak = p.with_suffix(".json.bak-cvs")
+if not bak.exists():
+    shutil.copy2(p, bak)
+    print("backup:", bak)
+cfg.pop("quantization_config", None)
+p.write_text(json.dumps(cfg, indent=2) + "\n")
+print("removed quantization_config from", p)
+PY'
+```
+
+Re-run after that. Long-term fix belongs in ATOM (`QuarkParser` should treat
+`bfloat16`/`float16` weight dtype as `QuantType.No`). Do **not** point this variant at
+`Kimi-K2.6-MXFP4` if the goal is native K2.6 BF16.
+
 ```bash
 cd ~/cvs && source .cvs_venv/bin/activate
 mkdir -p ~/input/cluster_file

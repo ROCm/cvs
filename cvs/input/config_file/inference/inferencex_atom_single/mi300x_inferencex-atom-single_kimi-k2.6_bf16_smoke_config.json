@@ -47,13 +47,14 @@
       "atom_args": [
         "-tp",
         "8",
+        "--kv_cache_dtype",
+        "bf16",
         "--trust-remote-code"
       ],
       "env": {
         "ATOM_DISABLE_MMAP": "true",
         "ATOM_USE_TRITON_GEMM": "1",
         "ATOM_USE_TRITON_MOE": "1",
-        "ATOM_USE_TRITON_MXFP4_BMM": "1",
         "TORCH_COMPILE_DISABLE": "1"
       }
     }

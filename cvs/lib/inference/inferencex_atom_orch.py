@@ -45,7 +45,7 @@ class InferenceXAtomJob:
         r"proc died unexpectedly|load model runner failed|"
         r"Failed to initialize all EngineCores|Engine Core Mgr:|"
         r"Couldn't instantiate the backend tokenizer|is not pickleable|"
-        r"CUDA out of memory|OutOfMemoryError|"
+        r"Unsupported quant dtype|CUDA out of memory|OutOfMemoryError|"
         r"Traceback \(most recent call last\)",
         re.I,
     )
