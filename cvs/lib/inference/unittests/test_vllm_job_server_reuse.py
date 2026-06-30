@@ -20,10 +20,14 @@ _NNODES = 2
 class FakeOrch:
     hosts = ["10.0.0.1", "10.0.0.2"]
 
+    def __init__(self):
+        self.head_cmds = []
+
     def exec(self, *a, **k):
         return {}
 
-    def exec_on_head(self, *a, **k):
+    def exec_on_head(self, cmd, *a, **k):
+        self.head_cmds.append(cmd)
         return {}
 
 
@@ -121,6 +125,22 @@ class TestServerSignatureReuse(unittest.TestCase):
         self.assertNotIn("--node-rank", sig[0])
         # hashable + stable
         self.assertEqual(hash(sig), hash(job.server_signature()))
+
+
+class TestRunClientEnsuresOutDir(unittest.TestCase):
+    """The server-reuse path skips build_server_cmd (which creates the per-cell
+    out_dir), so run_client must create its own out_dir or the client's
+    client.log/results writes fail with 'No such file or directory'."""
+
+    def test_run_client_mkdirs_out_dir(self):
+        job = _job("1024", "1024", 8, serve_args={"max-model-len": "16384"})
+        job.run_client()
+        mkdir_cmds = [c for c in job.orch.head_cmds if "mkdir -p" in c and job.out_dir in c]
+        self.assertTrue(
+            mkdir_cmds,
+            f"run_client must mkdir -p its out_dir ({job.out_dir}) so the reuse path "
+            f"(which skips build_server_cmd) can still write client.log; head cmds: {job.orch.head_cmds}",
+        )
 
 
 if __name__ == "__main__":
