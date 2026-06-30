@@ -58,6 +58,10 @@ class VllmJob:
     READINESS_RE = re.compile(r"Application startup complete|Uvicorn running|Started server", re.I)
     COMPLETION_RE = re.compile(r"Serving Benchmark Result", re.I)
     FAILED_REQUESTS_RE = re.compile(r"Failed requests:\s+([0-9]+)", re.I)
+    SUCCESSFUL_REQUESTS_RE = re.compile(r"Successful requests:\s+([0-9]+)", re.I)
+    # A benchmark cell with a few transient request drops is still a usable perf
+    # data point; only abort the sweep when the failure FRACTION exceeds this.
+    MAX_FAILED_REQUEST_FRACTION = 0.01
     CLIENT_CRASH_RE = re.compile(r"Traceback \(most recent call last\)", re.I)
     CLIENT_LAUNCH_FAIL_RE = re.compile(
         r"unrecognized arguments|invalid choice|error: argument |command not found|: No such file or directory",
@@ -187,11 +191,14 @@ class VllmJob:
             self.model_id,
             "--tensor-parallel-size",
             str(self.tp),
-            "--max-model-len",
-            self._derive_max_model_len(),
             "--port",
             str(self.port_no),
         ]
+        # Emit a derived --max-model-len ONLY when the config did not set one in
+        # serve_args. Emitting both makes vllm see the flag twice (the serve_args
+        # value silently wins); the explicit config value takes precedence here.
+        if "max-model-len" not in self.serve_args:
+            argv += ["--max-model-len", self._derive_max_model_len()]
         if int(self.nnodes) > 1:
             argv += [
                 "--node-rank",
@@ -214,6 +221,26 @@ class VllmJob:
 
     def _rank_log(self, rank: int) -> str:
         return self.server_log.replace("out-node0", f"out-node{rank}")
+
+    def server_signature(self):
+        """Identity of the vllm server for this cell, independent of rank, the
+        client-only knobs (concurrency, num_prompts), and per-cell log paths.
+
+        Two cells with the same signature are served by an identical server, so
+        the running server can be reused without a stop/start/reload. Built from
+        the rank-0 argv with the rank-specific --node-rank stripped, plus the
+        server env map (which build_server_cmd writes into the env script).
+        Concurrency is a client arg only and never appears here, so cells that
+        differ only in concurrency share a signature.
+        """
+        argv = list(self._server_argv(0))
+        # Drop the rank token so rank-0 vs rank-N argvs compare equal; the rest
+        # of the distributed flags (master/nnodes/pp) are identical across cells.
+        if "--node-rank" in argv:
+            i = argv.index("--node-rank")
+            del argv[i : i + 2]
+        env_items = tuple(sorted((str(k), str(v)) for k, v in self.server_env.items()))
+        return (tuple(argv), env_items)
 
     # ---------- server side ----------
 
@@ -421,8 +448,19 @@ class VllmJob:
                     failed.append((host, txt[-500:]))
                 else:
                     fm = self.FAILED_REQUESTS_RE.search(txt)
-                    if fm and int(fm.group(1)) > 0:
-                        failed.append((host, f"Failed requests: {fm.group(1)} -- {txt[-500:]}"))
+                    n_failed = int(fm.group(1)) if fm else 0
+                    if n_failed > 0:
+                        sm = self.SUCCESSFUL_REQUESTS_RE.search(txt)
+                        n_ok = int(sm.group(1)) if sm else 0
+                        total = n_ok + n_failed
+                        frac = (n_failed / total) if total else 1.0
+                        if frac > self.MAX_FAILED_REQUEST_FRACTION:
+                            failed.append((host, f"Failed requests: {n_failed}/{total} ({frac:.1%}) -- {txt[-500:]}"))
+                        else:
+                            log.warning(
+                                "%s: %d/%d requests failed (%.2f%%) — within tolerance (<=%.0f%%), continuing",
+                                host, n_failed, total, frac * 100, self.MAX_FAILED_REQUEST_FRACTION * 100,
+                            )
             if failed:
                 self.dump_client_log()
                 raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
