@@ -26,7 +26,6 @@ def test_cleanup_stale_containers(orch, lifecycle, request):
 
 def test_launch_inference_containers(orch, lifecycle, request):
     """Stage 1: launch SGLang containers on prefill/decode/router/bench nodes."""
-    lifecycle.skip_if_prior_failure()
     log.info("Testcase launch SGLang containers")
     globals.error_list = []
     t0 = time.monotonic()
@@ -36,7 +35,6 @@ def test_launch_inference_containers(orch, lifecycle, request):
 
 
 def test_setup_ibv_devices(im_obj, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.check_ibv_devices()
@@ -45,7 +43,6 @@ def test_setup_ibv_devices(im_obj, lifecycle, request):
 
 
 def test_rms_norm(im_obj, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.run_test_rmsnorm()
@@ -53,7 +50,6 @@ def test_rms_norm(im_obj, lifecycle, request):
 
 
 def test_launch_prefill_servers(im_obj, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_prefill_container_env()
@@ -62,7 +58,6 @@ def test_launch_prefill_servers(im_obj, lifecycle, request):
 
 
 def test_launch_decode_servers(im_obj, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_decode_container_env()
@@ -71,7 +66,6 @@ def test_launch_decode_servers(im_obj, lifecycle, request):
 
 
 def test_poll_for_server_ready(im_obj, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.poll_and_check_server_ready()
@@ -79,7 +73,6 @@ def test_poll_for_server_ready(im_obj, lifecycle, request):
 
 
 def test_launch_proxy_router(im_obj, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_proxy_router_container_env()
