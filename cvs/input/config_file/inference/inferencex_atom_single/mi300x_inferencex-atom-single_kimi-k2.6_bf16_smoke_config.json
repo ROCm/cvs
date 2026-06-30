@@ -1,5 +1,5 @@
 {
-  "_comment": "Kimi K2.6 smoke on MI300X (DTNI lab). Local checkpoint /mnt/dtni/models/Kimi-K2.6. Three ISL/OSL combos x C=4,8,16,32,64 (15 cells). random_range_ratio=0 so ISL+OSL fits max_model_length=16896 (8192+8192). Record-only thresholds.",
+  "_comment": "Kimi K2.6 BF16 smoke on MI300X (DTNI lab). Local checkpoint /mnt/dtni/models/Kimi-K2.6. Three ISL/OSL combos x C=4,8,16,32,64 (15 cells). random_range_ratio=0 so ISL+OSL fits max_model_length=16896 (8192+8192). Do not set ATOM_DISABLE_MMAP on this 555G BF16 MoE checkpoint (OOM during FusedMoE create_weights). Record-only thresholds.",
   "schema_version": 1,
   "framework": "inferencex_atom_single",
   "gpu_arch": "mi300x",
@@ -51,10 +51,16 @@
         "bf16",
         "--trust-remote-code"
       ],
+      "serve_args": {
+        "level": 0,
+        "enforce-eager": true,
+        "gpu-memory-utilization": "0.78"
+      },
       "env": {
-        "ATOM_DISABLE_MMAP": "true",
         "ATOM_USE_TRITON_GEMM": "1",
         "ATOM_USE_TRITON_MOE": "1",
+        "ATOM_ENABLE_ALLREDUCE_RMSNORM_FUSION": "0",
+        "ATOM_LOADER_USE_THREADPOOL": "0",
         "TORCH_COMPILE_DISABLE": "1"
       }
     }

@@ -165,6 +165,19 @@ Re-run after that. Long-term fix belongs in ATOM (`QuarkParser` should treat
 `bfloat16`/`float16` weight dtype as `QuantType.No`). Do **not** point this variant at
 `Kimi-K2.6-MXFP4` if the goal is native K2.6 BF16.
 
+Also remove nested `text_config.quantization_config` if present (same Quark metadata
+issue; backup `config.json` first, use `sudo` when the tree is owned by another user).
+
+**`HIP out of memory` during `FusedMoE` / `create_weights`** — the ~555G BF16 checkpoint
+does **not** fit when `ATOM_DISABLE_MMAP=true` (each GPU pins ~183 GiB of weights before
+MoE buffers allocate). The shipped Kimi config omits `ATOM_DISABLE_MMAP`, uses
+`serve_args.level=0`, `gpu-memory-utilization=0.78`, and `ATOM_LOADER_USE_THREADPOOL=0`.
+Confirm a single server process and idle GPUs (`rocm-smi` ~300 MiB/GPU) before launch.
+
+**`hipIpcGetMemHandle` / custom all-reduce** — if this reappears, use
+`ATOM_ENABLE_ALLREDUCE_RMSNORM_FUSION=0` and `--level 0` (already in the Kimi config).
+Do **not** set `PYTORCH_ALLOC_CONF=expandable_segments:True` with custom AR on this stack.
+
 ```bash
 cd ~/cvs && source .cvs_venv/bin/activate
 mkdir -p ~/input/cluster_file

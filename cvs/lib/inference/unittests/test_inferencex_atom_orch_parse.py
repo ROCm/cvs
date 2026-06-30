@@ -271,6 +271,31 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         self.assertIn("--max-model-len", argv)
         self.assertEqual(argv[argv.index("--max-model-len") + 1], "8192")
 
+    def test_atom_server_argv_forwards_shared_serve_args(self):
+        variant = _fake_variant(driver="atom")
+        variant.roles.server.serve_args = {
+            "gpu-memory-utilization": "0.78",
+            "level": 0,
+            "enforce-eager": True,
+            "block-size": 64,
+        }
+        job = InferenceXAtomJob(
+            orch=FakeOrch(),
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        argv = job._atom_server_argv()
+        self.assertIn("--gpu-memory-utilization", argv)
+        self.assertEqual(argv[argv.index("--gpu-memory-utilization") + 1], "0.78")
+        self.assertIn("--level", argv)
+        self.assertEqual(argv[argv.index("--level") + 1], "0")
+        self.assertIn("--enforce-eager", argv)
+        self.assertNotIn("--block-size", argv)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,9 +45,19 @@ class InferenceXAtomJob:
         r"proc died unexpectedly|load model runner failed|"
         r"Failed to initialize all EngineCores|Engine Core Mgr:|"
         r"Couldn't instantiate the backend tokenizer|is not pickleable|"
-        r"Unsupported quant dtype|CUDA out of memory|OutOfMemoryError|"
+        r"Unsupported quant dtype|CUDA out of memory|HIP out of memory|OutOfMemoryError|"
         r"Traceback \(most recent call last\)",
         re.I,
+    )
+
+    # serve_args keys forwarded to ``atom.entrypoints.openai_server`` (vLLM names where shared).
+    _ATOM_SHARED_SERVE_ARG_KEYS = frozenset(
+        {
+            "gpu-memory-utilization",
+            "enforce-eager",
+            "level",
+            "cudagraph-capture-sizes",
+        }
     )
 
     _DEFAULT_SERVE_ARGS = {
@@ -238,6 +248,14 @@ class InferenceXAtomJob:
         argv.extend(self._flatten_serve_args(self.serve_args))
         return argv
 
+    def _atom_shared_serve_argv(self):
+        argv = []
+        for key in self._ATOM_SHARED_SERVE_ARG_KEYS:
+            if key not in self.serve_args:
+                continue
+            argv.extend(self._flatten_serve_args({key: self.serve_args[key]}))
+        return argv
+
     def _atom_server_argv(self):
         argv = [
             "python",
@@ -251,6 +269,7 @@ class InferenceXAtomJob:
             self.max_model_length,
         ]
         argv.extend(self.atom_server_args)
+        argv.extend(self._atom_shared_serve_argv())
         return argv
 
     def _atom_server_log_fatal(self, output):
