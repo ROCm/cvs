@@ -88,7 +88,6 @@ def test_launch_proxy_router(im_obj, lifecycle, request):
 
 
 def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     results = im_obj.verify_openai_compatible_endpoints()
@@ -97,7 +96,6 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
 
 
 def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
@@ -107,7 +105,6 @@ def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, r
 
 
 def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
@@ -117,7 +114,6 @@ def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, reque
 
 
 def test_run_lm_eval_mmlu_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
@@ -127,7 +123,6 @@ def test_run_lm_eval_mmlu_benchmark_test(im_obj, inf_res_dict, lifecycle, reques
 
 
 def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
