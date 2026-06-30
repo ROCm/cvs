@@ -207,6 +207,8 @@ class VllmJob:
                 "--distributed-executor-backend",
                 "mp",
             ]
+            if rank > 0:
+                argv.append("--headless")
         argv.extend(self._flatten_serve_args(self.serve_args))
         return argv
 
@@ -270,9 +272,17 @@ class VllmJob:
                     )
 
     def is_ready(self):
-        """Check readiness on each node using its own per-rank log path."""
+        """Check readiness on each node using its own per-rank log path.
+
+        Headless worker nodes (rank > 0) never log 'Application startup
+        complete' — they have no API server. Only check the head (rank 0)
+        for the startup pattern; worker ranks are considered ready implicitly
+        once the head is up.
+        """
         pattern = self.READINESS_RE.pattern
         for rank, host in enumerate(self.orch.hosts):
+            if rank > 0 and int(self.nnodes) > 1:
+                continue
             rank_log = self._rank_log(rank)
             out = self.orch.exec(
                 f"grep -qiE {shlex.quote(pattern)} {shlex.quote(rank_log)}",
@@ -393,7 +403,11 @@ class VllmJob:
         self.orch.exec_on_head("bash -c " + shlex.quote(client_cmd))
 
     def wait_client_complete(self):
-        """Poll the client log on the HEAD node only via exec_on_head."""
+        """Poll the client log on the HEAD node only via exec_on_head.
+
+        Polls silently (no per-iteration log dump) to keep the captured section
+        clean. After completion, dump_client_log() emits the full log once.
+        """
         log.info("client initial wait %ds", self._client_initial_wait)
         time.sleep(self._client_initial_wait)
         for it in range(self._client_poll_count):
@@ -410,12 +424,22 @@ class VllmJob:
                     if fm and int(fm.group(1)) > 0:
                         failed.append((host, f"Failed requests: {fm.group(1)} -- {txt[-500:]}"))
             if failed:
+                self.dump_client_log()
                 raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
             if done and all(done):
                 log.info("client complete (iter=%d)", it)
+                self.dump_client_log()
                 return
             time.sleep(self._client_poll_wait)
+        self.dump_client_log()
         raise RuntimeError("client did not complete before poll cap")
+
+    def dump_client_log(self):
+        """Emit the full client log to the captured section once after completion."""
+        out = self.orch.exec_on_head(f"cat {shlex.quote(self.client_log)}")
+        for host, text in (out or {}).items():
+            for line in (text or "").splitlines():
+                log.info("[%s client.log] %s", host, line)
 
     def parse_results(self):
         """Fetch and parse the results artifact from the HEAD node via exec_on_head."""
