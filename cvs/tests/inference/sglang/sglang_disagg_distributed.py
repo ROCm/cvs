@@ -8,25 +8,10 @@ Single SGLang disaggregated (PD) benchmark module: model is selected from
 
 import time
 
-import pytest
-
 from cvs.lib import globals
-from cvs.lib.utils_lib import update_test_result
 from cvs.tests.inference.sglang._shared import test_print_results_table
 
 log = globals.log
-
-
-def _skip_if_prior_failure(lifecycle):
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
-
-
-def _complete_stage(lifecycle, request, label, t0):
-    lifecycle.record(request.node.nodeid, label, time.monotonic() - t0)
-    if globals.error_list:
-        lifecycle.failed = True
-    update_test_result()
 
 
 def test_cleanup_stale_containers(orch, lifecycle, request):
@@ -36,113 +21,113 @@ def test_cleanup_stale_containers(orch, lifecycle, request):
     orch.teardown_containers()
     orch.cleanup_log_dir()
     time.sleep(5)
-    _complete_stage(lifecycle, request, "stale_cleanup", t0)
+    lifecycle.complete_stage(request, "stale_cleanup", t0)
 
 
 def test_launch_inference_containers(orch, lifecycle, request):
     """Stage 1: launch SGLang containers on prefill/decode/router/bench nodes."""
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     log.info("Testcase launch SGLang containers")
     globals.error_list = []
     t0 = time.monotonic()
     if not orch.setup_containers():
         lifecycle.failed = True
-    _complete_stage(lifecycle, request, "container_launch", t0)
+    lifecycle.complete_stage(request, "container_launch", t0)
 
 
 def test_setup_ibv_devices(im_obj, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.check_ibv_devices()
     im_obj.exec_nic_setup_scripts()
-    _complete_stage(lifecycle, request, "ibv_setup", t0)
+    lifecycle.complete_stage(request, "ibv_setup", t0)
 
 
 def test_rms_norm(im_obj, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.run_test_rmsnorm()
-    _complete_stage(lifecycle, request, "rms_norm", t0)
+    lifecycle.complete_stage(request, "rms_norm", t0)
 
 
 def test_launch_prefill_servers(im_obj, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_prefill_container_env()
     im_obj.launch_prefill_servers()
-    _complete_stage(lifecycle, request, "prefill_launch", t0)
+    lifecycle.complete_stage(request, "prefill_launch", t0)
 
 
 def test_launch_decode_servers(im_obj, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_decode_container_env()
     im_obj.launch_decode_servers()
-    _complete_stage(lifecycle, request, "decode_launch", t0)
+    lifecycle.complete_stage(request, "decode_launch", t0)
 
 
 def test_poll_for_server_ready(im_obj, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.poll_and_check_server_ready()
-    _complete_stage(lifecycle, request, "server_ready", t0)
+    lifecycle.complete_stage(request, "server_ready", t0)
 
 
 def test_launch_proxy_router(im_obj, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_proxy_router_container_env()
     im_obj.launch_proxy_router()
-    _complete_stage(lifecycle, request, "proxy_router_launch", t0)
+    lifecycle.complete_stage(request, "proxy_router_launch", t0)
 
 
 def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     results = im_obj.verify_openai_compatible_endpoints()
     inf_res_dict["__smoke_probe_results__"] = results
-    _complete_stage(lifecycle, request, "smoke_endpoints", t0)
+    lifecycle.complete_stage(request, "smoke_endpoints", t0)
 
 
 def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
     h = im_obj.run_lm_eval_hellaswag_benchmark_test()
     inf_res_dict.setdefault("__phase_labels__", {})["accuracy_hellaswag"] = h
-    _complete_stage(lifecycle, request, "lm_eval_hellaswag", t0)
+    lifecycle.complete_stage(request, "lm_eval_hellaswag", t0)
 
 
 def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
     g = im_obj.run_lm_eval_gsm8k_benchmark_test()
     inf_res_dict.setdefault("__phase_labels__", {})["accuracy_gsm8k"] = g
-    _complete_stage(lifecycle, request, "lm_eval_gsm8k", t0)
+    lifecycle.complete_stage(request, "lm_eval_gsm8k", t0)
 
 
 def test_run_lm_eval_mmlu_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
     m = im_obj.run_lm_eval_mmlu_benchmark_test()
     inf_res_dict.setdefault("__phase_labels__", {})["accuracy_mmlu"] = m
-    _complete_stage(lifecycle, request, "lm_eval_mmlu", t0)
+    lifecycle.complete_stage(request, "lm_eval_mmlu", t0)
 
 
 def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
@@ -164,15 +149,15 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request
     labels["performance_test"] = "PASS" if not globals.error_list else "FAIL"
 
     inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
-    _complete_stage(lifecycle, request, "bench_serv_random", t0)
+    lifecycle.complete_stage(request, "bench_serv_random", t0)
 
 
 def test_disagg_gpu_topology(im_obj, lifecycle, request):
-    _skip_if_prior_failure(lifecycle)
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.sglang_disagg_gpu_counts()
-    _complete_stage(lifecycle, request, "gpu_topology", t0)
+    lifecycle.complete_stage(request, "gpu_topology", t0)
 
 
 def test_teardown(orch, lifecycle, request):

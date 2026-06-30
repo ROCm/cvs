@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -30,6 +31,7 @@ from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
     resolve_test_config_placeholders,
+    update_test_result,
 )
 
 from cvs.tests.inference.sglang._shared import SGLANG_DISAGG_TEST_ORDER, resolve_benchmark_variant_key
@@ -202,6 +204,15 @@ class _Lifecycle:
 
     def record(self, nodeid: str, label: str, value: float, unit: str = "s") -> None:
         self.report.setdefault(nodeid, []).append((label, value, unit))
+
+    def skip_if_prior_failure(self) -> None:
+        if self.failed:
+            pytest.skip("a prior lifecycle stage failed")
+    def complete_stage(self, request, label: str, t0: float) -> None:
+        self.record(request.node.nodeid, label, time.monotonic() - t0)
+        if globals.error_list:
+            self.failed = True
+        update_test_result()
 
 
 # ---------- fixtures ----------
