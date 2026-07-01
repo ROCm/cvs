@@ -356,16 +356,45 @@ class HtmlReportManager:
         if not self._custom_test_reports:
             return ""
 
-        # Simple Reports section - only test reports, no config files
         html = '<div><h2>Reports</h2><ul>'
-
-        # Add test reports only
         for report in self._custom_test_reports:
             html += f'<li><a href="{report["path"]}" target="_blank">{report["name"]}</a></li>'
-
-        html += '</ul></div>'
+        html += "</ul></div>"
 
         return html
+
+    def generate_suite_reports(self, session):
+        """Write registered suite report HTML/JSON into the pytest bundle before zip."""
+        if not self.is_enabled:
+            return
+
+        from cvs.lib.report.inference import publish_inference_suite_report
+        from cvs.lib.report.registry import get_session_results, get_suite_report_config
+        from cvs.lib.report.types import InferenceReportConfig
+
+        report_config = get_suite_report_config(session.config)
+        if report_config is None:
+            return
+
+        store = get_session_results()
+
+        if not isinstance(report_config, InferenceReportConfig):
+            log.warning("Unknown suite report config type: %s", type(report_config).__name__)
+            return
+
+        inf_res_dict = store.get("inf_res_dict")
+        if not inf_res_dict:
+            log.info("Skipping suite report generation: no results in session store")
+            return
+
+        publish_inference_suite_report(
+            report_config,
+            variant_config=store.get("variant_config"),
+            inf_res_dict=inf_res_dict,
+            lifecycle_report=store.get("lifecycle_report") or {},
+            report_manager=self,
+            pytest_config=session.config,
+        )
 
     @staticmethod
     def inject_style_overrides(prefix):

@@ -36,6 +36,13 @@ from cvs.lib.utils_lib import (
 
 from cvs.tests.inference.sglang._shared import SGLANG_DISAGG_TEST_ORDER, resolve_benchmark_variant_key
 
+from cvs.lib.report.inference_wiring import (
+    attach_inference_suite_report_row_extra,
+    bind_inference_suite_report_session,
+    configure_inference_suite_report,
+)
+from cvs.lib.report.presets.sglang_disagg_distributed import SGLANG_DISAGG_REPORT_CONFIG
+
 log = globals.log
 
 
@@ -224,6 +231,15 @@ class _Lifecycle:
 # ---------- fixtures ----------
 
 @pytest.fixture(scope="module", autouse=True)
+def _suite_report_session(inf_res_dict, variant_config, lifecycle):
+    bind_inference_suite_report_session(
+        inf_res_dict=inf_res_dict,
+        variant_config=variant_config,
+        lifecycle=lifecycle,
+    )
+    yield
+
+@pytest.fixture(scope="module", autouse=True)
 def _configure_docker_cmd(cluster_dict, inference_dict):
     import cvs.lib.docker_lib as docker_lib
     docker_lib.set_docker_cmd(_resolve_docker_cmd(cluster_dict, inference_dict))
@@ -249,9 +265,6 @@ def variant_config(pytestconfig, cluster_dict) -> SglangVariantConfig:
 @pytest.fixture(scope="module")
 def lifecycle():
     return _Lifecycle()
-
-
-# Backward-compatible aliases (existing tests/fixtures can keep using these names)
 
 
 @pytest.fixture(scope="module")
@@ -403,6 +416,9 @@ def orch(p_phdl, d_phdl, r_phdl, b_phdl, variant_config, lifecycle):
 
 # ---------- pytest hooks ----------
 
+def pytest_configure(config):
+    configure_inference_suite_report(config, SGLANG_DISAGG_REPORT_CONFIG)
+
 
 def pytest_collection_modifyitems(items):
     rank = SGLANG_DISAGG_TEST_ORDER
@@ -413,6 +429,7 @@ def pytest_collection_modifyitems(items):
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
+    attach_inference_suite_report_row_extra(item, report) 
     if report.when != "call":
         return
     lc = item.funcargs.get("lifecycle")

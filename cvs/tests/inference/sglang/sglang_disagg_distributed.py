@@ -13,7 +13,6 @@ from cvs.tests.inference.sglang._shared import test_print_results_table
 
 log = globals.log
 
-
 def test_cleanup_stale_containers(orch, lifecycle, request):
     """Stage 0: remove stale containers and logs from a prior run."""
     globals.error_list = []
