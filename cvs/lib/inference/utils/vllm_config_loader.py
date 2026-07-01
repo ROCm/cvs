@@ -30,7 +30,7 @@ import warnings
 from collections import Counter
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing_extensions import Literal
 
 from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
@@ -66,6 +66,9 @@ class ModelSpec(_Forbid):
     remote: Literal[0, 1]
 
 
+_VLLM_LOG_LEVELS = {"debug", "info", "warning", "error", "critical"}
+
+
 class RoleServer(_Forbid):
     serve_args: Dict[str, Any] = {}
     env: Dict[str, str] = {}
@@ -76,6 +79,14 @@ class RoleServer(_Forbid):
     # Linux netdev for NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME.
     # Required when nnodes > 1. No "auto" — not reliably derivable from HCA names.
     ib_netdev: Optional[str] = None
+
+    @field_validator("serve_args", mode="after")
+    @classmethod
+    def _check_log_level(cls, v):
+        level = v.get("log-level")
+        if level is not None and level not in _VLLM_LOG_LEVELS:
+            raise ValueError(f"serve_args.log-level must be one of {sorted(_VLLM_LOG_LEVELS)}, got: {level!r}")
+        return v
 
 
 class Roles(_Forbid):
