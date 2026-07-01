@@ -165,6 +165,9 @@ class SglangVariantConfig:
     def perf_cell_key(self) -> str:
         return perf_cell_key(self.benchmark_params)
 
+    def cell_key(self, isl, osl, concurrency) -> str:
+        return perf_cell_key(self.benchmark_params)
+
 
 def load_sglang_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangVariantConfig:
     """Load, resolve placeholders, pick variant, load thresholds, inject expected_results."""
