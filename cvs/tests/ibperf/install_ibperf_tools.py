@@ -203,10 +203,6 @@ def vpc_node_list(cluster_dict):
         raise ValueError('At least 2 nodes are required to run this test')
 
     if len(node_list) % 2 != 0:
-        log.info(
-            'Odd number of nodes (%d); excluding last node to form server/client pairs',
-            len(node_list),
-        )
         node_list.pop()
     for node in node_list:
         vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])

@@ -206,10 +206,6 @@ def vpc_node_list(cluster_dict):
     if len(node_list) < 2:
         raise ValueError('At least 2 nodes are required to run this test')
     if len(node_list) % 2 != 0:
-        log.info(
-            'Odd number of nodes (%d); excluding last node to form server/client pairs',
-            len(node_list),
-        )
         node_list.pop()
     for node in node_list:
         vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
@@ -271,8 +267,7 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
                     config_dict['expected_results'],
                 )
 
-    log.info('%%%%%%%%% ib_bw_dict %%%%%%%%%%')
-    log.info("%s", ib_bw_dict)
+    log.debug('ib_bw_dict: %s', ib_bw_dict)
     update_test_result()
 
 
@@ -321,8 +316,7 @@ def test_ib_lat_perf(phdl, lat_test, config_dict):
                 lat_test, msg_size, ib_lat_dict[lat_test][msg_size], config_dict['expected_results']
             )
 
-    log.info('%%%%%%%%%%% ib_lat_dict %%%%%%%%%')
-    log.info("%s", ib_lat_dict)
+    log.debug('ib_lat_dict: %s', ib_lat_dict)
     update_test_result()
 
 
