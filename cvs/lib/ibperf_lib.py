@@ -27,8 +27,8 @@ def _log_bw_summary(msg_size, res_dict, instance_no=None):
         bw = res_dict[node]['bw']
         pps = res_dict[node]['pps']
         bws.append(float(bw))
-        log.info('Node %s BW - %s, MPPS - %s', node, bw, pps)
-    if instance_no is not None:
+        log.debug('Node %s gpu=%s BW=%s MPPS=%s', node, instance_no, bw, pps)
+    if instance_no is not None and bws:
         log.debug(
             'BW msg_size=%s gpu=%s: avg=%.2f Gbps across %d nodes',
             msg_size,
@@ -48,8 +48,10 @@ def _log_lat_summary(msg_size, res_dict, instance_no=None):
         avgs.append(float(lat))
         parts.append(f'{node}={lat}')
         log.debug('Node %s msg_size %s: avg latency=%s us', node, msg_size, lat)
+    if not avgs:
+        return
     inst_label = f' gpu={instance_no}' if instance_no is not None else ''
-    log.info(
+    log.debug(
         'Latency msg_size=%s%s: avg=%.2f us [%s]',
         msg_size,
         inst_label,
@@ -237,11 +239,11 @@ def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None):
 
 
 def verify_expected_bw(bw_test, msg_size, qp_count, res_dict, expected_res):
-    log.info('Verifying expected BW for test %s msg_size %s QP count %s', bw_test, msg_size, qp_count)
-    log.info("%s", list(expected_res.keys()))
-    log.info("%s", res_dict)
+    log.info('Verifying expected BW: %s msg_size=%s qp=%s', bw_test, msg_size, qp_count)
+    log.debug('Expected results keys: %s', list(expected_res.keys()))
+    log.debug('Result dict: %s', res_dict)
     if bw_test in expected_res.keys():
-        log.info("%s", list(expected_res[bw_test].keys()))
+        log.debug('Expected %s keys: %s', bw_test, list(expected_res[bw_test].keys()))
         if msg_size in expected_res[bw_test].keys():
             if qp_count in expected_res[bw_test][msg_size].keys():
                 for node in res_dict.keys():
@@ -252,11 +254,11 @@ def verify_expected_bw(bw_test, msg_size, qp_count, res_dict, expected_res):
 
 
 def verify_expected_lat(lat_test, msg_size, res_dict, expected_res):
-    log.info('Verifying expected latency for test %s msg_size %s', lat_test, msg_size)
-    log.info("%s", list(expected_res.keys()))
-    log.info("%s", res_dict)
+    log.info('Verifying expected latency: %s msg_size=%s', lat_test, msg_size)
+    log.debug('Expected results keys: %s', list(expected_res.keys()))
+    log.debug('Result dict: %s', res_dict)
     if lat_test in expected_res.keys():
-        log.info("%s", list(expected_res[lat_test].keys()))
+        log.debug('Expected %s keys: %s', lat_test, list(expected_res[lat_test].keys()))
         if msg_size in expected_res[lat_test].keys():
             for node in res_dict.keys():
                 if float(res_dict[node]['lat']) >= float(expected_res[lat_test][msg_size]):
