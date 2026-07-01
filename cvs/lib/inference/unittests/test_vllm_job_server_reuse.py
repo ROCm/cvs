@@ -5,11 +5,18 @@ All rights reserved.
 Unit tests for cvs.lib.inference.vllm_job.VllmJob server-command construction:
   - the duplicate --max-model-len fix (config-pin suppresses the derived value)
   - server_signature(), which gates cross-cell server reuse
+  - _flatten_serve_args boolean handling and log-level pass-through
+  - _check_early_failure tail emission and CLI parse error detection
+  - RoleServer.serve_args log-level validator
 '''
 
 import unittest
+import unittest.mock as mock
 from types import SimpleNamespace
 
+import pydantic
+
+from cvs.lib.inference.utils.vllm_config_loader import RoleServer
 from cvs.lib.inference.vllm_job import VllmJob
 
 _TP = 8
@@ -29,6 +36,64 @@ class FakeOrch:
     def exec_on_head(self, cmd, *a, **k):
         self.head_cmds.append(cmd)
         return {}
+
+
+class FakeOrchWithOutput:
+    """Single-rank fake orch that returns controllable tail/grep output."""
+
+    hosts = ["10.0.0.1"]
+
+    def __init__(self, tail_output="", grep_exit=1):
+        self.head_cmds = []
+        self._tail_output = tail_output
+        self._grep_exit = grep_exit  # 1 = no match (safe), 0 = match found
+
+    def exec(self, cmd, hosts=None, detailed=False):
+        if detailed:
+            return {"10.0.0.1": {"exit_code": self._grep_exit, "stdout": ""}}
+        return {"10.0.0.1": self._tail_output}
+
+    def exec_on_head(self, cmd, *a, **k):
+        self.head_cmds.append(cmd)
+        return {}
+
+
+def _make_job_for_check(tail_output="", grep_exit=1):
+    """Construct a VllmJob suitable for testing _check_early_failure."""
+    variant = mock.MagicMock()
+    variant.params.tensor_parallelism = "8"
+    variant.params.pipeline_parallel_size = "1"
+    variant.params.master_addr = "localhost"
+    variant.params.master_port = "29501"
+    variant.params.nnodes = "1"
+    variant.params.port_no = "8000"
+    variant.params.random_range_ratio = "0.0"
+    variant.params.random_prefix_len = "0"
+    variant.params.burstiness = "1.0"
+    variant.params.seed = "0"
+    variant.params.request_rate = "inf"
+    variant.params.tokenizer_mode = "auto"
+    variant.params.percentile_metrics = "ttft,tpot,itl,e2el"
+    variant.params.metric_percentiles = "50,90,95,99"
+    variant.params.base_url = "http://0.0.0.0"
+    variant.params.dataset_name = "random"
+    variant.params.backend = "vllm"
+    variant.model.id = "/models/test-model"
+    variant.paths.log_dir = "/tmp/test_logs"
+    variant.paths.models_dir = "/tmp/models"
+    variant.roles.server.serve_args = {}
+    variant.roles.server.env = {}
+    variant.roles.server.ib_netdev = None
+    orch = FakeOrchWithOutput(tail_output=tail_output, grep_exit=grep_exit)
+    return VllmJob(
+        orch=orch,
+        variant=variant,
+        hf_token="tok",
+        isl="1024",
+        osl="1024",
+        concurrency="8",
+        num_prompts="100",
+    )
 
 
 def _variant(serve_args=None):
@@ -161,6 +226,50 @@ class TestRunClientTrustRemoteCode(unittest.TestCase):
     def test_trust_remote_code_absent_when_server_omits_it(self):
         job = _job("1024", "1024", 8, serve_args={"max-model-len": "16384"})
         self.assertNotIn("--trust-remote-code", self._bench_cmd(job))
+
+
+class TestFlattenServeArgsFalse(unittest.TestCase):
+    def test_false_value_omitted(self):
+        result = VllmJob._flatten_serve_args({"enable-prefix-caching": False, "tensor-parallel-size": "8"})
+        self.assertNotIn("--enable-prefix-caching", result)
+        self.assertNotIn("False", result)
+        self.assertEqual(result, ["--tensor-parallel-size", "8"])
+
+    def test_true_value_emits_flag_only(self):
+        result = VllmJob._flatten_serve_args({"enforce-eager": True})
+        self.assertEqual(result, ["--enforce-eager"])
+
+    def test_log_level_passed_through(self):
+        result = VllmJob._flatten_serve_args({"log-level": "debug"})
+        self.assertEqual(result, ["--log-level", "debug"])
+
+
+class TestCheckEarlyFailureEmitTail(unittest.TestCase):
+    def test_emit_tail_true_logs_content(self):
+        job = _make_job_for_check(tail_output="INFO engine loading\nINFO weights done")
+        with mock.patch("cvs.lib.inference.vllm_job.log") as mock_log:
+            job._check_early_failure(emit_tail=True)
+        logged_lines = [call.args[3] for call in mock_log.info.call_args_list if len(call.args) >= 4]
+        self.assertIn("INFO engine loading", logged_lines)
+        self.assertIn("INFO weights done", logged_lines)
+
+    def test_raises_on_cli_parse_error(self):
+        job = _make_job_for_check(tail_output="vllm: error: unrecognized arguments: False")
+        with self.assertRaises(RuntimeError):
+            job._check_early_failure()
+
+
+class TestRoleServerLogLevelValidator(unittest.TestCase):
+    def test_invalid_log_level_rejected(self):
+        with self.assertRaises(pydantic.ValidationError) as ctx:
+            RoleServer(serve_args={"log-level": "verbose"})
+        msg = str(ctx.exception)
+        self.assertIn("log-level", msg)
+        self.assertIn("verbose", msg)
+
+    def test_valid_log_level_accepted(self):
+        rs = RoleServer(serve_args={"log-level": "debug"})
+        self.assertEqual(rs.serve_args["log-level"], "debug")
 
 
 if __name__ == "__main__":
