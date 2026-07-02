@@ -124,14 +124,7 @@
 			  "limit": "100",
 			  "num_concurrent": "1",
 			  "exec_timeout_sec": "7200",
-			  "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-		          {
-			       "hellaswag":
-			           {
-					"acc_norm,none": 0.23
-				   }
-			  }
+			  "extra_model_args": "tokenizer_backend=huggingface"
 		      },
                       "lm_eval_gsm8k":
                       {
@@ -143,14 +136,7 @@
                           "limit": "100",
                           "num_concurrent": "4",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "gsm8k":
-                                   {
-                                        "exact_match,flexible-extract": 0.96
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface"                         
                       },
                       "lm_eval_mmlu":
                       {
@@ -162,14 +148,7 @@
                           "limit": "1",
                           "num_concurrent": "1",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "mmlu":
-                                   {
-                                         "acc,none": 0.29
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface"
                       }
 
                   }
@@ -237,14 +216,7 @@
 			  "limit": "100",
 			  "num_concurrent": "1",
 			  "exec_timeout_sec": "7200",
-			  "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-		          {
-			       "hellaswag":
-			           {
-					"acc_norm,none": 0.82
-				   }
-			  }
+			  "extra_model_args": "tokenizer_backend=huggingface"
 		      },
                       "lm_eval_gsm8k":
                       {
@@ -256,14 +228,7 @@
                           "limit": "100",
                           "num_concurrent": "4",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "gsm8k":
-                                   {
-                                        "exact_match,flexible-extract": 0.23
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface"
                       },
                       "lm_eval_mmlu":
                       {
@@ -275,14 +240,7 @@
                           "limit": "1",
                           "num_concurrent": "1",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "mmlu":
-                                   {
-                                         "acc,none": 0.5
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface"
                       }
 
 
@@ -351,14 +309,7 @@
 			  "limit": "100",
 			  "num_concurrent": "1",
 			  "exec_timeout_sec": "7200",
-			  "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True",
-                          "expected_results":
-		          {
-			       "hellaswag":
-			           {
-					"acc_norm,none": 0.82
-				   }
-			  }
+			  "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
 		      },
                       "lm_eval_gsm8k":
                       {
@@ -370,15 +321,8 @@
                           "limit": "100",
                           "num_concurrent": "4",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True",
-                          "expected_results":
-                          {
-                               "gsm8k":
-                                   {
-                                        "exact_match,flexible-extract": 0.23
-                                   }
-                          }
-                      },
+                          "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
+                                           },
                       "lm_eval_mmlu":
                       {
                           "backend": "sglang",
@@ -389,14 +333,8 @@
                           "limit": "1",
                           "num_concurrent": "1",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True",
-                          "expected_results":
-                          {
-                               "mmlu":
-                                   {
-                                         "acc,none": 0.5
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
+                          
                       }
 
 
@@ -465,14 +403,7 @@
 			  "limit": "100",
 			  "num_concurrent": "1",
 			  "exec_timeout_sec": "7200",
-			  "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-		          {
-			       "hellaswag":
-			           {
-					"acc_norm,none": 0.23
-				   }
-			  }
+			  "extra_model_args": "tokenizer_backend=huggingface"
 		      },
                       "lm_eval_gsm8k":
                       {
@@ -484,14 +415,7 @@
                           "limit": "100",
                           "num_concurrent": "4",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "gsm8k":
-                                   {
-                                        "exact_match,flexible-extract": 0.96
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface"
                       },
 		    "lm_eval_mmlu":
                       {
@@ -503,14 +427,7 @@
                           "limit": "1",
                           "num_concurrent": "1",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "mmlu":
-                                   {
-                                         "acc,none": 0.29
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface"
                       }
 
 

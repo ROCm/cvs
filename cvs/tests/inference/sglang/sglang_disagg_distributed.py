@@ -115,7 +115,6 @@ def test_run_lm_eval_mmlu_benchmark_test(im_obj, inf_res_dict, lifecycle, reques
 
 
 def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request, perf_cell):
-    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
     bench = im_obj.bp_dict["inference_tests"]["bench_serv_random"]
@@ -148,7 +147,7 @@ def test_disagg_gpu_topology(im_obj, lifecycle, request):
 def test_print_results_table(inf_res_dict, lifecycle):
     from cvs.tests.inference.sglang._shared import test_print_results_table as _print
     _print(inf_res_dict, lifecycle)
-    
+
 def test_teardown(orch, lifecycle, request):
     """Final stage: tear down containers and logs. Runs even if a prior stage failed."""
     t0 = time.monotonic()
