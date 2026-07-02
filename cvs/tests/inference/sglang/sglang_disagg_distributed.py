@@ -9,7 +9,7 @@ Single SGLang disaggregated (PD) benchmark module: model is selected from
 import time
 
 from cvs.lib import globals
-from cvs.tests.inference.sglang._shared import test_print_results_table
+from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
 
 log = globals.log
 
@@ -114,29 +114,30 @@ def test_run_lm_eval_mmlu_benchmark_test(im_obj, inf_res_dict, lifecycle, reques
     lifecycle.complete_stage(request, "lm_eval_mmlu", t0)
 
 
-def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
+def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request, perf_cell):
+    lifecycle.skip_if_prior_failure()
     globals.error_list = []
     t0 = time.monotonic()
+    bench = im_obj.bp_dict["inference_tests"]["bench_serv_random"]
+    bench["input_length"] = perf_cell["isl"]
+    bench["output_length"] = perf_cell["osl"]
+    bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(perf_cell["specs"])
     im_obj.setup_benchmark_serv_container_env()
     im_obj.benchserv_test_random(d_type="auto")
-
-    bench = (im_obj.bp_dict.get("inference_tests") or {}).get("bench_serv_random") or {}
-    expected = (bench.get("expected_results") or {}).get("auto") or {}
-
     key = (
         im_obj.model_name,
         im_obj.gpu_type,
-        str(bench.get("input_length", "-")),
-        str(bench.get("output_length", "-")),
+        perf_cell["isl"],
+        perf_cell["osl"],
         "bench_serv_random",
         str(im_obj.bp_dict.get("max_concurrency", "-")),
     )
     labels = inf_res_dict.setdefault("__phase_labels__", {})
-    labels["performance_expected"] = expected
-    labels["performance_test"] = "PASS" if not globals.error_list else "FAIL"
-
+    labels.setdefault("performance_by_cell", {})[perf_cell["cell_key"]] = (
+        "PASS" if not globals.error_list else "FAIL"
+    )
     inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
-    lifecycle.complete_stage(request, "bench_serv_random", t0)
+    lifecycle.complete_stage(request, f"bench_serv_random[{perf_cell['isl']}/{perf_cell['osl']}]", t0)
 
 
 def test_disagg_gpu_topology(im_obj, lifecycle, request):
