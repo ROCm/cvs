@@ -91,10 +91,47 @@ SGLANG_DISAGG_TEST_ORDER = {
 }
 
 
-def test_print_results_table(inf_res_dict):
-    phase_labels = inf_res_dict.pop("__phase_labels__", None) or {}
+def _flat_threshold_specs(specs: dict) -> dict[str, float]:
+    """Threshold cell specs → {metric: numeric_gate}."""
+    out: dict[str, float] = {}
+    for metric, spec in (specs or {}).items():
+        if isinstance(spec, dict) and "value" in spec:
+            out[metric] = float(spec["value"])
+        elif spec is not None:
+            out[metric] = float(spec)
+    return out
 
-    smoke_results = inf_res_dict.pop("__smoke_probe_results__", None)
+
+def _perf_result(actual, expected, metric_key: str) -> str:
+    if actual is None or expected is None:
+        return "-"
+    a, e = float(actual), float(expected)
+    if "ms" in metric_key.lower():
+        return "PASS" if a <= e else "FAIL"
+    return "PASS" if a >= e else "FAIL"
+
+
+def _thresholds_for_cell(variant_config, isl, osl, conc) -> dict[str, float]:
+    if variant_config is None:
+        return {}
+    tp = (getattr(variant_config, "benchmark_params", None) or {}).get("tensor_parallelism", "-")
+    cell_id = f"ISL={isl},OSL={osl},TP={tp},CONC={conc}"
+    raw = (getattr(variant_config, "thresholds", None) or {}).get(cell_id) or {}
+    return _flat_threshold_specs(raw)
+
+
+def test_print_results_table(inf_res_dict, lifecycle):
+    """Log smoke, lm-eval accuracy, and perf tables (one row per metric per host per ISL/OSL cell)."""
+    phase_labels = getattr(lifecycle, "phase_labels", None) or {}
+    smoke_results = getattr(lifecycle, "smoke_results", None)
+
+    try:
+        from cvs.lib.report.registry import get_session_results
+
+        variant_config = get_session_results().get("variant_config")
+    except Exception:
+        variant_config = None
+
     if smoke_results:
         smoke_rows = []
         for line in smoke_results:
@@ -112,9 +149,13 @@ def test_print_results_table(inf_res_dict):
                     tablefmt="github",
                 ),
             )
-        
+
     acc_rows = []
-    for label, key in (("HellaSwag", "accuracy_hellaswag"), ("GSM8K", "accuracy_gsm8k"), ("MMLU", "accuracy_mmlu")):
+    for label, key in (
+        ("HellaSwag", "accuracy_hellaswag"),
+        ("GSM8K", "accuracy_gsm8k"),
+        ("MMLU", "accuracy_mmlu"),
+    ):
         e = phase_labels.get(key)
         if isinstance(e, dict) and "task" in e:
             passed = e.get("passed")
@@ -138,7 +179,17 @@ def test_print_results_table(inf_res_dict):
             ),
         )
 
-    perf_expected = phase_labels.get("performance_expected") or {}
+    performance_by_cell = phase_labels.get("performance_by_cell") or {}
+    if performance_by_cell:
+        summary_rows = [[cell_id, result] for cell_id, result in sorted(performance_by_cell.items())]
+        log.info(
+            "\n\n\n\n======== Performance summary (by ISL/OSL cell) ========\n%s",
+            tabulate(
+                summary_rows,
+                headers=["Cell", "Result"],
+                tablefmt="github",
+            ),
+        )
 
     PERF_METRICS = [
         ("Mean TTFT (ms)", "mean_ttft_ms"),
@@ -152,28 +203,29 @@ def test_print_results_table(inf_res_dict):
         ("MFU (estimated)", "mfu"),
     ]
 
-    def _perf_result(actual, expected, metric_key: str) -> str:
-        if actual is None or expected is None:
-            return "-"
-        a, e = float(actual), float(expected)
-        if "ms" in metric_key.lower():
-            return "PASS" if a <= e else "FAIL"
-        return "PASS" if a >= e else "FAIL"
-
     perf_rows = []
-    for key, host_dict in inf_res_dict.items():
+    perf_items = [
+        (k, v)
+        for k, v in inf_res_dict.items()
+        if isinstance(k, tuple) and len(k) == 6 and isinstance(v, dict)
+    ]
+    for key, host_dict in sorted(perf_items, key=lambda kv: (str(kv[0][2]), str(kv[0][3]))):
         model, gpu, isl, osl, policy, conc = key
+        expected_map = _thresholds_for_cell(variant_config, isl, osl, conc)
         for host, m in host_dict.items():
             for label, metric_key in PERF_METRICS:
                 actual = m.get(metric_key)
                 if actual is None:
                     continue
-
-                expected = perf_expected.get(metric_key)
+                expected = expected_map.get(metric_key)
                 perf_rows.append(
                     [
                         model,
                         gpu,
+                        isl,
+                        osl,
+                        policy,
+                        conc,
                         host,
                         label,
                         f"{float(actual):.4f}",
@@ -187,9 +239,21 @@ def test_print_results_table(inf_res_dict):
             "\n\n\n\n======== Performance results ========\n%s",
             tabulate(
                 perf_rows,
-                headers=["Model", "GPU", "Host", "Metric", "Actual", "Expected", "Result"],
+                headers=[
+                    "Model",
+                    "GPU",
+                    "ISL",
+                    "OSL",
+                    "Policy",
+                    "Conc",
+                    "Host",
+                    "Metric",
+                    "Actual",
+                    "Expected",
+                    "Result",
+                ],
                 tablefmt="github",
             ),
         )
-    elif not smoke_results and not acc_rows:
+    elif not smoke_results and not acc_rows and not performance_by_cell:
         log.info("inf_res_dict empty, nothing to print")

@@ -216,7 +216,8 @@ class SglangVariantConfig:
         return perf_cell_key(self.benchmark_params)
 
     def cell_key(self, isl, osl, concurrency) -> str:
-        return perf_cell_key(self.benchmark_params)
+        tp = self.benchmark_params.get("tensor_parallelism", "-")
+        return f"ISL={isl},OSL={osl},TP={tp},CONC={concurrency}"
 
 
 def load_sglang_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangVariantConfig:
@@ -267,6 +268,8 @@ class _Lifecycle:
         self.failed = False
         self.torn_down = False
         self.report: dict[str, list[tuple[str, float, str]]] = {}
+        self.phase_labels: dict[str, Any] = {}
+        self.smoke_results: list | None = None
 
     def record(self, nodeid: str, label: str, value: float, unit: str = "s") -> None:
         self.report.setdefault(nodeid, []).append((label, value, unit))

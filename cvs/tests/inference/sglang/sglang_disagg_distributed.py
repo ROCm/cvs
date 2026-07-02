@@ -83,7 +83,7 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
     globals.error_list = []
     t0 = time.monotonic()
     results = im_obj.verify_openai_compatible_endpoints()
-    inf_res_dict["__smoke_probe_results__"] = results
+    lifecycle.smoke_results = results
     lifecycle.complete_stage(request, "smoke_endpoints", t0)
 
 
@@ -92,7 +92,7 @@ def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, r
     t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
     h = im_obj.run_lm_eval_hellaswag_benchmark_test()
-    inf_res_dict.setdefault("__phase_labels__", {})["accuracy_hellaswag"] = h
+    lifecycle.phase_labels["accuracy_hellaswag"] = h
     lifecycle.complete_stage(request, "lm_eval_hellaswag", t0)
 
 
@@ -101,7 +101,7 @@ def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, reque
     t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
     g = im_obj.run_lm_eval_gsm8k_benchmark_test()
-    inf_res_dict.setdefault("__phase_labels__", {})["accuracy_gsm8k"] = g
+    lifecycle.phase_labels["accuracy_gsm8k"] = g
     lifecycle.complete_stage(request, "lm_eval_gsm8k", t0)
 
 
@@ -110,7 +110,7 @@ def test_run_lm_eval_mmlu_benchmark_test(im_obj, inf_res_dict, lifecycle, reques
     t0 = time.monotonic()
     im_obj.setup_benchmark_serv_container_env()
     m = im_obj.run_lm_eval_mmlu_benchmark_test()
-    inf_res_dict.setdefault("__phase_labels__", {})["accuracy_mmlu"] = m
+    lifecycle.phase_labels["accuracy_mmlu"] = m
     lifecycle.complete_stage(request, "lm_eval_mmlu", t0)
 
 
@@ -132,8 +132,7 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request
         "bench_serv_random",
         str(im_obj.bp_dict.get("max_concurrency", "-")),
     )
-    labels = inf_res_dict.setdefault("__phase_labels__", {})
-    labels.setdefault("performance_by_cell", {})[perf_cell["cell_key"]] = (
+    lifecycle.phase_labels.setdefault("performance_by_cell", {})[perf_cell["cell_key"]] = (
         "PASS" if not globals.error_list else "FAIL"
     )
     inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
@@ -146,7 +145,10 @@ def test_disagg_gpu_topology(im_obj, lifecycle, request):
     im_obj.sglang_disagg_gpu_counts()
     lifecycle.complete_stage(request, "gpu_topology", t0)
 
-
+def test_print_results_table(inf_res_dict, lifecycle):
+    from cvs.tests.inference.sglang._shared import test_print_results_table as _print
+    _print(inf_res_dict, lifecycle)
+    
 def test_teardown(orch, lifecycle, request):
     """Final stage: tear down containers and logs. Runs even if a prior stage failed."""
     t0 = time.monotonic()
