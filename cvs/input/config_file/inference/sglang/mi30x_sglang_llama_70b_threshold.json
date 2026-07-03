@@ -33,6 +33,17 @@
     "goodput": { "kind": "min", "value": 0.99 },
     "mfu": { "kind": "min", "value": 0.02 }
   },
+  "ISL=8192,OSL=8192,TP=8,CONC=25": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 900 },
+    "total_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 225 },
+    "input_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 112.5 },
+    "output_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 112.5 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 },
+    "mfu": { "kind": "min", "value": 0.02 }
+  },
   "BENCH=lm_eval_hellaswag": {
     "acc_norm,none": { "kind": "min", "value": 0.23 }
   },
