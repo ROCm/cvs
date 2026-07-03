@@ -61,7 +61,7 @@ def pytest_generate_tests(metafunc):
         return
 
     cells = load_perf_cells_for_collection(config_file)
-    ids = [f"isl{c['isl']}-osl{c['osl']}" for c in cells]
+    ids = [f"isl{c['isl']}-osl{c['osl']}-c{c['conc']}" for c in cells]
     metafunc.parametrize("perf_cell", cells, ids=ids)
 
 def perf_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, Any]]:

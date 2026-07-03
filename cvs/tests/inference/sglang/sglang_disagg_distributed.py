@@ -121,6 +121,7 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request
     bench["input_length"] = perf_cell["isl"]
     bench["output_length"] = perf_cell["osl"]
     bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(perf_cell["specs"])
+    im_obj.bp_dict["max_concurrency"] = perf_cell["conc"]
     im_obj.setup_benchmark_serv_container_env()
     im_obj.benchserv_test_random(d_type="auto")
     key = (
@@ -129,7 +130,7 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request
         perf_cell["isl"],
         perf_cell["osl"],
         "bench_serv_random",
-        str(im_obj.bp_dict.get("max_concurrency", "-")),
+        str(perf_cell["conc"]),
     )
     lifecycle.phase_labels.setdefault("performance_by_cell", {})[perf_cell["cell_key"]] = (
         "PASS" if not globals.error_list else "FAIL"

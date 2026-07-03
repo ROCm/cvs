@@ -840,6 +840,7 @@ class SglangDisaggPD:
                       python3 -m sglang.bench_serving --backend {i_dict['backend']} \
                       --dataset-name random \
                       --num-prompts {i_dict['num_prompts']} \
+                      --max-concurrency {self.bp_dict['max_concurrency']} \
                       --random-input {i_dict['input_length']} \
                       --random-output {i_dict['output_length']} \
                       --random-range-ratio {i_dict['random_range_ratio']} \
