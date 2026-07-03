@@ -16,6 +16,7 @@ from cvs.lib.report.presets.builder import make_inference_report_config
 from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries
 
 SGLANG_DISAGG_RESULTS_COLUMNS = (
+    # Fixed columns (from 6-tuple key + host; None = not read from metrics dict)
     ("Model", None),
     ("GPU", None),
     ("ISL", None),
@@ -23,23 +24,29 @@ SGLANG_DISAGG_RESULTS_COLUMNS = (
     ("Policy", None),
     ("Conc", None),
     ("Host", None),
-    ("Mean TTFT (ms)", "mean_ttft_ms"),
-    ("Mean TPOT (ms)", "mean_tpot_ms"),
-    ("P99 ITL (ms)", "p99_itl_ms"),
+    # Throughput / efficiency
     ("Req/s", "request_throughput_per_sec"),
     ("Output tok/s", "output_throughput_per_sec"),
     ("Output tok/s/GPU", "output_throughput_per_gpu_per_sec"),
     ("Goodput", "goodput"),
     ("MFU", "mfu"),
+    # Latency
+    ("Mean TTFT (ms)", "mean_ttft_ms"),
+    ("Mean TPOT (ms)", "mean_tpot_ms"),
+    ("P99 ITL (ms)", "p99_itl_ms"),
+    ("Mean E2E latency (ms)", "mean_e2e_latency_ms"),
 )
 
 SGLANG_METRIC_UNITS = {
     "mean_ttft_ms": "ms",
     "mean_tpot_ms": "ms",
     "p99_itl_ms": "ms",
+    "mean_e2e_latency_ms": "ms",
     "request_throughput_per_sec": "req/s",
     "output_throughput_per_sec": "tok/s",
     "output_throughput_per_gpu_per_sec": "tok/s/GPU",
+    "goodput": "",
+    "mfu": "",
 }
 
 
@@ -79,13 +86,25 @@ SGLANG_DISAGG_REPORT_CONFIG = InferenceReportConfig(
     metric_prefix="",
     cell_highlights=(
         ("output_throughput_per_sec", "Output tok/s"),
+        ("output_throughput_per_gpu_per_sec", "Output tok/s/GPU"),
+        ("request_throughput_per_sec", "Req/s"),
         ("mean_ttft_ms", "Mean TTFT (ms)"),
         ("mean_tpot_ms", "Mean TPOT (ms)"),
+        ("p99_itl_ms", "P99 ITL (ms)"),
+        ("mean_e2e_latency_ms", "Mean E2E (ms)"),
+        ("goodput", "Goodput"),
+        ("mfu", "MFU"),
     ),
     chart_series=(
         ReportChartSeries("output_throughput_per_sec", "Output tok/s", "tok/s"),
+        ReportChartSeries("output_throughput_per_gpu_per_sec", "Output tok/s/GPU", "tok/s/GPU"),
+        ReportChartSeries("request_throughput_per_sec", "Req/s", "req/s"),
+        ReportChartSeries("goodput", "Goodput", ""),
+        ReportChartSeries("mfu", "MFU", ""),
         ReportChartSeries("mean_ttft_ms", "Mean TTFT", "ms", invert=True),
         ReportChartSeries("mean_tpot_ms", "Mean TPOT", "ms", invert=True),
+        ReportChartSeries("p99_itl_ms", "P99 ITL", "ms", invert=True),
+        ReportChartSeries("mean_e2e_latency_ms", "Mean E2E latency", "ms", invert=True),
     ),
     inference_test_substring="test_run_performance_benchmark",
     sweep_throughput_metric="output_throughput_per_sec",
