@@ -14,6 +14,9 @@ from typing import Any, Mapping
 
 from cvs.lib import globals
 
+from cvs.lib.inference.inference_suite_results_table import print_results_table
+from cvs.lib.report.presets.sglang_disagg_distributed import SGLANG_DISAGG_RESULTS_COLUMNS
+
 
 log = globals.log
 
@@ -179,14 +182,31 @@ def test_print_results_table(inf_res_dict, lifecycle):
             ),
         )
 
+    _CELL_RE = re.compile(
+        r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),CONC=(?P<conc>\d+)$"
+    )
     performance_by_cell = phase_labels.get("performance_by_cell") or {}
     if performance_by_cell:
-        summary_rows = [[cell_id, result] for cell_id, result in sorted(performance_by_cell.items())]
+        summary_rows = []
+        for cell_id, result in sorted(
+            performance_by_cell.items(),
+            key=lambda kv: (
+                int(m.group("isl")), int(m.group("osl")), int(m.group("conc"))
+            ) if (m := _CELL_RE.match(str(kv[0]))) else (0, 0, 0),
+        ):
+            m = _CELL_RE.match(str(cell_id))
+            if m:
+                summary_rows.append([
+                    m.group("isl"), m.group("osl"), m.group("tp"), m.group("conc"), result
+                ])
+            else:
+                summary_rows.append(["-", "-", "-", str(cell_id), result])
+       
         log.info(
             "\n\n\n\n======== Performance summary (by ISL/OSL cell) ========\n%s",
             tabulate(
                 summary_rows,
-                headers=["Cell", "Result"],
+                headers=["ISL", "OSL", "TP", "Conc", "Result"],
                 tablefmt="github",
             ),
         )
@@ -203,13 +223,22 @@ def test_print_results_table(inf_res_dict, lifecycle):
         ("MFU (estimated)", "mfu"),
     ]
 
-    perf_rows = []
     perf_items = [
         (k, v)
         for k, v in inf_res_dict.items()
         if isinstance(k, tuple) and len(k) == 6 and isinstance(v, dict)
     ]
-    for key, host_dict in sorted(perf_items, key=lambda kv: (str(kv[0][2]), str(kv[0][3]))):
+    if perf_items:
+        log.info(
+            "\n\n\n\n======== Performance results (by ISL/OSL/Conc) ========",
+        )
+        print_results_table(dict(perf_items), SGLANG_DISAGG_RESULTS_COLUMNS)
+
+    perf_rows = []
+    for key, host_dict in sorted(
+        perf_items,
+        key=lambda kv: (int(kv[0][2]), int(kv[0][3]), int(kv[0][5])),
+    ):
         model, gpu, isl, osl, policy, conc = key
         expected_map = _thresholds_for_cell(variant_config, isl, osl, conc)
         for host, m in host_dict.items():
