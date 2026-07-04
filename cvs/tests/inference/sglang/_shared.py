@@ -14,9 +14,6 @@ from typing import Any, Mapping
 
 from cvs.lib import globals
 
-from cvs.lib.inference.inference_suite_results_table import print_results_table
-from cvs.lib.report.presets.sglang_disagg_distributed import SGLANG_DISAGG_RESULTS_COLUMNS
-
 
 log = globals.log
 
@@ -228,12 +225,7 @@ def test_print_results_table(inf_res_dict, lifecycle):
         for k, v in inf_res_dict.items()
         if isinstance(k, tuple) and len(k) == 6 and isinstance(v, dict)
     ]
-    if perf_items:
-        log.info(
-            "\n\n\n\n======== Performance results (by ISL/OSL/Conc) ========",
-        )
-        print_results_table(dict(perf_items), SGLANG_DISAGG_RESULTS_COLUMNS)
-
+    
     perf_rows = []
     for key, host_dict in sorted(
         perf_items,
