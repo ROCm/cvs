@@ -278,10 +278,10 @@
 
 		  }
              },
-			 "glm-5.2-fp8":
+			 "glm-52-fp8":
 			 {
 				 "backend": "sglang",
-				 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_glm_5_2_fp8_threshold.json",
+				 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_glm_52_fp8_threshold.json",
 				 "max_concurrency": "128",
 				 "_comments_model": "If the model is local, specify the full path of the model",
 				 "model": "/root/models/GLM-5.2-FP8",
