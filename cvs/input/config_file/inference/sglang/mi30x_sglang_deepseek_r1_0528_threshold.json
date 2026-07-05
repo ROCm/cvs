@@ -1,47 +1,60 @@
 {
-    "_comment": "DeepSeek-R1-0528 thresholds for MI30X SGLang disaggregated. Performance from bench_serv_random expected_results.auto; accuracy from lm_eval_* expected_results in mi30x_sglang_distributed.json.",
-    "ISL=1024,OSL=1024,TP=16,CONC=64": {
-      "output_throughput_per_sec": {
-        "kind": "min_tok_s",
-        "value": 340
-      },
-      "mean_ttft_ms": {
-        "kind": "max_ms",
-        "value": 60000
-      },
-      "mean_tpot_ms": {
-        "kind": "max_ms",
-        "value": 250
-      },
-      "mean_e2e_latency_ms": {
-        "kind": "max_ms",
-        "value": 120000
-      },
-      "goodput": {
-        "kind": "min",
-        "value": 0.99
-      },
-      "mfu": {
-        "kind": "min",
-        "value": 0.25
-      }
-    },
-    "BENCH=lm_eval_hellaswag": {
-      "acc_norm,none": {
-        "kind": "min",
-        "value": 0.23
-      }
-    },
-    "BENCH=lm_eval_gsm8k": {
-      "exact_match,flexible-extract": {
-        "kind": "min",
-        "value": 0.99
-      }
-    },
-    "BENCH=lm_eval_mmlu": {
-      "acc,none": {
-        "kind": "min",
-        "value": 0.5
-      }
-    }
+  "_comment": "DeepSeek-R1-0528 thresholds for MI30X SGLang disaggregated. Performance cells mirror mi30x_sglang_llama_70b_threshold.json ISL/OSL/CONC grid with TP=16.",
+  "ISL=1024,OSL=1024,TP=16,CONC=25": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 340 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 },
+    "mfu": { "kind": "min", "value": 0.25 }
+  },
+  "ISL=1024,OSL=1024,TP=16,CONC=50": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 340 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 },
+    "mfu": { "kind": "min", "value": 0.25 }
+  },
+  "ISL=1024,OSL=1024,TP=16,CONC=100": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 340 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 },
+    "mfu": { "kind": "min", "value": 0.25 }
+  },
+  "ISL=1024,OSL=8192,TP=16,CONC=25": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 340 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 },
+    "mfu": { "kind": "min", "value": 0.25 }
+  },
+  "ISL=8192,OSL=1024,TP=16,CONC=25": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 340 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 },
+    "mfu": { "kind": "min", "value": 0.25 }
+  },
+  "ISL=8192,OSL=8192,TP=16,CONC=25": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 340 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 },
+    "mfu": { "kind": "min", "value": 0.25 }
+  },
+  "BENCH=lm_eval_hellaswag": {
+    "acc_norm,none": { "kind": "min", "value": 0.23 }
+  },
+  "BENCH=lm_eval_gsm8k": {
+    "exact_match,flexible-extract": { "kind": "min", "value": 0.99 }
+  },
+  "BENCH=lm_eval_mmlu": {
+    "acc,none": { "kind": "min", "value": 0.5 }
   }
+}
