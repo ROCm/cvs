@@ -580,7 +580,7 @@ class SglangDisaggPD:
                               --dist-init-addr {dist_init_addr} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
-                              --attention-backend torch_native \
+                              --attention-backend aiter \
                               --log-level {self.inf_dict['log_level']}' > /tmp/prefill_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
@@ -653,7 +653,7 @@ class SglangDisaggPD:
                               --dist-init-addr {dist_init_addr} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
-                              --attention-backend torch_native \
+                              --attention-backend aiter \
                               --log-level {self.inf_dict['log_level']}' > /tmp/decode_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
