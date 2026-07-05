@@ -1,15 +1,26 @@
 {
     "ompi":
     {
-
-       "_comment_install_dir": "Directory where ompi tarball is fectched, install is in ompi-5.0.10/install sub-directory under it",
+       "nfs_install": "True",
+       "_comment_nfs_install": "If nfs_install is true, OpenMPI and/or UCX (optional) will be installed in NFS. Otherwise, all nodes will have local installation of OpenMPI with or without UCX",
        "install_dir": "/home/{user-id}/",
+       "_comment_install_dir": "Directory where ompi/ucx tarball is fectched, install is in ompi-5.0.10/install sub-directory under it.",
+       "rocm_dir": "<changeme>",
+       "_comment_rocm_dir": "ROCm installation path. Set to auto-detect from /opt/rocm or /opt/rocm/core-* if left as changeme",
        "ompi_url": "https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-5.0.10.tar.gz",
+       "_comment_ompi_url": "OpenMPI tested tarball. Change it only if you know another working version, build may break.",
+       "ucx_install": "True",
+       "ucx_url": "https://github.com/openucx/ucx/releases/download/v1.15.0/ucx-1.15.0.tar.gz",
+       "_comment_ucx_url": "UCX tested tarball. Change it only if you know another working version, build may break.",
        "disable_oshmem": "True",
        "disable_mpi_fortran": "True",
        "hwloc": "Internal",
+       "_comment_hwloc": "Changing hwloc to point to an external tarball is not supported in the current version",
        "libevent": "Internal",
+       "_comment_libevent": "Changing libevent to point to an external tarball is not supported in the current version",
        "pmix": "Internal",
-       "prrte": "Internal"
+       "_comment_pmix": "Changing pmix to point to an external tarball is not supported in the current version",
+       "prrte": "Internal",
+       "_comment_prrte": "Changing prrte to point to an external tarball is not supported in the current version"
     }
 }

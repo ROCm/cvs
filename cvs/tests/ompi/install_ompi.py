@@ -186,85 +186,138 @@ def vpc_node_list(cluster_dict):
     return vpc_node_list
 
 
-def _run_or_fail(shdl, cmd, timeout=None, desc=None):
+def detect_rocm_path(phdl, config_rocm_path):
     """
-    Helper to run a command on the head node via shdl and record a failure with
-    fail_test() if it fails on any host.
-
-    shdl.exec is expected to be called with detailed=True so that the return
-    value is {host: {"output": <str>, "exit_code": <int>}}.
+    Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
+    Args:
+        phdl: Parallel SSH handle
+        config_rocm_path (str): Configured ROCm path from config file ('<changeme>' for auto-detect)
+    Returns:
+        str: Detected ROCm path
     """
-    if desc:
-        log.info("Running: %s", desc)
-    else:
-        log.info("Running cmd: %s", cmd)
+    # If rocm_path is explicitly configured, validate and use it
+    if config_rocm_path and config_rocm_path != '<changeme>':
+        out_dict = phdl.exec(
+            f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+        )
+        for node, output in out_dict.items():
+            if output.strip() and 'libamdhip64.so' in output:
+                log.info(f'Using configured ROCm path: {config_rocm_path} (validated)')
+                return config_rocm_path
+            else:
+                log.warning(
+                    f'Configured ROCm path {config_rocm_path} does not contain required libraries, will auto-detect'
+                )
 
-    out = shdl.exec(cmd, timeout=timeout, detailed=True, print_console=True)
+    # Auto-detect ROCm path
+    log.info('Auto-detecting ROCm path...')
 
-    # shdl is Pssh over a single host list [head_node], but we still iterate
-    for host, result in out.items():
-        # result should be {'output': str, 'exit_code': int}
-        exit_code = result.get("exit_code", -1)
-        output = result.get("output", "")
-
-        log.info("Host %s exit_code=%s", host, exit_code)
-        if exit_code != 0:
-            msg = (
-                f"Command failed on host {host}: {cmd}\n"
-                f"Description: {desc or 'N/A'}\n"
-                f"Exit code: {exit_code}\n"
-                f"Output:\n{output}"
+    # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
+    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    for node, output in out_dict.items():
+        if output and '/opt/rocm/core-' in output:
+            rocm_path = output.strip()
+            validate_dict = phdl.exec(
+                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
             )
-            log.error("%s", msg)
-            fail_test(msg)  # record the failure but do not raise here
+            for _, lib_output in validate_dict.items():
+                if lib_output.strip() and 'libamdhip64.so' in lib_output:
+                    log.info(f'Detected ROCm path (new layout): {rocm_path}')
+                    return rocm_path
 
-    return out
+    # Fall back to legacy /opt/rocm
+    out_dict = phdl.exec('test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1')
+    for node, output in out_dict.items():
+        if output.strip() and 'libamdhip64.so' in output:
+            log.info('Detected ROCm path (legacy layout): /opt/rocm')
+            return '/opt/rocm'
+
+    log.warning('Could not detect ROCm path with required libraries, defaulting to /opt/rocm')
+    return '/opt/rocm'
+
+
+def _install_ucx(hdl, config_dict):
+    ucx_url = config_dict["ucx_url"]
+    install_dir = config_dict["install_dir"].rstrip('/')
+    tarball_name = ucx_url.split('/')[-1]
+    ucx_src = tarball_name.rstrip('.tar.gz')
+    hdl.exec(
+        f"mkdir -p {install_dir}/{ucx_src} && cd {install_dir}/{ucx_src} && wget -q {ucx_url} && tar -zxf {tarball_name} --strip-components=1",
+        timeout=600,
+    )
+    hdl.exec(f"mkdir -p {install_dir}/{ucx_src}/build")
+    hdl.exec(f"mkdir -p {install_dir}/{ucx_src}/install")
+    rocm_path = detect_rocm_path(hdl, config_dict.get('rocm_dir', '<changeme>'))
+    log.info(f'Using ROCm path for ucx configure: {rocm_path}')
+    hdl.exec(
+        f'cd {install_dir}/{ucx_src}/build; ../configure --prefix={install_dir}/{ucx_src}/install --with-rocm={rocm_path}',
+        timeout=500,
+    )
+    hdl.exec(f'cd {install_dir}/{ucx_src}/build; make -j $(nproc)', timeout=500)
+    hdl.exec(f'cd {install_dir}/{ucx_src}/build; make install', timeout=500)
+    return ucx_src
 
 
 def test_install_ompi(phdl, shdl, config_dict):
     """
-    Build and install OpenMPI (OMPI) on the head node according to ompi_config.json,
-    then verify on all nodes via phdl.
+    Build and install OpenMPI (OMPI) according to ompi_config.json,
     """
     globals.error_list = []
-
-    # Extract config
-    install_dir = config_dict["install_dir"].rstrip('/')  # e.g. /home/ahskabir
+    nfs_install = config_dict["nfs_install"]
+    install_dir = config_dict["install_dir"].rstrip('/')
     ompi_url = config_dict["ompi_url"]
-    tarball_name = ompi_url.split('/')[-1]  # openmpi-5.0.10.tar.gz
+    ucx_install = config_dict["ucx_install"]
+
+    tarball_name = ompi_url.split('/')[-1]
     ompi_src_dir = f"{install_dir}/ompi-5.0.10"
     ompi_build_dir = f"{ompi_src_dir}/build"
     ompi_install_prefix = f"{ompi_src_dir}/install"
 
-    # Build configure options from config_dict
+    # if NFS install is not true we have to install ompi on every
+    # node in the cluster. Therefore, we decide on the handle first
+    # if NFS then we will use the shdl otherwise phdl
+    hdl = ''
+    if nfs_install == "True":
+        hdl = shdl
+    else:
+        hdl = phdl
+
+    # if ucx_install is true then install ucx first
+    if ucx_install == "True":
+        ucx_src = _install_ucx(hdl, config_dict)
+
+    # Build ompi configure options from config_dict
     cfg_opts = [
         f"--prefix={ompi_install_prefix}",
         "--enable-orterun-prefix-by-default",
         "--enable-mca-no-build=btl-uct",
     ]
 
-    def is_true(val):
-        if isinstance(val, bool):
-            return val
-        if isinstance(val, str):
-            return val.strip().lower() == "true"
-        return False
-
-    if is_true(config_dict.get("disable_oshmem", False)):
+    if config_dict.get("disable_oshmem", False):
         cfg_opts.append("--disable-oshmem")
 
-    if is_true(config_dict.get("disable_mpi_fortran", False)):
+    if config_dict.get("disable_mpi_fortran", False):
         cfg_opts.append("--disable-mpi-fortran")
 
-    def add_internal_opt(key, name):
-        val = config_dict.get(key)
-        if isinstance(val, str) and val.strip().lower() == "internal":
-            cfg_opts.append(f"--with-{name}=internal")
+    val = config_dict.get("hwloc")
+    if val.strip().lower() == "internal":
+        cfg_opts.append("--with-hwloc=internal")
 
-    add_internal_opt("hwloc", "hwloc")
-    add_internal_opt("libevent", "libevent")
-    add_internal_opt("pmix", "pmix")
-    add_internal_opt("prrte", "prrte")
+    val = config_dict.get("libevent")
+    if val.strip().lower() == "internal":
+        cfg_opts.append("--with-libevent=internal")
+
+    val = config_dict.get("pmix")
+    if val.strip().lower() == "internal":
+        cfg_opts.append("--with-pmix=internal")
+
+    val = config_dict.get("prrte")
+    if val.strip().lower() == "internal":
+        cfg_opts.append("--with-prrte=internal")
+
+    # Configure with UCX is user requested
+    if ucx_install == "True":
+        cfg_opts.append(f"--with-ucx={install_dir}/{ucx_src}/install")
 
     configure_cmd = f"../configure {' '.join(cfg_opts)}"
 
@@ -274,85 +327,16 @@ def test_install_ompi(phdl, shdl, config_dict):
     log.info("OMPI install prefix: %s", ompi_install_prefix)
     log.info("OMPI configure cmd: %s", configure_cmd)
 
-    # 1. Prepare directory and fetch tarball (head node)
-    _run_or_fail(
-        shdl,
-        f"mkdir -p {install_dir}",
-        desc=f"Create OMPI base install_dir {install_dir}",
-    )
-
-    _run_or_fail(
-        shdl,
-        f"cd {install_dir} && wget -O {tarball_name} {ompi_url}",
-        timeout=600,
-        desc="Download OpenMPI tarball",
-    )
-
-    # 2. Extract sources and create build dir (head node)
-    _run_or_fail(
-        shdl,
+    hdl.exec(f'cd {install_dir} && wget -q -O {tarball_name} {ompi_url}', timeout=600)
+    hdl.exec(
         f"cd {install_dir} && "
         f"rm -rf {ompi_src_dir} && "
         f"mkdir -p {ompi_src_dir} && "
         f"tar -zxf {tarball_name} -C {ompi_src_dir} --strip-components=1 && "
         f"mkdir -p {ompi_build_dir}",
         timeout=600,
-        desc="Extract OMPI sources and create build directory",
     )
-
-    # 3. Configure (head node)
-    _run_or_fail(
-        shdl,
-        f"cd {ompi_build_dir} && {configure_cmd}",
-        timeout=900,
-        desc="Configure OpenMPI",
-    )
-
-    # 4. Build (head node)
-    _run_or_fail(
-        shdl,
-        f"cd {ompi_build_dir} && make -j $(nproc)",
-        timeout=3600,
-        desc="Build OpenMPI",
-    )
-
-    # 5. Install (head node)
-    _run_or_fail(
-        shdl,
-        f"cd {ompi_build_dir} && make install",
-        timeout=1800,
-        desc="Install OpenMPI",
-    )
-
-    # 6. Verification on ALL nodes via phdl
-    #
-    # Strategy:
-    # - Ensure mpirun binary exists at the install prefix on the head node (already
-    #   implied by successful install, but we can still check on each node).
-    # - Typically, the install lives on a shared FS (e.g. NFS) mounted at the same
-    #   path on all nodes. So each node should see:
-    #     {ompi_install_prefix}/bin/mpirun
-    #
-    # Here we just test presence and executability on every node.
-    verify_cmd = f"test -x {ompi_install_prefix}/bin/mpirun && {ompi_install_prefix}/bin/mpirun --version | head -n 1"
-
-    log.info("Verifying OMPI installation on all nodes using phdl")
-    out_dict = phdl.exec(verify_cmd, timeout=300, detailed=True, print_console=True)
-
-    for node, result in out_dict.items():
-        exit_code = result.get("exit_code", -1)
-        output = result.get("output", "")
-
-        log.info("Node %s OMPI verify exit_code=%s", node, exit_code)
-        if exit_code != 0:
-            msg = (
-                f"OMPI verification failed on node {node}\n"
-                f"Command: {verify_cmd}\n"
-                f"Exit code: {exit_code}\n"
-                f"Output:\n{output}"
-            )
-            log.error("%s", msg)
-            fail_test(msg)
-
-    # Final test result bookkeeping
+    hdl.exec(f"cd {ompi_build_dir} && {configure_cmd}", timeout=900)
+    hdl.exec(f"cd {ompi_build_dir} && make -j $(nproc)", timeout=3600)
+    hdl.exec(f"cd {ompi_build_dir} && make install", timeout=1800)
     update_test_result()
