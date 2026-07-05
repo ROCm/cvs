@@ -107,9 +107,9 @@ SGLANG_DISAGG_REPORT_CONFIG = InferenceReportConfig(
         ReportChartSeries("mean_e2e_latency_ms", "Mean E2E latency", "ms", invert=True),
     ),
     inference_test_substring="test_run_performance_benchmark",
-    sweep_throughput_metric="output_throughput_per_sec",
+    sweep_throughput_metric="output_throughput_per_gpu_per_sec",
     sweep_ttft_metric="mean_ttft_ms",
-    headline_metric="output_throughput_per_sec",
+    headline_metric="output_throughput_per_gpu_per_sec",
     session_lifecycle_labels=(
         "stale_cleanup", "container_launch", "ibv_setup", "rms_norm",
         "prefill_launch", "decode_launch", "server_ready", "proxy_router_launch",

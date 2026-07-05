@@ -258,6 +258,17 @@ class SglangDisaggPD:
         log.info(f'benchmark_params_dict = {self.bp_dict}')
         log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 
+    # Helper function for generating MLA + chunked prefill flags
+    def _mla_server_flags(self) -> str:
+        """Optional SGLang MLA + chunked prefill flags from benchmark_params."""
+        enabled = str(self.bp_dict.get("enable-mla", "false")).lower() in (
+            "true", "1", "yes",
+        )
+        if not enabled:
+            return ""
+        size = self.bp_dict.get("chunked-prefill-size", "512")
+        return f" --enable-mla --chunked-prefill-size {size}"
+
     # Helper function for installing container packages
     def install_container_packages(
         self,
@@ -581,6 +592,7 @@ class SglangDisaggPD:
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
+                              {self._mla_server_flags()} \
                               --log-level {self.inf_dict['log_level']}' > /tmp/prefill_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
@@ -654,6 +666,7 @@ class SglangDisaggPD:
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
+                              {self._mla_server_flags()} \
                               --log-level {self.inf_dict['log_level']}' > /tmp/decode_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
