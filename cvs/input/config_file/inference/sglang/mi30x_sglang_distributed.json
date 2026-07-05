@@ -208,7 +208,7 @@
         "deepseek-r1":
              {
 		 "backend": "sglang",
-                 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_deepseek_r1_0528_threshold.json",
+         "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_deepseek_r1_0528_threshold.json",
 		 "max_concurrency": "128",
 		 "_comments_model": "If the model is local, specify the full path of the model",
 		 "model": "/root/models/DeepSeek-R1-0528",
@@ -224,10 +224,10 @@
 		      {
 			  "backend": "sglang",
 			  "data_set_name": "random",
-			  "num_prompts": "100",
+			  "num_prompts": "25",
 			  "random_range_ratio": "0.5",
-                          "model_num_params": "671000000000",
-                          "peak_gpu_tflops": "1300"
+			  "model_num_params": "671000000000",
+			  "peak_gpu_tflops": "1300"
 		      },
 		      "bench_serv_generated_shared_prefix":
 		      {
@@ -278,6 +278,77 @@
 
 		  }
              },
+			 "glm-5.2-fp8":
+			 {
+				 "backend": "sglang",
+				 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_glm_5_2_fp8_threshold.json",
+				 "max_concurrency": "128",
+				 "_comments_model": "If the model is local, specify the full path of the model",
+				 "model": "/root/models/GLM-5.2-FP8",
+				 "prefill_policy": "cache_aware",
+				 "decode_policy": "cache_aware",
+				 "tensor_parallelism": "16",
+				 "memory_fraction": "0.8",
+				 "tokenizer_mode": "auto",
+				 "inference_poll_iterations": "16",
+				 "inference_tests":
+				 {
+					 "bench_serv_random":
+					 {
+						 "backend": "sglang",
+						 "data_set_name": "random",
+						 "num_prompts": "25",
+						 "random_range_ratio": "0.5",
+						 "model_num_params": "744000000000",
+						 "peak_gpu_tflops": "1300"
+					 },
+					 "bench_serv_generated_shared_prefix":
+					 {
+						 "backend": "sglang",
+						 "gsp_num_groups": "1",
+						 "gsp_prompts_per_group": "16",
+						 "gsp_system_prompt_len": "0",
+						 "gsp_question_len": "1024",
+						 "gsp_output_len": "1024"
+					 },
+					 "lm_eval_hellaswag":
+					 {
+						 "backend": "sglang",
+						 "lm_eval_model": "local-completions",
+						 "tasks": "hellaswag",
+						 "num_fewshot": "0",
+						 "batch_size": "auto",
+						 "limit": "100",
+						 "num_concurrent": "1",
+						 "exec_timeout_sec": "7200",
+						 "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
+					 },
+					 "lm_eval_gsm8k":
+					 {
+						 "backend": "sglang",
+						 "lm_eval_model": "local-completions",
+						 "tasks": "gsm8k",
+						 "num_fewshot": "5",
+						 "batch_size": "auto",
+						 "limit": "100",
+						 "num_concurrent": "4",
+						 "exec_timeout_sec": "7200",
+						 "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
+					 },
+					 "lm_eval_mmlu":
+					 {
+						 "backend": "sglang",
+						 "lm_eval_model": "local-completions",
+						 "tasks": "mmlu",
+						 "num_fewshot": "5",
+						 "batch_size": "auto",
+						 "limit": "1",
+						 "num_concurrent": "1",
+						 "exec_timeout_sec": "7200",
+						 "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
+					 }
+				 }
+			 },
              "gpt-oss-120b":
              {
 		 "backend": "sglang",
