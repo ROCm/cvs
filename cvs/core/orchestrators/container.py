@@ -477,11 +477,16 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             "chown -R root:root /root/.ssh",
             "bash -c 'chmod 700 /root/.ssh && chmod 600 /root/.ssh/*'",
             "mkdir -p /run/sshd",  # Create privilege separation directory for sshd
+            "bash -c 'which sshd > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -q openssh-server)'",
             "/usr/sbin/sshd -p2224",
         ]
 
+        timeouts = {
+            "bash -c 'which sshd > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -q openssh-server)'": 120,
+        }
+
         for cmd in ssh_setup_commands:
-            result = self.exec(cmd, timeout=10, detailed=True)
+            result = self.exec(cmd, timeout=timeouts.get(cmd, 10), detailed=True)
             # Check if command succeeded on all hosts
             for hostname, output in result.items():
                 if output['exit_code'] != 0:
