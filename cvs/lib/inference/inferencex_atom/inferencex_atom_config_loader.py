@@ -66,6 +66,14 @@ class InferenceXAtomParams(_Forbid):
     bench_max_failed_requests: str = "0"
     bench_extra_args: str = ""
     result_filename: str = "results"
+    # Multinode (M5): omit or set nnodes=1 for single-node runs. When nnodes>1,
+    # cluster node_dict must list the same number of hosts and test_setup_sshd runs.
+    nnodes: str = "1"
+    pipeline_parallel_size: str = "1"
+    master_addr: str = ""
+    master_port: str = "29501"
+    # Optional single-node reference output_throughput for scaling.efficiency_pct.
+    scaling_baseline_output_throughput: str = ""
 
 
 class InferenceXAtomRunCard(_Forbid):
@@ -83,7 +91,13 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
     sweep: Sweep
 
     def cell_key(self, isl, osl, concurrency):
-        return f"ISL={isl},OSL={osl},TP={self.params.tensor_parallelism},CONC={concurrency}"
+        p = self.params
+        key = f"ISL={isl},OSL={osl},TP={p.tensor_parallelism}"
+        if int(p.pipeline_parallel_size) > 1 or int(p.nnodes) > 1:
+            key += f",PP={p.pipeline_parallel_size}"
+        if int(p.nnodes) > 1:
+            key += f",NNODES={p.nnodes}"
+        return f"{key},CONC={concurrency}"
 
     def expected_cells(self) -> List[str]:
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
@@ -145,6 +159,10 @@ def server_session_key(variant_config, isl, osl):
         str(osl),
         tuple(variant_config.roles.server.atom_args),
         p.tensor_parallelism,
+        p.nnodes,
+        p.pipeline_parallel_size,
+        p.master_addr,
+        p.master_port,
     )
 
 
