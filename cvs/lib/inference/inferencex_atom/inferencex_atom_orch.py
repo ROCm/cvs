@@ -58,6 +58,18 @@ class InferenceXAtomJob:
         "no-enable-prefix-caching": True,
     }
 
+    # vLLM multinode flags; ATOM openai_server rejects these (use ATOM_DP_* / -dp instead).
+    _VLLM_DISTRIBUTED_FLAGS = frozenset(
+        {
+            "--node-rank",
+            "--master-addr",
+            "--master-port",
+            "--nnodes",
+            "--pipeline-parallel-size",
+            "--distributed-executor-backend",
+        }
+    )
+
     def __init__(
         self,
         orch,
@@ -87,7 +99,7 @@ class InferenceXAtomJob:
         self.log_subdir = log_subdir
 
         p = variant.params
-        self.driver = p.driver
+        self.driver = str(p.driver or "atom").strip().lower()
         self.tp = p.tensor_parallelism
         self.pp = p.pipeline_parallel_size
         self.nnodes = int(p.nnodes)
@@ -223,17 +235,6 @@ class InferenceXAtomJob:
                 argv.extend([opt, str(value)])
         return argv
 
-    def _atom_spmd_dp_cli(self):
-        """Return ``-dp N`` argv when local GPUs can host *N* TP shards each."""
-        if not self.distributed:
-            return []
-        tp = int(self.tp)
-        if tp * self.nnodes > 8:
-            return []
-        if self._argv_has_flag(self.atom_server_args, "-dp", "--data-parallel-size"):
-            return []
-        return ["-dp", str(self.nnodes)]
-
     @staticmethod
     def _argv_has_flag(argv, *names):
         for tok in argv:
@@ -241,8 +242,38 @@ class InferenceXAtomJob:
                 return True
         return False
 
+    def _without_vllm_distributed_flags(self, argv):
+        """Strip vLLM multinode tokens from ``roles.server.atom_args`` if present."""
+        out = []
+        skip_next = False
+        for tok in argv:
+            if skip_next:
+                skip_next = False
+                continue
+            if tok in self._VLLM_DISTRIBUTED_FLAGS:
+                skip_next = True
+                continue
+            out.append(tok)
+        return out
+
+    def _atom_spmd_dp_cli(self):
+        """Return ``-dp N`` argv when local GPUs can host *N* TP shards on one node."""
+        if self.driver != "atom" or not self.distributed:
+            return []
+        tp = int(self.tp)
+        if tp * self.nnodes > 8:
+            return []
+        atom_argv = self._without_vllm_distributed_flags(self.atom_server_args)
+        if self._argv_has_flag(atom_argv, "-dp", "--data-parallel-size"):
+            return []
+        return ["-dp", str(self.nnodes)]
+
+    def _atom_multinode_argv(self):
+        """ATOM-only multinode CLI tokens (never vLLM ``--node-rank`` / ``--pipeline-parallel-size``)."""
+        return self._atom_spmd_dp_cli()
+
     def _atom_spmd_env_exports(self, rank):
-        if not self.distributed or not self._atom_spmd_dp_cli():
+        if self.driver != "atom" or not self.distributed or not self._atom_spmd_dp_cli():
             return []
         return [
             f"export ATOM_DP_RANK={rank}",
@@ -252,11 +283,9 @@ class InferenceXAtomJob:
             f"export ATOM_DP_MASTER_PORT={self.master_port}",
         ]
 
-    def _distributed_argv(self, rank):
+    def _vllm_distributed_argv(self, rank):
         if not self.distributed:
             return []
-        if self.driver == "atom":
-            return self._atom_spmd_dp_cli()
         return [
             "--node-rank",
             str(rank),
@@ -315,7 +344,7 @@ class InferenceXAtomJob:
             "--port",
             str(self.port_no),
         ]
-        argv.extend(self._distributed_argv(rank))
+        argv.extend(self._vllm_distributed_argv(rank))
         argv.extend(self._flatten_serve_args(self.serve_args))
         return argv
 
@@ -329,8 +358,8 @@ class InferenceXAtomJob:
             "--server-port",
             str(self.port_no),
         ]
-        argv.extend(self.atom_server_args)
-        argv.extend(self._distributed_argv(rank))
+        argv.extend(self._without_vllm_distributed_flags(self.atom_server_args))
+        argv.extend(self._atom_multinode_argv())
         return argv
 
     def start_server(self):
@@ -343,7 +372,12 @@ class InferenceXAtomJob:
         label = "atom" if self.driver == "atom" else "vllm"
         launch_hosts = enumerate(hosts) if self.distributed else [(0, hosts[0])]
         for rank, host in launch_hosts:
-            argv = self._atom_server_argv(rank) if self.driver == "atom" else self._server_argv(rank)
+            if self.driver == "atom":
+                argv = self._atom_server_argv(rank)
+            elif self.driver == "vllm":
+                argv = self._server_argv(rank)
+            else:
+                raise RuntimeError(f"unsupported params.driver={self.driver!r}; expected 'atom' or 'vllm'")
             serve_cmd = " ".join(shlex.quote(str(a)) for a in argv)
             rank_log = self._rank_server_log(rank)
             rank_env = " && ".join(self._atom_spmd_env_exports(rank))
