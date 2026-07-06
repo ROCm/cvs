@@ -65,7 +65,7 @@
              {
 		 "backend": "sglang",
          "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_llama_70b_threshold.json",
-		 "max_concurrency": "128",
+		 "max_concurrency": "256",
 		 "model": "meta-llama/Llama-3.1-70B-Instruct",
 		 "prefill_policy": "cache_aware",
 		 "decode_policy": "cache_aware",
@@ -136,7 +136,7 @@
              {
 		 "backend": "sglang",
                  "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_kimi_k2.6_threshold.json",
-		 "max_concurrency": "128",
+		 "max_concurrency": "256",
 		 "_comments_model": "If the model is local, specify the full path of the model",
 		 "model": "amd/Kimi-K2.5-W4A8",
 		 "prefill_policy": "cache_aware",
@@ -209,7 +209,7 @@
              {
 		 "backend": "sglang",
          "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_deepseek_r1_0528_threshold.json",
-		 "max_concurrency": "128",
+		 "max_concurrency": "256",
 		 "_comments_model": "If the model is local, specify the full path of the model",
 		 "model": "/root/models/DeepSeek-R1-0528",
 		 "prefill_policy": "cache_aware",
@@ -282,7 +282,7 @@
 			 {
 				 "backend": "sglang",
 				 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_glm_52_fp8_threshold.json",
-				 "max_concurrency": "128",
+				 "max_concurrency": "256",
 				 "_comments_model": "If the model is local, specify the full path of the model",
 				 "model": "/root/models/GLM-5.2-FP8",
 				 "prefill_policy": "cache_aware",
@@ -353,7 +353,7 @@
              {
 		 "backend": "sglang",
                  "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_gpt_oss_120b_threshold.json",
-		 "max_concurrency": "25",
+		 "max_concurrency": "256",
 		 "model": "openai/gpt-oss-120b",
 		 "prefill_policy": "cache_aware",
 		 "decode_policy": "cache_aware",

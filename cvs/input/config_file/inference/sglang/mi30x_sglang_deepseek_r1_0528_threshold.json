@@ -1,21 +1,5 @@
 {
-  "_comment": "DeepSeek-R1-0528 thresholds for MI30X SGLang disaggregated. ISL=1024 OSL=1024 concurrency sweep: 2,4,8,16,32,64,128. Other ISL/OSL at CONC=16.",
-  "ISL=1024,OSL=1024,TP=16,CONC=2": {
-    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 22 },
-    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
-    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
-    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
-    "goodput": { "kind": "min", "value": 0.99 },
-    "mfu": { "kind": "min", "value": 0.002 }
-  },
-  "ISL=1024,OSL=1024,TP=16,CONC=4": {
-    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 43 },
-    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
-    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
-    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
-    "goodput": { "kind": "min", "value": 0.99 },
-    "mfu": { "kind": "min", "value": 0.004 }
-  },
+  "_comment": "DeepSeek-R1-0528 thresholds for MI30X SGLang disaggregated. ISL=1024 OSL=1024 concurrency sweep: 8,16,32,64,128,256. Other ISL/OSL at CONC=32.",
   "ISL=1024,OSL=1024,TP=16,CONC=8": {
     "output_throughput_per_sec": { "kind": "min_tok_s", "value": 76 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
@@ -49,6 +33,14 @@
     "mfu": { "kind": "min", "value": 0.02 }
   },
   "ISL=1024,OSL=1024,TP=16,CONC=128": {
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 218 },
+    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
+    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
+    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
+    "goodput": { "kind": "min", "value": 0.99 },
+    "mfu": { "kind": "min", "value": 0.02 }
+  },
+  "ISL=1024,OSL=1024,TP=16,CONC=256": {
     "output_throughput_per_sec": { "kind": "min_tok_s", "value": 218 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
     "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
