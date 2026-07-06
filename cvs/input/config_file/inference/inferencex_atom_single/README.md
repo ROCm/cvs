@@ -28,6 +28,7 @@ Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc
 |---------|-----|-------|
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke` | MI300X | Quick path check (C=128, 128 prompts) |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` | MI300X | W1 perf, portable min-SLO thresholds, server reuse across sweep |
+| `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` | MI300X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); `enforce_thresholds: false` until lab confirm |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | MI300X | W1 FP8+MTP3 |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf` | MI355X | W1 perf (CI seeds, `enforce_thresholds: false`) |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | MI355X | W1 FP8+MTP3 |
@@ -38,7 +39,7 @@ ATOM server CLI is inline in each config under `roles.server.atom_args` (vLLM-st
 
 ## Cluster + container naming
 
-Use `cvs/input/cluster_file/mi300x_atom_single.json` or `mi355x_atom_single.json`. The cluster `container.name` must match the variant (`inferencex_atom_mi300x` / `inferencex_atom_mi355x`); the suite deep-merges variant container settings over the cluster file.
+Use `cvs/input/cluster_file/mi300x_atom_single.json` or `mi355x_atom_single.json` for single-node runs. For **multinode** (M5), use `mi300x_atom_multi.json` with two entries in `node_dict` and set `params.master_addr` in the variant config to the head node's VPC IP. `params.nnodes` must match the cluster host count; `test_setup_sshd` starts in-container sshd on port 2224 when `len(node_dict) > 1`. The cluster `container.name` must match the variant (`inferencex_atom_mi300x` / `inferencex_atom_mi355x` / `inferencex_atom_mi300x_multi`); the suite deep-merges variant container settings over the cluster file.
 
 ## Shared suite helpers (reusable by other inference suites)
 
@@ -135,6 +136,40 @@ LOG=~/cvs_results/${TS}_ix-atom-w1-perf_mi300x.log
 cvs run inferencex_atom_single \
   --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
   --config_file "$PERF_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json" \
+  --html="$HTML" \
+  --self-contained-html \
+  --log-file="$LOG" \
+  -vvv -s
+
+echo "HTML: $HTML"
+echo "LOG:  $LOG"
+```
+
+## W1 perf multinode (MI300X, 2-node)
+
+Requires a 2-node cluster file, ATOM image with distributed serve support, and fabric env in `roles.server.env` (NCCL socket ifnames, etc.). One cell matches the single-node W1 reference (ISL=OSL=1024, C=128).
+
+```bash
+cd ~/cvs && source .cvs_venv/bin/activate
+
+MULTI_DIR=~/input/config_file/inference/inferencex_atom_single/multi
+mkdir -p "$MULTI_DIR"
+
+cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json \
+  --output "$MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json"
+cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_threshold.json \
+  --output "$MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_threshold.json"
+cvs copy-config mi300x_atom_multi.json --output ~/input/cluster_file/mi300x_atom_multi.json
+
+# Edit cluster + config: replace {head-node-ip} / {worker-node-ip} and set params.master_addr.
+
+TS=$(date +%Y%m%d_%H%M%S)
+HTML=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi300x.html
+LOG=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi300x.log
+
+cvs run inferencex_atom_single \
+  --cluster_file ~/input/cluster_file/mi300x_atom_multi.json \
+  --config_file "$MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \
