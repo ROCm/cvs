@@ -275,9 +275,30 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         job.start_server()
         launch_cmds = [c for c, hosts in orch.commands if hosts]
         self.assertEqual(len(launch_cmds), 2)
-        self.assertIn("--node-rank 0", launch_cmds[0])
-        self.assertIn("--node-rank 1", launch_cmds[1])
-        self.assertIn("--distributed-executor-backend mp", launch_cmds[0])
+        self.assertNotIn("--node-rank", launch_cmds[0])
+        self.assertNotIn("--distributed-executor-backend", launch_cmds[0])
+        self.assertIn("openai_server", launch_cmds[0])
+
+    def test_distributed_atom_spmd_env_and_dp_when_tp_allows(self):
+        orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
+        variant = _fake_variant(driver="atom", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1")
+        variant.params.tensor_parallelism = "4"
+        variant.roles.server.atom_args = ["-tp", "4"]
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.start_server()
+        launch_cmds = [c for c, hosts in orch.commands if hosts]
+        self.assertIn("-dp 2", launch_cmds[0])
+        self.assertIn("ATOM_DP_RANK=0", launch_cmds[0])
+        self.assertIn("ATOM_DP_RANK=1", launch_cmds[1])
+        self.assertIn("ATOM_DP_MASTER_IP=10.0.0.1", launch_cmds[0])
 
     def test_distributed_client_uses_exec_on_head(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])

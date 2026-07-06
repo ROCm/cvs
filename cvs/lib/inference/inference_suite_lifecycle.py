@@ -105,7 +105,11 @@ def test_setup_sshd(orch, lifecycle, request):
         lifecycle.failed = True
         pytest.fail("setup_sshd() returned False")
     if len(orch.hosts) > 1:
-        probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
+        probe = orch.exec(
+            "bash -c '"
+            "(ss -ltn 2>/dev/null || netstat -lnt 2>/dev/null) | grep -q :2224 && echo OK || "
+            "(pgrep -f \"sshd.*2224\" >/dev/null && echo OK) || echo NO'"
+        )
         if not any("OK" in (v or "") for v in (probe or {}).values()):
             lifecycle.failed = True
             pytest.fail("sshd not listening on 2224 after setup_sshd()")

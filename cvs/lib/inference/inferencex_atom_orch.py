@@ -9,11 +9,14 @@ InferenceX ATOM job driven by a ContainerOrchestrator (single- or multi-node).
 
 ``params.driver=vllm`` (interim uplift): ``vllm serve`` + ``vllm bench serve``.
 
-When ``params.nnodes`` > 1 the job launches one server rank per cluster host
-(``--node-rank`` / ``--master-addr`` / ``--distributed-executor-backend mp``),
-polls every rank for early failures, and runs the benchmark client on the head
-node only. Single-node runs (``nnodes=1`` or omitted) keep the original
-broadcast path.
+When ``params.nnodes`` > 1 the job launches one ATOM server per cluster host.
+For ``driver=atom``, multinode uses ATOM SPMD data-parallel env vars
+(``ATOM_DP_*``) plus ``-dp N`` when each node has enough GPUs for local DP
+replicas (``tensor_parallelism * nnodes <= 8``). With TP8 across two 8-GPU
+nodes, each host runs an independent ``-tp 8`` replica (no ``-dp``) because
+ATOM cannot place two local DP ranks when TP already consumes all eight GPUs;
+the benchmark client still runs on the head node only. For ``driver=vllm``,
+multinode keeps vLLM's ``--node-rank`` / ``--master-addr`` flags.
 
 Does NOT subclass :class:`cvs.lib.inference.base.InferenceBaseJob`.
 '''
@@ -222,9 +225,40 @@ class InferenceXAtomJob:
                 argv.extend([opt, str(value)])
         return argv
 
+    def _atom_spmd_dp_cli(self):
+        """Return ``-dp N`` argv when local GPUs can host *N* TP shards each."""
+        if not self.distributed:
+            return []
+        tp = int(self.tp)
+        if tp * self.nnodes > 8:
+            return []
+        if self._argv_has_flag(self.atom_server_args, "-dp", "--data-parallel-size"):
+            return []
+        return ["-dp", str(self.nnodes)]
+
+    @staticmethod
+    def _argv_has_flag(argv, *names):
+        for tok in argv:
+            if tok in names:
+                return True
+        return False
+
+    def _atom_spmd_env_exports(self, rank):
+        if not self.distributed or not self._atom_spmd_dp_cli():
+            return []
+        return [
+            f"export ATOM_DP_RANK={rank}",
+            f"export ATOM_DP_SIZE={self.nnodes}",
+            "export ATOM_DP_RANK_LOCAL=0",
+            f"export ATOM_DP_MASTER_IP={shlex.quote(self.master_addr)}",
+            f"export ATOM_DP_MASTER_PORT={self.master_port}",
+        ]
+
     def _distributed_argv(self, rank):
         if not self.distributed:
             return []
+        if self.driver == "atom":
+            return self._atom_spmd_dp_cli()
         return [
             "--node-rank",
             str(rank),
@@ -314,8 +348,11 @@ class InferenceXAtomJob:
             argv = self._atom_server_argv(rank) if self.driver == "atom" else self._server_argv(rank)
             serve_cmd = " ".join(shlex.quote(str(a)) for a in argv)
             rank_log = self._rank_server_log(rank)
+            rank_env = " && ".join(self._atom_spmd_env_exports(rank))
+            env_prefix = f"{rank_env} && " if rank_env else ""
             inner = (
                 f"source /tmp/server_env_script.sh && "
+                f"{env_prefix}"
                 f"nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
             )
             if self.distributed:
@@ -328,9 +365,11 @@ class InferenceXAtomJob:
 
     def _atom_health_ok(self):
         url = f"http://localhost:{self.port_no}/health"
-        out = self._exec_head(
-            f"curl -sf {shlex.quote(url)} -o /dev/null && echo OK || echo NO"
-        )
+        probe = f"curl -sf {shlex.quote(url)} -o /dev/null && echo OK || echo NO"
+        if self.distributed:
+            out = self._exec_all("bash -c " + shlex.quote(probe))
+        else:
+            out = self._exec_head("bash -c " + shlex.quote(probe))
         return bool(out) and all("OK" in (v or "") for v in out.values())
 
     def _atom_warmup_ok(self):
