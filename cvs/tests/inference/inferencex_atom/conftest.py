@@ -41,6 +41,9 @@ def _log_variant_run_card(variant_config):
         parts.append(f"upstream_run={rc.upstream_run_url}")
     if rc.notes:
         parts.append(f"notes={rc.notes}")
+    if int(variant_config.params.nnodes) > 1:
+        parts.append(f"nnodes={variant_config.params.nnodes}")
+        parts.append(f"pp={variant_config.params.pipeline_parallel_size}")
     log.info("InferenceX ATOM run card: %s", "; ".join(parts))
 
 

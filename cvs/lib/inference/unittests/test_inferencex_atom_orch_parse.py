@@ -21,10 +21,15 @@ _OSL = 1024
 _TP = 8
 
 
-def _fake_variant(*, driver="vllm"):
+def _fake_variant(*, driver="vllm", nnodes="1", pipeline_parallel_size="1", master_addr="", scaling_baseline_output_throughput=""):
     params = SimpleNamespace(
         driver=driver,
         tensor_parallelism=str(_TP),
+        pipeline_parallel_size=pipeline_parallel_size,
+        nnodes=nnodes,
+        master_addr=master_addr,
+        master_port="29501",
+        scaling_baseline_output_throughput=scaling_baseline_output_throughput,
         port_no="8000",
         random_range_ratio="0.8",
         random_prefix_len="0",
@@ -114,10 +119,10 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
             num_prompts=1000,
         )
         job.run_client()
-        rm_cmds = [c for c in orch.commands if c.startswith("rm -f ")]
+        rm_cmds = [c for c, _ in orch.commands if c.startswith("rm -f ")]
         self.assertEqual(len(rm_cmds), 1)
         self.assertIn(job._result_artifact, rm_cmds[0])
-        self.assertTrue(any("benchmark_serving" in c for c in orch.commands))
+        self.assertTrue(any("benchmark_serving" in c for c, _ in orch.commands))
 
     def test_parse_results_empty_artifact_raises(self):
         job = InferenceXAtomJob(
@@ -177,7 +182,7 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
             num_prompts=100,
         )
         job.build_server_cmd()
-        env_cmd = orch.commands[0]
+        env_cmd = orch.commands[0][0]
         self.assertNotIn("CVS_GPU_MEMORY_UTIL", env_cmd)
         self.assertNotIn("VLLM_GPU_MEMORY_UTIL", env_cmd)
         self.assertNotIn("VLLM_ENFORCE_EAGER", env_cmd)
@@ -254,6 +259,60 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         self.assertTrue(job.CLIENT_CRASH_RE.search("Traceback (most recent call last)"))
         self.assertTrue(job.CLIENT_LAUNCH_FAIL_RE.search("unrecognized arguments: --bad"))
         self.assertTrue(job.EARLY_FAILURE_RE.search("No such file or directory"))
+
+    def test_distributed_start_server_targets_each_host(self):
+        orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="atom", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd(clear_atom_cache=False)
+        job.start_server()
+        launch_cmds = [c for c, hosts in orch.commands if hosts]
+        self.assertEqual(len(launch_cmds), 2)
+        self.assertIn("--node-rank 0", launch_cmds[0])
+        self.assertIn("--node-rank 1", launch_cmds[1])
+        self.assertIn("--distributed-executor-backend mp", launch_cmds[0])
+
+    def test_distributed_client_uses_exec_on_head(self):
+        orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="atom", nnodes="2", pipeline_parallel_size="2"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.run_client()
+        self.assertEqual(len(orch.exec_on_head_commands), 2)
+        self.assertTrue(any("benchmark_serving" in c for c in orch.exec_on_head_commands))
+
+    def test_parse_results_scaling_efficiency(self):
+        raw = json.loads((_FIXTURES / "vllm_results_sample.json").read_text())
+        job = InferenceXAtomJob(
+            orch=FakeOrch(exec_on_head_return={"head": json.dumps(raw)}),
+            variant=_fake_variant(
+                driver="atom",
+                nnodes="2",
+                scaling_baseline_output_throughput="100",
+            ),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        metrics = job.parse_results()["head"]
+        self.assertIn("scaling.efficiency_pct", metrics)
+        expected = (raw["output_throughput"] / (100.0 * 2)) * 100.0
+        self.assertAlmostEqual(metrics["scaling.efficiency_pct"], expected)
 
 
 if __name__ == "__main__":
