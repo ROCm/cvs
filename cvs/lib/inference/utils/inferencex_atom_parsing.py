@@ -69,10 +69,29 @@ RECORD_METRICS: tuple[str, ...] = tuple(
 ENFORCED_METRICS = frozenset(_tiered)
 
 
-def to_client_metrics(raw, *, tp, isl):
+def scaling_efficiency_pct(actual_output_throughput, *, baseline_single_node, nnodes):
+    """Linear scaling efficiency: actual / (single-node baseline × nnodes)."""
+    denom = _safe_div(baseline_single_node, 1)
+    if denom is None or int(nnodes) < 1:
+        return None
+    ideal = denom * int(nnodes)
+    if ideal <= 0:
+        return None
+    return _safe_div(actual_output_throughput, ideal)
+
+
+def to_client_metrics(raw, *, tp, isl, scaling_baseline_output_throughput=None, nnodes=1):
     """Map an ATOM ``results.json`` dict to the ``client.*`` namespace for IX."""
     m = _vllm_to_client_metrics(raw, tp=tp, isl=isl)
     m["client.output_tput_per_gpu"] = _safe_div(raw.get("output_throughput"), tp)
+    if scaling_baseline_output_throughput is not None:
+        eff = scaling_efficiency_pct(
+            raw.get("output_throughput"),
+            baseline_single_node=scaling_baseline_output_throughput,
+            nnodes=nnodes,
+        )
+        if eff is not None:
+            m["scaling.efficiency_pct"] = eff * 100.0
     return m
 
 
