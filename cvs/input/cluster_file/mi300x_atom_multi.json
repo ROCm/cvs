@@ -1,0 +1,34 @@
+{
+  "_comment": "2-node MI300X example for inferencex_atom_single multinode (M5). Replace mgmt_ip / node_dict with lab IPs. head_node_dict.mgmt_ip should match the rank-0 (master) node VPC IP used in params.master_addr.",
+  "orchestrator": "container",
+  "username": "{user-id}",
+  "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+  "head_node_dict": {
+    "mgmt_ip": "{head-node-ip}"
+  },
+  "env_vars": {},
+  "node_dict": {
+    "{head-node-ip}": {
+      "bmc_ip": "NA",
+      "vpc_ip": "{head-node-ip}"
+    },
+    "{worker-node-ip}": {
+      "bmc_ip": "NA",
+      "vpc_ip": "{worker-node-ip}"
+    }
+  },
+  "container": {
+    "lifetime": "per_run",
+    "image": "rocm/atom-dev:latest",
+    "name": "inferencex_atom_mi300x_multi",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G"
+      }
+    }
+  }
+}
