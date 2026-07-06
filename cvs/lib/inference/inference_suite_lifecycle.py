@@ -82,8 +82,7 @@ from cvs.lib.inference.cache_probe import du_bytes
 
 
 def test_launch_container(orch, variant_config, lifecycle, request):
-    """Stage 1: launch the container."""
-    t = time.monotonic()
+    """Stage 1: launch the container."""    t = time.monotonic()
     ok = orch.setup_containers()
     lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
     if not ok:
