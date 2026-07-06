@@ -67,6 +67,22 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         ):
             self.assertIn(key, variant.thresholds[cell])
 
+    def test_load_w1_mi300x_multinode_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom_single/"
+            "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
+        self.assertFalse(variant.enforce_thresholds)
+        self.assertEqual(
+            variant.expected_cells(),
+            ["ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=128"],
+        )
+
     def test_load_w1_mi300x_smoke_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
