@@ -1,0 +1,3 @@
+{
+  "_comment": "No training metrics are gated yet (the Training Frameworks rows are capability smoke/scaffold tests). This file exists because substitute_config requires a sibling threshold file; populate it per-cell (throughput, images/s/GPU, TFLOPS, step-time p50/p95, Top-1, ...) as the Performance/Accuracy matrix rows are implemented, then add a coverage check to VariantConfig and flip enforce_thresholds to true."
+}

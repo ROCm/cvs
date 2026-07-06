@@ -1,0 +1,13 @@
+{
+  "_comment": "Keys starting with _ are stripped before the coverage check. Each top-level key must match VariantConfig.cell_key() EXACTLY: MODEL=<arch>,PREC=<precision>,RES=<input_size>,BS=<batch_size>. Values below are UNCALIBRATED placeholders -- enforce_thresholds is false in the config, so these are recorded, not asserted. Replace with measured baselines and flip enforce_thresholds to true to gate.",
+  "_gated_metrics": "Only vision.throughput_img_s is gated today (see cvs/lib/vision/utils/vision_parsing.py GATED_METRICS). Every present cell must carry a spec for each gated metric before enforce_thresholds can be true.",
+  "MODEL=resnet50,PREC=fp16,RES=224,BS=32": {
+    "vision.throughput_img_s": { "kind": "min", "value": 1 }
+  },
+  "MODEL=resnet50,PREC=fp16,RES=224,BS=64": {
+    "vision.throughput_img_s": { "kind": "min", "value": 1 }
+  },
+  "MODEL=vit_b_16,PREC=fp16,RES=224,BS=32": {
+    "vision.throughput_img_s": { "kind": "min", "value": 1 }
+  }
+}

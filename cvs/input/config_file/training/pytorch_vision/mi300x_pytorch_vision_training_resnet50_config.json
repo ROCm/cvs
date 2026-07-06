@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "framework": "pytorch_vision_training",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "/home/daforbes/gitlab/cvs/cvs/input/config_file/training/pytorch_vision/mi300x_pytorch_vision_training_resnet50_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "{shared_fs}/models",
+    "log_dir": "{shared_fs}/LOGS/pytorch_vision_training",
+    "hf_token_file": "/home/{user-id}/.hf_token"
+  },
+  "model": {
+    "id": "torchvision/resnet50",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "pytorch_vision_training_therock",
+    "image": "registry-sc-harbor.amd.com/framework/therock-main:1332_gfx94X_7.13.0a20260430_ubuntu24.04_py3.12_pytorch_release-2.11_443606e",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}"
+        ]
+      }
+    }
+  },
+  "env": {},
+  "training": {
+    "model_arch": "resnet50",
+    "dataset": "imagenet-1k",
+    "dataset_path": "",
+    "precision": "amp_bf16",
+    "strategy": "ddp",
+    "nnodes": "1",
+    "nproc_per_node": "8",
+    "global_batch_size": "256",
+    "micro_batch_size": "32",
+    "num_steps": "10",
+    "num_epochs": "1",
+    "lr": "0.1",
+    "checkpoint_dir": "",
+    "train_timeout_s": "3600"
+  }
+}

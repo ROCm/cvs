@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "framework": "pytorch_vision",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "/home/daforbes/gitlab/cvs/cvs/input/config_file/inference/pytorch_vision/mi300x_pytorch_vision_resnet50_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "{shared_fs}/models",
+    "log_dir": "{shared_fs}/LOGS/pytorch_vision",
+    "hf_token_file": "/home/{user-id}/.hf_token"
+  },
+  "model": {
+    "id": "torchvision-classification",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "pytorch_vision_therock",
+    "image": "registry-sc-harbor.amd.com/framework/therock-main:1332_gfx94X_7.13.0a20260430_ubuntu24.04_py3.12_pytorch_release-2.11_443606e",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}"
+        ]
+      }
+    }
+  },
+  "env": {},
+  "params": {
+    "warmup_iters": "10",
+    "bench_iters": "50",
+    "channels_last": "1",
+    "use_torch_compile": "0",
+    "bench_timeout_s": "1800"
+  },
+  "sweep": {
+    "model_combinations": [
+      { "name": "resnet50_fp16",  "arch": "resnet50",  "precision": "fp16", "input_size": "224" },
+      { "name": "vit_b_16_fp16",  "arch": "vit_b_16",  "precision": "fp16", "input_size": "224" }
+    ],
+    "runs": [
+      { "combo": "resnet50_fp16", "batch_size": 32 },
+      { "combo": "resnet50_fp16", "batch_size": 64 },
+      { "combo": "vit_b_16_fp16", "batch_size": 32 }
+    ]
+  }
+}
