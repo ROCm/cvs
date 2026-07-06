@@ -3,21 +3,21 @@
     "config":
     {
         "__container_image": "rocm/jax-training:maxtext-v25.9",
-        "container_image": "rocm/jax-training:maxtext-v26.2",
+        "container_image": "rocm/jax-training:maxtext-v26.4-jax0.9.1-te2.12.0",
         "container_name": "rocm-jax-llama3.1-70b",
         "distributed_training": "False",
         "enable_checkpointing": "False",
         "__nnodes": " = number of nodes used in singlenode training",
         "nnodes": "1",
         "__coordinator_ip": "localhost",
-        "coordinator_ip": "10.245.135.31",
+        "coordinator_ip": "<changeme>",
         "training_steps": "30",
         "nic_type": "thor2",
 
         "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "256G",
         "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
-        "data_cache_dir": "/home/{user-id}/cache",
+        "data_cache_dir": "/home/{user-id}/cache/hf_cache",
         "mock_data": "True",
         "log_dir": "/home/{user-id}/LOGS",
 
@@ -39,8 +39,8 @@
             "xla_gpu_executable_terminate_timeout": "300",
             "xla_gpu_first_collective_call_warn_stuck_timeout_seconds": "300",
             "xla_gpu_first_collective_call_terminate_timeout_seconds": "1200",
-            "xla_gpu_graph_level": "0",
-            "xla_gpu_autotune_level": "4",
+	    "xla_gpu_graph_level": "0",
+            "xla_gpu_autotune_level": "0",
             "xla_gpu_enable_reduce_scatter_combine_by_dim": "false",
             "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592",
             "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592",
@@ -50,14 +50,19 @@
 
         "env_vars":
         {
+	    "NNODES": "1",
+	    "NODE_RANK": "0",
             "GPU_MAX_HW_QUEUES": "2",
             "HSA_FORCE_FINE_GRAIN_PCIE": "1",
             "HIP_FORCE_DEV_KERNARG": "1",
             "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.975",
-            "NCCL_DEBUG": "ERROR",
+            "NCCL_DEBUG": "VERSION",
             "NCCL_PROTO": "Simple",
             "NCCL_IB_TC": "41",
             "NCCL_IB_SL": "0",
+	    "NCCL_IB_DISABLE": "1",
+            "NCCL_SHM_DISABLE": "0",
+	    "NCCL_P2P_DISABLE": "0",
             "NCCL_IB_GID_INDEX": "3",
             "NCCL_CHECKS_DISABLE": "1",
             "NCCL_CROSS_NIC": "0",
@@ -88,8 +93,8 @@
             },
             "env_dict":
             {
-                "JAX_COORDINATOR_IP": "10.245.135.31",
-                "JAX_COORDINATOR_PORT": "1234",
+                "JAX_COORDINATOR_IP": "<changeme>",
+                "JAX_COORDINATOR_PORT": "12346",
                 "NNODES": "1",
                 "JAX_DISTRIBUTED_INITIALIZATION_TIMEOUT_SECONDS": "1800",
                 "JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS": "900"
@@ -102,7 +107,7 @@
         {
              "llama3.1-70b":
              {
-                 "mi300x":
+                 "mi325":
                  {
                      "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
                      "model_size": "70",
