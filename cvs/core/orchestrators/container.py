@@ -477,12 +477,12 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             "chown -R root:root /root/.ssh",
             "bash -c 'chmod 700 /root/.ssh && chmod 600 /root/.ssh/*'",
             "mkdir -p /run/sshd",  # Create privilege separation directory for sshd
-            "bash -c 'which sshd > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -q openssh-server)'",
+            "bash -c 'which sshd > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -q openssh-server iproute2)'",
             "/usr/sbin/sshd -p2224",
         ]
 
         timeouts = {
-            "bash -c 'which sshd > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -q openssh-server)'": 120,
+            "bash -c 'which sshd > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -q openssh-server iproute2)'": 120,
         }
 
         for cmd in ssh_setup_commands:
