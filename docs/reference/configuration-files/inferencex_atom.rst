@@ -158,6 +158,15 @@ Top-level blocks follow the DTNI variant schema. InferenceX ATOM-specific keys:
    * - ``params.reuse_server_across_sweep``
      - ``true``
      - Skip server restart when only concurrency changes between sweep cells.
+   * - ``params.nnodes`` / ``params.pipeline_parallel_size``
+     - ``2`` / ``2``
+     - Multinode distributed serve (M5). Omit or set ``nnodes: "1"`` for single-node.
+   * - ``params.master_addr`` / ``params.master_port``
+     - head VPC IP / ``29501``
+     - Rendezvous for distributed ATOM/vLLM executor; defaults to cluster head when empty.
+   * - ``params.scaling_baseline_output_throughput``
+     - ``1500``
+     - Single-node reference ``output_throughput`` for ``scaling.efficiency_pct`` (record-only).
    * - ``params.server_warmup_wait_s`` / ``client_initial_wait_s``
      - ``330`` / ``120``
      - Config-driven server warmup and client poll floor (shorter on smoke configs).
