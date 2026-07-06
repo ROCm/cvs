@@ -300,6 +300,37 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         self.assertIn("ATOM_DP_RANK=1", launch_cmds[1])
         self.assertIn("ATOM_DP_MASTER_IP=10.0.0.1", launch_cmds[0])
 
+    def test_distributed_atom_tp8_multinode_never_passes_vllm_flags(self):
+        orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
+        variant = _fake_variant(driver="atom", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1")
+        variant.roles.server.atom_args = [
+            "-tp",
+            "8",
+            "--node-rank",
+            "1",
+            "--pipeline-parallel-size",
+            "2",
+        ]
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        argv = job._atom_server_argv(rank=1)
+        joined = " ".join(argv)
+        self.assertNotIn("--node-rank", joined)
+        self.assertNotIn("--pipeline-parallel-size", joined)
+        self.assertNotIn("--master-addr", joined)
+        self.assertIn("-tp 8", joined)
+        job.start_server()
+        launch_cmds = [c for c, hosts in orch.commands if hosts]
+        self.assertNotIn("--node-rank", launch_cmds[1])
+        self.assertNotIn("--pipeline-parallel-size", launch_cmds[1])
+
     def test_distributed_client_uses_exec_on_head(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
         job = InferenceXAtomJob(
