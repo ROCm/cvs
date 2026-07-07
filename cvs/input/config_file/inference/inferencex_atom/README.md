@@ -62,7 +62,16 @@ W1 MI300X perf with two concurrency cells expects **~17** pytest rows (not one r
 
 ## Before the first lab run
 
-- `git checkout` the branch under test, then `make install` and `source .cvs_venv/bin/activate` on the **launcher** host.
+- On the **launcher** host after `git checkout` / `git pull`: run **`make install` first**, then **`source .cvs_venv/bin/activate`**. Do not activate `.cvs_venv` before `make install` — the Makefile manages that venv and install can fail if it is already active.
+
+```bash
+cd ~/cvs
+git fetch origin hnimrama/ix-atom-multinode
+git reset --hard origin/hnimrama/ix-atom-multinode
+make install
+source .cvs_venv/bin/activate
+```
+
 - Edit `~/input/cluster_file/mi300x_atom_single.json` (or `mi355x_atom_single.json`): node IPs, `username`, `priv_key_file`, `container.image`.
 - **Launcher vs GPU node:** CVS pytest runs on the launcher; `ContainerOrchestrator` SSHes to cluster nodes and runs `sudo docker` there. Local Docker on the launcher is not used. Prerequisites split by host:
 
@@ -81,7 +90,9 @@ W1 MI300X perf with two concurrency cells expects **~17** pytest rows (not one r
 One cell, 128 prompts — run this before the full perf matrix.
 
 ```bash
-cd ~/cvs && source .cvs_venv/bin/activate
+cd ~/cvs
+make install   # after git pull only; run before activating venv
+source .cvs_venv/bin/activate
 mkdir -p ~/cvs_results ~/input/cluster_file
 
 SMOKE_DIR=~/input/config_file/inference/inferencex_atom/smoke
@@ -119,7 +130,9 @@ section for links. Render-only; does not affect gates.
 Two concurrency cells (C=128, C=256), 1000 prompts. Second cell reuses the ATOM server when `reuse_server_across_sweep: true`.
 
 ```bash
-cd ~/cvs && source .cvs_venv/bin/activate
+cd ~/cvs
+make install   # after git pull only; run before activating venv
+source .cvs_venv/bin/activate
 
 PERF_DIR=~/input/config_file/inference/inferencex_atom/perf
 mkdir -p "$PERF_DIR"
@@ -150,7 +163,9 @@ echo "LOG:  $LOG"
 Requires a 2-node cluster file, ATOM image with distributed serve support, and fabric env in `roles.server.env` (NCCL socket ifnames, etc.). One cell matches the single-node W1 reference (ISL=OSL=1024, C=128).
 
 ```bash
-cd ~/cvs && source .cvs_venv/bin/activate
+cd ~/cvs
+make install   # after git pull only; run before activating venv
+source .cvs_venv/bin/activate
 
 MULTI_DIR=~/input/config_file/inference/inferencex_atom/multi
 mkdir -p "$MULTI_DIR"
@@ -184,7 +199,9 @@ echo "LOG:  $LOG"
 Thresholds are seeded from [ROCm/ATOM run 27912164002](https://github.com/ROCm/ATOM/actions/runs/27912164002). `enforce_thresholds` stays `false` until an MI355X lab run confirms.
 
 ```bash
-cd ~/cvs && source .cvs_venv/bin/activate
+cd ~/cvs
+make install   # after git pull only; run before activating venv
+source .cvs_venv/bin/activate
 
 PERF_DIR=~/input/config_file/inference/inferencex_atom/mi355x_perf
 mkdir -p "$PERF_DIR"
