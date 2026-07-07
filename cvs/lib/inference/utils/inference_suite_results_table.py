@@ -36,6 +36,7 @@ INFERENCEX_ATOM_RESULTS_COLUMNS = (
     ("Mean TTFT (ms)", "client.mean_ttft_ms"),
     ("Mean TPOT (ms)", "client.mean_tpot_ms"),
     ("P99 ITL (ms)", "client.p99_itl_ms"),
+    ("Scaling eff. (%)", "scaling.efficiency_pct"),
 )
 
 # Optional preset for suites that want vLLM-style columns (not wired in vllm_single yet).
