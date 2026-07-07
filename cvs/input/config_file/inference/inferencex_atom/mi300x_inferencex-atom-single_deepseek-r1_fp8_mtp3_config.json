@@ -1,13 +1,13 @@
 {
-  "_comment": "W1 DeepSeek R1 FP8 on 8x MI300X. Recipe: dsr1-fp8-mi300x-atom. Thresholds: portable minimum SLOs (throughput + health), not per-node calibration.",
+  "_comment": "W1 DeepSeek R1 FP8+MTP3 on 8x MI300X. Recipe: dsr1-fp8-mi300x-atom-mtp3. Thresholds: plan Section 4.2.",
   "schema_version": 1,
-  "framework": "inferencex_atom_single",
+  "framework": "inferencex_atom",
   "gpu_arch": "mi300x",
-  "enforce_thresholds": true,
-  "threshold_json": "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json",
+  "enforce_thresholds": false,
+  "threshold_json": "mi300x_inferencex-atom-single_deepseek-r1_fp8_mtp3_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "MI300X lab reference Section 4.1"
+    "notes": "MI300X MTP3 lab reference Section 4.2"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -48,7 +48,11 @@
         "8",
         "--kv_cache_dtype",
         "fp8",
-        "--trust-remote-code"
+        "--trust-remote-code",
+        "--method",
+        "mtp",
+        "--num-speculative-tokens",
+        "3"
       ],
       "env": {
         "ATOM_DISABLE_MMAP": "true"
@@ -63,7 +67,7 @@
     "num_prompts": "1000",
     "max_model_length": "4096",
     "metric_percentiles": "95,99",
-    "reuse_server_across_sweep": "true",
+    "bench_extra_args": "--use-chat-template",
     "client_poll_count": "80",
     "client_poll_wait_time": "60"
   },

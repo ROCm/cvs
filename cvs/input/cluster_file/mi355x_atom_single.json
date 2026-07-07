@@ -1,5 +1,5 @@
 {
-  "_comment": "Single-node MI355X example for inferencex_atom_single (ATOM driver). Pin image to match variant config / ATOM CI run.",
+  "_comment": "Single-node MI355X example for inferencex_atom (ATOM driver). Pin image to match variant config / ATOM CI run.",
   "orchestrator": "container",
   "username": "{user-id}",
   "priv_key_file": "/home/{user-id}/.ssh/id_rsa",

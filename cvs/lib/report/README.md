@@ -4,9 +4,8 @@ CVS can attach an HTML/JSON **suite report** to pytest runs that use `--html`. R
 generated at **session end** and bundled into the same results zip as the pytest HTML report.
 They are **render-only** — they do not change pass/fail or threshold enforcement.
 
-**IX-atom reference:** `presets/inferencex_atom.py` + shim `presets/inferencex_atom_single.py`
-(auto-loaded for `cvs run inferencex_atom_single`). Suite owners also see Step 8 in
-`cvs/lib/inference/ADDING_A_SUITE.md`.
+**IX-atom reference:** `presets/inferencex_atom.py` (auto-loaded for `cvs run inferencex_atom`).
+Suite owners also see Step 8 in `cvs/lib/inference/ADDING_A_SUITE.md`.
 
 ## Quick start
 
@@ -25,8 +24,10 @@ Your suite must already collect:
 | `variant_config` | Thresholds, `enforce_thresholds`, `cell_key(isl, osl, conc)` |
 | `lifecycle` | `.record(nodeid, label, seconds)` on server/client stages |
 
+## Unit tests
+
 ```bash
-cvs run inferencex_atom_single --cluster_file ... --config_file ... --html=~/cvs_results/run.html
+cvs run inferencex_atom --cluster_file ... --config_file ... --html=~/cvs_results/run.html
 python -m pytest cvs/lib/report/unittests/ -q
 ```
 
