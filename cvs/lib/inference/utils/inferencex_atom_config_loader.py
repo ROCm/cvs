@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-InferenceX ATOM suite config schema (``inferencex_atom``).
+InferenceX ATOM suite config schema (``inferencex_atom`` / ``inferencex_atom_vllm_single``).
 
 Generic paths/model/container/threshold plumbing lives in
 :mod:`cvs.lib.utils.config_loader`. Sweep selector types are shared with
@@ -79,14 +79,17 @@ class InferenceXAtomParams(_Forbid):
 class InferenceXAtomRunCard(_Forbid):
     upstream_run_url: str = ""
     atom_image_pin: str = ""
+    vllm_image_pin: str = ""
     notes: str = ""
+    # Optional ATOM reference metrics JSON (cell_key -> client.* scalars) for M4 parity gates.
+    parity_reference_json: str = ""
 
 
-INFERENCEX_ATOM_FRAMEWORKS = ("inferencex_atom",)
+INFERENCEX_ATOM_FRAMEWORKS = ("inferencex_atom", "inferencex_atom_vllm_single")
 
 
 class InferenceXAtomVariantConfig(BaseVariantConfig):
-    framework: Literal["inferencex_atom"]
+    framework: Literal["inferencex_atom", "inferencex_atom_vllm_single"]
 
     @field_validator("framework", mode="before")
     @classmethod
@@ -149,6 +152,20 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
             )
         return self
 
+    @model_validator(mode="after")
+    def _framework_driver_consistency(self):
+        if self.framework == "inferencex_atom_vllm_single":
+            if self.params.driver != "vllm":
+                raise ValueError(
+                    "framework='inferencex_atom_vllm_single' requires params.driver='vllm'"
+                )
+            if not self.roles.server.serve_args:
+                raise ValueError(
+                    "framework='inferencex_atom_vllm_single' requires "
+                    "roles.server.serve_args (inline vLLM serve flags)"
+                )
+        return self
+
 
 def expand_sweep(sweep):
     """Expand a sweep into ``(cases, ids)`` for pytest parametrization."""
@@ -176,15 +193,24 @@ def reuse_server_flag(params) -> bool:
     return raw in ("true", "1", "yes")
 
 
+def _serve_args_session_key(serve_args: dict) -> tuple:
+    return tuple(sorted((str(k), str(v)) for k, v in (serve_args or {}).items()))
+
+
 def server_session_key(variant_config, isl, osl):
     """Stable key for server reuse across sweep cells with identical model/shape."""
     p = variant_config.params
+    server = variant_config.roles.server
+    if p.driver == "vllm":
+        server_tokens = _serve_args_session_key(server.serve_args)
+    else:
+        server_tokens = tuple(server.atom_args)
     return (
         variant_config.model.id,
         p.driver,
         str(isl),
         str(osl),
-        tuple(variant_config.roles.server.atom_args),
+        server_tokens,
         p.tensor_parallelism,
         p.nnodes,
         p.pipeline_parallel_size,
@@ -193,10 +219,34 @@ def server_session_key(variant_config, isl, osl):
     )
 
 
-def expand_sweep_parametrize(sweep, fixturenames):
+def load_parity_reference_cells(path: str) -> dict[str, dict]:
+    """Load cell_key -> metric dict from a parity reference JSON file."""
+    if not (path or "").strip():
+        return {}
+    from pathlib import Path
+    import json
+
+    ref_path = Path(path)
+    if not ref_path.is_file():
+        raise FileNotFoundError(f"parity reference not found: {path}")
+    data = json.loads(ref_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"parity reference must be a JSON object: {path}")
+    out: dict[str, dict] = {}
+    for key, value in data.items():
+        if str(key).startswith("_"):
+            continue
+        if not isinstance(value, dict):
+            raise ValueError(f"parity reference cell {key!r} must be an object")
+        out[str(key)] = value
+    return out
+
+
+def expand_sweep_parametrize(sweep, fixturenames, *, metric_tier_order=None):
     """Build pytest parametrize args for inference or metric-tier collection."""
     from cvs.lib.inference.utils.inferencex_atom_parsing import METRIC_TIER_ORDER
 
+    tiers = metric_tier_order or METRIC_TIER_ORDER
     cases, ids = expand_sweep(sweep)
     if "metric_tier" in fixturenames:
         if not cases:
@@ -204,7 +254,7 @@ def expand_sweep_parametrize(sweep, fixturenames):
         tier_cases = []
         tier_ids = []
         for (combo, c), cid in zip(cases, ids):
-            for tier in METRIC_TIER_ORDER:
+            for tier in tiers:
                 tier_cases.append((combo, c, tier))
                 tier_ids.append(f"{cid}-{tier}")
         return ("seq_combo,concurrency,metric_tier", tier_cases, tier_ids)

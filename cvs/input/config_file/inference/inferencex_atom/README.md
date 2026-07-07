@@ -28,7 +28,8 @@ Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc
 |---------|-----|-------|
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke` | MI300X | Quick path check (C=128, 128 prompts) |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` | MI300X | W1 perf, portable min-SLO thresholds, server reuse across sweep |
-| `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` | MI300X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); `enforce_thresholds: false` until lab confirm |
+| `mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf` | MI300X | **M4 vLLM parity** sibling of W1 perf (`framework: inferencex_atom_vllm_single`) |
+| `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` | MI300X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); enforced thresholds + scaling gate |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | MI300X | W1 FP8+MTP3 |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf` | MI355X | W1 perf (CI seeds, `enforce_thresholds: false`) |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` | MI355X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); `enforce_thresholds: false` until lab confirm |
@@ -222,6 +223,41 @@ LOG=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi355x.log
 cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/mi355x_atom_multi.json \
   --config_file "$MULTI_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json" \
+  --html="$HTML" \
+  --self-contained-html \
+  --log-file="$LOG" \
+  -vvv -s
+
+echo "HTML: $HTML"
+echo "LOG:  $LOG"
+```
+
+## W1 vLLM parity (MI300X, M4)
+
+Same sweep cells as ATOM W1 perf. Uses ``cvs run inferencex_atom_vllm_single`` (not legacy ``vllm_single``). Set ``container.image`` to your ROCm vLLM image. Optional ``run_card.parity_reference_json`` enables ``compare.vllm.*`` ratio gates (see ``mi300x_inferencex-atom-single_deepseek-r1_fp8_atom_reference.example.json``).
+
+```bash
+cd ~/cvs && source .cvs_venv/bin/activate
+
+VLLM_DIR=~/input/config_file/inference/inferencex_atom/vllm_perf
+mkdir -p "$VLLM_DIR"
+
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_config.json \
+  --output "$VLLM_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_config.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_threshold.json \
+  --output "$VLLM_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_threshold.json"
+cvs copy-config mi300x_atom_single.json --output ~/input/cluster_file/mi300x_atom_single.json
+
+# After a green ATOM W1 run, copy cell metrics into a reference JSON and set
+# run_card.parity_reference_json in the vLLM config.
+
+TS=$(date +%Y%m%d_%H%M%S)
+HTML=~/cvs_results/${TS}_ix-atom-vllm-parity_mi300x.html
+LOG=~/cvs_results/${TS}_ix-atom-vllm-parity_mi300x.log
+
+cvs run inferencex_atom_vllm_single \
+  --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
+  --config_file "$VLLM_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_config.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \

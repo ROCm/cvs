@@ -63,7 +63,17 @@ METRIC_TIERS: dict[str, tuple[str, ...]] = {
 SCALING_METRICS: tuple[str, ...] = METRIC_TIERS["scaling"]
 SCALING_METRIC_UNITS: dict[str, str] = {"efficiency_pct": "%"}
 
+COMPARE_VLLM_METRICS: tuple[str, ...] = (
+    "output_throughput_ratio",
+    "mean_ttft_ms_ratio",
+)
+COMPARE_VLLM_METRIC_UNITS: dict[str, str] = {
+    "output_throughput_ratio": "ratio",
+    "mean_ttft_ms_ratio": "ratio",
+}
+
 METRIC_TIER_ORDER: tuple[str, ...] = tuple(METRIC_TIERS.keys()) + ("record",)
+VLLM_METRIC_TIER_ORDER: tuple[str, ...] = tuple(METRIC_TIERS.keys()) + ("compare", "record")
 
 _tiered = {m for names in METRIC_TIERS.values() for m in names}
 RECORD_METRICS: tuple[str, ...] = tuple(short for short, _unit in CLIENT_METRICS if short not in _tiered)
@@ -97,6 +107,22 @@ def to_client_metrics(raw, *, tp, isl, scaling_baseline_output_throughput=None, 
     return m
 
 
+def compare_vllm_metrics(actual: dict, reference: dict) -> dict[str, float]:
+    """M4 parity ratios: vLLM cell metrics relative to ATOM reference cell."""
+    out: dict[str, float] = {}
+    vllm_tput = actual.get("client.output_throughput")
+    atom_tput = reference.get("client.output_throughput")
+    ratio = _safe_div(vllm_tput, atom_tput)
+    if ratio is not None:
+        out["compare.vllm.output_throughput_ratio"] = ratio
+    vllm_ttft = actual.get("client.mean_ttft_ms")
+    atom_ttft = reference.get("client.mean_ttft_ms")
+    ratio = _safe_div(vllm_ttft, atom_ttft)
+    if ratio is not None:
+        out["compare.vllm.mean_ttft_ms_ratio"] = ratio
+    return out
+
+
 def tier_metric_specs(thresholds_cell: dict, tier: str) -> dict[str, dict]:
     """Return threshold specs for one tier in a sweep cell."""
     if tier == "record":
@@ -105,6 +131,9 @@ def tier_metric_specs(thresholds_cell: dict, tier: str) -> dict[str, dict]:
     elif tier == "scaling":
         names = SCALING_METRICS
         prefix = "scaling."
+    elif tier == "compare":
+        names = COMPARE_VLLM_METRICS
+        prefix = "compare.vllm."
     else:
         names = METRIC_TIERS.get(tier, ())
         prefix = "client."
