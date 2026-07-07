@@ -67,6 +67,13 @@ h1 { margin: 0 0 0.25rem; font-size: 1.6rem; font-weight: 600; letter-spacing: -
 .chart-card-title { margin: 0 0 0.5rem; font-size: 0.72rem; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
 .chart-wrap { position: relative; height: 240px; }
+.chart-wrap-tall { height: 300px; }
+.chart-card-wide { max-width: 100%; }
+.toolbar-inline { display: flex; align-items: center; gap: 0.5rem; font-size: 0.72rem; color: var(--muted); }
+.toolbar-inline select {
+  background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.5rem; font-size: 0.85rem; min-width: 9rem;
+}
 .shape-details { margin-bottom: 0.75rem; border: 1px solid var(--border); border-radius: 10px;
   background: rgba(255,255,255,0.02); overflow: hidden; }
 .shape-details summary { cursor: pointer; padding: 0.65rem 0.85rem; font-size: 0.9rem; font-weight: 600;
@@ -150,11 +157,57 @@ tr.fail td { background: rgba(255,92,106,0.08); }
     <p class="subsection-hint">Line charts per shape · drag to pan, scroll to zoom on line views</p>
     <div id="chart-grid"></div>
   </div>
+  <div class="subsection" id="percentile-block" style="display:none">
+    <p class="subsection-title">P90 / P95 / P99 vs concurrency</p>
+    <p class="subsection-hint">Percentile fan per shape · shaded band spans P90→P99 · solid lines are P90, P95, and P99</p>
+    <div id="percentile-grid"></div>
+  </div>
+  <div class="subsection" id="margin-block" style="display:none">
+    <div class="subsection-head">
+      <p class="subsection-title">Gate margin vs concurrency</p>
+      <label class="toolbar-inline">Gate metric
+        <select id="margin-metric" aria-label="Gated metric for margin chart">
+          <option value="client.output_throughput">Throughput</option>
+          <option value="client.mean_ttft_ms">TTFT</option>
+          <option value="client.mean_tpot_ms">TPOT</option>
+        </select>
+      </label>
+    </div>
+    <p class="subsection-hint">% of gate threshold (100% = on gate) · only cells with enforced gate specs · dashed line marks 100%</p>
+    <div class="chart-grid" id="margin-grid"></div>
+  </div>
+  <div class="subsection" id="tradeoff-block" style="display:none">
+    <div class="subsection-head">
+      <p class="subsection-title">Throughput vs latency</p>
+      <label class="toolbar-inline">Y-axis
+        <select id="tradeoff-latency-metric" aria-label="Latency metric for tradeoff chart">
+          <option value="client.mean_ttft_ms" selected>Mean TTFT</option>
+          <option value="client.p99_ttft_ms">P99 TTFT</option>
+          <option value="client.mean_tpot_ms">Mean TPOT</option>
+          <option value="client.p99_tpot_ms">P99 TPOT</option>
+        </select>
+      </label>
+    </div>
+    <p class="subsection-hint">Operating points per shape · lines trace increasing concurrency · useful when latency trades off with throughput</p>
+    <article class="chart-card chart-card-wide">
+      <div class="chart-wrap chart-wrap-tall" id="tradeoff-chart-wrap"></div>
+    </article>
+  </div>
 </section>
 
 <section class="panel" id="heatmap" style="display:none">
-  <h2>Throughput heatmap</h2>
-  <p class="subsection-hint">Concurrency columns · cell color = output tok/s (filtered)</p>
+  <div class="subsection-head">
+    <h2 style="margin:0;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);font-weight:600">Sweep heatmap</h2>
+    <label class="toolbar-inline">Metric
+      <select id="heatmap-metric" aria-label="Heatmap metric">
+        <option value="client.output_throughput">Output tok/s</option>
+        <option value="client.total_token_throughput">Total tok/s</option>
+        <option value="client.mean_ttft_ms">Mean TTFT</option>
+        <option value="client.mean_tpot_ms">Mean TPOT</option>
+      </select>
+    </label>
+  </div>
+  <p class="subsection-hint" id="heatmap-hint">Concurrency columns · greener is better for throughput · greener is lower for latency</p>
   <div style="overflow-x:auto" id="heatmap-wrap"></div>
 </section>
 
@@ -184,6 +237,48 @@ let reportData = null;
 let allCells = [];
 let chartInstances = [];
 let comparisonChartMode = 'bar';
+let tradeoffLatencyMetric = 'client.mean_ttft_ms';
+let heatmapMetricKey = 'client.output_throughput';
+let marginMetricKey = 'client.output_throughput';
+
+const TRADEOFF_LATENCY_LABELS = {
+  'client.mean_ttft_ms': 'Mean TTFT',
+  'client.p99_ttft_ms': 'P99 TTFT',
+  'client.mean_tpot_ms': 'Mean TPOT',
+  'client.p99_tpot_ms': 'P99 TPOT',
+};
+
+const HEATMAP_METRICS = {
+  'client.output_throughput': { label: 'Output tok/s', unit: 'tok/s', higherBetter: true },
+  'client.total_token_throughput': { label: 'Total tok/s', unit: 'tok/s', higherBetter: true },
+  'client.mean_ttft_ms': { label: 'Mean TTFT', unit: 'ms', higherBetter: false },
+  'client.mean_tpot_ms': { label: 'Mean TPOT', unit: 'ms', higherBetter: false },
+};
+
+const PERCENTILE_FAMILIES = [
+  {
+    id: 'ttft',
+    title: 'TTFT',
+    unit: 'ms',
+    series: [
+      { key: 'client.p90_ttft_ms', label: 'P90' },
+      { key: 'client.p95_ttft_ms', label: 'P95' },
+      { key: 'client.p99_ttft_ms', label: 'P99' },
+    ],
+  },
+  {
+    id: 'tpot',
+    title: 'TPOT',
+    unit: 'ms',
+    series: [
+      { key: 'client.p90_tpot_ms', label: 'P90' },
+      { key: 'client.p95_tpot_ms', label: 'P95' },
+      { key: 'client.p99_tpot_ms', label: 'P99' },
+    ],
+  },
+];
+
+const FAN_COLORS = ['#3dd68c', '#6b9fff', '#c77dff'];
 
 function $(id) { return document.getElementById(id); }
 
@@ -210,6 +305,23 @@ function metricVal(cell, key) {
 function metricNum(cell, key) {
   const v = (cell.actuals || {})[key];
   return v == null ? null : Number(v);
+}
+
+function cellBarPct(cell, metricKey) {
+  const entry = (cell.metrics || []).find(m => m.metric === metricKey);
+  if (!entry || entry.bar_pct == null || !entry.spec) return null;
+  return Number(entry.bar_pct);
+}
+
+function pointsByConcurrency(rows, valueFn) {
+  const byConc = new Map();
+  rows.forEach(c => {
+    const conc = Number(c.concurrency);
+    const val = valueFn(c);
+    if (val == null || Number.isNaN(conc)) return;
+    byConc.set(conc, val);
+  });
+  return [...byConc.entries()].sort((a, b) => a[0] - b[0]);
 }
 
 function filteredCells() {
@@ -264,6 +376,14 @@ function destroyCharts() {
   chartInstances = [];
   clearEl('chart-grid');
   clearEl('comparison-grid');
+  clearEl('margin-grid');
+  clearEl('percentile-grid');
+  const tradeoffWrap = $('tradeoff-chart-wrap');
+  if (tradeoffWrap) tradeoffWrap.innerHTML = '';
+  ['comparison-block', 'per-shape-block', 'percentile-block', 'margin-block', 'tradeoff-block'].forEach(id => {
+    const el = $(id);
+    if (el) el.style.display = 'none';
+  });
 }
 
 function updateComparisonToggleUI() {
@@ -415,6 +535,274 @@ function makeChart(canvas, type, labels, datasets, unit, title) {
   return ch;
 }
 
+function makeFanChart(canvas, labels, series, unit, title) {
+  const datasets = series.map((s, i) => ({
+    label: s.label,
+    data: s.data,
+    borderColor: FAN_COLORS[i % FAN_COLORS.length],
+    backgroundColor: i < series.length - 1 ? FAN_COLORS[i % FAN_COLORS.length] + '40' : 'transparent',
+    fill: i < series.length - 1 ? '+1' : false,
+    tension: 0.2,
+    pointRadius: 4,
+    pointHoverRadius: 6,
+    borderWidth: 2,
+    pointBackgroundColor: FAN_COLORS[i % FAN_COLORS.length],
+    pointBorderColor: '#1a1d27',
+    pointBorderWidth: 1,
+  }));
+  return makeChart(canvas, 'line', labels, datasets, unit, title);
+}
+
+function gateReferenceDataset(labels) {
+  return {
+    label: 'Gate (100%)',
+    data: labels.map(() => 100),
+    borderColor: 'rgba(154,163,181,0.65)',
+    backgroundColor: 'transparent',
+    borderDash: [6, 4],
+    borderWidth: 1.5,
+    pointRadius: 0,
+    fill: false,
+    order: 0,
+  };
+}
+
+function throughputMetricKey() {
+  return (reportData.report || {}).headline_metric || 'client.output_throughput';
+}
+
+function makeTradeoffChart(canvas, datasets, latencyLabel) {
+  const ch = new Chart(canvas, {
+    type: 'scatter',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: true },
+      plugins: {
+        legend: { labels: { color: '#e8eaef', boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          backgroundColor: '#2a3142',
+          borderColor: '#3a4255',
+          borderWidth: 1,
+          titleColor: '#e8eaef',
+          bodyColor: '#c8d0e0',
+          callbacks: {
+            label(ctx) {
+              const p = ctx.raw;
+              const st = p.status ? ' · ' + p.status.toUpperCase() : '';
+              return ctx.dataset.label + ': '
+                + Number(p.x).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' tok/s, '
+                + Number(p.y).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' ms · C=' + p.conc + st;
+            },
+          },
+        },
+        zoom: {
+          pan: { enabled: true, mode: 'xy' },
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Output throughput (tok/s)', color: '#9aa3b5', font: { size: 11 } },
+          ticks: { color: '#9aa3b5' },
+          grid: { color: '#2a2f3d' },
+        },
+        y: {
+          title: { display: true, text: latencyLabel + ' (ms)', color: '#9aa3b5', font: { size: 11 } },
+          ticks: { color: '#9aa3b5' },
+          grid: { color: '#2a2f3d' },
+        },
+      },
+    },
+  });
+  chartInstances.push(ch);
+  return ch;
+}
+
+function buildTradeoffChart(rows) {
+  const block = $('tradeoff-block');
+  const wrap = $('tradeoff-chart-wrap');
+  if (!block || !wrap) return false;
+
+  wrap.innerHTML = '';
+  block.style.display = 'none';
+
+  const tputKey = throughputMetricKey();
+  const latKey = tradeoffLatencyMetric;
+  const latLabel = TRADEOFF_LATENCY_LABELS[latKey] || 'Latency';
+  const colors = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
+  const shapes = [...shapeGroups(rows).entries()];
+  const datasets = [];
+
+  shapes.forEach(([shapeKey, shapeRows], index) => {
+    const [isl, osl] = shapeKey.split('|');
+    const shapeLabel = 'ISL=' + isl + ' · OSL=' + osl;
+    const points = shapeRows
+      .map(c => {
+        const x = metricNum(c, tputKey);
+        const y = metricNum(c, latKey);
+        const conc = Number(c.concurrency);
+        if (x == null || y == null || Number.isNaN(conc)) return null;
+        return { x, y, conc, status: cellStatus(c) };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.conc - b.conc);
+    if (!points.length) return;
+
+    const color = colors[index % colors.length];
+    const dashed = LINE_DASHES[index % LINE_DASHES.length];
+    datasets.push({
+      label: shapeLabel,
+      data: points,
+      showLine: points.length > 1,
+      tension: 0.15,
+      borderColor: color,
+      backgroundColor: color,
+      borderWidth: 2.5,
+      borderDash: dashed,
+      pointRadius: 5,
+      pointHoverRadius: 7,
+      pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
+      pointBackgroundColor: points.map(p => (p.status === 'fail' ? '#ff5c6a' : color)),
+      pointBorderColor: '#1a1d27',
+      pointBorderWidth: 2,
+      order: dashed.length ? index : index + 10,
+    });
+  });
+
+  if (!datasets.length) return false;
+
+  const canvas = document.createElement('canvas');
+  wrap.appendChild(canvas);
+  makeTradeoffChart(canvas, datasets, latLabel);
+  block.style.display = 'block';
+  return true;
+}
+
+function buildPercentileCharts(rows) {
+  const block = $('percentile-block');
+  const grid = $('percentile-grid');
+  if (!block || !grid) return;
+  grid.innerHTML = '';
+  block.style.display = 'none';
+
+  const shapes = [...shapeGroups(rows).entries()];
+  let chartCount = 0;
+
+  shapes.forEach(([shapeKey, shapeRows]) => {
+    const [isl, osl] = shapeKey.split('|');
+    const shapeLabel = 'ISL=' + isl + ' · OSL=' + osl;
+    const details = document.createElement('details');
+    details.className = 'shape-details';
+    details.open = shapes.length <= 2;
+    const summary = document.createElement('summary');
+    summary.textContent = shapeLabel;
+    details.appendChild(summary);
+    const innerGrid = document.createElement('div');
+    innerGrid.className = 'chart-grid';
+
+    PERCENTILE_FAMILIES.forEach(family => {
+      const concSet = new Set();
+      const seriesData = family.series.map(s => {
+        const points = pointsByConcurrency(shapeRows, c => metricNum(c, s.key));
+        points.forEach(p => concSet.add(p[0]));
+        return { label: s.label, points };
+      });
+      const concurrencies = [...concSet].sort((a, b) => a - b);
+      if (concurrencies.length < 2) return;
+      const usable = seriesData.filter(s => s.points.length >= 2);
+      if (usable.length < 2) return;
+
+      const labels = concurrencies.map(c => 'C=' + c);
+      const datasets = usable.map(s => ({
+        label: s.label,
+        data: concurrencies.map(c => {
+          const hit = s.points.find(p => p[0] === c);
+          return hit ? hit[1] : null;
+        }),
+      }));
+
+      const card = document.createElement('article');
+      card.className = 'chart-card';
+      const cardTitle = document.createElement('h3');
+      cardTitle.className = 'chart-card-title';
+      cardTitle.textContent = family.title + ' percentiles (' + family.unit + ')';
+      card.appendChild(cardTitle);
+      const wrap = document.createElement('div');
+      wrap.className = 'chart-wrap';
+      const canvas = document.createElement('canvas');
+      wrap.appendChild(canvas);
+      card.appendChild(wrap);
+      innerGrid.appendChild(card);
+      makeFanChart(canvas, labels, datasets, family.unit, null);
+      chartCount += 1;
+    });
+
+    if (innerGrid.childElementCount) {
+      details.appendChild(innerGrid);
+      grid.appendChild(details);
+    }
+  });
+
+  if (chartCount) block.style.display = 'block';
+}
+
+function buildMarginCharts(rows) {
+  const block = $('margin-block');
+  const grid = $('margin-grid');
+  if (!block || !grid) return;
+  grid.innerHTML = '';
+  block.style.display = 'none';
+
+  const shapes = [...shapeGroups(rows).entries()];
+  const allConcs = new Set();
+  const shapeSeries = [];
+
+  shapes.forEach(([shapeKey, shapeRows]) => {
+    const [isl, osl] = shapeKey.split('|');
+    const points = pointsByConcurrency(shapeRows, c => cellBarPct(c, marginMetricKey));
+    if (points.length < 2) return;
+    points.forEach(p => allConcs.add(p[0]));
+    shapeSeries.push({
+      label: 'ISL=' + isl + ' · OSL=' + osl,
+      points,
+    });
+  });
+
+  if (!shapeSeries.length) return;
+  const concurrencies = [...allConcs].sort((a, b) => a - b);
+  if (concurrencies.length < 2) return;
+
+  const labels = concurrencies.map(c => 'C=' + c);
+  const colors = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
+  const datasets = shapeSeries.map((s, i) => buildLineDataset({
+    label: s.label,
+    data: concurrencies.map(c => {
+      const hit = s.points.find(p => p[0] === c);
+      return hit ? hit[1] : null;
+    }),
+  }, i, colors[i % colors.length]));
+  datasets.push(gateReferenceDataset(labels));
+
+  const metricLabel = (HEATMAP_METRICS[marginMetricKey] || {}).label || 'Gate margin';
+  const card = document.createElement('article');
+  card.className = 'chart-card chart-card-wide';
+  const cardTitle = document.createElement('h3');
+  cardTitle.className = 'chart-card-title';
+  cardTitle.textContent = metricLabel + ' gate margin (% of threshold)';
+  card.appendChild(cardTitle);
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+  const canvas = document.createElement('canvas');
+  wrap.appendChild(canvas);
+  card.appendChild(wrap);
+  grid.appendChild(card);
+  makeChart(canvas, 'line', labels, datasets, '% of gate', null);
+  block.style.display = 'block';
+}
+
 function buildComparisonCharts(rows) {
   const comparison = buildChartComparisonFromRows(rows);
   const comparisonGrid = $('comparison-grid');
@@ -479,84 +867,85 @@ function buildCharts(rows) {
   grid.innerHTML = '';
   perShapeBlock.style.display = 'none';
 
-  if (!chartConfig.length || rows.length < 2) {
-    if (!chartInstances.length) chartsPanel.style.display = 'none';
-    return;
-  }
-  const shapes = [...shapeGroups(rows).entries()];
-  if (!shapes.length) {
-    if (!chartInstances.length) chartsPanel.style.display = 'none';
-    return;
-  }
-  chartsPanel.style.display = 'block';
-  perShapeBlock.style.display = 'block';
-  const colors = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
-  let chartCount = 0;
+  if (chartConfig.length && rows.length >= 2) {
+    const shapes = [...shapeGroups(rows).entries()];
+    if (shapes.length) {
+      perShapeBlock.style.display = 'block';
+      const colors = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
+      let chartCount = 0;
 
-  shapes.forEach(([shapeKey, shapeRows]) => {
-    const [isl, osl] = shapeKey.split('|');
-    const shapeLabel = 'ISL=' + isl + ' · OSL=' + osl;
-    const details = document.createElement('details');
-    details.className = 'shape-details';
-    details.open = shapes.length <= 2;
-    const summary = document.createElement('summary');
-    summary.textContent = shapeLabel;
-    details.appendChild(summary);
-    const innerGrid = document.createElement('div');
-    innerGrid.className = 'chart-grid';
+      shapes.forEach(([shapeKey, shapeRows]) => {
+        const [isl, osl] = shapeKey.split('|');
+        const shapeLabel = 'ISL=' + isl + ' · OSL=' + osl;
+        const details = document.createElement('details');
+        details.className = 'shape-details';
+        details.open = shapes.length <= 2;
+        const summary = document.createElement('summary');
+        summary.textContent = shapeLabel;
+        details.appendChild(summary);
+        const innerGrid = document.createElement('div');
+        innerGrid.className = 'chart-grid';
 
-    chartConfig.forEach((spec, idx) => {
-      const byConc = new Map();
-      shapeRows.forEach(c => {
-        const conc = Number(c.concurrency);
-        const val = metricNum(c, spec.metric);
-        if (val == null || Number.isNaN(conc)) return;
-        byConc.set(conc, Math.max(byConc.get(conc) ?? -Infinity, val));
+        chartConfig.forEach((spec, idx) => {
+          const points = pointsByConcurrency(shapeRows, c => metricNum(c, spec.metric));
+          if (points.length < 2) return;
+          const card = document.createElement('article');
+          card.className = 'chart-card';
+          const cardTitle = document.createElement('h3');
+          cardTitle.className = 'chart-card-title';
+          cardTitle.textContent = spec.title + (spec.unit ? ' (' + spec.unit + ')' : '');
+          card.appendChild(cardTitle);
+          const wrap = document.createElement('div');
+          wrap.className = 'chart-wrap';
+          const canvas = document.createElement('canvas');
+          wrap.appendChild(canvas);
+          card.appendChild(wrap);
+          innerGrid.appendChild(card);
+          const color = colors[(idx + chartCount) % colors.length];
+          makeChart(
+            canvas,
+            'line',
+            points.map(p => 'C=' + p[0]),
+            [buildSingleLineDataset(spec.title, points.map(p => p[1]), color)],
+            spec.unit,
+            null,
+          );
+          chartCount += 1;
+        });
+
+        if (innerGrid.childElementCount) {
+          details.appendChild(innerGrid);
+          grid.appendChild(details);
+        }
       });
-      const points = [...byConc.entries()].sort((a, b) => a[0] - b[0]);
-      if (points.length < 2) return;
-      const card = document.createElement('article');
-      card.className = 'chart-card';
-      const cardTitle = document.createElement('h3');
-      cardTitle.className = 'chart-card-title';
-      cardTitle.textContent = spec.title + (spec.unit ? ' (' + spec.unit + ')' : '');
-      card.appendChild(cardTitle);
-      const wrap = document.createElement('div');
-      wrap.className = 'chart-wrap';
-      const canvas = document.createElement('canvas');
-      wrap.appendChild(canvas);
-      card.appendChild(wrap);
-      innerGrid.appendChild(card);
-      const color = colors[(idx + chartCount) % colors.length];
-      makeChart(
-        canvas,
-        'line',
-        points.map(p => 'C=' + p[0]),
-        [buildSingleLineDataset(spec.title, points.map(p => p[1]), color)],
-        spec.unit,
-        null,
-      );
-      chartCount += 1;
-    });
 
-    if (innerGrid.childElementCount) {
-      details.appendChild(innerGrid);
-      grid.appendChild(details);
+      if (!grid.childElementCount) perShapeBlock.style.display = 'none';
     }
-  });
+  }
 
-  if (!grid.childElementCount) {
-    perShapeBlock.style.display = 'none';
-  }
-  if (!chartInstances.length) {
-    chartsPanel.style.display = 'none';
-  }
+  buildPercentileCharts(rows);
+  buildMarginCharts(rows);
+  buildTradeoffChart(rows);
+
+  if (chartInstances.length) chartsPanel.style.display = 'block';
+  else chartsPanel.style.display = 'none';
+}
+
+function heatCellStyle(v, minV, maxV, higherBetter) {
+  const span = maxV - minV || 1;
+  const pct = higherBetter ? (v - minV) / span : 1 - (v - minV) / span;
+  const clamped = Math.max(0, Math.min(1, pct));
+  const r = Math.round(255 - clamped * 120);
+  const g = Math.round(80 + clamped * 120);
+  return 'background:rgba(' + r + ',' + g + ',100,0.35)';
 }
 
 function buildHeatmap(rows) {
   const wrap = $('heatmap-wrap');
   const panel = $('heatmap');
-  const headline = (reportData.report || {}).headline_metric || 'client.output_throughput';
+  const hint = $('heatmap-hint');
+  const metricKey = heatmapMetricKey;
+  const meta = HEATMAP_METRICS[metricKey] || { label: metricKey, unit: '', higherBetter: true };
   const groups = new Map();
   rows.forEach(c => {
     const key = c.isl + '|' + c.osl + '|' + c.policy;
@@ -568,11 +957,21 @@ function buildHeatmap(rows) {
     return;
   }
   const allConcs = [...new Set(rows.map(c => Number(c.concurrency)))].sort((a, b) => a - b);
-  let maxT = 0;
+  const values = [];
   groups.forEach(cells => cells.forEach(c => {
-    const v = metricNum(c, headline);
-    if (v != null) maxT = Math.max(maxT, v);
+    const v = metricNum(c, metricKey);
+    if (v != null) values.push(v);
   }));
+  if (!values.length) {
+    panel.style.display = 'none';
+    return;
+  }
+  const minV = Math.min(...values);
+  const maxV = Math.max(...values);
+  if (hint) {
+    hint.textContent = meta.label + ' · concurrency columns · greener is '
+      + (meta.higherBetter ? 'higher' : 'lower') + ' · filtered cells';
+  }
   let html = '<table class="data heat"><thead><tr><th>ISL / OSL</th>';
   allConcs.forEach(c => { html += '<th>C=' + c + '</th>'; });
   html += '</tr></thead><tbody>';
@@ -581,14 +980,13 @@ function buildHeatmap(rows) {
     html += '<tr><td>ISL=' + isl + ' OSL=' + osl + ' · ' + policy + '</td>';
     allConcs.forEach(conc => {
       const cell = cells.find(c => Number(c.concurrency) === conc);
-      const v = cell ? metricNum(cell, headline) : null;
+      const v = cell ? metricNum(cell, metricKey) : null;
       if (v == null) {
         html += '<td class="matrix-na">—</td>';
       } else {
-        const pct = maxT > 0 ? v / maxT : 0;
-        const r = Math.round(255 - pct * 120);
-        const g = Math.round(80 + pct * 120);
-        html += '<td style="background:rgba(' + r + ',' + g + ',100,0.35)">' + metricVal(cell, headline) + '</td>';
+        html += '<td style="' + heatCellStyle(v, minV, maxV, meta.higherBetter) + '" title="'
+          + meta.label + ': ' + metricVal(cell, metricKey) + '">'
+          + metricVal(cell, metricKey) + '</td>';
       }
     });
     html += '</tr>';
@@ -696,6 +1094,27 @@ if (compareModeLines) {
     render();
   });
 }
+const tradeoffLatencySel = $('tradeoff-latency-metric');
+if (tradeoffLatencySel) {
+  tradeoffLatencySel.addEventListener('change', () => {
+    tradeoffLatencyMetric = tradeoffLatencySel.value;
+    render();
+  });
+}
+const heatmapMetricSel = $('heatmap-metric');
+if (heatmapMetricSel) {
+  heatmapMetricSel.addEventListener('change', () => {
+    heatmapMetricKey = heatmapMetricSel.value;
+    render();
+  });
+}
+const marginMetricSel = $('margin-metric');
+if (marginMetricSel) {
+  marginMetricSel.addEventListener('change', () => {
+    marginMetricKey = marginMetricSel.value;
+    render();
+  });
+}
 
 function loadReportData() {
   const embedded = $('embedded-report-json');
@@ -718,6 +1137,18 @@ loadReportData().then(data => {
   }
   buildOverview();
   populateFilters();
+  const tradeoffSel = $('tradeoff-latency-metric');
+  const sweepTtft = (data.report || {}).sweep_ttft_metric;
+  if (tradeoffSel && sweepTtft && TRADEOFF_LATENCY_LABELS[sweepTtft]) {
+    tradeoffSel.value = sweepTtft;
+    tradeoffLatencyMetric = sweepTtft;
+  }
+  const headline = (data.report || {}).headline_metric;
+  const heatmapSel = $('heatmap-metric');
+  if (heatmapSel && headline && HEATMAP_METRICS[headline]) {
+    heatmapSel.value = headline;
+    heatmapMetricKey = headline;
+  }
   ['f-isl','f-osl','f-policy','f-host','f-tier','f-search'].forEach(id => {
     $(id).addEventListener('input', render);
     $(id).addEventListener('change', render);
