@@ -49,10 +49,15 @@ def status_badge_css(*, light: bool = False) -> str:
 def link_or_text_html(url: str, label: str) -> str:
     if not url:
         return "\u2014"
-    safe_url = html.escape(url)
     safe_label = html.escape(label)
     if re.match(r"^https?://", url):
+        safe_url = html.escape(url)
         return f'<a href="{safe_url}" target="_blank" rel="noopener">{safe_label}</a>'
+    from pathlib import Path
+
+    basename = Path(url).name
+    if basename:
+        return f'<a href="{html.escape(basename)}">{safe_label}</a>'
     return f"<span>{safe_label}</span>"
 
 
