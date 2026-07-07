@@ -80,7 +80,8 @@ def sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency):
 
 
 def test_launch_container(orch, variant_config, lifecycle, request):
-    """Stage 1: launch the container."""    t = time.monotonic()
+    """Stage 1: launch the container."""
+    t = time.monotonic()
     ok = orch.setup_containers()
     lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
     if not ok:
