@@ -114,6 +114,22 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
             enforce_thresholds=self.enforce_thresholds,
             gated_metrics=GATED_METRICS,
         )
+        if int(self.params.nnodes) > 1 and (self.params.scaling_baseline_output_throughput or "").strip():
+            missing = []
+            for cell in self.expected_cells():
+                specs = self.thresholds.get(cell) or {}
+                if "scaling.efficiency_pct" not in specs:
+                    missing.append(cell)
+            if missing:
+                msg = (
+                    "multinode variant with scaling_baseline_output_throughput requires "
+                    f"scaling.efficiency_pct in every cell; missing: {missing}"
+                )
+                if self.enforce_thresholds:
+                    raise ValueError(msg)
+                import warnings
+
+                warnings.warn(f"{msg} (enforce_thresholds=false -> record-only)", stacklevel=2)
         return self
 
     @model_validator(mode="after")

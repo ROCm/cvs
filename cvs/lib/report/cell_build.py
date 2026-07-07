@@ -141,7 +141,7 @@ def build_cell_record(
                 "label": label,
                 "metric": full,
                 "actual": actual,
-                "unit": config.metric_units.get(short, ""),
+                "unit": config.metric_units.get(short.rsplit(".", 1)[-1], ""),
                 "spec": spec,
                 "status": metric_pass(full, actual, spec) if enforce and spec else "record",
                 "bar_pct": bar_pct(float(actual), spec)

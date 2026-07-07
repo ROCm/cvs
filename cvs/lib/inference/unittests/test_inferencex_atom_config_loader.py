@@ -77,10 +77,13 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.nnodes, "2")
         self.assertEqual(variant.params.pipeline_parallel_size, "2")
         self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
-        self.assertFalse(variant.enforce_thresholds)
+        self.assertTrue(variant.enforce_thresholds)
+        self.assertEqual(len(variant.expected_cells()), 15)
+        cell = "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertIn(cell, variant.expected_cells())
         self.assertEqual(
-            variant.expected_cells(),
-            ["ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=128"],
+            variant.thresholds[cell]["scaling.efficiency_pct"],
+            {"kind": "min", "value": 50},
         )
 
     def test_load_w1_mi300x_smoke_variant(self):

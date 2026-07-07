@@ -15,6 +15,7 @@ from cvs.lib.inference.inference_suite_results_table import INFERENCEX_ATOM_RESU
 from cvs.lib.inference.utils.inferencex_atom_parsing import (
     CLIENT_METRIC_UNITS,
     METRIC_TIER_ORDER,
+    SCALING_METRIC_UNITS,
     tier_metric_specs,
 )
 from cvs.lib.report.chart_presets import DEFAULT_PERF_CHART_SERIES
@@ -22,6 +23,17 @@ from cvs.lib.report.presets.builder import (
     make_inference_report_config,
     provenance_link_rows,
     thresholds_run_card_row,
+)
+from cvs.lib.report.types import ReportChartSeries
+
+_INFERENCEX_ATOM_CHART_SERIES = (
+    *DEFAULT_PERF_CHART_SERIES,
+    ReportChartSeries(
+        "efficiency_pct",
+        "Scaling efficiency",
+        "%",
+        metric_key="scaling.efficiency_pct",
+    ),
 )
 
 
@@ -46,12 +58,12 @@ INFERENCEX_ATOM_REPORT_CONFIG = make_inference_report_config(
     report_basename="inferencex_atom_run_deck",
     title="IX Run Deck",
     subtitle="InferenceX ATOM \u00b7 lab performance summary",
-    footer="CVS inferencex_atom_single \u00b7 render-only \u00b7 does not affect gates",
+    footer="CVS inferencex_atom \u00b7 render-only \u00b7 does not affect gates",
     link_name="IX Run Deck",
     results_columns=INFERENCEX_ATOM_RESULTS_COLUMNS,
     metric_tier_order=METRIC_TIER_ORDER,
     tier_metric_specs=tier_metric_specs,
-    metric_units=CLIENT_METRIC_UNITS,
+    metric_units={**CLIENT_METRIC_UNITS, **SCALING_METRIC_UNITS},
     metric_prefix="client.",
     cell_highlights=(
         ("output_throughput", "Output tok/s"),
@@ -59,8 +71,9 @@ INFERENCEX_ATOM_REPORT_CONFIG = make_inference_report_config(
         ("mean_tpot_ms", "Mean TPOT (ms)"),
         ("p99_ttft_ms", "P99 TTFT (ms)"),
         ("p95_tpot_ms", "P95 TPOT (ms)"),
+        ("scaling.efficiency_pct", "Scaling eff. (%)"),
     ),
-    chart_series=DEFAULT_PERF_CHART_SERIES,
+    chart_series=_INFERENCEX_ATOM_CHART_SERIES,
     inference_test_substring="test_inferencex_atom_inference",
     row_card_extras=False,
     row_card_test_names=("test_cell_metrics",),

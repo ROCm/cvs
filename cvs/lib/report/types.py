@@ -32,6 +32,7 @@ class ReportChartSeries:
     title: str
     unit: str
     invert: bool = False
+    metric_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,8 @@ class InferenceReportConfig:
         return tuple(t for t in self.metric_tier_order if t != self.record_tier)
 
     def full_metric(self, short: str) -> str:
+        if "." in short:
+            return short
         if short.startswith(f"{self.metric_prefix}"):
             return short
         return f"{self.metric_prefix}{short}"
