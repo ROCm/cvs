@@ -27,6 +27,7 @@ from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import (
     CLIENT_METRIC_UNITS as _METRIC_UNITS,
     METRIC_TIERS,
     RECORD_METRICS,
+    SCALING_METRIC_UNITS,
     tier_metric_specs,
 )
 from cvs.lib.utils.verdict import evaluate_all
@@ -138,15 +139,21 @@ def test_cell_metrics(
     specs = tier_metric_specs(thresholds_cell, metric_tier)
 
     display = _tier_display_metric(metric_tier)
-    full = f"client.{display}"
+    if metric_tier == "scaling":
+        full = f"scaling.{display}"
+        unit = SCALING_METRIC_UNITS.get(display, "%")
+    else:
+        full = f"client.{display}"
+        unit = _METRIC_UNITS.get(display, metric_tier)
     value = actuals.get(full)
-    unit = _METRIC_UNITS.get(display, metric_tier)
     request.node.user_properties.append(("metric_value", value))
     request.node.user_properties.append(("metric_unit", unit))
 
     if not variant_config.enforce_thresholds or metric_tier == "record":
         return
     if not specs:
+        if metric_tier == "scaling" and int(variant_config.params.nnodes) <= 1:
+            pytest.skip("scaling tier not configured for single-node runs")
         pytest.fail(f"no threshold specs for tier {metric_tier!r} in cell {cell!r}")
     # ATOM benchmark_serving may omit some tail percentiles even when
     # metric_percentiles requests them; only gate metrics present in actuals.

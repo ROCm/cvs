@@ -51,6 +51,14 @@ class TestInferenceXAtomParsing(unittest.TestCase):
         self.assertIn("client.median_ttft_ms", specs)
         self.assertNotIn("client.output_throughput", specs)
 
+    def test_tier_metric_specs_scaling(self):
+        cell = {
+            "scaling.efficiency_pct": {"kind": "min", "value": 50},
+            "client.output_throughput": {"kind": "min_tok_s", "value": 1},
+        }
+        specs = tier_metric_specs(cell, "scaling")
+        self.assertEqual(specs, {"scaling.efficiency_pct": {"kind": "min", "value": 50}})
+
     def test_gated_metrics_subset_of_client_metrics(self):
         client_short = {short for short, _unit in CLIENT_METRICS}
         missing = GATED_METRICS - client_short
