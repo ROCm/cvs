@@ -577,8 +577,8 @@ class SglangDisaggPD:
                               --dtype {dtype} \
                               --kv-cache-dtype {kv_cache_dtype} \
                               --trust-remote-code \
-                              --tp {self.bp_dict['tensor_parallelism']} \
-                              --pp {self.bp_dict['pipeline_parallelism']} \
+                              --tp-size {self.inf_dict['tensor_parallelism']} \
+                              --pp-size {self.inf_dict['pipeline_parallelism']} \
                               --nnodes {self.prefill_nnodes} \
                               --node-rank {i} \
                               --dist-init-addr {dist_init_addr} \
@@ -653,8 +653,8 @@ class SglangDisaggPD:
                               --trust-remote-code \
                               --dtype {dtype} \
                               --kv-cache-dtype {kv_cache_dtype} \
-                              --tp {self.bp_dict['tensor_parallelism']} \
-                              --pp {self.bp_dict['pipeline_parallelism']} \
+                              --tp-size {self.bp_dict['tensor_parallelism']} \
+                              --pp-size {self.bp_dict['pipeline_parallelism']} \
                               --nnodes {self.decode_nnodes} \
                               --node-rank {i} \
                               --dist-init-addr {dist_init_addr} \
