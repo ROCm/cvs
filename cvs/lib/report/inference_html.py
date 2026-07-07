@@ -18,6 +18,7 @@ from cvs.lib.report.render.gate_matrix import (
     render_gate_matrix_html,
 )
 from cvs.lib.report.render.panel_shell import render_panel_section, render_results_table_html
+from cvs.lib.report.render.sweep_charts import chart_tooltip_css
 
 SESSION_FALLBACK = (
     "container_launch", "sshd_setup", "model_fetch", "server_ready", "client_complete", "teardown"
@@ -40,6 +41,37 @@ def _chart_group_keys(chart_cfg: list, chart_series: dict) -> List[Tuple[str, st
     return keys
 
 
+def _chart_y_ticks(min_val: float, max_val: float, *, count: int = 5) -> List[float]:
+    """Linear y-axis tick values from min to max (inclusive)."""
+    if count < 2:
+        return [max_val]
+    span = max_val - min_val
+    if span <= 0:
+        return [max_val]
+    return [min_val + span * i / (count - 1) for i in range(count)]
+
+
+def _chart_display_scale(min_val: float, max_val: float) -> Tuple[float, float, List[float]]:
+    """Y-axis domain and ticks; pad flat series so the scale is readable."""
+    if max_val > min_val:
+        domain_min, domain_max = min_val, max_val
+    else:
+        pad = max(abs(max_val) * 0.08, 1.0)
+        domain_min, domain_max = max_val - pad, max_val + pad
+    ticks = _chart_y_ticks(domain_min, domain_max)
+    return domain_min, domain_max, ticks
+
+
+def _chart_value_pct(val: float, domain_min: float, domain_max: float) -> float:
+    span = domain_max - domain_min or 1.0
+    return max(0.0, min(100.0, 100.0 * (val - domain_min) / span))
+
+
+def _bar_height_pct(val: float, min_val: float, max_val: float) -> float:
+    domain_min, domain_max, _ = _chart_display_scale(min_val, max_val)
+    return max(8.0, _chart_value_pct(val, domain_min, domain_max))
+
+
 def _render_bar_chart(
     title: str,
     points: List[Tuple[int, float]],
@@ -53,23 +85,35 @@ def _render_bar_chart(
     values = [p[1] for p in points]
     max_val = max(values) or 1.0
     min_val = min(values) or 0.0
+    domain_min, domain_max, ticks = _chart_display_scale(min_val, max_val)
+    y_labels = "".join(
+        f"<span class='chart-ylbl' style='bottom:{_chart_value_pct(t, domain_min, domain_max):.2f}%'>"
+        f"{html.escape(fmt_num(t))}</span>"
+        for t in ticks
+    )
+    grid = "".join(
+        f"<span class='chart-hline' style='bottom:{_chart_value_pct(t, domain_min, domain_max):.2f}%'></span>"
+        for t in ticks
+    )
+    x_labels = []
     bars = []
     for conc, val in points:
-        if invert:
-            span = max_val - min_val or max_val or 1.0
-            norm = (max_val - val) / span if span else 1.0
-            h = max(12.0, 20.0 + 80.0 * norm)
-        else:
-            h = max(12.0, 100.0 * val / max_val)
+        h = _bar_height_pct(val, min_val, max_val)
+        tip = html.escape(f"C={conc}: {fmt_num(val)} {unit}".strip())
         bars.append(
-            f"<div class='chart-col'><div class='chart-bar chart-bar-{accent}' "
-            f"style='height:{h:.0f}%'></div>"
-            f"<div class='chart-x'>C={conc}</div>"
-            f"<div class='chart-y'>{fmt_num(val)}</div></div>"
+            f"<div class='chart-col'>"
+            f"<div class='chart-bar chart-bar-{accent} chart-has-tip' style='height:{h:.1f}%' "
+            f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div></div>"
         )
+        x_labels.append(f"<span class='chart-xlbl'>C={conc}</span>")
     return (
         f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
-        f"<div class='chart'>{''.join(bars)}</div>"
+        f"<div class='chart-viz'>"
+        f"<div class='chart-ywrap'><div class='chart-ylabels'>{y_labels}</div></div>"
+        f"<div class='chart-main'>"
+        f"<div class='chart-plotbox'><div class='chart-hgrid' aria-hidden='true'>{grid}</div>"
+        f"<div class='chart-bars'>{''.join(bars)}</div></div>"
+        f"<div class='chart-xrow'>{''.join(x_labels)}</div></div></div>"
         f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
     )
 
@@ -113,23 +157,38 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .summary-card h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
 .summary-stat { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
 .summary-meta { font-size: 0.8rem; color: var(--muted); margin-top: 0.35rem; }
-.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
 .chart-panel { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
 .chart-panel h3 { margin: 0 0 0.75rem; font-size: 0.75rem; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--muted); }
-.chart { display: flex; align-items: flex-end; justify-content: center; gap: 1.25rem; height: 160px; padding-top: 0.5rem; }
-.chart-col { display: flex; flex-direction: column; align-items: center; width: 64px; height: 100%; }
-.chart-bar { width: 40px; border-radius: 6px 6px 2px 2px; margin-top: auto; }
+.chart-viz { display: flex; align-items: stretch; gap: 0.35rem; }
+.chart-ywrap { flex: 0 0 auto; padding-bottom: 1.35rem; }
+.chart-ylabels { position: relative; width: 3.1rem; height: 148px; }
+.chart-ylbl { position: absolute; right: 0.25rem; transform: translateY(50%);
+  font-size: 0.62rem; color: var(--muted); white-space: nowrap; line-height: 1; }
+.chart-main { flex: 1; min-width: 0; }
+.chart-plotbox { position: relative; height: 148px; border-left: 1px solid rgba(154, 163, 181, 0.55);
+  border-bottom: 1px solid rgba(154, 163, 181, 0.55); background: rgba(0, 0, 0, 0.12); }
+.chart-hgrid { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.chart-hline { position: absolute; left: 0; right: 0; height: 0;
+  border-top: 1px solid rgba(42, 47, 61, 0.95); }
+.chart-bars { position: absolute; inset: 0; z-index: 1; display: flex; align-items: flex-end;
+  justify-content: space-around; padding: 0 0.35rem; gap: 0.35rem; }
+.chart-col { flex: 1 1 0; max-width: 52px; height: 100%; display: flex; align-items: flex-end;
+  justify-content: center; border-left: 1px solid rgba(42, 47, 61, 0.55); }
+.chart-col:first-child { border-left: none; }
+.chart-bar { width: 100%; max-width: 40px; min-height: 3px; border-radius: 4px 4px 0 0; }
 .chart-bar-accent { background: linear-gradient(180deg, var(--accent) 0%, #c44d28 100%); }
 .chart-bar-accent2 { background: linear-gradient(180deg, var(--accent2) 0%, #3d5a99 100%); }
 .chart-bar-accent3 { background: linear-gradient(180deg, var(--accent3) 0%, #7a3db8 100%); }
-.chart-x { font-size: 0.75rem; margin-top: 0.5rem; color: var(--muted); }
-.chart-y { font-size: 0.7rem; font-weight: 600; margin-top: 0.2rem; }
-.chart-unit { text-align: center; font-size: 0.7rem; color: var(--muted); margin-top: 0.35rem; }
+.chart-xrow { display: flex; justify-content: space-around; gap: 0.35rem; padding: 0.4rem 0.35rem 0; }
+.chart-xlbl { flex: 1 1 0; max-width: 52px; text-align: center; font-size: 0.72rem; color: var(--muted); }
+.chart-unit { text-align: center; font-size: 0.7rem; color: var(--muted); margin-top: 0.45rem; }
+.chart-sweep-hint { margin: 0 0 0.75rem; font-size: 0.75rem; color: var(--muted); }
 .chart-group { margin-bottom: 1.25rem; }
 .chart-group:last-child { margin-bottom: 0; }
 .chart-group-title { margin: 0 0 0.75rem; font-size: 0.95rem; font-weight: 600; color: var(--text); }
-""" + gate_matrix_table_css() + cell_card_report_css() + """
+""" + chart_tooltip_css() + gate_matrix_table_css() + cell_card_report_css() + """
 .cell-title { font-weight: 600; font-size: 1.05rem; }
 .metric-row { margin-bottom: 0.65rem; }
 .metric-label { font-size: 0.75rem; color: var(--muted); }
@@ -154,8 +213,9 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
   body { padding: 1rem; }
   .hero-head { flex-direction: column; }
   .headline { font-size: 1.75rem; }
-  .chart { gap: 0.75rem; height: 140px; }
-  .chart-col { width: 52px; }
+  .chart-ylabels { width: 2.6rem; height: 132px; }
+  .chart-plotbox { height: 132px; }
+  .chart-ywrap { padding-bottom: 1.2rem; }
 }
 @media print {
   body { background: #fff; color: #111; padding: 0.5in; }
@@ -232,6 +292,7 @@ def render_report_html(payload: dict) -> str:
     ) or "<p class='muted'>No sweep summary (no throughput data).</p>"
 
     chart_cfg = payload.get("chart_config") or []
+    chart_comparison = payload.get("chart_comparison") or {}
     chart_accent = ("accent", "accent2", "accent3")
     group_keys = _chart_group_keys(chart_cfg, chart_series)
     chart_sections: List[str] = []
@@ -273,6 +334,25 @@ def render_report_html(payload: dict) -> str:
         else "<p class='muted'>Concurrency charts need two or more points per sweep shape.</p>"
     )
 
+    sweep_chart_hint = ""
+    if chart_sections:
+        sweep_chart_hint = (
+            "<p class='chart-sweep-hint'>Per-shape bars use a y/x grid; hover a bar for the exact value.</p>"
+        )
+
+    sweep_viewer_banner = ""
+    viewer_name = summary.get("viewer_html")
+    if chart_comparison and viewer_name:
+        sweep_viewer_banner = (
+            "<div class='viewer-banner'>Cross-shape comparison (grouped bars and scaling trends) "
+            f"is in the <a href='{html.escape(viewer_name)}'>interactive viewer</a>.</div>"
+        )
+    elif chart_comparison:
+        sweep_viewer_banner = (
+            "<div class='viewer-banner'>Cross-shape comparison charts are available in the "
+            "interactive viewer sidecar.</div>"
+        )
+
     matrix_html = render_gate_matrix_html(gate_matrix, tier_order)
     heatmap_html = render_gate_heatmap_html(gate_matrix, tier_order)
     heatmap_section = ""
@@ -305,7 +385,6 @@ def render_report_html(payload: dict) -> str:
         for c in cells
     ]
     cells_banner = ""
-    viewer_name = summary.get("viewer_html")
     if summary.get("mode") == "truncated" and viewer_name:
         cells_banner = (
             f"<div class='viewer-banner'>Showing {len(cells)} of {summary.get('total_cells', len(all_cells))} "
@@ -340,7 +419,7 @@ def render_report_html(payload: dict) -> str:
 {nav}
 <section class="panel" id="run-card"><h2>Run card</h2><div class="meta-grid">{hero_html}</div>{notes_html}</section>
 <section class="panel" id="lifecycle"><h2>Lifecycle timeline</h2><div class="tl-row">{timeline_html}</div></section>
-<section class="panel" id="sweep"><h2>Sweep analytics</h2><div class="summary-grid">{summary_html}</div>{charts_html}</section>
+<section class="panel" id="sweep"><h2>Sweep analytics</h2><div class="summary-grid">{summary_html}</div>{sweep_viewer_banner}{sweep_chart_hint}{charts_html}</section>
 <section class="panel" id="gates"><h2>Gate matrix</h2><div class="matrix-wrap">{matrix_html}{heatmap_section}</div></section>
 <section class="panel" id="cells"><h2>Sweep cells</h2>{cells_banner}<div class="cells">{''.join(cell_cards) or '<p class="muted">No cells.</p>'}</div></section>
 <section class="panel" id="results"><h2>Full results</h2><div class="results-wrap">{results_html}</div></section>
