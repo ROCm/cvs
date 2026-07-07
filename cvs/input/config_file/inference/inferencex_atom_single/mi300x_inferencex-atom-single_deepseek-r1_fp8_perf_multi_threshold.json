@@ -1,5 +1,5 @@
 {
-  "_comment": "MI300X W1 multinode seeded thresholds (enforce_thresholds=false until lab confirm). Cell key includes PP and NNODES segments.",
+  "_comment": "MI300X W1 multinode seeded thresholds (scaling.efficiency_pct min 50% floor (lab seed)). Cell key includes PP and NNODES segments.",
   "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16": {
     "client.total_token_throughput": {
       "kind": "min_tok_s",
@@ -100,6 +100,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=64": {
@@ -202,6 +206,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=128": {
@@ -304,6 +312,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=16": {
@@ -406,6 +418,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=64": {
@@ -508,6 +524,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=128": {
@@ -610,6 +630,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=2048,OSL=1024,TP=8,PP=2,NNODES=2,CONC=16": {
@@ -712,6 +736,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=2048,OSL=1024,TP=8,PP=2,NNODES=2,CONC=64": {
@@ -814,6 +842,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=2048,OSL=1024,TP=8,PP=2,NNODES=2,CONC=128": {
@@ -916,6 +948,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=1024,OSL=2048,TP=8,PP=2,NNODES=2,CONC=16": {
@@ -1018,6 +1054,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=1024,OSL=2048,TP=8,PP=2,NNODES=2,CONC=64": {
@@ -1120,6 +1160,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=1024,OSL=2048,TP=8,PP=2,NNODES=2,CONC=128": {
@@ -1222,6 +1266,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=2048,OSL=2048,TP=8,PP=2,NNODES=2,CONC=16": {
@@ -1324,6 +1372,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=2048,OSL=2048,TP=8,PP=2,NNODES=2,CONC=64": {
@@ -1426,6 +1478,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   },
   "ISL=2048,OSL=2048,TP=8,PP=2,NNODES=2,CONC=128": {
@@ -1528,6 +1584,10 @@
     "client.failed": {
       "kind": "max",
       "value": 0
+    },
+    "scaling.efficiency_pct": {
+      "kind": "min",
+      "value": 50
     }
   }
 }
