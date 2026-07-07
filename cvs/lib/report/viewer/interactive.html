@@ -87,6 +87,8 @@ table.data th, table.data td { border: 1px solid var(--border); padding: 0.45rem
 table.data th { background: rgba(255,255,255,0.04); color: var(--muted); font-size: 0.68rem; text-transform: uppercase; }
 table.data td:first-child, table.data th:first-child { text-align: left; }
 tr.fail td { background: rgba(255,92,106,0.08); }
+tr.regression td { background: rgba(255,92,106,0.14); }
+tr.changed td { background: rgba(255,107,53,0.1); }
 .status-pass-txt { color: var(--pass); } .status-fail-txt { color: var(--fail); } .status-record-txt { color: var(--record); }
 .heat td { text-align: center; font-size: 0.75rem; min-width: 3rem; }
 .matrix-pass { background: rgba(61,214,140,0.15); color: var(--pass); }
@@ -133,6 +135,8 @@ tr.fail td { background: rgba(255,92,106,0.08); }
     <label>Host <select id="f-host"><option value="">All</option></select></label>
     <label>Tier fail <select id="f-tier"><option value="">Any</option></select></label>
     <label>Search <input id="f-search" type="search" placeholder="cell id, host…"/></label>
+    <label>Baseline JSON <input id="f-baseline" type="file" accept=".json,application/json"/></label>
+    <label>Delta % <input id="f-delta-threshold" type="number" min="0" step="0.5" value="5" style="min-width:4rem"/></label>
     <button type="button" id="btn-export">Export CSV</button>
     <button type="button" id="btn-reset-zoom">Reset zoom</button>
   </div>
@@ -220,7 +224,7 @@ tr.fail td { background: rgba(255,92,106,0.08); }
 <section class="panel" id="cells">
   <h2>Cells</h2>
   <div style="overflow-x:auto">
-    <table class="data"><thead><tr>
+    <table class="data"><thead><tr id="cells-header">
       <th>Cell</th><th>ISL</th><th>OSL</th><th>Policy</th><th>Host</th><th>C</th>
       <th>Throughput</th><th>TTFT</th><th>TPOT</th><th>Status</th>
     </tr></thead><tbody id="rows"></tbody></table>
@@ -240,6 +244,8 @@ let comparisonChartMode = 'bar';
 let tradeoffLatencyMetric = 'client.mean_ttft_ms';
 let heatmapMetricKey = 'client.output_throughput';
 let marginMetricKey = 'client.output_throughput';
+let prevRunByKey = null;
+let deltaThresholdPct = 5;
 
 const TRADEOFF_LATENCY_LABELS = {
   'client.mean_ttft_ms': 'Mean TTFT',
@@ -292,6 +298,64 @@ function viewerScaleChartConfig() {
 }
 
 function $(id) { return document.getElementById(id); }
+
+function cellMapKey(c) {
+  return String(c.cell_id || '') + '\0' + String(c.host || '');
+}
+
+function applyPrevRunPanel(panel) {
+  if (!panel || !panel.rows) {
+    prevRunByKey = null;
+    return;
+  }
+  prevRunByKey = new Map();
+  panel.rows.forEach(r => {
+    prevRunByKey.set(String(r.cell_id || '') + '\0' + String(r.host || ''), r);
+  });
+  if (panel.threshold_pct != null) {
+    deltaThresholdPct = Number(panel.threshold_pct);
+    const deltaInput = $('f-delta-threshold');
+    if (deltaInput) deltaInput.value = String(deltaThresholdPct);
+  }
+}
+
+function buildPrevRunFromBaseline(data) {
+  const headline = (reportData.report || {}).headline_metric || 'client.output_throughput';
+  const threshold = Number($('f-delta-threshold').value) || deltaThresholdPct;
+  const baseMap = new Map();
+  (data.cells || []).forEach(c => baseMap.set(cellMapKey(c), c));
+  prevRunByKey = new Map();
+  allCells.forEach(c => {
+    const prev = baseMap.get(cellMapKey(c));
+    const current = metricNum(c, headline);
+    const previous = prev ? metricNum(prev, headline) : null;
+    let delta_pct = null;
+    let regression = false;
+    let changed = false;
+    if (current != null && previous != null && previous !== 0) {
+      delta_pct = 100.0 * (current - previous) / previous;
+      changed = Math.abs(delta_pct) > threshold;
+      regression = changed && delta_pct < 0;
+    }
+    prevRunByKey.set(cellMapKey(c), {
+      previous_throughput: previous,
+      'compare.prev_run.throughput_delta_pct': delta_pct,
+      regression,
+      changed,
+    });
+  });
+}
+
+function updateCellsHeader() {
+  const header = $('cells-header');
+  if (!header) return;
+  const base = ['Cell', 'ISL', 'OSL', 'Policy', 'Host', 'C', 'Throughput', 'TTFT', 'TPOT'];
+  if (prevRunByKey) {
+    base.push('Prev tok/s', 'Delta %');
+  }
+  base.push('Status');
+  header.innerHTML = base.map(h => '<th>' + h + '</th>').join('');
+}
 
 function clearEl(id) {
   const el = $(id);
@@ -1040,17 +1104,35 @@ function renderTable(rows) {
     '<span>Showing <strong>' + rows.length + '</strong> of <strong>' + allCells.length + '</strong> cells</span>'
     + '<span><strong>' + passN + '</strong> pass</span>'
     + (failN ? '<span><strong>' + failN + '</strong> fail</span>' : '')
-    + '<span>Charts and heatmap follow filters</span>';
+    + '<span>Charts and heatmap follow filters</span>'
+    + (prevRunByKey ? '<span>baseline comparison active</span>' : '');
 
+  updateCellsHeader();
   const tbody = $('rows');
   tbody.innerHTML = rows.map(c => {
     const st = cellStatus(c);
-    return '<tr class="' + st + '"><td>' + (c.cell_id || '') + '</td>'
+    const prev = prevRunByKey ? prevRunByKey.get(cellMapKey(c)) : null;
+    let rowCls = st;
+    if (prev && prev.regression) rowCls = 'regression';
+    else if (prev && prev.changed) rowCls = 'changed';
+    let deltaCol = '';
+    if (prevRunByKey) {
+      const prevVal = prev && prev.previous_throughput != null
+        ? Number(prev.previous_throughput).toLocaleString(undefined, { maximumFractionDigits: 1 })
+        : '—';
+      const delta = prev && prev['compare.prev_run.throughput_delta_pct'] != null
+        ? (prev['compare.prev_run.throughput_delta_pct'] >= 0 ? '+' : '')
+          + Number(prev['compare.prev_run.throughput_delta_pct']).toFixed(1) + '%'
+        : '—';
+      deltaCol = '<td>' + prevVal + '</td><td>' + delta + '</td>';
+    }
+    return '<tr class="' + rowCls + '"><td>' + (c.cell_id || '') + '</td>'
       + '<td>' + c.isl + '</td><td>' + c.osl + '</td><td>' + (c.policy || '') + '</td>'
       + '<td>' + (c.host || '') + '</td><td>' + c.concurrency + '</td>'
       + '<td>' + metricVal(c, 'client.output_throughput') + '</td>'
       + '<td>' + metricVal(c, 'client.mean_ttft_ms') + '</td>'
       + '<td>' + metricVal(c, 'client.mean_tpot_ms') + '</td>'
+      + deltaCol
       + '<td class="status-' + st + '-txt">' + st.toUpperCase() + '</td></tr>';
   }).join('');
 }
@@ -1065,17 +1147,25 @@ function render() {
 
 function exportCsv() {
   const rows = filteredCells();
-  const header = ['cell_id', 'host', 'isl', 'osl', 'policy', 'concurrency', 'throughput', 'ttft_ms', 'tpot_ms', 'status'];
+  const header = ['cell_id', 'host', 'isl', 'osl', 'policy', 'concurrency', 'throughput', 'ttft_ms', 'tpot_ms'];
+  if (prevRunByKey) header.push('prev_throughput', 'delta_pct');
+  header.push('status');
   const lines = [header.join(',')];
   rows.forEach(c => {
     const st = cellStatus(c);
+    const prev = prevRunByKey ? prevRunByKey.get(cellMapKey(c)) : null;
     const row = [
       c.cell_id, c.host, c.isl, c.osl, c.policy, c.concurrency,
       metricNum(c, 'client.output_throughput') ?? '',
       metricNum(c, 'client.mean_ttft_ms') ?? '',
       metricNum(c, 'client.mean_tpot_ms') ?? '',
-      st,
     ];
+    if (prevRunByKey) {
+      row.push(prev && prev.previous_throughput != null ? prev.previous_throughput : '');
+      row.push(prev && prev['compare.prev_run.throughput_delta_pct'] != null
+        ? prev['compare.prev_run.throughput_delta_pct'] : '');
+    }
+    row.push(st);
     lines.push(row.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(','));
   });
   const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
@@ -1126,6 +1216,42 @@ if (marginMetricSel) {
     render();
   });
 }
+const deltaThresholdInput = $('f-delta-threshold');
+if (deltaThresholdInput) {
+  deltaThresholdInput.addEventListener('change', () => {
+    const baselineInput = $('f-baseline');
+    if (baselineInput && baselineInput.files && baselineInput.files[0]) {
+      baselineInput.dispatchEvent(new Event('change'));
+    } else if (reportData && reportData.panels && reportData.panels.prev_run) {
+      applyPrevRunPanel(reportData.panels.prev_run);
+      render();
+    }
+  });
+}
+const baselineInput = $('f-baseline');
+if (baselineInput) {
+  baselineInput.addEventListener('change', ev => {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) {
+      prevRunByKey = null;
+      if (reportData && reportData.panels && reportData.panels.prev_run) {
+        applyPrevRunPanel(reportData.panels.prev_run);
+      }
+      render();
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        buildPrevRunFromBaseline(JSON.parse(reader.result));
+        render();
+      } catch (err) {
+        $('meta').textContent = 'Invalid baseline JSON: ' + err;
+      }
+    };
+    reader.readAsText(file);
+  });
+}
 
 function loadReportData() {
   const embedded = $('embedded-report-json');
@@ -1141,6 +1267,9 @@ function loadReportData() {
 loadReportData().then(data => {
   reportData = data;
   allCells = data.cells || [];
+  if (data.panels && data.panels.prev_run) {
+    applyPrevRunPanel(data.panels.prev_run);
+  }
   const runDeckLink = $('run-deck-link');
   if (runDeckLink && JSON_PATH) {
     runDeckLink.href = JSON_PATH.replace(/\.json$/i, '.html');

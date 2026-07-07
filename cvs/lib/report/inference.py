@@ -7,7 +7,7 @@ Generic inference suite reports for DTNI.
 Sits on top of the tabular ``print_results_table`` output: same ``inf_res_dict``
 keys and column presets, plus optional HTML/JSON dashboard when pytest ``--html`` is set.
 
-**Suite conftest** — wire via ``inference_wiring`` (see ``ADDING_A_SUITE.md``)::
+**Suite conftest** — optional explicit wiring via ``inference_wiring`` (see ``cvs/lib/report/README.md``)::
 
     from cvs.lib.report.inference_wiring import (
         bind_inference_suite_report_session,

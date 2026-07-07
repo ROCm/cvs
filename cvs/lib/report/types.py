@@ -59,6 +59,7 @@ class InferenceReportConfig:
     row_card_test_names: tuple[str, ...] = ("test_metric", "test_cell_metrics")
     interactive_viewer: bool = True
     viewer_cell_threshold: int = 24
+    prev_run_json: str = ""
     run_card_display_builder: RunCardDisplayFn = field(
         default=lambda _variant, _prov: [("Suite", "inference", False)]
     )

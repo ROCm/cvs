@@ -289,6 +289,23 @@ def build_inference_report_payload(
 
     chart_series = build_chart_series(config, cells)
     chart_comparison = build_chart_comparison(config, cells)
+    from cvs.lib.report.panels.prev_run import build_prev_run_panel, resolve_prev_run_json_path
+
+    panels: dict = {}
+    prev_run_path = resolve_prev_run_json_path(
+        config.prev_run_json,
+        report_basename=config.report_basename,
+        report_dir=report_dir,
+    )
+    if prev_run_path:
+        prev_run_panel = build_prev_run_panel(
+            cells,
+            Path(prev_run_path),
+            headline_metric=config.headline_metric,
+        )
+        if prev_run_panel:
+            panels["prev_run"] = prev_run_panel
+
     chart_config = [
         {
             "suffix": ch.metric_suffix,
@@ -325,4 +342,5 @@ def build_inference_report_payload(
         "sweep_summaries": build_sweep_summaries(config, cells),
         "gate_matrix": build_gate_matrix_rows(cells),
         "results_table": build_results_table(config, inf_res_dict),
+        "panels": panels,
     }

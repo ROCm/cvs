@@ -34,6 +34,7 @@ Root cvs/conftest.py (automatic when preset exists)
 pytest_sessionfinish → generate_suite_reports()
   • inferencex_atom_run_deck.html + .json
   • inferencex_atom_run_deck_viewer.html
+  • inferencex_atom_run_deck_summary.html
         │
         ▼
 Results zip bundles pytest HTML + all report files
@@ -56,7 +57,7 @@ Results zip bundles pytest HTML + all report files
 cvs run inferencex_atom_single --cluster_file ... --config_file ... --html=~/cvs_results/run.html
 ```
 
-Expect in the zip: `inferencex_atom_run_deck.html`, `.json`, `_viewer.html`.
+Expect in the zip: `inferencex_atom_run_deck.html`, `.json`, `_viewer.html`, `_summary.html`.
 
 ---
 
@@ -134,13 +135,14 @@ generated via pytest: CVS version, optional git commit, `--cluster_file`, and `-
 ## Report types
 
 When `--html` is set, CVS may produce the following outputs. All suite-specific files use
-the preset `report_basename` (e.g. `inferencex_atom_report`).
+the preset `report_basename` (e.g. `inferencex_atom_run_deck`).
 
 | Output | When | Format | Contents |
 |--------|------|--------|----------|
 | **Pytest HTML report** | Always with `--html` | `.html` | Standard pytest-html test log, lifecycle tables, and links to bundled files |
 | **Inference suite report** | Inference suite registered + `inf_res_dict` populated | `.html` + `.json` | Run card, session lifecycle timeline, sweep summaries, concurrency charts, gate matrix, full results table, per-cell cards (inline or summary mode for large sweeps). JSON holds the full payload for tooling and the viewer |
-| **Interactive viewer** | `interactive_viewer=True` on inference preset (default) | `{basename}_viewer.html` | Filterable cells; cross-shape comparison; per-shape throughput/latency scaling; P90/P95/P99 fans; gate margin vs C; heatmap metric toggle; throughput-vs-latency tradeoff; gate matrix; CSV export |
+| **Interactive viewer** | `interactive_viewer=True` on inference preset (default) | `{basename}_viewer.html` | Filterable cells; baseline JSON upload and delta % comparison; cross-shape comparison; per-shape throughput/latency scaling; P90/P95/P99 fans; gate margin vs C; heatmap metric toggle; throughput-vs-latency tradeoff; gate matrix; CSV export |
+| **CI summary** | Always with inference suite report | `{basename}_summary.html` | One-page pass/fail status, cells to review, baseline regression count, optional parity link |
 | **Pytest row cell cards** | Inference preset with `row_card_extras` | Embedded in pytest HTML | Compact per-cell metric cards on `test_cell_metrics` / `test_metric` rows |
 
 **Results zip** (created at session end): pytest HTML, `{suite}_html/` attachments (suite reports, logs, config copies), and optional `assets/`.
@@ -149,18 +151,24 @@ the preset `report_basename` (e.g. `inferencex_atom_report`).
 
 ```text
 cvs/lib/report/
-├── inference.py                  # build payload, write HTML/JSON
+├── inference.py                  # build payload, write HTML/JSON/viewer/summary
+├── ci_summary.py                 # one-page CI summary HTML
+├── compare.py                    # delta/ratio helpers for prev-run panel
 ├── auto_register.py              # load presets/<cvs_run_stem>.py at session start
 ├── inference_wiring.py           # optional explicit preset registration
 ├── registry.py                   # preset registration + session store
 ├── types.py                      # InferenceReportConfig
+├── panels/
+│   └── prev_run.py               # baseline comparison panel (JSON + viewer)
 ├── presets/
 │   ├── inferencex_atom.py        # IX-atom full preset (reference)
 │   ├── inferencex_atom_single.py # auto-load shim for cvs run stem
 │   ├── builder.py                # make_inference_report_config()
 │   ├── _inference_suite_template.py  # copy → presets/<your_stem>.py
 │   └── <cvs_run_stem>.py         # one file per suite owner
-├── viewer/                       # interactive *_report_viewer.html
+├── viewer/                       # interactive *_viewer.html
+├── scripts/
+│   └── generate_ix_atom_sample_report.py  # local sample generator (no lab run)
 └── unittests/
 ```
 
@@ -185,8 +193,22 @@ conftest wiring (see **Quick start** above).
 | `tier_metric_specs` | Metric tiers for gate matrix / cell cards |
 | `chart_series` | Concurrency chart series (grouped per ISL/OSL in JSON + static HTML) |
 | `inference_test_substring` | Which test nodeids count as inference rows |
-| `interactive_viewer` | Write `*_report_viewer.html` (default `True`) |
+| `interactive_viewer` | Write `*_viewer.html` (default `True`) |
 | `viewer_cell_threshold` | Truncate inline cell cards in static HTML above this count |
+| `prev_run_json` | Optional path to baseline JSON; also auto-discovers `{report_basename}_prev.json` beside the report or `CVS_INFERENCE_PREV_REPORT_JSON` |
+
+### Baseline comparison
+
+At report time, if a baseline JSON is found, the payload includes `panels.prev_run` with per-cell
+throughput deltas. The interactive viewer can also load any prior `{report_basename}.json` via
+**Baseline JSON** and adjust the **Delta %** threshold to flag regressions in the cells table
+and CSV export.
+
+Baseline resolution order:
+
+1. `prev_run_json` on the preset
+2. `CVS_INFERENCE_PREV_REPORT_JSON` environment variable
+3. Sibling file `{report_basename}_prev.json` in the report directory
 
 ### Pytest deep links
 
@@ -206,6 +228,7 @@ Written as `{report_basename}.json` next to the HTML dashboard. External tools s
 | `lifecycle` | Session stage → seconds |
 | `cells` | Per sweep cell: `actuals`, `tiers`, `metrics`, optional pytest nodeids |
 | `chart_series`, `chart_comparison`, `sweep_summaries`, `gate_matrix`, `results_table` | Charts and tabular export (`chart_comparison` for JSON tooling; viewer rebuilds comparison from filtered cells) |
+| `panels` | Optional panels such as `prev_run` (baseline comparison rows) |
 | `summary` | Truncation mode and viewer basename when cell count is large |
 
 ## Unit tests
@@ -216,7 +239,7 @@ python -m pytest cvs/lib/report/unittests/ -q
 
 ## See also
 
-- `cvs/lib/inference/ADDING_A_SUITE.md` — new-suite checklist (IX-atom report example)
 - `cvs/lib/report/presets/_inference_suite_template.py` — minimal preset starter
 - `cvs/lib/report/presets/inferencex_atom.py` — full preset reference
 - `cvs/lib/report/presets/builder.py` — `make_inference_report_config()` helper
+- `cvs/lib/report/scripts/generate_ix_atom_sample_report.py` — generate local sample reports without a lab run
