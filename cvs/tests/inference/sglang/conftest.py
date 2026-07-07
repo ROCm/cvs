@@ -50,7 +50,7 @@ log = globals.log
 # ---------- threshold helpers (unchanged) ----------
 
 _PERF_CELL_RE = re.compile(
-    r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),CONC=(?P<conc>\d+)$"
+        r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),CONC=(?P<conc>\d+)$"
 )
 
 def pytest_generate_tests(metafunc):

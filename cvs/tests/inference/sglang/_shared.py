@@ -182,6 +182,8 @@ def test_print_results_table(inf_res_dict, lifecycle):
     _CELL_RE = re.compile(
         r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),CONC=(?P<conc>\d+)$"
     )
+    bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
+    pp = bp.get("pipeline_parallelism", "1")
     performance_by_cell = phase_labels.get("performance_by_cell") or {}
     if performance_by_cell:
         summary_rows = []
@@ -194,16 +196,21 @@ def test_print_results_table(inf_res_dict, lifecycle):
             m = _CELL_RE.match(str(cell_id))
             if m:
                 summary_rows.append([
-                    m.group("isl"), m.group("osl"), m.group("tp"), m.group("conc"), result
+                    m.group("isl"),
+                    m.group("osl"),
+                    m.group("tp"),
+                    pp,
+                    m.group("conc"),
+                    result,
                 ])
             else:
-                summary_rows.append(["-", "-", "-", str(cell_id), result])
+                summary_rows.append(["-", "-", "-", pp, str(cell_id), result])
        
         log.info(
             "\n\n\n\n======== Performance summary (by ISL/OSL cell) ========\n%s",
             tabulate(
                 summary_rows,
-                headers=["ISL", "OSL", "TP", "Conc", "Result"],
+                headers=["ISL", "OSL", "TP", "PP", "Conc", "Result"],
                 tablefmt="github",
             ),
         )

@@ -246,6 +246,7 @@ class SglangDisaggPD:
         self.bp_dict.setdefault('random_range_ration', '1.0')
         self.bp_dict.setdefault('random_prefix_len', '0')
         self.bp_dict.setdefault('tensor_parallelism', '8')
+        self.bp_dict.setdefault('pipeline_parallelism', '1')
         self.bp_dict.setdefault('port_no', '8000')
         self.bp_dict.setdefault('tokenizer_mode', 'auto')
         self.bp_dict.setdefault('percentile_metrics', 'ttft,tpot,itl,e2el')
@@ -577,6 +578,7 @@ class SglangDisaggPD:
                               --kv-cache-dtype {kv_cache_dtype} \
                               --trust-remote-code \
                               --tp {self.bp_dict['tensor_parallelism']} \
+                              --pp {self.bp_dict['pipeline_parallelism']} \
                               --nnodes {self.prefill_nnodes} \
                               --node-rank {i} \
                               --dist-init-addr {dist_init_addr} \
@@ -652,6 +654,7 @@ class SglangDisaggPD:
                               --dtype {dtype} \
                               --kv-cache-dtype {kv_cache_dtype} \
                               --tp {self.bp_dict['tensor_parallelism']} \
+                              --pp {self.bp_dict['pipeline_parallelism']} \
                               --nnodes {self.decode_nnodes} \
                               --node-rank {i} \
                               --dist-init-addr {dist_init_addr} \
@@ -859,7 +862,8 @@ class SglangDisaggPD:
         peak_tflops = float(i_dict.get("peak_gpu_tflops", 1300))
         num_params = float(i_dict.get("model_num_params", 70e9))
         tp = int(self.bp_dict.get("tensor_parallelism", 1))
-        num_gpus = (int(self.prefill_nnodes) + int(self.decode_nnodes)) * tp
+        pp = int(self.bp_dict.get("pipeline_parallelism", 1))
+        num_gpus = (int(self.prefill_nnodes) + int(self.decode_nnodes)) * tp * pp
         for node, m in (self.inference_results_dict or {}).items():
             duration = float(m.get("benchmark_duration") or 0)
             in_tok = float(m.get("total_input_tokens") or 0)
@@ -1062,10 +1066,12 @@ class SglangDisaggPD:
                 s, t = int(succ), int(self.inference_results_dict[node]["total_requests"])
                 self.inference_results_dict[node]["goodput"] = f"{(s / t):.6f}" if t else None
 
-            # Per-GPU throughput (derived): define denominator to match *your* accounting policy
+            # Per-GPU throughput (derived): total output tok/s / GPUs in PD fleet
             out_tps = self.inference_results_dict[node].get("output_throughput_per_sec")
             if out_tps:
-                ng = int(self.bp_dict.get("tensor_parallelism", "1"))
+                tp = int(self.bp_dict.get("tensor_parallelism", "1"))
+                pp = int(self.bp_dict.get("pipeline_parallelism", "1"))
+                ng = (int(self.prefill_nnodes) + int(self.decode_nnodes)) * tp * pp
                 if ng > 0:
                     self.inference_results_dict[node]["output_throughput_per_gpu_per_sec"] = (
                         f"{float(out_tps) / ng:.6f}"
@@ -1338,6 +1344,7 @@ class SglangDisaggPD:
         After model load, count occupied GPUs per prefill/decode node via amd-smi.
         """
         tp = int(self.bp_dict["tensor_parallelism"])
+        pp = int(self.bp_dict.get("pipeline_parallelism", 1))
 
         def _count_per_node(phdl):
             per_node = {}
@@ -1368,6 +1375,7 @@ class SglangDisaggPD:
 
         result = {
             "configured_tp": tp,
+            "configured_pp": pp,
             "prefill_per_node": prefill_per_node,
             "decode_per_node": decode_per_node,
             "prefill_occupied_gpus": occupied_prefill,
@@ -1378,6 +1386,7 @@ class SglangDisaggPD:
         lines = [
             "",
             f"Configured TP: {tp}",
+            f"Configured PP: {pp}",
             "",
             "Prefill:",
         ]
