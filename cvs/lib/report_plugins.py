@@ -374,6 +374,11 @@ class HtmlReportManager:
 
         report_config = get_suite_report_config(session.config)
         if report_config is None:
+            suite_name = getattr(session.config, "_suite_name", "unknown")
+            log.info(
+                "Skipping suite report generation: no preset registered for suite '%s'",
+                suite_name,
+            )
             return
 
         store = get_session_results()

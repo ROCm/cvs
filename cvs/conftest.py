@@ -14,12 +14,8 @@ import pytest
 from cvs.lib.report_plugins import HtmlReportManager
 
 
-def _ensure_html_report_manager(config):
-    """Create ``HtmlReportManager`` once; safe if ``pytest_configure`` did not run."""
-    mgr = getattr(config, "_html_report_manager", None)
-    if mgr is not None:
-        return mgr
-
+def _sync_suite_name_from_args(config):
+    """Derive suite stem from the first ``*.py`` target in ``config.args``."""
     suite_name = "test"
     for arg in config.args:
         bare = arg.split("::")[0]
@@ -28,8 +24,24 @@ def _ensure_html_report_manager(config):
             break
     config._suite_name = suite_name
     config._test_html_dir = f"{suite_name}_html"
+
+
+def _ensure_html_report_manager(config):
+    """Create ``HtmlReportManager`` once; safe if ``pytest_configure`` did not run."""
+    _sync_suite_name_from_args(config)
+    mgr = getattr(config, "_html_report_manager", None)
+    if mgr is not None:
+        return mgr
+
     config._html_report_manager = HtmlReportManager(config)
     return config._html_report_manager
+
+
+def _auto_register_inference_suite_report(config):
+    from cvs.lib.report.auto_register import try_auto_register_inference_suite_report
+
+    _sync_suite_name_from_args(config)
+    return try_auto_register_inference_suite_report(config)
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -39,9 +51,7 @@ def pytest_configure(config):
 
 @pytest.hookimpl(trylast=True)
 def pytest_configure(config):
-    from cvs.lib.report.auto_register import try_auto_register_inference_suite_report
-
-    try_auto_register_inference_suite_report(config)
+    _auto_register_inference_suite_report(config)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -136,6 +146,7 @@ def pytest_metadata(metadata):
 
 # Prepare a clean per-run log directory before tests start.
 def pytest_sessionstart(session):
+    _auto_register_inference_suite_report(session.config)
     _ensure_html_report_manager(session.config).setup_log_dir()
 
 
