@@ -1,13 +1,17 @@
 '''Unit tests for cvs.lib.report inference suite reports.'''
 
+from dataclasses import replace
+
 from cvs.lib.report.inference import (
     build_inference_report_payload,
     render_report_html,
     write_report,
 )
+from cvs.lib.report.chart_presets import DEFAULT_PERF_CHART_SERIES
 from cvs.lib.report.unittests._fixtures import (
     generic_inference_report_config,
     generic_variant,
+    multi_shape_inf_res,
     two_cell_inf_res,
 )
 
@@ -26,7 +30,9 @@ def test_build_inference_report_payload_uses_config():
     assert payload["report"]["title"] == "Test inference suite report"
     assert len(payload["cells"]) == 2
     assert len(payload["sweep_summaries"]) == 1
-    assert len(payload["chart_series"]["output_throughput"]) == 2
+    assert len(payload["chart_series"]["output_throughput"]) == 1
+    assert len(payload["chart_series"]["output_throughput"][0]["points"]) == 2
+    assert payload["chart_series"]["output_throughput"][0]["label"] == "ISL=1024 · OSL=1024"
     assert len(payload["chart_config"]) == 1
     assert payload["chart_config"][0]["suffix"] == "output_throughput"
 
@@ -45,6 +51,25 @@ def test_render_report_html_from_payload():
     assert "Gate matrix" in doc
     assert "heatmap" in doc
     assert "Full results" in doc
+
+
+def test_build_chart_series_groups_by_isl_osl():
+    cfg = replace(generic_inference_report_config(), chart_series=DEFAULT_PERF_CHART_SERIES)
+    payload = build_inference_report_payload(
+        config=cfg,
+        variant_config=generic_variant(),
+        inf_res_dict=multi_shape_inf_res(),
+        lifecycle_report={},
+    )
+    output_groups = payload["chart_series"]["output_throughput"]
+    assert len(output_groups) == 2
+    assert {g["label"] for g in output_groups} == {
+        "ISL=1024 · OSL=1024",
+        "ISL=8192 · OSL=1024",
+    }
+    doc = render_report_html(payload)
+    assert doc.count("<h3 class='chart-group-title'>") == 2
+    assert "P99 ITL" in doc
 
 
 def test_write_report_writes_html_and_json(tmp_path):

@@ -170,6 +170,7 @@ conftest wiring (see **Quick start** above).
 | Suite | Preset file | Notes |
 |-------|-------------|-------|
 | InferenceX ATOM | `presets/inferencex_atom_single.py` | **Reference** — auto-loaded for `cvs run inferencex_atom_single` |
+| vLLM single-node | `presets/vllm_single.py` | Auto-loaded for `cvs run vllm_single` |
 | Your suite | `presets/<cvs_run_stem>.py` | Copy `_inference_suite_template.py` or `inferencex_atom.py` |
 
 ## Inference suites (field reference)
@@ -182,7 +183,7 @@ conftest wiring (see **Quick start** above).
 | `report_basename` | Output stem, e.g. `my_suite_report` → `.html` / `.json` |
 | `results_columns` | Results table columns (same keys as `inf_res_dict`) |
 | `tier_metric_specs` | Metric tiers for gate matrix / cell cards |
-| `chart_series` | Concurrency chart series |
+| `chart_series` | Concurrency chart series (grouped per ISL/OSL in JSON + static HTML) |
 | `inference_test_substring` | Which test nodeids count as inference rows |
 | `interactive_viewer` | Write `*_report_viewer.html` (default `True`) |
 | `viewer_cell_threshold` | Truncate inline cell cards in static HTML above this count |

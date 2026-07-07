@@ -66,3 +66,27 @@ def two_cell_inf_res():
             }
         }
     return inf_res
+
+
+def multi_shape_inf_res():
+    inf_res = {}
+    shapes = (
+        ("1024", "1024", "c16_1k1k", 16, 741.0),
+        ("1024", "1024", "c32_1k1k", 32, 1305.0),
+        ("8192", "1024", "c16_8k1k", 16, 546.0),
+        ("8192", "1024", "c32_8k1k", 32, 787.0),
+    )
+    for isl, osl, policy, conc, tput in shapes:
+        key = ("amd/Kimi-K2.5-W4A8", "mi300x", isl, osl, policy, conc)
+        inf_res[key] = {
+            "10.32.81.141": {
+                "client.output_throughput": tput,
+                "client.total_token_throughput": tput * 2,
+                "client.mean_ttft_ms": 200.0,
+                "client.mean_tpot_ms": 25.0,
+                "client.p99_ttft_ms": 500.0,
+                "client.p99_tpot_ms": 30.0,
+                "client.p99_itl_ms": 80.0,
+            }
+        }
+    return inf_res

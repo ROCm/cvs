@@ -24,6 +24,22 @@ SESSION_FALLBACK = (
 )
 
 
+def _chart_group_keys(chart_cfg: list, chart_series: dict) -> List[Tuple[str, str, str]]:
+    """Unique ISL/OSL groups that have chartable sweep data."""
+    seen: set[Tuple[str, str]] = set()
+    keys: List[Tuple[str, str, str]] = []
+    for chart in chart_cfg:
+        for entry in chart_series.get(chart["suffix"], []):
+            if not isinstance(entry, dict):
+                continue
+            key = (str(entry["isl"]), str(entry["osl"]))
+            if key in seen:
+                continue
+            seen.add(key)
+            keys.append((entry["isl"], entry["osl"], entry.get("label") or f"ISL={key[0]} \u00b7 OSL={key[1]}"))
+    return keys
+
+
 def _render_bar_chart(
     title: str,
     points: List[Tuple[int, float]],
@@ -110,6 +126,9 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .chart-x { font-size: 0.75rem; margin-top: 0.5rem; color: var(--muted); }
 .chart-y { font-size: 0.7rem; font-weight: 600; margin-top: 0.2rem; }
 .chart-unit { text-align: center; font-size: 0.7rem; color: var(--muted); margin-top: 0.35rem; }
+.chart-group { margin-bottom: 1.25rem; }
+.chart-group:last-child { margin-bottom: 0; }
+.chart-group-title { margin: 0 0 0.75rem; font-size: 0.95rem; font-weight: 600; color: var(--text); }
 """ + gate_matrix_table_css() + cell_card_report_css() + """
 .cell-title { font-weight: 600; font-size: 1.05rem; }
 .metric-row { margin-bottom: 0.65rem; }
@@ -214,22 +233,44 @@ def render_report_html(payload: dict) -> str:
 
     chart_cfg = payload.get("chart_config") or []
     chart_accent = ("accent", "accent2", "accent3")
-    chart_parts = []
-    for idx, chart in enumerate(chart_cfg):
-        points = chart_series.get(chart["suffix"], [])
-        part = _render_bar_chart(
-            chart["title"],
-            points,
-            chart["unit"],
-            invert=bool(chart.get("invert")),
-            accent=chart_accent[idx % 3],
+    group_keys = _chart_group_keys(chart_cfg, chart_series)
+    chart_sections: List[str] = []
+    for isl, osl, label in group_keys:
+        chart_parts = []
+        for idx, chart in enumerate(chart_cfg):
+            entry = next(
+                (
+                    e
+                    for e in chart_series.get(chart["suffix"], [])
+                    if isinstance(e, dict) and str(e.get("isl")) == str(isl) and str(e.get("osl")) == str(osl)
+                ),
+                None,
+            )
+            if not entry:
+                continue
+            part = _render_bar_chart(
+                chart["title"],
+                entry["points"],
+                chart["unit"],
+                invert=bool(chart.get("invert")),
+                accent=chart_accent[idx % 3],
+            )
+            if part:
+                chart_parts.append(part)
+        if not chart_parts:
+            continue
+        title_html = (
+            f"<h3 class='chart-group-title'>{html.escape(label)}</h3>"
+            if len(group_keys) > 1
+            else ""
         )
-        if part:
-            chart_parts.append(part)
+        chart_sections.append(
+            f"<div class='chart-group'>{title_html}<div class='chart-grid'>{''.join(chart_parts)}</div></div>"
+        )
     charts_html = (
-        f"<div class='chart-grid'>{''.join(chart_parts)}</div>"
-        if chart_parts
-        else "<p class='muted'>Concurrency charts need two or more sweep cells.</p>"
+        "".join(chart_sections)
+        if chart_sections
+        else "<p class='muted'>Concurrency charts need two or more points per sweep shape.</p>"
     )
 
     matrix_html = render_gate_matrix_html(gate_matrix, tier_order)

@@ -17,6 +17,7 @@ from cvs.lib.inference.utils.inferencex_atom_parsing import (
     METRIC_TIER_ORDER,
     tier_metric_specs,
 )
+from cvs.lib.report.chart_presets import DEFAULT_PERF_CHART_SERIES
 from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries
 
 _SESSION_LIFECYCLE = (
@@ -70,11 +71,7 @@ INFERENCEX_ATOM_REPORT_CONFIG = InferenceReportConfig(
         ("p99_ttft_ms", "P99 TTFT (ms)"),
         ("p95_tpot_ms", "P95 TPOT (ms)"),
     ),
-    chart_series=(
-        ReportChartSeries("output_throughput", "Output tok/s", "tok/s"),
-        ReportChartSeries("mean_ttft_ms", "Mean TTFT", "ms", invert=True),
-        ReportChartSeries("mean_tpot_ms", "Mean TPOT", "ms", invert=True),
-    ),
+    chart_series=DEFAULT_PERF_CHART_SERIES,
     inference_test_substring="test_inferencex_atom_inference",
     session_lifecycle_labels=_SESSION_LIFECYCLE,
     cell_lifecycle_labels=_CELL_LIFECYCLE,

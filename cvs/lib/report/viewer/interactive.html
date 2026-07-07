@@ -29,6 +29,8 @@ h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color
 .toolbar button:hover { border-color: var(--accent); }
 .meta { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.75rem; }
 .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+.chart-group { margin-bottom: 1rem; }
+.chart-group-title { margin: 0 0 0.5rem; font-size: 0.9rem; font-weight: 600; }
 .chart-wrap { position: relative; height: 260px; }
 table.data { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 table.data th, table.data td { border: 1px solid var(--border); padding: 0.45rem 0.55rem; text-align: right; }
@@ -154,6 +156,16 @@ function populateFilters() {
   });
 }
 
+function shapeGroups(rows) {
+  const groups = new Map();
+  rows.forEach(c => {
+    const key = String(c.isl) + '|' + String(c.osl);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(c);
+  });
+  return groups;
+}
+
 function destroyCharts() {
   chartInstances.forEach(ch => ch.destroy());
   chartInstances = [];
@@ -163,60 +175,90 @@ function destroyCharts() {
 function buildCharts(rows) {
   destroyCharts();
   const chartConfig = reportData.chart_config || [];
+  const grid = document.getElementById('chart-grid');
   if (!chartConfig.length || rows.length < 2) {
     document.getElementById('charts-section').style.display = 'none';
     return;
   }
+  const shapes = [...shapeGroups(rows).entries()];
+  if (!shapes.length) {
+    document.getElementById('charts-section').style.display = 'none';
+    return;
+  }
   document.getElementById('charts-section').style.display = 'block';
-  const colors = ['#ff6b35', '#6b9fff', '#c77dff'];
-  chartConfig.forEach((spec, idx) => {
-    const byConc = new Map();
-    rows.forEach(c => {
-      const conc = Number(c.concurrency);
-      const val = metricNum(c, spec.metric);
-      if (val == null || Number.isNaN(conc)) return;
-      byConc.set(conc, Math.max(byConc.get(conc) ?? -Infinity, val));
-    });
-    const points = [...byConc.entries()].sort((a, b) => a[0] - b[0]);
-    if (points.length < 2) return;
-    const wrap = document.createElement('div');
-    wrap.className = 'chart-wrap';
-    const canvas = document.createElement('canvas');
-    wrap.appendChild(canvas);
-    document.getElementById('chart-grid').appendChild(wrap);
-    const color = colors[idx % colors.length];
-    const ch = new Chart(canvas, {
-      type: 'line',
-      data: {
-        labels: points.map(p => 'C=' + p[0]),
-        datasets: [{
-          label: spec.title + ' (' + spec.unit + ')',
-          data: points.map(p => p[1]),
-          borderColor: color,
-          backgroundColor: color + '33',
-          tension: 0.2,
-          fill: true,
-          pointRadius: 4,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { labels: { color: '#e8eaef' } },
-          zoom: {
-            pan: { enabled: true, mode: 'x' },
-            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+  const colors = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#c77dff', '#9aa3b5', '#ff5c6a'];
+  let chartCount = 0;
+
+  shapes.forEach(([shapeKey, shapeRows]) => {
+    const [isl, osl] = shapeKey.split('|');
+    const shapeLabel = 'ISL=' + isl + ' · OSL=' + osl;
+    const groupEl = document.createElement('div');
+    groupEl.className = 'chart-group';
+    if (shapes.length > 1) {
+      const title = document.createElement('h3');
+      title.className = 'chart-group-title';
+      title.textContent = shapeLabel;
+      groupEl.appendChild(title);
+    }
+    const innerGrid = document.createElement('div');
+    innerGrid.className = 'chart-grid';
+
+    chartConfig.forEach((spec, idx) => {
+      const byConc = new Map();
+      shapeRows.forEach(c => {
+        const conc = Number(c.concurrency);
+        const val = metricNum(c, spec.metric);
+        if (val == null || Number.isNaN(conc)) return;
+        byConc.set(conc, Math.max(byConc.get(conc) ?? -Infinity, val));
+      });
+      const points = [...byConc.entries()].sort((a, b) => a[0] - b[0]);
+      if (points.length < 2) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'chart-wrap';
+      const canvas = document.createElement('canvas');
+      wrap.appendChild(canvas);
+      innerGrid.appendChild(wrap);
+      const color = colors[(idx + chartCount) % colors.length];
+      const ch = new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels: points.map(p => 'C=' + p[0]),
+          datasets: [{
+            label: spec.title + ' (' + spec.unit + ')',
+            data: points.map(p => p[1]),
+            borderColor: color,
+            backgroundColor: color + '33',
+            tension: 0.2,
+            fill: true,
+            pointRadius: 4,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: '#e8eaef' } },
+            zoom: {
+              pan: { enabled: true, mode: 'x' },
+              zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+            },
+          },
+          scales: {
+            x: { ticks: { color: '#9aa3b5' }, grid: { color: '#2a2f3d' } },
+            y: { ticks: { color: '#9aa3b5' }, grid: { color: '#2a2f3d' } },
           },
         },
-        scales: {
-          x: { ticks: { color: '#9aa3b5' }, grid: { color: '#2a2f3d' } },
-          y: { ticks: { color: '#9aa3b5' }, grid: { color: '#2a2f3d' } },
-        },
-      },
+      });
+      chartInstances.push(ch);
+      chartCount += 1;
     });
-    chartInstances.push(ch);
+
+    if (innerGrid.childElementCount) {
+      groupEl.appendChild(innerGrid);
+      grid.appendChild(groupEl);
+    }
   });
+
   if (!chartInstances.length) {
     document.getElementById('charts-section').style.display = 'none';
   }

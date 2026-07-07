@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, List, Optional, Tuple
 
+from cvs.lib.report.chart_presets import DEFAULT_PERF_CHART_SERIES
 from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries, TierMetricSpecsFn
 
 _SESSION_LIFECYCLE = (
@@ -71,12 +72,8 @@ def _charts_from_highlights(
     highlights: tuple[tuple[str, str], ...],
     metric_units: dict[str, str],
 ) -> tuple[ReportChartSeries, ...]:
-    charts: list[ReportChartSeries] = []
-    for short, label in highlights[:3]:
-        unit = metric_units.get(short, "ms" if short.endswith("_ms") else "")
-        invert = short.endswith("_ms") or "latency" in label.lower() or "tpot" in short
-        charts.append(ReportChartSeries(short, label, unit, invert=invert))
-    return tuple(charts)
+    del highlights, metric_units  # builder default uses the shared perf sweep set
+    return DEFAULT_PERF_CHART_SERIES
 
 
 def make_inference_report_config(
@@ -104,6 +101,8 @@ def make_inference_report_config(
     highlights = cell_highlights or _highlights_from_columns(results_columns, metric_units)
     charts = chart_series or _charts_from_highlights(highlights, metric_units)
     workload = inference_test_substring or f"test_{suite_id}"
+    session_labels = kwargs.pop("session_lifecycle_labels", _SESSION_LIFECYCLE)
+    cell_labels = kwargs.pop("cell_lifecycle_labels", _CELL_LIFECYCLE)
 
     return InferenceReportConfig(
         suite_id=suite_id,
@@ -119,8 +118,8 @@ def make_inference_report_config(
         cell_highlights=highlights,
         chart_series=charts,
         inference_test_substring=workload,
-        session_lifecycle_labels=_SESSION_LIFECYCLE,
-        cell_lifecycle_labels=_CELL_LIFECYCLE,
+        session_lifecycle_labels=session_labels,
+        cell_lifecycle_labels=cell_labels,
         row_card_extras=True,
         row_card_test_names=row_card_test_names,
         interactive_viewer=True,

@@ -41,23 +41,50 @@ def overall_status(config: InferenceReportConfig, cells: List[dict], enforce: bo
     return "pass"
 
 
+def _group_cells_by_shape(cells: List[dict]) -> Dict[Tuple[str, str], List[dict]]:
+    groups: Dict[Tuple[str, str], List[dict]] = {}
+    for cell in cells:
+        groups.setdefault((str(cell["isl"]), str(cell["osl"])), []).append(cell)
+    for group in groups.values():
+        group.sort(key=lambda c: int(c["concurrency"]))
+    return groups
+
+
 def build_chart_series(
     config: InferenceReportConfig, cells: List[dict]
-) -> Dict[str, List[Tuple[int, float]]]:
-    series: Dict[str, List[Tuple[int, float]]] = {}
+) -> Dict[str, List[dict]]:
+    """Per-metric sweep charts grouped by ISL/OSL shape.
+
+    Each metric maps to a list of ``{isl, osl, label, points}`` entries so
+    multi-shape sweeps do not collapse distinct cells onto the same concurrency
+    axis.
+    """
+    groups = _group_cells_by_shape(cells)
+    series: Dict[str, List[dict]] = {}
     for chart in config.chart_series:
-        points: List[Tuple[int, float]] = []
         full = config.full_metric(chart.metric_suffix)
-        for cell in cells:
-            val = cell["actuals"].get(full)
-            if val is None:
-                continue
-            try:
-                points.append((int(cell["concurrency"]), float(val)))
-            except (TypeError, ValueError):
-                continue
-        if points:
-            series[chart.metric_suffix] = sorted(points, key=lambda p: p[0])
+        group_entries: List[dict] = []
+        for (isl, osl), group_cells in sorted(groups.items()):
+            points: List[Tuple[int, float]] = []
+            for cell in group_cells:
+                val = cell["actuals"].get(full)
+                if val is None:
+                    continue
+                try:
+                    points.append((int(cell["concurrency"]), float(val)))
+                except (TypeError, ValueError):
+                    continue
+            if len(points) >= 2:
+                group_entries.append(
+                    {
+                        "isl": isl,
+                        "osl": osl,
+                        "label": f"ISL={isl} \u00b7 OSL={osl}",
+                        "points": points,
+                    }
+                )
+        if group_entries:
+            series[chart.metric_suffix] = group_entries
     return series
 
 
