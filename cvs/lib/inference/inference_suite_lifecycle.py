@@ -4,7 +4,7 @@ All rights reserved.
 
 Reusable **lifecycle-as-tests** helpers for DTNI inference suites.
 
-``inferencex_atom_single`` imports the stage tests from here today; other suites
+``inferencex_atom`` imports the stage tests from here today; other suites
 (``vllm_single``, future IX parity frameworks) can reuse the same module instead
 of copying launch / sshd / model-fetch / teardown blocks.
 
