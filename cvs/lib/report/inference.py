@@ -29,6 +29,7 @@ from typing import Any, Mapping, Optional
 
 from cvs.lib import globals
 from cvs.lib.report.artifacts import write_html_json_artifacts
+from cvs.lib.report.ci_summary import write_inference_ci_summary
 from cvs.lib.report.inference_html import render_report_html
 from cvs.lib.report.inference_payload import build_inference_report_payload
 from cvs.lib.report.provenance import build_inference_report_provenance
@@ -108,7 +109,8 @@ def write_report(
             tier_order=config.metric_tier_order,
             embed_payload=payload,
         )
-    result = {"html": html_path, "json": json_path, "payload": payload}
+    summary_path = write_inference_ci_summary(payload, config, path.parent)
+    result = {"html": html_path, "json": json_path, "payload": payload, "summary": summary_path}
     if viewer_path is not None:
         result["viewer"] = viewer_path
     return result
@@ -159,16 +161,20 @@ def publish_inference_suite_report(
         provenance=provenance,
     )
     log.info(
-        "Suite report written (%s): %s (json: %s)",
+        "Suite report written (%s): %s (json: %s, summary: %s)",
         config.suite_id,
         artifacts["html"],
         artifacts["json"],
+        artifacts["summary"],
     )
 
     if report_manager and report_manager.is_enabled:
         report_manager.add_html_to_report(artifacts["html"], link_name=config.link_name)
         report_manager.add_html_to_report(
             artifacts["json"], link_name=f"{config.link_name} JSON"
+        )
+        report_manager.add_html_to_report(
+            artifacts["summary"], link_name=f"{config.link_name} summary"
         )
         viewer = artifacts.get("viewer")
         if viewer is not None:

@@ -117,6 +117,59 @@ def _w1_lifecycle():
     }
 
 
+def _multi_shape_variant():
+    return SimpleNamespace(
+        model=SimpleNamespace(id="deepseek-ai/DeepSeek-R1-0528"),
+        gpu_arch="mi300x",
+        enforce_thresholds=True,
+        thresholds=_load_thresholds(
+            "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json"
+        ),
+        cell_key=lambda isl, osl, conc: f"ISL={isl},OSL={osl},TP=8,CONC={conc}",
+        params=SimpleNamespace(driver="atom", tensor_parallelism="8", nnodes=1),
+        run_card=SimpleNamespace(
+            atom_image_pin="rocm/atom-dev:latest",
+            upstream_run_url="",
+            notes="Sample multi-shape sweep with enforced W1 perf gates (synthetic)",
+        ),
+    )
+
+
+def _multi_shape_inf_res():
+    model = "deepseek-ai/DeepSeek-R1-0528"
+    gpu, host = "mi300x", "10.245.135.75"
+    # 1k/1k: C=128 passes (>=1500 out tok/s), C=256 fails (<2500); 64/512 are record-only keys.
+    shapes = (
+        ("1024", "1024", "w1_1k_1k", {64: 0.85, 128: 1.35, 256: 1.55, 512: 1.72}),
+        ("8192", "1024", "w1_8k_1k", {64: 0.58, 128: 0.74, 256: 0.88, 512: 0.95}),
+    )
+    out = {}
+    for isl, osl, policy, scales in shapes:
+        ttft_scale = 1.0 if isl == "1024" else 1.65
+        for conc, scale in scales.items():
+            key = (model, gpu, isl, osl, policy, conc)
+            out[key] = {
+                host: _base_metrics(
+                    tput_scale=scale,
+                    ttft_scale=ttft_scale * (1.02 if conc > 128 else 1.0),
+                )
+            }
+    return out
+
+
+def _multi_shape_lifecycle():
+    base = "cvs/tests/inference/inferencex_atom/inferencex_atom_single.py"
+    lifecycle = {
+        f"{base}::test_launch_container": [("container_launch", 38.5, "s")],
+        f"{base}::test_setup_sshd": [("sshd_setup", 7.4, "s")],
+        f"{base}::test_model_fetch": [("model_fetch", 14.2, "s"), ("model_size", 685.2, "GB")],
+        f"{base}::test_teardown": [("teardown", 5.9, "s")],
+    }
+    lifecycle.update(_inference_lifecycle(base, "w1_1k_1k"))
+    lifecycle.update(_inference_lifecycle(base, "w1_8k_1k", base_client_complete=2105.3))
+    return lifecycle
+
+
 VARIANTS: Dict[str, VariantBuild] = {
     "w1": (
         _w1_variant,
@@ -126,6 +179,16 @@ VARIANTS: Dict[str, VariantBuild] = {
             "cluster_file": "mi300x_atom_single.json",
             "config_file": "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json",
             "generated": "synthetic W1 DeepSeek R1 FP8 perf demo",
+        },
+    ),
+    "multi_shape": (
+        _multi_shape_variant,
+        _multi_shape_inf_res,
+        _multi_shape_lifecycle,
+        {
+            "cluster_file": "mi300x_atom_single.json",
+            "config_file": "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json",
+            "generated": "synthetic multi-shape sweep with enforced perf gates",
         },
     ),
 }
@@ -153,6 +216,19 @@ def main() -> int:
     build_variant, build_inf_res, build_lifecycle, provenance = VARIANTS[args.variant]
     config = INFERENCEX_ATOM_REPORT_CONFIG
 
+    pytest_html = out_dir / f"sample_{args.variant}_pytest_results.html"
+    run_log = out_dir / f"sample_{args.variant}_run.log"
+    pytest_html.write_text(
+        "<!DOCTYPE html><html><body><h1>Sample pytest HTML</h1>"
+        "<p>Placeholder for run-deck link preview.</p></body></html>",
+        encoding="utf-8",
+    )
+    run_log.write_text(
+        f"Sample run log for variant={args.variant}\n"
+        "Synthetic data — not from a lab run.\n",
+        encoding="utf-8",
+    )
+
     artifacts = write_report(
         out_dir / f"{config.report_basename}.html",
         config=config,
@@ -160,8 +236,8 @@ def main() -> int:
         inf_res_dict=build_inf_res(),
         lifecycle_report=build_lifecycle(),
         cvs_version="sample",
-        pytest_html_path=str(out_dir / f"sample_{args.variant}_pytest_results.html"),
-        log_file_path=str(out_dir / f"sample_{args.variant}_run.log"),
+        pytest_html_path=str(pytest_html),
+        log_file_path=str(run_log),
         provenance=provenance,
     )
     print(f"Variant: {args.variant}")
@@ -169,6 +245,10 @@ def main() -> int:
     print(f"JSON:    {artifacts['json']}")
     if artifacts.get("viewer"):
         print(f"Viewer:  {artifacts['viewer']}")
+    if artifacts.get("summary"):
+        print(f"Summary: {artifacts['summary']}")
+    print(f"Pytest:  {pytest_html}")
+    print(f"Log:     {run_log}")
     return 0
 
 
