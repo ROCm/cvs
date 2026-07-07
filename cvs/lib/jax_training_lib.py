@@ -125,7 +125,7 @@ class JaxTrainingJob:
             'GPU_MAX_HW_QUEUES': '2',
             'HSA_FORCE_FINE_GRAIN_PCIE': '1',
             'HIP_FORCE_DEV_KERNARG': '1',
-            'XLA_PYTHON_CLIENT_MEM_FRACTION': '.93',
+            'XLA_PYTHON_CLIENT_MEM_FRACTION': '0.93',
             'NCCL_DEBUG': 'ERROR',
             'NCCL_PROTO': 'Simple',
             'NCCL_IB_TC': '41',
@@ -150,6 +150,7 @@ class JaxTrainingJob:
             'xla_gpu_memory_limit_slop_factor': '95',
             'xla_gpu_enable_command_buffer': "''",
             'xla_gpu_enable_cublaslt': 'True',
+            'xla_gpu_graph_level': '0',
             'xla_gpu_autotune_level': '0',
             'xla_gpu_enable_reduce_scatter_combine_by_dim': 'false',
             'xla_gpu_reduce_scatter_combine_threshold_bytes': '8589934592',
@@ -275,7 +276,7 @@ class JaxTrainingJob:
         - If NIC type appears to be Broadcom/Thor, applies a temporary workaround:
           * Copies the bnxt RDMA library from the host-named file to the container?s expected path.
           * Verifies that ibv_devinfo shows a bnxt_ HCA (to confirm RDMA is wired correctly).
-        - Forces NCCL GID index to 3 for Broadcom/Thor (common requirement).
+        - NCCL_IB_GID_INDEX is set via env_vars (NCCL knobs), not here.
 
         Assumptions:
         - self.phdl.exec runs a shell command and returns a dict: {node: stdout}.
@@ -287,8 +288,6 @@ class JaxTrainingJob:
         if self.distributed_training is True:
             # This is a temporary hack needed for broadcom nics to work within containers ..
             if re.search('broadcom|thor', self.nic_type, re.I):
-                # override the gid_index to 3 for broadcom
-                self.nccl_ib_gid_index = 3
                 rdma_lib = self.tc_dict['rdma_lib']
                 out_dict = self.phdl.exec(
                     f'docker exec {self.container_name} /bin/bash -c "sudo \
@@ -555,7 +554,6 @@ export GLOO_SOCKET_IFNAME={self.tc_dict['gloo_socket_ifname']}
         for i in range(0, self.training_steps):
             training_results_dict[i] = {}
 
-            ## pattern = f'completed step:\s+{i},\s+seconds:\s+([0-9\.]+),\s+TFLOP\/s\/device:\s+([0-9\.]+),\s+Tokens\/s\/device:\s+([0-9\.]+),\s+total_weights:\s+([0-9\\.]+),\s+loss:\s([0-9\.]+)'
             pattern = f'completed step:\s+{i},\s+seconds:\s+([0-9\.]+),\s+TFLOP\/s\/device:\s+([0-9\.]+),\s+Tokens\/s\/device:\s+([0-9\.]+),\s+total_weights:\s+([0-9\\.]+),\s+loss:\s+([0-9\.]+|nan|inf|-inf)'
             match = re.search(pattern, output, re.I)
 
