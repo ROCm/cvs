@@ -15,6 +15,7 @@ from cvs.lib.inference.inference_suite_results_table import INFERENCEX_ATOM_RESU
 from cvs.lib.inference.utils.inferencex_atom_parsing import (
     CLIENT_METRIC_UNITS,
     METRIC_TIER_ORDER,
+    SCALING_METRIC_UNITS,
     tier_metric_specs,
 )
 from cvs.lib.report.chart_presets import DEFAULT_PERF_CHART_SERIES
@@ -30,6 +31,16 @@ _SESSION_LIFECYCLE = (
 )
 
 _CELL_LIFECYCLE = ("server_ready", "client_complete")
+
+_INFERENCEX_ATOM_CHART_SERIES = (
+    *DEFAULT_PERF_CHART_SERIES,
+    ReportChartSeries(
+        "efficiency_pct",
+        "Scaling efficiency",
+        "%",
+        metric_key="scaling.efficiency_pct",
+    ),
+)
 
 
 def _atom_run_card_display(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
@@ -62,7 +73,7 @@ INFERENCEX_ATOM_REPORT_CONFIG = InferenceReportConfig(
     results_columns=INFERENCEX_ATOM_RESULTS_COLUMNS,
     metric_tier_order=METRIC_TIER_ORDER,
     tier_metric_specs=tier_metric_specs,
-    metric_units=CLIENT_METRIC_UNITS,
+    metric_units={**CLIENT_METRIC_UNITS, **SCALING_METRIC_UNITS},
     metric_prefix="client.",
     cell_highlights=(
         ("output_throughput", "Output tok/s"),
@@ -70,8 +81,9 @@ INFERENCEX_ATOM_REPORT_CONFIG = InferenceReportConfig(
         ("mean_tpot_ms", "Mean TPOT (ms)"),
         ("p99_ttft_ms", "P99 TTFT (ms)"),
         ("p95_tpot_ms", "P95 TPOT (ms)"),
+        ("scaling.efficiency_pct", "Scaling eff. (%)"),
     ),
-    chart_series=DEFAULT_PERF_CHART_SERIES,
+    chart_series=_INFERENCEX_ATOM_CHART_SERIES,
     inference_test_substring="test_inferencex_atom_inference",
     session_lifecycle_labels=_SESSION_LIFECYCLE,
     cell_lifecycle_labels=_CELL_LIFECYCLE,

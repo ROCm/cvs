@@ -62,7 +62,7 @@ def build_chart_series(
     groups = _group_cells_by_shape(cells)
     series: Dict[str, List[dict]] = {}
     for chart in config.chart_series:
-        full = config.full_metric(chart.metric_suffix)
+        full = chart.metric_key or config.full_metric(chart.metric_suffix)
         group_entries: List[dict] = []
         for (isl, osl), group_cells in sorted(groups.items()):
             points: List[Tuple[int, float]] = []
