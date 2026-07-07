@@ -64,7 +64,7 @@ def detect_rocm_path(phdl, config_rocm_path):
     return '/opt/rocm'
 
 
-def check_perftest_dmabuf_support(phdl, binary_path):
+def check_perftest_dmabuf_support(shdl, binary_path):
     """
     Check if the given perftest binary on the cluster node supports the
     --use_rocm_dmabuf flag by executing the binary's help output and
@@ -83,7 +83,7 @@ def check_perftest_dmabuf_support(phdl, binary_path):
 
     try:
         # detailed=True gives us exit_code per host
-        host_results = phdl.exec(cmd, detailed=True, print_console=False)
+        host_results = shdl.exec(cmd, detailed=True, print_console=False)
         # host_results: {host: {"output": str, "exit_code": int}}
 
         dmabuf_supported_any = False
@@ -249,6 +249,7 @@ def verify_expected_lat(lat_test, msg_size, res_dict, expected_res):
 
 
 def run_ib_perf_bw_test(
+    shdl,
     phdl,
     bw_test,
     gpu_numa_dict,
@@ -273,7 +274,7 @@ def run_ib_perf_bw_test(
         log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
         phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
     server_addr = None
-    dmabuf_supported = check_perftest_dmabuf_support(phdl, f'{app_path}/{bw_test}')
+    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{bw_test}')
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
         cmd_dict[node] = []
@@ -357,7 +358,7 @@ def run_ib_perf_bw_test(
 
 
 def run_ib_perf_lat_test(
-    phdl, lat_test, gpu_numa_dict, gpu_nic_dict, bck_nic_dict, app_path, msg_size, gid_index, port_no=1516, rocm_path=''
+    shdl, phdl, lat_test, gpu_numa_dict, gpu_nic_dict, bck_nic_dict, app_path, msg_size, gid_index, port_no=1516, rocm_path=''
 ):
     app_port = port_no
     result_dict = {}
@@ -370,7 +371,7 @@ def run_ib_perf_lat_test(
         log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
         phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
     server_addr = None
-    dmabuf_supported = check_perftest_dmabuf_support(phdl, f'{app_path}/{lat_test}')
+    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{lat_test}')
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
         cmd_dict[node] = []
