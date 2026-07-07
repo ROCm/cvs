@@ -18,6 +18,7 @@ from cvs.lib.report.render.gate_matrix import (
     render_gate_matrix_html,
 )
 from cvs.lib.report.render.panel_shell import render_panel_section, render_results_table_html
+from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
 from cvs.lib.report.render.sweep_charts import chart_tooltip_css
 
 SESSION_FALLBACK = (
@@ -77,7 +78,6 @@ def _render_bar_chart(
     points: List[Tuple[int, float]],
     unit: str,
     *,
-    invert: bool = False,
     accent: str = "accent",
 ) -> str:
     if len(points) < 2:
@@ -292,7 +292,6 @@ def render_report_html(payload: dict) -> str:
     ) or "<p class='muted'>No sweep summary (no throughput data).</p>"
 
     chart_cfg = payload.get("chart_config") or []
-    chart_comparison = payload.get("chart_comparison") or {}
     chart_accent = ("accent", "accent2", "accent3")
     group_keys = _chart_group_keys(chart_cfg, chart_series)
     chart_sections: List[str] = []
@@ -313,7 +312,6 @@ def render_report_html(payload: dict) -> str:
                 chart["title"],
                 entry["points"],
                 chart["unit"],
-                invert=bool(chart.get("invert")),
                 accent=chart_accent[idx % 3],
             )
             if part:
@@ -342,12 +340,12 @@ def render_report_html(payload: dict) -> str:
 
     sweep_viewer_banner = ""
     viewer_name = summary.get("viewer_html")
-    if chart_comparison and viewer_name:
+    if sweep_has_multi_shape_comparison(cells) and viewer_name:
         sweep_viewer_banner = (
             "<div class='viewer-banner'>Cross-shape comparison (grouped bars and scaling trends) "
             f"is in the <a href='{html.escape(viewer_name)}'>interactive viewer</a>.</div>"
         )
-    elif chart_comparison:
+    elif sweep_has_multi_shape_comparison(cells):
         sweep_viewer_banner = (
             "<div class='viewer-banner'>Cross-shape comparison charts are available in the "
             "interactive viewer sidecar.</div>"

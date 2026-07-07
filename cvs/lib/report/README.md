@@ -140,7 +140,7 @@ the preset `report_basename` (e.g. `inferencex_atom_report`).
 |--------|------|--------|----------|
 | **Pytest HTML report** | Always with `--html` | `.html` | Standard pytest-html test log, lifecycle tables, and links to bundled files |
 | **Inference suite report** | Inference suite registered + `inf_res_dict` populated | `.html` + `.json` | Run card, session lifecycle timeline, sweep summaries, concurrency charts, gate matrix, full results table, per-cell cards (inline or summary mode for large sweeps). JSON holds the full payload for tooling and the viewer |
-| **Interactive viewer** | `interactive_viewer=True` on inference preset (default) | `{basename}_viewer.html` | Filterable cell browser, Chart.js concurrency charts, throughput heatmap, gate matrix, CSV export. Reads the JSON sidecar |
+| **Interactive viewer** | `interactive_viewer=True` on inference preset (default) | `{basename}_viewer.html` | Filterable cells; cross-shape comparison; per-shape throughput/latency scaling; P90/P95/P99 fans; gate margin vs C; heatmap metric toggle; throughput-vs-latency tradeoff; gate matrix; CSV export |
 | **Pytest row cell cards** | Inference preset with `row_card_extras` | Embedded in pytest HTML | Compact per-cell metric cards on `test_cell_metrics` / `test_metric` rows |
 
 **Results zip** (created at session end): pytest HTML, `{suite}_html/` attachments (suite reports, logs, config copies), and optional `assets/`.
@@ -205,7 +205,7 @@ Written as `{report_basename}.json` next to the HTML dashboard. External tools s
 | `run_card_display`, `provenance` | Run card rows and paths (pytest HTML, cluster/config, git) |
 | `lifecycle` | Session stage → seconds |
 | `cells` | Per sweep cell: `actuals`, `tiers`, `metrics`, optional pytest nodeids |
-| `chart_series`, `sweep_summaries`, `gate_matrix`, `results_table` | Charts and tabular export |
+| `chart_series`, `chart_comparison`, `sweep_summaries`, `gate_matrix`, `results_table` | Charts and tabular export (`chart_comparison` for JSON tooling; viewer rebuilds comparison from filtered cells) |
 | `summary` | Truncation mode and viewer basename when cell count is large |
 
 ## Unit tests

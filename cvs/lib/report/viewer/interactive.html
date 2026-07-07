@@ -280,6 +280,17 @@ const PERCENTILE_FAMILIES = [
 
 const FAN_COLORS = ['#3dd68c', '#6b9fff', '#c77dff'];
 
+const VIEWER_SCALE_SUFFIXES = new Set([
+  'output_throughput',
+  'total_token_throughput',
+  'mean_ttft_ms',
+  'mean_tpot_ms',
+]);
+
+function viewerScaleChartConfig() {
+  return (reportData.chart_config || []).filter(spec => VIEWER_SCALE_SUFFIXES.has(spec.suffix));
+}
+
 function $(id) { return document.getElementById(id); }
 
 function clearEl(id) {
@@ -857,7 +868,7 @@ function buildComparisonCharts(rows) {
 
 function buildCharts(rows) {
   destroyCharts();
-  const chartConfig = reportData.chart_config || [];
+  const chartConfig = viewerScaleChartConfig();
   const grid = $('chart-grid');
   const perShapeBlock = $('per-shape-block');
   const chartsPanel = $('charts');

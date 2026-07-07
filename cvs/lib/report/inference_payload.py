@@ -50,6 +50,19 @@ def _group_cells_by_shape(cells: List[dict]) -> Dict[Tuple[str, str], List[dict]
     return groups
 
 
+def sweep_has_multi_shape_comparison(cells: List[dict]) -> bool:
+    """True when the sweep spans multiple ISL/OSL shapes at two or more concurrencies."""
+    shapes: set[Tuple[str, str]] = set()
+    concurrencies: set[int] = set()
+    for cell in cells:
+        shapes.add((str(cell.get("isl", "")), str(cell.get("osl", ""))))
+        try:
+            concurrencies.add(int(cell["concurrency"]))
+        except (TypeError, ValueError, KeyError):
+            continue
+    return len(shapes) >= 2 and len(concurrencies) >= 2
+
+
 def build_chart_series(
     config: InferenceReportConfig, cells: List[dict]
 ) -> Dict[str, List[dict]]:

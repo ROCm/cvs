@@ -7,6 +7,7 @@ from cvs.lib.report.inference import (
     render_report_html,
     write_report,
 )
+from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
 from cvs.lib.report.chart_presets import DEFAULT_PERF_CHART_SERIES
 from cvs.lib.report.unittests._fixtures import (
     generic_inference_report_config,
@@ -111,6 +112,24 @@ def test_build_chart_comparison_empty_for_single_shape():
         lifecycle_report={},
     )
     assert payload["chart_comparison"] == {}
+
+
+def test_sweep_has_multi_shape_comparison():
+    cfg = generic_inference_report_config()
+    multi = build_inference_report_payload(
+        config=cfg,
+        variant_config=generic_variant(),
+        inf_res_dict=multi_shape_inf_res(),
+        lifecycle_report={},
+    )
+    single = build_inference_report_payload(
+        config=cfg,
+        variant_config=generic_variant(),
+        inf_res_dict=two_cell_inf_res(),
+        lifecycle_report={},
+    )
+    assert sweep_has_multi_shape_comparison(multi["cells"])
+    assert not sweep_has_multi_shape_comparison(single["cells"])
 
 
 def test_write_report_writes_html_and_json(tmp_path):
