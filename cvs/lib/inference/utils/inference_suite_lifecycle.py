@@ -209,7 +209,7 @@ def html_metric_table_header(cells):
 
 
 def html_metric_table_row(report, cells):
-    props = dict(report.user_properties)
+    props = dict(getattr(report, "user_properties", ()))
     has = "metric_value" in props
     val = props.get("metric_value")
     unit = props.get("metric_unit", "") if has else ""
