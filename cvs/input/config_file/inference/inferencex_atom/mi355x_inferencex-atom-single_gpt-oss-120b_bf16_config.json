@@ -1,10 +1,10 @@
 {
-  "_comment": "Single-node InferenceX ATOM (schema_version 1). Set container.image and container.name. ISL+OSL must fit params.max_model_length. Volume bind home only; ContainerOrchestrator adds /home/<user>:/workspace.",
+  "_comment": "Single-node InferenceX ATOM sample (schema_version 1). Set container.image and container.name. Verify serve_args against your InferenceX revision.",
   "schema_version": 1,
-  "framework": "inferencex_atom_single",
-  "gpu_arch": "mi300x",
+  "framework": "inferencex_atom",
+  "gpu_arch": "mi355x",
   "enforce_thresholds": false,
-  "threshold_json": "mi300x_inferencex-atom-single_gpt-oss-120b_bf16_threshold.json",
+  "threshold_json": "mi355x_inferencex-atom-single_gpt-oss-120b_bf16_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "{shared_fs}/models",
@@ -41,15 +41,11 @@
     "server": {
       "serve_args": {
         "enforce-eager": true,
-        "gpu-memory-utilization": "0.95",
+        "gpu-memory-utilization": "0.92",
         "block-size": 64,
         "no-enable-prefix-caching": true
       },
-      "env": {
-        "AMDGCN_USE_BUFFER_OPS": "0",
-        "VLLM_ROCM_USE_AITER": "1",
-        "VLLM_ROCM_QUICK_REDUCE_QUANTIZATION": "INT4"
-      }
+      "env": {}
     }
   },
   "params": {

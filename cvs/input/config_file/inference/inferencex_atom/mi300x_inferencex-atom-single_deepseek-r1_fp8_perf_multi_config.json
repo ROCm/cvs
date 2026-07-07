@@ -1,7 +1,7 @@
 {
   "_comment": "W1 DeepSeek R1 FP8 multinode (2×8 GPU). Conc 16/64/128 per ISL/OSL shape (15 cells); runs grouped by shape for server reuse. max_model_length=4096.",
   "schema_version": 1,
-  "framework": "inferencex_atom_single",
+  "framework": "inferencex_atom",
   "gpu_arch": "mi300x",
   "enforce_thresholds": true,
   "threshold_json": "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_threshold.json",

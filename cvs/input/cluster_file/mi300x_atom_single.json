@@ -1,5 +1,5 @@
 {
-  "_comment": "Single-node MI300X example for inferencex_atom_single (ATOM driver). Replace mgmt_ip / node_dict with lab IPs.",
+  "_comment": "Single-node MI300X example for inferencex_atom (ATOM driver). Replace mgmt_ip / node_dict with lab IPs.",
   "orchestrator": "container",
   "username": "{user-id}",
   "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
