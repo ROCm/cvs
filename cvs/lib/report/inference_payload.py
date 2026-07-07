@@ -88,6 +88,71 @@ def build_chart_series(
     return series
 
 
+def build_chart_comparison(
+    config: InferenceReportConfig, cells: List[dict]
+) -> Dict[str, dict]:
+    """Cross-shape comparison data: shared concurrency axis, one series per ISL/OSL.
+
+    Used for grouped-bar and multi-line charts when the sweep spans two or more
+    sequence shapes with at least two concurrency levels.
+    """
+    groups = _group_cells_by_shape(cells)
+    if len(groups) < 2:
+        return {}
+
+    out: Dict[str, dict] = {}
+    for chart in config.chart_series:
+        full = config.full_metric(chart.metric_suffix)
+        shape_rows: List[dict] = []
+        all_concs: set[int] = set()
+
+        for (isl, osl), group_cells in sorted(groups.items()):
+            values_by_conc: Dict[int, float] = {}
+            for cell in group_cells:
+                val = cell["actuals"].get(full)
+                if val is None:
+                    continue
+                try:
+                    conc = int(cell["concurrency"])
+                    values_by_conc[conc] = float(val)
+                    all_concs.add(conc)
+                except (TypeError, ValueError):
+                    continue
+            if values_by_conc:
+                shape_rows.append(
+                    {
+                        "isl": isl,
+                        "osl": osl,
+                        "label": f"ISL={isl} \u00b7 OSL={osl}",
+                        "values_by_conc": values_by_conc,
+                    }
+                )
+
+        if len(shape_rows) < 2:
+            continue
+        concurrencies = sorted(all_concs)
+        if len(concurrencies) < 2:
+            continue
+
+        series = [
+            {
+                "label": row["label"],
+                "isl": row["isl"],
+                "osl": row["osl"],
+                "values": [row["values_by_conc"].get(c) for c in concurrencies],
+            }
+            for row in shape_rows
+        ]
+        out[chart.metric_suffix] = {
+            "concurrencies": concurrencies,
+            "series": series,
+            "title": chart.title,
+            "unit": chart.unit,
+            "invert": chart.invert,
+        }
+    return out
+
+
 def build_sweep_summaries(config: InferenceReportConfig, cells: List[dict]) -> List[dict]:
     groups: Dict[Tuple[str, str], List[dict]] = {}
     for cell in cells:
@@ -210,6 +275,7 @@ def build_inference_report_payload(
             run_card_notes = str(rc.notes)
 
     chart_series = build_chart_series(config, cells)
+    chart_comparison = build_chart_comparison(config, cells)
     chart_config = [
         {
             "suffix": ch.metric_suffix,
@@ -240,6 +306,7 @@ def build_inference_report_payload(
         "lifecycle": aggregate_lifecycle(lifecycle_report, config.session_lifecycle_labels),
         "cells": cells,
         "chart_series": chart_series,
+        "chart_comparison": chart_comparison,
         "chart_config": chart_config,
         "sweep_summaries": build_sweep_summaries(config, cells),
         "gate_matrix": build_gate_matrix_rows(cells),
