@@ -72,6 +72,47 @@ def test_build_chart_series_groups_by_isl_osl():
     assert "P99 ITL" in doc
 
 
+def test_build_chart_comparison_groups_shapes_at_each_concurrency():
+    cfg = replace(generic_inference_report_config(), chart_series=DEFAULT_PERF_CHART_SERIES)
+    payload = build_inference_report_payload(
+        config=cfg,
+        variant_config=generic_variant(),
+        inf_res_dict=multi_shape_inf_res(),
+        lifecycle_report={},
+    )
+    comparison = payload["chart_comparison"]["output_throughput"]
+    assert comparison["concurrencies"] == [16, 32]
+    assert len(comparison["series"]) == 2
+    labels = {s["label"] for s in comparison["series"]}
+    assert labels == {"ISL=1024 · OSL=1024", "ISL=8192 · OSL=1024"}
+
+
+def test_render_report_html_keeps_cross_shape_comparison_out_of_static_html():
+    cfg = replace(generic_inference_report_config(), chart_series=DEFAULT_PERF_CHART_SERIES)
+    payload = build_inference_report_payload(
+        config=cfg,
+        variant_config=generic_variant(),
+        inf_res_dict=multi_shape_inf_res(),
+        lifecycle_report={},
+    )
+    doc = render_report_html(payload)
+    assert "Compare shapes at each concurrency" not in doc
+    assert "Scaling trends across shapes" not in doc
+    assert payload["chart_comparison"]
+    assert "interactive viewer" in doc
+
+
+def test_build_chart_comparison_empty_for_single_shape():
+    cfg = generic_inference_report_config()
+    payload = build_inference_report_payload(
+        config=cfg,
+        variant_config=generic_variant(),
+        inf_res_dict=two_cell_inf_res(),
+        lifecycle_report={},
+    )
+    assert payload["chart_comparison"] == {}
+
+
 def test_write_report_writes_html_and_json(tmp_path):
     cfg = generic_inference_report_config()
     artifacts = write_report(

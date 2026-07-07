@@ -59,9 +59,15 @@ def test_write_interactive_viewer(tmp_path):
     assert '"cell_id":"c1"' in text or '"cell_id": "c1"' in text
     assert "f-isl" in text
     assert "chart.js" in text
-    assert "heatmap-section" in text
+    assert "heatmap-section" in text or 'id="heatmap"' in text
     assert "gate-wrap" in text
     assert "btn-export" in text
+    assert "comparison-grid" in text
+    assert "compare-mode-bars" in text
+    assert "compare-grid" not in text
+    assert "trend-grid" not in text
+    assert 'id="overview"' in text
+    assert 'id="heatmap"' in text
 
 
 def test_viewer_written_when_interactive_enabled(tmp_path):
