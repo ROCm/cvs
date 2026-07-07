@@ -299,6 +299,7 @@ def build_inference_report_payload(
             "footer": config.footer,
             "metric_tier_order": config.metric_tier_order,
             "headline_metric": config.headline_metric,
+            "sweep_ttft_metric": config.sweep_ttft_metric,
         },
         "run_card_display": run_card_display,
         "run_card_notes": run_card_notes,
