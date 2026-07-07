@@ -1,4 +1,4 @@
-# InferenceX ATOM single-node variants
+# InferenceX ATOM variants
 
 W1 **DeepSeek R1 FP8** on 8× GPU, ISL=OSL=1024, TP8.
 
@@ -11,11 +11,11 @@ W1 **DeepSeek R1 FP8** on 8× GPU, ISL=OSL=1024, TP8.
 {gpu}_inferencex-atom-single_{model}_{precision}[_{mode}]_threshold.json
 ```
 
-**On your lab machine** (`~/input/config_file/inference/inferencex_atom_single/`), copy each variant into its **own subdirectory** so only one `*threshold.json` sits next to the config you pass to `--config_file`. `substitute_config` globs the config's parent directory; multiple `*threshold.json` files there raises `ValueError: multiple *threshold.json files … (ambiguous)`.
+**On your lab machine** (`~/input/config_file/inference/inferencex_atom/`), copy each variant into its **own subdirectory** so only one `*threshold.json` sits next to the config you pass to `--config_file`. `substitute_config` globs the config's parent directory; multiple `*threshold.json` files there raises `ValueError: multiple *threshold.json files … (ambiguous)`.
 
 ```text
-~/input/.../inferencex_atom_single/smoke/   # smoke config + smoke threshold only
-~/input/.../inferencex_atom_single/perf/    # perf config + perf threshold only
+~/input/.../inferencex_atom/smoke/   # smoke config + smoke threshold only
+~/input/.../inferencex_atom/perf/    # perf config + perf threshold only
 ```
 
 Each shipped config sets `"threshold_json"` to the sibling threshold filename (resolved relative to the config directory). You may also use an absolute path (vLLM-style).
@@ -49,7 +49,7 @@ Use `cvs/input/cluster_file/mi300x_atom_single.json` or `mi355x_atom_single.json
 | `cvs/lib/inference/utils/inference_suite_results_table.py` | Configurable results table (`make_print_results_table`) |
 | `cvs/lib/inference/unittests/fake_orch.py` | `FakeOrch` for Job parse unit tests |
 
-`inferencex_atom_single` imports these today; `vllm_single` may adopt them in a follow-up without duplicating code.
+`inferencex_atom` imports these today; `vllm_single` may adopt them in a follow-up without duplicating code.
 
 ## Pytest layout
 
@@ -84,12 +84,12 @@ One cell, 128 prompts — run this before the full perf matrix.
 cd ~/cvs && source .cvs_venv/bin/activate
 mkdir -p ~/cvs_results ~/input/cluster_file
 
-SMOKE_DIR=~/input/config_file/inference/inferencex_atom_single/smoke
+SMOKE_DIR=~/input/config_file/inference/inferencex_atom/smoke
 mkdir -p "$SMOKE_DIR"
 
-cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_config.json \
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_config.json \
   --output "$SMOKE_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_config.json"
-cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_threshold.json \
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_threshold.json \
   --output "$SMOKE_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_threshold.json"
 cvs copy-config mi300x_atom_single.json --output ~/input/cluster_file/mi300x_atom_single.json
 
@@ -97,7 +97,7 @@ TS=$(date +%Y%m%d_%H%M%S)
 HTML=~/cvs_results/${TS}_ix-atom-smoke_mi300x.html
 LOG=~/cvs_results/${TS}_ix-atom-smoke_mi300x.log
 
-cvs run inferencex_atom_single \
+cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
   --config_file "$SMOKE_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_config.json" \
   --html="$HTML" \
@@ -121,19 +121,19 @@ Two concurrency cells (C=128, C=256), 1000 prompts. Second cell reuses the ATOM 
 ```bash
 cd ~/cvs && source .cvs_venv/bin/activate
 
-PERF_DIR=~/input/config_file/inference/inferencex_atom_single/perf
+PERF_DIR=~/input/config_file/inference/inferencex_atom/perf
 mkdir -p "$PERF_DIR"
 
-cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json \
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json \
   --output "$PERF_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json"
-cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json \
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json \
   --output "$PERF_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json"
 
 TS=$(date +%Y%m%d_%H%M%S)
 HTML=~/cvs_results/${TS}_ix-atom-w1-perf_mi300x.html
 LOG=~/cvs_results/${TS}_ix-atom-w1-perf_mi300x.log
 
-cvs run inferencex_atom_single \
+cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
   --config_file "$PERF_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json" \
   --html="$HTML" \
@@ -152,12 +152,12 @@ Requires a 2-node cluster file, ATOM image with distributed serve support, and f
 ```bash
 cd ~/cvs && source .cvs_venv/bin/activate
 
-MULTI_DIR=~/input/config_file/inference/inferencex_atom_single/multi
+MULTI_DIR=~/input/config_file/inference/inferencex_atom/multi
 mkdir -p "$MULTI_DIR"
 
-cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json \
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json \
   --output "$MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json"
-cvs copy-config inference/inferencex_atom_single/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_threshold.json \
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_threshold.json \
   --output "$MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_threshold.json"
 cvs copy-config mi300x_atom_multi.json --output ~/input/cluster_file/mi300x_atom_multi.json
 
@@ -167,7 +167,7 @@ TS=$(date +%Y%m%d_%H%M%S)
 HTML=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi300x.html
 LOG=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi300x.log
 
-cvs run inferencex_atom_single \
+cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/mi300x_atom_multi.json \
   --config_file "$MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json" \
   --html="$HTML" \
@@ -186,12 +186,12 @@ Thresholds are seeded from [ROCm/ATOM run 27912164002](https://github.com/ROCm/A
 ```bash
 cd ~/cvs && source .cvs_venv/bin/activate
 
-PERF_DIR=~/input/config_file/inference/inferencex_atom_single/mi355x_perf
+PERF_DIR=~/input/config_file/inference/inferencex_atom/mi355x_perf
 mkdir -p "$PERF_DIR"
 
-cvs copy-config inference/inferencex_atom_single/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json \
+cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json \
   --output "$PERF_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json"
-cvs copy-config inference/inferencex_atom_single/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json \
+cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json \
   --output "$PERF_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json"
 cvs copy-config mi355x_atom_single.json --output ~/input/cluster_file/mi355x_atom_single.json
 
@@ -199,7 +199,7 @@ TS=$(date +%Y%m%d_%H%M%S)
 HTML=~/cvs_results/${TS}_ix-atom-w1-perf_mi355x.html
 LOG=~/cvs_results/${TS}_ix-atom-w1-perf_mi355x.log
 
-cvs run inferencex_atom_single \
+cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/mi355x_atom_single.json \
   --config_file "$PERF_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json" \
   --html="$HTML" \

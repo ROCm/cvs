@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-InferenceX ATOM suite config schema (``framework: inferencex_atom_single``).
+InferenceX ATOM suite config schema (``inferencex_atom``).
 
 Generic paths/model/container/threshold plumbing lives in
 :mod:`cvs.lib.utils.config_loader`. Sweep selector types are shared with
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from typing_extensions import Literal
 
 from cvs.lib.inference.utils.inferencing_config_loader import (
@@ -82,8 +82,19 @@ class InferenceXAtomRunCard(_Forbid):
     notes: str = ""
 
 
+INFERENCEX_ATOM_FRAMEWORKS = ("inferencex_atom",)
+
+
 class InferenceXAtomVariantConfig(BaseVariantConfig):
-    framework: Literal["inferencex_atom_single"]
+    framework: Literal["inferencex_atom"]
+
+    @field_validator("framework", mode="before")
+    @classmethod
+    def _normalize_deprecated_framework(cls, value):
+        if value == "inferencex_atom_single":
+            return "inferencex_atom"
+        return value
+
     gpu_arch: str
     run_card: InferenceXAtomRunCard = InferenceXAtomRunCard()
     roles: InferenceXAtomRoles = InferenceXAtomRoles()
