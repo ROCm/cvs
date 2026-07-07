@@ -70,6 +70,7 @@
 		 "prefill_policy": "cache_aware",
 		 "decode_policy": "cache_aware",
 		 "tensor_parallelism": "8",
+		 "pipeline_parallelism": "1",
 		 "memory_fraction": "0.85",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
