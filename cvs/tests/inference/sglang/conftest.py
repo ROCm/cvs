@@ -262,11 +262,6 @@ def inf_res_dict():
 
 
 @pytest.fixture(scope="module")
-def gpu_metrics_snap():
-    return {}
-
-
-@pytest.fixture(scope="module")
 def im_obj(
     p_phdl,
     d_phdl,
@@ -292,13 +287,6 @@ def im_obj(
         b_phdl,
         gpu_type,
     )
-
-
-def pytest_generate_tests(metafunc):
-    from cvs.lib.utils.gpu import GPU_METRICS
-    if "gpu_metric" in metafunc.fixturenames:
-        keys = [f"gpu.{k}" for k, _u in GPU_METRICS]
-        metafunc.parametrize("gpu_metric", keys, ids=keys)
 
 
 def pytest_collection_modifyitems(items):
