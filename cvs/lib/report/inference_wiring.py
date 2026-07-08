@@ -46,3 +46,10 @@ def bind_inference_suite_report_session(
 def attach_inference_suite_report_row_extra(item, report) -> None:
     """Attach compact cell cards to metric test rows in pytest-html."""
     attach_inference_cell_row_extra(item, report)
+
+
+def attach_inference_suite_lifecycle_table(item, report) -> None:
+    """Attach per-test lifecycle timing table to pytest-html rows."""
+    from cvs.lib.inference.inference_suite_lifecycle import attach_lifecycle_html_table
+
+    attach_lifecycle_html_table(item, report)

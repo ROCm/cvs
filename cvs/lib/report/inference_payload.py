@@ -17,6 +17,20 @@ from cvs.lib.report.sweep_shape import (
 )
 from cvs.lib.report.types import InferenceReportConfig
 
+_CELL_KEY_LEN = 6  # model, gpu, isl, osl, policy, concurrency
+
+
+def _inf_res_sort_key(kv: tuple) -> tuple:
+    key = kv[0]
+    if isinstance(key, tuple) and len(key) >= _CELL_KEY_LEN:
+        return (key[4], key[5])
+    return (0, 0)
+
+
+def _metric_column_keys(results_columns: tuple) -> list:
+    """Metric dict keys after identity columns (cell key fields + host)."""
+    return [key for _label, key in results_columns[_CELL_KEY_LEN + 1 :]]
+
 
 def aggregate_lifecycle(
     lifecycle_report: Mapping[str, list],
@@ -112,6 +126,9 @@ def build_sweep_summaries(config: InferenceReportConfig, cells: List[dict]) -> L
         best_conc, best_tput, best_cell = max(points, key=lambda p: p[1])
         ttft_at_max = best_cell["actuals"].get(config.sweep_ttft_metric)
         sorted_points = sorted(points, key=lambda p: p[0])
+        # ``saturated``: throughput at the highest concurrency did not grow meaningfully
+        # (>1%) vs the previous step, and that highest concurrency is where peak
+        # throughput was observed (plateau at the sweep top end).
         saturated = False
         if len(sorted_points) >= 2:
             last_conc, last_tput, _ = sorted_points[-1]
@@ -134,9 +151,9 @@ def build_sweep_summaries(config: InferenceReportConfig, cells: List[dict]) -> L
 
 def build_results_table(config: InferenceReportConfig, inf_res_dict: Mapping[tuple, Any]) -> dict:
     headers = [label for label, _key in config.results_columns]
-    metric_keys = [key for _label, key in config.results_columns]
+    metric_keys = _metric_column_keys(config.results_columns)
     rows: List[List[Any]] = []
-    for key, host_dict in sorted(inf_res_dict.items(), key=lambda kv: (kv[0][4], kv[0][5])):
+    for key, host_dict in sorted(inf_res_dict.items(), key=_inf_res_sort_key):
         model, gpu, isl, osl, policy, conc = key
         if not isinstance(host_dict, dict):
             continue
@@ -144,7 +161,7 @@ def build_results_table(config: InferenceReportConfig, inf_res_dict: Mapping[tup
         for host, metrics in host_dict.items():
             row = list(fixed)
             row.append(host)
-            for mk in metric_keys[7:]:
+            for mk in metric_keys:
                 if mk is None:
                     row.append("\u2014")
                 else:

@@ -127,3 +127,29 @@ def test_write_report_writes_html_and_json(tmp_path):
     assert artifacts["html"].is_file()
     assert artifacts["json"].is_file()
     assert '"suite_id": "test_inference_suite"' in artifacts["json"].read_text(encoding="utf-8")
+
+
+def test_lifecycle_populates_cell_and_session_aggregates():
+    cfg = generic_inference_report_config()
+    lifecycle_report = {
+        "cvs/tests/x.py::test_inference[combo-128]": [
+            ("server_ready", 12.5, "s"),
+            ("client_complete", 45.0, "s"),
+        ],
+        "cvs/tests/x.py::test_inference[combo-256]": [
+            ("server_ready", 8.0, "s"),
+            ("client_complete", 30.0, "s"),
+        ],
+    }
+    payload = build_inference_report_payload(
+        config=cfg,
+        variant_config=generic_variant(),
+        inf_res_dict=two_cell_inf_res(),
+        lifecycle_report=lifecycle_report,
+    )
+    session = payload["lifecycle"]
+    assert session["server_ready"] == 12.5
+    assert session["client_complete"] == 45.0
+
+    cell_128 = next(c for c in payload["cells"] if c["concurrency"] == 128)
+    assert cell_128["cell_lifecycle"]["client_complete"] == 45.0

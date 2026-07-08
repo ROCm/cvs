@@ -6,12 +6,15 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 """
 
 import importlib.metadata
+import logging
 import sys
 from pathlib import Path
 
 import pytest
 
 from cvs.lib.report_plugins import HtmlReportManager
+
+log = logging.getLogger(__name__)
 
 
 def _sync_suite_name_from_args(config):
@@ -44,13 +47,10 @@ def _auto_register_inference_suite_report(config):
     return try_auto_register_inference_suite_report(config)
 
 
-@pytest.hookimpl(tryfirst=True)
-def pytest_configure(config):
-    _ensure_html_report_manager(config)
-
-
 @pytest.hookimpl(trylast=True)
 def pytest_configure(config):
+    """Single hook: manager first, then auto-register after suite ``pytest_configure`` hooks."""
+    _ensure_html_report_manager(config)
     _auto_register_inference_suite_report(config)
 
 
@@ -64,19 +64,45 @@ def _cvs_inference_suite_report_session(request):
         yield
         return
 
+    inf_res_dict = None
+    variant_config = None
+    lifecycle = None
     try:
         inf_res_dict = request.getfixturevalue("inf_res_dict")
+    except pytest.FixtureLookupError:
+        log.warning(
+            "Inference suite report preset registered but inf_res_dict fixture is missing; "
+            "session-end report will be skipped"
+        )
+        yield
+        return
+    try:
         variant_config = request.getfixturevalue("variant_config")
+    except pytest.FixtureLookupError:
+        log.warning(
+            "Inference suite report preset registered but variant_config fixture is missing; "
+            "session-end report will be skipped"
+        )
+        yield
+        return
+    try:
         lifecycle = request.getfixturevalue("lifecycle")
     except pytest.FixtureLookupError:
+        log.warning(
+            "Inference suite report preset registered but lifecycle fixture is missing; "
+            "session-end report will be skipped"
+        )
         yield
         return
 
-    bind_session_results(
-        inf_res_dict=inf_res_dict,
-        variant_config=variant_config,
-        lifecycle=lifecycle,
-    )
+    def _bind_at_module_end():
+        bind_session_results(
+            inf_res_dict=inf_res_dict,
+            variant_config=variant_config,
+            lifecycle=lifecycle,
+        )
+
+    request.addfinalizer(_bind_at_module_end)
     yield
 
 
@@ -161,10 +187,12 @@ def pytest_runtest_makereport(item, call):  # noqa: ARG001
     from cvs.lib.report.types import InferenceReportConfig
 
     if isinstance(get_suite_report_config(item.config), InferenceReportConfig):
-        from cvs.lib.inference.inference_suite_lifecycle import attach_lifecycle_html_table
-        from cvs.lib.report.inference_wiring import attach_inference_suite_report_row_extra
+        from cvs.lib.report.inference_wiring import (
+            attach_inference_suite_lifecycle_table,
+            attach_inference_suite_report_row_extra,
+        )
 
-        attach_lifecycle_html_table(item, report)
+        attach_inference_suite_lifecycle_table(item, report)
         attach_inference_suite_report_row_extra(item, report)
 
 

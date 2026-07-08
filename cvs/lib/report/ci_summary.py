@@ -46,8 +46,6 @@ def worst_cells(payload: Mapping[str, Any], config: InferenceReportConfig, *, li
     )
     worst: List[dict] = []
     for score, cell in scored:
-        if score[0] > 1 and len(worst) >= limit:
-            break
         worst.append(cell)
         if len(worst) >= limit:
             break
