@@ -303,6 +303,17 @@ function cellMapKey(c) {
   return String(c.cell_id || '') + '\0' + String(c.host || '');
 }
 
+function prevRunDeltaPct(current, previous) {
+  if (current == null || previous == null || previous === 0) return null;
+  return 100.0 * (current - previous) / previous;
+}
+
+function prevRunChangeFlags(deltaPct, threshold) {
+  if (deltaPct == null) return { changed: false, regression: false };
+  const changed = Math.abs(deltaPct) > threshold;
+  return { changed, regression: changed && deltaPct < 0 };
+}
+
 function applyPrevRunPanel(panel) {
   if (!panel || !panel.rows) {
     prevRunByKey = null;
@@ -310,7 +321,7 @@ function applyPrevRunPanel(panel) {
   }
   prevRunByKey = new Map();
   panel.rows.forEach(r => {
-    prevRunByKey.set(String(r.cell_id || '') + '\0' + String(r.host || ''), r);
+    prevRunByKey.set(cellMapKey(r), r);
   });
   if (panel.threshold_pct != null) {
     deltaThresholdPct = Number(panel.threshold_pct);
@@ -329,19 +340,13 @@ function buildPrevRunFromBaseline(data) {
     const prev = baseMap.get(cellMapKey(c));
     const current = metricNum(c, headline);
     const previous = prev ? metricNum(prev, headline) : null;
-    let delta_pct = null;
-    let regression = false;
-    let changed = false;
-    if (current != null && previous != null && previous !== 0) {
-      delta_pct = 100.0 * (current - previous) / previous;
-      changed = Math.abs(delta_pct) > threshold;
-      regression = changed && delta_pct < 0;
-    }
+    const delta_pct = prevRunDeltaPct(current, previous);
+    const flags = prevRunChangeFlags(delta_pct, threshold);
     prevRunByKey.set(cellMapKey(c), {
       previous_throughput: previous,
       'compare.prev_run.throughput_delta_pct': delta_pct,
-      regression,
-      changed,
+      regression: flags.regression,
+      changed: flags.changed,
     });
   });
 }
@@ -476,7 +481,7 @@ function buildOverview() {
   const grid = $('summary-grid');
   const summaries = reportData.sweep_summaries || [];
   grid.innerHTML = summaries.map(s => (
-    '<article class="summary-card"><h3>ISL=' + s.isl + ' · OSL=' + s.osl + '</h3>'
+    '<article class="summary-card"><h3>' + shapeLabel(s.isl, s.osl) + '</h3>'
     + '<div class="summary-stat">' + metricVal({ actuals: { 'client.output_throughput': s.max_output_throughput } }, 'client.output_throughput')
     + ' <span style="font-size:0.75rem;font-weight:500;color:var(--muted)">tok/s</span></div>'
     + '<div class="summary-meta">Peak at C=' + s.conc_at_max_tput
@@ -492,6 +497,16 @@ function buildOverview() {
 
 const LINE_DASHES = [[], [7, 4], [3, 3], [10, 4, 2, 4]];
 const LINE_POINT_STYLES = ['circle', 'rect', 'triangle', 'rectRot'];
+const CHART_COLORS = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
+
+function shapeLabel(isl, osl) {
+  return 'ISL=' + isl + ' · OSL=' + osl;
+}
+
+function filtersAreDefault() {
+  return !$('f-isl').value && !$('f-osl').value && !$('f-policy').value
+    && !$('f-host').value && !$('f-tier').value && !$('f-search').value.trim();
+}
 
 function buildLineDataset(series, index, color) {
   const dashed = LINE_DASHES[index % LINE_DASHES.length];
@@ -553,7 +568,7 @@ function buildChartComparisonFromRows(rows) {
         allConcs.add(conc);
       });
       if (byConc.size) {
-        shapeSeries.push({ label: 'ISL=' + isl + ' · OSL=' + osl, byConc });
+        shapeSeries.push({ label: shapeLabel(isl, osl), byConc });
       }
     });
     if (shapeSeries.length < 2) return;
@@ -707,13 +722,12 @@ function buildTradeoffChart(rows) {
   const tputKey = throughputMetricKey();
   const latKey = tradeoffLatencyMetric;
   const latLabel = TRADEOFF_LATENCY_LABELS[latKey] || 'Latency';
-  const colors = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
   const shapes = [...shapeGroups(rows).entries()];
   const datasets = [];
 
   shapes.forEach(([shapeKey, shapeRows], index) => {
     const [isl, osl] = shapeKey.split('|');
-    const shapeLabel = 'ISL=' + isl + ' · OSL=' + osl;
+    const label = shapeLabel(isl, osl);
     const points = shapeRows
       .map(c => {
         const x = metricNum(c, tputKey);
@@ -726,10 +740,10 @@ function buildTradeoffChart(rows) {
       .sort((a, b) => a.conc - b.conc);
     if (!points.length) return;
 
-    const color = colors[index % colors.length];
+    const color = CHART_COLORS[index % CHART_COLORS.length];
     const dashed = LINE_DASHES[index % LINE_DASHES.length];
     datasets.push({
-      label: shapeLabel,
+      label: label,
       data: points,
       showLine: points.length > 1,
       tension: 0.15,
@@ -768,12 +782,12 @@ function buildPercentileCharts(rows) {
 
   shapes.forEach(([shapeKey, shapeRows]) => {
     const [isl, osl] = shapeKey.split('|');
-    const shapeLabel = 'ISL=' + isl + ' · OSL=' + osl;
+    const label = shapeLabel(isl, osl);
     const details = document.createElement('details');
     details.className = 'shape-details';
     details.open = shapes.length <= 2;
     const summary = document.createElement('summary');
-    summary.textContent = shapeLabel;
+    summary.textContent = label;
     details.appendChild(summary);
     const innerGrid = document.createElement('div');
     innerGrid.className = 'chart-grid';
@@ -841,7 +855,7 @@ function buildMarginCharts(rows) {
     if (points.length < 2) return;
     points.forEach(p => allConcs.add(p[0]));
     shapeSeries.push({
-      label: 'ISL=' + isl + ' · OSL=' + osl,
+      label: shapeLabel(isl, osl),
       points,
     });
   });
@@ -851,14 +865,13 @@ function buildMarginCharts(rows) {
   if (concurrencies.length < 2) return;
 
   const labels = concurrencies.map(c => 'C=' + c);
-  const colors = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
   const datasets = shapeSeries.map((s, i) => buildLineDataset({
     label: s.label,
     data: concurrencies.map(c => {
       const hit = s.points.find(p => p[0] === c);
       return hit ? hit[1] : null;
     }),
-  }, i, colors[i % colors.length]));
+  }, i, CHART_COLORS[i % CHART_COLORS.length]));
   datasets.push(gateReferenceDataset(labels));
 
   const metricLabel = (HEATMAP_METRICS[marginMetricKey] || {}).label || 'Gate margin';
@@ -879,7 +892,12 @@ function buildMarginCharts(rows) {
 }
 
 function buildComparisonCharts(rows) {
-  const comparison = buildChartComparisonFromRows(rows);
+  let comparison = null;
+  if (filtersAreDefault() && rows.length === allCells.length) {
+    const baked = reportData.chart_comparison;
+    if (baked && Object.keys(baked).length) comparison = baked;
+  }
+  if (!comparison) comparison = buildChartComparisonFromRows(rows);
   const comparisonGrid = $('comparison-grid');
   const comparisonBlock = $('comparison-block');
   if (!comparisonGrid || !comparisonBlock) return;
@@ -887,7 +905,6 @@ function buildComparisonCharts(rows) {
   comparisonBlock.style.display = 'none';
   if (!comparison) return;
 
-  const colors = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
   const chartType = comparisonChartMode === 'line' ? 'line' : 'bar';
   let chartCount = 0;
 
@@ -895,7 +912,7 @@ function buildComparisonCharts(rows) {
     const entry = comparison[suffix];
     const labels = entry.concurrencies.map(c => 'C=' + c);
     const datasets = entry.series.map((s, i) => {
-      const color = colors[i % colors.length];
+      const color = CHART_COLORS[i % CHART_COLORS.length];
       if (chartType === 'bar') {
         return {
           label: s.label,
@@ -946,17 +963,16 @@ function buildCharts(rows) {
     const shapes = [...shapeGroups(rows).entries()];
     if (shapes.length) {
       perShapeBlock.style.display = 'block';
-      const colors = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
       let chartCount = 0;
 
       shapes.forEach(([shapeKey, shapeRows]) => {
         const [isl, osl] = shapeKey.split('|');
-        const shapeLabel = 'ISL=' + isl + ' · OSL=' + osl;
+        const label = shapeLabel(isl, osl);
         const details = document.createElement('details');
         details.className = 'shape-details';
         details.open = shapes.length <= 2;
         const summary = document.createElement('summary');
-        summary.textContent = shapeLabel;
+        summary.textContent = label;
         details.appendChild(summary);
         const innerGrid = document.createElement('div');
         innerGrid.className = 'chart-grid';
@@ -976,7 +992,7 @@ function buildCharts(rows) {
           wrap.appendChild(canvas);
           card.appendChild(wrap);
           innerGrid.appendChild(card);
-          const color = colors[(idx + chartCount) % colors.length];
+          const color = CHART_COLORS[(idx + chartCount) % CHART_COLORS.length];
           makeChart(
             canvas,
             'line',

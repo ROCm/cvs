@@ -6,10 +6,12 @@ import html
 from typing import List, Tuple
 
 from cvs.lib.report.cell_build import select_summary_cells
-from cvs.lib.report.formatting import fmt_num
-from cvs.lib.report.formatting import link_or_text_html
-from cvs.lib.report.formatting import status_badge_css
-from cvs.lib.report.formatting import status_badge_html
+from cvs.lib.report.formatting import (
+    fmt_num,
+    link_or_text_html,
+    status_badge_css,
+    status_badge_html,
+)
 from cvs.lib.report.render.cell_card import cell_card_report_css, render_cell_card_html
 from cvs.lib.report.render.gate_matrix import (
     gate_heatmap_css,
@@ -20,10 +22,9 @@ from cvs.lib.report.render.gate_matrix import (
 from cvs.lib.report.render.panel_shell import render_panel_section, render_results_table_html
 from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
 from cvs.lib.report.render.sweep_charts import chart_tooltip_css
+from cvs.lib.report.types import DEFAULT_SESSION_LIFECYCLE_LABELS
 
-SESSION_FALLBACK = (
-    "container_launch", "sshd_setup", "model_fetch", "server_ready", "client_complete", "teardown"
-)
+SESSION_FALLBACK = DEFAULT_SESSION_LIFECYCLE_LABELS
 
 
 def _chart_group_keys(chart_cfg: list, chart_series: dict) -> List[Tuple[str, str, str]]:

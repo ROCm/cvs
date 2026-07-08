@@ -11,29 +11,34 @@ from __future__ import annotations
 from typing import Any, Callable, List, Optional, Tuple
 
 from cvs.lib.report.chart_presets import DEFAULT_PERF_CHART_SERIES
-from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries, TierMetricSpecsFn
-
-_SESSION_LIFECYCLE = (
-    "container_launch",
-    "sshd_setup",
-    "model_fetch",
-    "server_ready",
-    "client_complete",
-    "teardown",
+from cvs.lib.report.types import (
+    DEFAULT_CELL_LIFECYCLE_LABELS,
+    DEFAULT_SESSION_LIFECYCLE_LABELS,
+    InferenceReportConfig,
+    ReportChartSeries,
+    TierMetricSpecsFn,
 )
 
-_CELL_LIFECYCLE = ("server_ready", "client_complete")
+
+def provenance_link_rows(provenance: dict) -> List[Tuple[str, str, bool]]:
+    rows: List[Tuple[str, str, bool]] = []
+    if provenance.get("pytest_html_path"):
+        rows.append(("Pytest report", provenance["pytest_html_path"], True))
+    if provenance.get("log_file_path"):
+        rows.append(("Run log", provenance["log_file_path"], True))
+    return rows
+
+
+def thresholds_run_card_row(variant: Any) -> Tuple[str, str, bool]:
+    enforce = bool(getattr(variant, "enforce_thresholds", False))
+    return ("Thresholds", "enforced" if enforce else "record-only", False)
 
 
 def _default_run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
     rows: List[Tuple[str, str, bool]] = [
         ("Model", getattr(getattr(variant, "model", None), "id", "\u2014"), False),
         ("GPU", getattr(variant, "gpu_arch", "\u2014"), False),
-        (
-            "Thresholds",
-            "enforced" if getattr(variant, "enforce_thresholds", False) else "record-only",
-            False,
-        ),
+        thresholds_run_card_row(variant),
     ]
     framework = getattr(variant, "framework", None)
     if framework:
@@ -41,10 +46,7 @@ def _default_run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bo
     params = getattr(variant, "params", None)
     if params is not None and hasattr(params, "tensor_parallelism"):
         rows.append(("TP", str(params.tensor_parallelism), False))
-    if provenance.get("pytest_html_path"):
-        rows.append(("Pytest report", provenance["pytest_html_path"], True))
-    if provenance.get("log_file_path"):
-        rows.append(("Run log", provenance["log_file_path"], True))
+    rows.extend(provenance_link_rows(provenance))
     return rows
 
 
@@ -66,14 +68,6 @@ def _highlights_from_columns(
     if out:
         return tuple(out)
     return (("output_throughput", "Output tok/s"),)
-
-
-def _charts_from_highlights(
-    highlights: tuple[tuple[str, str], ...],
-    metric_units: dict[str, str],
-) -> tuple[ReportChartSeries, ...]:
-    del highlights, metric_units  # builder default uses the shared perf sweep set
-    return DEFAULT_PERF_CHART_SERIES
 
 
 def make_inference_report_config(
@@ -99,10 +93,13 @@ def make_inference_report_config(
     basename = report_basename or f"{suite_id}_report"
     display_title = title or f"{suite_id.replace('_', ' ').title()} Report"
     highlights = cell_highlights or _highlights_from_columns(results_columns, metric_units)
-    charts = chart_series or _charts_from_highlights(highlights, metric_units)
+    charts = chart_series or DEFAULT_PERF_CHART_SERIES
     workload = inference_test_substring or f"test_{suite_id}"
-    session_labels = kwargs.pop("session_lifecycle_labels", _SESSION_LIFECYCLE)
-    cell_labels = kwargs.pop("cell_lifecycle_labels", _CELL_LIFECYCLE)
+    session_labels = kwargs.pop("session_lifecycle_labels", DEFAULT_SESSION_LIFECYCLE_LABELS)
+    cell_labels = kwargs.pop("cell_lifecycle_labels", DEFAULT_CELL_LIFECYCLE_LABELS)
+    row_card_extras = kwargs.pop("row_card_extras", True)
+    interactive_viewer = kwargs.pop("interactive_viewer", True)
+    viewer_cell_threshold = kwargs.pop("viewer_cell_threshold", 24)
 
     return InferenceReportConfig(
         suite_id=suite_id,
@@ -120,9 +117,10 @@ def make_inference_report_config(
         inference_test_substring=workload,
         session_lifecycle_labels=session_labels,
         cell_lifecycle_labels=cell_labels,
-        row_card_extras=True,
+        row_card_extras=row_card_extras,
         row_card_test_names=row_card_test_names,
-        interactive_viewer=True,
+        interactive_viewer=interactive_viewer,
+        viewer_cell_threshold=viewer_cell_threshold,
         run_card_display_builder=run_card_display_builder or _default_run_card,
         **kwargs,
     )

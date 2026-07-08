@@ -7,24 +7,13 @@ import os
 from pathlib import Path
 from typing import Any, List, Mapping, Optional
 
-from cvs.lib.report.compare import metric_delta_pct, metric_ratio, prev_run_change_flags
+from cvs.lib.report.compare import build_prev_run_compare_row
 from cvs.lib.report.formatting import fmt_num
 from cvs.lib.report.json_io import cell_id_host_key, index_cells_by_id_host, load_report_json
 from cvs.lib.report.metrics import HEADLINE_THROUGHPUT_METRIC
 
 PREV_RUN_ENV = "CVS_INFERENCE_PREV_REPORT_JSON"
 DEFAULT_THRESHOLD_PCT = 5.0
-
-
-def cell_lookup_key(cell: Mapping[str, Any]) -> tuple[str, str]:
-    return cell_id_host_key(cell)
-
-
-def load_cell_index(path: Path) -> dict[tuple[str, str], dict]:
-    data = load_report_json(path)
-    if not data:
-        return {}
-    return index_cells_by_id_host(data)
 
 
 def resolve_prev_run_json_path(
@@ -52,42 +41,20 @@ def build_prev_run_panel(
 ) -> Optional[dict]:
     if not baseline_json_path.is_file():
         return None
-    baseline = load_cell_index(baseline_json_path)
+    baseline = index_cells_by_id_host(load_report_json(baseline_json_path) or {})
     if not baseline:
         return None
 
     rows = []
     for cell in cells:
-        prev_cell = baseline.get(cell_lookup_key(cell))
-        actuals = cell.get("actuals") or {}
-        prev_actuals = (prev_cell or {}).get("actuals") or {}
-        current = actuals.get(headline_metric)
-        previous = prev_actuals.get(headline_metric)
-        ratio = None
-        delta_pct = None
-        changed = False
-        regression = False
-        if current is not None and previous is not None:
-            try:
-                cur_f = float(current)
-                prev_f = float(previous)
-                ratio = metric_ratio(cur_f, prev_f)
-                delta_pct = metric_delta_pct(cur_f, prev_f)
-                changed, regression = prev_run_change_flags(delta_pct, threshold_pct)
-            except (TypeError, ValueError):
-                pass
+        prev_cell = baseline.get(cell_id_host_key(cell))
         rows.append(
-            {
-                "cell_id": cell.get("cell_id"),
-                "host": cell.get("host"),
-                "concurrency": cell.get("concurrency"),
-                "current_throughput": current,
-                "previous_throughput": previous,
-                "compare.prev_run.throughput_ratio": ratio,
-                "compare.prev_run.throughput_delta_pct": delta_pct,
-                "changed": changed,
-                "regression": regression,
-            }
+            build_prev_run_compare_row(
+                cell,
+                prev_cell,
+                headline_metric=headline_metric,
+                threshold_pct=threshold_pct,
+            )
         )
 
     return {

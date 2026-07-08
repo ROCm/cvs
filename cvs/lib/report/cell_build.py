@@ -204,6 +204,15 @@ def build_all_cells(
     return cells
 
 
+def cell_has_gated_failure(cell: dict, gated_tiers: tuple[str, ...]) -> bool:
+    tiers = cell.get("tiers") or {}
+    return any(tiers.get(t) == "fail" for t in gated_tiers)
+
+
+def cell_has_any_tier_failure(cell: dict) -> bool:
+    return any(t == "fail" for t in (cell.get("tiers") or {}).values())
+
+
 def select_summary_cells(
     cells: List[dict],
     limit: int,
@@ -214,11 +223,8 @@ def select_summary_cells(
     if limit <= 0 or len(cells) <= limit:
         return cells
 
-    def is_fail(cell: dict) -> bool:
-        return any(cell["tiers"].get(t) == "fail" for t in gated_tiers)
-
-    fails = [c for c in cells if is_fail(c)]
-    rest = [c for c in cells if not is_fail(c)]
+    fails = [c for c in cells if cell_has_gated_failure(c, gated_tiers)]
+    rest = [c for c in cells if not cell_has_gated_failure(c, gated_tiers)]
     selected = list(fails[:limit])
     if len(selected) < limit:
         selected.extend(rest[: limit - len(selected)])

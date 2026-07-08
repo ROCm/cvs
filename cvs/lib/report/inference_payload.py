@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from cvs.lib.report.cell_build import build_all_cells
+from cvs.lib.report.panels.prev_run import build_prev_run_panel, resolve_prev_run_json_path
+from cvs.lib.report.provenance import extend_run_card_display
 from cvs.lib.report.render.gate_matrix import build_gate_matrix_rows
+from cvs.lib.report.sweep_shape import (
+    group_cells_by_shape,
+    metric_values_by_concurrency,
+    shape_label,
+)
 from cvs.lib.report.types import InferenceReportConfig
 
 
@@ -41,15 +48,6 @@ def overall_status(config: InferenceReportConfig, cells: List[dict], enforce: bo
     return "pass"
 
 
-def _group_cells_by_shape(cells: List[dict]) -> Dict[Tuple[str, str], List[dict]]:
-    groups: Dict[Tuple[str, str], List[dict]] = {}
-    for cell in cells:
-        groups.setdefault((str(cell["isl"]), str(cell["osl"])), []).append(cell)
-    for group in groups.values():
-        group.sort(key=lambda c: int(c["concurrency"]))
-    return groups
-
-
 def sweep_has_multi_shape_comparison(cells: List[dict]) -> bool:
     """True when the sweep spans multiple ISL/OSL shapes at two or more concurrencies."""
     shapes: set[Tuple[str, str]] = set()
@@ -72,27 +70,20 @@ def build_chart_series(
     multi-shape sweeps do not collapse distinct cells onto the same concurrency
     axis.
     """
-    groups = _group_cells_by_shape(cells)
+    groups = group_cells_by_shape(cells)
     series: Dict[str, List[dict]] = {}
     for chart in config.chart_series:
         full = config.full_metric(chart.metric_suffix)
         group_entries: List[dict] = []
         for (isl, osl), group_cells in sorted(groups.items()):
-            points: List[Tuple[int, float]] = []
-            for cell in group_cells:
-                val = cell["actuals"].get(full)
-                if val is None:
-                    continue
-                try:
-                    points.append((int(cell["concurrency"]), float(val)))
-                except (TypeError, ValueError):
-                    continue
+            values_by_conc = metric_values_by_concurrency(group_cells, full)
+            points = sorted(values_by_conc.items())
             if len(points) >= 2:
                 group_entries.append(
                     {
                         "isl": isl,
                         "osl": osl,
-                        "label": f"ISL={isl} \u00b7 OSL={osl}",
+                        "label": shape_label(isl, osl),
                         "points": points,
                     }
                 )
@@ -109,7 +100,7 @@ def build_chart_comparison(
     Used for grouped-bar and multi-line charts when the sweep spans two or more
     sequence shapes with at least two concurrency levels.
     """
-    groups = _group_cells_by_shape(cells)
+    groups = group_cells_by_shape(cells)
     if len(groups) < 2:
         return {}
 
@@ -120,23 +111,14 @@ def build_chart_comparison(
         all_concs: set[int] = set()
 
         for (isl, osl), group_cells in sorted(groups.items()):
-            values_by_conc: Dict[int, float] = {}
-            for cell in group_cells:
-                val = cell["actuals"].get(full)
-                if val is None:
-                    continue
-                try:
-                    conc = int(cell["concurrency"])
-                    values_by_conc[conc] = float(val)
-                    all_concs.add(conc)
-                except (TypeError, ValueError):
-                    continue
+            values_by_conc = metric_values_by_concurrency(group_cells, full)
             if values_by_conc:
+                all_concs.update(values_by_conc)
                 shape_rows.append(
                     {
                         "isl": isl,
                         "osl": osl,
-                        "label": f"ISL={isl} \u00b7 OSL={osl}",
+                        "label": shape_label(isl, osl),
                         "values_by_conc": values_by_conc,
                     }
                 )
@@ -167,9 +149,7 @@ def build_chart_comparison(
 
 
 def build_sweep_summaries(config: InferenceReportConfig, cells: List[dict]) -> List[dict]:
-    groups: Dict[Tuple[str, str], List[dict]] = {}
-    for cell in cells:
-        groups.setdefault((str(cell["isl"]), str(cell["osl"])), []).append(cell)
+    groups = group_cells_by_shape(cells)
 
     summaries: List[dict] = []
     for (isl, osl), group in sorted(groups.items()):
@@ -230,6 +210,62 @@ def build_results_table(config: InferenceReportConfig, inf_res_dict: Mapping[tup
     return {"headers": headers, "rows": rows}
 
 
+def _build_run_card_display(
+    config: InferenceReportConfig,
+    variant_config,
+    prov: dict[str, str],
+) -> tuple[list[tuple[str, str, bool]], str, str]:
+    raw_run_card = config.run_card_display_builder(variant_config, prov)
+    run_card_notes = ""
+    run_card_rows: List[Tuple[str, str, bool]] = []
+    for label, value, is_link in raw_run_card:
+        if label == "Notes":
+            run_card_notes = str(value)
+            continue
+        run_card_rows.append((label, value, is_link))
+
+    run_card_display = extend_run_card_display(run_card_rows, prov)
+    run_card_display = [
+        (label, value, is_link)
+        for label, value, is_link in run_card_display
+        if label != "CVS version"
+    ]
+    display_labels = {label for label, _value, _link in run_card_display}
+    if prov.get("cvs_version") and "CVS" not in display_labels:
+        run_card_display.append(("CVS", str(prov["cvs_version"]), False))
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    if "Generated" not in display_labels:
+        run_card_display.append(("Generated", generated_at, False))
+    if not run_card_notes:
+        rc = getattr(variant_config, "run_card", None)
+        if rc and getattr(rc, "notes", None):
+            run_card_notes = str(rc.notes)
+    return run_card_display, run_card_notes, generated_at
+
+
+def _build_panels(
+    config: InferenceReportConfig,
+    cells: List[dict],
+    report_dir: Optional[Path],
+) -> dict:
+    panels: dict = {}
+    prev_run_path = resolve_prev_run_json_path(
+        config.prev_run_json,
+        report_basename=config.report_basename,
+        report_dir=report_dir,
+    )
+    if not prev_run_path:
+        return panels
+    prev_run_panel = build_prev_run_panel(
+        cells,
+        Path(prev_run_path),
+        headline_metric=config.headline_metric,
+    )
+    if prev_run_panel:
+        panels["prev_run"] = prev_run_panel
+    return panels
+
+
 def build_inference_report_payload(
     *,
     config: InferenceReportConfig,
@@ -259,52 +295,13 @@ def build_inference_report_payload(
     if cvs_version:
         prov.setdefault("cvs_version", cvs_version)
 
-    from cvs.lib.report.provenance import extend_run_card_display
-
-    raw_run_card = config.run_card_display_builder(variant_config, prov)
-    run_card_notes = ""
-    run_card_rows: List[Tuple[str, str, bool]] = []
-    for label, value, is_link in raw_run_card:
-        if label == "Notes":
-            run_card_notes = str(value)
-            continue
-        run_card_rows.append((label, value, is_link))
-
-    run_card_display = extend_run_card_display(run_card_rows, prov)
-    run_card_display = [
-        (label, value, is_link)
-        for label, value, is_link in run_card_display
-        if label != "CVS version"
-    ]
-    display_labels = {label for label, _value, _link in run_card_display}
-    if prov.get("cvs_version") and "CVS" not in display_labels:
-        run_card_display.append(("CVS", str(prov["cvs_version"]), False))
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    if "Generated" not in display_labels:
-        run_card_display.append(("Generated", generated_at, False))
-    if not run_card_notes:
-        rc = getattr(variant_config, "run_card", None)
-        if rc and getattr(rc, "notes", None):
-            run_card_notes = str(rc.notes)
+    run_card_display, run_card_notes, generated_at = _build_run_card_display(
+        config, variant_config, prov
+    )
 
     chart_series = build_chart_series(config, cells)
     chart_comparison = build_chart_comparison(config, cells)
-    from cvs.lib.report.panels.prev_run import build_prev_run_panel, resolve_prev_run_json_path
-
-    panels: dict = {}
-    prev_run_path = resolve_prev_run_json_path(
-        config.prev_run_json,
-        report_basename=config.report_basename,
-        report_dir=report_dir,
-    )
-    if prev_run_path:
-        prev_run_panel = build_prev_run_panel(
-            cells,
-            Path(prev_run_path),
-            headline_metric=config.headline_metric,
-        )
-        if prev_run_panel:
-            panels["prev_run"] = prev_run_panel
+    panels = _build_panels(config, cells, report_dir)
 
     chart_config = [
         {
@@ -330,6 +327,8 @@ def build_inference_report_payload(
             "metric_tier_order": config.metric_tier_order,
             "headline_metric": config.headline_metric,
             "sweep_ttft_metric": config.sweep_ttft_metric,
+            "session_lifecycle_labels": config.session_lifecycle_labels,
+            "cell_lifecycle_labels": config.cell_lifecycle_labels,
         },
         "run_card_display": run_card_display,
         "run_card_notes": run_card_notes,

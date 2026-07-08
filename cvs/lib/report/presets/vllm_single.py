@@ -12,7 +12,11 @@ from typing import Any, List, Tuple
 from cvs.lib.inference.inference_suite_results_table import VLLM_SINGLE_RESULTS_COLUMNS
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRIC_UNITS, CLIENT_METRICS
 from cvs.lib.report.chart_presets import DEFAULT_PERF_CHART_SERIES
-from cvs.lib.report.presets.builder import make_inference_report_config
+from cvs.lib.report.presets.builder import (
+    make_inference_report_config,
+    provenance_link_rows,
+    thresholds_run_card_row,
+)
 
 _VLLM_METRIC_TIERS: dict[str, tuple[str, ...]] = {
     "throughput": ("total_token_throughput", "output_throughput"),
@@ -30,7 +34,7 @@ _VLLM_RECORD_METRICS: tuple[str, ...] = tuple(
     short for short, _unit in CLIENT_METRICS if short not in _tiered
 )
 
-_SESSION_LIFECYCLE = (
+_VLLM_SESSION_LIFECYCLE: tuple[str, ...] = (
     "container_launch",
     "topology_discovery",
     "model_fetch",
@@ -59,19 +63,12 @@ def _vllm_run_card_display(variant: Any, provenance: dict) -> List[Tuple[str, st
         ("Model", getattr(getattr(variant, "model", None), "id", "\u2014"), False),
         ("GPU", getattr(variant, "gpu_arch", "\u2014"), False),
         ("Framework", "vllm", False),
-        (
-            "Thresholds",
-            "enforced" if getattr(variant, "enforce_thresholds", False) else "record-only",
-            False,
-        ),
+        thresholds_run_card_row(variant),
     ]
     params = getattr(variant, "params", None)
     if params is not None and hasattr(params, "tensor_parallelism"):
         rows.append(("TP", str(params.tensor_parallelism), False))
-    if provenance.get("pytest_html_path"):
-        rows.append(("Pytest report", provenance["pytest_html_path"], True))
-    if provenance.get("log_file_path"):
-        rows.append(("Run log", provenance["log_file_path"], True))
+    rows.extend(provenance_link_rows(provenance))
     return rows
 
 
@@ -90,5 +87,5 @@ VLLM_SINGLE_REPORT_CONFIG = make_inference_report_config(
     chart_series=DEFAULT_PERF_CHART_SERIES,
     row_card_test_names=("test_metric",),
     run_card_display_builder=_vllm_run_card_display,
-    session_lifecycle_labels=_SESSION_LIFECYCLE,
+    session_lifecycle_labels=_VLLM_SESSION_LIFECYCLE,
 )

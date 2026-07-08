@@ -24,6 +24,7 @@ Session-end generation is automatic when ``--html`` is set; no lifecycle report 
 
 from __future__ import annotations
 
+import importlib.metadata
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -37,6 +38,29 @@ from cvs.lib.report.types import InferenceReportConfig
 from cvs.lib.report.viewer.scaffold import viewer_basename_for, write_interactive_viewer
 
 log = globals.log
+
+
+def _cvs_version() -> str:
+    try:
+        return importlib.metadata.version("cvs")
+    except importlib.metadata.PackageNotFoundError:
+        return "dev"
+
+
+def _summary_payload_meta(config: InferenceReportConfig, total_cells: int) -> dict:
+    if config.interactive_viewer and total_cells > config.viewer_cell_threshold:
+        return {
+            "mode": "truncated",
+            "total_cells": total_cells,
+            "inline_limit": config.viewer_cell_threshold,
+            "viewer_html": viewer_basename_for(config.report_basename),
+            "gated_tiers": list(config.gated_tiers),
+        }
+    summary = {"mode": "full", "total_cells": total_cells}
+    if config.interactive_viewer:
+        summary["viewer_html"] = viewer_basename_for(config.report_basename)
+    return summary
+
 
 # Re-export public API for existing imports.
 __all__ = [
@@ -72,25 +96,11 @@ def write_report(
         provenance=provenance,
         report_dir=out_path.parent,
     )
-    payload["report"]["session_lifecycle_labels"] = config.session_lifecycle_labels
-    payload["report"]["cell_lifecycle_labels"] = config.cell_lifecycle_labels
+    total_cells = len(payload["cells"])
+    payload["summary"] = _summary_payload_meta(config, total_cells)
 
     path = out_path
-    total_cells = len(payload["cells"])
     viewer_path = None
-    summary_mode = config.interactive_viewer and total_cells > config.viewer_cell_threshold
-    if summary_mode:
-        payload["summary"] = {
-            "mode": "truncated",
-            "total_cells": total_cells,
-            "inline_limit": config.viewer_cell_threshold,
-            "viewer_html": viewer_basename_for(config.report_basename),
-            "gated_tiers": list(config.gated_tiers),
-        }
-    else:
-        payload["summary"] = {"mode": "full", "total_cells": total_cells}
-        if config.interactive_viewer:
-            payload["summary"]["viewer_html"] = viewer_basename_for(config.report_basename)
 
     html_path, json_path = write_html_json_artifacts(
         path,
@@ -130,12 +140,7 @@ def publish_inference_suite_report(
         log.warning("Skipping suite report generation: variant_config not in session store")
         return None
 
-    import importlib.metadata
-
-    try:
-        cvs_version = importlib.metadata.version("cvs")
-    except importlib.metadata.PackageNotFoundError:
-        cvs_version = "dev"
+    cvs_version = _cvs_version()
 
     htmlpath = getattr(pytest_config.option, "htmlpath", None)
     if not htmlpath:
@@ -143,11 +148,12 @@ def publish_inference_suite_report(
 
     html_path = Path(htmlpath).resolve()
     log_file = getattr(pytest_config.option, "log_file", None)
+    log_file_path = str(Path(log_file).resolve()) if log_file else ""
     provenance = build_inference_report_provenance(
         pytest_config,
         cvs_version=cvs_version,
         pytest_html_path=str(html_path),
-        log_file_path=str(Path(log_file).resolve()) if log_file else "",
+        log_file_path=log_file_path,
     )
     artifacts = write_report(
         html_path.parent / f"{config.report_basename}.html",
@@ -157,7 +163,7 @@ def publish_inference_suite_report(
         lifecycle_report=lifecycle_report,
         cvs_version=cvs_version,
         pytest_html_path=str(html_path),
-        log_file_path=str(Path(log_file).resolve()) if log_file else "",
+        log_file_path=log_file_path,
         provenance=provenance,
     )
     log.info(

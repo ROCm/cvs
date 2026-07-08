@@ -6,9 +6,9 @@ import html
 from pathlib import Path
 from typing import Any, List, Mapping, Optional
 
+from cvs.lib.report.cell_build import cell_has_any_tier_failure
 from cvs.lib.report.formatting import status_badge_css, status_badge_html
 from cvs.lib.report.json_io import load_report_json
-from cvs.lib.report.metrics import HEADLINE_THROUGHPUT_METRIC
 from cvs.lib.report.types import InferenceReportConfig
 
 _PARITY_JSON = "inference_parity_report.json"
@@ -18,14 +18,17 @@ def ci_summary_basename(report_basename: str) -> str:
     return f"{report_basename}_summary.html"
 
 
-def _cell_worst_score(cell: dict, gated_tiers: tuple[str, ...]) -> tuple:
+def _cell_worst_score(
+    cell: dict,
+    gated_tiers: tuple[str, ...],
+    headline_metric: str,
+) -> tuple:
     failed = sum(1 for t in gated_tiers if cell.get("tiers", {}).get(t) == "fail")
     if failed:
         return (0, -failed, cell.get("cell_id", ""))
-    regressions = 1 if any(t == "fail" for t in cell.get("tiers", {}).values()) else 0
-    if regressions:
+    if cell_has_any_tier_failure(cell):
         return (1, 0, cell.get("cell_id", ""))
-    headline = (cell.get("actuals") or {}).get(HEADLINE_THROUGHPUT_METRIC)
+    headline = (cell.get("actuals") or {}).get(headline_metric)
     try:
         tput = float(headline) if headline is not None else float("inf")
     except (TypeError, ValueError):
@@ -36,10 +39,13 @@ def _cell_worst_score(cell: dict, gated_tiers: tuple[str, ...]) -> tuple:
 def worst_cells(payload: Mapping[str, Any], config: InferenceReportConfig, *, limit: int = 3) -> List[dict]:
     cells = list(payload.get("cells") or [])
     gated = config.gated_tiers
-    ranked = sorted(cells, key=lambda c: _cell_worst_score(c, gated))
+    headline_metric = config.headline_metric
+    scored = sorted(
+        ((_cell_worst_score(c, gated, headline_metric), c) for c in cells),
+        key=lambda item: item[0],
+    )
     worst: List[dict] = []
-    for cell in ranked:
-        score = _cell_worst_score(cell, gated)
+    for score, cell in scored:
         if score[0] > 1 and len(worst) >= limit:
             break
         worst.append(cell)
@@ -169,9 +175,7 @@ def write_inference_ci_summary(
     report_dir = Path(report_dir)
     out = report_dir / ci_summary_basename(config.report_basename)
     parity = None
-    if parity_json_path and parity_json_path.is_file():
-        parity = _parity_summary(report_dir)
-    elif (report_dir / _PARITY_JSON).is_file():
+    if (parity_json_path and parity_json_path.is_file()) or (report_dir / _PARITY_JSON).is_file():
         parity = _parity_summary(report_dir)
     out.write_text(
         render_ci_summary_html(

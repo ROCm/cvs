@@ -13,6 +13,16 @@ from typing import Any, Callable, List, Tuple
 TierMetricSpecsFn = Callable[[dict, str], dict[str, dict]]
 RunCardDisplayFn = Callable[[Any, dict], List[Tuple[str, str, bool]]]
 
+DEFAULT_SESSION_LIFECYCLE_LABELS: tuple[str, ...] = (
+    "container_launch",
+    "sshd_setup",
+    "model_fetch",
+    "server_ready",
+    "client_complete",
+    "teardown",
+)
+DEFAULT_CELL_LIFECYCLE_LABELS: tuple[str, ...] = ("server_ready", "client_complete")
+
 
 @dataclass(frozen=True)
 class ReportChartSeries:
@@ -43,15 +53,8 @@ class InferenceReportConfig:
     chart_series: tuple[ReportChartSeries, ...] = ()
     record_tier: str = "record"
     inference_test_substring: str = "test_inference"
-    session_lifecycle_labels: tuple[str, ...] = (
-        "container_launch",
-        "sshd_setup",
-        "model_fetch",
-        "server_ready",
-        "client_complete",
-        "teardown",
-    )
-    cell_lifecycle_labels: tuple[str, ...] = ("server_ready", "client_complete")
+    session_lifecycle_labels: tuple[str, ...] = DEFAULT_SESSION_LIFECYCLE_LABELS
+    cell_lifecycle_labels: tuple[str, ...] = DEFAULT_CELL_LIFECYCLE_LABELS
     sweep_throughput_metric: str = "client.output_throughput"
     sweep_ttft_metric: str = "client.mean_ttft_ms"
     headline_metric: str = "client.output_throughput"

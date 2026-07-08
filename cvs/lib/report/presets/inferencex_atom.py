@@ -18,41 +18,30 @@ from cvs.lib.inference.utils.inferencex_atom_parsing import (
     tier_metric_specs,
 )
 from cvs.lib.report.chart_presets import DEFAULT_PERF_CHART_SERIES
-from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries
-
-_SESSION_LIFECYCLE = (
-    "container_launch",
-    "sshd_setup",
-    "model_fetch",
-    "server_ready",
-    "client_complete",
-    "teardown",
+from cvs.lib.report.presets.builder import (
+    make_inference_report_config,
+    provenance_link_rows,
+    thresholds_run_card_row,
 )
-
-_CELL_LIFECYCLE = ("server_ready", "client_complete")
 
 
 def _atom_run_card_display(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
     rc = variant.run_card
-    enforce = bool(variant.enforce_thresholds)
     rows: List[Tuple[str, str, bool]] = [
         ("Model", variant.model.id, False),
         ("GPU", variant.gpu_arch, False),
         ("Driver", variant.params.driver, False),
         ("Image pin", rc.atom_image_pin or "\u2014", False),
         ("TP", str(variant.params.tensor_parallelism), False),
-        ("Thresholds", "enforced" if enforce else "record-only", False),
+        thresholds_run_card_row(variant),
     ]
     if rc.upstream_run_url:
         rows.append(("Upstream", rc.upstream_run_url, True))
-    if provenance.get("pytest_html_path"):
-        rows.append(("Pytest report", provenance["pytest_html_path"], True))
-    if provenance.get("log_file_path"):
-        rows.append(("Run log", provenance["log_file_path"], True))
+    rows.extend(provenance_link_rows(provenance))
     return rows
 
 
-INFERENCEX_ATOM_REPORT_CONFIG = InferenceReportConfig(
+INFERENCEX_ATOM_REPORT_CONFIG = make_inference_report_config(
     suite_id="inferencex_atom",
     report_basename="inferencex_atom_run_deck",
     title="IX Run Deck",
@@ -73,11 +62,8 @@ INFERENCEX_ATOM_REPORT_CONFIG = InferenceReportConfig(
     ),
     chart_series=DEFAULT_PERF_CHART_SERIES,
     inference_test_substring="test_inferencex_atom_inference",
-    session_lifecycle_labels=_SESSION_LIFECYCLE,
-    cell_lifecycle_labels=_CELL_LIFECYCLE,
     row_card_extras=False,
     row_card_test_names=("test_cell_metrics",),
-    interactive_viewer=True,
     viewer_cell_threshold=16,
     run_card_display_builder=_atom_run_card_display,
 )
