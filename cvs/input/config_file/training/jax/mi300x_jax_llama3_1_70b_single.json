@@ -3,7 +3,8 @@
     "config":
     {
         "__container_image": "rocm/jax-training:maxtext-v25.9",
-        "container_image": "rocm/jax-training:maxtext-v26.4-jax0.9.1-te2.12.0",
+        "_container_image": "rocm/jax-training:maxtext-v26.4-jax0.9.1-te2.12.0",
+        "container_image": "rocm/jax-training:maxtext-v26.3",
         "container_name": "rocm-jax-llama3.1-70b",
         "distributed_training": "False",
         "enable_checkpointing": "False",
@@ -39,7 +40,6 @@
             "xla_gpu_executable_terminate_timeout": "300",
             "xla_gpu_first_collective_call_warn_stuck_timeout_seconds": "300",
             "xla_gpu_first_collective_call_terminate_timeout_seconds": "1200",
-            "xla_gpu_graph_level": "0",
             "xla_gpu_autotune_level": "0",
             "xla_gpu_enable_reduce_scatter_combine_by_dim": "false",
             "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592",
@@ -107,7 +107,7 @@
         {
              "llama3.1-70b":
              {
-                 "mi325":
+                 "mi300x":
                  {
                      "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
                      "model_size": "70",

@@ -150,7 +150,6 @@ class JaxTrainingJob:
             'xla_gpu_memory_limit_slop_factor': '95',
             'xla_gpu_enable_command_buffer': "''",
             'xla_gpu_enable_cublaslt': 'True',
-            'xla_gpu_graph_level': '0',
             'xla_gpu_autotune_level': '0',
             'xla_gpu_enable_reduce_scatter_combine_by_dim': 'false',
             'xla_gpu_reduce_scatter_combine_threshold_bytes': '8589934592',
