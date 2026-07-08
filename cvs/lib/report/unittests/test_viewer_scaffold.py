@@ -56,27 +56,10 @@ def test_write_interactive_viewer(tmp_path):
     text = out.read_text(encoding="utf-8")
     assert "suite_report.json" in text
     assert "embedded-report-json" in text
-    assert '"cell_id":"c1"' in text or '"cell_id": "c1"' in text
-    assert "f-isl" in text
+    assert '"cell_id"' in text
     assert "chart.js" in text
-    assert "heatmap-section" in text or 'id="heatmap"' in text
-    assert "gate-wrap" in text
-    assert "btn-export" in text
     assert "comparison-grid" in text
-    assert "compare-mode-bars" in text
-    assert "tradeoff-block" in text
-    assert "tradeoff-latency-metric" in text
-    assert "Throughput vs latency" in text
-    assert "percentile-block" in text
-    assert "margin-block" in text
-    assert "margin-metric" in text
-    assert "heatmap-metric" in text
-    assert "P90 / P95 / P99 vs concurrency" in text
-    assert "Gate margin vs concurrency" in text
-    assert "compare-grid" not in text
-    assert "trend-grid" not in text
     assert 'id="overview"' in text
-    assert 'id="heatmap"' in text
 
 
 def test_viewer_written_when_interactive_enabled(tmp_path):

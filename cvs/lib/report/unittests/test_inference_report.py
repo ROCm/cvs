@@ -36,6 +36,7 @@ def test_build_inference_report_payload_uses_config():
     assert payload["chart_series"]["output_throughput"][0]["label"] == "ISL=1024 · OSL=1024"
     assert len(payload["chart_config"]) == 1
     assert payload["chart_config"][0]["suffix"] == "output_throughput"
+    assert "chart_comparison" not in payload
 
 
 def test_render_report_html_from_payload():
@@ -45,13 +46,21 @@ def test_render_report_html_from_payload():
         variant_config=generic_variant(),
         inf_res_dict=two_cell_inf_res(),
         lifecycle_report={},
+        pytest_html_path="/out/ix_atom_run.html",
+        log_file_path="/out/ix_atom_run.log",
     )
+    payload["run_card_display"] = [
+        ("Pytest report", "/out/ix_atom_run.html", True),
+        ("Run log", "/out/ix_atom_run.log", True),
+    ]
     doc = render_report_html(payload)
     assert "Test inference suite report" in doc
     assert "report-nav" in doc
     assert "Gate matrix" in doc
     assert "heatmap" in doc
     assert "Full results" in doc
+    assert '<a href="ix_atom_run.html">Pytest report</a>' in doc
+    assert '<a href="ix_atom_run.log">Run log</a>' in doc
 
 
 def test_build_chart_series_groups_by_isl_osl():
@@ -71,47 +80,8 @@ def test_build_chart_series_groups_by_isl_osl():
     doc = render_report_html(payload)
     assert doc.count("<h3 class='chart-group-title'>") == 2
     assert "P99 ITL" in doc
-
-
-def test_build_chart_comparison_groups_shapes_at_each_concurrency():
-    cfg = replace(generic_inference_report_config(), chart_series=DEFAULT_PERF_CHART_SERIES)
-    payload = build_inference_report_payload(
-        config=cfg,
-        variant_config=generic_variant(),
-        inf_res_dict=multi_shape_inf_res(),
-        lifecycle_report={},
-    )
-    comparison = payload["chart_comparison"]["output_throughput"]
-    assert comparison["concurrencies"] == [16, 32]
-    assert len(comparison["series"]) == 2
-    labels = {s["label"] for s in comparison["series"]}
-    assert labels == {"ISL=1024 · OSL=1024", "ISL=8192 · OSL=1024"}
-
-
-def test_render_report_html_keeps_cross_shape_comparison_out_of_static_html():
-    cfg = replace(generic_inference_report_config(), chart_series=DEFAULT_PERF_CHART_SERIES)
-    payload = build_inference_report_payload(
-        config=cfg,
-        variant_config=generic_variant(),
-        inf_res_dict=multi_shape_inf_res(),
-        lifecycle_report={},
-    )
-    doc = render_report_html(payload)
     assert "Compare shapes at each concurrency" not in doc
-    assert "Scaling trends across shapes" not in doc
-    assert payload["chart_comparison"]
     assert "interactive viewer" in doc
-
-
-def test_build_chart_comparison_empty_for_single_shape():
-    cfg = generic_inference_report_config()
-    payload = build_inference_report_payload(
-        config=cfg,
-        variant_config=generic_variant(),
-        inf_res_dict=two_cell_inf_res(),
-        lifecycle_report={},
-    )
-    assert payload["chart_comparison"] == {}
 
 
 def test_sweep_has_multi_shape_comparison():

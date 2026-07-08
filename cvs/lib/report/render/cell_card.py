@@ -3,70 +3,96 @@
 from __future__ import annotations
 
 import html
-from typing import Mapping, Optional
+from typing import Literal, Mapping, Optional
 
 from cvs.lib.report.formatting import fmt_num, pytest_row_link_html
 
-def cell_card_css(*, compact: bool = False) -> str:
-    base = """
-.cell-card { background: #1a1d27; border: 1px solid #2a2f3d; border-radius: 12px;
-  padding: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem;
-  font-family: "Segoe UI", system-ui, sans-serif; color: #e8eaef; }
+_THEME_TOKENS: dict[str, dict[str, str]] = {
+    "pytest": {
+        "card_bg": "#1a1d27",
+        "border": "#2a2f3d",
+        "text": "#e8eaef",
+        "accent": "#ff6b35",
+        "muted": "#9aa3b5",
+        "pass": "#3dd68c",
+        "fail": "#ff5c6a",
+        "record": "#6b9fff",
+        "na": "#5c6370",
+        "card_font": 'font-family: "Segoe UI", system-ui, sans-serif; color: #e8eaef;',
+    },
+    "report": {
+        "card_bg": "var(--panel)",
+        "border": "var(--border)",
+        "text": "inherit",
+        "accent": "var(--accent)",
+        "muted": "var(--muted)",
+        "pass": "var(--pass)",
+        "fail": "var(--fail)",
+        "record": "var(--record)",
+        "na": "var(--na)",
+        "card_font": "",
+    },
+}
+
+
+def _cell_card_css(*, theme: Literal["pytest", "report"] = "pytest", compact: bool = False) -> str:
+    t = _THEME_TOKENS[theme]
+    text_rule = f" color: {t['text']};" if t["text"] != "inherit" else ""
+    card_font = t["card_font"]
+    grid_rule = (
+        ".cells { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }\n"
+        if theme == "report"
+        else ""
+    )
+    compact_rules = ""
+    if compact:
+        compact_rules = """
 .cell-card-compact { padding: 0.85rem 1rem; gap: 0.5rem; font-size: 0.85rem; }
-.headline { font-size: 2.25rem; font-weight: 700; color: #ff6b35; line-height: 1; }
 .cell-card-compact .headline { font-size: 1.5rem; }
-.headline-unit { font-size: 0.9rem; color: #9aa3b5; margin-left: 0.35rem; }
-.cell-sub { font-size: 0.8rem; color: #9aa3b5; }
-.cell-mini-tl { display: flex; gap: 4px; min-height: 36px; border-radius: 6px; overflow: hidden; font-size: 0.65rem; }
-.cell-mini-seg { display: flex; flex-direction: column; justify-content: center; align-items: center;
-  padding: 0.25rem; background: rgba(255,255,255,0.05); min-width: 40px; }
-.tl-lbl { font-size: 0.65rem; color: #9aa3b5; text-align: center; }
-.tl-val { font-size: 0.8rem; font-weight: 600; color: #ff6b35; }
-.chip { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; padding: 0.2rem 0.5rem;
-  border-radius: 999px; display: inline-block; margin-right: 0.25rem; }
-.chip-pass { background: rgba(61,214,140,0.15); color: #3dd68c; }
-.chip-fail { background: rgba(255,92,106,0.15); color: #ff5c6a; }
-.chip-record { background: rgba(107,159,255,0.12); color: #6b9fff; }
-.chip-na { background: rgba(92,99,112,0.2); color: #5c6370; }
-.bar-track { height: 4px; background: #2a2f3d; border-radius: 2px; margin-top: 0.35rem; overflow: hidden; }
-.bar-fill { height: 100%; border-radius: 2px; }
-.bar-pass { background: #3dd68c; } .bar-fail { background: #ff5c6a; } .bar-record { background: #6b9fff; }
-.target, .metric-label, .cell-foot { font-size: 0.7rem; color: #9aa3b5; }
-.metric-row-highlight { outline: 1px solid #6b9fff; border-radius: 6px; padding: 0.25rem; }
-.margin { font-size: 0.7rem; color: #3dd68c; display: block; }
-.margin-fail { color: #ff5c6a; }
-.headline-margin { font-size: 0.85rem; color: #3dd68c; margin-top: 0.15rem; }
-.headline-margin-fail { color: #ff5c6a; }
-.metric-val { font-weight: 600; }
-.metric-margin-col { font-size: 0.75rem; color: #9aa3b5; min-width: 5rem; text-align: right; }
-.metric-row-grid { display: grid; grid-template-columns: 1fr auto auto; gap: 0.35rem 0.75rem; align-items: baseline; }
 """
-    return base
+    chip_margin = " margin-right: 0.25rem;" if theme == "pytest" else ""
+    return (
+        grid_rule
+        + f"""
+.cell-card {{ background: {t['card_bg']}; border: 1px solid {t['border']}; border-radius: 12px;
+  padding: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem;{text_rule} {card_font} }}
+{compact_rules}.headline {{ font-size: 2.25rem; font-weight: 700; color: {t['accent']}; line-height: 1; }}
+.headline-unit {{ font-size: 0.9rem; color: {t['muted']}; margin-left: 0.35rem; }}
+.cell-sub {{ font-size: 0.8rem; color: {t['muted']}; }}
+.cell-mini-tl {{ display: flex; gap: 4px; min-height: 36px; border-radius: 6px; overflow: hidden; font-size: 0.65rem; }}
+.cell-mini-seg {{ display: flex; flex-direction: column; justify-content: center; align-items: center;
+  padding: 0.25rem; background: rgba(255,255,255,0.05); min-width: 40px; }}
+.tl-lbl {{ font-size: 0.65rem; color: {t['muted']}; text-align: center; }}
+.tl-val {{ font-size: 0.8rem; font-weight: 600; color: {t['accent']}; }}
+.chip {{ font-size: 0.7rem; font-weight: 600; text-transform: uppercase; padding: 0.2rem 0.5rem;
+  border-radius: 999px; display: inline-block;{chip_margin} }}
+.chip-pass {{ background: rgba(61,214,140,0.15); color: {t['pass']}; }}
+.chip-fail {{ background: rgba(255,92,106,0.15); color: {t['fail']}; }}
+.chip-record {{ background: rgba(107,159,255,0.12); color: {t['record']}; }}
+.chip-na {{ background: rgba(92,99,112,0.2); color: {t['na']}; }}
+.bar-track {{ height: 4px; background: {t['border']}; border-radius: 2px; margin-top: 0.35rem; overflow: hidden; }}
+.bar-fill {{ height: 100%; border-radius: 2px; }}
+.bar-pass {{ background: {t['pass']}; }} .bar-fail {{ background: {t['fail']}; }} .bar-record {{ background: {t['record']}; }}
+.target, .metric-label, .cell-foot {{ font-size: 0.7rem; color: {t['muted']}; }}
+.metric-row-highlight {{ outline: 1px solid {t['record']}; border-radius: 6px; padding: 0.25rem; }}
+.margin {{ font-size: 0.7rem; color: {t['pass']}; display: block; }}
+.margin-fail {{ color: {t['fail']}; }}
+.headline-margin {{ font-size: 0.85rem; color: {t['pass']}; margin-top: 0.15rem; }}
+.headline-margin-fail {{ color: {t['fail']}; }}
+.metric-val {{ font-weight: 600; }}
+.metric-margin-col {{ font-size: 0.75rem; color: {t['muted']}; min-width: 5rem; text-align: right; }}
+.metric-row-grid {{ display: grid; grid-template-columns: 1fr auto auto; gap: 0.35rem 0.75rem; align-items: baseline; }}
+"""
+    )
+
+
+def cell_card_css(*, compact: bool = False) -> str:
+    return _cell_card_css(theme="pytest", compact=compact)
 
 
 def cell_card_report_css() -> str:
     """Cell card rules using report theme CSS variables (static inference HTML)."""
-    return """
-.cells { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
-.cell-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  padding: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem; }
-.headline { font-size: 2.25rem; font-weight: 700; color: var(--accent); line-height: 1; }
-.headline-unit { font-size: 0.9rem; color: var(--muted); margin-left: 0.35rem; }
-.cell-sub { font-size: 0.8rem; color: var(--muted); }
-.cell-mini-tl { display: flex; gap: 4px; min-height: 36px; border-radius: 6px; overflow: hidden; font-size: 0.65rem; }
-.cell-mini-seg { display: flex; flex-direction: column; justify-content: center; align-items: center;
-  padding: 0.25rem; background: rgba(255,255,255,0.05); min-width: 40px; }
-.chip { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; padding: 0.2rem 0.5rem; border-radius: 999px; }
-.chip-pass { background: rgba(61,214,140,0.15); color: var(--pass); }
-.chip-fail { background: rgba(255,92,106,0.15); color: var(--fail); }
-.chip-record { background: rgba(107,159,255,0.12); color: var(--record); }
-.chip-na { background: rgba(92,99,112,0.2); color: var(--na); }
-.bar-track { height: 4px; background: var(--border); border-radius: 2px; margin-top: 0.35rem; overflow: hidden; }
-.bar-fill { height: 100%; border-radius: 2px; }
-.bar-pass { background: var(--pass); } .bar-fail { background: var(--fail); } .bar-record { background: var(--record); }
-.target, .metric-label, .cell-foot { font-size: 0.7rem; color: var(--muted); }
-.margin { font-size: 0.7rem; color: var(--pass); display: block; } .margin-fail { color: var(--fail); }
-"""
+    return _cell_card_css(theme="report")
 
 
 def render_cell_lifecycle_html(

@@ -503,11 +503,6 @@ function shapeLabel(isl, osl) {
   return 'ISL=' + isl + ' · OSL=' + osl;
 }
 
-function filtersAreDefault() {
-  return !$('f-isl').value && !$('f-osl').value && !$('f-policy').value
-    && !$('f-host').value && !$('f-tier').value && !$('f-search').value.trim();
-}
-
 function buildLineDataset(series, index, color) {
   const dashed = LINE_DASHES[index % LINE_DASHES.length];
   return {
@@ -892,12 +887,7 @@ function buildMarginCharts(rows) {
 }
 
 function buildComparisonCharts(rows) {
-  let comparison = null;
-  if (filtersAreDefault() && rows.length === allCells.length) {
-    const baked = reportData.chart_comparison;
-    if (baked && Object.keys(baked).length) comparison = baked;
-  }
-  if (!comparison) comparison = buildChartComparisonFromRows(rows);
+  const comparison = buildChartComparisonFromRows(rows);
   const comparisonGrid = $('comparison-grid');
   const comparisonBlock = $('comparison-block');
   if (!comparisonGrid || !comparisonBlock) return;
