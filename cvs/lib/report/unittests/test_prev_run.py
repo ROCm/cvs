@@ -4,7 +4,6 @@ import json
 
 from cvs.lib.report.panels.prev_run import (
     build_prev_run_panel,
-    render_prev_run_panel_html,
     resolve_prev_run_json_path,
 )
 
@@ -36,8 +35,9 @@ def test_prev_run_panel_flags_regression(tmp_path):
     ]
     panel = build_prev_run_panel(current_cells, baseline, threshold_pct=5.0)
     assert panel is not None
-    assert panel["rows"][0]["regression"] is True
-    assert "Prev tok/s" in render_prev_run_panel_html(panel)
+    row = panel["rows"][0]
+    assert row["regression"] is True
+    assert row["compare.prev_run.throughput_delta_pct"] == -10.0
 
 
 def test_resolve_prev_run_json_path_sibling(tmp_path):

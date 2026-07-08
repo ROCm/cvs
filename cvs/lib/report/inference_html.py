@@ -19,7 +19,7 @@ from cvs.lib.report.render.gate_matrix import (
     render_gate_heatmap_html,
     render_gate_matrix_html,
 )
-from cvs.lib.report.render.panel_shell import render_panel_section, render_results_table_html
+from cvs.lib.report.render.panel_shell import render_results_table_html
 from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
 from cvs.lib.report.render.sweep_charts import chart_tooltip_css
 from cvs.lib.report.types import DEFAULT_SESSION_LIFECYCLE_LABELS

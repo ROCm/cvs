@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import html
 import os
 from pathlib import Path
-from typing import Any, List, Mapping, Optional
+from typing import List, Optional
 
 from cvs.lib.report.compare import build_prev_run_compare_row
-from cvs.lib.report.formatting import fmt_num
 from cvs.lib.report.json_io import cell_id_host_key, index_cells_by_id_host, load_report_json
 from cvs.lib.report.metrics import HEADLINE_THROUGHPUT_METRIC
 
@@ -63,30 +61,3 @@ def build_prev_run_panel(
         "threshold_pct": threshold_pct,
         "rows": rows,
     }
-
-
-def render_prev_run_panel_html(panel: dict) -> str:
-    rows = panel.get("rows") or []
-    if not rows:
-        return "<p class='muted'>No aligned cells between this run and the baseline JSON.</p>"
-    threshold = panel.get("threshold_pct", DEFAULT_THRESHOLD_PCT)
-    body = []
-    for row in rows:
-        delta = row.get("compare.prev_run.throughput_delta_pct")
-        delta_s = f"{delta:+.1f}%" if delta is not None else "\u2014"
-        row_cls = "fail" if row.get("regression") else ("changed" if row.get("changed") else "")
-        body.append(
-            f"<tr class='{row_cls}'><td>{html.escape(str(row.get('cell_id', '')))}</td>"
-            f"<td>{html.escape(str(row.get('host', '')))}</td>"
-            f"<td>{row.get('concurrency', '')}</td>"
-            f"<td>{fmt_num(row.get('previous_throughput'))}</td>"
-            f"<td>{fmt_num(row.get('current_throughput'))}</td>"
-            f"<td>{html.escape(delta_s)}</td></tr>"
-        )
-    baseline = html.escape(str(panel.get("baseline_json", "")))
-    return (
-        f"<p class='muted'>Baseline: {baseline} · flag when |delta| &gt; {threshold}%</p>"
-        "<table class='results-table'><tr><th>Cell</th><th>Host</th><th>C</th>"
-        "<th>Prev tok/s</th><th>Current tok/s</th><th>Delta</th></tr>"
-        f"{''.join(body)}</table>"
-    )

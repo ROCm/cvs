@@ -13,5 +13,5 @@ __pycache__/
 # Build distributions
 dist/
 
-# Local IX Run Deck sample output (generate_ix_atom_sample_report.py)
+# Local IX Run Deck sample output
 sample_reports/

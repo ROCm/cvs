@@ -1,14 +1,9 @@
-'''Shared panel section and results-table HTML for static reports.'''
+'''Shared results-table HTML for static reports.'''
 
 from __future__ import annotations
 
 import html
 from typing import Any, Iterable, Sequence
-
-
-def render_panel_section(title: str, body_html: str, *, section_id: str = "") -> str:
-    id_attr = f" id='{html.escape(section_id)}'" if section_id else ""
-    return f"<section class='panel'{id_attr}><h2>{html.escape(title)}</h2>{body_html}</section>"
 
 
 def render_results_table_html(
