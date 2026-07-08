@@ -48,19 +48,20 @@ def test_render_report_html_from_payload():
         lifecycle_report={},
         pytest_html_path="/out/ix_atom_run.html",
         log_file_path="/out/ix_atom_run.log",
+        provenance={
+            "pytest_html_href": "../ix_atom_run.html",
+            "log_file_href": "ix_atom_run.log",
+        },
     )
-    payload["run_card_display"] = [
-        ("Pytest report", "/out/ix_atom_run.html", True),
-        ("Run log", "/out/ix_atom_run.log", True),
-    ]
     doc = render_report_html(payload)
     assert "Test inference suite report" in doc
     assert "report-nav" in doc
     assert "Gate matrix" in doc
     assert "heatmap" in doc
     assert "Full results" in doc
-    assert '<a href="ix_atom_run.html">Pytest report</a>' in doc
+    assert '<a href="../ix_atom_run.html">Pytest report</a>' in doc
     assert '<a href="ix_atom_run.log">Run log</a>' in doc
+    assert "class='notes'" not in doc
 
 
 def test_build_chart_series_groups_by_isl_osl():
@@ -100,6 +101,18 @@ def test_sweep_has_multi_shape_comparison():
     )
     assert sweep_has_multi_shape_comparison(multi["cells"])
     assert not sweep_has_multi_shape_comparison(single["cells"])
+
+
+def test_payload_omits_variant_run_card_notes():
+    variant = generic_variant()
+    variant.run_card = type("RunCard", (), {"notes": "demo note that should not render"})()
+    payload = build_inference_report_payload(
+        config=generic_inference_report_config(),
+        variant_config=variant,
+        inf_res_dict=two_cell_inf_res(),
+        lifecycle_report={},
+    )
+    assert payload.get("run_card_notes") == ""
 
 
 def test_write_report_writes_html_and_json(tmp_path):

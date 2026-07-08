@@ -22,10 +22,12 @@ from cvs.lib.report.types import (
 
 def provenance_link_rows(provenance: dict) -> List[Tuple[str, str, bool]]:
     rows: List[Tuple[str, str, bool]] = []
-    if provenance.get("pytest_html_path"):
-        rows.append(("Pytest report", provenance["pytest_html_path"], True))
-    if provenance.get("log_file_path"):
-        rows.append(("Run log", provenance["log_file_path"], True))
+    pytest_href = provenance.get("pytest_html_href") or provenance.get("pytest_html_path")
+    if pytest_href:
+        rows.append(("Pytest report", str(pytest_href), True))
+    log_href = provenance.get("log_file_href") or provenance.get("log_file_path")
+    if log_href:
+        rows.append(("Run log", str(log_href), True))
     return rows
 
 

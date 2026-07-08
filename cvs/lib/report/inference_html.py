@@ -371,7 +371,9 @@ def render_report_html(payload: dict) -> str:
     cell_lifecycle_labels = tuple(
         report.get("cell_lifecycle_labels") or ("server_ready", "client_complete")
     )
-    pytest_basename = (payload.get("provenance") or {}).get("pytest_html_basename", "")
+    pytest_basename = (payload.get("provenance") or {}).get("pytest_html_href") or (
+        (payload.get("provenance") or {}).get("pytest_html_basename", "")
+    )
     cell_cards = [
         render_cell_card_html(
             c,

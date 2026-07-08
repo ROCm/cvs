@@ -25,6 +25,7 @@ Session-end generation is automatic when ``--html`` is set; no lifecycle report 
 from __future__ import annotations
 
 import importlib.metadata
+import shutil
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -60,6 +61,30 @@ def _summary_payload_meta(config: InferenceReportConfig, total_cells: int) -> di
     if config.interactive_viewer:
         summary["viewer_html"] = viewer_basename_for(config.report_basename)
     return summary
+
+
+def _bundle_artifact_hrefs(
+    *,
+    html_path: Path,
+    log_file_path: str,
+    report_manager,
+) -> tuple[Path, str, str]:
+    """Return output dir and zip-safe hrefs for pytest HTML and run log."""
+    out_dir = html_path.parent
+    pytest_href = html_path.name
+    log_href = ""
+    if report_manager and report_manager.is_enabled:
+        out_dir = report_manager.log_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        pytest_href = f"../{html_path.name}"
+        if log_file_path:
+            log_src = Path(log_file_path)
+            log_href = log_src.name
+            if log_src.is_file():
+                shutil.copy2(log_src, out_dir / log_src.name)
+    elif log_file_path:
+        log_href = Path(log_file_path).name
+    return out_dir, pytest_href, log_href
 
 
 # Re-export public API for existing imports.
@@ -149,14 +174,21 @@ def publish_inference_suite_report(
     html_path = Path(htmlpath).resolve()
     log_file = getattr(pytest_config.option, "log_file", None)
     log_file_path = str(Path(log_file).resolve()) if log_file else ""
+    out_dir, pytest_href, log_href = _bundle_artifact_hrefs(
+        html_path=html_path,
+        log_file_path=log_file_path,
+        report_manager=report_manager,
+    )
     provenance = build_inference_report_provenance(
         pytest_config,
         cvs_version=cvs_version,
         pytest_html_path=str(html_path),
         log_file_path=log_file_path,
+        pytest_html_href=pytest_href,
+        log_file_href=log_href,
     )
     artifacts = write_report(
-        html_path.parent / f"{config.report_basename}.html",
+        out_dir / f"{config.report_basename}.html",
         config=config,
         variant_config=variant_config,
         inf_res_dict=inf_res_dict,

@@ -29,6 +29,8 @@ def build_inference_report_provenance(
     cvs_version: str,
     pytest_html_path: str = "",
     log_file_path: str = "",
+    pytest_html_href: str = "",
+    log_file_href: str = "",
 ) -> dict[str, str]:
     cluster = getattr(pytest_config.option, "cluster_file", None) or ""
     config_file = getattr(pytest_config.option, "config_file", None) or ""
@@ -42,10 +44,17 @@ def build_inference_report_provenance(
     commit = git_commit_short()
     if commit:
         provenance["git_commit"] = commit
-    if pytest_html_path:
+    if pytest_html_path or pytest_html_href:
         from pathlib import Path
 
-        provenance["pytest_html_basename"] = Path(pytest_html_path).name
+        href = pytest_html_href or Path(pytest_html_path).name
+        provenance["pytest_html_href"] = href
+        provenance["pytest_html_basename"] = href
+    if log_file_path or log_file_href:
+        from pathlib import Path
+
+        href = log_file_href or Path(log_file_path).name
+        provenance["log_file_href"] = href
     return provenance
 
 

@@ -180,10 +180,6 @@ def _build_run_card_display(
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     if "Generated" not in display_labels:
         run_card_display.append(("Generated", generated_at, False))
-    if not run_card_notes:
-        rc = getattr(variant_config, "run_card", None)
-        if rc and getattr(rc, "notes", None):
-            run_card_notes = str(rc.notes)
     return run_card_display, run_card_notes, generated_at
 
 
