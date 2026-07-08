@@ -734,8 +734,8 @@ class TestGpuMetricsConstants(unittest.TestCase):
                 self.assertIn(f"gpu.{short}", out)
 
     def test_derived_metrics_not_emitted_by_parser(self):
-        """GPU_METRICS (derived) are computed in vllm_single, not by the parser.
-        parse_gpu_metrics must NOT emit keys for derived short names."""
+        """GPU_METRICS (derived) are computed by the calling suite, not by the
+        parser. parse_gpu_metrics must NOT emit keys for derived short names."""
         out = parse_gpu_metrics([_full_gpu_entry()])
         for short, _unit in GPU_METRICS:
             with self.subTest(metric=short):

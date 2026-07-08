@@ -242,7 +242,7 @@ def gpu_metrics_snap():
     return {}   # stores pre/post-load snapshots keyed by (cell_key, "preload"/"loaded")
 ```
 
-`test_vllm_inference` accepts `gpu_metrics_snap` as a function argument to store
+`test_<framework>_inference` accepts `gpu_metrics_snap` as a function argument to store
 intermediate snapshots. Omitting it causes a collection error even if the test never
 uses the fixture body.
 

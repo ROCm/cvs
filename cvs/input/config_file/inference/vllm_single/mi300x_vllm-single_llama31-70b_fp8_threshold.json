@@ -23,12 +23,7 @@
     "client.p95_e2el_ms":            { "kind": "max_ms",    "value": 1000000 },
     "client.p99_e2el_ms":            { "kind": "max_ms",    "value": 1000000 },
     "client.success_rate":           { "kind": "min",       "value": 0 },
-    "client.failed":                 { "kind": "max",       "value": 1000000000 },
-    "gpu.peak_gpu_memory_mb":        { "kind": "max",       "value": 200000 },
-    "gpu.model_load_memory_mb":      { "kind": "max",       "value": 180000 },
-    "gpu.model_load_s":              { "kind": "max",       "value": 300    },
-    "gpu.gpu_compute_util_pct":      { "kind": "min",       "value": 70     },
-    "gpu.gpu_bandwidth_util_pct":    { "kind": "min",       "value": 60     }
+    "client.failed":                 { "kind": "max",       "value": 1000000000 }
   },
   "ISL=8000,OSL=1000,TP=8,CONC=16": {
     "client.total_token_throughput": { "kind": "min_tok_s", "value": 0 },
@@ -53,12 +48,7 @@
     "client.p95_e2el_ms":            { "kind": "max_ms",    "value": 1000000 },
     "client.p99_e2el_ms":            { "kind": "max_ms",    "value": 1000000 },
     "client.success_rate":           { "kind": "min",       "value": 0 },
-    "client.failed":                 { "kind": "max",       "value": 1000000000 },
-    "gpu.peak_gpu_memory_mb":        { "kind": "max",       "value": 200000 },
-    "gpu.model_load_memory_mb":      { "kind": "max",       "value": 180000 },
-    "gpu.model_load_s":              { "kind": "max",       "value": 300    },
-    "gpu.gpu_compute_util_pct":      { "kind": "min",       "value": 70     },
-    "gpu.gpu_bandwidth_util_pct":    { "kind": "min",       "value": 60     }
+    "client.failed":                 { "kind": "max",       "value": 1000000000 }
   },
   "ISL=1000,OSL=8000,TP=8,CONC=16": {
     "client.total_token_throughput": { "kind": "min_tok_s", "value": 0 },
@@ -83,12 +73,7 @@
     "client.p95_e2el_ms":            { "kind": "max_ms",    "value": 1000000 },
     "client.p99_e2el_ms":            { "kind": "max_ms",    "value": 1000000 },
     "client.success_rate":           { "kind": "min",       "value": 0 },
-    "client.failed":                 { "kind": "max",       "value": 1000000000 },
-    "gpu.peak_gpu_memory_mb":        { "kind": "max",       "value": 200000 },
-    "gpu.model_load_memory_mb":      { "kind": "max",       "value": 180000 },
-    "gpu.model_load_s":              { "kind": "max",       "value": 300    },
-    "gpu.gpu_compute_util_pct":      { "kind": "min",       "value": 70     },
-    "gpu.gpu_bandwidth_util_pct":    { "kind": "min",       "value": 60     }
+    "client.failed":                 { "kind": "max",       "value": 1000000000 }
   },
   "ISL=1000,OSL=4000,TP=8,CONC=16": {
     "client.total_token_throughput": { "kind": "min_tok_s", "value": 0 },
@@ -113,12 +98,7 @@
     "client.p95_e2el_ms":            { "kind": "max_ms",    "value": 1000000 },
     "client.p99_e2el_ms":            { "kind": "max_ms",    "value": 1000000 },
     "client.success_rate":           { "kind": "min",       "value": 0 },
-    "client.failed":                 { "kind": "max",       "value": 1000000000 },
-    "gpu.peak_gpu_memory_mb":        { "kind": "max",       "value": 200000 },
-    "gpu.model_load_memory_mb":      { "kind": "max",       "value": 180000 },
-    "gpu.model_load_s":              { "kind": "max",       "value": 300    },
-    "gpu.gpu_compute_util_pct":      { "kind": "min",       "value": 70     },
-    "gpu.gpu_bandwidth_util_pct":    { "kind": "min",       "value": 60     }
+    "client.failed":                 { "kind": "max",       "value": 1000000000 }
   },
   "ISL=5000,OSL=1024,TP=8,CONC=16": {
     "client.total_token_throughput": { "kind": "min_tok_s", "value": 0 },
@@ -143,11 +123,6 @@
     "client.p95_e2el_ms":            { "kind": "max_ms",    "value": 1000000 },
     "client.p99_e2el_ms":            { "kind": "max_ms",    "value": 1000000 },
     "client.success_rate":           { "kind": "min",       "value": 0 },
-    "client.failed":                 { "kind": "max",       "value": 1000000000 },
-    "gpu.peak_gpu_memory_mb":        { "kind": "max",       "value": 200000 },
-    "gpu.model_load_memory_mb":      { "kind": "max",       "value": 180000 },
-    "gpu.model_load_s":              { "kind": "max",       "value": 300    },
-    "gpu.gpu_compute_util_pct":      { "kind": "min",       "value": 70     },
-    "gpu.gpu_bandwidth_util_pct":    { "kind": "min",       "value": 60     }
+    "client.failed":                 { "kind": "max",       "value": 1000000000 }
   }
 }

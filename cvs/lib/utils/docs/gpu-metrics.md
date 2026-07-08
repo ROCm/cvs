@@ -260,7 +260,7 @@ See `docs/threshold-kinds.md` for the full threshold kind reference (`min`, `max
 ## The `gpu_poll.log` file
 
 Every run writes `gpu_poll.log` into the local HTML report directory (the same folder
-as the per-test HTML files, e.g. `vllm_single_html/`). Because the zip bundle includes
+as the per-test HTML files, e.g. `<suite>_html/`). Because the zip bundle includes
 that directory, the log is always available in the run archive. It is also copied to
 the suite's NFS `out_dir` on the head node for cluster-side inspection.
 

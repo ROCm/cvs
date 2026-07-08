@@ -10,7 +10,7 @@ import pathlib
 import time
 
 # Human-readable derived metrics exposed as HTML rows (one row per entry per cell).
-# These are computed in vllm_single.py from the raw amd-smi snapshots and stored
+# These are computed by the calling suite from the raw amd-smi snapshots and stored
 # under "gpu.<short>" keys in inf_res_dict.
 GPU_METRICS: list[tuple[str, str]] = [
     ("peak_gpu_memory_mb", "MB"),

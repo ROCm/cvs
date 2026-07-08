@@ -44,9 +44,6 @@ def test_print_results_table(inf_res_dict):
         "P95 TPOT (ms)",
         "P99 ITL (ms)",
         "Goodput (req/s)",
-        "Peak VRAM (MB)",
-        "Compute %",
-        "BW %",
     ]
     rows = []
     for key, host_dict in inf_res_dict.items():
@@ -69,9 +66,6 @@ def test_print_results_table(inf_res_dict):
                     _cell(m, "client.p95_tpot_ms"),
                     _cell(m, "client.p99_itl_ms"),
                     _cell(m, "client.goodput"),
-                    _cell(m, "gpu.peak_gpu_memory_mb"),
-                    _cell(m, "gpu.gpu_compute_util_pct"),
-                    _cell(m, "gpu.gpu_bandwidth_util_pct"),
                 ]
             )
     log.info("\n" + tabulate(rows, headers=headers, tablefmt="github"))
