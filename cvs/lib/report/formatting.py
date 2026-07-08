@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html
 import re
-from pathlib import PurePosixPath
 from typing import Any
 
 
@@ -55,7 +54,7 @@ def link_or_text_html(url: str, label: str) -> str:
         safe_url = html.escape(url)
         return f'<a href="{safe_url}" target="_blank" rel="noopener">{safe_label}</a>'
     normalized = url.replace("\\", "/")
-    if normalized.startswith("../") or "/" in PurePosixPath(normalized).parts:
+    if normalized.startswith("../"):
         return f'<a href="{html.escape(normalized)}">{safe_label}</a>'
     from pathlib import Path
 
