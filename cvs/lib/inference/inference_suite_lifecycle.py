@@ -28,6 +28,9 @@ of copying launch / sshd / model-fetch / teardown blocks.
     )
 
 Also provides ``sweep_cell_result_key``; see :mod:`cvs.lib.inference.cache_probe` for ``du_bytes``.
+
+Optional HTML/JSON suite report: add ``cvs/lib/report/presets/<cvs_run_stem>.py`` (see
+``cvs/lib/report/README.md``); root ``cvs/conftest.py`` auto-wires hooks when ``--html`` is set.
 '''
 
 from __future__ import annotations
@@ -76,6 +79,10 @@ def sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency):
 
 
 from cvs.lib.inference.cache_probe import du_bytes
+
+
+def test_launch_container(orch, variant_config, lifecycle, request):
+    """Stage 1: launch the container."""
     t = time.monotonic()
     ok = orch.setup_containers()
     lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
