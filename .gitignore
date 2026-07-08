@@ -17,3 +17,6 @@ docs/sphinx/_toc.yml
 
 # Build distributions
 dist/
+
+# Local sample output
+sample_reports/
