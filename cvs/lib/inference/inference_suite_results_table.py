@@ -4,6 +4,9 @@ All rights reserved.
 
 Reusable end-of-session results table for DTNI inference suites.
 
+Pair with ``cvs.lib.report`` suite reports for an optional HTML/JSON dashboard
+that uses the same column preset and ``inf_res_dict`` keys.
+
 Bind a column preset with ``make_print_results_table(columns)`` and export the
 returned callable as ``test_print_results_table`` from the suite module (see
 ``cvs/tests/inference/inferencex_atom/_shared.py``). Other suites can supply
@@ -12,8 +15,6 @@ tabulate loop.
 '''
 
 from __future__ import annotations
-
-from tabulate import tabulate
 
 from cvs.lib import globals
 
@@ -63,6 +64,8 @@ def _cell(metrics, key):
 
 
 def print_results_table(inf_res_dict, columns):
+    from tabulate import tabulate
+
     if not inf_res_dict:
         log.info("inf_res_dict empty, nothing to print")
         return

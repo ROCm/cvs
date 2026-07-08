@@ -12,7 +12,6 @@ from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFacto
 from cvs.lib import globals
 from cvs.lib.inference.inference_suite_lifecycle import (
     InferenceLifecycle,
-    attach_lifecycle_html_table,
     html_metric_table_header,
     html_metric_table_row,
     sort_lifecycle_items,
@@ -136,12 +135,6 @@ def inf_res_dict():
 
 def pytest_collection_modifyitems(items):
     sort_lifecycle_items(items, LIFECYCLE_RANK)
-
-
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    outcome = yield
-    attach_lifecycle_html_table(item, outcome.get_result())
 
 
 def pytest_html_results_table_header(cells):

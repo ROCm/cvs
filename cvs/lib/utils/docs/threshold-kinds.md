@@ -278,9 +278,10 @@ the reference metric's value at check time. This means:
 - The reference metric is resolved at evaluation time from the same `actuals`
   dict that holds the primary metric's value.
 - Passing all cell actuals to `evaluate_all` (not just the single metric being
-  asserted) is required for `min_ratio` to work. The `test_metric` pattern in
-  `cvs/lib/inference/ADDING_A_SUITE.md` calls
-  `evaluate_all(full_cell_actuals, {metric: spec})` for exactly this reason.
+  asserted) is required for `min_ratio` to work. Inference suite `test_metric`
+  hooks (e.g. `cvs/tests/inference/vllm/vllm_single.py`) call
+  `evaluate_all(actuals, {full: spec})` with the full per-host actuals dict for
+  exactly this reason.
 
 ---
 
