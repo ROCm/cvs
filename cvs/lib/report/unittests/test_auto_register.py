@@ -43,3 +43,11 @@ def test_auto_register_skips_when_already_configured():
 def test_auto_register_missing_module():
     config = SimpleNamespace(_suite_name="no_such_suite_xyz")
     assert try_auto_register_inference_suite_report(config) is False
+
+
+def test_auto_register_loads_inferencex_atom_single_preset():
+    config = SimpleNamespace(_suite_name="inferencex_atom_single")
+    assert try_auto_register_inference_suite_report(config) is True
+    preset = get_suite_report_config(config)
+    assert preset is not None
+    assert preset.suite_id == "inferencex_atom"

@@ -20,15 +20,9 @@ from cvs.lib.inference.utils.inferencex_atom_config_loader import (
     load_variant,
     orchestrator_container_from_variant,
 )
-from cvs.lib.report.inference_wiring import configure_inference_suite_report
-from cvs.lib.report.presets.inferencex_atom import INFERENCEX_ATOM_REPORT_CONFIG
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log
-
-
-def pytest_configure(config):
-    configure_inference_suite_report(config, INFERENCEX_ATOM_REPORT_CONFIG)
 
 
 def _log_variant_run_card(variant_config):
