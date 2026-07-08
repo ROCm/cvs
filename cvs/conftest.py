@@ -55,8 +55,13 @@ def pytest_configure(config):
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _cvs_inference_suite_report_session(request):
-    """Bind ``inf_res_dict`` / ``variant_config`` / ``lifecycle`` when a preset is registered."""
+def _cvs_inference_suite_report_module(request):
+    """Bind module-scoped suite fixtures into the session store at module teardown.
+
+    ``inf_res_dict``, ``variant_config``, and ``lifecycle`` are module fixtures;
+    ``bind_session_results()`` writes into a session-level store consumed at
+    ``pytest_sessionfinish`` when generating the run deck.
+    """
     from cvs.lib.report.registry import bind_session_results, get_suite_report_config
     from cvs.lib.report.types import InferenceReportConfig
 
