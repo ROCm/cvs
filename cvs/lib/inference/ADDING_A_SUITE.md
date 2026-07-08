@@ -584,6 +584,19 @@ reference (`min`, `max`, `max_ms`, `within`, `min_tok_s`, `min_ratio`).
 
 ---
 
+## Step 8: Suite reports (optional, `--html`)
+
+**Full guide:** `cvs/lib/report/README.md`
+
+Add one preset at `cvs/lib/report/presets/<cvs_run_stem>.py`. Root `cvs/conftest.py`
+auto-loads it when the stem matches `cvs run …` and writes HTML/JSON/viewer at session
+end when `--html` is set. Reports are render-only and do not change pass/fail.
+
+Do **not** wire reports in suite `conftest.py`. **IX-atom reference:**
+`presets/inferencex_atom_single.py` + `presets/inferencex_atom.py`.
+
+---
+
 ## Pre-PR checklist
 
 Walk this list against your suite before opening a PR. Each item is verifiable
@@ -641,3 +654,7 @@ in the existing code.
 - [ ] `enforce_thresholds` starts as `false` until baselines are calibrated
 - [ ] New gated metric → every existing `threshold.json` that covers cells where the
       metric is defined has a spec for it
+
+**Suite reports (optional)**
+
+- [ ] Added `cvs/lib/report/presets/<cvs_run_stem>.py` when using `--html` (see [Step 8](#step-8-suite-reports-optional-html))
