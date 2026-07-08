@@ -204,7 +204,7 @@ def vpc_node_list(cluster_dict):
 
 
 @pytest.mark.parametrize("bw_test", ["ib_write_bw", "ib_read_bw", "ib_send_bw"])
-def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
+def test_ib_bw_perf(shdl, phdl, bw_test, config_dict, cluster_dict):
     # Get IB_backend_nics for each node
     # Get the NIC to GPU mapping dict
     # Generate the command list for all nodes
@@ -230,6 +230,7 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
     rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
+    node_list = list(cluster_dict['node_dict'].keys())
     for msg_size in config_dict['msg_size_list']:
         ib_bw_dict[bw_test][msg_size] = {}
         for qp_count in config_dict['qp_count_list']:
@@ -250,6 +251,7 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
                 int(config_dict['port_no']),
                 int(config_dict['duration']),
                 rocm_path=rocm_path,
+                cluster_node_list=node_list,
             )
             end_time = phdl.exec('date +"%a %b %e %H:%M"')
             verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
@@ -268,7 +270,7 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
 
 
 @pytest.mark.parametrize("lat_test", ["ib_write_lat", "ib_send_lat"])
-def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
+def test_ib_lat_perf(shdl, phdl, lat_test, config_dict, cluster_dict):
     globals.error_list = []
     ib_lat_dict[lat_test] = {}
 
@@ -291,6 +293,7 @@ def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
     log.info(f'%%%%%% gpu_numa_dict %%%%% {gpu_numa_dict}')
 
     rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
+    node_list = list(cluster_dict['node_dict'].keys())
     for msg_size in config_dict['msg_size_list']:
         ib_lat_dict[lat_test][msg_size] = {}
         # Log a message to Dmesg to create a timestamp record
@@ -308,6 +311,7 @@ def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
             config_dict['gid_index'],
             int(config_dict['port_no']),
             rocm_path=rocm_path,
+            cluster_node_list=node_list,
         )
         end_time = phdl.exec('date +"%a %b %e %H:%M"')
         verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)

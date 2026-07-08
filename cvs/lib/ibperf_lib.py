@@ -11,6 +11,10 @@ import xlsxwriter
 
 from cvs.lib.utils_lib import *
 
+from cvs.lib import globals
+
+log = globals.log
+
 
 def detect_rocm_path(phdl, config_rocm_path):
     """
@@ -64,7 +68,7 @@ def detect_rocm_path(phdl, config_rocm_path):
     return '/opt/rocm'
 
 
-def check_perftest_dmabuf_support(shdl, binary_path):
+def check_perftest_dmabuf_support(shdl, binary_path, head_node):
     """
     Check if the given perftest binary on the cluster node supports the
     --use_rocm_dmabuf flag by executing the binary's help output and
@@ -78,62 +82,17 @@ def check_perftest_dmabuf_support(shdl, binary_path):
         bool: True if the binary supports --use_rocm_dmabuf on any host,
               False otherwise.
     """
-    cmd = f"{binary_path} --help 2>&1 | grep use_rocm_dmabuf"
+    cmd = f'{binary_path} --help 2>&1 | grep use_rocm_dmabuf | wc -l'
     log.info("Checking dmabuf support: %s", cmd)
-
+    dmabuf_available = False
     try:
-        # detailed=True gives us exit_code per host
-        host_results = shdl.exec(cmd, detailed=True, print_console=False)
-        # host_results: {host: {"output": str, "exit_code": int}}
-
-        dmabuf_supported_any = False
-
-        for host, result in host_results.items():
-            # Some safety in case of unexpected shape
-            if not isinstance(result, dict):
-                log.warning("Unexpected exec result type for host %s: %r", host, result)
-                continue
-
-            exit_code = result.get("exit_code", -1)
-            output = result.get("output", "") or ""
-
-            log.debug(
-                "dmabuf check host=%s exit_code=%s, output=%r",
-                host,
-                exit_code,
-                output,
-            )
-
-            # Mirror your manual test: grep returns 0 on match
-            if "use_rocm_dmabuf" in output:
-                if exit_code != 0:
-                    log.warning(
-                        "Host %s: found 'use_rocm_dmabuf' in output but exit_code=%s; treating as supported.",
-                        host,
-                        exit_code,
-                    )
-                log.info(
-                    "Binary %s on host %s supports --use_rocm_dmabuf",
-                    binary_path,
-                    host,
-                )
-                dmabuf_supported_any = True
-            else:
-                log.info(
-                    "Binary %s on host %s does NOT support --use_rocm_dmabuf (no match in output).",
-                    binary_path,
-                    host,
-                )
-
-        return dmabuf_supported_any
-
-    except Exception as e:  # pylint: disable=broad-except
-        log.warning(
-            "Failed to check dmabuf support for %s: %s. Assuming no dmabuf support.",
-            binary_path,
-            str(e),
-        )
-        return False
+        dmabuf_check_out = shdl.exec(cmd)
+        dmabuf_available = int(dmabuf_check_out[head_node].strip()) > 0
+        log.info("dmabuf available in ibperf build" if dmabuf_available else "dmabuf not available in ibperf build")
+        return dmabuf_available
+    except Exception as e:
+        log.warning(f"ibperf dmabuf check failed: {e}")
+        return dmabuf_available
 
 
 def get_ib_bw_pps(phdl, msg_size, cmd):
@@ -262,6 +221,7 @@ def run_ib_perf_bw_test(
     port_no=1516,
     duration=60,
     rocm_path='',
+    cluster_node_list=None,
 ):
     app_port = port_no
     result_dict = {}
@@ -274,7 +234,8 @@ def run_ib_perf_bw_test(
         log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
         phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
     server_addr = None
-    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{bw_test}')
+    head_node = cluster_node_list[0]
+    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{bw_test}', head_node)
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
         cmd_dict[node] = []
@@ -358,7 +319,18 @@ def run_ib_perf_bw_test(
 
 
 def run_ib_perf_lat_test(
-    shdl, phdl, lat_test, gpu_numa_dict, gpu_nic_dict, bck_nic_dict, app_path, msg_size, gid_index, port_no=1516, rocm_path=''
+    shdl,
+    phdl,
+    lat_test,
+    gpu_numa_dict,
+    gpu_nic_dict,
+    bck_nic_dict,
+    app_path,
+    msg_size,
+    gid_index,
+    port_no=1516,
+    rocm_path='',
+    cluster_node_list=None,
 ):
     app_port = port_no
     result_dict = {}
@@ -371,7 +343,8 @@ def run_ib_perf_lat_test(
         log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
         phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
     server_addr = None
-    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{lat_test}')
+    head_node = cluster_node_list[0]
+    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{lat_test}', head_node)
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
         cmd_dict[node] = []
