@@ -108,9 +108,30 @@ def launch_docker_container(
     network='host',
     shm_size='64G',
     timeout=60 * 10,
+    ulimit_nofile=None,
 ):
     cmd = f'docker run -d --network {network} --ipc {network} \
             --cap-add=IPC_LOCK --security-opt seccomp=unconfined --privileged '
+    if ulimit_nofile is None:
+        # 'ulimit -n' reports only the soft limit; query soft and hard separately so
+        # we don't cap the container below the host's available hard limit.
+        soft_dict = phdl.exec('ulimit -Sn')
+        hard_dict = phdl.exec('ulimit -Hn')
+        for node in soft_dict:
+            soft = soft_dict[node].strip()
+            hard = hard_dict.get(node, '').strip()
+            if soft.isdigit():
+                # If the hard limit is non-numeric (e.g. 'unlimited'), fall back to soft
+                hard = hard if hard.isdigit() else soft
+                ulimit_nofile = f'{soft}:{hard}'
+                break
+        else:
+            log.warning(
+                'Could not auto-detect a numeric ulimit -n on any node; '
+                'skipping --ulimit nofile for docker run'
+            )
+    if ulimit_nofile:
+        cmd = cmd + f' --ulimit nofile={ulimit_nofile} '
     for device in device_list:
         cmd = cmd + f' --device {device} '
     for src_vol in volume_dict.keys():

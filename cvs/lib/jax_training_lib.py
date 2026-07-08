@@ -118,11 +118,51 @@ class JaxTrainingJob:
         self.tc_dict.setdefault('nccl_ib_hca', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
         self.tc_dict.setdefault('nccl_socket_ifname', 'ens51f1np1')
         self.tc_dict.setdefault('gloo_socket_ifname', 'ens51f1np1')
-        self.tc_dict.setdefault('nccl_ib_gid_index', '3')
-        self.tc_dict.setdefault('nccl_debug', 'ERROR')
         self.tc_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.tc_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
-        self.tc_dict.setdefault('master_address', '127.0.0.1')
+
+        self.tc_dict.setdefault('env_vars', {
+            'GPU_MAX_HW_QUEUES': '2',
+            'HSA_FORCE_FINE_GRAIN_PCIE': '1',
+            'HIP_FORCE_DEV_KERNARG': '1',
+            'XLA_PYTHON_CLIENT_MEM_FRACTION': '0.93',
+            'NCCL_DEBUG': 'ERROR',
+            'NCCL_PROTO': 'Simple',
+            'NCCL_IB_TC': '41',
+            'NCCL_IB_SL': '0',
+            'NCCL_IB_GID_INDEX': '3',
+            'NCCL_CHECKS_DISABLE': '1',
+            'NCCL_CROSS_NIC': '0',
+            'NVTE_ALLOW_NONDETERMINISTIC_ALGO': '1',
+            'NVTE_USE_HIPBLASLT': '1',
+            'NVTE_FUSED_ATTN': '1',
+            'NVTE_CK_USES_BWD_V3': '1',
+            'NVTE_CK_USES_FWD_V3': '1',
+            'NVTE_CK_IS_V3_ATOMIC_FP32': '0',
+            'NVTE_CK_HOW_V3_BF16_CVT': '2',
+            'NVTE_FUSED_ATTN_CK': '1',
+            'NVTE_FUSED_ATTN_AOTRITON': '0',
+        })
+
+        self.tc_dict.setdefault('xla_flags', {
+            'xla_gpu_enable_latency_hiding_scheduler': 'True',
+            'xla_gpu_enable_triton_gemm': 'False',
+            'xla_gpu_memory_limit_slop_factor': '95',
+            'xla_gpu_enable_command_buffer': "''",
+            'xla_gpu_enable_cublaslt': 'True',
+            'xla_gpu_autotune_level': '0',
+            'xla_gpu_enable_reduce_scatter_combine_by_dim': 'false',
+            'xla_gpu_reduce_scatter_combine_threshold_bytes': '8589934592',
+            'xla_gpu_all_reduce_combine_threshold_bytes': '8589934592',
+            'xla_gpu_all_gather_combine_threshold_bytes': '8589934592',
+            'xla_gpu_enable_all_gather_combine_by_dim': 'FALSE',
+        })
+
+        self.tc_dict.setdefault('rdma_lib', {
+            'host_source_file': '/usr/local/lib/libbnxt_re-rdmav34.so',
+            'container_mount_file': '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host',
+            'container_dest_file': '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
+        })
 
         self.container_image = self.tc_dict['container_image']
         self.container_name = self.tc_dict['container_name']
@@ -136,8 +176,6 @@ class JaxTrainingJob:
         self.nccl_ib_hca = self.tc_dict['nccl_ib_hca']
         self.nccl_socket_ifname = self.tc_dict['nccl_socket_ifname']
         self.gloo_socket_ifname = self.tc_dict['gloo_socket_ifname']
-        self.nccl_ib_gid_index = self.tc_dict['nccl_ib_gid_index']
-        self.nccl_debug = self.tc_dict['nccl_debug']
         self.data_cache_dir = self.tc_dict['data_cache_dir']
         self.log_dir = self.tc_dict['log_dir']
         self.coordinator_ip = self.tc_dict.get('coordinator_ip', 'localhost')
@@ -159,6 +197,14 @@ class JaxTrainingJob:
             self.expected_result_dict = self.model_params_dict['multi_node'][self.model_name][self.gpu_type][
                 'result_dict'
             ]
+
+        self.mp_dict.setdefault('hardware', 'gpu')
+        self.mp_dict.setdefault('packing', 'True')
+        self.mp_dict.setdefault('enable_goodput_recording', 'False')
+        self.mp_dict.setdefault('monitor_goodput', 'False')
+        self.mp_dict.setdefault('optimizer_memory_host_offload', 'False')
+        self.mp_dict.setdefault('param_scan_axis', '1')
+        self.mp_dict.setdefault('shardy', 'False')
 
         # Remove and recreate the scripts dir
         self.phdl.exec(f'rm -rf {self.scripts_dir}')
@@ -186,15 +232,16 @@ class JaxTrainingJob:
         Returns:
             dict: {'base': str, 'config': str, 'reference_config': str}
         """
-        # (base_path, config_subdir, reference_config)
+        # (base_path, config_subdir, reference_config, train_script_path)
         path_configs = [
-            ('/workspace/maxtext/src/MaxText', 'configs/models', 'llama2-70b.yml'),
-            ('/workspace/maxtext/MaxText', 'configs', 'llama2_70b_gpu_bs7.yml'),
+            ('/workspace/maxtext/src/maxtext', 'configs/models', 'llama3-70b.yml', '/workspace/maxtext/src/maxtext/trainers/pre_train/train.py'),
+            ('/workspace/maxtext/src/MaxText', 'configs/models', 'llama3-70b.yml', '/workspace/maxtext/src/MaxText/train.py'),
+            ('/workspace/maxtext/MaxText', 'configs', 'llama2_70b_gpu_bs7.yml', '/workspace/maxtext/MaxText/train.py'),
         ]
 
-        for base, config_subdir, ref_config in path_configs:
+        for base, config_subdir, ref_config, train_script in path_configs:
             if docker_lib.path_exists_in_container(self.phdl, container_name, base):
-                return {'base': base, 'config': f"{base}/{config_subdir}", 'reference_config': ref_config}
+                return {'base': base, 'config': f"{base}/{config_subdir}", 'reference_config': ref_config, 'train_script': train_script}
 
         raise RuntimeError(f"MaxText not found in container '{container_name}'")
 
@@ -207,11 +254,15 @@ class JaxTrainingJob:
 
     def launch_docker_container(self, container_name, image, device_list, volume_dict, env_dict):
         if self.distributed_training is True:
-            docker_lib.launch_docker_container(self.phdl, container_name, image, device_list, volume_dict, env_dict)
+            docker_lib.launch_docker_container(
+                self.phdl, container_name, image, device_list, volume_dict, env_dict
+            )
         else:
             env_dict['JAX_COORDINATOR_IP'] = 'localhost'
             env_dict['NNODES'] = 1
-            docker_lib.launch_docker_container(self.phdl, container_name, image, device_list, volume_dict, env_dict)
+            docker_lib.launch_docker_container(
+                self.phdl, container_name, image, device_list, volume_dict, env_dict
+            )
 
     def exec_nic_setup_scripts(
         self,
@@ -224,7 +275,7 @@ class JaxTrainingJob:
         - If NIC type appears to be Broadcom/Thor, applies a temporary workaround:
           * Copies the bnxt RDMA library from the host-named file to the container?s expected path.
           * Verifies that ibv_devinfo shows a bnxt_ HCA (to confirm RDMA is wired correctly).
-        - Forces NCCL GID index to 3 for Broadcom/Thor (common requirement).
+        - NCCL_IB_GID_INDEX is set via env_vars (NCCL knobs), not here.
 
         Assumptions:
         - self.phdl.exec runs a shell command and returns a dict: {node: stdout}.
@@ -236,16 +287,14 @@ class JaxTrainingJob:
         if self.distributed_training is True:
             # This is a temporary hack needed for broadcom nics to work within containers ..
             if re.search('broadcom|thor', self.nic_type, re.I):
-                # override the gid_index to 3 for broadcom
-                self.nccl_ib_gid_index = 3
+                rdma_lib = self.tc_dict['rdma_lib']
                 out_dict = self.phdl.exec(
                     f'docker exec {self.container_name} /bin/bash -c "sudo \
-                    cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
-                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
+                    cp {rdma_lib["container_mount_file"]} {rdma_lib["container_dest_file"]}; \
                     sleep 2;ibv_devinfo;sleep 2;"'
                 )
                 for node in out_dict.keys():
-                    if not re.search('hca_id:\s+bnxt_', out_dict[node], re.I):
+                    if not re.search(r'hca_id:\s+(bnxt_|rocep|rdma)', out_dict[node], re.I):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
@@ -274,143 +323,85 @@ class JaxTrainingJob:
         # Auto-detect MaxText paths in the container
         maxtext_paths = self.get_maxtext_paths(self.container_name)
 
-        cmd = f'''docker exec {self.container_name} /bin/bash -c "echo 'base_config: base.yml
-                  run_name: {self.model_name}-job
-                  hardware: gpu
-                  steps: {self.training_config_dict['training_steps']}
-                  model_name: {self.model_name}
-                  enable_checkpointing: {self.training_config_dict['enable_checkpointing']}
-                  attention: {self.mp_dict['attention']}
-                  packing: True
-                  enable_goodput_recording: False
-                  monitor_goodput: False
-                  optimizer_memory_host_offload: False
-                  param_scan_axis: 1
-                  shardy: False
-                  dcn_data_parallelism: {self.mp_dict['dcn_data_parallelism']}
-                  dcn_fsdp_parallelism: {self.mp_dict['dcn_fsdp_parallelism']}
-                  dcn_pipeline_parallelism: {self.mp_dict['dcn_pipeline_parallelism']}
-                  dcn_tensor_parallelism: {self.mp_dict['dcn_tensor_parallelism']}
-                  dcn_sequence_parallelism: {self.mp_dict['dcn_sequence_parallelism']}
-                  ici_fsdp_parallelism: {self.mp_dict['ici_fsdp_parallelism']}
-                  ici_data_parallelism: {self.mp_dict['ici_data_parallelism']}
-                  ici_sequence_parallelism: {self.mp_dict['ici_sequence_parallelism']}
-                  ici_tensor_parallelism: {self.mp_dict['ici_tensor_parallelism']}
-                  ici_pipeline_parallelism: {self.mp_dict['ici_pipeline_parallelism']}
-                  remat_policy: {self.mp_dict['remat_policy']}
-                  use_iota_embed: {self.mp_dict['use_iota_embed']}
-                  scan_layers: {self.mp_dict['scan_layers']}
-                  dataset_type: {self.mp_dict['dataset_type']}
-                  hf_path: {self.mp_dict['hf_path']}
-                  hf_train_files: {self.mp_dict['hf_train_files']}
-                  tokenizer_path: {self.mp_dict['tokenizer_path']}
-                  async_checkpointing: {self.mp_dict['async_checkpointing']}
-                  logits_dot_in_fp32: {self.mp_dict['logits_dot_in_fp32']}
-                  megablox: {self.mp_dict['megablox']}
-                  dtype: {self.mp_dict['dtype']}
-                  quantization: {self.mp_dict['quantization']}
-                  quantize_kvcache: {self.mp_dict['quantize_kvcache']}
-                  kv_quant_axis: {self.mp_dict['kv_quant_axis']}
-                  kv_quant_dtype: {self.mp_dict['kv_quant_dtype']}
-                  weight_dtype: {self.mp_dict['weight_dtype']}
-                  checkpoint_is_quantized: {self.mp_dict['checkpoint_is_quantized']}
-                  per_device_batch_size: {self.mp_dict['per_device_batch_size']}
-                  max_target_length: {self.mp_dict['max_target_length']}
-                  skip_first_n_steps_for_profiler: {self.mp_dict['skip_first_n_steps_for_profiler']}' > {maxtext_paths['config']}/training_config_for_jax.yml" '''
-        formatted_cmd = textwrap_for_yml(cmd)
-        self.phdl.exec(formatted_cmd)
+        # Keys in mp_dict that are CVS internal metadata, not MaxText YAML params
+        mp_skip_keys = {'result_dict', 'tokenizer_model', 'model_size', 'batch_size',
+                        'micro_batch_size', 'precision', 'sequence_length',
+                        'tensor_parallelism', 'pipeline_parallelism', 'recompute', 'fsdp'}
 
-        # Create the config yml file
-        cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
-                  base_emb_dim: {self.mp_dict['base_emb_dim']}
-                  base_num_query_heads: {self.mp_dict['base_num_query_heads']}
-                  base_num_kv_heads: {self.mp_dict['base_num_kv_heads']}
-                  base_num_decoder_layers: {self.mp_dict['base_num_decoder_layers']}
-                  base_mlp_dim: {self.mp_dict['base_mlp_dim']}
-                  head_dim: {self.mp_dict['head_dim']}
-                  mlp_activations: {self.mp_dict['mlp_activations']}
-                  vocab_size: {self.mp_dict['vocab_size']}
-                  enable_dropout: {self.mp_dict['enable_dropout']}
-                  logits_via_embedding: {self.mp_dict['logits_via_embedding']}
-                  normalization_layer_epsilon: {self.mp_dict['normalization_layer_epsilon']}
-                  rope_max_timescale: {self.mp_dict['rope_max_timescale']}
-                  decoder_block: {self.mp_dict['decoder_block']} '  > {maxtext_paths['config']}/model_config_for_jax.yml" '''
-        formatted_cmd = textwrap_for_yml(cmd)
-        self.phdl.exec(formatted_cmd)
+        # Header params that come from training_config_dict or self, not mp_dict
+        yml_lines = [
+            'base_config: base.yml',
+            f'run_name: {self.model_name}-job',
+            f'steps: {self.training_config_dict["training_steps"]}',
+            f'model_name: {self.model_name}',
+            f'enable_checkpointing: {self.training_config_dict["enable_checkpointing"]}',
+        ]
 
-        xla_dict = self.mp_dict['xla_flags']
-        cmd = f'''docker exec {self.container_name} /bin/bash -c \"echo export XLA_FLAGS=--xla_gpu_enable_cublaslt={xla_dict['xla_gpu_enable_cublaslt']} --xla_gpu_autotune_level={xla_dict['xla_gpu_autotune_level']} --xla_gpu_enable_reduce_scatter_combine_by_dim={xla_dict['xla_gpu_enable_reduce_scatter_combine_by_dim']} --xla_gpu_reduce_scatter_combine_threshold_bytes={xla_dict['xla_gpu_reduce_scatter_combine_threshold_bytes']} --xla_gpu_all_reduce_combine_threshold_bytes={xla_dict['xla_gpu_all_reduce_combine_threshold_bytes']}  --xla_gpu_all_gather_combine_threshold_bytes={xla_dict['xla_gpu_all_gather_combine_threshold_bytes']} --xla_gpu_enable_all_gather_combine_by_dim={xla_dict['xla_gpu_enable_all_gather_combine_by_dim']} --xla_gpu_executable_warn_stuck_timeout={xla_dict['xla_gpu_executable_warn_stuck_timeout']} --xla_gpu_executable_terminate_timeout={xla_dict['xla_gpu_executable_terminate_timeout']} > /workspace/maxtext/maxtext_xla_env.sh\"'''
+        # Loop over mp_dict: skip CVS-internal keys, dicts, and underscore-prefixed keys
+        for k, v in self.mp_dict.items():
+            if k in mp_skip_keys or k.startswith('_') or isinstance(v, dict):
+                continue
+            yml_lines.append(f'{k}: {v}')
+
+        yml_content = '\n'.join(yml_lines)
+        cmd = f'''docker exec {self.container_name} /bin/bash -c "cat > {maxtext_paths['config']}/training_config_for_jax.yml <<'YMLEOF'\n{yml_content}\nYMLEOF"'''
         self.phdl.exec(cmd)
 
-        # Hack to add the double quotes ..
-        cmd = f'''docker exec {self.container_name} /bin/bash -c 'sed -i -e "s/XLA_FLAGS=/XLA_FLAGS=\\\"/g" -e "/XLA_FLAGS/s/$/\\\"/g" /workspace/maxtext/maxtext_xla_env.sh'  '''
-        self.phdl.exec(cmd)
+        # Print the generated training config for verification
+        out_dict = self.phdl.exec(f'docker exec {self.container_name} cat {maxtext_paths["config"]}/training_config_for_jax.yml')
+        for node in out_dict:
+            log.info("training_config_for_jax.yml on %s:\n%s", node, out_dict[node])
 
         time.sleep(5)
+
+        # Build XLA_FLAGS and env var exports from config
+        xla_dict = self.tc_dict['xla_flags']
+        xla_flags_str = ' '.join(f'--{k}={v}' for k, v in xla_dict.items())
+        env_vars = self.tc_dict['env_vars']
+        env_exports = '\n'.join(f'export {k}={v}' for k, v in env_vars.items())
+        env_exports += f'\nexport XLA_FLAGS=\\"{xla_flags_str}\\"'
 
         # Need check for Single Node vs Double node ..
         if self.distributed_training is not True:
             cmd_list = []
             for i in range(0, int(self.nnodes)):
-                cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
-                      export NNODES=1
-                      export NODE_RANK=0
-                      export JAX_COORDINATOR_ADDRESS='localhost'
-                      export JAX_COORDINATOR_IP='localhost'
-                      export JAX_COORDINATOR_PORT={self.coordinator_port}
-                      export HSA_FORCE_FINE_GRAIN_PCIE=1
-                      export GPU_MAX_HW_QUEUES={self.tc_dict['gpu_max_hw_queues']}
-                      export HIP_FORCE_DEV_KERNARG=1
-                      export NVTE_FUSED_ATTN=1
-                      export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
-                      export XLA_PYTHON_CLIENT_MEM_FRACTION={self.tc_dict['xla_python_client_mem_fraction']}
-                      export XLA_GPU_EXECUTABLE_WARN_STUCK_TIMEOUT={self.tc_dict['xla_gpu_executable_warn_stuck_timeout']}
-                      export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
-                      export NCCL_DEBUG={self.tc_dict['nccl_debug']}
-                      export NCCL_IB_DISABLE=1
-                      export NCCL_SHM_DISABLE=0
-                      export NCCL_P2P_DISABLE=0
-                      export HSA_FORCE_FINE_GRAIN_PCIE=1
-                      export NVTE_CK_BWD_V3={self.tc_dict['nvte_ck_bwd_v3']}
-                      export NVTE_CK_V3_BF16_CVT={self.tc_dict['nvte_ck_v3_bf16_cvt']}' >> /workspace/maxtext/maxtext_env.sh"'''
-                formatted_cmd = textwrap_for_yml(cmd)
-                cmd_list.append(formatted_cmd)
+                env_content = f"""export NNODES=1
+export NODE_RANK=0
+export JAX_COORDINATOR_ADDRESS=localhost
+export JAX_COORDINATOR_IP=localhost
+export JAX_COORDINATOR_PORT={self.coordinator_port}
+export LD_LIBRARY_PATH=/opt/rocm/lib:\\$LD_LIBRARY_PATH
+export NCCL_IB_DISABLE=1
+export NCCL_SHM_DISABLE=0
+export NCCL_P2P_DISABLE=0
+{env_exports}"""
+                # heredoc avoids quoting issues with '' inside XLA_FLAGS
+                cmd = f'''docker exec {self.container_name} /bin/bash -c "cat >> /workspace/maxtext/maxtext_env.sh <<'ENVEOF'\n{env_content}\nENVEOF"'''
+                cmd_list.append(cmd)
         else:
             cmd_list = []
             for i in range(0, int(self.nnodes)):
-                cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
-                      export NNODES={int(self.nnodes)}
-                      export NODE_RANK={i}
-                      export JAX_COORDINATOR_ADDRESS={self.coordinator_ip}
-                      export JAX_COORDINATOR_IP={self.coordinator_ip}
-                      export JAX_COORDINATOR_PORT={self.coordinator_port}
-                      export HSA_FORCE_FINE_GRAIN_PCIE=1
-                      export GPU_MAX_HW_QUEUES={self.tc_dict['gpu_max_hw_queues']}
-                      export HIP_FORCE_DEV_KERNARG=1
-                      export NVTE_FUSED_ATTN=1
-                      export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
-                      export XLA_PYTHON_CLIENT_MEM_FRACTION={self.tc_dict['xla_python_client_mem_fraction']}
-                      export XLA_GPU_EXECUTABLE_WARN_STUCK_TIMEOUT={self.tc_dict['xla_gpu_executable_warn_stuck_timeout']}
-                      export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
-                      export NCCL_DEBUG={self.tc_dict['nccl_debug']}
-                      export NCCL_CHECKS_DISABLE={self.tc_dict['nccl_checks_disable']}
-                      export NCCL_IB_HCA={self.tc_dict['nccl_ib_hca']}
-                      export NCCL_IB_GID_INDEX={self.tc_dict['nccl_ib_gid_index']}
-                      export NCCL_CROSS_NIC=0
-                      export NCCL_PROTO={self.tc_dict['nccl_proto']}
-                      export HSA_FORCE_FINE_GRAIN_PCIE=1
-                      export NCCL_IB_TC={self.tc_dict['nccl_ib_tc']}
-                      export NCCL_IB_SL={self.tc_dict['nccl_ib_sl']}
-                      export NCCL_SOCKET_IFNAME={self.tc_dict['nccl_socket_ifname']}
-                      export GLOO_SOCKET_IFNAME={self.tc_dict['gloo_socket_ifname']}
-                      export NCCL_CHECKS_DISABLE={self.tc_dict['nccl_checks_disable']}
-                      export HSA_FORCE_FINE_GRAIN_PCIE=1
-                      export NVTE_CK_BWD_V3={self.tc_dict['nvte_ck_bwd_v3']}
-                      export NVTE_CK_V3_BF16_CVT={self.tc_dict['nvte_ck_v3_bf16_cvt']}' >> /workspace/maxtext/maxtext_env.sh"'''
-                formatted_cmd = textwrap_for_yml(cmd)
-                cmd_list.append(formatted_cmd)
+                env_content = f"""export NNODES={int(self.nnodes)}
+export NODE_RANK={i}
+export JAX_COORDINATOR_ADDRESS={self.coordinator_ip}
+export JAX_COORDINATOR_IP={self.coordinator_ip}
+export JAX_COORDINATOR_PORT={self.coordinator_port}
+export HF_HOME={self.data_cache_dir}
+export LD_LIBRARY_PATH=/opt/rocm/lib:\\$LD_LIBRARY_PATH
+export NCCL_IB_HCA={self.tc_dict['nccl_ib_hca']}
+export NCCL_SOCKET_IFNAME={self.tc_dict['nccl_socket_ifname']}
+export GLOO_SOCKET_IFNAME={self.tc_dict['gloo_socket_ifname']}
+{env_exports}"""
+                # heredoc avoids quoting issues with '' inside XLA_FLAGS (e.g. --xla_gpu_enable_command_buffer='')
+                cmd = f'''docker exec {self.container_name} /bin/bash -c "cat >> /workspace/maxtext/maxtext_env.sh <<'ENVEOF'\n{env_content}\nENVEOF"'''
+                cmd_list.append(cmd)
         log.info("%s", cmd_list)
         self.phdl.exec_cmd_list(cmd_list)
+
+        # Print the generated env file for verification
+        out_dict = self.phdl.exec(f'docker exec {self.container_name} cat /workspace/maxtext/maxtext_env.sh')
+        for node in out_dict:
+            log.info("maxtext_env.sh on %s:\n%s", node, out_dict[node])
 
         cmd_list = []
         for i in range(0, int(self.nnodes)):
@@ -423,7 +414,7 @@ class JaxTrainingJob:
             # Take a reference config yml like llama2_70b
             cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                       mkdir -p {self.log_dir}/jax-logs/out-node{i}
-                      export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/; cd /workspace/maxtext; python {maxtext_paths['base']}/train.py {maxtext_paths['config']}/{maxtext_paths['reference_config']} enable_goodput_recording=false monitor_goodput=false shardy=False base_output_directory={self.tc_dict['log_dir']} 2>&1 | tee >(grep -v 'external/xla/xla/') > {self.log_dir}/jax-logs/out-node{i}/training.log' > /workspace/maxtext/training_wrapper_script.sh"'''
+                      export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/; cd /workspace/maxtext; python {maxtext_paths['train_script']} {maxtext_paths['config']}/{maxtext_paths['reference_config']} enable_goodput_recording=false monitor_goodput=false shardy=False base_output_directory={self.tc_dict['log_dir']} 2>&1 | tee >(grep -v 'external/xla/xla/') > {self.log_dir}/jax-logs/out-node{i}/training.log' > /workspace/maxtext/training_wrapper_script.sh"'''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
         self.phdl.exec_cmd_list(cmd_list)
@@ -461,7 +452,7 @@ class JaxTrainingJob:
         # Build a docker exec command per node/rank
         for i in range(0, int(self.nnodes)):
             # Source the env file, then launch training in background with nohup, redirecting output to a per-node log
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "source /workspace/maxtext/maxtext_xla_env.sh && source /workspace/maxtext/maxtext_env.sh && nohup bash /workspace/maxtext/training_wrapper_script.sh > {self.log_dir}/jax-logs/out-node{i}/training_redirect_logs"'''
+            cmd = f'''docker exec {self.container_name} /bin/bash -c "source /workspace/maxtext/maxtext_env.sh && nohup bash /workspace/maxtext/training_wrapper_script.sh > {self.log_dir}/jax-logs/out-node{i}/training_redirect_logs"'''
             cmd_list.append(cmd)
 
         # Execute the launch commands (expected to run across the cluster)
@@ -562,7 +553,7 @@ class JaxTrainingJob:
         for i in range(0, self.training_steps):
             training_results_dict[i] = {}
 
-            pattern = f'completed step:\s+{i},\s+seconds:\s+([0-9\.]+),\s+TFLOP\/s\/device:\s+([0-9\.]+),\s+Tokens\/s\/device:\s+([0-9\.]+),\s+total_weights:\s+([0-9\\.]+),\s+loss:\s([0-9\.]+)'
+            pattern = f'completed step:\s+{i},\s+seconds:\s+([0-9\.]+),\s+TFLOP\/s\/device:\s+([0-9\.]+),\s+Tokens\/s\/device:\s+([0-9\.]+),\s+total_weights:\s+([0-9\\.]+),\s+loss:\s+([0-9\.]+|nan|inf|-inf)'
             match = re.search(pattern, output, re.I)
 
             # Guard against missing or malformed lines to avoid AttributeError on match.group(...)
