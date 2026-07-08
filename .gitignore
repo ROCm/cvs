@@ -12,3 +12,6 @@ __pycache__/
 
 # Build distributions
 dist/
+
+# Local sample output
+sample_reports/
