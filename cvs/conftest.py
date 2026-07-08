@@ -47,21 +47,29 @@ def _auto_register_inference_suite_report(config):
     return try_auto_register_inference_suite_report(config)
 
 
-@pytest.hookimpl(trylast=True)
+@pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
-    """Single hook: manager first, then auto-register after suite ``pytest_configure`` hooks."""
     _ensure_html_report_manager(config)
     _auto_register_inference_suite_report(config)
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _cvs_inference_suite_report_module(request):
-    """Bind module-scoped suite fixtures into the session store at module teardown.
+@pytest.fixture(scope="session", autouse=True)
+def _cvs_inference_suite_report_session(request):
+    """Initialize the session report store when a suite preset is registered."""
+    from cvs.lib.report.registry import clear_session_results, get_suite_report_config
+    from cvs.lib.report.types import InferenceReportConfig
 
-    ``inf_res_dict``, ``variant_config``, and ``lifecycle`` are module fixtures;
-    ``bind_session_results()`` writes into a session-level store consumed at
-    ``pytest_sessionfinish`` when generating the run deck.
-    """
+    if not isinstance(get_suite_report_config(request.config), InferenceReportConfig):
+        yield
+        return
+
+    clear_session_results()
+    yield
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _cvs_inference_suite_report_bind_module(request, _cvs_inference_suite_report_session):
+    """Bind module-scoped suite fixtures into the session store at module teardown."""
     from cvs.lib.report.registry import bind_session_results, get_suite_report_config
     from cvs.lib.report.types import InferenceReportConfig
 

@@ -17,19 +17,12 @@ from cvs.lib.report.sweep_shape import (
 )
 from cvs.lib.report.types import InferenceReportConfig
 
-_CELL_KEY_LEN = 6  # model, gpu, isl, osl, policy, concurrency
-
 
 def _inf_res_sort_key(kv: tuple) -> tuple:
     key = kv[0]
-    if isinstance(key, tuple) and len(key) >= _CELL_KEY_LEN:
+    if isinstance(key, tuple) and len(key) >= 6:
         return (key[4], key[5])
     return (0, 0)
-
-
-def _metric_column_keys(results_columns: tuple) -> list:
-    """Metric dict keys after identity columns (cell key fields + host)."""
-    return [key for _label, key in results_columns[_CELL_KEY_LEN + 1 :]]
 
 
 def aggregate_lifecycle(
@@ -151,7 +144,8 @@ def build_sweep_summaries(config: InferenceReportConfig, cells: List[dict]) -> L
 
 def build_results_table(config: InferenceReportConfig, inf_res_dict: Mapping[tuple, Any]) -> dict:
     headers = [label for label, _key in config.results_columns]
-    metric_keys = _metric_column_keys(config.results_columns)
+    metric_keys = [key for _label, key in config.results_columns]
+    n_fixed = sum(1 for _label, key in config.results_columns if key is None)
     rows: List[List[Any]] = []
     for key, host_dict in sorted(inf_res_dict.items(), key=_inf_res_sort_key):
         model, gpu, isl, osl, policy, conc = key
@@ -161,7 +155,7 @@ def build_results_table(config: InferenceReportConfig, inf_res_dict: Mapping[tup
         for host, metrics in host_dict.items():
             row = list(fixed)
             row.append(host)
-            for mk in metric_keys:
+            for mk in metric_keys[n_fixed:]:
                 if mk is None:
                     row.append("\u2014")
                 else:
