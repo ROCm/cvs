@@ -12,8 +12,8 @@ from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFacto
 from cvs.lib import globals
 from cvs.lib.inference.utils.inference_suite_lifecycle import (
     InferenceLifecycle,
-    # html_metric_table_header,
-    # html_metric_table_row,
+    html_metric_table_header,
+    html_metric_table_row,
     sort_lifecycle_items,
 )
 from cvs.lib.inference.atom.atom_config_loader import (
@@ -141,9 +141,9 @@ def pytest_collection_modifyitems(items):
     sort_lifecycle_items(items, LIFECYCLE_RANK)
 
 
-# def pytest_html_results_table_header(cells):
-#     html_metric_table_header(cells)
-#
-#
-# def pytest_html_results_table_row(report, cells):
-#     html_metric_table_row(report, cells)
+def pytest_html_results_table_header(cells):
+    html_metric_table_header(cells)
+
+
+def pytest_html_results_table_row(report, cells):
+    html_metric_table_row(report, cells)

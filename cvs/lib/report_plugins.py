@@ -118,12 +118,16 @@ class HtmlReportManager:
 
         log_content = []
         for section_name, section_content in report.sections:
-            log_content.append(f"<h3>{html.escape(section_name)}</h3><pre>{html.escape(section_content)}</pre>")
+            log_content.append(
+                f"<h3>{html.escape(section_name)}</h3>"
+                f"<pre>{html.escape(section_content)}</pre>"
+            )
 
         if log_content:
             # Persist a standalone html log page per test.
             log_path.write_text(
-                f"<html><body><h1>{html.escape(report.nodeid)}</h1>{''.join(log_content)}</body></html>",
+                f"<html><body><h1>{html.escape(report.nodeid)}</h1>"
+                f"{''.join(log_content)}</body></html>",
                 encoding="utf-8",
             )
             log.info("Wrote external test log: %s", log_path)
@@ -433,42 +437,12 @@ class HtmlReportManager:
         if not self._anc_verdicts and not self._custom_test_reports:
             return ""
 
-        failed_verdicts = [v for v in self._anc_verdicts if not v["passed"]]
-        # ANC log zips are tagged with their owning test_name; everything else
-        # (rccl/preflight artifacts) has no test_name and stays in the flat list.
-        anc_artifacts = [r for r in self._custom_test_reports if r.get("test_name")]
-        other_artifacts = [r for r in self._custom_test_reports if not r.get("test_name")]
-
-        html = '<div><h2>Reports</h2>'
-
-        if self._anc_verdicts:
-            if failed_verdicts:
-                html += '<ul>'
-                for v in failed_verdicts:
-                    status = '<span style="color:#c62828;font-weight:bold;">FAILED</span>'
-                    name = self._escape(v["name"])
-                    detail = f' &mdash; {self._escape(v["detail"])}' if v["detail"] else ''
-                    html += f'<li>{name}: {status}{detail}'
-                    # Nest this test's failed-node zip(s) directly under its verdict.
-                    zips = [r for r in anc_artifacts if r.get("test_name") == v["name"] and r.get("passed") is False]
-                    if zips:
-                        html += '<ul>'
-                        for z in zips:
-                            html += f'<li><a href="{z["path"]}" target="_blank">{self._escape(z["name"])}</a></li>'
-                        html += '</ul>'
-                    html += '</li>'
-                html += '</ul>'
-            else:
-                html += '<ul><li><span style="color:#2e7d32;font-weight:bold;">All tests passed</span></li></ul>'
-
-        # Non-ANC attached artifacts (e.g. rccl/preflight) kept as a flat list.
-        if other_artifacts:
-            html += '<ul>'
-            for report in other_artifacts:
-                html += f'<li><a href="{report["path"]}" target="_blank">{self._escape(report["name"])}</a></li>'
-            html += '</ul>'
-
-        html += '</div>'
+        html = '<div><h2>Reports</h2><ul>'
+        for report in self._custom_test_reports:
+            path = html.escape(str(report["path"]))
+            name = html.escape(str(report["name"]))
+            html += f'<li><a href="{path}" target="_blank">{name}</a></li>'
+        html += "</ul></div>"
 
         return html
 

@@ -8,11 +8,10 @@ Shared types for CVS inference suite reports.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Tuple
 
 TierMetricSpecsFn = Callable[[dict, str], dict[str, dict]]
 RunCardDisplayFn = Callable[[Any, dict], List[Tuple[str, str, bool]]]
-LaunchProvenanceFn = Callable[[Any], dict[str, str]]
 
 DEFAULT_SESSION_LIFECYCLE_LABELS: tuple[str, ...] = (
     "container_launch",
@@ -64,8 +63,9 @@ class InferenceReportConfig:
     interactive_viewer: bool = True
     viewer_cell_threshold: int = 24
     prev_run_json: str = ""
-    run_card_display_builder: RunCardDisplayFn = field(default=lambda _variant, _prov: [("Suite", "inference", False)])
-    launch_provenance_builder: Optional[LaunchProvenanceFn] = None
+    run_card_display_builder: RunCardDisplayFn = field(
+        default=lambda _variant, _prov: [("Suite", "inference", False)]
+    )
 
     @property
     def gated_tiers(self) -> tuple[str, ...]:
@@ -73,7 +73,5 @@ class InferenceReportConfig:
 
     def full_metric(self, short: str) -> str:
         if short.startswith(f"{self.metric_prefix}"):
-            return short
-        if short.startswith(("scaling.", "gpu.")):
             return short
         return f"{self.metric_prefix}{short}"

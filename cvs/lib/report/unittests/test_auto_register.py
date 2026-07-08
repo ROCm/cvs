@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from cvs.lib.report.auto_register import try_auto_register_inference_suite_report
 from cvs.lib.report.presets.builder import make_inference_report_config
 from cvs.lib.report.registry import get_suite_report_config, register_suite_report
@@ -43,9 +45,9 @@ def test_auto_register_missing_module():
     assert try_auto_register_inference_suite_report(config) is False
 
 
-def test_auto_register_loads_atom_preset():
-    config = SimpleNamespace(_suite_name="atom")
+def test_auto_register_loads_inferencex_atom_single_preset():
+    config = SimpleNamespace(_suite_name="inferencex_atom_single")
     assert try_auto_register_inference_suite_report(config) is True
     preset = get_suite_report_config(config)
     assert preset is not None
-    assert preset.suite_id == "atom"
+    assert preset.suite_id == "inferencex_atom"

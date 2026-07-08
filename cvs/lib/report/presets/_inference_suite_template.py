@@ -5,9 +5,9 @@ All rights reserved.
 **Copy this file** to ``cvs/lib/report/presets/<cvs_run_stem>.py``.
 
 The filename must match the pytest module stem from ``cvs run <stem>`` (e.g.
-``inferencex_atom`` → ``presets/inferencex_atom.py``).
+``inferencex_atom_single`` → ``presets/inferencex_atom_single.py``).
 
-**Reference:** ``inferencex_atom.py`` (IX-atom preset; auto-loaded when ``cvs run inferencex_atom``).
+**Reference:** ``inferencex_atom.py`` (full preset) + ``inferencex_atom_single.py`` (auto-load shim).
 See ``cvs/lib/report/README.md`` for the IX-atom end-to-end example.
 
 Suite owners fill in the TODOs below, keep collecting ``inf_res_dict`` during tests,
@@ -17,7 +17,7 @@ and run with ``--html``. No conftest changes required.
 from __future__ import annotations
 
 # TODO: column preset + parsing helpers from your suite
-# from cvs.lib.inference.utils.inference_suite_results_table import MY_SUITE_RESULTS_COLUMNS
+# from cvs.lib.inference.inference_suite_results_table import MY_SUITE_RESULTS_COLUMNS
 # from cvs.lib.inference.utils.my_parsing import CLIENT_METRIC_UNITS, tier_metric_specs, METRIC_TIER_ORDER
 from cvs.lib.report.presets.builder import make_inference_report_config
 
