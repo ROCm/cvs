@@ -13,6 +13,7 @@ from cvs.lib.preflight.gid_consistency import GidConsistencyCheck
 from cvs.lib.preflight.version_check import RocmVersionCheck
 from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
 from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
+from cvs.lib.preflight.node_smoke import NodeSmokeCheck
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
 from cvs.lib.preflight.report import PreflightReportGenerator
@@ -455,6 +456,58 @@ def test_gid_consistency(phdl, config_dict):
     preflight_update_test_result()
 
 
+def test_node_smoke(phdl, config_dict):
+    """
+    Run Primus ``node_smoke`` checks on each reachable node via primus-cli.
+
+    Opt-in via ``node_smoke.connectivity_mode`` in the preflight config (default
+    ``skip``).  Uses parallel SSH — no Slurm required.
+
+    Nodes that fail are reported but are **not** pruned from ``phdl``.
+    """
+    global preflight_results
+
+    if not phdl.reachable_hosts:
+        log.warning("Primus node_smoke skipped: no reachable hosts remain after earlier preflight pruning")
+        preflight_results['node_smoke'] = {
+            'mode': 'skip',
+            'skipped': True,
+            'message': 'No reachable nodes available for Primus node_smoke',
+            'node_results': {},
+        }
+        preflight_update_test_result()
+        return
+
+    node_list = list(phdl.reachable_hosts)
+    log.info("Running Primus node_smoke on %d reachable host(s)", len(node_list))
+
+    checker = NodeSmokeCheck(phdl, node_list, config_dict)
+    results = checker.run()
+    preflight_results['node_smoke'] = results
+
+    if results.get('skipped'):
+        log.info("Primus node_smoke: %s", results.get('message', 'skipped'))
+        preflight_update_test_result()
+        return
+
+    failed_nodes = results.get('failed_nodes') or []
+    unknown_nodes = results.get('unknown_nodes') or []
+    total = results.get('total_nodes', 0)
+    passing = len(results.get('passing_nodes') or [])
+
+    if failed_nodes or unknown_nodes:
+        log.warning(
+            "Primus node_smoke FAIL on %d/%d node(s): %s",
+            len(failed_nodes) + len(unknown_nodes),
+            total,
+            ", ".join(failed_nodes + unknown_nodes),
+        )
+    else:
+        log.info("Primus node_smoke PASS on %d/%d nodes", passing, total)
+
+    preflight_update_test_result()
+
+
 def test_ifoe_l2_connectivity(phdl, config_dict):
     """
     Test IFoE L2 connectivity using ``afmctl test ping`` (AIMVT-180).
@@ -727,6 +780,7 @@ def test_generate_preflight_report(phdl, config_dict, request):
         'gid_consistency',
         'rocm_versions',
         'interface_names',
+        'node_smoke',
         'ifoe_l2_connectivity',
         'rdma_connectivity',
     ]

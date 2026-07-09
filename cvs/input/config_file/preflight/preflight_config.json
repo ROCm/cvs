@@ -12,7 +12,7 @@
       "_comment_expected_rocm_version": "Expected ROCm version across all cluster nodes. Must match the output of 'amd-smi version' on all nodes. Format: 'major.minor.patch' (e.g., '6.2.0', '5.7.1').",
       
       "_example_rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
-      "rdma_interfaces": "[<changeme>]",
+      "rdma_interfaces": ["<changeme>"],
       "_comment_rdma_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand."
     },
     
@@ -90,6 +90,100 @@
         "ssh_timeout": 180,
         "_comment_ssh_timeout": "Overall SSH timeout (seconds) for each afmctl invocation. Increase for large port counts or high pings_per_port values."
       }
+    },
+
+    "node_smoke": {
+      "_comment": "Primus node_smoke checks via primus-cli direct (opt-in; default skip). See Primus docs/node-smoke-test-instruction.md",
+
+      "_setup_comment": "Primus clone/venv setup runs automatically when auto_setup is true (default). Manual equivalent:",
+      "_setup_step_1": "git clone --recurse-submodules https://github.com/AMD-AIG-AIMA/Primus.git /home/{user-id}/INSTALL/Primus",
+      "_setup_step_2": "cd /home/{user-id}/INSTALL/Primus && git checkout dev/preflight-direct-test",
+      "_setup_step_3": "python3 -m venv /home/{user-id}/envs/preflight/.venv && pip install torch --index-url https://download.pytorch.org/whl/rocm6.2",
+      "_setup_note": "Paths use {user-id} resolved at runtime. Set auto_setup to false to skip automatic install.",
+
+      "auto_setup": true,
+      "_comment_auto_setup": "When true, clone/update Primus and create venv with minimal deps (torch) on each node before node_smoke.",
+
+      "setup_timeout": 600,
+      "_comment_setup_timeout": "SSH timeout (seconds) for the per-node Primus auto_setup step (clone + pip install).",
+
+      "force_reclone": false,
+      "_comment_force_reclone": "When true, rm -rf primus_dir and clone fresh on every run (destructive). With shared_install (default), only the leader node reclones.",
+
+      "shared_install": true,
+      "_comment_shared_install": "When true (default), only the first node clones/updates Primus and installs the venv on shared NFS home; other nodes wait. Set false only if primus_dir and venv_activate are local per node.",
+
+      "pip_install_mode": "minimal",
+      "_comment_pip_install_mode": "Venv deps after clone: 'minimal' (torch only), 'requirements' (pip install -r requirements.txt), or 'skip' (venv only).",
+
+      "torch_pip_index_url": "https://download.pytorch.org/whl/rocm6.2",
+      "_comment_torch_pip_index_url": "PyTorch wheel index for minimal install. Match your ROCm version (e.g. rocm6.2, rocm7.1).",
+
+      "primus_git_url": "https://github.com/AMD-AIG-AIMA/Primus.git",
+      "_comment_primus_git_url": "Primus repository URL for one-time clone.",
+
+      "primus_git_branch": "dev/preflight-direct-test",
+      "_comment_primus_git_branch": "Git branch to checkout after clone. node_smoke and primus-cli direct preflight live on this branch.",
+
+      "primus_git_recurse_submodules": false,
+      "_comment_primus_git_recurse_submodules": "Clone submodules (Megatron, etc.). false is recommended for node_smoke — submodules are not required and slow setup.",
+
+      "primus_dir": "/home/{user-id}/INSTALL/Primus",
+      "_comment_primus_dir": "Path where Primus is cloned on each cluster node. Must match the clone target in setup step 1. Required when connectivity_mode is 'run'.",
+
+      "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
+      "_comment_venv_activate": "Path to the Python virtualenv activate script used by primus-cli direct. Required when connectivity_mode is 'run'.",
+
+      "connectivity_mode": "skip",
+      "_comment_connectivity_mode": "Options: 'run' (host/GPU/RDMA roll-call via node_smoke) or 'skip' (default).",
+
+      "gpus_per_node": 8,
+      "_comment_gpus_per_node": "Expected GPU count per node (exported as GPUS_PER_NODE and passed to node_smoke --expected-gpus).",
+
+      "master_port": 1234,
+      "_comment_master_port": "MASTER_PORT for the distributed env primus-cli sets up across SSH-launched ranks.",
+
+      "dump_path": "",
+      "_comment_dump_path": "Directory for per-node smoke/*.json output. Leave empty to use <reporting.artifacts_root_dir>/node_smoke.",
+
+      "expected_rdma_nics": null,
+      "_comment_expected_rdma_nics": "Hard-fail when training RDMA NIC count differs. null defaults to len(node_check.rdma_interfaces). Example: 8.",
+
+      "ulimit_l_min_gb": 32,
+      "_comment_ulimit_l_min_gb": "FAIL when RLIMIT_MEMLOCK is below this many GiB. 0 disables.",
+
+      "shm_min_gb": 8,
+      "_comment_shm_min_gb": "FAIL when /dev/shm is below this many GiB. 0 disables.",
+
+      "skip_dmesg": false,
+      "_comment_skip_dmesg": "Skip the dmesg recent-error scan (use inside unprivileged containers).",
+
+      "allow_foreign_procs": false,
+      "_comment_allow_foreign_procs": "Do not FAIL on foreign GPU processes. Recommended inside containers where proc names resolve to N/A.",
+
+      "allowed_procs": "gpuagent,rocm-smi-daemon,amd-smi,dcgm-exporter",
+      "_comment_allowed_procs": "Comma-separated process names allowed to hold GPUs without failing the node.",
+
+      "require_tools": "",
+      "_comment_require_tools": "Comma-separated tools that must exist in PATH for PASS (amd-smi, rocm-smi, lsof). Empty = warn only.",
+
+      "nccl_socket_ifname": "",
+      "_comment_nccl_socket_ifname": "Optional NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME override for node_smoke.",
+
+      "gloo_socket_ifname": "",
+      "_comment_gloo_socket_ifname": "Optional GLOO_SOCKET_IFNAME override (defaults to nccl_socket_ifname when empty).",
+
+      "nccl_ib_hca": "",
+      "_comment_nccl_ib_hca": "Optional NCCL_IB_HCA override. Defaults to comma-joined node_check.rdma_interfaces.",
+
+      "nccl_ib_gid_index": null,
+      "_comment_nccl_ib_gid_index": "Optional NCCL_IB_GID_INDEX override. Defaults to node_check.gid_index.",
+
+      "ssh_timeout": 300,
+      "_comment_ssh_timeout": "SSH timeout in seconds for each node's node_smoke invocation (~30s; increase for slow nodes).",
+
+      "extra_args": [],
+      "_comment_extra_args": "Additional node_smoke CLI flags forwarded to primus-cli. Example: [\"--no-clean-dump-path\"]."
     },
     
     "reporting": {
