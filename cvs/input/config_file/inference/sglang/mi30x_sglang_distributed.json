@@ -74,8 +74,7 @@
 		 "memory_fraction": "0.85",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
-		 "context_length": "204800",
-		 "max_model_length": "204800",
+		 "context_length": "205000",
 		 "inference_tests":
 		  {
 		      "bench_serv_random":
@@ -156,8 +155,7 @@
 		 "memory_fraction": "0.80",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
-		 "context_length": "204800",
-		 "max_model_length": "204800",
+		 "context_length": "205000",
 		 "inference_tests":
 		  {
 		      "bench_serv_random":
@@ -239,8 +237,7 @@
 		 "memory_fraction": "0.7",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
-		 "context_length": "204800",
-		 "max_model_length": "204800",
+		 "context_length": "205000",
 		 "inference_tests":
 		  {
 		      "bench_serv_random":
@@ -322,8 +319,7 @@
 				 "memory_fraction": "0.8",
 				 "tokenizer_mode": "auto",
 				 "inference_poll_iterations": "16",
-				 "context_length": "204800",
-				 "max_model_length": "204800",
+				 "context_length": "205000",
 				 "inference_tests":
 				 {
 					 "bench_serv_random":
@@ -402,8 +398,7 @@
 		 "memory_fraction": "0.85",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
-		 "context_length": "204800",
-		 "max_model_length": "204800",
+		 "context_length": "205000",
 		 "inference_tests":
 		 {
 		      "bench_serv_random":
