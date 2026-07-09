@@ -12,7 +12,7 @@
       "_comment_expected_rocm_version": "Expected ROCm version across all cluster nodes. Must match the output of 'amd-smi version' on all nodes. Format: 'major.minor.patch' (e.g., '6.2.0', '5.7.1').",
       
       "_example_rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
-      "rdma_interfaces": ["<changeme>"],
+      "rdma_interfaces": "[<changeme>]",
       "_comment_rdma_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand."
     },
     
