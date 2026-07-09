@@ -143,6 +143,7 @@
 		 "prefill_policy": "cache_aware",
 		 "decode_policy": "cache_aware",
 		 "tensor_parallelism": "8",
+		 "pipeline_parallelism": "2",
 		 "memory_fraction": "0.80",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
@@ -215,8 +216,8 @@
 		 "model": "/root/models/DeepSeek-R1-0528",
 		 "prefill_policy": "cache_aware",
 		 "decode_policy": "cache_aware",
-		 "tensor_parallelism": "16",
-		 "pipeline_parallelism": "1",
+		 "tensor_parallelism": "8",
+		 "pipeline_parallelism": "2",
 		 "memory_fraction": "0.7",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
@@ -229,7 +230,7 @@
 			  "num_prompts": "25",
 			  "random_range_ratio": "0.5",
 			  "model_num_params": "671000000000",
-			  "peak_gpu_tflops": "1300"
+			  "peak_gpu_tflops": "2615"
 		      },
 		      "bench_serv_generated_shared_prefix":
 		      {
@@ -289,7 +290,8 @@
 				 "model": "/root/models/GLM-5.2-FP8",
 				 "prefill_policy": "cache_aware",
 				 "decode_policy": "cache_aware",
-				 "tensor_parallelism": "16",
+				 "tensor_parallelism": "8",
+				 "pipeline_parallelism": "2",
 				 "memory_fraction": "0.8",
 				 "tokenizer_mode": "auto",
 				 "inference_poll_iterations": "16",
@@ -360,6 +362,7 @@
 		 "prefill_policy": "cache_aware",
 		 "decode_policy": "cache_aware",
 		 "tensor_parallelism": "8",
+		 "pipeline_parallelism": "1",
 		 "memory_fraction": "0.85",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
