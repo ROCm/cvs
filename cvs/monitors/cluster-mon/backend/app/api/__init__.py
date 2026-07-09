@@ -15,11 +15,14 @@ from app.api import (
     ssh_keys,
     collectors,
     rccl_endpoints,
+    rack,
+    node_groups,
+    cpu,
+    disk_api,
 )
 
 router = APIRouter()
 
-# Include sub-routers
 router.include_router(cluster.router, prefix="/cluster", tags=["cluster"])
 router.include_router(nodes.router, prefix="/nodes", tags=["nodes"])
 router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
@@ -31,3 +34,7 @@ router.include_router(logs.router, prefix="/logs", tags=["logs"])
 router.include_router(ssh_keys.router, prefix="/ssh-keys", tags=["ssh-keys"])
 router.include_router(collectors.router, prefix="/collectors", tags=["collectors"])
 router.include_router(rccl_endpoints.router, prefix="/rccl", tags=["rccl"])
+router.include_router(rack.router, prefix="/rack", tags=["rack"])
+router.include_router(node_groups.router, prefix="/node-groups", tags=["node-groups"])
+router.include_router(cpu.router, prefix="/cpu", tags=["cpu"])
+router.include_router(disk_api.router, prefix="/disk", tags=["disk"])

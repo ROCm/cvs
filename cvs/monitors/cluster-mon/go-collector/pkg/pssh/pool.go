@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	defaultDialTimeout        = 10 * time.Second
+	defaultDialTimeout        = 30 * time.Second // generous for slow SSH banners
 	defaultMaxSessionsPerConn = 10 // matches sshd MaxSessions default
 	defaultReprobeInterval    = 300 * time.Second
 	defaultKeepaliveInterval  = 30 * time.Second
@@ -65,9 +65,11 @@ type Pool struct {
 	// keyBytes takes priority over keyPath when non-nil (in-memory key, never
 	// written to disk). keyPath is used lazily when keyBytes is nil so the pool
 	// can start even when the key file does not yet exist (e.g. fresh container).
+	// password is used when both keyPath and keyBytes are empty/nil.
 	user               string
 	keyPath            string
 	keyBytes           []byte // in-memory key PEM; takes priority over keyPath
+	password           string // SSH password; used only when no key is available
 	dialTimeout        time.Duration
 	maxSessionsPerConn int
 
@@ -107,7 +109,7 @@ type Pool struct {
 // dialFunc may be nil (direct TCP dial) or a function returning a net.Conn
 // already tunnelled through a jump host.
 func New(
-	user, keyPath string,
+	user, keyPath, password string,
 	nodes []string,
 	maxSessionsPerConn int,
 	keepaliveInterval time.Duration,
@@ -150,6 +152,7 @@ func New(
 	p := &Pool{
 		user:               user,
 		keyPath:            keyPath,
+		password:           password,
 		dialTimeout:        defaultDialTimeout,
 		maxSessionsPerConn: maxSessionsPerConn,
 		dialSem:            make(chan struct{}, dialSemCap),
@@ -242,15 +245,16 @@ func (p *Pool) TriggerReprobe() {
 	}
 }
 
-// UpdateCredentials replaces the SSH username and/or key material in the running pool.
-// Pass empty/nil to keep the current value for that field.
+// UpdateCredentials replaces the SSH username, key material, and/or password
+// in the running pool. Pass empty/nil to keep the current value for that field.
 // keyBytes, when non-nil, replaces any existing in-memory key and clears keyPath.
+// password is used when both keyPath and keyBytes are empty/nil.
 //
 // All cached connections are dropped under connMu (they authenticated with the old
 // credentials and cannot be re-used). All currently reachable nodes are moved back
 // to unreachable so the background reprobe re-dials them with the new credentials.
 // TriggerReprobe is called at the end so recovery begins immediately.
-func (p *Pool) UpdateCredentials(user, keyPath string, keyBytes []byte) {
+func (p *Pool) UpdateCredentials(user, keyPath string, keyBytes []byte, password string) {
 	p.connMu.Lock()
 	if user != "" {
 		p.user = user
@@ -259,10 +263,16 @@ func (p *Pool) UpdateCredentials(user, keyPath string, keyBytes []byte) {
 		cp := make([]byte, len(keyBytes))
 		copy(cp, keyBytes)
 		p.keyBytes = cp
-		p.keyPath = "" // in-memory key takes over
+		p.keyPath = ""    // in-memory key takes over
+		p.password = ""   // key wins over password
 	} else if keyPath != "" {
 		p.keyPath = keyPath
-		p.keyBytes = nil // switch back to file-based
+		p.keyBytes = nil  // switch back to file-based
+		p.password = ""   // key wins over password
+	} else if password != "" {
+		p.password = password
+		p.keyPath = ""
+		p.keyBytes = nil
 	}
 	for h, e := range p.conns {
 		e.cancel()
@@ -284,6 +294,7 @@ func (p *Pool) UpdateCredentials(user, keyPath string, keyBytes []byte) {
 		"user_changed", user != "",
 		"key_path_changed", keyPath != "",
 		"key_bytes_changed", len(keyBytes) > 0,
+		"password_changed", password != "",
 	)
 }
 
@@ -463,14 +474,13 @@ func (p *Pool) conn(host string) (*connEntry, error) {
 	}
 	p.connMu.RUnlock()
 
-	// Load key at connection time — not at pool creation time.
-	// This allows the pool to start immediately even when the key file does not
-	// yet exist. If the file is missing, conn() returns an error, the node is
-	// marked unreachable, and the background reprobe retries every 5 minutes.
-	// Once the key is uploaded the next reprobe succeeds with no restart needed.
-	auth, err := loadKeyAuth(p.keyPath, p.keyBytes)
+	// Load auth methods at connection time — not at pool creation time.
+	// Supports key-based (file or in-memory bytes) and password-based auth.
+	// If the key file is missing, conn() returns an error, the node is marked
+	// unreachable, and the background reprobe retries every 5 minutes.
+	auth, err := loadAuth(p.keyPath, p.keyBytes, p.password)
 	if err != nil {
-		return nil, fmt.Errorf("key load: %w", err)
+		return nil, fmt.Errorf("auth load: %w", err)
 	}
 
 	sshCfg := &xssh.ClientConfig{
@@ -636,15 +646,27 @@ func (p *Pool) runSession(ctx context.Context, host, cmd string) (string, error)
 
 // ─── auth helpers ─────────────────────────────────────────────────────────────
 
-// loadKeyAuth returns SSH auth methods for the node key.
-// When keyBytes is non-nil it is parsed directly (in-memory path — key never
-// touches disk). Otherwise keyPath is read from the filesystem (lazy file path,
-// with ~ expansion so callers can pass paths like ~/.ssh/id_ed25519).
-func loadKeyAuth(keyPath string, keyBytes []byte) ([]xssh.AuthMethod, error) {
-	var pem []byte
+// loadAuth returns SSH auth methods for connecting to a cluster node.
+//
+// Priority order:
+//  1. keyBytes (in-memory PEM, never written to disk)
+//  2. keyPath  (file-based, read lazily with ~ expansion)
+//  3. password (plain-text; used when no key is available)
+//
+// Returns an error only when a key is specified but cannot be parsed.
+// If all three are empty, returns an error (no auth available).
+func loadAuth(keyPath string, keyBytes []byte, password string) ([]xssh.AuthMethod, error) {
+	// In-memory key takes top priority.
 	if len(keyBytes) > 0 {
-		pem = keyBytes
-	} else {
+		signer, err := xssh.ParsePrivateKey(keyBytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse in-memory key: %w", err)
+		}
+		return []xssh.AuthMethod{xssh.PublicKeys(signer)}, nil
+	}
+
+	// File-based key next.
+	if keyPath != "" {
 		// Expand ~ to the actual home directory.
 		if len(keyPath) >= 2 && keyPath[0] == '~' && (keyPath[1] == '/' || keyPath[1] == '\\') {
 			home, err := os.UserHomeDir()
@@ -653,17 +675,28 @@ func loadKeyAuth(keyPath string, keyBytes []byte) ([]xssh.AuthMethod, error) {
 			}
 			keyPath = home + keyPath[1:]
 		}
-		var err error
-		pem, err = os.ReadFile(keyPath)
+		pem, err := os.ReadFile(keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("read key %q: %w", keyPath, err)
 		}
+		signer, err := xssh.ParsePrivateKey(pem)
+		if err != nil {
+			return nil, fmt.Errorf("parse key %q: %w", keyPath, err)
+		}
+		return []xssh.AuthMethod{xssh.PublicKeys(signer)}, nil
 	}
-	signer, err := xssh.ParsePrivateKey(pem)
-	if err != nil {
-		return nil, fmt.Errorf("parse key %q: %w", keyPath, err)
+
+	// Password auth as fallback.
+	if password != "" {
+		return []xssh.AuthMethod{xssh.Password(password)}, nil
 	}
-	return []xssh.AuthMethod{xssh.PublicKeys(signer)}, nil
+
+	return nil, fmt.Errorf("no SSH credentials available (set key or password)")
+}
+
+// loadKeyAuth is kept for backward-compatibility — delegates to loadAuth.
+func loadKeyAuth(keyPath string, keyBytes []byte) ([]xssh.AuthMethod, error) {
+	return loadAuth(keyPath, keyBytes, "")
 }
 
 // addrFor appends :22 when host has no explicit port.

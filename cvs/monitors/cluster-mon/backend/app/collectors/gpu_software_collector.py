@@ -9,6 +9,8 @@ import logging
 from typing import Dict, Any
 from datetime import datetime
 
+from app.collectors.rocm_exec import exec_with_rocm_fallback
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,8 +48,8 @@ class GPUSoftwareCollector:
         rocm_ver_output = await ssh_manager.exec_async(
             "bash -c 'cat /opt/rocm*/.info/version 2>/dev/null | head -1 || echo \"N/A\"'", timeout=60
         )
-        driver_output = await ssh_manager.exec_async(
-            "bash -c 'rocm-smi --showdriverversion 2>/dev/null || echo \"Not available\"'", timeout=60
+        driver_output = await exec_with_rocm_fallback(
+            ssh_manager, "bash -c 'rocm-smi --showdriverversion 2>/dev/null || echo \"Not available\"'", timeout=60
         )
 
         rocm_version = {}
@@ -84,7 +86,7 @@ class GPUSoftwareCollector:
         Command: amd-smi firmware --json
         """
         logger.info("Collecting GPU firmware information")
-        output = await ssh_manager.exec_async("amd-smi firmware --json", timeout=120)
+        output = await exec_with_rocm_fallback(ssh_manager, "amd-smi firmware --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_amd_smi_version(self, ssh_manager) -> Dict[str, Any]:
@@ -94,8 +96,8 @@ class GPUSoftwareCollector:
         Command: amd-smi version --json
         """
         logger.info("Collecting AMD SMI version")
-        output = await ssh_manager.exec_async(
-            "bash -c 'amd-smi version --json 2>/dev/null || amd-smi --version'", timeout=60
+        output = await exec_with_rocm_fallback(
+            ssh_manager, "bash -c 'amd-smi version --json 2>/dev/null || amd-smi --version'", timeout=60
         )
         return self.parse_json_output(output)
 
@@ -206,8 +208,8 @@ class GPUSoftwareCollector:
 
         logger.info("Collecting all GPU software information (optimized)")
 
-        version_output = await ssh_manager.exec_async("amd-smi version --json", timeout=60)
-        firmware_output = await ssh_manager.exec_async("amd-smi firmware --json", timeout=120)
+        version_output = await exec_with_rocm_fallback(ssh_manager, "amd-smi version --json", timeout=60)
+        firmware_output = await exec_with_rocm_fallback(ssh_manager, "amd-smi firmware --json", timeout=120)
 
         # Parse amd-smi version --json output
         rocm_version_info = {}

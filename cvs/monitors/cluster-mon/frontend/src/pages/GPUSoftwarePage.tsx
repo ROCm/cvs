@@ -39,8 +39,8 @@ export function GPUSoftwarePage() {
     }
 
     if (autoRefresh) {
-      // Auto-refresh every 180 seconds (3 minutes) since software rarely changes
-      const interval = setInterval(fetchSoftwareInfo, 180000)
+      // Auto-refresh every 300 seconds (5 minutes) since software rarely changes
+      const interval = setInterval(fetchSoftwareInfo, 300000)
       return () => clearInterval(interval)
     }
   }, [autoRefresh])

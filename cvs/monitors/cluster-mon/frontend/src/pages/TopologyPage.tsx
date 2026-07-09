@@ -63,8 +63,8 @@ export function TopologyPage() {
   useEffect(() => {
     loadTopologyData()
 
-    // Auto-refresh every 180 seconds (3 minutes)
-    const interval = setInterval(loadTopologyData, 180000)
+    // Auto-refresh every 300 seconds (5 minutes)
+    const interval = setInterval(loadTopologyData, 300000)
     return () => clearInterval(interval)
   }, [])
 

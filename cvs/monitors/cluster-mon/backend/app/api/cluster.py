@@ -137,19 +137,31 @@ async def get_cluster_status() -> Dict[str, Any]:
             "status": "no_ssh_manager",
         }
 
-    total_nodes = len(app_state.ssh_manager.host_list)
-    unreachable_nodes = len(app_state.ssh_manager.unreachable_hosts)
+    all_nodes = app_state.ssh_manager.host_list
+    total_nodes = len(all_nodes)
 
-    # Check health of each reachable node
+    # Use node_health_status as the single source of truth for all three components
+    # (summary cards, heatmap, nodes grid).  ssh_manager.unreachable_hosts reflects
+    # the Go daemon's live probe state and can diverge from the Python-side
+    # failure-threshold tracker (node_health_status).
     healthy_nodes = 0
     unhealthy_nodes = 0
+    unreachable_nodes = 0
 
-    for node in app_state.ssh_manager.reachable_hosts:
-        node_status, _ = check_node_health(node, gpu_data)
-        if node_status == "healthy":
-            healthy_nodes += 1
-        else:
+    for node in all_nodes:
+        stable_status = app_state.node_health_status.get(node, 'healthy')
+        if stable_status == 'unreachable':
+            unreachable_nodes += 1
+        elif stable_status == 'unhealthy':
+            # SSH reachable but GPU driver/command failed
             unhealthy_nodes += 1
+        else:
+            # Further check for hardware issues (RAS/PCIe/XGMI/temp errors)
+            node_status, _ = check_node_health(node, gpu_data)
+            if node_status == 'healthy':
+                healthy_nodes += 1
+            else:
+                unhealthy_nodes += 1
 
     total_gpus = 0
     total_util = 0

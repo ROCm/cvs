@@ -237,7 +237,10 @@ func (p *Pool) reprobeUnreachable(ctx context.Context) {
 		if it.ok {
 			recovered = append(recovered, it.host)
 		} else {
-			errMap[it.host] = cleanProbeErr(it.err)
+			reason := cleanProbeErr(it.err)
+			errMap[it.host] = reason
+			// Log each failing host so operators can see the actual SSH error.
+			p.logger.Info("pssh_host_unreachable", "host", it.host, "reason", reason)
 			// Drop the stale cached connection so the next attempt re-dials.
 			p.drop(it.host)
 		}

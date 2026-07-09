@@ -1,996 +1,689 @@
 import { useState, useEffect } from 'react'
-import { Upload, Save, Server, CheckCircle, XCircle, Package, Download, RefreshCw, Clock } from 'lucide-react'
+import { Upload, Save, CheckCircle, XCircle, Package, Download, RefreshCw, Network, Server } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { api } from '@/services/api'
 import { useClusterStore } from '@/stores/clusterStore'
 
-export function ConfigurationPage() {
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface GroupState {
+  hosts: string
+  username: string
+  authMethod: 'key' | 'password'
+  keyFile: string
+  password: string
+}
+
+interface JumpState {
+  enabled: boolean
+  host: string
+  username: string
+  authMethod: 'key' | 'password'
+  keyFile: string
+  password: string
+}
+
+const defaultGroup = (): GroupState => ({
+  hosts: '', username: 'root', authMethod: 'key',
+  keyFile: '~/.ssh/id_rsa', password: '',
+})
+
+const defaultJump = (): JumpState => ({
+  enabled: false, host: '', username: 'root',
+  authMethod: 'key', keyFile: '~/.ssh/id_rsa', password: '',
+})
+
+// ---------------------------------------------------------------------------
+// SSH credentials form (reused by each tab)
+// ---------------------------------------------------------------------------
+
+function SSHForm({ state, onChange, idPrefix }: {
+  state: GroupState
+  onChange: (s: GroupState) => void
+  idPrefix: string
+}) {
+  const [uploadMsg, setUploadMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const handleKeyUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      await api.uploadSshKey(file)
+      const path = `/root/.ssh/${file.name}`
+      onChange({ ...state, keyFile: path })
+      setUploadMsg({ ok: true, text: `Key '${file.name}' uploaded → ${path}` })
+    } catch (err: any) {
+      setUploadMsg({ ok: false, text: `Upload failed: ${err.message}` })
+    }
+    // Reset input so same file can be re-uploaded
+    e.target.value = ''
+  }
+
+  return (
+    <div className="space-y-4 pt-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            SSH Username
+          </label>
+          <input
+            type="text"
+            value={state.username}
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
+            onChange={e => onChange({ ...state, username: e.target.value })}
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Authentication
+          </label>
+          <div className="flex gap-4 mt-2">
+            {(['key', 'password'] as const).map(m => (
+              <label key={m} className="flex items-center gap-2 cursor-pointer text-sm dark:text-gray-300">
+                <input
+                  type="radio"
+                  name={`${idPrefix}-auth`}
+                  value={m}
+                  checked={state.authMethod === m}
+                  onChange={() => { onChange({ ...state, authMethod: m }); setUploadMsg(null) }}
+                  className="w-4 h-4 text-blue-600"
+                />
+                {m === 'key' ? 'SSH Key' : 'Password'}
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {state.authMethod === 'key' ? (
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Private Key <span className="text-xs text-gray-500 font-normal">(stored inside container)</span>
+          </label>
+          {/* Upload button */}
+          <label className="flex items-center gap-2 cursor-pointer w-fit px-3 py-1.5 border border-dashed border-blue-400 dark:border-blue-600 rounded-lg text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
+            <Upload className="h-3.5 w-3.5" />
+            Upload key file
+            <input type="file" className="hidden" onChange={handleKeyUpload} />
+          </label>
+          {uploadMsg && (
+            <p className={`text-xs ${uploadMsg.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+              {uploadMsg.text}
+            </p>
+          )}
+          {/* Path input */}
+          <input
+            type="text"
+            value={state.keyFile}
+            placeholder="/root/.ssh/id_rsa"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
+            onChange={e => onChange({ ...state, keyFile: e.target.value })}
+          />
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Upload auto-fills this path. You can also edit it manually if the key is already mounted.
+          </p>
+        </div>
+      ) : (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Password
+          </label>
+          <input
+            type="password"
+            value={state.password}
+            placeholder="Stored in memory only — re-enter after restart"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
+            onChange={e => onChange({ ...state, password: e.target.value })}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Hosts textarea with file upload
+// ---------------------------------------------------------------------------
+
+function HostsInput({ value, onChange, placeholder }: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+}) {
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => onChange((ev.target?.result as string) ?? '')
+    reader.readAsText(file)
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+          IPs / Hostnames <span className="text-xs text-gray-500">(one per line)</span>
+        </label>
+        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-blue-600 hover:underline">
+          <Upload className="h-3.5 w-3.5" />
+          Upload .txt
+          <input type="file" accept=".txt" className="hidden" onChange={handleFile} />
+        </label>
+      </div>
+      <textarea
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={6}
+        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500 resize-none"
+      />
+      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+        {value.split('\n').map(s => s.trim()).filter(Boolean).length} host(s) configured
+      </p>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Node Groups + Jump Host card
+// ---------------------------------------------------------------------------
+
+type TabKey = 'gpu' | 'scaleup' | 'scaleout'
+
+const TABS: { key: TabKey; label: string; desc: string; icon: React.ElementType }[] = [
+  { key: 'gpu',      label: 'GPU Nodes',            desc: 'Regular GPU nodes & compute trays',    icon: Server  },
+  { key: 'scaleup',  label: 'Scale-up Switches',    desc: 'IFoE fabric switches (SONiC)',          icon: Network },
+  { key: 'scaleout', label: 'Scale-out Switches',   desc: 'Inter-rack switches (SONiC)',           icon: Network },
+]
+
+function NodeGroupsCard() {
+  const [activeTab, setActiveTab] = useState<TabKey>('gpu')
+  const [gpu,      setGpu]      = useState<GroupState>(defaultGroup())
+  const [scaleUp,  setScaleUp]  = useState<GroupState>(defaultGroup())
+  const [scaleOut, setScaleOut] = useState<GroupState>(defaultGroup())
+  const [jump,     setJump]     = useState<JumpState>(defaultJump())
+  const [pollInterval, setPollInterval] = useState(120)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  // Pre-populate: try node_groups config first, fall back to existing cluster config
+  useEffect(() => {
+    const loadNodeGroups = async () => {
+      try {
+        const resp: any = await api.getNodeGroups()
+        const fromGroup = (g: any): GroupState => ({
+          hosts:      (g?.hosts ?? []).join('\n'),
+          username:   g?.ssh?.username    ?? 'root',
+          authMethod: (g?.ssh?.auth_method ?? 'key') as 'key' | 'password',
+          keyFile:    g?.ssh?.key_file    ?? '~/.ssh/id_rsa',
+          password:   '',
+        })
+        setGpu(fromGroup(resp.gpu_nodes))
+        setScaleUp(fromGroup(resp.scale_up_switches))
+        setScaleOut(fromGroup(resp.scale_out_switches))
+        if (resp.poll_interval) setPollInterval(resp.poll_interval)
+
+        // Jump host — use first group's jump host (shared)
+        const jh = resp.gpu_nodes?.jump_host
+        if (jh) {
+          setJump({
+            enabled:    jh.enabled    ?? false,
+            host:       jh.host       ?? '',
+            username:   jh.username   ?? 'root',
+            authMethod: (jh.auth_method ?? 'key') as 'key' | 'password',
+            keyFile:    jh.key_file   ?? '~/.ssh/id_rsa',
+            password:   '',
+          })
+        }
+
+        // If GPU nodes empty, pre-populate from existing cluster config
+        if (!resp.gpu_nodes?.hosts?.length) {
+          const current: any = await api.getCurrentConfiguration()
+          if (current?.nodes?.length) {
+            setGpu(prev => ({
+              ...prev,
+              hosts:      current.nodes.join('\n'),
+              username:   current.username   ?? prev.username,
+              authMethod: (current.auth_method ?? 'key') as 'key' | 'password',
+              keyFile:    current.key_file   ?? prev.keyFile,
+            }))
+          }
+        }
+      } catch {
+        // First run — try existing cluster config
+        try {
+          const current: any = await api.getCurrentConfiguration()
+          if (current?.nodes?.length) {
+            setGpu(prev => ({
+              ...prev,
+              hosts:      current.nodes.join('\n'),
+              username:   current.username   ?? prev.username,
+              authMethod: (current.auth_method ?? 'key') as 'key' | 'password',
+              keyFile:    current.key_file   ?? prev.keyFile,
+            }))
+          }
+          if (current?.jump_host_enabled) {
+            setJump({
+              enabled:    true,
+              host:       current.jump_host         ?? '',
+              username:   current.jump_host_username ?? 'root',
+              authMethod: 'key',
+              keyFile:    current.jump_host_key_file ?? '~/.ssh/id_rsa',
+              password:   '',
+            })
+          }
+        } catch { /* ignore */ }
+      }
+    }
+    loadNodeGroups()
+  }, [])
+
+  const toGroupPayload = (g: GroupState) => ({
+    hosts: g.hosts.split('\n').map((s: string) => s.trim()).filter(Boolean),
+    ssh: {
+      username:    g.username,
+      auth_method: g.authMethod,
+      key_file:    g.authMethod === 'key' ? g.keyFile : '~/.ssh/id_rsa',
+      timeout:     30,
+      password:    g.authMethod === 'password' ? (g.password || null) : null,
+    },
+    // Shared jump host applied to every group
+    jump_host: {
+      enabled:     jump.enabled,
+      host:        jump.host,
+      username:    jump.username,
+      auth_method: jump.authMethod,
+      key_file:    jump.authMethod === 'key' ? jump.keyFile : '~/.ssh/id_rsa',
+      password:    jump.authMethod === 'password' ? (jump.password || null) : null,
+    },
+  })
+
+  const handleSave = async () => {
+    setSaving(true)
+    setMsg(null)
+    try {
+      await api.saveNodeGroups({
+        gpu_nodes:          toGroupPayload(gpu),
+        scale_up_switches:  toGroupPayload(scaleUp),
+        scale_out_switches: toGroupPayload(scaleOut),
+        poll_interval:      pollInterval,
+      })
+      await api.reloadNodeGroups()
+      setMsg({ type: 'success', text: 'Node groups saved. GPU nodes synced to cluster and registered with SSH daemon.' })
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message ?? 'Save failed' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const stateFor = (tab: TabKey) =>
+    tab === 'gpu' ? gpu : tab === 'scaleup' ? scaleUp : scaleOut
+  const setterFor = (tab: TabKey) =>
+    tab === 'gpu' ? setGpu : tab === 'scaleup' ? setScaleUp : setScaleOut
+
+  return (
+    <>
+      {/* ── Node Groups ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Network className="h-5 w-5 text-blue-600" />
+            Node Groups
+          </CardTitle>
+          <CardDescription>
+            Configure SSH access for each host group. All groups use the Go SSH daemon.
+            GPU nodes are also synced to the cluster node list for GPU/NIC metrics collection.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-0">
+          {msg && (
+            <div className={`mb-4 p-3 rounded-lg text-sm ${
+              msg.type === 'success'
+                ? 'bg-green-50 border border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-700 dark:text-green-300'
+                : 'bg-red-50 border border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-700 dark:text-red-300'
+            }`}>{msg.text}</div>
+          )}
+
+          <div className="p-3 mb-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg text-xs text-amber-800 dark:text-amber-300">
+            <strong>Passwords are in-memory only</strong> — re-enter after each container restart and click Save.
+            Key file paths are persisted to <code>config/node_groups.yaml</code>.
+          </div>
+
+          {/* Tabs */}
+          <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
+            <div className="flex gap-0">
+              {TABS.map(({ key, label, desc, icon: Icon }) => (
+                <button
+                  key={key}
+                  onClick={() => setActiveTab(key)}
+                  className={`flex items-start gap-2 px-5 py-3 text-sm border-b-2 -mb-px transition-colors text-left ${
+                    activeTab === key
+                      ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                      : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <Icon className="h-4 w-4 mt-0.5 shrink-0" />
+                  <div>
+                    <div className="font-medium">{label}</div>
+                    <div className="text-xs text-gray-400 dark:text-gray-500 font-normal">{desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Tab content */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <HostsInput
+              value={stateFor(activeTab).hosts}
+              onChange={v => setterFor(activeTab)({ ...stateFor(activeTab), hosts: v })}
+              placeholder={
+                activeTab === 'gpu'
+                  ? '192.168.1.101\n192.168.1.102\ncompute-tray-01.rack.local'
+                  : activeTab === 'scaleup'
+                  ? '192.168.2.1\n192.168.2.2'
+                  : '192.168.3.1'
+              }
+            />
+            <SSHForm
+              state={stateFor(activeTab)}
+              onChange={setterFor(activeTab)}
+              idPrefix={activeTab}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Jump Host ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Jump Host / Bastion</CardTitle>
+          <CardDescription>
+            Optional. When enabled, all three node groups connect through this jump host.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={jump.enabled}
+              onChange={e => setJump({ ...jump, enabled: e.target.checked })}
+              className="w-4 h-4 text-blue-600 rounded"
+            />
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Use Jump Host for all groups
+            </span>
+          </label>
+
+          {jump.enabled && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Jump Host IP / Hostname
+                </label>
+                <input
+                  type="text"
+                  value={jump.host}
+                  placeholder="bastion.example.com"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
+                  onChange={e => setJump({ ...jump, host: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Username
+                </label>
+                <input
+                  type="text"
+                  value={jump.username}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
+                  onChange={e => setJump({ ...jump, username: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Auth Method
+                </label>
+                <div className="flex gap-4 mt-2">
+                  {(['key', 'password'] as const).map(m => (
+                    <label key={m} className="flex items-center gap-2 cursor-pointer text-sm dark:text-gray-300">
+                      <input
+                        type="radio"
+                        name="jump-auth"
+                        value={m}
+                        checked={jump.authMethod === m}
+                        onChange={() => setJump({ ...jump, authMethod: m })}
+                        className="w-4 h-4 text-blue-600"
+                      />
+                      {m === 'key' ? 'SSH Key' : 'Password'}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                {jump.authMethod === 'key' ? (
+                  <>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Key File Path{' '}
+                      <span className="text-xs text-gray-500 font-normal">(on jump host)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={jump.keyFile}
+                      placeholder="~/.ssh/id_rsa"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
+                      onChange={e => setJump({ ...jump, keyFile: e.target.value })}
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Path to the SSH private key <strong>on the jump host</strong> used to reach cluster nodes.
+                      The daemon fetches it via SFTP — it is never written into this container.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Password
+                    </label>
+                    <input
+                      type="password"
+                      value={jump.password}
+                      placeholder="In-memory only"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
+                      onChange={e => setJump({ ...jump, password: e.target.value })}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Single Save & Apply — applies everything above */}
+      <div className="flex items-center justify-between py-2">
+        <div className="flex items-center gap-3">
+          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            Poll Interval (seconds)
+          </label>
+          <input
+            type="number"
+            min={10}
+            max={3600}
+            value={pollInterval}
+            className="w-24 px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-1 focus:ring-blue-500"
+            onChange={e => setPollInterval(Number(e.target.value))}
+          />
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
+        >
+          <Save className="h-4 w-4" />
+          {saving ? 'Saving...' : 'Save & Apply'}
+        </button>
+      </div>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Package Installs card (unchanged logic, kept as a self-contained component)
+// ---------------------------------------------------------------------------
+
+function PackageInstallsCard() {
   const nodes = useClusterStore((state) => state.nodes)
-
-  const [nodeIps, setNodeIps] = useState('')
-  const [username, setUsername] = useState('')
-  const [authMethod, setAuthMethod] = useState<'key' | 'password'>('key')
-  const [keyFilePath, setKeyFilePath] = useState('~/.ssh/id_rsa')
-  const [password, setPassword] = useState('')
-
-  // Jump host configuration
-  const [useJumpHost, setUseJumpHost] = useState(false)
-  const [jumpHost, setJumpHost] = useState('')
-  const [jumpUsername, setJumpUsername] = useState('')
-  const [jumpAuthMethod, setJumpAuthMethod] = useState<'key' | 'password'>('key')
-  const [jumpKeyFilePath, setJumpKeyFilePath] = useState('~/.ssh/id_rsa')
-  const [jumpPassword, setJumpPassword] = useState('')
-
-  // Node access from jump host
-  const [nodeUsernameViaJump, setNodeUsernameViaJump] = useState('')
-  const [nodeKeyFileOnJumpHost, setNodeKeyFileOnJumpHost] = useState('~/.ssh/id_rsa')
-
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [isSaving, setIsSaving] = useState(false)
-
-  // Package management state
   const [packages, setPackages] = useState<any[]>([])
   const [packageStatuses, setPackageStatuses] = useState<{ [key: string]: any }>({})
   const [installingPackage, setInstallingPackage] = useState<string | null>(null)
   const [packageMessage, setPackageMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onload = (event) => {
-        const content = event.target?.result as string
-        setNodeIps(content)
-      }
-      reader.readAsText(file)
-    }
-  }
-
-  // Load available packages
   const loadPackages = async () => {
     try {
       const result = await api.getPackageList()
       setPackages(result.packages || [])
-    } catch (error) {
-      console.error('Failed to load packages:', error)
-    }
+    } catch { /* ignore */ }
   }
 
-  // Check package status
   const checkPackageStatus = async (packageId: string) => {
     try {
       const status = await api.getPackageStatus(packageId)
       setPackageStatuses(prev => ({ ...prev, [packageId]: status }))
-    } catch (error) {
-      console.error(`Failed to check status for ${packageId}:`, error)
-    }
+    } catch { /* ignore */ }
   }
 
-  // Install package
-  const handleInstallPackage = async (packageId: string) => {
+  const refreshAll = async () => {
+    for (const pkg of packages) await checkPackageStatus(pkg.id)
+  }
+
+  const handleInstall = async (packageId: string) => {
+    setInstallingPackage(packageId)
+    setPackageMessage({ type: 'info', text: `Installing ${packageId} on all nodes...` })
     try {
-      setInstallingPackage(packageId)
-      setPackageMessage({ type: 'info', text: `Installing ${packageId} on all nodes... This may take a few minutes.` })
-
       const result = await api.installPackage(packageId)
-
       setPackageMessage({
         type: result.success ? 'success' : 'error',
-        text: result.message || `Installation completed: ${result.successful} successful, ${result.failed} failed`
+        text: result.message || `Done: ${result.successful} ok, ${result.failed} failed`,
       })
-
-      // Refresh package status after installation
       await checkPackageStatus(packageId)
-
-    } catch (error: any) {
-      console.error(`Failed to install ${packageId}:`, error)
-      setPackageMessage({
-        type: 'error',
-        text: `Failed to install ${packageId}: ${error.message || 'Unknown error'}`
-      })
+    } catch (err: any) {
+      setPackageMessage({ type: 'error', text: `Failed: ${err.message}` })
     } finally {
       setInstallingPackage(null)
     }
   }
 
-  // Refresh all package statuses
-  const refreshPackageStatuses = async () => {
-    for (const pkg of packages) {
-      await checkPackageStatus(pkg.id)
-    }
-  }
-
-
-  const handleSaveConfiguration = async () => {
-    try {
-      setIsSaving(true)
-
-      // Parse node IPs
-      const nodes = nodeIps
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith('#'))
-
-      if (nodes.length === 0) {
-        setMessage({ type: 'error', text: 'Please enter at least one node IP' })
-        setIsSaving(false)
-        return
-      }
-
-      // Validate username
-      const effectiveUsername = useJumpHost ? nodeUsernameViaJump : username
-      if (!effectiveUsername || effectiveUsername.trim() === '') {
-        setMessage({ type: 'error', text: 'Please enter SSH username' })
-        setIsSaving(false)
-        return
-      }
-
-      // Prepare configuration
-      // When jump host is enabled the direct SSH section is irrelevant — use
-      // the node credentials from the jump host section instead.
-      const effectiveAuthMethod = useJumpHost ? 'key' : authMethod
-      const effectiveKeyFilePath = useJumpHost
-        ? (nodeKeyFileOnJumpHost || undefined)
-        : (authMethod === 'key' ? keyFilePath : undefined)
-      const effectivePassword = useJumpHost ? undefined : (authMethod === 'password' ? password : undefined)
-
-      const config = {
-        nodes,
-        username: effectiveUsername,
-        auth_method: effectiveAuthMethod,
-        key_file_path: effectiveKeyFilePath,
-        password: effectivePassword,
-        use_jump_host: useJumpHost,
-        jump_host: useJumpHost ? {
-          host: jumpHost,
-          username: jumpUsername,
-          auth_method: jumpAuthMethod,
-          key_file_path: jumpAuthMethod === 'key' ? jumpKeyFilePath : undefined,
-          password: jumpAuthMethod === 'password' ? jumpPassword : undefined,
-          node_username: nodeUsernameViaJump,
-          node_key_file: nodeKeyFileOnJumpHost,
-        } : null,  // Send null instead of undefined to ensure backend disables it
-      }
-
-      // Validate jump host if enabled
-      if (useJumpHost && !jumpHost) {
-        setMessage({ type: 'error', text: 'Please enter jump host IP/hostname' })
-        setIsSaving(false)
-        return
-      }
-
-      // Send to backend API
-      setMessage({ type: 'success', text: '💾 Saving configuration...' })
-
-      const result = await api.updateConfiguration(config)
-
-      setMessage({
-        type: 'success',
-        text: `✅ ${result.message}\n\n🔄 Reloading backend configuration...`,
-      })
-
-      // Reload backend configuration immediately
-      try {
-        const reloadResult = await api.reloadConfiguration()
-
-        // Check if key upload is required
-        if (reloadResult.requires_key_upload) {
-          setMessage({
-            type: 'error',
-            text: `⚠️ Configuration saved but SSH keys missing!\n\n${reloadResult.error}\n\nPlease upload your SSH private key using the file upload above and try saving again.`,
-          })
-          setIsSaving(false)
-          return
-        }
-
-        if (!reloadResult.success) {
-          setMessage({
-            type: 'error',
-            text: `⚠️ Configuration saved but reload failed: ${reloadResult.error}`,
-          })
-          setIsSaving(false)
-          return
-        }
-
-        // Reload the current configuration from backend
-        const currentConfig = await api.getCurrentConfiguration()
-
-        // Update all form fields with saved values
-        if (currentConfig.nodes && currentConfig.nodes.length > 0) {
-          setNodeIps(currentConfig.nodes.join('\n'))
-        }
-        if (currentConfig.username) {
-          setUsername(currentConfig.username)
-        }
-        if (currentConfig.auth_method) {
-          setAuthMethod(currentConfig.auth_method as 'key' | 'password')
-        }
-        if (currentConfig.key_file) {
-          setKeyFilePath(currentConfig.key_file)
-        }
-
-        // Update jump host settings
-        setUseJumpHost(currentConfig.jump_host_enabled || false)
-
-        if (currentConfig.jump_host_enabled) {
-          if (currentConfig.jump_host) {
-            setJumpHost(currentConfig.jump_host)
-          }
-          if (currentConfig.jump_host_username) {
-            setJumpUsername(currentConfig.jump_host_username)
-          }
-          if (currentConfig.jump_host_key_file) {
-            setJumpKeyFilePath(currentConfig.jump_host_key_file)
-          }
-          if (currentConfig.node_username_via_jump) {
-            setNodeUsernameViaJump(currentConfig.node_username_via_jump)
-          }
-          if (currentConfig.node_key_file_on_jumphost) {
-            setNodeKeyFileOnJumpHost(currentConfig.node_key_file_on_jumphost)
-          }
-        }
-
-        setMessage({
-          type: 'success',
-          text: `✅ Configuration saved and applied successfully!\n\nMonitoring ${currentConfig.nodes?.length || 0} nodes.`,
-        })
-      } catch (err) {
-        console.error('Failed to reload configuration:', err)
-        setMessage({
-          type: 'error',
-          text: `❌ Failed to reload configuration: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        })
-      } finally {
-        setIsSaving(false)
-      }
-
-    } catch (error: any) {
-      console.error('Failed to save configuration:', error)
-      setMessage({
-        type: 'error',
-        text: `❌ Failed to save configuration: ${error.message || 'Unknown error'}`,
-      })
-      setIsSaving(false)
-    }
-  }
-
-  // Load current configuration and packages on mount
-  useEffect(() => {
-    const loadCurrentConfig = async () => {
-      try {
-        const currentConfig = await api.getCurrentConfiguration()
-        if (currentConfig.nodes && currentConfig.nodes.length > 0) {
-          setNodeIps(currentConfig.nodes.join('\n'))
-        }
-        if (currentConfig.username) {
-          setUsername(currentConfig.username)
-        }
-        if (currentConfig.jump_host_enabled) {
-          setUseJumpHost(true)
-          if (currentConfig.jump_host) {
-            setJumpHost(currentConfig.jump_host)
-          }
-          if (currentConfig.jump_host_username) {
-            setJumpUsername(currentConfig.jump_host_username)
-          }
-        }
-      } catch (error) {
-        console.error('Failed to load current configuration:', error)
-      }
-    }
-
-    loadCurrentConfig()
-    loadPackages()
-  }, [])
-
-  // Load package statuses when packages are loaded
-  useEffect(() => {
-    if (packages.length > 0) {
-      refreshPackageStatuses()
-    }
-  }, [packages])
+  useEffect(() => { loadPackages() }, [])
+  useEffect(() => { if (packages.length) refreshAll() }, [packages])
 
   return (
-    <div className="max-w-4xl">
-      <h1 className="text-3xl font-bold mb-6">Cluster Configuration</h1>
-
-      <div className="space-y-6">
-        {/* Message */}
-        {message && (
-          <div
-            className={`p-4 rounded-lg ${
-              message.type === 'success'
-                ? 'bg-green-50 text-green-800 border border-green-200'
-                : 'bg-red-50 text-red-800 border border-red-200'
-            }`}
-          >
-            {message.text}
-          </div>
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Package className="h-5 w-5" />
+          Package Installs
+        </CardTitle>
+        <CardDescription>Install required packages on all GPU nodes</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {packageMessage && (
+          <div className={`p-3 rounded-lg text-sm ${
+            packageMessage.type === 'success' ? 'bg-green-50 text-green-800 border border-green-200' :
+            packageMessage.type === 'error'   ? 'bg-red-50 text-red-800 border border-red-200' :
+                                                'bg-blue-50 text-blue-800 border border-blue-200'
+          }`}>{packageMessage.text}</div>
         )}
 
-        {/* Node Configuration */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Server className="h-5 w-5" />
-              Cluster Nodes
-            </CardTitle>
-            <CardDescription>
-              Enter node IP addresses or hostnames (one per line)
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* File Upload */}
-            <div>
-              <label className="block text-sm font-medium mb-2">Upload Nodes File</label>
-              <div className="flex items-center gap-4">
-                <input
-                  type="file"
-                  accept=".txt"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                  id="file-upload"
-                />
-                <label
-                  htmlFor="file-upload"
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 transition-colors"
-                >
-                  <Upload className="h-4 w-4" />
-                  Upload nodes.txt
-                </label>
-                <span className="text-sm text-gray-500">
-                  Or enter IPs manually below
-                </span>
-              </div>
-            </div>
-
-            {/* Manual Input */}
-            <div>
-              <label className="block text-sm font-medium mb-2">Node IPs / Hostnames</label>
-              <textarea
-                value={nodeIps}
-                onChange={(e) => setNodeIps(e.target.value)}
-                placeholder="192.168.1.10&#10;192.168.1.11&#10;192.168.1.12&#10;node1.cluster.local"
-                rows={8}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Enter one IP address or hostname per line. Lines starting with # are ignored.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Current Loaded Configuration */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-green-600" />
-              Current Configuration (Loaded from files)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <span className="font-semibold">Total Nodes:</span>{' '}
-                <span className="font-mono">{nodes.length}</span>
-              </div>
-              <div>
-                <span className="font-semibold">SSH Username:</span>{' '}
-                <span className="font-mono">{username}</span>
-              </div>
-              <div>
-                <span className="font-semibold">Auth Method:</span>{' '}
-                <span className="font-mono">{authMethod === 'key' ? 'SSH Key' : 'Password'}</span>
-              </div>
-              {authMethod === 'key' && (
-                <div>
-                  <span className="font-semibold">Key File:</span>{' '}
-                  <span className="font-mono">{keyFilePath}</span>
-                </div>
-              )}
-              <div>
-                <span className="font-semibold">Jump Host:</span>{' '}
-                <span className="font-mono">{useJumpHost ? `Enabled (${jumpHost})` : 'Disabled (Direct SSH)'}</span>
-              </div>
-            </div>
-
-            {nodes.length > 0 && (
-              <div className="mt-4">
-                <div className="font-semibold mb-2">Configured Nodes:</div>
-                <div className="bg-gray-50 p-3 rounded max-h-40 overflow-y-auto font-mono text-xs">
-                  {nodes.slice(0, 20).map((node, idx) => (
-                    <div key={idx} className="py-1">{node.hostname}</div>
-                  ))}
-                  {nodes.length > 20 && (
-                    <div className="text-gray-500 italic mt-2">
-                      ... and {nodes.length - 20} more nodes
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Current Nodes Status */}
-        {nodes.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Current Nodes Being Monitored</CardTitle>
-              <CardDescription>
-                {nodes.length} node(s) configured - SSH reachability status
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {(() => {
-                  // Deduplicate nodes by hostname
-                  const uniqueNodes = nodes.reduce((acc: any[], curr) => {
-                    if (!acc.find(n => n.hostname === curr.hostname)) {
-                      acc.push(curr)
-                    }
-                    return acc
-                  }, [])
-
-                  return uniqueNodes.map((node) => (
-                    <div
-                      key={node.hostname}
-                      className="flex items-center justify-between p-3 border border-gray-200 rounded-lg hover:bg-gray-50"
-                    >
-                      <div className="flex items-center gap-3">
-                        {node.status === 'unreachable' ? (
-                          <XCircle className="h-5 w-5 text-red-500" />
-                        ) : (
-                          <CheckCircle className="h-5 w-5 text-green-500" />
-                        )}
-                        <div>
-                          <div className="font-medium">{node.hostname}</div>
-                          <div className="text-xs text-gray-500">
-                            {node.status === 'unreachable' ? (
-                              <span className="text-red-600">SSH Connection Failed</span>
-                            ) : (
-                              <span className="text-green-600">
-                                SSH Connected • {node.gpu_count} GPUs
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-sm">
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${
-                            node.status === 'unreachable'
-                              ? 'bg-red-100 text-red-800'
-                              : node.status === 'unhealthy'
-                                ? 'bg-yellow-100 text-yellow-800'
-                                : 'bg-green-100 text-green-800'
-                          }`}
-                        >
-                          {node.status === 'unreachable'
-                            ? 'Unreachable'
-                            : node.status === 'unhealthy'
-                              ? 'Unhealthy'
-                              : 'Healthy'}
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                })()}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* SSH Authentication */}
-        <Card className={useJumpHost ? 'opacity-50' : ''}>
-          <CardHeader>
-            <CardTitle>SSH Authentication</CardTitle>
-            <CardDescription>Configure SSH access to cluster nodes</CardDescription>
-          </CardHeader>
-          <CardContent className={`space-y-4 ${useJumpHost ? 'pointer-events-none select-none' : ''}`}>
-            {useJumpHost && (
-              <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-sm text-amber-800">
-                <strong>Not used when Jump Host is enabled.</strong> Configure node credentials in the Jump Host section below.
-              </div>
-            )}
-            {/* Username */}
-            <div>
-              <label className="block text-sm font-medium mb-2">SSH Username</label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="root"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-
-            {/* Auth Method */}
-            <div>
-              <label className="block text-sm font-medium mb-2">Authentication Method</label>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    value="key"
-                    checked={authMethod === 'key'}
-                    onChange={() => setAuthMethod('key')}
-                    className="w-4 h-4 text-blue-600"
-                  />
-                  <span>SSH Key</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    value="password"
-                    checked={authMethod === 'password'}
-                    onChange={() => setAuthMethod('password')}
-                    className="w-4 h-4 text-blue-600"
-                  />
-                  <span>Password</span>
-                </label>
-              </div>
-            </div>
-
-            {/* SSH Key Upload and Path */}
-            {authMethod === 'key' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Upload SSH Private Key
-                  </label>
-                  <input
-                    type="file"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0]
-                      if (file) {
-                        try {
-                          await api.uploadSshKey(file)
-                          setMessage({ type: 'success', text: `SSH key '${file.name}' uploaded successfully` })
-                          // Update the key file path to match uploaded file
-                          setKeyFilePath(`/root/.ssh/${file.name}`)
-                        } catch (error: any) {
-                          setMessage({ type: 'error', text: `Failed to upload SSH key: ${error.message}` })
-                        }
-                      }
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Upload your SSH private key, or use mounted host paths below (see mounted paths)
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    SSH Private Key Path (in container)
-                  </label>
-                  <input
-                    type="text"
-                    value={keyFilePath}
-                    onChange={(e) => setKeyFilePath(e.target.value)}
-                    placeholder="/root/.ssh/id_rsa"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Upload SSH key to /root/.ssh/* or use path after manual volume mount
-                  </p>
-                </div>
-              </>
-            )}
-
-            {/* Password */}
-            {authMethod === 'password' && (
-              <div>
-                <label className="block text-sm font-medium mb-2">SSH Password</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter SSH password"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-                <p className="text-xs text-yellow-600 mt-1">
-                  ⚠️ Storing passwords is less secure. SSH keys are recommended.
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Jump Host Configuration */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Jump Host / Bastion Configuration</CardTitle>
-            <CardDescription>
-              Configure jump host for nodes not directly accessible
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Enable Jump Host */}
-            <div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={useJumpHost}
-                  onChange={(e) => setUseJumpHost(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 rounded"
-                />
-                <span className="font-medium">Use Jump Host (Bastion)</span>
-              </label>
-              <p className="text-xs text-gray-500 mt-1 ml-6">
-                Enable this if cluster nodes are only accessible through a jump/bastion host
-              </p>
-            </div>
-
-            {useJumpHost && (
-              <>
-                {/* Jump Host Address */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">Jump Host IP / Hostname</label>
-                  <input
-                    type="text"
-                    value={jumpHost}
-                    onChange={(e) => setJumpHost(e.target.value)}
-                    placeholder="bastion.example.com or 192.168.1.100"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-
-                {/* Jump Host Username */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">Jump Host Username</label>
-                  <input
-                    type="text"
-                    value={jumpUsername}
-                    onChange={(e) => setJumpUsername(e.target.value)}
-                    placeholder="your_username"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-
-                {/* Jump Host Auth Method */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Jump Host Authentication
-                  </label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        value="key"
-                        checked={jumpAuthMethod === 'key'}
-                        onChange={() => setJumpAuthMethod('key')}
-                        className="w-4 h-4 text-blue-600"
-                      />
-                      <span>SSH Key</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        value="password"
-                        checked={jumpAuthMethod === 'password'}
-                        onChange={() => setJumpAuthMethod('password')}
-                        className="w-4 h-4 text-blue-600"
-                      />
-                      <span>Password</span>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Jump Host SSH Key Upload and Path */}
-                {jumpAuthMethod === 'key' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">
-                        Upload Jump Host SSH Private Key
-                      </label>
-                      <input
-                        type="file"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0]
-                          if (file) {
-                            try {
-                              await api.uploadSshKey(file)
-                              setMessage({ type: 'success', text: `Jump host key '${file.name}' uploaded successfully` })
-                              setJumpKeyFilePath(`/root/.ssh/${file.name}`)
-                            } catch (error: any) {
-                              setMessage({ type: 'error', text: `Failed to upload jump host key: ${error.message}` })
-                            }
-                          }
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Upload SSH key to access the jump host from container
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium mb-2">
-                        Jump Host SSH Private Key Path (in container)
-                      </label>
-                      <input
-                        type="text"
-                        value={jumpKeyFilePath}
-                        onChange={(e) => setJumpKeyFilePath(e.target.value)}
-                        placeholder="/root/.ssh/id_rsa"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Path will be set automatically after upload
-                      </p>
-                    </div>
-                  </>
-                )}
-
-                {/* Jump Host Password */}
-                {jumpAuthMethod === 'password' && (
-                  <div>
-                    <label className="block text-sm font-medium mb-2">
-                      Jump Host Password
-                    </label>
-                    <input
-                      type="password"
-                      value={jumpPassword}
-                      onChange={(e) => setJumpPassword(e.target.value)}
-                      placeholder="Enter jump host password"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-                )}
-
-                {/* Divider */}
-                <div className="border-t border-gray-300 my-4"></div>
-
-                {/* Node Access from Jump Host */}
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
-                  <p className="text-sm font-semibold text-yellow-900 mb-2">
-                    Node Access Configuration (FROM Jump Host)
-                  </p>
-                  <p className="text-xs text-yellow-800">
-                    Specify how to SSH from the jump host to cluster nodes
-                  </p>
-                </div>
-
-                {/* Node Username */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Node Username (for cluster nodes)
-                  </label>
-                  <input
-                    type="text"
-                    value={nodeUsernameViaJump}
-                    onChange={(e) => setNodeUsernameViaJump(e.target.value)}
-                    placeholder="your_username"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Username to use when SSHing from jump host to cluster nodes
-                  </p>
-                </div>
-
-                {/* Node Key File Path on jump host */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Node SSH Key Path (on jump host)
-                  </label>
-                  <input
-                    type="text"
-                    value={nodeKeyFileOnJumpHost}
-                    onChange={(e) => setNodeKeyFileOnJumpHost(e.target.value)}
-                    placeholder="~/.ssh/id_ed25519"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Path to the SSH private key <strong>on the jump host</strong> used to authenticate to cluster nodes (e.g., ~/.ssh/id_ed25519). The backend fetches it via SFTP — the key is never stored in this container.
-                  </p>
-                </div>
-
-                {/* Jump Host Info */}
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                  <p className="text-xs text-blue-800">
-                    <strong>Jump Host Setup:</strong> The system SSHes to the jump host, reads the node key from the path above via SFTP, and streams it to the Go daemon in memory — the node key is never written inside the container.
-                  </p>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Package Installs */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5" />
-              Package Installs
-            </CardTitle>
-            <CardDescription>
-              Install required packages on all cluster nodes
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Package Message */}
-            {packageMessage && (
-              <div
-                className={`p-4 rounded-lg ${
-                  packageMessage.type === 'success'
-                    ? 'bg-green-50 text-green-800 border border-green-200'
-                    : packageMessage.type === 'error'
-                    ? 'bg-red-50 text-red-800 border border-red-200'
-                    : 'bg-blue-50 text-blue-800 border border-blue-200'
-                }`}
-              >
-                {packageMessage.text}
-              </div>
-            )}
-
-            {/* Refresh Button */}
-            <div className="flex justify-end">
-              <button
-                onClick={refreshPackageStatuses}
-                disabled={packages.length === 0}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <RefreshCw className="h-4 w-4" />
-                Refresh Status
-              </button>
-            </div>
-
-            {/* Package List */}
-            {packages.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                Loading packages...
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {packages.map((pkg) => {
-                  const status = packageStatuses[pkg.id]
-                  const isInstalling = installingPackage === pkg.id
-
-                  return (
-                    <div
-                      key={pkg.id}
-                      className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50"
-                    >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3">
-                          <Package className="h-5 w-5 text-blue-600" />
-                          <div>
-                            <div className="font-medium">{pkg.name}</div>
-                            <div className="text-sm text-gray-600">{pkg.description}</div>
-                            <div className="text-xs text-gray-500 mt-1">
-                              Package: <span className="font-mono">{pkg.package_name}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Installation Status */}
-                        {status && (
-                          <div className="mt-3 ml-8 text-sm">
-                            <div className="flex items-center gap-2">
-                              {status.installed_count === status.total_nodes ? (
-                                <>
-                                  <CheckCircle className="h-4 w-4 text-green-600" />
-                                  <span className="text-green-700 font-medium">
-                                    Installed on all {status.total_nodes} nodes
-                                  </span>
-                                </>
-                              ) : status.installed_count > 0 ? (
-                                <>
-                                  <XCircle className="h-4 w-4 text-yellow-600" />
-                                  <span className="text-yellow-700 font-medium">
-                                    Installed on {status.installed_count}/{status.total_nodes} nodes
-                                  </span>
-                                </>
-                              ) : (
-                                <>
-                                  <XCircle className="h-4 w-4 text-red-600" />
-                                  <span className="text-red-700 font-medium">
-                                    Not installed on any nodes
-                                  </span>
-                                </>
-                              )}
-                            </div>
-
-                            {/* Show partial installation details */}
-                            {status.installed_count > 0 && status.installed_count < status.total_nodes && (
-                              <div className="mt-2 text-xs text-gray-600">
-                                <div>Missing on: {status.not_installed_nodes.slice(0, 5).join(', ')}
-                                  {status.not_installed_nodes.length > 5 && ` and ${status.not_installed_nodes.length - 5} more`}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Install Button */}
-                      <div>
-                        <button
-                          onClick={() => handleInstallPackage(pkg.id)}
-                          disabled={isInstalling || nodes.length === 0}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors font-medium ${
-                            isInstalling
-                              ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                              : status && status.installed_count === status.total_nodes
-                              ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                              : 'bg-blue-600 text-white hover:bg-blue-700'
-                          }`}
-                        >
-                          {isInstalling ? (
-                            <>
-                              <RefreshCw className="h-4 w-4 animate-spin" />
-                              Installing...
-                            </>
-                          ) : status && status.installed_count === status.total_nodes ? (
-                            <>
-                              <CheckCircle className="h-4 w-4" />
-                              Reinstall
-                            </>
-                          ) : (
-                            <>
-                              <Download className="h-4 w-4" />
-                              Install
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-
-            {nodes.length === 0 && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
-                No nodes configured. Please configure nodes above before installing packages.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Save Button */}
         <div className="flex justify-end">
-          <button
-            onClick={handleSaveConfiguration}
-            disabled={isSaving}
-            className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isSaving ? (
-              <>
-                <Clock className="h-4 w-4 animate-pulse" />
-                Saving and Starting...
-              </>
-            ) : (
-              <>
-                <Save className="h-4 w-4" />
-                Save Configuration and Start Monitoring
-              </>
-            )}
+          <button onClick={refreshAll} disabled={packages.length === 0}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-sm font-medium disabled:opacity-50">
+            <RefreshCw className="h-4 w-4" />
+            Refresh Status
           </button>
         </div>
 
-        {/* Instructions */}
-        <Card className="bg-blue-50 border-blue-200">
-          <CardHeader>
-            <CardTitle className="text-base">After Saving Configuration</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm space-y-2">
-            <p>1. Configuration will be saved to the backend</p>
-            <p>2. Restart the backend server to apply changes:</p>
-            <pre className="bg-gray-900 text-gray-100 p-3 rounded mt-2 text-xs">
-              cd backend{'\n'}
-              kill $(cat backend.pid){'\n'}
-              ./run.sh
-            </pre>
-            <p className="text-blue-700 font-medium mt-4">
-              For SSH key authentication to work, ensure your public key is authorized on all nodes.
-            </p>
-          </CardContent>
-        </Card>
+        {packages.length === 0 ? (
+          <div className="text-center py-8 text-gray-500 dark:text-gray-400">Loading packages...</div>
+        ) : (
+          <div className="space-y-3">
+            {packages.map(pkg => {
+              const status = packageStatuses[pkg.id]
+              const isInstalling = installingPackage === pkg.id
+              return (
+                <div key={pkg.id} className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3">
+                      <Package className="h-5 w-5 text-blue-600" />
+                      <div>
+                        <div className="font-medium dark:text-gray-200">{pkg.name}</div>
+                        <div className="text-sm text-gray-600 dark:text-gray-400">{pkg.description}</div>
+                        <div className="text-xs text-gray-500 mt-1 font-mono">{pkg.package_name}</div>
+                      </div>
+                    </div>
+                    {status && (
+                      <div className="mt-3 ml-8 text-sm flex items-center gap-2">
+                        {status.installed_count === status.total_nodes ? (
+                          <><CheckCircle className="h-4 w-4 text-green-600" /><span className="text-green-700 dark:text-green-400">Installed on all {status.total_nodes} nodes</span></>
+                        ) : status.installed_count > 0 ? (
+                          <><XCircle className="h-4 w-4 text-yellow-600" /><span className="text-yellow-700 dark:text-yellow-400">Installed on {status.installed_count}/{status.total_nodes} nodes</span></>
+                        ) : (
+                          <><XCircle className="h-4 w-4 text-red-600" /><span className="text-red-700 dark:text-red-400">Not installed</span></>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleInstall(pkg.id)}
+                    disabled={isInstalling || nodes.length === 0}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm ${
+                      isInstalling ? 'bg-gray-300 dark:bg-gray-700 text-gray-600 dark:text-gray-400 cursor-not-allowed' :
+                      status?.installed_count === status?.total_nodes ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 hover:bg-green-200' :
+                      'bg-blue-600 text-white hover:bg-blue-700'
+                    }`}
+                  >
+                    {isInstalling ? (
+                      <><RefreshCw className="h-4 w-4 animate-spin" />Installing...</>
+                    ) : status?.installed_count === status?.total_nodes ? (
+                      <><CheckCircle className="h-4 w-4" />Reinstall</>
+                    ) : (
+                      <><Download className="h-4 w-4" />Install</>
+                    )}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {nodes.length === 0 && (
+          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-3 text-sm text-yellow-800 dark:text-yellow-300">
+            No GPU nodes configured. Save your node groups above to enable package installs.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
+
+export function ConfigurationPage() {
+  return (
+    <div className="space-y-6 max-w-5xl">
+      <div>
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Configuration</h1>
+        <p className="text-gray-500 dark:text-gray-400 mt-1">
+          Configure SSH access for GPU nodes and switches. Compute trays are auto-detected from GPU nodes via afmctl.
+        </p>
       </div>
+
+      <NodeGroupsCard />
+      <PackageInstallsCard />
     </div>
   )
 }

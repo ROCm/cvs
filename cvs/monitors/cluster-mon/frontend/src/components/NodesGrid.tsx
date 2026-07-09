@@ -21,7 +21,7 @@ export function NodesGrid() {
     }
 
     fetchNodes()
-    const interval = setInterval(fetchNodes, 60000)
+    const interval = setInterval(fetchNodes, 300000)
     return () => clearInterval(interval)
   }, [setNodes])
 
@@ -85,7 +85,7 @@ export function NodesGrid() {
                   <span className="font-medium">{node.gpu_count}</span>
                 </div>
 
-                {node.status !== 'unreachable' && (
+                {node.status === 'healthy' && (
                   <>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Utilization</span>
@@ -126,12 +126,12 @@ export function NodesGrid() {
                 )}
 
                 {node.status === 'unreachable' && (
-                  <div className="text-xs text-red-500 mt-2">Unreachable</div>
+                  <div className="text-xs text-red-500 mt-2">SSH unreachable</div>
                 )}
 
-                {node.status === 'unhealthy' && node.health_issues && node.health_issues.length > 0 && (
-                  <div className="text-xs text-yellow-600 mt-2 truncate" title={node.health_issues.join(', ')}>
-                    ⚠ {node.health_issues.length} issue(s)
+                {node.status === 'unhealthy' && (
+                  <div className="text-xs text-yellow-600 mt-2" title={(node.health_issues ?? []).join(', ')}>
+                    ⚠ {node.health_issues?.[0] ?? 'GPU driver / amd-smi failed'}
                   </div>
                 )}
               </div>

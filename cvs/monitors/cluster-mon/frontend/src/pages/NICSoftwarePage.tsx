@@ -36,7 +36,7 @@ export function NICSoftwarePage() {
     }
 
     if (autoRefresh) {
-      const interval = setInterval(fetchSoftwareInfo, 180000)
+      const interval = setInterval(fetchSoftwareInfo, 300000)
       return () => clearInterval(interval)
     }
   }, [autoRefresh])

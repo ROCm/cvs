@@ -41,17 +41,21 @@ async def list_nodes() -> List[Dict[str, Any]]:
     all_nodes = app_state.ssh_manager.host_list
 
     for node in all_nodes:
-        # Get stable status (requires 5 consecutive failures to change)
+        # node_health_status is the single source of truth (updated by the Go
+        # probe → update_node_status with failure_threshold).  Only run the
+        # hardware-health check for nodes that are not already marked unreachable.
         stable_status = app_state.node_health_status.get(node, 'healthy')
 
-        # Check for hardware health issues
-        has_metrics_error = node in util_data and isinstance(util_data[node], dict) and 'error' in util_data[node]
-        health_status, health_issues = check_node_health(node, gpu_data, has_metrics_error)
-
-        # Use stable status if it's unreachable
         if stable_status == 'unreachable':
             health_status = 'unreachable'
-            health_issues = [f'Unreachable after {app_state.node_failure_count.get(node, 0)} consecutive failures']
+            health_issues = [f'Unreachable after {app_state.node_failure_count.get(node, 0)} consecutive SSH failures']
+        elif stable_status == 'unhealthy':
+            # SSH reachable but GPU driver / amd-smi command failed on this node
+            health_status = 'unhealthy'
+            health_issues = ['GPU driver not loaded or amd-smi command failed']
+        else:
+            has_metrics_error = node in util_data and isinstance(util_data[node], dict) and 'error' in util_data[node]
+            health_status, health_issues = check_node_health(node, gpu_data, has_metrics_error)
 
         node_info = {
             "hostname": node,

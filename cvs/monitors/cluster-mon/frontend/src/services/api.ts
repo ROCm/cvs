@@ -140,6 +140,51 @@ class ApiClient {
   async getRCCLPerformanceHistory(count = 50) {
     return this.request(`/rccl/performance/history?count=${count}`)
   }
+
+  // CPU and memory data
+  async getCPUData() {
+    return this.request('/cpu/data')
+  }
+
+  // Storage / disk data
+  async getStorageData() {
+    return this.request('/disk/data')
+  }
+
+  // Node groups (unified 3-group config)
+  async getNodeGroups() {
+    return this.request('/node-groups/config')
+  }
+
+  async saveNodeGroups(config: any) {
+    return this.post('/node-groups/config', config)
+  }
+
+  async reloadNodeGroups() {
+    return this.post('/node-groups/config/reload', {})
+  }
+
+  // Rack config (legacy)
+  async getRackConfig() {
+    return this.request('/rack/config')
+  }
+
+  async updateRackConfig(config: any) {
+    return this.post('/rack/config', config)
+  }
+
+  async reloadRackConfig() {
+    return this.post('/rack/config/reload', {})
+  }
+
+  // IFoE data
+  async getIFoEData() {
+    return this.request('/rack/ifoe')
+  }
+
+  async refreshIFoEData() {
+    return this.post('/rack/ifoe/refresh', {})
+  }
 }
 
 export const api = new ApiClient(API_BASE_URL)

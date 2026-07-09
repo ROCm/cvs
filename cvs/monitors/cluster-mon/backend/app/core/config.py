@@ -29,10 +29,10 @@ class SSHConfig(BaseModel):
 
 
 class PollingConfig(BaseModel):
-    interval: int = 60
+    interval: int = 300
     batch_size: int = 10
     stagger_delay: int = 2
-    failure_threshold: int = 5
+    failure_threshold: int = 2
 
 
 class AlertsConfig(BaseModel):

@@ -3,6 +3,9 @@ import { RefreshCw, Network } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { CustomDataTable } from '@/components/ui/DataTable'
 import { useClusterStore } from '@/stores/clusterStore'
+import { HorizontalStackedBar, VerticalBarChart, COLORS, shortName } from '@/components/charts/ClusterCharts'
+import { ExpandableChartCard } from '@/components/charts/ChartModal'
+import { TopNodesChart } from '@/components/charts/TopNodesChart'
 
 export function NICMetricsPage() {
   const latestMetrics = useClusterStore((state) => state.latestMetrics)
@@ -59,7 +62,7 @@ export function NICMetricsPage() {
     }
 
     if (autoRefresh) {
-      const interval = setInterval(fetchAdvancedInfo, 180000) // Refresh every 3 minutes
+      const interval = setInterval(fetchAdvancedInfo, 300000) // Refresh every 5 minutes
       return () => clearInterval(interval)
     }
   }, [autoRefresh])
@@ -393,6 +396,34 @@ export function NICMetricsPage() {
         </Card>
       )}
 
+      {/* ── Top 10 Nodes by RDMA Error Count ── */}
+      {rdmaStatsData.rows.length > 0 && (() => {
+        const errKeys = rdmaStatsData.activeColumns.filter((k: string) =>
+          k.toLowerCase().match(/err|drop|retry|timeout|nak|fail/)
+        )
+        const nodeErrs = rdmaStatsData.rows.map((r: any) => ({
+          node:  r.node,
+          value: errKeys.reduce((s: number, k: string) => s + (Number(r[k]) || 0), 0),
+          label: `${errKeys.reduce((s: number, k: string) => s + (Number(r[k]) || 0), 0).toLocaleString()} errs`,
+        }))
+        return <TopNodesChart data={nodeErrs} title="RDMA Error Count" unit=" errs" critThreshold={1} warnThreshold={1} />
+      })()}
+
+      {/* ── RDMA Visual Overview ── */}
+      {rdmaStatsData.rows.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Error counters bar chart — top nodes by total errors */}
+          <ExpandableChartCard title="RDMA Error Counters by Node"
+            small={<VerticalBarChart data={rdmaStatsData.rows.map((r:any)=>{const errKeys=rdmaStatsData.activeColumns.filter((k:string)=>k.toLowerCase().match(/err|drop|retry|timeout|nak|fail/));const total=errKeys.reduce((s:number,k:string)=>s+(Number(r[k])||0),0);return{name:`${r.node} ${(r.device||'').split('/').pop()}`,errors:total,_color:total>0?COLORS.red:COLORS.gray}}).sort((a:any,b:any)=>b.errors-a.errors).slice(0,20)} dataKey="errors" color={COLORS.red} height={200} unit=" errs"/>}
+            large={<VerticalBarChart data={rdmaStatsData.rows.map((r:any)=>{const errKeys=rdmaStatsData.activeColumns.filter((k:string)=>k.toLowerCase().match(/err|drop|retry|timeout|nak|fail/));const total=errKeys.reduce((s:number,k:string)=>s+(Number(r[k])||0),0);return{name:`${r.node} ${(r.device||'').split('/').pop()}`,errors:total,_color:total>0?COLORS.red:COLORS.gray}}).sort((a:any,b:any)=>b.errors-a.errors).slice(0,20)} dataKey="errors" color={COLORS.red} height={500} unit=" errs"/>}
+          />
+          <ExpandableChartCard title="Active RDMA Counters per Node"
+            small={<HorizontalStackedBar data={rdmaStatsData.rows.map((r:any)=>{const errKeys=rdmaStatsData.activeColumns.filter((k:string)=>k.match(/err|drop|nak|fail/i));const dataKeys=rdmaStatsData.activeColumns.filter((k:string)=>!k.match(/err|drop|nak|fail/i));return{name:`${r.node} ${(r.device||'').split('/').pop()}`,Errors:errKeys.filter((k:string)=>(r[k]||0)>0).length,Data:dataKeys.filter((k:string)=>(r[k]||0)>0).length}})} keys={['Errors','Data']} colors={[COLORS.red,COLORS.blue]} maxValue={rdmaStatsData.activeColumns.length||50} unit=""/>}
+            large={<HorizontalStackedBar data={rdmaStatsData.rows.map((r:any)=>{const errKeys=rdmaStatsData.activeColumns.filter((k:string)=>k.match(/err|drop|nak|fail/i));const dataKeys=rdmaStatsData.activeColumns.filter((k:string)=>!k.match(/err|drop|nak|fail/i));return{name:`${r.node} ${(r.device||'').split('/').pop()}`,Errors:errKeys.filter((k:string)=>(r[k]||0)>0).length,Data:dataKeys.filter((k:string)=>(r[k]||0)>0).length}})} keys={['Errors','Data']} colors={[COLORS.red,COLORS.blue]} maxValue={rdmaStatsData.activeColumns.length||50} unit="" height={Math.max(300,rdmaStatsData.rows.length*40+80)}/>}
+          />
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>
@@ -435,6 +466,7 @@ export function NICMetricsPage() {
                 data={rdmaStatsData.rows}
                 defaultPageLength={50}
                 pageLengthOptions={[50, 100, 1000]}
+                scrollX={true}
               />
             )
           })()}
@@ -527,6 +559,7 @@ export function NICMetricsPage() {
             data={congestionData.rows}
             defaultPageLength={50}
             pageLengthOptions={[50, 100, 1000]}
+            scrollX={true}
           />
         )
       })()}

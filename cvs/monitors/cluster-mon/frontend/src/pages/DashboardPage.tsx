@@ -18,7 +18,7 @@ export function DashboardPage() {
     const tempData = latestMetrics.gpu.temperature || {}
 
     Object.entries(utilData).forEach(([node, gpuData]: [string, any]) => {
-      if (typeof gpuData === 'object' && !gpuData.error) {
+      if (typeof gpuData === 'object' && !('error' in gpuData)) {
         Object.entries(gpuData).forEach(([gpuId, metrics]: [string, any]) => {
           if (typeof metrics === 'object') {
             const memMetrics = memData[node]?.[gpuId] || {}
@@ -50,7 +50,7 @@ export function DashboardPage() {
     const tempData = latestMetrics.gpu.temperature || {}
 
     Object.entries(memData).forEach(([node, gpuData]: [string, any]) => {
-      if (typeof gpuData === 'object' && !gpuData.error) {
+      if (typeof gpuData === 'object' && !('error' in gpuData)) {
         Object.entries(gpuData).forEach(([gpuId, metrics]: [string, any]) => {
           if (typeof metrics === 'object') {
             const memUsed = parseInt(metrics['VRAM Total Used Memory (B)']) || 0
@@ -87,7 +87,7 @@ export function DashboardPage() {
     const memData = latestMetrics.gpu.memory || {}
 
     Object.entries(tempData).forEach(([node, gpuData]: [string, any]) => {
-      if (typeof gpuData === 'object' && !gpuData.error) {
+      if (typeof gpuData === 'object' && !('error' in gpuData)) {
         Object.entries(gpuData).forEach(([gpuId, metrics]: [string, any]) => {
           if (typeof metrics === 'object') {
             const temp = parseFloat(metrics['Temperature (Sensor junction) (C)']) ||

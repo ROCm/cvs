@@ -36,7 +36,11 @@ class CollectorResult:
     state: CollectorState
     data: dict[str, Any]
     error: Optional[str] = None
-    node_errors: dict[str, bool] = field(default_factory=dict)
+    # node_errors maps hostname → error_type string:
+    #   ''            — no error (node healthy)
+    #   'unreachable' — SSH connection failed (ABORT response from Go daemon)
+    #   'unhealthy'   — SSH succeeded but command failed (driver not loaded, etc.)
+    node_errors: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
     def now_iso() -> str:
@@ -116,8 +120,11 @@ class BaseCollector(ABC):
 
             # Node health update — only GPU collector populates node_errors
             if hasattr(app_state, 'node_health_status'):
-                for node, has_error in result.node_errors.items():
-                    _update_node_status_via_app_state(app_state, node, has_error)
+                for node, error_type in result.node_errors.items():
+                    # error_type: '' = healthy, 'unreachable' = SSH failed,
+                    #             'unhealthy' = SSH ok but command/driver failed
+                    has_error = bool(error_type)
+                    _update_node_status_via_app_state(app_state, node, has_error, error_type or 'unreachable')
 
             # Update latest_metrics for WebSocket broadcast
             if hasattr(app_state, 'latest_metrics'):
@@ -140,11 +147,13 @@ class BaseCollector(ABC):
             await asyncio.sleep(self.poll_interval)
 
 
-def _update_node_status_via_app_state(app_state: Any, node: str, has_error: bool) -> None:
+def _update_node_status_via_app_state(
+    app_state: Any, node: str, has_error: bool, error_type: str = 'unreachable'
+) -> None:
     """Update node health status via app_state. Avoids circular import from main."""
     try:
         from app.main import update_node_status
 
-        update_node_status(node, has_error, "unreachable")
+        update_node_status(node, has_error, error_type)
     except Exception as e:
         logger.debug(f"update_node_status not available: {e}")

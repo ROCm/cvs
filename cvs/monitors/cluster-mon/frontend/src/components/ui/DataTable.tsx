@@ -15,6 +15,7 @@ interface DataTableProps {
   defaultPageLength?: number
   pageLengthOptions?: number[]
   className?: string
+  scrollX?: boolean  // enable horizontal scroll for wide tables
 }
 
 export function CustomDataTable({
@@ -23,6 +24,7 @@ export function CustomDataTable({
   defaultPageLength = 50,
   pageLengthOptions = [50, 100, 1000],
   className = '',
+  scrollX = false,
 }: DataTableProps) {
   const tableRef = useRef<HTMLTableElement>(null)
   const dataTableRef = useRef<any>(null)
@@ -38,8 +40,12 @@ export function CustomDataTable({
         pageLength: defaultPageLength,
         lengthMenu: pageLengthOptions,
         order: [[0, 'asc']], // Default sort by first column
-        responsive: true,
-        autoWidth: false,
+        responsive: !scrollX, // disable responsive when scrollX is on (they conflict)
+        scrollX: scrollX,
+        autoWidth: scrollX, // autoWidth needed for scrollX to work
+        // Silently render empty string when a row is missing a column's key
+        // instead of throwing "Requested unknown parameter" warnings.
+        columnDefs: [{ defaultContent: '', targets: '_all' }],
         language: {
           search: 'Search:',
           lengthMenu: 'Show _MENU_ entries per page',
@@ -85,6 +91,7 @@ export function CustomDataTable({
         /* DataTables custom styling */
         .datatable-wrapper {
           font-size: 0.875rem;
+          overflow-x: auto;
         }
 
         .datatable-wrapper table.dataTable {

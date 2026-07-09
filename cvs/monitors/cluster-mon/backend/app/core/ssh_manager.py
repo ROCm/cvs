@@ -274,13 +274,22 @@ class SshManager:
             if transport is None or not transport.is_active():
                 new_client = paramiko.SSHClient()
                 new_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                new_client.connect(
-                    node,
-                    username=self.user,
-                    key_filename=self.pkey,
-                    password=self.password,
-                    timeout=self.timeout,
-                )
+                import os as _os
+
+                # Only pass key_filename if the file actually exists
+                _pkey = self.pkey
+                if _pkey and not _os.path.exists(_os.path.expanduser(_pkey)):
+                    _pkey = None
+                connect_kwargs: dict = {
+                    "username": self.user,
+                    "timeout": self.timeout,
+                    "look_for_keys": _pkey is None and self.password is None,
+                }
+                if self.password:
+                    connect_kwargs["password"] = self.password
+                elif _pkey:
+                    connect_kwargs["key_filename"] = _pkey
+                new_client.connect(node, **connect_kwargs)
                 if client:
                     try:
                         client.close()

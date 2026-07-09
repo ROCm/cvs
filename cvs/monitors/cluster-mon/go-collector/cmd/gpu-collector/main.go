@@ -49,14 +49,15 @@ type IncomingMsg struct {
 	Command  string   `json:"command,omitempty"`
 	TimeoutS int      `json:"timeout_s,omitempty"`
 	Hosts    []string `json:"hosts,omitempty"`
-	// User, KeyPath, and KeyBytes are optional credential update fields for
-	// refresh_nodes messages. KeyBytes (base64-encoded PEM, standard JSON []byte
-	// encoding) takes priority over KeyPath when both are set. Sending KeyBytes
-	// lets Python deliver the node key in-memory via UDS at any time — no daemon
-	// restart required, and the key never touches the container filesystem.
+	// Credential update fields for refresh_nodes messages.
+	// KeyBytes (base64-encoded PEM) takes priority over KeyPath when both are set.
+	// Password is used when neither KeyPath nor KeyBytes is provided.
+	// Sending KeyBytes lets Python deliver the node key in-memory via UDS at any
+	// time — no daemon restart required, key never touches the container filesystem.
 	User     string `json:"user,omitempty"`
 	KeyPath  string `json:"key_path,omitempty"`
 	KeyBytes []byte `json:"key_bytes,omitempty"`
+	Password string `json:"password,omitempty"`
 }
 
 var (
@@ -68,6 +69,7 @@ func main() {
 	socketPath    := flag.String("socket", "/tmp/go-collector.sock", "Unix socket path")
 	sshUser       := flag.String("ssh-user", "", "SSH username for cluster nodes")
 	sshKey        := flag.String("ssh-key", "", "Path to SSH private key for cluster nodes (file-based, lazy; omit to use UDS key delivery)")
+	sshPassword   := flag.String("ssh-password", "", "SSH password for cluster nodes (alternative to --ssh-key; can also be delivered via refresh_nodes UDS message)")
 	hostsFile     := flag.String("hosts-file", "", "Path to file with one hostname per line")
 	probeInterval := flag.Duration("probe-interval", 300*time.Second, "Reprobe interval for unreachable hosts")
 	jumpHost      := flag.String("jump-host", "", "Jump host hostname (optional)")
@@ -84,8 +86,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *sshKey == "" {
-		logger.Warn("--ssh-key not set; node key must be delivered via refresh_nodes UDS message")
+	if *sshKey == "" && *sshPassword == "" {
+		logger.Warn("--ssh-key and --ssh-password not set; credentials must be delivered via refresh_nodes UDS message")
 	}
 
 	hosts, err := loadHosts(*hostsFile)
@@ -119,7 +121,7 @@ func main() {
 	// succeeds regardless of key presence. All nodes start unreachable;
 	// runBackground fires an immediate t=0 sweep to classify the fleet.
 	pool, err = pssh.New(
-		*sshUser, *sshKey, hosts,
+		*sshUser, *sshKey, *sshPassword, hosts,
 		10,             // maxSessionsPerConn — matches sshd MaxSessions
 		effectiveKeepalive,
 		*probeInterval,
@@ -285,8 +287,8 @@ func handleHealth(conn net.Conn, msg IncomingMsg) {
 // still nudges TriggerReprobe, causing an immediate sweep of unreachable nodes
 // which now succeed because the key file has appeared on disk.
 func handleRefreshNodes(conn net.Conn, msg IncomingMsg) {
-	if msg.User != "" || msg.KeyPath != "" || len(msg.KeyBytes) > 0 {
-		pool.UpdateCredentials(msg.User, msg.KeyPath, msg.KeyBytes)
+	if msg.User != "" || msg.KeyPath != "" || len(msg.KeyBytes) > 0 || msg.Password != "" {
+		pool.UpdateCredentials(msg.User, msg.KeyPath, msg.KeyBytes, msg.Password)
 	}
 
 	added, removed := pool.Refresh(msg.Hosts)

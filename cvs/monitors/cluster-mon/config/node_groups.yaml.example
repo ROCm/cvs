@@ -1,0 +1,52 @@
+# node_groups.yaml — SSH host groups for cluster monitoring
+# Copy to config/node_groups.yaml and edit.
+# Passwords are NEVER stored here — enter them in the Configuration UI.
+
+gpu_nodes:
+  hosts:
+    - 192.168.1.101
+    - 192.168.1.102
+  ssh:
+    username: root
+    auth_method: key        # "key" or "password"
+    key_file: ~/.ssh/id_rsa
+    timeout: 30
+  jump_host:
+    enabled: false
+    host: ""
+    username: root
+    auth_method: key
+    key_file: ~/.ssh/id_rsa
+
+scale_up_switches:
+  hosts:
+    - 192.168.2.1
+    - 192.168.2.2
+  ssh:
+    username: admin
+    auth_method: password   # SONiC switches often use password
+    key_file: ~/.ssh/id_rsa
+    timeout: 30
+  jump_host:
+    enabled: false
+    host: ""
+    username: root
+    auth_method: key
+    key_file: ~/.ssh/id_rsa
+
+scale_out_switches:
+  hosts:
+    - 192.168.3.1
+  ssh:
+    username: admin
+    auth_method: password
+    key_file: ~/.ssh/id_rsa
+    timeout: 30
+  jump_host:
+    enabled: false
+    host: ""
+    username: root
+    auth_method: key
+    key_file: ~/.ssh/id_rsa
+
+poll_interval: 120

@@ -39,9 +39,10 @@ services:
     ports:
       - "8005:8001"
     volumes:
-      # Mount config directory for cluster.yaml and nodes.txt
+      # Mount config directory for cluster.yaml, nodes.txt, node_groups.yaml
       - ./config:/app/config
-      # SSH keys are uploaded via web UI - no volume mounts needed
+      # Mount SSH keys directory so uploaded keys persist across container rebuilds
+      - ./ssh_keys:/root/.ssh
     environment:
       # Polling configuration
       - POLLING__INTERVAL=${POLLING__INTERVAL:-60}

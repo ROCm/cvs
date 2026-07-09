@@ -9,6 +9,7 @@ from typing import Dict, Any
 from datetime import datetime, timezone
 
 from app.collectors.base import BaseCollector, CollectorResult, CollectorState
+from app.collectors.rocm_exec import exec_with_rocm_fallback
 from app.core.config import settings as _settings
 
 logger = logging.getLogger(__name__)
@@ -36,36 +37,49 @@ class GPUMetricsCollector(BaseCollector):
         parsed = {}
         # logger.info('#========== before parse ===========#')
         # logger.info(output_dict)
+        # Prefixes that indicate an error rather than valid JSON output
+        _ERR_PREFIXES = (
+            "ERROR",
+            "ABORT",
+            "amdsmi_",  # amdsmi_cli_exceptions.AmdSmi...
+            "AmdSmi",  # AmdSmiException...
+            "Traceback",  # Python traceback
+            "Exception:",
+        )
+
         for host, output in output_dict.items():
             try:
-                if output and not output.startswith("ERROR") and not output.startswith("ABORT"):
-                    # Clean up output (remove any extra whitespace/newlines)
-                    output = output.strip()
+                stripped = (output or "").strip()
 
-                    # Remove WARNING lines (common with amd-smi when user not in render/video groups)
-                    if output.startswith("WARNING:"):
-                        # Find the start of JSON (first '[' or '{')
-                        json_start = min(
-                            (output.find('[') if '[' in output else len(output)),
-                            (output.find('{') if '{' in output else len(output)),
-                        )
-                        if json_start < len(output):
-                            output = output[json_start:].strip()
-                            logger.debug(f"Stripped WARNING from {host} output")
+                # Treat empty output or known error prefixes as errors
+                if not stripped or any(stripped.startswith(p) for p in _ERR_PREFIXES):
+                    err_msg = stripped or "Empty output from command"
+                    logger.warning(f"Error output from {host}: {err_msg[:200]}")
+                    parsed[host] = {"error": err_msg}
+                    continue
 
-                    # Log raw output for debugging
-                    logger.debug(f"Raw output from {host} (length={len(output)}): {output[:200]}")
-                    if not output:
-                        logger.warning(f"Empty output from {host}")
-                        parsed[host] = {"error": "Empty output from command"}
+                # Remove WARNING lines (common with amd-smi when user not in render/video groups)
+                if stripped.startswith("WARNING:"):
+                    json_start = min(
+                        (stripped.find('[') if '[' in stripped else len(stripped)),
+                        (stripped.find('{') if '{' in stripped else len(stripped)),
+                    )
+                    if json_start < len(stripped):
+                        stripped = stripped[json_start:].strip()
+                        logger.debug(f"Stripped WARNING from {host} output")
                     else:
-                        parsed[host] = json.loads(output)
-                else:
-                    logger.warning(f"Error output from {host}: {output[:200]}")
-                    parsed[host] = {"error": output}
+                        parsed[host] = {"error": stripped}
+                        continue
+
+                if not stripped:
+                    parsed[host] = {"error": "Empty output after stripping"}
+                    continue
+
+                logger.debug(f"Raw output from {host} (length={len(stripped)}): {stripped[:200]}")
+                parsed[host] = json.loads(stripped)
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON from {host}: {e}")
-                logger.error(f"Output was: {output[:500]}")
+                logger.error(f"Output was: {(output or '')[:500]}")
                 parsed[host] = {"error": f"JSON parse error: {str(e)}"}
 
         # logger.info('#=========== parsed value ===============#')
@@ -89,7 +103,7 @@ class GPUMetricsCollector(BaseCollector):
         """
         logger.info("Collecting GPU utilization")
         # Use amd-smi metric which provides comprehensive GPU metrics
-        output = await ssh_manager.exec_async("amd-smi metric --json", timeout=120)
+        output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_gpu_memory(self, ssh_manager) -> Dict[str, Any]:
@@ -108,7 +122,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting GPU memory usage")
-        output = await ssh_manager.exec_async("amd-smi metric --json", timeout=120)
+        output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_gpu_temperature(self, ssh_manager) -> Dict[str, Any]:
@@ -128,7 +142,7 @@ class GPUMetricsCollector(BaseCollector):
         """
         logger.info("Collecting GPU temperature")
         # amd-smi metric provides temperature in the main metric output
-        output = await ssh_manager.exec_async("amd-smi metric --json", timeout=120)
+        output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_gpu_power(self, ssh_manager) -> Dict[str, Any]:
@@ -147,7 +161,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting GPU power metrics")
-        output = await ssh_manager.exec_async("amd-smi metric --power --json", timeout=120)
+        output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --power --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_gpu_metrics(self, ssh_manager) -> Dict[str, Any]:
@@ -166,7 +180,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting comprehensive GPU metrics")
-        output = await ssh_manager.exec_async("amd-smi metric --json", timeout=120)
+        output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_pcie_metrics(self, ssh_manager) -> Dict[str, Any]:
@@ -185,7 +199,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting PCIe metrics")
-        output = await ssh_manager.exec_async("amd-smi metric --pcie --json", timeout=120)
+        output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --pcie --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_xgmi_metrics(self, ssh_manager) -> Dict[str, Any]:
@@ -204,7 +218,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting XGMI metrics")
-        output = await ssh_manager.exec_async("amd-smi metric --xgmi-err --json", timeout=120)
+        output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --xgmi-err --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_ras_errors(self, ssh_manager) -> Dict[str, Any]:
@@ -223,7 +237,7 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting RAS error metrics")
-        output = await ssh_manager.exec_async("amd-smi metric --ecc --json", timeout=120)
+        output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --ecc --json", timeout=120)
         return self.parse_json_output(output)
 
     async def collect_gpu_info(self, ssh_manager) -> Dict[str, Any]:
@@ -240,7 +254,9 @@ class GPUMetricsCollector(BaseCollector):
             }
         """
         logger.info("Collecting GPU info")
-        output = await ssh_manager.exec_async("rocm-smi --loglevel error --showproductname --json", timeout=120)
+        output = await exec_with_rocm_fallback(
+            ssh_manager, "rocm-smi --loglevel error --showproductname --json", timeout=120
+        )
         return self.parse_json_output(output)
 
     async def collect_pcie_info(self, ssh_manager) -> Dict[str, Any]:
@@ -260,7 +276,7 @@ class GPUMetricsCollector(BaseCollector):
         logger.info("Collecting PCIe link info via lspci")
 
         # First get BDF (Bus/Device/Function) addresses from amd-smi
-        static_output = await ssh_manager.exec_async("amd-smi static --json", timeout=120)
+        static_output = await exec_with_rocm_fallback(ssh_manager, "amd-smi static --json", timeout=120)
         static_data = self.parse_json_output(static_output)
 
         # OPTIMIZATION: Run lspci once per node instead of once per GPU
@@ -335,7 +351,7 @@ class GPUMetricsCollector(BaseCollector):
         # OPTIMIZATION: Call amd-smi metric --json ONCE to get ALL data
         # This single command includes: utilization, memory, temperature, PCIe, XGMI, and ECC metrics
         logger.info("Calling amd-smi metric --json for comprehensive GPU data")
-        amd_smi_output = await ssh_manager.exec_async("amd-smi metric --json")
+        amd_smi_output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --json")
         amd_smi_data = self.parse_json_output(amd_smi_output)
 
         # Parse all metrics from single amd-smi output
@@ -345,15 +361,15 @@ class GPUMetricsCollector(BaseCollector):
 
         # Call dedicated commands for PCIe and ECC for cleaner data
         logger.info("Collecting PCIe metrics with dedicated command")
-        pcie_output = await ssh_manager.exec_async("amd-smi metric --pcie --json")
+        pcie_output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --pcie --json")
         pcie_data = self.parse_json_output(pcie_output)
 
         logger.info("Collecting XGMI metrics with dedicated command")
-        xgmi_output = await ssh_manager.exec_async("amd-smi metric --xgmi-err --json")
+        xgmi_output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --xgmi-err --json")
         xgmi_data = self.parse_json_output(xgmi_output)
 
         logger.info("Collecting ECC/RAS metrics with dedicated command")
-        ecc_output = await ssh_manager.exec_async("amd-smi metric --ecc --json")
+        ecc_output = await exec_with_rocm_fallback(ssh_manager, "amd-smi metric --ecc --json")
         ecc_data = self.parse_json_output(ecc_output)
 
         # Parse for frontend display
@@ -394,12 +410,22 @@ class GPUMetricsCollector(BaseCollector):
                 error=str(e),
             )
 
-        # Determine per-node errors from metrics
-        node_errors: dict[str, bool] = {}
+        # Determine per-node error type from metrics:
+        #   ''            — healthy
+        #   'unreachable' — SSH connection failed (ABORT from Go daemon)
+        #   'unhealthy'   — SSH ok but amd-smi/driver command failed
+        node_errors: dict[str, str] = {}
         util_data = metrics.get("utilization", {}) if isinstance(metrics, dict) else {}
         for node, node_data in util_data.items():
-            has_error = isinstance(node_data, dict) and "error" in node_data
-            node_errors[node] = has_error
+            if not isinstance(node_data, dict) or "error" not in node_data:
+                node_errors[node] = ''
+            else:
+                err_msg = str(node_data.get("error", ""))
+                if err_msg.startswith("ABORT"):
+                    node_errors[node] = 'unreachable'
+                else:
+                    # SSH succeeded but amd-smi/driver failed → node is unhealthy, not unreachable
+                    node_errors[node] = 'unhealthy'
 
         return CollectorResult(
             collector_name=self.name,
@@ -467,7 +493,16 @@ class GPUMetricsCollector(BaseCollector):
                         'UMC Activity': str(umc_val),
                     }
             else:
-                util_data[node] = data
+                # Unrecognised JSON structure (e.g. core_data/cpu_data keys, driver not loaded).
+                # Store as error so callers skip this node rather than treating arbitrary
+                # dict keys (core_data, cpu_data, ...) as GPU card IDs.
+                err = (
+                    data.get("error", "Unrecognised amd-smi output format")
+                    if isinstance(data, dict)
+                    else "Unrecognised output"
+                )
+                util_data[node] = {"error": str(err)}
+                logger.warning(f"_parse_utilization_from_amd_smi: skipping {node} — {err!r:.100}")
         return util_data
 
     def _parse_memory_from_amd_smi(self, amd_smi_data: Dict) -> Dict:
@@ -506,7 +541,8 @@ class GPUMetricsCollector(BaseCollector):
                         'GPU Memory Allocated (VRAM%)': str(used_percent),
                     }
             else:
-                mem_data[node] = data
+                err = data.get("error", "Unrecognised format") if isinstance(data, dict) else "Unrecognised output"
+                mem_data[node] = {"error": str(err)}
         return mem_data
 
     def _parse_temperature_from_amd_smi(self, amd_smi_data: Dict) -> Dict:
@@ -549,7 +585,8 @@ class GPUMetricsCollector(BaseCollector):
                         'Temperature (Sensor memory) (C)': str(mem_val),
                     }
             else:
-                temp_data[node] = data
+                err = data.get("error", "Unrecognised format") if isinstance(data, dict) else "Unrecognised output"
+                temp_data[node] = {"error": str(err)}
         return temp_data
 
     def _parse_pcie_metrics_from_amd_smi(self, amd_smi_data: Dict) -> Dict:
@@ -569,7 +606,14 @@ class GPUMetricsCollector(BaseCollector):
         No need for lspci commands!
         """
         pcie_info = {}
+        # Log first-node structure once so we can diagnose format mismatches
+        _logged = False
         for node, data in amd_smi_data.items():
+            if not _logged:
+                preview = str(data)[:400] if data else 'None'
+                logger.info(f"PCIe raw data for {node}: {preview}")
+                _logged = True
+
             # Handle error case
             if isinstance(data, dict) and 'error' in data:
                 pcie_info[node] = data
@@ -586,7 +630,14 @@ class GPUMetricsCollector(BaseCollector):
                 pcie_info[node] = {}
                 for gpu in gpu_list:
                     gpu_id = f"card{gpu.get('gpu', 0)}"
+                    # amd-smi --pcie may nest under 'pcie' key, or place fields directly
+                    # on the GPU object depending on the version. Try nested first.
                     pcie_data = gpu.get('pcie', {})
+                    if not pcie_data:
+                        # Fallback: treat the GPU entry itself as pcie_data
+                        # (some amd-smi versions return flat structure)
+                        pcie_data = {k: v for k, v in gpu.items() if k != 'gpu'}
+                    logger.debug(f"PCIe {node}/{gpu_id}: pcie_data keys={list(pcie_data.keys())[:10]}")
 
                     if pcie_data:
                         # Flatten nested values for frontend display

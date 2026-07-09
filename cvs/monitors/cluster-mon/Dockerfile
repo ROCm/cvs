@@ -4,6 +4,8 @@ FROM golang:1.22-alpine AS go-builder
 
 WORKDIR /src
 COPY go-collector/go.mod go-collector/go.sum ./
+ENV GONOSUMDB=*
+ENV GOFLAGS=-mod=mod
 RUN go mod download
 COPY go-collector/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -o /gpu-collector ./cmd/gpu-collector

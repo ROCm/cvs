@@ -214,16 +214,37 @@ class RCCLCollector(BaseCollector):
                 )
 
             except Exception as e:
+                err_str = str(e)
                 prev = self.job_state
                 self.job_state = RCCLJobState.ERROR
                 await self._push_state_event(prev, self.job_state, app_state, leader)
-                logger.error(f"RCCL collect() unexpected error on {leader}: {e}", exc_info=True)
+                # Log auth/connection errors at DEBUG to avoid noise when no RCCL
+                # job is running (expected state for most clusters). Only log as
+                # ERROR for unexpected non-auth failures.
+                if any(
+                    kw in err_str
+                    for kw in (
+                        "No authentication methods",
+                        "authentication failed",
+                        "Connection refused",
+                        "timed out",
+                        "No such file",
+                        "protocol banner",
+                        "SSH banner",
+                        "EOF",
+                    )
+                ):
+                    logger.debug(
+                        f"RCCL port-forward to {leader}: {err_str} (no RCCL job active, or no SSH key configured)"
+                    )
+                else:
+                    logger.error(f"RCCL collect() error on {leader}: {e}", exc_info=True)
                 return CollectorResult(
                     collector_name=self.name,
                     timestamp=CollectorResult.now_iso(),
                     state=CollectorState.ERROR,
                     data={},
-                    error=str(e),
+                    error=err_str,
                 )
 
         # All candidates tried. If some timed out and none responded, mark UNREACHABLE.

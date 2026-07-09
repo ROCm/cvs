@@ -21,14 +21,14 @@ export function ClusterOverview() {
     }
 
     fetchStatus()
-    const interval = setInterval(fetchStatus, 60000)
+    const interval = setInterval(fetchStatus, 300000)
     return () => clearInterval(interval)
   }, [setClusterStatus])
 
   if (!clusterStatus) {
     return (
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        {[...Array(5)].map((_, i) => (
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+        {[...Array(6)].map((_, i) => (
           <Card key={i} className="animate-pulse">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Loading...</CardTitle>
@@ -64,16 +64,27 @@ export function ClusterOverview() {
     {
       title: 'Total Nodes',
       value: clusterStatus.total_nodes,
-      description: `${clusterStatus.healthy_nodes} healthy`,
+      description: `${clusterStatus.healthy_nodes} healthy · ${clusterStatus.unhealthy_nodes} unhealthy · ${clusterStatus.unreachable_nodes} unreachable`,
       icon: Server,
-      color: clusterStatus.healthy_nodes === clusterStatus.total_nodes ? 'text-green-500' : 'text-yellow-500',
+      color: clusterStatus.unreachable_nodes > 0 ? 'text-red-500'
+           : clusterStatus.unhealthy_nodes > 0   ? 'text-yellow-500'
+           : 'text-green-500',
     },
     {
-      title: 'Healthy Nodes',
+      title: 'Healthy',
       value: clusterStatus.healthy_nodes,
-      description: `${clusterStatus.unhealthy_nodes} unhealthy, ${clusterStatus.unreachable_nodes} unreachable`,
+      description: 'SSH reachable, GPU driver OK',
       icon: Server,
       color: 'text-green-500',
+    },
+    {
+      title: 'Unhealthy',
+      value: clusterStatus.unhealthy_nodes + clusterStatus.unreachable_nodes,
+      description: `${clusterStatus.unreachable_nodes} unreachable · ${clusterStatus.unhealthy_nodes} driver failed`,
+      icon: Server,
+      color: clusterStatus.unreachable_nodes > 0 ? 'text-red-500'
+           : clusterStatus.unhealthy_nodes > 0   ? 'text-yellow-500'
+           : 'text-green-500',
     },
     {
       title: 'Avg GPU Utilization',
@@ -131,7 +142,7 @@ export function ClusterOverview() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
         {stats.map((stat) => {
           const Icon = stat.icon
           return (
