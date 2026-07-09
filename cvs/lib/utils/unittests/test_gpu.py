@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for cvs.lib.inference.utils.gpu.
+Unit tests for cvs.lib.utils.gpu.
 
 Black-box tests authored from the behavioral spec only (impl-blind). The module
 contains pure parsers for `amd-smi metric --json` output: no I/O, no hardware,
@@ -28,7 +28,7 @@ Framework: unittest.TestCase + self.subTest + unittest.mock (no pytest).
 import unittest
 from unittest.mock import MagicMock, patch
 
-from cvs.lib.inference.utils.gpu import (
+from cvs.lib.utils.gpu import (
     GPU_METRICS,
     GPU_METRIC_UNITS,
     _RAW_GPU_FIELDS,
@@ -568,7 +568,7 @@ class TestCaptureGpuMetrics(unittest.TestCase):
         """Given a valid amd-smi JSON list, capture_gpu_metrics returns all 7 keys,
         delegates to parse_gpu_metrics, and passes the parsed values through."""
         orch = self._make_orch([_full_gpu_entry()])
-        with patch("cvs.lib.inference.utils.gpu.parse_gpu_metrics", wraps=parse_gpu_metrics) as mock_parse:
+        with patch("cvs.lib.utils.gpu.parse_gpu_metrics", wraps=parse_gpu_metrics) as mock_parse:
             out = capture_gpu_metrics(orch)
         self.assertIsInstance(out, dict)
         self.assertEqual(set(out.keys()), set(ALL_KEYS))
@@ -777,7 +777,7 @@ class TestPollGpuMetrics(unittest.TestCase):
             return call_count[0] >= 2  # done after 2nd poll
 
         with (
-            unittest.mock.patch("cvs.lib.inference.utils.gpu.capture_gpu_metrics", return_value=snap),
+            unittest.mock.patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
             unittest.mock.patch("time.sleep"),
         ):
             readings = poll_gpu_metrics(orch, is_done_fn=is_done, poll_interval_s=0)
@@ -791,7 +791,7 @@ class TestPollGpuMetrics(unittest.TestCase):
             return False
 
         with (
-            unittest.mock.patch("cvs.lib.inference.utils.gpu.capture_gpu_metrics", side_effect=RuntimeError("SSH timeout")),
+            unittest.mock.patch("cvs.lib.utils.gpu.capture_gpu_metrics", side_effect=RuntimeError("SSH timeout")),
             unittest.mock.patch("time.sleep"),
         ):
             readings = poll_gpu_metrics(
@@ -827,7 +827,7 @@ class TestPollGpuMetrics(unittest.TestCase):
             log_path = f.name
         try:
             with (
-                unittest.mock.patch("cvs.lib.inference.utils.gpu.capture_gpu_metrics", return_value=snap),
+                unittest.mock.patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
                 unittest.mock.patch("time.sleep"),
             ):
                 poll_gpu_metrics(orch, is_done_fn=is_done, poll_interval_s=0, log_path=log_path)
@@ -862,7 +862,7 @@ class TestPollGpuMetrics(unittest.TestCase):
             return done_calls[0] >= 2
 
         with (
-            unittest.mock.patch("cvs.lib.inference.utils.gpu.capture_gpu_metrics", side_effect=capture),
+            unittest.mock.patch("cvs.lib.utils.gpu.capture_gpu_metrics", side_effect=capture),
             unittest.mock.patch("time.sleep"),
         ):
             readings = poll_gpu_metrics(
@@ -904,7 +904,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
         """nodes=None must call orch.exec_on_head (regression guard)."""
         orch = MagicMock()
         orch.exec_on_head.return_value = {"host0": self._make_gpu_json(1000)}
-        from cvs.lib.inference.utils.gpu import capture_gpu_metrics
+        from cvs.lib.utils.gpu import capture_gpu_metrics
         result = capture_gpu_metrics(orch, nodes=None)
         orch.exec_on_head.assert_called_once_with("amd-smi metric --json")
         self.assertEqual(result["gpu.used_vram"], 1000)
@@ -915,7 +915,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
         orch.exec.side_effect = self._make_exec_by_hosts(
             {"prefill-host": 2000, "decode-host": 3000}
         )
-        from cvs.lib.inference.utils.gpu import capture_gpu_metrics
+        from cvs.lib.utils.gpu import capture_gpu_metrics
         capture_gpu_metrics(
             orch,
             nodes=[("prefill-0", ["prefill-host"]), ("decode-0", ["decode-host"])],
@@ -928,7 +928,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
         """VRAM from all nodes is summed in the merged result."""
         orch = MagicMock()
         orch.exec.side_effect = self._make_exec_by_hosts({"p": 2000, "d": 3000})
-        from cvs.lib.inference.utils.gpu import capture_gpu_metrics
+        from cvs.lib.utils.gpu import capture_gpu_metrics
         result = capture_gpu_metrics(
             orch, nodes=[("prefill-0", ["p"]), ("decode-0", ["d"])]
         )
@@ -943,7 +943,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
             return {hosts[0]: self._make_gpu_json(1000, gfx)}
 
         orch.exec.side_effect = _exec
-        from cvs.lib.inference.utils.gpu import capture_gpu_metrics
+        from cvs.lib.utils.gpu import capture_gpu_metrics
         result = capture_gpu_metrics(
             orch, nodes=[("prefill-0", ["p"]), ("decode-0", ["d"])]
         )
@@ -953,7 +953,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
         """Exception from orch.exec propagates (not swallowed)."""
         orch = MagicMock()
         orch.exec.side_effect = RuntimeError("ssh failed")
-        from cvs.lib.inference.utils.gpu import capture_gpu_metrics
+        from cvs.lib.utils.gpu import capture_gpu_metrics
         with self.assertRaises(RuntimeError):
             capture_gpu_metrics(orch, nodes=[("prefill-0", ["p"])])
 
@@ -978,7 +978,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
             ]})}
 
         orch.exec.side_effect = _exec
-        from cvs.lib.inference.utils.gpu import capture_gpu_metrics
+        from cvs.lib.utils.gpu import capture_gpu_metrics
         result = capture_gpu_metrics(
             orch, nodes=[("prefill-0", ["p"]), ("decode-0", ["d"])]
         )
@@ -1011,12 +1011,12 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
         try:
             with (
                 patch(
-                    "cvs.lib.inference.utils.gpu._capture_multi_node",
+                    "cvs.lib.utils.gpu._capture_multi_node",
                     return_value=(snap, per_node),
                 ),
                 patch("time.sleep"),
             ):
-                from cvs.lib.inference.utils.gpu import poll_gpu_metrics
+                from cvs.lib.utils.gpu import poll_gpu_metrics
                 poll_gpu_metrics(
                     MagicMock(), is_done_fn=lambda: True,
                     poll_interval_s=0, log_path=log_path, nodes=nodes,
@@ -1039,12 +1039,12 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
         try:
             with (
                 patch(
-                    "cvs.lib.inference.utils.gpu._capture_multi_node",
+                    "cvs.lib.utils.gpu._capture_multi_node",
                     return_value=(snap, per_node),
                 ),
                 patch("time.sleep"),
             ):
-                from cvs.lib.inference.utils.gpu import poll_gpu_metrics
+                from cvs.lib.utils.gpu import poll_gpu_metrics
                 poll_gpu_metrics(
                     MagicMock(), is_done_fn=lambda: True,
                     poll_interval_s=0, log_path=log_path, nodes=nodes,
@@ -1064,10 +1064,10 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
             log_path = f.name
         try:
             with (
-                patch("cvs.lib.inference.utils.gpu.capture_gpu_metrics", return_value=snap),
+                patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
                 patch("time.sleep"),
             ):
-                from cvs.lib.inference.utils.gpu import poll_gpu_metrics
+                from cvs.lib.utils.gpu import poll_gpu_metrics
                 poll_gpu_metrics(
                     MagicMock(), is_done_fn=lambda: True,
                     poll_interval_s=0, log_path=log_path, nodes=None,
@@ -1089,12 +1089,12 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
         try:
             with (
                 patch(
-                    "cvs.lib.inference.utils.gpu._capture_multi_node",
+                    "cvs.lib.utils.gpu._capture_multi_node",
                     return_value=(snap, per_node),
                 ),
                 patch("time.sleep"),
             ):
-                from cvs.lib.inference.utils.gpu import poll_gpu_metrics
+                from cvs.lib.utils.gpu import poll_gpu_metrics
                 readings = poll_gpu_metrics(
                     MagicMock(), is_done_fn=lambda: True,
                     poll_interval_s=0, log_path=log_path, nodes=nodes,
@@ -1125,10 +1125,10 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
             log_path = f.name
         try:
             with (
-                patch("cvs.lib.inference.utils.gpu.capture_gpu_metrics", return_value=snap),
+                patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
                 patch("time.sleep"),
             ):
-                from cvs.lib.inference.utils.gpu import poll_gpu_metrics
+                from cvs.lib.utils.gpu import poll_gpu_metrics
                 with self.assertRaises(RuntimeError):
                     poll_gpu_metrics(
                         MagicMock(), is_done_fn=_is_done,

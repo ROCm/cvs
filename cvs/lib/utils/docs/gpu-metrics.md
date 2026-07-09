@@ -1,10 +1,12 @@
 # GPU Metrics Polling — Integration Guide
 
-`cvs/lib/inference/utils/gpu.py` is a shared library that any CVS inference suite can use to
-collect GPU utilisation data during a benchmark run and surface it as rows in the
-HTML report. This document explains what the library measures and how a suite can wire
-it in; the exact fixture/parametrize/threshold plumbing shown below is illustrative
-reference pseudocode — adapt it to your suite's own lifecycle-as-tests structure.
+`cvs/lib/utils/gpu.py` is a shared library that any CVS suite — inference or training —
+can use to collect GPU utilisation data during a run and surface it as rows in the
+HTML report. It has no suite-specific logic: it shells out to `amd-smi metric --json`
+via an `Orchestrator` and parses/aggregates the result. This document explains what the
+library measures and how a suite can wire it in; the exact fixture/parametrize/threshold
+plumbing shown below is illustrative reference pseudocode drawn from an inference suite —
+adapt it to your suite's own lifecycle-as-tests structure.
 
 > **Prerequisite**: this guide assumes you have completed (or are familiar with)
 > the steps in `cvs/lib/inference/ADDING_A_SUITE.md`. Concepts like `cell_key`,
@@ -102,7 +104,7 @@ at snapshot time — unlike `poll_gpu_metrics`, it can raise.
 ```python
 import pathlib
 import time
-from cvs.lib.inference.utils.gpu import GPU_METRICS, GPU_METRIC_UNITS, agg_readings, capture_gpu_metrics, poll_gpu_metrics
+from cvs.lib.utils.gpu import GPU_METRICS, GPU_METRIC_UNITS, agg_readings, capture_gpu_metrics, poll_gpu_metrics
 
 def test_<framework>_inference(orch, variant_config, inf_res_dict, gpu_metrics_snap, request, ...):
 
@@ -175,7 +177,7 @@ Pass the **full** per-cell actuals dict to `evaluate_all` — not just the singl
 — so that `min_ratio` threshold specs can resolve their reference metric:
 
 ```python
-from cvs.lib.inference.utils.gpu import GPU_METRIC_UNITS
+from cvs.lib.utils.gpu import GPU_METRIC_UNITS
 from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
 
 def test_gpu_metric(gpu_metric, inf_res_dict, variant_config, request):
@@ -236,7 +238,7 @@ rank = {
 The fixture name is `gpu_metric` (singular):
 
 ```python
-from cvs.lib.inference.utils.gpu import GPU_METRICS
+from cvs.lib.utils.gpu import GPU_METRICS
 
 def pytest_generate_tests(metafunc):
     if "metric" in metafunc.fixturenames:
