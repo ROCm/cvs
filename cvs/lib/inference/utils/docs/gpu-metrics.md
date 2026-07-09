@@ -1,9 +1,10 @@
 # GPU Metrics Polling — Integration Guide
 
-`cvs/lib/utils/gpu.py` is a shared library that any CVS inference suite can use to
+`cvs/lib/inference/utils/gpu.py` is a shared library that any CVS inference suite can use to
 collect GPU utilisation data during a benchmark run and surface it as rows in the
-HTML report. This document explains what the library measures, how to wire it into a
-new or existing suite, and how to configure thresholds.
+HTML report. This document explains what the library measures and how a suite can wire
+it in; the exact fixture/parametrize/threshold plumbing shown below is illustrative
+reference pseudocode — adapt it to your suite's own lifecycle-as-tests structure.
 
 > **Prerequisite**: this guide assumes you have completed (or are familiar with)
 > the steps in `cvs/lib/inference/ADDING_A_SUITE.md`. Concepts like `cell_key`,
@@ -45,9 +46,46 @@ pass/fail result if a threshold is configured.
 5. **Results stored** — all five derived metrics are written into `inf_res_dict` under
    `gpu.<key>` so `test_gpu_metric` can read them.
 
-`amd-smi` runs on the host node, not inside the container, via
-`orch.exec_on_head("amd-smi metric --json")`. This is intentional — `amd-smi` is a
-host-side tool and is not available inside the benchmark container.
+`amd-smi` runs on the host node, not inside the container. Single-node suites use
+`orch.exec_on_head("amd-smi metric --json")`; multi-node suites pass a `nodes` list and
+`gpu.py` calls `orch.exec("amd-smi metric --json", hosts=hosts)` per node instead. This
+is intentional — `amd-smi` is a host-side tool and is not available inside the benchmark
+container.
+
+---
+
+## Multi-node polling
+
+Both `capture_gpu_metrics` and `poll_gpu_metrics` accept an optional `nodes` parameter:
+a `list[(label, hosts)]`, where `hosts` is a list of hostnames. When provided, `gpu.py`
+calls `orch.exec("amd-smi metric --json", hosts=hosts)` once per `(label, hosts)` pair
+per poll, merges every node's GPU entries into a single aggregated snapshot (same shape
+as the single-node case), and separately tracks the last successful per-node VRAM
+reading for the summary block.
+
+```python
+nodes = [
+    ("prefill-0", prefill_node_list),
+    ("decode-0", decode_node_list),
+]
+poll_readings = poll_gpu_metrics(
+    orch,
+    is_done_fn=<your done predicate>,
+    log_path=str(_gpu_log) if _gpu_log else None,
+    model_load_s=load_s,
+    model_load_memory_mb=load_mb,
+    nodes=nodes,
+)
+```
+
+Any `Orchestrator` subclass works here since `.exec(cmd, hosts=...)` is part of the base
+`Orchestrator` contract — no need to construct raw `Pssh`/ssh handles per role. See
+`cvs/lib/inference/sglang_disagg_lib.py::sglang_disagg_gpu_counts` for a disaggregated
+prefill/decode suite that groups nodes by role this way.
+
+When `nodes` is provided, log lines are tagged with `[label1+label2]` and the summary
+block gains a `--- per-node vram (last reading) ---` section listing each label's most
+recent successful VRAM reading (or `-` if every poll failed for that node).
 
 ---
 
@@ -64,7 +102,7 @@ at snapshot time — unlike `poll_gpu_metrics`, it can raise.
 ```python
 import pathlib
 import time
-from cvs.lib.utils.gpu import GPU_METRICS, GPU_METRIC_UNITS, agg_readings, capture_gpu_metrics, poll_gpu_metrics
+from cvs.lib.inference.utils.gpu import GPU_METRICS, GPU_METRIC_UNITS, agg_readings, capture_gpu_metrics, poll_gpu_metrics
 
 def test_<framework>_inference(orch, variant_config, inf_res_dict, gpu_metrics_snap, request, ...):
 
@@ -137,7 +175,7 @@ Pass the **full** per-cell actuals dict to `evaluate_all` — not just the singl
 — so that `min_ratio` threshold specs can resolve their reference metric:
 
 ```python
-from cvs.lib.utils.gpu import GPU_METRIC_UNITS
+from cvs.lib.inference.utils.gpu import GPU_METRIC_UNITS
 from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
 
 def test_gpu_metric(gpu_metric, inf_res_dict, variant_config, request):
@@ -198,7 +236,7 @@ rank = {
 The fixture name is `gpu_metric` (singular):
 
 ```python
-from cvs.lib.utils.gpu import GPU_METRICS
+from cvs.lib.inference.utils.gpu import GPU_METRICS
 
 def pytest_generate_tests(metafunc):
     if "metric" in metafunc.fixturenames:
@@ -322,8 +360,13 @@ the metric was unavailable for this run, not a regression.
 - **Threshold JSON keys use the `gpu.` prefix** (`"gpu.peak_gpu_memory_mb"`, not
   `"peak_gpu_memory_mb"`). A missing prefix means the spec is never found and the
   metric silently operates as record-only even when `enforce_thresholds=True`.
-- **`amd-smi` runs on the host, not in the container.** If your orchestrator does not
-  support `exec_on_head`, GPU polling is not available for your suite.
+- **`amd-smi` runs on the host, not in the container.** Single-node polling requires
+  `orch.exec_on_head`; multi-node polling (via `nodes=`) requires `orch.exec(cmd,
+  hosts=...)` instead. Every `Orchestrator` subclass supports both — if yours doesn't,
+  GPU polling is not available for your suite.
+- **Multi-node degrades per label, not globally.** If `orch.exec` raises for one node in
+  `nodes`, that node's entries are excluded from the merged snapshot and its per-node
+  VRAM is `None` for that poll; other nodes' data is unaffected.
 - **Pass the full cell actuals dict to `evaluate_all`.** `min_ratio` threshold specs
   need to resolve a reference metric from `actuals`. Passing only the single metric's
   value causes a reference-resolution failure.

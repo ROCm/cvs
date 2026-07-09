@@ -171,9 +171,10 @@ def capture_gpu_metrics(orch, nodes=None) -> dict:
     """One amd-smi exec on the host node(s). Returns flat {gpu.* metrics} dict.
 
     Single-node (nodes=None): orch must have .exec_on_head(cmd) -> {host: str}.
-    Multi-node (nodes provided): nodes is a list of (label, phdl) pairs where
-    each phdl has .exec(cmd) -> {host: str}. All nodes' GPU entries are merged
-    before aggregation. Return type is identical in both cases.
+    Multi-node (nodes provided): nodes is a list of (label, hosts) pairs where
+    hosts is a list of hostnames passed to orch.exec(cmd, hosts=hosts) -> {host: str}.
+    All nodes' GPU entries are merged before aggregation. Return type is
+    identical in both cases.
 
     Exceptions from exec calls propagate to the caller (poll_gpu_metrics handles them).
     """
@@ -183,8 +184,8 @@ def capture_gpu_metrics(orch, nodes=None) -> dict:
         for _host, text in out.items():
             all_entries.extend(_try_parse(text))
     else:
-        for _label, phdl in nodes:
-            out = phdl.exec("amd-smi metric --json")
+        for _label, hosts in nodes:
+            out = orch.exec("amd-smi metric --json", hosts=hosts)
             for _host, text in out.items():
                 all_entries.extend(_try_parse(text))
     return parse_gpu_metrics(all_entries)
@@ -216,26 +217,33 @@ def _node_label_tag(nodes) -> str:
     """Return '+'-joined node labels for log line tagging, or empty string."""
     if not nodes:
         return ""
-    return "[" + "+".join(lbl for lbl, _phdl in nodes) + "] "
+    return "[" + "+".join(lbl for lbl, _hosts in nodes) + "] "
 
 
-def _collect_per_node_vram(nodes) -> "dict[str, int | None]":
-    """For each (label, phdl) pair call amd-smi and return {label: used_vram_mb}.
+def _capture_multi_node(orch, nodes) -> "tuple[dict, dict[str, int | None]]":
+    """One amd-smi exec per (label, hosts) pair.
 
-    Degrades per label: if phdl.exec raises, that label maps to None.
+    Returns (merged_snapshot, per_node_vram) computed from a single exec round:
+    merged_snapshot is parse_gpu_metrics() over every node's GPU entries combined
+    (same shape as capture_gpu_metrics), per_node_vram is {label: used_vram_mb}.
+
+    Degrades per label: if orch.exec raises for a node, that label's entries are
+    excluded from the merge and its per-node VRAM is None.
     """
-    result = {}
-    for label, phdl in nodes:
+    all_entries = []
+    per_node_vram: "dict[str, int | None]" = {}
+    for label, hosts in nodes:
         try:
-            out = phdl.exec("amd-smi metric --json")
-            all_entries = []
+            out = orch.exec("amd-smi metric --json", hosts=hosts)
+            node_entries = []
             for _host, text in out.items():
-                all_entries.extend(_try_parse(text))
-            snap = parse_gpu_metrics(all_entries)
-            result[label] = snap.get("gpu.used_vram")
+                node_entries.extend(_try_parse(text))
+            all_entries.extend(node_entries)
+            snap = parse_gpu_metrics(node_entries)
+            per_node_vram[label] = snap.get("gpu.used_vram")
         except Exception:
-            result[label] = None
-    return result
+            per_node_vram[label] = None
+    return parse_gpu_metrics(all_entries), per_node_vram
 
 
 def poll_gpu_metrics(
@@ -256,10 +264,11 @@ def poll_gpu_metrics(
     Returns list of raw snapshot dicts (failed polls excluded).
     Never raises. Writes per-poll lines + summary to log_path if given.
 
-    nodes: optional list of (label, phdl) pairs for multi-node polling.
-    When provided, all nodes are polled and merged into a single reading.
-    Log lines are tagged with node labels; summary includes per-node VRAM.
-    When None (default), uses orch.exec_on_head — single-node behaviour.
+    nodes: optional list of (label, hosts) pairs for multi-node polling, where
+    hosts is a list of hostnames passed to orch.exec(cmd, hosts=hosts). When
+    provided, all nodes are polled once per iteration and merged into a single
+    reading. Log lines are tagged with node labels; summary includes per-node
+    VRAM. When None (default), uses orch.exec_on_head — single-node behaviour.
     """
     log = logging.getLogger(__name__)
     readings: list = []
@@ -272,29 +281,15 @@ def poll_gpu_metrics(
 
     while True:
         poll_n += 1
+        snap = None
         try:
-            snap = capture_gpu_metrics(orch, nodes=nodes)
-            consecutive_failures = 0
-            readings.append(snap)
-            used = snap.get("gpu.used_vram")
-            gfx = snap.get("gpu.gfx_activity")
-            umc = snap.get("gpu.umc_activity")
-            mm = snap.get("gpu.mm_activity")
-            done = is_done_fn()
-            done_tag = "  [done]" if done else ""
-            line = (
-                f"[gpu {label} {poll_n}/?] {node_tag}"
-                f"used_vram={used} MB  gfx={gfx}%  umc={umc}%  mm={mm}%{done_tag}"
-            )
-            log_lines.append(line)
-            # Collect per-node VRAM inline (separate calls, degrade gracefully)
             if nodes:
-                per_node = _collect_per_node_vram(nodes)
+                snap, per_node = _capture_multi_node(orch, nodes)
                 for lbl, vram in per_node.items():
                     if vram is not None:
                         node_last_vram[lbl] = vram
-            if done:
-                break
+            else:
+                snap = capture_gpu_metrics(orch, nodes=None)
         except Exception as exc:
             consecutive_failures += 1
             line = (
@@ -309,6 +304,26 @@ def poll_gpu_metrics(
                     consecutive_failures,
                 )
                 break
+            time.sleep(poll_interval_s)
+            continue
+
+        consecutive_failures = 0
+        readings.append(snap)
+        used = snap.get("gpu.used_vram")
+        gfx = snap.get("gpu.gfx_activity")
+        umc = snap.get("gpu.umc_activity")
+        mm = snap.get("gpu.mm_activity")
+        # is_done_fn() runs outside the amd-smi try/except so an exception here
+        # is never misattributed as a polling failure.
+        done = is_done_fn()
+        done_tag = "  [done]" if done else ""
+        line = (
+            f"[gpu {label} {poll_n}/?] {node_tag}"
+            f"used_vram={used} MB  gfx={gfx}%  umc={umc}%  mm={mm}%{done_tag}"
+        )
+        log_lines.append(line)
+        if done:
+            break
 
         time.sleep(poll_interval_s)
 
