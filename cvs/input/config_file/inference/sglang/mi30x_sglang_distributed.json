@@ -74,6 +74,8 @@
 		 "memory_fraction": "0.85",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
+		 "context_length": "204800",
+		 "max_model_length": "204800",
 		 "inference_tests":
 		  {
 		      "bench_serv_random":
@@ -94,6 +96,13 @@
 			  "gsp_question_len": "1024",
 			  "gsp_output_len": "1024"
 		      },
+			  "long_ctx_niah": {
+					"num_prompts": "6",
+					"seed": "42",
+					"request_timeout_sec": "7200",
+					"exec_timeout_sec": "21600",
+					"tolerance_frac": "0.05"
+				},
 		      "lm_eval_hellaswag":
 		      {
 			  "backend": "sglang",
@@ -147,6 +156,8 @@
 		 "memory_fraction": "0.80",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
+		 "context_length": "204800",
+		 "max_model_length": "204800",
 		 "inference_tests":
 		  {
 		      "bench_serv_random":
@@ -167,7 +178,14 @@
 			  "gsp_question_len": "1024",
 			  "gsp_output_len": "1024"
 		      },
-                      "lm_eval_hellaswag":
+		      "long_ctx_niah": {
+					"num_prompts": "6",
+					"seed": "42",
+					"request_timeout_sec": "7200",
+					"exec_timeout_sec": "21600",
+					"tolerance_frac": "0.05"
+				},
+				"lm_eval_hellaswag":
 		      {
 			  "backend": "sglang",
 			  "lm_eval_model": "local-completions",
@@ -221,6 +239,8 @@
 		 "memory_fraction": "0.7",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
+		 "context_length": "204800",
+		 "max_model_length": "204800",
 		 "inference_tests":
 		  {
 		      "bench_serv_random":
@@ -241,7 +261,14 @@
 			  "gsp_question_len": "1024",
 			  "gsp_output_len": "1024"
 		      },
-                      "lm_eval_hellaswag":
+				"long_ctx_niah": {
+					"num_prompts": "6",
+					"seed": "42",
+					"request_timeout_sec": "7200",
+					"exec_timeout_sec": "21600",
+					"tolerance_frac": "0.05"
+				},
+			 "lm_eval_hellaswag":
 		      {
 			  "backend": "sglang",
 			  "lm_eval_model": "local-completions",
@@ -295,6 +322,8 @@
 				 "memory_fraction": "0.8",
 				 "tokenizer_mode": "auto",
 				 "inference_poll_iterations": "16",
+				 "context_length": "204800",
+				 "max_model_length": "204800",
 				 "inference_tests":
 				 {
 					 "bench_serv_random":
@@ -315,6 +344,13 @@
 						 "gsp_question_len": "1024",
 						 "gsp_output_len": "1024"
 					 },
+					 "long_ctx_niah": {
+						"num_prompts": "6",
+						"seed": "42",
+						"request_timeout_sec": "7200",
+						"exec_timeout_sec": "21600",
+						"tolerance_frac": "0.05"
+					},
 					 "lm_eval_hellaswag":
 					 {
 						 "backend": "sglang",
@@ -366,6 +402,8 @@
 		 "memory_fraction": "0.85",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
+		 "context_length": "204800",
+		 "max_model_length": "204800",
 		 "inference_tests":
 		 {
 		      "bench_serv_random":
@@ -386,6 +424,13 @@
 			  "gsp_question_len": "1024",
 			  "gsp_output_len": "1024"
 		      },
+		      "long_ctx_niah": {
+						"num_prompts": "6",
+						"seed": "42",
+						"request_timeout_sec": "7200",
+						"exec_timeout_sec": "21600",
+						"tolerance_frac": "0.05"
+					},
 		      "lm_eval_hellaswag":
 		      {
 			  "backend": "sglang",

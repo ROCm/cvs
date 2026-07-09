@@ -53,16 +53,24 @@ _PERF_CELL_RE = re.compile(
         r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),CONC=(?P<conc>\d+)$"
 )
 
+_ACC_CELL_RE = re.compile(
+    r"^ACC_ISL=(?P<isl>\d+),OSL=(?P<osl>\d+)$"
+)
+
 def pytest_generate_tests(metafunc):
-    if "perf_cell" not in metafunc.fixturenames:
-        return
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
         return
 
-    cells = load_perf_cells_for_collection(config_file)
-    ids = [f"isl{c['isl']}-osl{c['osl']}-c{c['conc']}" for c in cells]
-    metafunc.parametrize("perf_cell", cells, ids=ids)
+    if "perf_cell" in metafunc.fixturenames:
+        cells = load_perf_cells_for_collection(config_file)
+        ids = [f"isl{c['isl']}-osl{c['osl']}-c{c['conc']}" for c in cells]
+        metafunc.parametrize("perf_cell", cells, ids=ids)
+
+    if "acc_cell" in metafunc.fixturenames:
+        cells = load_acc_cells_for_collection(config_file)
+        ids = [f"acc-isl{c['isl']}-osl{c['osl']}" for c in cells]
+        metafunc.parametrize("acc_cell", cells, ids=ids)
 
 def perf_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, Any]]:
     """All ISL/OSL performance cells from a threshold file (excludes BENCH= keys)."""
@@ -96,6 +104,36 @@ def load_perf_cells_for_collection(config_file: str) -> list[dict[str, Any]]:
     cells = perf_cells_from_thresholds(thresholds)
     if not cells:
         pytest.fail(f"No ISL=... performance cells in {threshold_path}")
+    return cells
+
+def acc_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, Any]]:
+    cells = []
+    for cell_key, specs in thresholds.items():
+        if str(cell_key).startswith("_"):
+            continue
+        m = _ACC_CELL_RE.match(str(cell_key))
+        if not m:
+            continue
+        cells.append({
+            "cell_key": cell_key,
+            "isl": m.group("isl"),
+            "osl": m.group("osl"),
+            "specs": specs,
+        })
+    cells.sort(key=lambda c: int(c["isl"]))
+    return cells
+
+
+def load_acc_cells_for_collection(config_file: str) -> list[dict[str, Any]]:
+    with open(config_file, encoding="utf-8") as fp:
+        root = json.load(fp)
+    variant_key = resolve_benchmark_variant_key(root, config_file)
+    bp = root["benchmark_params"][variant_key]
+    threshold_path = _resolve_threshold_path(_threshold_file_path(bp))
+    thresholds = _load_thresholds_file(threshold_path)
+    cells = acc_cells_from_thresholds(thresholds)
+    if not cells:
+        pytest.fail(f"No ACC_ISL=... accuracy cells in {threshold_path}")
     return cells
 
 def _resolve_docker_cmd(cluster_dict, inference_dict) -> str:

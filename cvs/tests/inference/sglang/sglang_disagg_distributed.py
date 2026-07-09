@@ -86,6 +86,30 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
     lifecycle.smoke_results = results
     lifecycle.complete_stage(request, "smoke_endpoints", t0)
 
+def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
+    globals.error_list = []
+    t0 = time.monotonic()
+    bench = im_obj.bp_dict["inference_tests"]["long_ctx_niah"]
+    bench["input_length"] = acc_cell["isl"]
+    bench["output_length"] = acc_cell["osl"]
+    bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(acc_cell["specs"])
+    im_obj.bp_dict["max_concurrency"] = "1"
+    im_obj.setup_benchmark_serv_container_env()
+    summary = im_obj.run_long_context_niah_accuracy(
+        isl=int(acc_cell["isl"]),
+        osl=int(acc_cell["osl"]),
+        d_type="auto",
+    )
+    lifecycle.phase_labels[f"accuracy_long_ctx_{acc_cell['isl']}"] = summary
+    lifecycle.phase_labels.setdefault("accuracy_by_cell", {})[acc_cell["cell_key"]] = (
+        "PASS" if summary.get("passed") else "FAIL"
+    )
+    lifecycle.complete_stage(
+        request,
+        f"long_ctx_niah[{acc_cell['isl']}/{acc_cell['osl']}]",
+        t0,
+    )
+
 
 # def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
 #     globals.error_list = []

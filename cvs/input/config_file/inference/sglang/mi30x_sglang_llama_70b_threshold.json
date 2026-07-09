@@ -88,6 +88,15 @@
     "goodput": { "kind": "min", "value": 0.99 },
     "mfu": { "kind": "min", "value": 0.02 }
   },
+  "ACC_ISL=98304,OSL=128": {
+    "pass_rate": { "kind": "min", "value": 0.95 }
+  },
+  "ACC_ISL=131072,OSL=128": {
+    "pass_rate": { "kind": "min", "value": 0.95 }
+  },
+  "ACC_ISL=204800,OSL=128": {
+    "pass_rate": { "kind": "min", "value": 0.90 }
+  },
   "BENCH=lm_eval_hellaswag": {
     "acc_norm,none": { "kind": "min", "value": 0.23 }
   },

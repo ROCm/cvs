@@ -81,13 +81,14 @@ SGLANG_DISAGG_TEST_ORDER = {
     "test_poll_for_server_ready": 6,
     "test_launch_proxy_router": 7,
     "test_openai_compatible_http_endpoints": 8,
-    # "test_run_lm_eval_hellaswag_benchmark_test": 9,
-    # "test_run_lm_eval_gsm8k_benchmark_test": 10,
-    # "test_run_lm_eval_mmlu_benchmark_test": 11,
-    # "test_run_performance_benchmark_test": 12,
-    "test_disagg_gpu_topology": 13,
-    "test_print_results_table": 14,
-    "test_teardown": 15,
+    "test_run_long_context_accuracy": 9,
+    # "test_run_lm_eval_hellaswag_benchmark_test": 10,
+    # "test_run_lm_eval_gsm8k_benchmark_test": 11,
+    # "test_run_lm_eval_mmlu_benchmark_test": 12,
+    # "test_run_performance_benchmark_test": 13,
+    "test_disagg_gpu_topology": 14,
+    "test_print_results_table": 15,
+    "test_teardown": 16,
 }
 
 
@@ -178,6 +179,40 @@ def test_print_results_table(inf_res_dict, lifecycle):
                 tablefmt="github",
             ),
         )
+
+    bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
+    tp = bp.get("tensor_parallelism", "8")
+    pp = bp.get("pipeline_parallelism", "1")
+
+    _ACC_CELL_RE = re.compile(r"^ACC_ISL=(?P<isl>\d+),OSL=(?P<osl>\d+)$")
+
+    acc_by_cell = phase_labels.get("accuracy_by_cell") or {}
+    if acc_by_cell:
+        long_ctx_rows = []
+        for cell_id, result in sorted(acc_by_cell.items()):
+            m = _ACC_CELL_RE.match(str(cell_id))
+            if not m:
+                continue
+            key = f"accuracy_long_ctx_{m.group('isl')}"
+            e = phase_labels.get(key) or {}
+            long_ctx_rows.append([
+                f"ISL={m.group('isl')}",
+                m.group("osl"),
+                tp,
+                pp,
+                f"{float(e['actual']):.4f}" if e.get("actual") is not None else "-",
+                f"{float(e['expected']):.4f}" if e.get("expected") is not None else "-",
+                result,
+            ])
+        if long_ctx_rows:
+            log.info(
+                "\n\n\n\n======== Long-context accuracy (NIAH) ========\n%s",
+                tabulate(
+                    long_ctx_rows,
+                    headers=["Cell", "OSL", "TP", "PP", "Pass rate", "Expected", "Result"],
+                    tablefmt="github",
+                ),
+            )
 
     _CELL_RE = re.compile(
         r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),CONC=(?P<conc>\d+)$"

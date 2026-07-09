@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 from cvs.lib import globals
 from cvs.lib.docker_lib import get_docker_cmd
-from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
+from cvs.lib.utils.model_query_lib import LmEvalBenchmark, LongContextNiahBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -247,6 +247,7 @@ class SglangDisaggPD:
         self.bp_dict.setdefault('random_prefix_len', '0')
         self.bp_dict.setdefault('tensor_parallelism', '8')
         self.bp_dict.setdefault('pipeline_parallelism', '1')
+        self.bp_dict.setdefault('context_length', self.bp_dict.get('max_model_length', '131072'))
         self.bp_dict.setdefault('port_no', '8000')
         self.bp_dict.setdefault('tokenizer_mode', 'auto')
         self.bp_dict.setdefault('percentile_metrics', 'ttft,tpot,itl,e2el')
@@ -585,6 +586,7 @@ class SglangDisaggPD:
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
+                              --context-length {self.bp_dict['context_length']} \
                               --log-level {self.inf_dict['log_level']}' > /tmp/prefill_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
@@ -661,6 +663,7 @@ class SglangDisaggPD:
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
+                              --context-length {self.bp_dict['context_length']} \
                               --log-level {self.inf_dict['log_level']}' > /tmp/decode_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
@@ -1549,6 +1552,63 @@ class SglangDisaggPD:
                 error=errors[-1] if errors else "no benchmark nodes produced output to score",
             )
             errors.append(f"lm-eval {spec['display']}: no benchmark nodes produced output to score")
+
+        for msg in errors:
+            fail_test(msg)
+
+        return summary
+
+    def run_long_context_niah_accuracy(self, *, isl: int, osl: int, d_type: str = "auto"):
+        """NIAH long-context accuracy at fixed ISL/OSL via /v1/chat/completions."""
+        bench_key = "long_ctx_niah"
+        i_dict = self.bp_dict["inference_tests"][bench_key]
+        port = int(self.inf_dict["proxy_router_serv_port"])
+        log_basename = f"long_ctx_niah_isl{isl}_osl{osl}.log"
+
+        inner_cmd, scoring = LongContextNiahBenchmark.prepare(
+            i_dict,
+            port=port,
+            model_id=self.bp_dict["model"],
+            isl=int(isl),
+            osl=int(osl),
+            log_dir=self.log_dir,
+            log_basename=log_basename,
+        )
+        probe_src = LongContextNiahBenchmark.probe_script(**scoring["probe_kwargs"])
+        b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
+
+        cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c  "
+                mkdir -p {self.log_dir}/benchmark_node; \\
+                echo '{b64}' | base64 -d > /tmp/long_ctx_niah_probe.py && \\
+                source /tmp/benchmark_env_script.sh && \\
+                {inner_cmd}" '''
+        out_dict = self.b_phdl.exec(
+            textwrap_for_yml(cmd),
+            timeout=int(scoring["exec_timeout_sec"]),
+        )
+        time.sleep(5)
+
+        check_kwargs = LongContextNiahBenchmark.check_kwargs_from_scoring(scoring)
+        summary = None
+        errors: list[str] = []
+
+        for node, text in out_dict.items():
+            ok, node_summary, err = LongContextNiahBenchmark.check_results(text, **check_kwargs)
+            if node_summary is not None:
+                summary = node_summary
+            if not ok:
+                errors.append(f"long_ctx_niah on node {node!r}: {err}")
+
+        if summary is None:
+            summary = {
+                "task": "long_ctx_niah",
+                "metric_key": scoring["metric_key"],
+                "actual": None,
+                "expected": float(scoring["expected"]),
+                "passed": False,
+                "error": errors[-1] if errors else "no benchmark output",
+            }
+            errors.append("long_ctx_niah: no benchmark nodes produced output to score")
 
         for msg in errors:
             fail_test(msg)
