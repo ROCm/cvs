@@ -198,8 +198,6 @@ def test_print_results_table(inf_res_dict, lifecycle):
             long_ctx_rows.append([
                 f"ISL={m.group('isl')}",
                 m.group("osl"),
-                tp,
-                pp,
                 f"{float(e['actual']):.4f}" if e.get("actual") is not None else "-",
                 f"{float(e['expected']):.4f}" if e.get("expected") is not None else "-",
                 result,
@@ -209,7 +207,7 @@ def test_print_results_table(inf_res_dict, lifecycle):
                 "\n\n\n\n======== Long-context accuracy (NIAH) ========\n%s",
                 tabulate(
                     long_ctx_rows,
-                    headers=["Cell", "OSL", "TP", "PP", "Pass rate", "Expected", "Result"],
+                    headers=["Cell", "OSL", "Pass rate", "Expected", "Result"],
                     tablefmt="github",
                 ),
             )
