@@ -2,9 +2,9 @@
   :description: Configure the variables in the SGLang Disaggregated Prefill-Decode configuration file
   :keywords: inference, ROCm, install, cvs, SGLang, disaggregated, prefill, decode, LLM, MI35X
 
-*************************************************
+****************************************************************
 SGLang disaggregated prefill-decode inference configuration file
-*************************************************
+****************************************************************
 
 SGLang disaggregated prefill-decode tests validate distributed LLM inference performance using SGLang's disaggregated architecture on AMD MI35X GPU clusters.
 These tests ensure optimal throughput, latency, and scalability for large-scale LLM serving workloads by separating prefill and decode phases across different node groups.

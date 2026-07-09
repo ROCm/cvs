@@ -2,9 +2,9 @@
   :description: Configure the variables in the InferenceMAX configuration files
   :keywords: inference, ROCm, install, cvs, InferenceMAX, vLLM
 
-***************************************
+*******************************************
 InferenceMAX inference configuration file
-***************************************
+*******************************************
 
 InferenceMAX tests validate inference performance for large language models (LLMs) using vLLM backend on AMD GPU clusters. These tests ensure optimal inference throughput, latency, and token generation performance for AI serving workloads.
 

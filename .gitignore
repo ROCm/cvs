@@ -9,6 +9,11 @@ __pycache__/
 .test_venv/
 .cvs_venv/
 .ruff_venv/
+.doc_venv/
+
+# Documentation build output
+docs/_build/
+docs/sphinx/_toc.yml
 
 # Build distributions
 dist/

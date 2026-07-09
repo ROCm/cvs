@@ -2,9 +2,9 @@
   :description: Configure the variables in the MI355X Single-Node vLLM configuration file
   :keywords: inference, ROCm, install, cvs, vLLM, MI355X, LLM, single-node
 
-*************************************************
+****************************************************
 MI355X single-node vLLM inference configuration file
-*************************************************
+****************************************************
 
 MI355X single-node vLLM tests validate LLM inference performance using vLLM on AMD MI355X GPU systems. These tests ensure optimal throughput, latency, and scalability for large language model serving workloads on single-node configurations.
 
