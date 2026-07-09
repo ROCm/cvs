@@ -50,36 +50,26 @@ For detailed information on testing procedures and guidelines, see [UNIT_TESTING
 
 ## Code Quality
 
-We use Ruff for linting and formatting Python code. Always check and fix code quality issues:
+We use [pre-commit](https://pre-commit.com/) hooks with [Ruff](https://docs.astral.sh/ruff/) to enforce linting and formatting. The hooks run automatically on every commit.
 
-### Check Formatting
+### Setup (one-time)
+
 ```bash
-make fmt-check
+make pre-commit
 ```
 
-This will check for formatting issues without modifying files.
+This installs `pre-commit` and sets up the git hooks. From this point on, every `git commit` will automatically:
+- Lint Python files and auto-fix issues (including unsafe fixes)
+- Format Python files
+- Strip trailing whitespace
+- Fix missing end-of-file newlines
+- Validate YAML syntax
 
-### Format Code
-```bash
-make fmt
-```
+If a hook modifies a file, the commit will be aborted — just re-stage the changes and commit again.
 
-This will format all Python files according to our style guide.
+### Manual checks
 
-### Check Code Quality
-```bash
-make lint
-```
-
-This will check for:
-- Linting issues (code style, potential bugs)
-
-### Auto-fix Issues
-```bash
-make lint-fix
-```
-
-This will automatically fix safe linting issues.
+You can also run the checks explicitly using Make targets.
 
 ### Advanced Linting
 For unsafe fixes (like removing unused variables), use:
@@ -96,33 +86,25 @@ This provides interactive confirmation for each file with potentially breaking c
    git checkout -b feature/your-feature-name
    ```
 
-2. Make your changes
-
-3. Run quality checks:
+2. Set up pre-commit hooks (first time only):
    ```bash
-   make fmt-check
-   make lint
-   make test
+   make pre-commit
    ```
 
-4. Fix any issues:
-   ```bash
-   make fmt
-   make lint-fix
-   make unsafe-lint-fix
-   ```
+3. Make your changes
 
-5. Run tests again:
+4. Run tests:
    ```bash
    make test
    ```
 
-6. Commit your changes:
+5. Commit your changes — pre-commit hooks will automatically check and fix lint/formatting:
    ```bash
    git commit -ms "Description of changes"
    ```
+   If the hooks modify any files, re-stage and commit again.
 
-7. Create a pull request
+6. Create a pull request
 
 ## Building for Distribution
 
