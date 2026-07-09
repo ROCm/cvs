@@ -1,0 +1,71 @@
+# CVS Unified Platform - docker-compose
+#
+# Conventions borrowed from the existing monitors:
+#   - cvs/monitors/cluster-mon/docker-compose.yml  (iptables/SSH warning,
+#     network_mode host option, POLLING__* env, restart policy)
+#   - cvs/monitors/metrics_exp/docker-compose.yml  (service/healthcheck/network/
+#     volume structure, 30080 external port)
+#
+# S0: a single service (the Go daemon serving all three tiles + embedded UI).
+# Later slices ADD services to this same file:
+#   S11 -> postgres
+#   S14 -> prometheus, loki, grafana (+ optional gpu-exporter profile)
+#
+# WARNING (from cluster-mon): Docker's iptables manipulation can block the
+# daemon's OUTBOUND SSH to cluster nodes (used from S7 on). If SSH to nodes
+# fails once collectors land, either:
+#   Option 1: set "iptables": false in /etc/docker/daemon.json, or
+#   Option 2: uncomment `network_mode: "host"` below (and drop the ports block).
+
+services:
+  cvs-platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${CVS_VERSION:-0.1.0-s0}
+        COMMIT: ${CVS_COMMIT:-dev}
+        BUILD_TIME: ${CVS_BUILD_TIME:-unknown}
+    image: cvs-platform:${CVS_VERSION:-s0}
+    container_name: cvs-platform
+    restart: unless-stopped
+
+    # Network mode: use "host" to avoid iptables interfering with outbound SSH
+    # (recommended once Cluster Monitor SSH lands). If enabled, comment out ports.
+    # network_mode: "host"
+
+    ports:
+      - "30080:8080"
+
+    environment:
+      CVS_LISTEN_ADDR: ":8080"
+      # Test Execution: the cvs CLI is baked into the image; suites are
+      # discovered via `cvs list --json`.
+      CVS_BIN: cvs
+      # Cluster Monitor polling (consumed from S8 on; kept here for parity with
+      # the cluster-mon conventions so the knobs are discoverable early).
+      POLLING__INTERVAL: ${POLLING__INTERVAL:-60}
+      POLLING__FAILURE_THRESHOLD: ${POLLING__FAILURE_THRESHOLD:-5}
+      DEBUG: ${DEBUG:-false}
+
+    # Config mount (cluster.yaml / nodes.txt) used from S6 on. Harmless now.
+    volumes:
+      - ./deploy/config:/app/config
+      # Persistent data: bind-mounted to ./data on the host (nvme0n1p2, 498 GB free)
+      # so it survives container restarts/redeploys and stays off the full /dockerdisk.
+      - ./data:/app/data
+
+    networks:
+      - cvs
+
+    healthcheck:
+      # python is present in the runtime image (CVS CLI); use it instead of wget.
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz').status==200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+networks:
+  cvs:
+    driver: bridge

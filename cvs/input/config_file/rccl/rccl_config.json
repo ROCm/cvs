@@ -1,20 +1,20 @@
 {
     "rccl": {
         "mpi_params": {
-            "no_of_nodes": "2",
-            "no_of_local_ranks": "8",
+            "no_of_nodes": "<changeme>-2",
+            "no_of_local_ranks": "<changeme>-8",
             "_comment_mpi_pml": "MPI Point-to-Point Messaging Layer: 'auto' (auto-detect UCX support), 'ucx' (force UCX), or 'ob1' (force OpenIB/TCP fallback). This remains in config because it is an MPI launch option, not an env-script setting.",
             "mpi_pml": "auto",
-            "mpi_dir": "/home/{user-id}/openmpi/bin",
-            "mpi_oob_port": "eth0"
+            "mpi_dir": "<changeme>-/home/{user-id}/openmpi",
+            "mpi_oob_port": "<changeme>-eth0"
         },
 
         "_comment_env_script": "RCCL/NCCL/UCX tuning parameters. Path configurations (mpi_dir, rccl_tests_dir) are now in mpi_params and rccl_test_params respectively.",
-        "env_source_script": "/home/{user-id}/thor2_env_script.sh",
+        "env_source_script": "<changeme>-/home/{user-id}/thor2_env_script.sh",
 
         "rccl_test_params": {
             "rccl_collective": [ "all_reduce_perf", "all_gather_perf", "scatter_perf", "gather_perf", "reduce_scatter_perf", "sendrecv_perf", "alltoall_perf", "alltoallv_perf", "broadcast_perf" ],
-            "rccl_tests_dir": "/home/{user-id}/rccl-tests/build",
+            "rccl_tests_dir": "<changeme>-/home/{user-id}/rccl-tests/build",
             "start_msg_size": "1024",
             "end_msg_size": "16g",
             "step_function": "2",
