@@ -2,9 +2,9 @@
   :description: Copy files and directories to cluster nodes using CVS
   :keywords: CVS, cluster, copy, scp, files, directories, parallel
 
-*******************************
+*********************************************
 Copy Files and Directories to Cluster Nodes
-*******************************
+*********************************************
 
 CVS provides an ``scp`` command to copy files and directories to all nodes in the cluster simultaneously using parallel SCP operations. This is useful for distributing configuration files, scripts, data files, or software packages across all cluster nodes at once.
 

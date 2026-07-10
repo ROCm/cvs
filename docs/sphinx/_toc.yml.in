@@ -50,7 +50,7 @@ subtrees:
         title: InferenceMAX
       - file: reference/configuration-files/vllm_singlenode_mi355x
         title: vLLM Single-Node MI355X
-      - file: reference/configuration-files/sglang_disagg_pd
+      - file: reference/configuration-files/sglang
         title: SGLang Disaggregated
       - file: reference/configuration-files/flux1_t2i
         title: Flux.1 Text-to-Image

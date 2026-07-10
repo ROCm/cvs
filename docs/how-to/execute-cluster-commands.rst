@@ -2,9 +2,9 @@
   :description: Execute arbitrary commands on cluster nodes using CVS
   :keywords: CVS, cluster, commands, exec, SSH, arbitrary
 
-*******************************
+*********************************************
 Execute Arbitrary Commands on Cluster Nodes
-*******************************
+*********************************************
 
 CVS provides an ``exec`` command to execute arbitrary shell commands on all nodes in the cluster simultaneously using parallel SSH. This is useful for gathering system information, running diagnostics, or performing administrative tasks across all cluster nodes at once.
 
