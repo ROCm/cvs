@@ -13,6 +13,7 @@ from cvs.lib.preflight.gid_consistency import GidConsistencyCheck
 from cvs.lib.preflight.version_check import RocmVersionCheck
 from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
 from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
+from cvs.lib.preflight.transferbench_smoke import TransferBenchSmokeCheck
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
 from cvs.lib.preflight.report import PreflightReportGenerator
@@ -595,6 +596,209 @@ def test_ifoe_l2_connectivity(phdl, config_dict):
     preflight_update_test_result()
 
 
+def test_ifoe_transferbench_smoke(phdl, config_dict):
+    """Test IFoE scale-up via TransferBench candidate-branch smoketest (AIMVT-181).
+
+    Builds on AIMVT-180 (L2 reachability via ``afmctl test ping``) by exercising
+    the IFoE data path one layer above L2: it asks every reachable node to run
+    the TransferBench candidate-branch ``smoketest`` preset and validates that
+    the binary completes with exit code zero and no ``FAIL`` cells.
+
+    Two precondition gates run before the binary is invoked:
+
+      1. **vPod membership** – ``amd-smi fabric --topology --json`` is queried
+         on every reachable node and the union of reported ``vpod_id`` values
+         must be a single id (the smoketest preset itself exits with
+         ``ERR_FATAL`` when ranks span multiple virtual pods).
+      2. **Reachable host count** – ``multi_rank`` mode requires at least
+         two reachable nodes; otherwise we degrade to ``per_node`` mode and
+         log a warning.
+
+    Configuration lives under ``connectivity_check.transferbench`` in the
+    preflight config file. The check is **opt-in**: when
+    ``connectivity_mode`` is ``"skip"`` (default) or omitted, the test
+    records a SKIPPED result and returns immediately without contacting
+    nodes. Nodes whose smoketest fails are reported but are **not** pruned
+    from ``phdl`` -- operators decide whether to proceed with downstream
+    RDMA / RCCL testing.
+    """
+    global preflight_results
+
+    mode = get_nested_config(config_dict, 'connectivity_check.transferbench', 'connectivity_mode', 'skip')
+    if isinstance(mode, str):
+        mode_normalized = mode.strip().lower()
+    else:
+        mode_normalized = 'skip' if not mode else 'run'
+
+    if mode_normalized in ('skip', 'off', 'disabled', 'false', '0'):
+        log.info("IFoE TransferBench smoketest skipped by configuration (mode=%s)", mode)
+        preflight_results['transferbench_smoke'] = {
+            'mode': mode_normalized,
+            'skipped': True,
+            'message': 'IFoE TransferBench smoketest skipped by configuration',
+            'nodes': {},
+        }
+        preflight_update_test_result()
+        return
+
+    if not phdl.reachable_hosts:
+        log.warning(
+            "IFoE TransferBench smoketest skipped: no reachable hosts remain after earlier preflight pruning"
+        )
+        preflight_results['transferbench_smoke'] = {
+            'mode': mode_normalized,
+            'skipped': True,
+            'message': 'No reachable nodes available for TransferBench smoketest',
+            'nodes': {},
+        }
+        preflight_update_test_result()
+        return
+
+    tb_binary = get_nested_config(
+        config_dict, 'connectivity_check.transferbench', 'tb_binary', 'TransferBench'
+    )
+    use_sudo = _config_flag_enabled(
+        get_nested_config(config_dict, 'connectivity_check.transferbench', 'use_sudo', True),
+        default=True,
+    )
+    preset = get_nested_config(
+        config_dict, 'connectivity_check.transferbench', 'preset', 'smoketest'
+    )
+    size_list = get_nested_config(
+        config_dict, 'connectivity_check.transferbench', 'size_list', ['1K', '16M']
+    )
+    num_iterations = int(
+        get_nested_config(config_dict, 'connectivity_check.transferbench', 'num_iterations', 2)
+    )
+    num_warmups = int(
+        get_nested_config(config_dict, 'connectivity_check.transferbench', 'num_warmups', 0)
+    )
+    always_validate = _config_flag_enabled(
+        get_nested_config(
+            config_dict, 'connectivity_check.transferbench', 'always_validate', True
+        ),
+        default=True,
+    )
+    run_parallel = _config_flag_enabled(
+        get_nested_config(config_dict, 'connectivity_check.transferbench', 'run_parallel', True),
+        default=True,
+    )
+    use_bdma = _config_flag_enabled(
+        get_nested_config(config_dict, 'connectivity_check.transferbench', 'use_bdma', False),
+        default=False,
+    )
+    force_single_pod = _config_flag_enabled(
+        get_nested_config(
+            config_dict, 'connectivity_check.transferbench', 'force_single_pod', True
+        ),
+        default=True,
+    )
+    rank_mode = get_nested_config(
+        config_dict, 'connectivity_check.transferbench', 'rank_mode', 'per_node'
+    )
+    socket_master_port = int(
+        get_nested_config(
+            config_dict, 'connectivity_check.transferbench', 'socket_master_port', 31337
+        )
+    )
+    master_node = get_nested_config(
+        config_dict, 'connectivity_check.transferbench', 'master_node', None
+    )
+    max_skip_pct = float(
+        get_nested_config(
+            config_dict, 'connectivity_check.transferbench', 'max_skip_pct', 25.0
+        )
+    )
+    ssh_timeout = int(
+        get_nested_config(config_dict, 'connectivity_check.transferbench', 'ssh_timeout', 600)
+    )
+    skip_pod_check = _config_flag_enabled(
+        get_nested_config(
+            config_dict, 'connectivity_check.transferbench', 'skip_pod_check', False
+        ),
+        default=False,
+    )
+
+    log.info(
+        "Running IFoE TransferBench smoketest (tb_binary=%s, preset=%s, rank_mode=%s, "
+        "size_list=%s, num_iterations=%s, max_skip_pct=%s) on %d host(s)",
+        tb_binary,
+        preset,
+        rank_mode,
+        size_list,
+        num_iterations,
+        max_skip_pct,
+        len(phdl.reachable_hosts),
+    )
+
+    checker = TransferBenchSmokeCheck(
+        phdl,
+        tb_binary=tb_binary,
+        use_sudo=use_sudo,
+        preset=preset,
+        size_list=size_list if isinstance(size_list, (list, tuple)) else [size_list],
+        num_iterations=num_iterations,
+        num_warmups=num_warmups,
+        always_validate=always_validate,
+        run_parallel=run_parallel,
+        use_bdma=use_bdma,
+        force_single_pod=force_single_pod,
+        rank_mode=rank_mode,
+        socket_master_port=socket_master_port,
+        master_node=master_node if master_node else None,
+        max_skip_pct=max_skip_pct,
+        ssh_timeout=ssh_timeout,
+        skip_pod_check=skip_pod_check,
+        config_dict=config_dict,
+    )
+
+    results = checker.run()
+
+    preflight_results['transferbench_smoke'] = {
+        'mode': mode_normalized,
+        'skipped': False,
+        'status': results.get('status'),
+        'rank_mode': results.get('rank_mode'),
+        'pod_membership': results.get('pod_membership') or {},
+        'nodes': results.get('nodes') or {},
+        'totals': results.get('totals') or {},
+        'errors': results.get('errors') or [],
+        'max_skip_pct': max_skip_pct,
+    }
+
+    totals = results.get('totals') or {}
+    if results.get('status') == 'FAIL':
+        log.warning(
+            "IFoE TransferBench smoketest FAIL: %d/%d node(s) failed, %d warning(s); "
+            "cluster errors: %s",
+            totals.get('nodes_fail', 0),
+            totals.get('nodes_total', 0),
+            totals.get('nodes_warning', 0),
+            "; ".join(results.get('errors') or []) or 'none',
+        )
+        for node, node_result in (results.get('nodes') or {}).items():
+            if node_result.get('status') == 'FAIL':
+                for err in node_result.get('errors') or []:
+                    log.error("Node %s TransferBench smoketest: %s", node, err)
+    elif results.get('status') == 'WARNING':
+        log.warning(
+            "IFoE TransferBench smoketest WARNING: %d node(s) exceeded skip budget (max %s%%)",
+            totals.get('nodes_warning', 0),
+            max_skip_pct,
+        )
+    else:
+        log.info(
+            "IFoE TransferBench smoketest PASS on %d/%d node(s) (tests pass/fail/skip = %d/%d/%d)",
+            totals.get('nodes_pass', 0),
+            totals.get('nodes_total', 0),
+            totals.get('tests_pass', 0),
+            totals.get('tests_fail', 0),
+            totals.get('tests_skip', 0),
+        )
+
+    preflight_update_test_result()
+
+
 def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     """
     Test RDMA connectivity between cluster nodes using ibv_rc_pingpong.
@@ -728,6 +932,7 @@ def test_generate_preflight_report(phdl, config_dict, request):
         'rocm_versions',
         'interface_names',
         'ifoe_l2_connectivity',
+        'transferbench_smoke',
         'rdma_connectivity',
     ]
     missing_checks = [check for check in required_checks if check not in preflight_results]
