@@ -121,17 +121,18 @@ def _thresholds_for_cell(variant_config, isl, osl, conc) -> dict[str, float]:
     return _flat_threshold_specs(raw)
 
 
-def test_print_results_table(inf_res_dict, lifecycle):
+def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
     """Log smoke, lm-eval accuracy, and perf tables (one row per metric per host per ISL/OSL cell)."""
     phase_labels = getattr(lifecycle, "phase_labels", None) or {}
     smoke_results = getattr(lifecycle, "smoke_results", None)
 
-    try:
-        from cvs.lib.report.registry import get_session_results
+    if variant_config is None:
+        try:
+            from cvs.lib.report.registry import get_session_results
 
-        variant_config = get_session_results().get("variant_config")
-    except Exception:
-        variant_config = None
+            variant_config = get_session_results().get("variant_config")
+        except Exception:
+            variant_config = None
 
     if smoke_results:
         smoke_rows = []

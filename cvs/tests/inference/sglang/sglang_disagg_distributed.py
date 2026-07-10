@@ -170,9 +170,17 @@ def test_disagg_gpu_topology(im_obj, lifecycle, request):
     im_obj.sglang_disagg_gpu_counts()
     lifecycle.complete_stage(request, "gpu_topology", t0)
 
-def test_print_results_table(inf_res_dict, lifecycle, variant_config):
+def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
+    from cvs.lib.report.registry import bind_session_results
     from cvs.tests.inference.sglang._shared import test_print_results_table as _print
-    _print(inf_res_dict, lifecycle, variant_config)
+
+    bind_session_results(
+        inf_res_dict=inf_res_dict,
+        variant_config=variant_config,
+        lifecycle=lifecycle,
+    )
+    _print(inf_res_dict, lifecycle)
+
 
 def test_teardown(orch, lifecycle, request):
     """Final stage: tear down containers and logs. Runs even if a prior stage failed."""
