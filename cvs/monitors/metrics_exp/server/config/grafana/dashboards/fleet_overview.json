@@ -1,0 +1,378 @@
+{
+  "uid": "fleet-overview",
+  "title": "Fleet Overview",
+  "description": "High-level view of all GPU node groups",
+  "tags": ["gpu-fleet", "overview"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "nodegroup",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(gpu_power_usage, node_group)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Fleet Summary",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total Node Groups",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "targets": [
+        {
+          "expr": "count(count by (node_group) (gpu_power_usage))",
+          "legendFormat": "Groups"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "blue", "value": null}]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Total Nodes",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+      "targets": [
+        {
+          "expr": "count(count by (hostname) (up{job=\"amd_gpu_metrics\", node_group=~\"$nodegroup\"}))",
+          "legendFormat": "Nodes"
+        }
+      ],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "blue", "value": null}]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Active Nodes",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+      "targets": [
+        {
+          "expr": "count(count by (hostname) (up{job=\"amd_gpu_metrics\", node_group=~\"$nodegroup\"} == 1))",
+          "legendFormat": "Active"
+        }
+      ],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Down Nodes",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+      "targets": [
+        {
+          "expr": "count(count by (hostname) (up{job=\"amd_gpu_metrics\", node_group=~\"$nodegroup\"} == 0)) or vector(0)",
+          "legendFormat": "Down"
+        }
+      ],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Total GPUs",
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+      "targets": [
+        {
+          "expr": "count(gpu_power_usage{node_group=~\"$nodegroup\"})",
+          "legendFormat": "GPUs"
+        }
+      ],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "purple", "value": null}]
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "gauge",
+      "title": "Avg GPU Utilization",
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+      "targets": [
+        {
+          "expr": "avg(gpu_gfx_activity{node_group=~\"$nodegroup\"})",
+          "legendFormat": "Utilization"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "max": 100,
+          "min": 0,
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "blue", "value": null},
+              {"color": "green", "value": 20},
+              {"color": "yellow", "value": 80}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "GPU Metrics",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Average GPU Temperature by Node Group",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "targets": [
+        {
+          "expr": "avg by (node_group) (gpu_junction_temperature{node_group=~\"$nodegroup\"})",
+          "legendFormat": "{{node_group}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "custom": {"lineWidth": 2}
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Average GPU Power by Node Group",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "targets": [
+        {
+          "expr": "avg by (node_group) (gpu_power_usage{node_group=~\"$nodegroup\"})",
+          "legendFormat": "{{node_group}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "custom": {"lineWidth": 2}
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Average GPU Utilization by Node Group",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "targets": [
+        {
+          "expr": "avg by (node_group) (gpu_gfx_activity{node_group=~\"$nodegroup\"})",
+          "legendFormat": "{{node_group}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 2}
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Average GPU Memory Usage by Node Group",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "targets": [
+        {
+          "expr": "avg by (node_group) (gpu_used_vram{node_group=~\"$nodegroup\"} / gpu_total_vram{node_group=~\"$nodegroup\"} * 100)",
+          "legendFormat": "{{node_group}} VRAM %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 2}
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Top 10 Nodes by Key Metrics",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22}
+    },
+    {
+      "id": 14,
+      "type": "barchart",
+      "title": "Top 10 Nodes by GPU Temperature (Max)",
+      "description": "Nodes with highest maximum GPU junction temperature",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
+      "targets": [
+        {
+          "expr": "topk(10, max by (hostname) (gpu_junction_temperature{node_group=~\"$nodegroup\"}))",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always", "xTickLabelRotation": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "color": {"mode": "palette-classic"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 85}]
+          }
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "barchart",
+      "title": "Top 10 Nodes by GPU Power (Max)",
+      "description": "Nodes with highest maximum GPU power draw",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
+      "targets": [
+        {
+          "expr": "topk(10, max by (hostname) (gpu_power_usage{node_group=~\"$nodegroup\"}))",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always", "xTickLabelRotation": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "barchart",
+      "title": "Top 10 Nodes by GPU Utilization (Max)",
+      "description": "Nodes with highest maximum GPU utilization",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 31},
+      "targets": [
+        {
+          "expr": "topk(10, max by (hostname) (gpu_gfx_activity{node_group=~\"$nodegroup\"}))",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always", "xTickLabelRotation": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "barchart",
+      "title": "Top 10 Nodes by GPU Memory Usage (Max)",
+      "description": "Nodes with highest maximum GPU VRAM usage",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 31},
+      "targets": [
+        {
+          "expr": "topk(10, max by (hostname) (gpu_used_vram{node_group=~\"$nodegroup\"} / gpu_total_vram{node_group=~\"$nodegroup\"} * 100))",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always", "xTickLabelRotation": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "Node Status",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 39}
+    },
+    {
+      "id": 19,
+      "type": "table",
+      "title": "Node Status",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 40},
+      "targets": [
+        {
+          "expr": "count by (hostname, node_group, instance) (gpu_power_usage{node_group=~\"$nodegroup\"})",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"hostname": "Hostname", "instance": "Instance", "node_group": "Node Group", "Value": "GPU Count"}}}
+      ]
+    }
+  ]
+}

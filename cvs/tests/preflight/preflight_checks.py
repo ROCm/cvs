@@ -12,6 +12,7 @@ import json
 from cvs.lib.preflight.gid_consistency import GidConsistencyCheck
 from cvs.lib.preflight.version_check import RocmVersionCheck
 from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
+from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
 from cvs.lib.preflight.report import PreflightReportGenerator
@@ -454,6 +455,146 @@ def test_gid_consistency(phdl, config_dict):
     preflight_update_test_result()
 
 
+def test_ifoe_l2_connectivity(phdl, config_dict):
+    """
+    Test IFoE L2 connectivity using ``afmctl test ping`` (AIMVT-180).
+
+    Runs ``afmctl test ping`` on each reachable node for every configured
+    (BDF, dst-accelerator) pairing and validates the per-port pass/fail
+    counts and Summary loss percentages against the configured threshold.
+
+    Configuration lives under ``connectivity_check.ifoe`` in the preflight
+    config file. The check is opt-in: when ``connectivity_mode`` is
+    ``"skip"`` (or omitted) the test records a SKIPPED result and returns
+    without contacting nodes. Nodes that fail L2 ping are reported but are
+    **not** pruned from ``phdl`` — operators can decide whether to proceed
+    with downstream RDMA / RCCL testing.
+    """
+    global preflight_results
+
+    mode = get_nested_config(config_dict, 'connectivity_check.ifoe', 'connectivity_mode', 'skip')
+    if isinstance(mode, str):
+        mode_normalized = mode.strip().lower()
+    else:
+        mode_normalized = 'skip' if not mode else 'run'
+
+    if mode_normalized in ('skip', 'off', 'disabled', 'false', '0'):
+        log.info("IFoE L2 connectivity test skipped by configuration (mode=%s)", mode)
+        preflight_results['ifoe_l2_connectivity'] = {
+            'mode': mode_normalized,
+            'skipped': True,
+            'message': 'IFoE L2 connectivity test skipped by configuration',
+            'node_results': {},
+        }
+        preflight_update_test_result()
+        return
+
+    if not phdl.reachable_hosts:
+        log.warning("IFoE L2 connectivity skipped: no reachable hosts remain after earlier preflight pruning")
+        preflight_results['ifoe_l2_connectivity'] = {
+            'mode': mode_normalized,
+            'skipped': True,
+            'message': 'No reachable nodes available for IFoE L2 connectivity testing',
+            'node_results': {},
+        }
+        preflight_update_test_result()
+        return
+
+    afmctl_path = get_nested_config(config_dict, 'connectivity_check.ifoe', 'afmctl_path', 'afmctl')
+    bdfs = get_nested_config(config_dict, 'connectivity_check.ifoe', 'bdfs', [])
+    bdf_discovery = get_nested_config(config_dict, 'connectivity_check.ifoe', 'bdf_discovery', 'auto')
+    dst_accelerators = get_nested_config(config_dict, 'connectivity_check.ifoe', 'dst_accelerators', [0])
+    ports = get_nested_config(config_dict, 'connectivity_check.ifoe', 'ports', 'all')
+    pings_per_port = get_nested_config(config_dict, 'connectivity_check.ifoe', 'pings_per_port', 1)
+    per_ping_timeout = get_nested_config(config_dict, 'connectivity_check.ifoe', 'per_ping_timeout', None)
+    traffic_types = get_nested_config(
+        config_dict, 'connectivity_check.ifoe', 'traffic_types', ['ifoe_req', 'ifoe_resp', 'non_ifoe']
+    )
+    loss_threshold_pct = get_nested_config(config_dict, 'connectivity_check.ifoe', 'loss_threshold_pct', 0.0)
+    ssh_timeout = get_nested_config(config_dict, 'connectivity_check.ifoe', 'ssh_timeout', 180)
+    use_sudo = _config_flag_enabled(
+        get_nested_config(config_dict, 'connectivity_check.ifoe', 'use_sudo', False), default=False
+    )
+
+    log.info(
+        "Running IFoE L2 connectivity (afmctl=%s, bdf_discovery=%s, dst_accelerators=%s, "
+        "ports=%s, pings_per_port=%s, traffic_types=%s, loss_threshold_pct=%s) on %d host(s)",
+        afmctl_path,
+        bdf_discovery,
+        dst_accelerators,
+        ports,
+        pings_per_port,
+        traffic_types,
+        loss_threshold_pct,
+        len(phdl.reachable_hosts),
+    )
+
+    checker = IfoeL2ConnectivityCheck(
+        phdl,
+        afmctl_path=afmctl_path,
+        bdfs=bdfs if isinstance(bdfs, (list, tuple)) else [],
+        dst_accelerators=dst_accelerators,
+        ports=ports,
+        pings_per_port=pings_per_port,
+        per_ping_timeout=per_ping_timeout,
+        traffic_types=traffic_types,
+        loss_threshold_pct=loss_threshold_pct,
+        ssh_timeout=ssh_timeout,
+        use_sudo=use_sudo,
+        bdf_discovery=bdf_discovery,
+        config_dict=config_dict,
+    )
+
+    node_results = checker.run()
+
+    failed_nodes = [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+    total_invocations = 0
+    failed_invocations = 0
+    for r in node_results.values():
+        for accel_block in (r.get('accelerators') or {}).values():
+            for invocation in accel_block.values():
+                if invocation.get('status') == 'SKIPPED':
+                    continue
+                total_invocations += 1
+                if invocation.get('status') == 'FAIL':
+                    failed_invocations += 1
+
+    summary_status = 'FAIL' if failed_nodes else 'PASS'
+    preflight_results['ifoe_l2_connectivity'] = {
+        'mode': mode_normalized,
+        'skipped': False,
+        'status': summary_status,
+        'node_results': node_results,
+        'total_nodes': len(node_results),
+        'failed_nodes': failed_nodes,
+        'total_invocations': total_invocations,
+        'failed_invocations': failed_invocations,
+        'loss_threshold_pct': loss_threshold_pct,
+        'traffic_types': list(traffic_types) if isinstance(traffic_types, (list, tuple)) else [traffic_types],
+    }
+
+    if failed_nodes:
+        log.warning(
+            "IFoE L2 connectivity FAIL on %d/%d node(s): %s",
+            len(failed_nodes),
+            len(node_results),
+            ", ".join(failed_nodes),
+        )
+        for node in failed_nodes:
+            for err in node_results[node].get('errors', []):
+                log.error("Node %s IFoE L2: %s", node, err)
+    else:
+        log.info(
+            "IFoE L2 connectivity PASS on %d/%d nodes (%d/%d invocations succeeded)",
+            len(node_results) - len(failed_nodes),
+            len(node_results),
+            total_invocations - failed_invocations,
+            total_invocations,
+        )
+
+    preflight_update_test_result()
+
+
 def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     """
     Test RDMA connectivity between cluster nodes using ibv_rc_pingpong.
@@ -582,7 +723,13 @@ def test_generate_preflight_report(phdl, config_dict, request):
     log.info("Generating preflight check report")
 
     # Ensure we have results from all checks
-    required_checks = ['gid_consistency', 'rocm_versions', 'interface_names', 'rdma_connectivity']
+    required_checks = [
+        'gid_consistency',
+        'rocm_versions',
+        'interface_names',
+        'ifoe_l2_connectivity',
+        'rdma_connectivity',
+    ]
     missing_checks = [check for check in required_checks if check not in preflight_results]
 
     if missing_checks:

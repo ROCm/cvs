@@ -1,0 +1,30 @@
+# AMD GPU Fleet Manager - Python Dependencies
+
+# Web framework
+fastapi==0.110.0
+uvicorn[standard]==0.28.0
+
+# Database
+sqlalchemy==2.0.28
+psycopg2-binary==2.9.9
+alembic==1.13.1
+
+# Async SSH
+asyncssh==2.14.2
+
+# HTTP client
+httpx==0.27.0
+
+# Data validation
+pydantic==2.6.3
+pydantic-settings==2.2.1
+
+# Security
+cryptography==42.0.5
+python-multipart==0.0.9
+
+# Templating
+jinja2==3.1.3
+
+# Utilities
+python-dotenv==1.0.1

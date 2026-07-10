@@ -1,0 +1,24 @@
+# Prometheus scrape job template for node group: {{ node_group_name }}
+- job_name: 'gpu_{{ node_group_name }}'
+  static_configs:
+    - targets:
+{% for node in nodes %}
+      - '{{ node.ip }}:{{ node.gpu_port }}'
+{% endfor %}
+  relabel_configs:
+    - source_labels: [__address__]
+      target_label: instance
+    - target_label: node_group
+      replacement: '{{ node_group_name }}'
+
+- job_name: 'node_{{ node_group_name }}'
+  static_configs:
+    - targets:
+{% for node in nodes %}
+      - '{{ node.ip }}:{{ node.node_port }}'
+{% endfor %}
+  relabel_configs:
+    - source_labels: [__address__]
+      target_label: instance
+    - target_label: node_group
+      replacement: '{{ node_group_name }}'

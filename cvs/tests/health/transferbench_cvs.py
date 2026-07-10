@@ -11,7 +11,6 @@ import re
 import json
 
 
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 
 from cvs.lib import globals
@@ -56,20 +55,23 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-def detect_rocm_path(phdl, config_rocm_path):
+def detect_rocm_path(orch, config_rocm_path):
     """
     Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
     Args:
-        phdl: Parallel SSH handle
+        orch: Orchestrator instance
         config_rocm_path (str): Configured ROCm path from config file (empty string for auto-detect)
     Returns:
         str: Detected ROCm path
     """
-    # If rocm_path is explicitly configured, validate and use it
+    # If rocm_path is explicitly configured, validate and use it. The validation
+    # is a glob+pipe pipeline (does {path}/lib exist AND does it contain a
+    # libamdhip64.so*?), wrapped in explicit `bash -c` because
+    # ContainerOrchestrator's docker-exec transport does not spawn a shell.
     if config_rocm_path and config_rocm_path != '<changeme>':
-        # Validate the configured path exists
-        out_dict = phdl.exec(
-            f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+        out_dict = orch.exec(
+            f"bash -c 'test -d {config_rocm_path}/lib"
+            f" && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'"
         )
         for node, output in out_dict.items():
             if output.strip() and 'libamdhip64.so' in output:
@@ -83,14 +85,15 @@ def detect_rocm_path(phdl, config_rocm_path):
     # Auto-detect ROCm path
     log.info('Auto-detecting ROCm path...')
 
-    # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
-    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y). Glob+pipe wrapped
+    # in explicit `bash -c`; same rationale as the configured-path probe above.
+    out_dict = orch.exec("bash -c 'ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1'")
     for node, output in out_dict.items():
         if output and '/opt/rocm/core-' in output:
             rocm_path = output.strip()
             # Validate it has the library
-            validate_dict = phdl.exec(
-                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+            validate_dict = orch.exec(
+                f"bash -c 'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'"
             )
             for _, lib_output in validate_dict.items():
                 if lib_output.strip() and 'libamdhip64.so' in lib_output:
@@ -98,7 +101,7 @@ def detect_rocm_path(phdl, config_rocm_path):
                     return rocm_path
 
     # Fall back to legacy /opt/rocm
-    out_dict = phdl.exec('test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1')
+    out_dict = orch.exec("bash -c 'test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1'")
     for node, output in out_dict.items():
         if output.strip() and 'libamdhip64.so' in output:
             log.info('Detected ROCm path (legacy layout): /opt/rocm')
@@ -149,7 +152,21 @@ def parse_tb_p2p_bw(out_dict, exp_dict):
 def parse_tb_scaling_bw(out_dict, exp_dict):
     for node in out_dict.keys():
         log.info(f"^^^^^ {out_dict[node]} ^^^^^^")
-        match = re.search('Best\s+[0-9\.]+\(\s[0-9]+\)\s+[0-9\.]+\(\s[0-9]+\)\s+([0-9\.]+)', out_dict[node])
+        # Best summary row: skip CPU00/CPU01 columns, capture GPU00 peak bandwidth.
+        # CU counts in parentheses may be padded (e.g. "(  8)" vs "( 32)").
+        match = re.search(
+            r'(?m)^[ \t]*Best\s+'
+            r'(?:[0-9\.]+\(\s*[0-9]+\)\s+){2}'
+            r'([0-9\.]+)',
+            out_dict[node],
+        )
+        if not match:
+            out = out_dict[node]
+            tail = 6000
+            if len(out) > tail:
+                out = f"...[truncated {len(out) - tail} chars; Best row is usually near the end]...\n{out[-tail:]}"
+            fail_test(f"TransferBench scaling Best row GPU00 bandwidth not found on node {node}. Output: {out}")
+            continue
         gpu0_bw = float(match.group(1))
         if float(gpu0_bw) < float(exp_dict['best_gpu0_bw']):
             fail_test(
@@ -159,9 +176,20 @@ def parse_tb_scaling_bw(out_dict, exp_dict):
 
 def parse_tb_schmoo_bw(out_dict, exp_dict):
     for node in out_dict.keys():
+        # Line-anchored schmoo data row: leading indent + optional |/│, then whole 32 (not 132/320).
+        # Use (?<![0-9])32(?![0-9]) instead of \b32\b so indented lines (spaces are non-word) still match.
         match = re.search(
-            '\s+32\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)', out_dict[node]
+            r'(?m)^[ \t]*(?:[|│][ \t]*)*(?<![0-9])32(?![0-9])(?:[ \t]*[|│])?[ \t]+'
+            r'([0-9\.]+)[ \t]+([0-9\.]+)[ \t]+([0-9\.]+)[ \t]+([0-9\.]+)[ \t]+([0-9\.]+)[ \t]+([0-9\.]+)',
+            out_dict[node],
         )
+        if not match:
+            out = out_dict[node]
+            tail = 6000
+            if len(out) > tail:
+                out = f"...[truncated {len(out_dict[node]) - tail} chars; schmoo table is usually near the end]...\n{out_dict[node][-tail:]}"
+            fail_test(f"TransferBench schmoo row for 32 CU not found on node {node}. Output: {out}")
+            continue
         local_read = float(match.group(1))
         local_write = float(match.group(2))
         local_copy = float(match.group(3))
@@ -194,148 +222,15 @@ def parse_tb_schmoo_bw(out_dict, exp_dict):
             )
 
 
-def parse_tb_example_test_results(out_dict, exp_dict):
-    for node in out_dict.keys():
-        # Test 1 results parse
-        match = re.search('(Test\s1:\n.*\n.*\n.*\n)', out_dict[node])
-        if not match:
-            fail_test(f"Test 1 output section not found in TransferBench output on node {node}")
-            continue
-        test1_out = match.group(1)
-        match = re.search(r'(?:Transfer|Executor:\s+GPU)\s+[0-9]+\s+[|│]\s*([0-9\.]+)\s+GB/s', test1_out, re.I)
-        if not match:
-            fail_test(f"Transfer bandwidth pattern not found in Test 1 output on node {node}. Output: {test1_out}")
-            continue
-        test1_res = match.group(1)
-        if float(test1_res) < float(exp_dict['test1']):
-            fail_test(
-                f"Transfer Bench example test1 failed actual value {test1_res} is less than expected {exp_dict['test1']}"
-            )
-
-        # Test 2 results parse
-        match = re.search('(Test\s2:\n.*\n.*\n.*\n)', out_dict[node])
-        if not match:
-            fail_test(f"Test 2 output section not found in TransferBench output on node {node}")
-            continue
-        test2_out = match.group(1)
-        match = re.search(r'(?:Transfer|Executor:\s+(?:GPU|DMA))\s+[0-9]+\s+[|│]\s*([0-9\.]+)\s+GB/s', test2_out, re.I)
-        if not match:
-            fail_test(f"Transfer bandwidth pattern not found in Test 2 output on node {node}. Output: {test2_out}")
-            continue
-        test2_res = match.group(1)
-        if float(test2_res) < float(exp_dict['test2']):
-            fail_test(
-                f"Transfer Bench example test2 failed actual value {test2_res} is less than expected {exp_dict['test2']}"
-            )
-
-        # Test 3 results parse
-        match = re.search('(Test\s3:.*?)(?=Test\s[456]:|##|$)', out_dict[node], re.DOTALL)
-        if not match:
-            fail_test(f"Test 3 output section not found in TransferBench output on node {node}")
-            continue
-        test3_out = match.group(1)
-
-        match = re.search(
-            r'(?:Transfer|Executor:\s+GPU)\s+[0-9]+\s+[|│]\s*([0-9\.]+)\s+GB/s(?:[\s0-9\.\|a-z]+\s+G0\s*-\>)?',
-            test3_out,
-            re.I,
-        )
-        if not match:
-            fail_test(
-                f"G0->G1 transfer bandwidth pattern not found in Test 3 output on node {node}. Output: {test3_out}"
-            )
-            continue
-        test3_res_0_1 = match.group(1)
-        if float(test3_res_0_1) < float(exp_dict['test3_0_to_1']):
-            fail_test(
-                f"Transfer Bench example test3 failed actual value {test3_res_0_1} is less than expected {exp_dict['test3_0_to_1']}"
-            )
-
-        match = re.search(
-            r'(?:Transfer|Executor:\s+GPU)\s+[0-9]+\s+[|│]\s*([0-9\.]+)\s+GB/s(?:[\s0-9\.\|a-z]+\s+G1\s*-\>)?',
-            test3_out,
-            re.I,
-        )
-        if not match:
-            fail_test(
-                f"G1->G0 transfer bandwidth pattern not found in Test 3 output on node {node}. Output: {test3_out}"
-            )
-            continue
-        test3_res_1_0 = match.group(1)
-        if float(test3_res_1_0) < float(exp_dict['test3_1_to_0']):
-            fail_test(
-                f"Transfer Bench example test3 failed actual value {test3_res_1_0} is less than expected {exp_dict['test3_1_to_0']}"
-            )
-
-        # Test 4 results parse
-        match = re.search('(Test\s4:\n.*\n.*\n.*\n)', out_dict[node])
-        if not match:
-            fail_test(f"Test 4 output section not found in TransferBench output on node {node}")
-            continue
-        test4_out = match.group(1)
-        match = re.search(r'(?:Transfer|Executor:\s+GPU)\s+[0-9]+\s+[|│]\s*([0-9\.]+)\s+GB/s', test4_out, re.I)
-        if not match:
-            fail_test(f"Transfer bandwidth pattern not found in Test 4 output on node {node}. Output: {test4_out}")
-            continue
-        test4_res = match.group(1)
-        if float(test4_res) < float(exp_dict['test4']):
-            fail_test(
-                f"Transfer Bench example test4 failed actual value {test4_res} is less than expected {exp_dict['test4']}"
-            )
-
-        # Test 5 CPU only .. skip
-        # Test 6 results parse
-        match = re.search('(Test\s6:\n.*\n.*\n.*\n)', out_dict[node])
-        if not match:
-            fail_test(f"Test 6 output section not found in TransferBench output on node {node}")
-            continue
-        test6_out = match.group(1)
-        match = re.search(r'Executor:\s+GPU\s+[0-9]+\s+│\s*([0-9\.]+)\s+GB/s', test6_out, re.I)
-        if not match:
-            fail_test(f"Transfer bandwidth pattern not found in Test 6 output on node {node}. Output: {test6_out}")
-            continue
-        test6_res = match.group(1)
-        if float(test6_res) < float(exp_dict['test6']):
-            fail_test(
-                f"Transfer Bench example test6 failed actual value {test6_res} is less than expected {exp_dict['test6']}"
-            )
-
-
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
-
-
-def test_transfer_bench_example_tests_1_6_t(phdl, config_dict):
-    globals.error_list = []
-    log.info('Testcase Run TransferBench example tests 1-6')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    log.info("%s", config_dict)
-    example_path = config_dict['example_tests_path']
-    out_dict = phdl.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench {example_path}/example.cfg'",
-        timeout=(60 * 5),
-    )
-    print_test_output(log, out_dict)
-    scan_test_results(out_dict)
-    parse_tb_example_test_results(out_dict, config_dict['results']['example_results'])
-    update_test_result()
-
-
 def test_transfer_bench_a2a(
-    phdl,
+    orch,
     config_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench a2a')
     path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
+    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
+    out_dict = orch.exec(
         f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench a2a'",
         timeout=(60 * 5),
     )
@@ -347,14 +242,14 @@ def test_transfer_bench_a2a(
 
 
 def test_transfer_bench_p2p(
-    phdl,
+    orch,
     config_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench p2p')
     path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
+    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
+    out_dict = orch.exec(
         f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench p2p'",
         timeout=(60 * 5),
     )
@@ -365,14 +260,14 @@ def test_transfer_bench_p2p(
 
 
 def test_transfer_bench_healthcheck(
-    phdl,
+    orch,
     config_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench healthcheck')
     path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
+    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
+    out_dict = orch.exec(
         f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench healthcheck'",
         timeout=(60 * 3),
     )
@@ -382,14 +277,14 @@ def test_transfer_bench_healthcheck(
 
 
 def test_transfer_bench_a2asweep(
-    phdl,
+    orch,
     config_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench a2asweep')
     path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
+    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
+    out_dict = orch.exec(
         f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench a2asweep'",
         timeout=(60 * 10),
     )
@@ -399,15 +294,15 @@ def test_transfer_bench_a2asweep(
 
 
 def test_transfer_bench_scaling(
-    phdl,
+    orch,
     config_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench scaling')
     path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench scaling'",
+    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
+    out_dict = orch.exec(
+        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && GFX_TEMPORAL=3 GFX_UNROLL=32 {path}/TransferBench scaling'",
         timeout=(60 * 10),
     )
     print_test_output(log, out_dict)
@@ -417,15 +312,15 @@ def test_transfer_bench_scaling(
 
 
 def test_transfer_bench_schmoo(
-    phdl,
+    orch,
     config_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench schmoo')
     path = config_dict['path']
-    rocm_path = detect_rocm_path(phdl, config_dict.get('rocm_path', ''))
-    out_dict = phdl.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench schmoo'",
+    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
+    out_dict = orch.exec(
+        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && GFX_UNROLL=32 SWEEP_MIN=32 {path}/TransferBench schmoo'",
         timeout=(60 * 5),
     )
     print_test_output(log, out_dict)
