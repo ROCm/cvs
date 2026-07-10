@@ -30,6 +30,15 @@ class GeneratorPlugin(ABC):
         """Generate the output based on parsed arguments"""
         pass
 
+    def supports_raw_argv(self):
+        """
+        Return True if this generator does its own argv splitting (e.g. dynamic
+        argument groups like --rack0 / --rack1). When True, _run_generator will
+        use parse_known_args and attach the full raw arg list as args._raw_args
+        so the generate() method can perform its own secondary parsing.
+        """
+        return False
+
 
 def _discover_generators():
     """
@@ -100,7 +109,14 @@ def _run_generator(generator_name, args):
     # Set the program name to include the full command context
     parser.prog = f"cvs generate {generator_name}"
     try:
-        parsed_args = parser.parse_args(args)
+        if plugin.supports_raw_argv():
+            # Plugin does its own secondary parsing (e.g. dynamic --rackN groups).
+            # Use parse_known_args so unrecognised args don't cause an error, and
+            # attach the full raw arg list for the plugin to re-parse as needed.
+            parsed_args, _ = parser.parse_known_args(args)
+            parsed_args._raw_args = list(args)
+        else:
+            parsed_args = parser.parse_args(args)
         # Call the plugin's generate method
         plugin.generate(parsed_args)
     except SystemExit as e:

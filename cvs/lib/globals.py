@@ -10,3 +10,18 @@ import logging
 log = logging.getLogger()
 
 error_list = []
+
+
+def set_log_level(level):
+    """
+    Set the global CVS log level.
+
+    Args:
+        level: A logging level constant (e.g. logging.ERROR, logging.WARNING).
+
+    Example:
+        from cvs.lib.globals import set_log_level
+        set_log_level(logging.ERROR)   # suppress SSH/pssh WARNING noise
+        set_log_level(logging.DEBUG)   # enable full debug output
+    """
+    log.setLevel(level)
