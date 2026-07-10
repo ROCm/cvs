@@ -11,7 +11,7 @@ CVS requires only SSH connectivity to the cluster nodes — no Slurm, no Kuberne
 
 The component public repository is located at `https://github.com/ROCm/cvs <https://github.com/ROCm/cvs>`_.
 
-.. grid:: 3
+.. grid:: 2
   :gutter: 3
 
   .. grid-item-card:: Overview
@@ -25,12 +25,9 @@ The component public repository is located at `https://github.com/ROCm/cvs <http
   .. grid-item-card:: How to
 
     * :doc:`Run tests <how-to/run-cvs-tests>`
-    * :doc:`Execute arbitrary commands on cluster nodes <how-to/execute-cluster-commands>`
+    * :doc:`Run ad-hoc cluster-wide commands <how-to/execute-cluster-commands>`
     * :doc:`Copy files and directories to cluster nodes <how-to/copy-to-cluster>`
     * :doc:`Monitor the health of GPU clusters <how-to/run-cluster>`
-
-.. grid:: 1
-  :gutter: 3
 
   .. grid-item-card:: Reference
 
