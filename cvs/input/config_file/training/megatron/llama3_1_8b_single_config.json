@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "framework": "megatron_single",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "config": {
+    "hf_token_file": "/home/{user-id}/.hf_token",
+    "log_dir": "/home/{user-id}/LOGS/megatron",
+    "scripts_dir": "/home/{user-id}/SCRIPTS/megatron",
+    "data_cache_dir": "/home/{user-id}/cache",
+    "rocm_dir": "",
+    "megatron_root": "/workspace/Megatron-LM",
+    "training_iterations": "10",
+    "nnodes": "1",
+    "nic_type": "thor2",
+    "nccl_socket_ifname": "ensf1np1",
+    "gloo_socket_ifname": "ensf1np1",
+    "nccl_ib_gid_index": "3",
+    "nccl_debug": "ERROR",
+    "master_address": "127.0.0.1",
+    "verify_network_errors": "False"
+  },
+  "model_params": {
+    "model_name": "llama3_1_8b",
+    "tokenizer_model": "meta-llama/Llama-3.1-8B",
+    "model_size": "8",
+    "sequence_length": "8192",
+    "recompute": "0",
+    "fsdp": "0",
+    "tensor_parallelism": "1",
+    "pipeline_parallelism": "1",
+    "precision": "TE_FP8"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "megatron_llama3_1_8b_single",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/dev/infiniband:/dev/infiniband"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    }
+  },
+  "sweep": {
+    "combinations": {
+      "llama3_1_8b-mi300x-bs128-mbs2": {
+        "name": "mbs2_gbs128_TE_FP8",
+        "global_batch_size": "128",
+        "micro_batch_size": "2",
+        "precision": "TE_FP8",
+        "result_dict": {
+          "throughput_per_gpu": "100",
+          "elapsed_time_per_iteration": "500",
+          "tokens_per_gpu": "1000",
+          "mem_usage": "0"
+        }
+      }
+    },
+    "runs": [
+      "llama3_1_8b-mi300x-bs128-mbs2"
+    ]
+  }
+}
