@@ -199,9 +199,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertIn('--traffic-type request,non-ifoe', cmd)
 
     def test_traffic_type_aliases_normalized(self):
-        check = IfoeL2ConnectivityCheck(
-            MagicMock(), traffic_types=['REQUEST', 'response', 'non-ifoe']
-        )
+        check = IfoeL2ConnectivityCheck(MagicMock(), traffic_types=['REQUEST', 'response', 'non-ifoe'])
         self.assertEqual(set(check.traffic_types), {'ifoe_req', 'ifoe_resp', 'non_ifoe'})
 
     def test_run_passes_with_explicit_bdfs(self):

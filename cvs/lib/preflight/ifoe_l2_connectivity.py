@@ -186,9 +186,7 @@ class AfmctlPingParser:
                     }
 
         if not result["ports"] and not result["summary"]:
-            result["parse_errors"].append(
-                "Could not locate afmctl ping result table or Summary section in output"
-            )
+            result["parse_errors"].append("Could not locate afmctl ping result table or Summary section in output")
 
         return result
 
@@ -237,9 +235,7 @@ def parse_afmctl_show_device(output: str) -> List[Dict]:
         if lm:
             raw_list = lm.group(1).strip()
             if raw_list and raw_list != "-":
-                cur["local_accelerators"] = [
-                    int(tok) for tok in re.split(r"[,\s]+", raw_list) if tok.isdigit()
-                ]
+                cur["local_accelerators"] = [int(tok) for tok in re.split(r"[,\s]+", raw_list) if tok.isdigit()]
             continue
         nm = re.match(r"^No\.\s*of\s*network\s*ports\s*:\s*(\d+)\s*$", line, re.IGNORECASE)
         if nm:
@@ -368,9 +364,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         self.dst_accelerators: List[int] = _coerce_int_list(dst_accelerators) or [0]
         self.ports = ports if ports not in ("", None) else "all"
         self.pings_per_port: int = int(pings_per_port) if pings_per_port else self.DEFAULT_PINGS_PER_PORT
-        self.per_ping_timeout: Optional[int] = (
-            int(per_ping_timeout) if per_ping_timeout not in (None, "", 0) else None
-        )
+        self.per_ping_timeout: Optional[int] = int(per_ping_timeout) if per_ping_timeout not in (None, "", 0) else None
 
         tt = _coerce_str_list(traffic_types) or list(self.DEFAULT_TRAFFIC_TYPES)
         canonical: List[str] = []
@@ -466,10 +460,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             for port, port_result in (parsed.get("ports") or {}).items():
                 rr = port_result.get(ttype)
                 if rr and rr.get("status") == "FAIL":
-                    errors.append(
-                        f"Port {port} {TRAFFIC_LABELS[ttype]}: "
-                        f"{rr['pass']}/{rr['total']} (FAIL)"
-                    )
+                    errors.append(f"Port {port} {TRAFFIC_LABELS[ttype]}: {rr['pass']}/{rr['total']} (FAIL)")
                     status = "FAIL"
         return status, errors
 
