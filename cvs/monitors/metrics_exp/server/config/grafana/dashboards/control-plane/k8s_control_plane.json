@@ -1,0 +1,349 @@
+{
+  "uid": "k8s-control-plane",
+  "title": "Kubernetes Control Plane",
+  "tags": ["control-plane", "kubernetes", "k8s"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "control_node_group",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(k8s_apiserver_up, control_node_group)",
+        "refresh": 2,
+        "multi": false,
+        "includeAll": false,
+        "label": "Control Node Group"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Control Plane Health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "API Server",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "targets": [{ "expr": "k8s_apiserver_up{control_node_group=\"$control_node_group\"}", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "etcd",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "targets": [{ "expr": "k8s_etcd_has_leader{control_node_group=\"$control_node_group\"}", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "NO LEADER", "color": "red" }, "1": { "text": "HAS LEADER", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Scheduler",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "targets": [{ "expr": "k8s_scheduler_up{control_node_group=\"$control_node_group\"}", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Controller Manager",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "targets": [{ "expr": "k8s_controller_manager_up{control_node_group=\"$control_node_group\"}", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "API Server",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "API Request Rate (by verb)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        { "expr": "sum by (verb) (k8s_apiserver_request_rate{control_node_group=\"$control_node_group\"})", "legendFormat": "{{verb}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "API P99 Latency (s)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        { "expr": "k8s_apiserver_request_duration_p99_seconds{control_node_group=\"$control_node_group\"}", "legendFormat": "{{verb}}" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.1 }, { "color": "red", "value": 0.3 }]
+          }
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "API Error Rate (5xx codes)",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "targets": [
+        { "expr": "sum by (verb) (k8s_apiserver_request_rate{control_node_group=\"$control_node_group\",code=~\"5..\"})", "legendFormat": "{{verb}} 5xx" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "color": { "mode": "fixed", "fixedColor": "red" } } }
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "etcd",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "etcd Leader Changes",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 23 },
+      "targets": [
+        { "expr": "k8s_etcd_leader_changes_total{control_node_group=\"$control_node_group\"}", "legendFormat": "Leader Changes" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "etcd WAL Fsync P99 (s)",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 23 },
+      "targets": [
+        { "expr": "k8s_etcd_wal_fsync_duration_p99_seconds{control_node_group=\"$control_node_group\"}", "legendFormat": "P99 Fsync" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.005 }, { "color": "red", "value": 0.01 }]
+          }
+        }
+      }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "etcd Proposals Failed",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 23 },
+      "targets": [
+        { "expr": "k8s_etcd_proposals_failed_total{control_node_group=\"$control_node_group\"}", "legendFormat": "Proposals Failed" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "red" } } }
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Scheduler",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 }
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Pending Pods by Queue",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        { "expr": "k8s_scheduler_pending_pods{control_node_group=\"$control_node_group\",queue=\"active\"}", "legendFormat": "Active" },
+        { "expr": "k8s_scheduler_pending_pods{control_node_group=\"$control_node_group\",queue=\"backoff\"}", "legendFormat": "Backoff" },
+        { "expr": "k8s_scheduler_pending_pods{control_node_group=\"$control_node_group\",queue=\"unschedulable\"}", "legendFormat": "Unschedulable" },
+        { "expr": "k8s_scheduler_pending_pods{control_node_group=\"$control_node_group\",queue=\"gated\"}", "legendFormat": "Gated" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Scheduling Attempt Failures",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "targets": [
+        { "expr": "k8s_scheduler_schedule_attempts_total{control_node_group=\"$control_node_group\",result=\"error\"}", "legendFormat": "Error" },
+        { "expr": "k8s_scheduler_schedule_attempts_total{control_node_group=\"$control_node_group\",result=\"unschedulable\"}", "legendFormat": "Unschedulable" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 40,
+      "type": "row",
+      "title": "Controller Manager",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 }
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Work Queue Depth",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 41 },
+      "targets": [
+        { "expr": "k8s_controller_manager_workqueue_depth{control_node_group=\"$control_node_group\"}", "legendFormat": "{{queue_name}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 50,
+      "type": "row",
+      "title": "Control Plane Node System",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 }
+    },
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "CPU Usage %",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
+      "targets": [
+        { "expr": "100 - (avg by (hostname) (irate(node_cpu_seconds_total{control_node_group=\"$control_node_group\",mode=\"idle\"}[5m])) * 100)", "legendFormat": "{{hostname}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    },
+    {
+      "id": 52,
+      "type": "timeseries",
+      "title": "Memory Usage %",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
+      "targets": [
+        { "expr": "100 * (1 - node_memory_MemAvailable_bytes{control_node_group=\"$control_node_group\"} / node_memory_MemTotal_bytes{control_node_group=\"$control_node_group\"})", "legendFormat": "{{hostname}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    },
+    {
+      "id": 60,
+      "type": "row",
+      "title": "Cluster Nodes",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 58 }
+    },
+    {
+      "id": 61,
+      "type": "table",
+      "title": "Node Status Table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 59 },
+      "targets": [{ "expr": "k8s_node_info{control_node_group=\"$control_node_group\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "control_node_group": true },
+          "renameByName": { "node": "Node", "role": "Role", "status": "Status", "version": "K8s Version" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "Role" }] },
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto", "filterable": true } } }
+    },
+    {
+      "id": 70,
+      "type": "row",
+      "title": "Pending & Failed Pods",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 69 }
+    },
+    {
+      "id": 71,
+      "type": "table",
+      "title": "Pending / Failed Pods",
+      "description": "Shows pods not in Running or Succeeded phase. Empty when all pods are healthy.",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 70 },
+      "targets": [{ "expr": "k8s_pod_info{control_node_group=\"$control_node_group\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "control_node_group": true },
+          "renameByName": { "pod": "Pod", "namespace": "Namespace", "phase": "Phase", "reason": "Reason", "node": "Node" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "Namespace" }] },
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto", "filterable": true } } }
+    },
+    {
+      "id": 80,
+      "type": "row",
+      "title": "Component Health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 82 }
+    },
+    {
+      "id": 81,
+      "type": "table",
+      "title": "Component Health Check",
+      "description": "1 = healthy, 0 = unhealthy/unreachable",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 83 },
+      "targets": [{ "expr": "k8s_component_health{control_node_group=\"$control_node_group\"}", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "control_node_group": true },
+          "renameByName": { "component": "Component", "endpoint": "Endpoint", "Value": "Healthy (1=yes)" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "Component" }] },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "displayMode": "color-background", "filterable": true },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }]
+          }
+        }
+      }
+    },
+    {
+      "id": 90,
+      "type": "row",
+      "title": "Logs",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 81 }
+    },
+    {
+      "id": 91,
+      "type": "logs",
+      "title": "Control Plane Logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 82 },
+      "targets": [{
+        "datasource": { "type": "loki", "uid": "loki" },
+        "expr": "{control_node_group=\"$control_node_group\"}"
+      }],
+      "options": { "showTime": true, "showLabels": true, "wrapLogMessage": true }
+    }
+  ]
+}

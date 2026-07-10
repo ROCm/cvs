@@ -17,17 +17,6 @@ from cvs.lib import globals
 global_log = globals.log
 
 
-class SimpleHostOutput:
-    """Simple HostOutput-compatible object for consistent processing across process boundaries."""
-
-    def __init__(self, host, stdout_lines, stderr_lines, exception, exit_code=0):
-        self.host = host
-        self.stdout = iter(stdout_lines)  # Convert list to iterator for _process_output compatibility
-        self.stderr = iter(stderr_lines)  # Convert list to iterator for _process_output compatibility
-        self.exception = exception
-        self.exit_code = exit_code
-
-
 class Pssh:
     """
     Single-process parallel SSH: one ParallelSSHClient (one gevent hub) over a host list.
@@ -46,6 +35,7 @@ class Pssh:
         stop_on_errors=True,
         env_vars=None,
         process_output=True,
+        **ssh_client_kwargs,
     ):
         # Backward compatibility warning for log parameter
         if log is not None:
@@ -68,6 +58,7 @@ class Pssh:
         self.stop_on_errors = stop_on_errors
         self.process_output = process_output
         self.unreachable_hosts = []
+        self.ssh_client_kwargs = ssh_client_kwargs
         self.env_prefix = build_env_prefix(env_vars)
         self.log.debug(f"Environ vars: {self.env_prefix}")
 
@@ -75,10 +66,16 @@ class Pssh:
             self.log.info("%s", self.reachable_hosts)
             self.log.info("%s", self.user)
             self.log.info("%s", self.pkey)
-            self.client = ParallelSSHClient(self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30)
+            self.client = ParallelSSHClient(
+                self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, **self.ssh_client_kwargs
+            )
         else:
             self.client = ParallelSSHClient(
-                self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
+                self.reachable_hosts,
+                user=self.user,
+                password=self.password,
+                keepalive_seconds=30,
+                **self.ssh_client_kwargs,
             )
 
     def check_connectivity(self, hosts):
@@ -88,17 +85,59 @@ class Pssh:
         """
         if not hosts:
             return []
+        temp_ssh_client_kwargs = self.ssh_client_kwargs.copy()
+        temp_ssh_client_kwargs['timeout'] = 2
+        temp_ssh_client_kwargs['num_retries'] = 0
         temp_client = ParallelSSHClient(
             hosts,
             user=self.user,
             pkey=self.pkey if self.password is None else None,
             password=self.password,
-            num_retries=0,
-            timeout=2,
+            **temp_ssh_client_kwargs,
         )
         output = temp_client.run_command('echo 1', stop_on_errors=False, read_timeout=2)
         unreachable = [item.host for item in output if item.exception]
         return unreachable
+
+    def prune_nodes(self, nodes_to_remove):
+        """
+        Explicitly prune hosts from this Pssh instance and rebuild client.
+
+        Args:
+            nodes_to_remove: Iterable of hostnames/IPs to remove.
+
+        Returns:
+            list: Hosts actually removed from reachable_hosts.
+        """
+        if not nodes_to_remove:
+            return []
+
+        remove_set = {h for h in nodes_to_remove if h}
+        removed = [h for h in self.reachable_hosts if h in remove_set]
+        if not removed:
+            return []
+
+        for host in removed:
+            self.log.warning(f"Host {host} is unreachable, pruning from reachable hosts list.")
+
+        self.reachable_hosts = [h for h in self.reachable_hosts if h not in remove_set]
+        for host in removed:
+            if host not in self.unreachable_hosts:
+                self.unreachable_hosts.append(host)
+
+        if self.password is None:
+            self.client = ParallelSSHClient(
+                self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, **self.ssh_client_kwargs
+            )
+        else:
+            self.client = ParallelSSHClient(
+                self.reachable_hosts,
+                user=self.user,
+                password=self.password,
+                keepalive_seconds=30,
+                **self.ssh_client_kwargs,
+            )
+        return removed
 
     def prune_unreachable_hosts(self, output):
         """
@@ -109,27 +148,13 @@ class Pssh:
         of potential unreachability, so we perform an additional connectivity check before pruning. This ensures
         that hosts are not permanently removed from the list for recoverable errors.
         """
-        initial_unreachable_len = len(self.unreachable_hosts)
         failed_hosts = [
             item.host
             for item in output
             if item.exception and isinstance(item.exception, (ConnectionError, Timeout, SessionError))
         ]
         unreachable = self.check_connectivity(failed_hosts)
-        for host in unreachable:
-            self.log.warning(f"Host {host} is unreachable, pruning from reachable hosts list.")
-            self.unreachable_hosts.append(host)
-            self.reachable_hosts.remove(host)
-        if len(self.unreachable_hosts) > initial_unreachable_len:
-            # Recreate client with filtered reachable_hosts, only if hosts were actually pruned
-            if self.password is None:
-                self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30
-                )
-            else:
-                self.client = ParallelSSHClient(
-                    self.reachable_hosts, user=self.user, password=self.password, keepalive_seconds=30
-                )
+        self.prune_nodes(unreachable)
 
     def inform_unreachability(self, cmd_output, include_exit_codes=False):
         """
@@ -381,35 +406,54 @@ class Pssh:
             ) from errors[0][1]
         return result
 
+    def upload_file_list(self, node_path_map):
+        """
+        Upload different files to different hosts using SFTP.
+
+        Args:
+            node_path_map: dict mapping {host: (local_path, remote_path)}
+
+        Returns:
+            dict: {host: "host: SUCCESS" | "host: FAILED - ..."}
+        """
+        if not node_path_map:
+            return {}
+
+        # Build copy_args for each host
+        copy_args = []
+        valid_hosts = []
+
+        for host in self.reachable_hosts:
+            if host in node_path_map:
+                local_path, remote_path = node_path_map[host]
+                copy_args.append({'local_file': local_path, 'remote_file': remote_path})
+                valid_hosts.append(host)
+
+        if not copy_args:
+            return {}
+
+        self.log.info(f"Uploading {len(copy_args)} different files to {len(valid_hosts)} hosts")
+
+        # Use copy_file with copy_args - returns greenlets
+        cmds = self.client.copy_file("%(local_file)s", "%(remote_file)s", copy_args=copy_args)
+
+        # Wait for greenlets to complete (like upload_file does)
+        self.client.pool.join()
+
+        # Process greenlet results
+        results = {}
+        for cmd, host in zip(cmds, valid_hosts):
+            try:
+                cmd.get()  # This will raise if the greenlet failed
+                results[host] = f"{host}: SUCCESS"
+            except Exception as e:
+                results[host] = f"{host}: FAILED - {e}"
+
+        return results
+
     def reboot_connections(self):
         self.log.info('Rebooting Connections')
         self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
-
-    def _extract_simple_data(self, output):
-        """
-        Extract essential data from pssh.output.HostOutput objects for safe IPC transfer.
-
-        Converts non-picklable HostOutput objects (containing active SSH channels,
-        generators, and C extension objects) into picklable SimpleHostOutput objects
-        by consuming stdout/stderr generators into lists and extracting core attributes.
-        """
-
-        simple_outputs = []
-        for item in output:
-            # Consume generators to lists for pickling
-            stdout_lines = list(item.stdout or [])
-            stderr_lines = list(item.stderr or [])
-
-            simple_output = SimpleHostOutput(
-                host=item.host,
-                stdout_lines=stdout_lines,
-                stderr_lines=stderr_lines,
-                exception=item.exception,
-                exit_code=getattr(item, 'exit_code', 0),
-            )
-            simple_outputs.append(simple_output)
-
-        return simple_outputs
 
     def destroy_clients(self):
         self.log.info('Destroying Current phdl connections ..')

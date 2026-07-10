@@ -5,7 +5,9 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import os
 import sys
+import json
 import logging
 import argparse
 import time
@@ -16,8 +18,52 @@ from cvs.lib import verify_lib
 from cvs.lib import linux_utils
 from cvs.lib import rocm_plib
 from cvs.lib import html_lib
+from cvs.lib import utils_lib
 
 log = logging.getLogger()
+
+
+def load_cluster_file(cluster_file_path):
+    """
+    Load and validate a CVS cluster file for the cluster health monitor.
+
+    Parses the JSON cluster file used by ``cvs run`` / ``cvs exec`` and
+    extracts the SSH credentials and node list. Path placeholders such as
+    ``{user-id}`` are resolved via :func:`utils_lib.resolve_cluster_config_placeholders`.
+
+    Args:
+        cluster_file_path (str): Path to the cluster JSON file.
+
+    Returns:
+        tuple: ``(node_list, username, priv_key_file)`` where ``node_list``
+        is the list of host IPs / hostnames (the keys of ``node_dict``).
+
+    Raises:
+        FileNotFoundError: If the cluster file does not exist.
+        ValueError: If the cluster file is missing required keys, has no
+            nodes, or contains invalid JSON.
+    """
+    try:
+        with open(cluster_file_path, 'r') as f:
+            cluster = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in cluster file '{cluster_file_path}': {e}") from e
+
+    cluster = utils_lib.resolve_cluster_config_placeholders(cluster)
+
+    username = cluster.get('username')
+    if not username:
+        raise ValueError(f"'username' missing from cluster file '{cluster_file_path}'")
+
+    priv_key_file = cluster.get('priv_key_file')
+    if not priv_key_file:
+        raise ValueError(f"'priv_key_file' missing from cluster file '{cluster_file_path}'")
+
+    node_list = list((cluster.get('node_dict') or {}).keys())
+    if not node_list:
+        raise ValueError(f"'node_dict' is empty or missing in cluster file '{cluster_file_path}'")
+
+    return node_list, username, priv_key_file
 
 
 def general_health_checks(
@@ -331,12 +377,37 @@ class CheckClusterHealthMonitor(MonitorPlugin):
         return "Generate a health report of your cluster by collecting various logs and metrics"
 
     def get_parser(self):
-        parser = argparse.ArgumentParser(description="Check Cluster Health")
-        parser.add_argument("--hosts_file", required=True, help="File name with list of IP address one per line")
-        parser.add_argument("--username", required=True, help="Username to ssh to the hosts")
-        group = parser.add_mutually_exclusive_group(required=True)
-        group.add_argument("--password", help="Password for username")
-        group.add_argument("--key_file", help="Private Keyfile for username")
+        parser = argparse.ArgumentParser(
+            description="Check Cluster Health",
+            epilog=(
+                "Examples:\n"
+                "  cvs monitor check_cluster_health --cluster_file cluster.json --iterations 2\n"
+                "  CLUSTER_FILE=cluster.json cvs monitor check_cluster_health --iterations 2"
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        # Source of hosts: either a CVS cluster file (preferred, can also be
+        # supplied via the CLUSTER_FILE env var) or a legacy one-IP-per-line
+        # hosts file. The "exactly one source" rule is enforced at runtime
+        # in _resolve_connection so the env var can satisfy --cluster_file.
+        source = parser.add_mutually_exclusive_group(required=False)
+        source.add_argument(
+            "--cluster_file",
+            help=(
+                "Path to a CVS cluster JSON file "
+                "(see cvs/input/cluster_file/cluster.json). "
+                "Provides node list, username, and SSH key. Recommended. "
+                "Takes precedence over the CLUSTER_FILE environment variable."
+            ),
+        )
+        source.add_argument(
+            "--hosts_file",
+            help="[DEPRECATED] File with one host IP/hostname per line. Use --cluster_file instead.",
+        )
+        # Credentials - only required when --hosts_file is used.
+        parser.add_argument("--username", help="SSH username (required with --hosts_file)")
+        parser.add_argument("--password", help="SSH password (only valid with --hosts_file)")
+        parser.add_argument("--key_file", help="SSH private key file (only valid with --hosts_file)")
         parser.add_argument("--iterations", type=int, default=2, help="Number of iterations to run the checks")
         parser.add_argument(
             "--time_between_iters", type=int, default=60, help="Time duration to sleep between iterations"
@@ -344,22 +415,67 @@ class CheckClusterHealthMonitor(MonitorPlugin):
         parser.add_argument("--report_file", default="./cluster_report.html", help="Output HTML report file path")
         return parser
 
+    def _resolve_connection(self, args):
+        """Return ``(node_list, username, pkey, password)`` based on parsed args.
+
+        Resolution order for the cluster file matches ``cvs exec`` / ``cvs scp``:
+        an explicit ``--cluster_file`` flag takes precedence, then the
+        ``CLUSTER_FILE`` environment variable is used as a fallback.
+        ``--hosts_file`` remains as a deprecated last-resort path.
+        """
+        # CLI flag wins; env var is the fallback. This matches standard Unix
+        # tooling and keeps cvs exec / cvs scp / cvs monitor consistent.
+        cluster_file = args.cluster_file or os.environ.get('CLUSTER_FILE')
+
+        if cluster_file and args.hosts_file:
+            print("ERROR: --hosts_file cannot be combined with --cluster_file or CLUSTER_FILE. Aborting.")
+            sys.exit(1)
+
+        if cluster_file:
+            if args.username or args.password or args.key_file:
+                print(
+                    "ERROR: --username/--password/--key_file are not allowed with --cluster_file; "
+                    "credentials come from the cluster file. Aborting."
+                )
+                sys.exit(1)
+            node_list, username, pkey = load_cluster_file(cluster_file)
+            return node_list, username, pkey, None
+
+        if not args.hosts_file:
+            print(
+                "ERROR: no cluster file specified. Set the CLUSTER_FILE environment variable, "
+                "pass --cluster_file, or (deprecated) pass --hosts_file. Aborting."
+            )
+            sys.exit(1)
+
+        # Legacy --hosts_file path.
+        print(
+            "WARNING: --hosts_file is deprecated. Switch to --cluster_file (see cvs/input/cluster_file/cluster.json)."
+        )
+        if not args.username:
+            print("ERROR: --username is required when using --hosts_file. Aborting.")
+            sys.exit(1)
+        if bool(args.password) == bool(args.key_file):
+            print("ERROR: exactly one of --password or --key_file is required with --hosts_file. Aborting.")
+            sys.exit(1)
+        with open(args.hosts_file, "r") as f:
+            node_list = [line.strip() for line in f if line.strip() and not line.lstrip().startswith("#")]
+        if not node_list:
+            print(f"ERROR: no hosts found in '{args.hosts_file}'. Aborting.")
+            sys.exit(1)
+        return node_list, args.username, args.key_file, args.password
+
     def monitor(self, args):
         """Execute the cluster health check monitoring."""
-        # Read host IP addresses from input file.
-        with open(args.hosts_file, "r") as f:
-            node_list = [line.strip() for line in f if line.strip()]
-        if not node_list:
-            print("ERROR !! No hosts in the file, this is mandatory, aborting !!")
-            sys.exit(1)
+        node_list, username, pkey, password = self._resolve_connection(args)
 
         html_report_file = args.report_file
 
-        # Connect to all hosts in the cluster ..
-        if args.key_file:
-            phdl = parallel_ssh_lib.Pssh(log, node_list, user=args.username, pkey=args.key_file)
-        elif args.password:
-            phdl = parallel_ssh_lib.Pssh(log, node_list, user=args.username, password=args.password)
+        # Connect to all hosts in the cluster.
+        if pkey:
+            phdl = parallel_ssh_lib.Pssh(log, node_list, user=username, pkey=pkey)
+        else:
+            phdl = parallel_ssh_lib.Pssh(log, node_list, user=username, password=password)
 
         start_time = phdl.exec('date')
 

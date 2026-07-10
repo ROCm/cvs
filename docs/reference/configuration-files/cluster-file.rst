@@ -27,9 +27,7 @@ Copy the template that matches your cluster shape, edit the placeholders, and pa
 Backends
 ========
 
-.. note::
-
-  **Scope today.** Of the test suites shipped with CVS, only ``rvs_cvs`` consumes the orchestrator and honors the ``orchestrator`` key in the cluster file. All other ``cvs run`` test suites and the ``cvs exec`` CLI run on the host regardless of the ``orchestrator`` value. Migrating additional suites to the orchestrator is tracked separately. Custom Python scripts can use the ``OrchestratorFactory`` API directly as an escape hatch.
+.. include:: /_includes/orchestrator-scope.rst
 
 Baremetal
 ---------
@@ -41,7 +39,7 @@ Container
 
 Container mode routes workload commands through a container runtime on each node. CVS uses host SSH to the node, then ``docker exec`` into a long-lived per-host container. Inside the container, an SSH daemon listens on port ``2224`` so that MPI-style workloads can fan out using the in-container SSH transport.
 
-The container backend is currently consumed by ``rvs_cvs`` only. The container lifecycle (start, verify, sshd setup, teardown) runs from the test fixture in `cvs/tests/health/rvs_cvs.py <https://github.com/ROCm/cvs/blob/main/cvs/tests/health/rvs_cvs.py>`_.
+The container backend is currently consumed by ``rvs_cvs`` and ``install_rvs``. The container lifecycle (start, verify, sshd setup, teardown) runs from the test fixture in `cvs/tests/health/rvs_cvs.py <https://github.com/ROCm/cvs/blob/main/cvs/tests/health/rvs_cvs.py>`_.
 
 Cluster file shape
 ==================
@@ -79,8 +77,7 @@ Both templates share the same top-level shape. The ``container`` block and the `
         },
 
         "container": {
-            "enabled": true,
-            "launch": true,
+            "lifetime": "per_run",
             "image": "rocm/cvs:latest",
             "name": "cvs_container",
             "runtime": {
@@ -106,7 +103,7 @@ Top-level parameters
      - Description
    * - ``orchestrator``
      - ``baremetal``
-     - Execution backend. Set to ``container`` to route workload commands through the container runtime. Honored today only by ``rvs_cvs``; see the Backends section above.
+     - Execution backend. Set to ``container`` to route workload commands through the container runtime. Honored today only by ``rvs_cvs`` and ``install_rvs``; see the Backends section above.
    * - ``username``
      - ``{user-id}``
      - SSH username for all hosts. ``{user-id}`` resolves to the current login user at runtime.
@@ -138,12 +135,9 @@ The ``container`` block configures the container backend. It is consumed by the 
    * - Configuration parameter
      - Default value
      - Description
-   * - ``enabled``
-     - ``false``
-     - Master switch. Must be ``true`` for the container backend to do anything. When ``false``, ``setup_containers`` and ``teardown_containers`` short-circuit to no-ops.
-   * - ``launch``
-     - ``false``
-     - When ``true``, CVS starts the long-running containers on every host as part of test setup. When ``false``, CVS only verifies that containers with the configured name are already running on every host and never stops them.
+   * - ``lifetime``
+     - ``per_run``
+     - Container lifecycle policy: ``no_launch``, ``per_run``, or ``persistent``. See the truth table below.
    * - ``image``
      - (required)
      - Image with the test dependencies (for example ``rvs``) pre-installed and an ``sshd`` you can start on port ``2224``. Must be present locally on each node or pullable from a reachable registry.
@@ -201,35 +195,31 @@ When ``runtime.name`` is ``docker``, the keys below configure the underlying ``d
      - ``["memlock=-1"]`` (appended)
      - Per-process resource limits. ``memlock=-1`` is required for RDMA.
 
-``launch`` truth table
-======================
+``lifetime`` truth table
+========================
 
-The ``launch`` flag interacts with ``enabled`` and the runtime-tracked ``container_id`` to decide whether ``teardown_containers`` actually stops anything. The behavior below is pinned by the unit test ``test_teardown_containers_short_circuits_when_launch_true`` in `cvs/core/orchestrators/unittests/test_container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/unittests/test_container.py>`_.
+``setup_containers`` and ``teardown_containers`` branch on ``container.lifetime``. The behavior below is pinned by the per-lifetime unit tests in `cvs/core/orchestrators/unittests/test_container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/unittests/test_container.py>`_.
 
 .. list-table::
-   :widths: 2 2 2 5
+   :widths: 2 4 4
    :header-rows: 1
 
-   * - ``enabled``
-     - ``launch``
-     - ``container_id``
-     - Behavior of ``teardown_containers``
-   * - ``false``
-     - any
-     - any
-     - Short-circuit (no-op, returns ``True``).
-   * - ``true``
-     - ``true``
-     - any
-     - Short-circuit. Containers are treated as externally managed; CVS does not stop them.
-   * - ``true``
-     - ``false``
-     - unset
-     - Short-circuit. Nothing was started.
-   * - ``true``
-     - ``false``
-     - set
-     - Calls the runtime's ``teardown_containers`` to stop and remove the container.
+   * - ``lifetime``
+     - ``setup_containers``
+     - ``teardown_containers``
+   * - ``no_launch``
+     - Verify a container with the configured name is already running on every host; set ``container_id``. Never starts anything.
+     - No-op. CVS does not own a container it did not launch.
+   * - ``per_run`` (default)
+     - Start a fresh container on every host (force-removing any stale same-named container first).
+     - Force-remove the container CVS started.
+   * - ``persistent``
+     - Attach if the container is already running on every host. Start fresh only if it is running on no host. Running on some hosts but not all is a hard error (CVS will not force-remove the still-running hosts and destroy their overlay). Idempotent across runs.
+     - No-op. The container is left running for the next run; remove it yourself when done.
+
+.. note::
+
+  With ``lifetime: persistent``, pin ``container.name`` explicitly. The default ``<user>_<sanitized_image>`` name shifts when you bump the image tag, silently abandoning the previous container's overlay.
 
 Prerequisites on each cluster node
 ==================================

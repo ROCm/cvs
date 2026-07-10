@@ -267,7 +267,6 @@ You can list all available TransferBench test cases using the CLI:
 .. code:: text
 
   Available tests in transferbench_cvs:
-    - test_transfer_bench_example_tests_1_6_t
     - test_transfer_bench_a2a
     - test_transfer_bench_p2p
     - test_transfer_bench_healthcheck
@@ -332,7 +331,7 @@ Use these scripts to start the test:
 
 .. note::
 
-  RVS additionally supports running inside a per-host container instead of on the host filesystem. Pass a ``cluster_container.json`` cluster file with ``orchestrator: container`` to route ``rvs`` invocations through the container backend. See :doc:`/how-to/run-with-containers`.
+  Both ``cvs run install_rvs`` and ``cvs run rvs_cvs`` support running inside a per-host container instead of on the host filesystem. Pass a ``cluster_container.json`` cluster file with ``orchestrator: container`` to route invocations through the container backend. See :doc:`/how-to/run-with-containers`.
 
 InfiniBand (IB Perf) test script
 --------------------------------

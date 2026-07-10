@@ -27,16 +27,14 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
             "install_dir": "/home/{user-id}/INSTALL/agfhc/",
             "_comments_log_dir": "log_dir has to be a NON NFS local file system",
             "log_dir": "/root/agfhc_logs",
-            "nfs_install": "True",
             "hbm_test_duration": "00:01:30"
         },
         "transferbench":
         {
           "path": "/home/{user-id}/INSTALL/TransferBench",
-          "example_tests_path": "/home/{user-id}/INSTALL/TransferBench/examples",
           "git_install_path": "/home/{user-id}/INSTALL/",
           "git_url": "https://github.com/ROCm/TransferBench.git",
-          "nfs_install": "True",
+          "git_tag": "v1.67.00",
           "_comment_rocm_path": "ROCm installation path. Set the placeholder changeme to auto-detect from /opt/rocm or /opt/rocm/core-*",
           "rocm_path": "<changeme>",
           "results":
@@ -52,16 +50,7 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
               "32_cu_local_copy": "1250.0",
               "32_cu_rem_read": "48.0",
               "32_cu_rem_write": "48.0",
-              "32_cu_rem_copy": "48.0",
-              "example_results":
-              {
-                  "test1": "47.1",
-                  "test2": "48.4",
-                  "test3_0_to_1": "31.9",
-                  "test3_1_to_0": "38.9",
-                  "test4": "1264",
-                  "test6": "48.6"
-              }
+              "32_cu_rem_copy": "48.0"
     
           }
         },
@@ -183,9 +172,6 @@ AGFHC
    * - ``log_dir``
      - ``/root/agfhc_logs``
      - Log directory
-   * - ``nfs_install``
-     - True
-     - Set the flag to install nfs
    * - ``hbm_test_duration``
      - 00:01:30
      - HBM test duration
@@ -203,18 +189,15 @@ TransferBench
    * - ``path``
      - ``/opt/amd/transferbench``
      - Path where TransferBench is installed
-   * - ``example_tests_path``
-     - ``/home/{user-id}/INSTALL`` |br| ``/TransferBench/examples``
-     - Path where TransferBench examples are installed
    * - ``git_install_path``
      - ``/home/{user-id}/INSTALL/``
      - Path where the Git repo is installed
    * - ``git_url``
      - `https://github.com/ROCm/TransferBench.git <https://github.com/ROCm/TransferBench.git>`_
      - URL for Git repo
-   * - ``nfs_install``
-     - True
-     - Set the flag to install nfs
+   * - ``git_tag``
+     - ``v1.67.00``
+     - Git tag to checkout after cloning TransferBench
    * - ``rocm_path``
      - ``<changeme>``
      - Set the path of rocm       
@@ -251,24 +234,6 @@ TransferBench
    * - ``32_cu_rem_copy``
      - 48.0
      - Remote memory copy bandwidth (GB/s) using 32 CUs
-   * - ``test1``
-     - 47.1
-     - Specific benchmark result (likely bandwidth in GB/s)
-   * - ``test2``
-     - 48.4
-     - Another benchmark result
-   * - ``test3_0_to_1``
-     - 31.9
-     - Directional test from GPU 0 to GPU 1
-   * - ``test3_1_to_0``
-     - 38.9
-     - Directional test from GPU 1 to GPU 0
-   * - ``test4``
-     - 1264
-     - High-performance test result (possibly local memory)
-   * - ``test6``
-     - 48.6
-     - Additional benchmark result
 
 ROCm Validation Suite (RVS)
 ---------------------------

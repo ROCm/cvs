@@ -2,25 +2,82 @@
 
     "config":
     {
-        "container_image": "rocm/jax-training:maxtext-v25.9",
+        "__container_image": "rocm/jax-training:maxtext-v25.9",
+        "_container_image": "rocm/jax-training:maxtext-v26.4-jax0.9.1-te2.12.0",
+        "container_image": "rocm/jax-training:maxtext-v26.3",
         "container_name": "rocm-jax-llama3.1-70b",
-        "distributed_training": "True",
+        "distributed_training": "False",
         "enable_checkpointing": "False",
-        "nnodes": "<changeme> = number of nodes used in singlenode training",
-        "coordinator_ip": "localhost",
+        "__nnodes": " = number of nodes used in singlenode training",
+        "nnodes": "1",
+        "__coordinator_ip": "localhost",
+        "coordinator_ip": "<changeme>",
         "training_steps": "30",
-        "gpu_max_hw_queues": "2",
-        "nvte_ck_bwd_v3": "1",
-        "nvte_ck_v3_bf16_cvt": "2",
-        "xla_python_client_mem_fraction": "0.975",
-	"xla_gpu_executable_warn_stuck_timeout": "90",
+        "nic_type": "thor2",
+
         "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "256G",
         "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
-        "data_cache_dir": "/home/{user-id}/cache",
+        "data_cache_dir": "/home/{user-id}/cache/hf_cache",
         "mock_data": "True",
         "log_dir": "/home/{user-id}/LOGS",
-        "dataset_source": 
+
+        "rdma_lib":
+        {
+            "host_source_file": "/usr/local/lib/libbnxt_re-rdmav34.so",
+            "container_mount_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+            "container_dest_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so"
+        },
+
+        "xla_flags":
+        {
+            "xla_gpu_enable_latency_hiding_scheduler": "True",
+            "xla_gpu_enable_triton_gemm": "False",
+            "xla_gpu_memory_limit_slop_factor": "95",
+            "xla_gpu_enable_command_buffer": "''",
+            "xla_gpu_enable_cublaslt": "True",
+            "xla_gpu_executable_warn_stuck_timeout": "90",
+            "xla_gpu_executable_terminate_timeout": "300",
+            "xla_gpu_first_collective_call_warn_stuck_timeout_seconds": "300",
+            "xla_gpu_first_collective_call_terminate_timeout_seconds": "1200",
+            "xla_gpu_autotune_level": "0",
+            "xla_gpu_enable_reduce_scatter_combine_by_dim": "false",
+            "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592",
+            "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592",
+            "xla_gpu_all_gather_combine_threshold_bytes": "137438953472",
+            "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
+        },
+
+        "env_vars":
+        {
+            "NNODES": "1",
+            "NODE_RANK": "0",
+            "GPU_MAX_HW_QUEUES": "2",
+            "HSA_FORCE_FINE_GRAIN_PCIE": "1",
+            "HIP_FORCE_DEV_KERNARG": "1",
+            "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.975",
+            "NCCL_DEBUG": "VERSION",
+            "NCCL_PROTO": "Simple",
+            "NCCL_IB_TC": "41",
+            "NCCL_IB_SL": "0",
+            "NCCL_IB_DISABLE": "1",
+            "NCCL_SHM_DISABLE": "0",
+            "NCCL_P2P_DISABLE": "1",
+            "NCCL_IB_GID_INDEX": "3",
+            "NCCL_CHECKS_DISABLE": "1",
+            "NCCL_CROSS_NIC": "0",
+            "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "1",
+            "NVTE_USE_HIPBLASLT": "1",
+            "NVTE_FUSED_ATTN": "1",
+            "NVTE_CK_USES_BWD_V3": "1",
+            "NVTE_CK_USES_FWD_V3": "1",
+            "NVTE_CK_IS_V3_ATOMIC_FP32": "0",
+            "NVTE_CK_HOW_V3_BF16_CVT": "2",
+            "NVTE_FUSED_ATTN_CK": "1",
+            "NVTE_FUSED_ATTN_AOTRITON": "0"
+        },
+
+        "dataset_source":
         {
         },
         "container_config":
@@ -37,10 +94,10 @@
             "env_dict":
             {
                 "JAX_COORDINATOR_IP": "<changeme>",
-                "JAX_COORDINATOR_PORT": "1234",
+                "JAX_COORDINATOR_PORT": "12346",
                 "NNODES": "1",
                 "JAX_DISTRIBUTED_INITIALIZATION_TIMEOUT_SECONDS": "1800",
-		"JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS": "900"
+                "JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS": "900"
             }
         }
     },
@@ -54,9 +111,10 @@
                  {
                      "tokenizer_model": "NousResearch/Meta-Llama-3-70B",
                      "model_size": "70",
+                     "hardware": "gpu",
                      "attention": "cudnn_flash_te",
-                     "dcn_data_parallelism": "1",
-                     "dcn_fsdp_parallelism": "-1",
+                     "dcn_data_parallelism": "-1",
+                     "dcn_fsdp_parallelism": "1",
                      "dcn_pipeline_parallelism": "1",
                      "dcn_tensor_parallelism": "1",
                      "dcn_sequence_parallelism": "1",
@@ -84,23 +142,14 @@
                      "checkpoint_is_quantized": "false",
                      "per_device_batch_size": "2",
                      "max_target_length": "8192",
+                     "max_segments_per_seq": "32",
                      "skip_first_n_steps_for_profiler": "3",
-
-                     "xla_flags":
-                     {
-                         "xla_gpu_enable_cublaslt": "True",
-			 "xla_gpu_executable_warn_stuck_timeout": "90",
-                         "xla_gpu_executable_terminate_timeout": "300",
-                         "xla_gpu_first_collective_call_warn_stuck_timeout_seconds": "300",
-                         "xla_gpu_first_collective_call_terminate_timeout_seconds": "1200",
-                         "xla_gpu_graph_level": "0",
-                         "xla_gpu_autotune_level": "4",
-                         "xla_gpu_enable_reduce_scatter_combine_by_dim": "false",
-                         "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592",
-                         "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592",
-                         "xla_gpu_all_gather_combine_threshold_bytes": "137438953472",
-                         "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
-                     },
+                     "packing": "True",
+                     "enable_goodput_recording": "False",
+                     "monitor_goodput": "False",
+                     "optimizer_memory_host_offload": "False",
+                     "param_scan_axis": "1",
+                     "shardy": "False",
 
                      "base_emb_dim": "16384",
                      "base_num_query_heads": "128",
@@ -125,7 +174,7 @@
                      "fsdp": "0",
                      "result_dict":
                      {
-			 "tflops_per_sec_per_gpu": "1800.0",
+                         "tflops_per_sec_per_gpu": "1800.0",
                          "tokens_per_sec_per_gpu": "900.0"
                      }
                  }

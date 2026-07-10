@@ -78,12 +78,12 @@ class TestPsshSharderMethods(unittest.TestCase):
         shard_init_kwargs = {'user': 'testuser'}
 
         payloads = self.sharder.create_payloads(
-            'cmd_list', host_chunks, shard_init_kwargs, cmd_list=['echo 1', 'echo 2']
+            'exec_cmd_list', host_chunks, shard_init_kwargs, cmd_list=['echo 1', 'echo 2']
         )
 
         expected = [
             {
-                'operation': 'cmd_list',
+                'operation': 'exec_cmd_list',
                 'init': {'user': 'testuser', 'host_list': ['host1', 'host2']},
                 'cmd_list': ['echo 1', 'echo 2'],
             }
@@ -230,7 +230,7 @@ class TestPsshShardWorker(unittest.TestCase):
         mock_pssh_class.assert_called_once_with(
             log=None, host_list=['host1', 'host2'], user='test', process_output=False
         )
-        mock_shard.exec.assert_called_once_with('echo hello', timeout=30, print_console=False)
+        mock_shard.exec.assert_called_once_with(cmd='echo hello', timeout=30, print_console=False)
         mock_shard.destroy_clients.assert_called_once()
 
     @patch('cvs.lib.parallel.pssh_sharder.Pssh')
@@ -243,7 +243,7 @@ class TestPsshShardWorker(unittest.TestCase):
         mock_shard.unreachable_hosts = []
 
         payload = {
-            'operation': 'cmd_list',
+            'operation': 'exec_cmd_list',
             'init': {'log': None, 'host_list': ['host1'], 'user': 'test'},
             'cmd_list': ['echo 1', 'echo 2'],
         }
@@ -255,19 +255,19 @@ class TestPsshShardWorker(unittest.TestCase):
 
         # Verify direct operation call
         mock_pssh_class.assert_called_once_with(log=None, host_list=['host1'], user='test', process_output=False)
-        mock_shard.exec_cmd_list.assert_called_once_with(['echo 1', 'echo 2'], timeout=None, print_console=False)
+        mock_shard.exec_cmd_list.assert_called_once_with(cmd_list=['echo 1', 'echo 2'], print_console=False)
         mock_shard.destroy_clients.assert_called_once()
 
     @patch('cvs.lib.parallel.pssh_sharder.Pssh')
-    def test_pssh_shard_worker_scp_mode(self, mock_pssh_class):
-        """Test shard worker in scp mode with direct operation calls."""
+    def test_pssh_shard_worker_upload_file_mode(self, mock_pssh_class):
+        """Test shard worker in upload_file mode with direct operation calls."""
         mock_shard = MagicMock()
         mock_pssh_class.return_value = mock_shard
         mock_shard.reachable_hosts = ['host1']
         mock_shard.unreachable_hosts = []
 
         payload = {
-            'operation': 'scp',
+            'operation': 'upload_file',
             'init': {'log': None, 'host_list': ['host1'], 'user': 'test'},
             'local_file': 'test.txt',
             'remote_file': '/tmp/test.txt',
@@ -280,7 +280,36 @@ class TestPsshShardWorker(unittest.TestCase):
         self.assertEqual(result, expected)
 
         # Verify direct operation call
-        mock_shard.scp_file.assert_called_once_with('test.txt', '/tmp/test.txt', recurse=False)
+        mock_shard.upload_file.assert_called_once_with(
+            local_file='test.txt', remote_file='/tmp/test.txt', recurse=False
+        )
+
+    @patch('cvs.lib.parallel.pssh_sharder.Pssh')
+    def test_pssh_shard_worker_download_file_mode(self, mock_pssh_class):
+        """Test shard worker in download_file mode with direct operation calls."""
+        mock_shard = MagicMock()
+        mock_pssh_class.return_value = mock_shard
+        mock_shard.reachable_hosts = ['host1']
+        mock_shard.unreachable_hosts = []
+        mock_shard.download_file.return_value = {'host1': '/local/test_host1.txt'}
+
+        payload = {
+            'operation': 'download_file',
+            'init': {'log': None, 'host_list': ['host1'], 'user': 'test'},
+            'remote_file': '/tmp/test.txt',
+            'local_file': 'test.txt',
+            'recurse': False,
+        }
+
+        result = PsshSharder.run_shard(payload)
+
+        expected = {'result': {'host1': '/local/test_host1.txt'}, 'reachable_hosts': ['host1'], 'unreachable_hosts': []}
+        self.assertEqual(result, expected)
+
+        # Verify direct operation call
+        mock_shard.download_file.assert_called_once_with(
+            remote_file='/tmp/test.txt', local_file='test.txt', recurse=False
+        )
 
     @patch('cvs.lib.parallel.pssh_sharder.Pssh')
     def test_pssh_shard_worker_reboot_mode(self, mock_pssh_class):
@@ -291,7 +320,7 @@ class TestPsshShardWorker(unittest.TestCase):
         mock_shard.unreachable_hosts = []
 
         payload = {
-            'operation': 'reboot',
+            'operation': 'reboot_connections',
             'init': {'log': None, 'host_list': ['host1'], 'user': 'test'},
         }
 
@@ -318,6 +347,25 @@ class TestPsshShardWorker(unittest.TestCase):
             PsshSharder.run_shard(payload)
 
         self.assertIn('Unknown operation: unknown_operation', str(cm.exception))
+
+    @patch('cvs.lib.parallel.pssh_sharder.Pssh')
+    def test_pssh_shard_worker_abc_enforcement(self, mock_pssh_class):
+        """Test shard worker properly enforces ABC operations."""
+        mock_shard = MagicMock()
+        mock_pssh_class.return_value = mock_shard
+
+        # Test with an operation not in ABC
+        payload = {
+            'operation': 'fake_operation_not_in_abc',
+            'init': {'log': None, 'host_list': ['host1'], 'user': 'test'},
+        }
+
+        with self.assertRaises(ValueError) as cm:
+            PsshSharder.run_shard(payload)
+
+        # Verify proper error message
+        self.assertIn('Unknown operation: fake_operation_not_in_abc', str(cm.exception))
+        self.assertIn('Supported:', str(cm.exception))
 
 
 if __name__ == "__main__":

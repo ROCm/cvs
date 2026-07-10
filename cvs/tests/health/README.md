@@ -34,7 +34,6 @@ pytest -vvv -log-file=/tmp/agfhc_test.log -s ./tests/health/agfhc_cvs.py --clust
 ```
 In the config file, cvs/input/config_file/health/mi300_health_config.json, change the value of parameters(/tmp/cvs):
 "path": "/tmp/cvs/INSTALL/TransferBench",
-"example_tests_path": "/tmp/cvs/INSTALL/TransferBench/examples",
 "git_install_path": "/tmp/cvs/INSTALL/", to desired location.
 
 pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_agfhc.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
@@ -61,7 +60,7 @@ RVS provides comprehensive GPU validation through multiple test modules. The tes
 
 #### Container mode
 
-`rvs_cvs` is currently the only CVS test suite that consumes the orchestrator and can run inside a per-host container instead of on the host filesystem. To use it, copy the `cluster_container.json` template (`cvs copy-config cluster_container.json --output ...`), set the container `image` and `name`, and pass the resulting cluster file to `cvs run rvs_cvs`. See the in-tree reference at [`cvs/input/cluster_file/README.md`](../../input/cluster_file/README.md) and the published [container-mode how-to](https://rocm.docs.amd.com/projects/cvs/en/latest/how-to/run-with-containers.html). Other suites and `cvs exec` ignore the `orchestrator` key and run on the host.
+To use it, copy the `cluster_container.json` template (`cvs copy-config cluster_container.json --output ...`), set the container `image` and `name`, and pass the resulting cluster file to `cvs run install_rvs` or `cvs run rvs_cvs`. See the in-tree reference at [`cvs/input/cluster_file/README.md`](../../input/cluster_file/README.md) and the published [container-mode how-to](https://rocm.docs.amd.com/projects/cvs/en/latest/how-to/run-with-containers.html).
 
 #### Supported Test Modules
 

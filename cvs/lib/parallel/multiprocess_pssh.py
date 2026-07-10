@@ -9,12 +9,13 @@ from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.parallel.pssh import Pssh
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.pssh_sharder import PsshSharder
+from cvs.lib.parallel.interfaces import ShardableSshInterface
 from cvs.lib import globals
 
 global_log = globals.log
 
 
-class MultiProcessPssh(Pssh):
+class MultiProcessPssh(ShardableSshInterface):
     """
     Multi-process parallel SSH with automatic host sharding for large host lists.
 
@@ -36,6 +37,7 @@ class MultiProcessPssh(Pssh):
         stop_on_errors=True,
         env_vars=None,
         config=None,
+        **ssh_client_kwargs,
     ):
         # Initialize configuration
         self.config = config or ParallelConfig.from_env()
@@ -44,13 +46,24 @@ class MultiProcessPssh(Pssh):
         # Always ensure self.log is set for backward compatibility
         self.log = global_log
 
+        # Store ssh_client_kwargs for forwarding to shard workers
+        self.ssh_client_kwargs = ssh_client_kwargs
+
         n = len(host_list) if host_list is not None else 0
         use_mp = hosts_per_shard > 0 and n > hosts_per_shard
 
-        if not use_mp:
-            # Use single-process base class
-            super().__init__(
-                log,  # Pass through log parameter to parent
+        if use_mp:
+            # Initialize for multi-process sharding - no Pssh instance needed
+            self._init_sharded(
+                log, host_list, user, password, pkey, host_key_check, stop_on_errors, env_vars, **ssh_client_kwargs
+            )
+
+            self.sharder = PsshSharder(self.config)
+            self.pssh = None  # No Pssh instance needed for sharded mode
+        else:
+            # No sharding - create Pssh instance for delegation
+            self.pssh = Pssh(
+                log,
                 host_list,
                 user,
                 password,
@@ -59,16 +72,13 @@ class MultiProcessPssh(Pssh):
                 stop_on_errors,
                 env_vars,
                 process_output=True,  # Default to True for compatibility
+                **ssh_client_kwargs,
             )
-            self._use_process_sharding = False
             # Ensure attributes needed by _shard_init_kwargs are available
+            self.host_list = host_list
+            self.reachable_hosts = list(host_list)  # Initialize with all hosts
+            self.unreachable_hosts = []
             self.env_vars = env_vars
-        else:
-            # Initialize for multi-process sharding
-            self._init_sharded(log, host_list, user, password, pkey, host_key_check, stop_on_errors, env_vars)
-
-            # Create the sharder - no registration needed with direct operations!
-            self.sharder = PsshSharder(self.config)
 
     def _init_sharded(
         self,
@@ -80,6 +90,7 @@ class MultiProcessPssh(Pssh):
         host_key_check,
         stop_on_errors,
         env_vars,
+        **ssh_client_kwargs,
     ):
         """Initialize for sharded multi-process execution."""
         # Always use global logger but maintain self.log for backward compatibility
@@ -93,10 +104,10 @@ class MultiProcessPssh(Pssh):
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
         self.env_vars = env_vars
+        self.ssh_client_kwargs = ssh_client_kwargs
         self.env_prefix = build_env_prefix(env_vars)
         self.process_output = True  # Default to True for compatibility
         self.client = None
-        self._use_process_sharding = True
         self.log.debug(f"Environ vars: {self.env_prefix}")
 
     def _shard_init_kwargs(self):
@@ -112,13 +123,20 @@ class MultiProcessPssh(Pssh):
             'host_key_check': self.host_key_check,
             'stop_on_errors': self.stop_on_errors,
             'env_vars': self.env_vars,
+            **self.ssh_client_kwargs,  # Forward all ssh client kwargs to shard workers
         }
+
+    def _sync_pssh_state(self):
+        """Sync wrapper reachability state from Single-process Pssh (non-sharded mode)."""
+        if self.pssh is None:
+            return
+        self.reachable_hosts = list(self.pssh.reachable_hosts)
+        self.unreachable_hosts = list(self.pssh.unreachable_hosts)
 
     def _merge_shard_returns(self, shard_returns, merge_unreachable=True):
         """
-        Update reachable/unreachable host lists from shard workers and convert results to cmd_output dict.
+        Update reachable/unreachable host lists from shard workers and merge results to cmd_output dict.
 
-        Handles both state updates and SimpleHostOutput conversion in one place for cleaner architecture.
         Returns cmd_output dict ready for _print_merged_outputs.
         """
         # 1. Update host lists (existing logic)
@@ -132,18 +150,12 @@ class MultiProcessPssh(Pssh):
                     if u not in self.unreachable_hosts:
                         self.unreachable_hosts.append(u)
 
-        # 2. Convert SimpleHostOutput objects to cmd_output dict
+        # 2. Merge results from shard workers (always dict format)
         merged = {}
         for shard in shard_returns:
             result = shard.get('result') or {}  # treat None as {} (for scp/reboot)
-
-            if isinstance(result, list):
-                # Handle SimpleHostOutput objects - convert using _process_output
-                temp_dict = self._process_output(result, print_console=False)
-                merged.update(temp_dict)
-            else:
-                # Handle old dict format (for scp/reboot)
-                merged.update(result)
+            # Shard workers always return processed dicts from _process_output
+            merged.update(result)
 
         # 3. Preserve original host order
         cmd_output = {}
@@ -153,11 +165,11 @@ class MultiProcessPssh(Pssh):
 
         return cmd_output
 
-    def _print_merged_outputs(self, cmd_output, cmd=None, cmd_list=None, print_console=True):
+    def _print_merged_outputs(self, cmd_output, cmd=None, cmd_list=None, cmd_hosts=None, print_console=True):
         """Print command outputs in original host order."""
         if not print_console:
             return
-        idx = {h: i for i, h in enumerate(self.host_list)}
+        idx = {h: i for i, h in enumerate(cmd_hosts)} if cmd_hosts is not None else {}
         for host in self.host_list:
             if host not in cmd_output:
                 continue
@@ -171,10 +183,12 @@ class MultiProcessPssh(Pssh):
             for line in cmd_output[host].splitlines():
                 self.log.info("%s", line)
 
-    def exec(self, cmd, timeout=None, print_console=True):
+    def exec(self, cmd, timeout=None, print_console=True, detailed=False):
         """Execute command with automatic sharding if needed."""
-        if not getattr(self, '_use_process_sharding', False):
-            return super().exec(cmd, timeout=timeout, print_console=print_console)
+        if self.pssh is not None:
+            result = self.pssh.exec(cmd, timeout=timeout, print_console=print_console, detailed=detailed)
+            self._sync_pssh_state()
+            return result
 
         if self.env_prefix:
             full_cmd = f"{self.env_prefix} ; {cmd}"
@@ -195,7 +209,7 @@ class MultiProcessPssh(Pssh):
         # Use sharder for sharded execution
         host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
         payloads = self.sharder.create_payloads(
-            'exec', host_chunks, self._shard_init_kwargs(), cmd=cmd, timeout=timeout
+            'exec', host_chunks, self._shard_init_kwargs(), cmd=cmd, timeout=timeout, detailed=detailed
         )
         shard_returns = self.sharder.execute_sharded(payloads)
 
@@ -213,28 +227,35 @@ class MultiProcessPssh(Pssh):
 
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
         """Execute command list with automatic sharding if needed."""
-        if not getattr(self, '_use_process_sharding', False):
-            return super().exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
+        if self.pssh is not None:
+            result = self.pssh.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
+            self._sync_pssh_state()
+            return result
 
-        if len(cmd_list) != len(self.host_list):
-            raise ValueError('cmd_list length must match host_list length')
+        # Keep host_list as full inventory; accept command lists aligned either
+        # with full host_list or current reachable_hosts.
+        if len(cmd_list) == len(self.host_list):
+            cmd_hosts = list(self.host_list)
+        elif len(cmd_list) == len(self.reachable_hosts):
+            cmd_hosts = list(self.reachable_hosts)
+        else:
+            raise ValueError(
+                "cmd_list length must match host_list length or reachable_hosts length "
+                f"(cmd_list={len(cmd_list)}, host_list={len(self.host_list)}, "
+                f"reachable_hosts={len(self.reachable_hosts)})"
+            )
 
-        # Apply env_prefix to all commands (for logging compatibility)
+        # Keep raw commands for shard payloads (worker Pssh applies env_prefix once).
+        # Build expanded commands separately for logging compatibility.
+        raw_commands = list(cmd_list)
         if self.env_prefix:
-            expanded = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
+            expanded = [f"{self.env_prefix} ; {cmd}" for cmd in raw_commands]
         else:
-            expanded = list(cmd_list)
+            expanded = list(raw_commands)
 
-        # Only filter commands if some hosts are unreachable
-        if len(self.reachable_hosts) < len(self.host_list):
-            # Filter commands to match reachable_hosts order
-            filtered_commands = []
-            for i, host in enumerate(self.host_list):
-                if host in self.reachable_hosts:
-                    filtered_commands.append(expanded[i])
-        else:
-            # All hosts are reachable, use expanded directly
-            filtered_commands = expanded
+        # Align commands to current reachable_hosts ordering for shard payloads.
+        command_by_host = dict(zip(cmd_hosts, raw_commands))
+        filtered_commands = [command_by_host[h] for h in self.reachable_hosts if h in command_by_host]
 
         self.log.info("%s", filtered_commands)
 
@@ -256,7 +277,7 @@ class MultiProcessPssh(Pssh):
             offset += k
             payloads.append(
                 self.sharder.create_payloads(
-                    'cmd_list', [shard_hosts], self._shard_init_kwargs(), cmd_list=shard_commands, timeout=timeout
+                    'exec_cmd_list', [shard_hosts], self._shard_init_kwargs(), cmd_list=shard_commands, timeout=timeout
                 )[0]
             )
 
@@ -265,25 +286,38 @@ class MultiProcessPssh(Pssh):
         # Merge results, update state, and convert to cmd_output dict
         cmd_output = self._merge_shard_returns(shard_returns)
 
-        self._print_merged_outputs(cmd_output, cmd=None, cmd_list=expanded, print_console=print_console)
+        self._print_merged_outputs(
+            cmd_output, cmd=None, cmd_list=expanded, cmd_hosts=cmd_hosts, print_console=print_console
+        )
 
         # Log per-host command execution
         if self.log:
-            for host, cmd in zip(self.host_list, expanded):
+            for host, cmd in zip(cmd_hosts, expanded):
                 self.log.debug(f"Command on {host}: {cmd}")
 
         return cmd_output
 
     def scp_file(self, local_file, remote_file, recurse=False):
-        """Copy file with automatic sharding if needed."""
-        if not getattr(self, '_use_process_sharding', False):
-            return super().scp_file(local_file, remote_file, recurse=recurse)
+        """
+        Backward-compatible alias for upload_file.
 
+        Kept so existing callers (and log-grep tooling looking for the legacy
+        "About to copy local file..." line) keep working. New code should call
+        upload_file directly.
+        """
         self.log.info('About to copy local file {} to remote {} on all Hosts'.format(local_file, remote_file))
+        return self.upload_file(local_file, remote_file, recurse=recurse)
+
+    def upload_file(self, local_file, remote_file, recurse=False):
+        """Upload file with automatic sharding if needed."""
+        if self.pssh is not None:
+            return self.pssh.upload_file(local_file, remote_file, recurse=recurse)
+
+        self.log.info('SFTP upload %s -> %s on %s', local_file, remote_file, self.reachable_hosts)
 
         host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
         payloads = self.sharder.create_payloads(
-            'scp',
+            'upload_file',
             host_chunks,
             self._shard_init_kwargs(),
             local_file=local_file,
@@ -291,24 +325,122 @@ class MultiProcessPssh(Pssh):
             recurse=recurse,
         )
         shard_returns = self.sharder.execute_sharded(payloads)
-        return self._merge_shard_returns(shard_returns, merge_unreachable=False)
+        return self._merge_shard_returns(shard_returns)
+
+    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_'):
+        """Download file with automatic sharding if needed."""
+        if self.pssh is not None:
+            return self.pssh.download_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
+
+        self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts)
+
+        host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
+        payloads = self.sharder.create_payloads(
+            'download_file',
+            host_chunks,
+            self._shard_init_kwargs(),
+            remote_file=remote_file,
+            local_file=local_file,
+            recurse=recurse,
+            suffix_separator=suffix_separator,
+        )
+        shard_returns = self.sharder.execute_sharded(payloads)
+        return self._merge_shard_returns(shard_returns)
 
     def reboot_connections(self):
         """Reboot connections with automatic sharding if needed."""
-        if not getattr(self, '_use_process_sharding', False):
-            return super().reboot_connections()
+        if self.pssh is not None:
+            return self.pssh.reboot_connections()
 
         self.log.info('Rebooting Connections')
 
         host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
-        payloads = self.sharder.create_payloads('reboot', host_chunks, self._shard_init_kwargs())
+        payloads = self.sharder.create_payloads('reboot_connections', host_chunks, self._shard_init_kwargs())
         shard_returns = self.sharder.execute_sharded(payloads)
         return self._merge_shard_returns(shard_returns, merge_unreachable=False)
 
+    def upload_file_list(self, node_path_map):
+        """Upload different files to different hosts with automatic sharding if needed."""
+        if self.pssh is not None:
+            return self.pssh.upload_file_list(node_path_map)
+
+        if not node_path_map:
+            return {}
+
+        self.log.info(f"Uploading files to hosts with sharding: {len(node_path_map)} file mappings")
+
+        # Shard the file operations across hosts
+        host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
+        payloads = []
+
+        for shard_hosts in host_chunks:
+            # Create subset of node_path_map for this shard
+            shard_node_path_map = {h: node_path_map[h] for h in shard_hosts if h in node_path_map}
+            if shard_node_path_map:
+                # Worker host_list must match node_path_map keys for upload_file_list.
+                # Pssh.upload_file_list delegates to ParallelSSHClient.copy_file(copy_args=...),
+                # which requires one copy_args entry per worker host in order.
+                target_hosts = [h for h in shard_hosts if h in shard_node_path_map]
+                payloads.append(
+                    self.sharder.create_payloads(
+                        'upload_file_list',
+                        [target_hosts],
+                        self._shard_init_kwargs(),
+                        node_path_map=shard_node_path_map,
+                    )[0]
+                )
+
+        if not payloads:
+            return {}
+
+        shard_returns = self.sharder.execute_sharded(payloads)
+
+        # Merge results from all shards
+        merged_results = {}
+        for shard in shard_returns:
+            result = shard.get('result', {})
+            merged_results.update(result)
+
+        return merged_results
+
+    def prune_nodes(self, nodes_to_remove):
+        """
+        Explicitly prune nodes from future operations.
+
+        Works in both modes:
+        - sharded mode: updates wrapper host state
+        - non-sharded mode: delegates to Single-process Pssh (which rebuilds its client)
+        """
+        if not nodes_to_remove:
+            return []
+
+        remove_set = {h for h in nodes_to_remove if h}
+        removed = [h for h in self.reachable_hosts if h in remove_set]
+        if not removed:
+            return []
+
+        if self.pssh is not None:
+            # Non-sharded mode: let single-process Pssh own prune + client rebuild.
+            removed = self.pssh.prune_nodes(removed)
+            self._sync_pssh_state()
+            return removed
+
+        # Sharded mode: workers create per-call Pssh instances from payload host lists, so
+        # pruning only needs to update wrapper host state used for future shard construction.
+        self.reachable_hosts = [h for h in self.reachable_hosts if h not in remove_set]
+        for host in removed:
+            if host not in self.unreachable_hosts:
+                self.unreachable_hosts.append(host)
+        return removed
+
     def destroy_clients(self):
         """Destroy clients - handle both sharded and non-sharded modes."""
-        if getattr(self, '_use_process_sharding', False):
-            self.log.info('Destroying Current phdl connections ..')
+        if self.pssh is None:
+            self.log.info('Cleaning up sharded mode state ..')
+            # In sharded mode, no persistent connections to destroy
             self.client = None
-            return
-        super().destroy_clients()
+        else:
+            self.log.info('Destroying Current phdl connections ..')
+            # In non-sharded mode, properly destroy the Pssh instance connections
+            if self.pssh is not None:
+                self.pssh.destroy_clients()

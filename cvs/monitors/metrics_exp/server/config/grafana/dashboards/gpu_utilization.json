@@ -1,0 +1,486 @@
+{
+  "uid": "gpu-utilization",
+  "title": "GPU Utilization",
+  "description": "GPU compute and memory utilization metrics",
+  "tags": ["gpu-fleet", "utilization"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "nodegroup",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(gpu_gfx_activity, node_group)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "hostname",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(gpu_gfx_activity{node_group=~\"$nodegroup\"}, hostname)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Overview",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "Avg GPU Utilization",
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 1},
+      "targets": [
+        {
+          "expr": "avg(gpu_gfx_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Avg"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "blue", "value": null},
+              {"color": "green", "value": 20},
+              {"color": "yellow", "value": 80},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "gauge",
+      "title": "Avg Memory Controller Activity",
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 1},
+      "targets": [
+        {
+          "expr": "avg(gpu_umc_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Avg"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "blue", "value": null},
+              {"color": "green", "value": 20},
+              {"color": "yellow", "value": 80}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "gauge",
+      "title": "Avg MMA Activity",
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 1},
+      "targets": [
+        {
+          "expr": "avg(gpu_mma_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Avg"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 80},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Total VRAM",
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 1},
+      "targets": [
+        {
+          "expr": "sum(gpu_total_vram{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "bytes", "decimals": 1}
+      }
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "GPU Compute",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "GPU GFX Activity",
+      "description": "Graphics/Compute engine utilization",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 7},
+      "targets": [
+        {
+          "expr": "gpu_gfx_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 15}
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Memory Controller Activity (UMC)",
+      "description": "Memory controller utilization",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 7},
+      "targets": [
+        {
+          "expr": "gpu_umc_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 15}
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Specialized Engines",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Matrix Math Accelerator Activity (MMA)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "gpu_mma_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 20}
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Video Codec (VCN) & JPEG Activity",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "gpu_vcn_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}} VCN"
+        },
+        {
+          "expr": "gpu_jpeg_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}} JPEG"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 20}
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Top 10 Nodes",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}
+    },
+    {
+      "id": 13,
+      "type": "barchart",
+      "title": "Top 10 Nodes by GPU Utilization",
+      "description": "Nodes with highest average GPU utilization",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 25},
+      "targets": [
+        {
+          "expr": "topk(10, avg by (hostname) (gpu_gfx_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "barchart",
+      "title": "Top 10 Nodes by Memory Controller Activity",
+      "description": "Nodes with highest average UMC activity",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 25},
+      "targets": [
+        {
+          "expr": "topk(10, avg by (hostname) (gpu_umc_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Per-Node Summary",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 33}
+    },
+    {
+      "id": 16,
+      "type": "bargauge",
+      "title": "GPU Utilization by Host",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 34},
+      "targets": [
+        {
+          "expr": "avg by (hostname) (gpu_gfx_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "{{hostname}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "blue", "value": null},
+              {"color": "green", "value": 20},
+              {"color": "yellow", "value": 80}
+            ]
+          }
+        }
+      },
+      "options": {"orientation": "horizontal", "displayMode": "gradient"}
+    },
+    {
+      "id": 17,
+      "type": "bargauge",
+      "title": "Memory Controller Activity by Host",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 34},
+      "targets": [
+        {
+          "expr": "avg by (hostname) (gpu_umc_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "{{hostname}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 80},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      },
+      "options": {"orientation": "horizontal", "displayMode": "gradient"}
+    },
+
+    {
+      "id": 18,
+      "type": "row",
+      "title": "User Activity & GPU Process Tracking",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 42}
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Active GPU Processes (KFD)",
+      "description": "Number of processes currently launching GPU kernels via KFD. 0 = no active GPU processes or KFD not loaded.",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 43},
+      "targets": [{ "expr": "sum(node_kfd_process_count{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }] } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "Logged-In Users",
+      "description": "Total active SSH/interactive sessions across selected nodes.",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 43},
+      "targets": [{ "expr": "sum(node_logged_in_users_count{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Unique GPU Users (KFD)",
+      "description": "Number of distinct users with active GPU processes.",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 43},
+      "targets": [{ "expr": "count(count by (user) (node_kfd_process_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "GPU Memory in Use (KFD)",
+      "description": "Total GPU memory allocated by KFD processes across selected nodes.",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 43},
+      "targets": [{ "expr": "sum(node_kfd_process_count{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 23,
+      "type": "table",
+      "title": "KFD GPU Processes (Active GPU Kernel Users)",
+      "description": "Processes currently using the GPU via KFD. Empty when no GPU workloads are running. gpu_mem_mb shown in label — sort by that column to find top memory consumers.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 47},
+      "targets": [{ "expr": "node_kfd_process_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true },
+          "renameByName": { "hostname": "Node", "user": "User", "pid": "PID", "cmd": "Command", "gpu_mem_mb": "GPU Mem (MB)", "node_group": "Node Group" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "GPU Mem (MB)", "desc": true }] },
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto", "filterable": true } } }
+    },
+    {
+      "id": 24,
+      "type": "table",
+      "title": "Currently Logged-In Users",
+      "description": "Active SSH/interactive sessions. Refresh interval: 30s.",
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 59},
+      "targets": [{ "expr": "node_logged_in_user_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true },
+          "renameByName": { "hostname": "Node", "user": "User", "tty": "Terminal", "from_host": "From", "login_time": "Login Time", "node_group": "Node Group" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "Node" }] },
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto", "filterable": true } } }
+    },
+    {
+      "id": 25,
+      "type": "table",
+      "title": "User Process Summary",
+      "description": "Number of running processes per user across selected nodes.",
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 59},
+      "targets": [{ "expr": "node_user_process_count{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} > 0", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true },
+          "renameByName": { "hostname": "Node", "user": "User", "Value": "Process Count", "node_group": "Node Group" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "Process Count", "desc": true }] },
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto", "filterable": true } } }
+    },
+    {
+      "id": 26,
+      "type": "table",
+      "title": "Notable User Commands (GPU/ML workloads prioritised)",
+      "description": "Most notable running process per user. GPU and ML workload commands are preferred over other processes.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 69},
+      "targets": [{ "expr": "node_user_top_process_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true },
+          "renameByName": { "hostname": "Node", "user": "User", "cmd": "Command", "node_group": "Node Group" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "Node" }] },
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto", "filterable": true } } }
+    },
+    {
+      "id": 27,
+      "type": "table",
+      "title": "Recent Login History",
+      "description": "Last 30 login events per node (from 'last' command). Refreshes every 30s.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 79},
+      "targets": [{ "expr": "node_recent_login_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true },
+          "renameByName": { "hostname": "Node", "user": "User", "tty": "Terminal", "from_host": "From", "date": "Date/Time", "node_group": "Node Group" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "Node" }] },
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto", "filterable": true } } }
+    },
+    {
+      "id": 28,
+      "type": "logs",
+      "title": "Auth Logs (SSH Logins & sudo Events)",
+      "description": "Live auth log stream from /var/log/auth.log (Ubuntu) or /var/log/secure (RHEL). Use the search bar to filter by username or event type.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 91},
+      "targets": [{
+        "datasource": { "type": "loki", "uid": "loki" },
+        "expr": "{node_group=~\"$nodegroup\", job=\"auth\"}"
+      }],
+      "options": { "showTime": true, "showLabels": true, "wrapLogMessage": false, "dedupStrategy": "none" }
+    }
+  ]
+}

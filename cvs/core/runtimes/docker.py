@@ -5,6 +5,8 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import shlex
+
 
 class DockerRuntime:
     """Docker container runtime implementation."""
@@ -42,8 +44,8 @@ class DockerRuntime:
 
         Args:
             container_config: Container configuration dictionary. Recognized
-                top-level keys include ``image``, ``launch``, ``runtime`` (with
-                nested ``args``), and ``env``.
+                top-level keys include ``image``, ``runtime`` (with nested
+                ``args``), and ``env``.
             container_name: Name to assign to the containers
             volumes: Optional list of volume mounts (overrides config)
             devices: Optional list of device passthroughs (overrides config)
@@ -57,11 +59,6 @@ class DockerRuntime:
         if not container_config or not container_config.get('image'):
             self.log.warning("No container config or image specified, skipping container start")
             return False
-
-        launch = container_config.get('launch', False)
-        if not launch:
-            self.log.info("Container launch disabled, assuming containers are already running")
-            return True
 
         image = container_config['image']
 
@@ -191,21 +188,35 @@ class DockerRuntime:
         return success
 
     def exec(self, container_name, cmd, hosts=None, timeout=None, detailed=False):
-        """Execute command in running Docker containers."""
-        # Use docker exec to run command in existing container
-        exec_cmd = f"sudo docker exec {container_name} {cmd}"
+        """Execute command in running Docker containers.
+
+        cmd is wrapped in `bash -c` so shell features (cd, ;, &&, |, globs,
+        redirects) run inside the container -- docker exec uses execve with
+        no implicit shell.
+        """
+        exec_cmd = f"sudo docker exec {container_name} bash -c {shlex.quote(cmd)}"
         if hosts:
-            # Execute on specific hosts
-            results = {}
-            for host in hosts:
-                results.update(self.orchestrator.all.exec_on_host(exec_cmd, host, timeout=timeout, detailed=detailed))
-            return results
-        else:
-            return self.orchestrator.all.exec(exec_cmd, timeout=timeout, detailed=detailed)
+            # Build a fresh Pssh for the host subset, mirroring
+            # BaremetalOrchestrator.exec's subset branch.
+            from cvs.lib.parallel_ssh_lib import Pssh
+
+            pssh = Pssh(
+                self.orchestrator.log,
+                hosts,
+                user=self.orchestrator.user,
+                password=self.orchestrator.password,
+                pkey=self.orchestrator.pkey,
+                host_key_check=False,
+                stop_on_errors=self.orchestrator.stop_on_errors,
+            )
+            return pssh.exec(exec_cmd, timeout=timeout, detailed=detailed)
+
+        return self.orchestrator.all.exec(exec_cmd, timeout=timeout, detailed=detailed)
 
     def exec_on_head(self, container_name, cmd, timeout=None):
-        """Execute command directly on head node (container)."""
-        exec_cmd = f"sudo docker exec {container_name} {cmd}"
+        """Execute command directly on head node (container). See exec() for
+        the bash -c wrap rationale."""
+        exec_cmd = f"sudo docker exec {container_name} bash -c {shlex.quote(cmd)}"
         return self.orchestrator.head.exec(exec_cmd, timeout=timeout)
 
     @staticmethod

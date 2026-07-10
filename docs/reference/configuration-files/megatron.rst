@@ -49,8 +49,14 @@ This is the ``mi3xx_megatron_llama_single.json`` configuration file:
           "shm_size": "128G",
           "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
           "data_cache_dir": "/home/{user-id}/cache",
+          "megatron_root": "/workspace/Megatron-LM",
+          "training_scripts": {
+              "llama-3": "examples/llama/train_llama3.sh",
+              "llama-2": "examples/llama/train_llama2.sh"
+          },
           "mock_data": "True",
           "log_dir": "/home/{user-id}/LOG_DIR",
+          "scripts_dir": "/home/{user-id}/SCRIPTS",
           "dataset_source": 
           {
           },
@@ -212,6 +218,15 @@ Use the parameters in these tables to configure the training file.
    * - ``log_dir``
      - ``/home/{user-id}/LOG_DIR``
      - Path where training logs should be written on the host
+   * - ``scripts_dir``
+     - ``/home/{user-id}/SCRIPTS``
+     - Per-node folder where the lib writes generated wrapper scripts (one per rank for distributed runs, single-node otherwise). Mounted into the container via the user's home volume mapping in ``container_config.volume_dict``.
+   * - ``megatron_root``
+     - ``/workspace/Megatron-LM``
+     - Root directory of the Megatron-LM checkout inside the container; ``cd`` targets and training scripts are derived from this.
+   * - ``training_scripts``
+     - ``{"llama-3": "examples/llama/train_llama3.sh", "llama-2": "examples/llama/train_llama2.sh"}``
+     - Mapping from tokenizer family substring to the training-script path relative to ``megatron_root``. The lib picks the entry whose key matches ``tokenizer_model`` via case-insensitive substring search (first match wins, dict insertion order).
 
 ``model_params/single_node/llama3_1_8b/mi300x``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -486,8 +501,14 @@ The ``mi35x_megatron_llama_single.json`` config file is used to run Megatron on 
             "shm_size": "128G",
             "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
             "data_cache_dir": "/home/{user-id}/cache",
+            "megatron_root": "/workspace/Megatron-LM",
+            "training_scripts": {
+                "llama-3": "examples/llama/train_llama3.sh",
+                "llama-2": "examples/llama/train_llama2.sh"
+            },
             "mock_data": "True",
             "log_dir": "/home/{user-id}/LOG_DIR",
+            "scripts_dir": "/home/{user-id}/SCRIPTS",
             "dataset_source":
             {
             },
@@ -638,6 +659,15 @@ Use the parameters in these tables to configure the training file.
    * - ``log_dir``
      - ``/home/{user-id}/LOG_DIR``
      - Path where training logs should be written on the host
+   * - ``scripts_dir``
+     - ``/home/{user-id}/SCRIPTS``
+     - Per-node folder where the lib writes generated wrapper scripts (one per rank for distributed runs, single-node otherwise). Mounted into the container via the user's home volume mapping in ``container_config.volume_dict``.
+   * - ``megatron_root``
+     - ``/workspace/Megatron-LM``
+     - Root directory of the Megatron-LM checkout inside the container; ``cd`` targets and training scripts are derived from this.
+   * - ``training_scripts``
+     - ``{"llama-3": "examples/llama/train_llama3.sh", "llama-2": "examples/llama/train_llama2.sh"}``
+     - Mapping from tokenizer family substring to the training-script path relative to ``megatron_root``. The lib picks the entry whose key matches ``tokenizer_model`` via case-insensitive substring search (first match wins, dict insertion order).
 
 ``dataset_source/container_config``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -915,13 +945,21 @@ This is the multi-node ``mi3xx_megatron_llama_distributed.json`` configuration f
             "gloo_socket_ifname": "<changeme>",
             "_example_nccl_ib_gid_index": "3",
             "nccl_ib_gid_index": "<changeme>",
+            "_example_hca_id_pattern": "bnxt_|rocep|mlx5_",
+            "hca_id_pattern": "bnxt_|rocep",
             "nccl_debug": "ERROR",
             "hf_token_file": "/home/{user-id}/.hf_token",
             "shm_size": "128G",
             "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
             "data_cache_dir": "/home/{user-id}/cache",
+            "megatron_root": "/workspace/Megatron-LM",
+            "training_scripts": {
+                "llama-3": "examples/llama/train_llama3.sh",
+                "llama-2": "examples/llama/train_llama2.sh"
+            },
             "mock_data": "True",
             "log_dir": "/home/{user-id}/LOG_DIR",
+            "scripts_dir": "/home/{user-id}/SCRIPTS",
             "dataset_source":
             {
             },
@@ -1120,6 +1158,12 @@ Use the parameters in these tables to configure the training file.
    * - ``_example_nccl_ib_gid_index``
      - 3
      - Example of  GID index used for IB addressing (selects which GID entry on the HCA to use)
+   * - ``_example_hca_id_pattern``
+     - ``bnxt_|rocep|mlx5_``
+     - Example of HCA-id pattern used to verify the libbnxt copy succeeded inside the container
+   * - ``hca_id_pattern``
+     - ``bnxt_|rocep``
+     - ``|``-separated list of NIC-name prefixes (e.g. ``bnxt_``, ``rocep``, ``mlx5_``) checked against ``ibv_devinfo`` ``hca_id:`` lines after the libbnxt copy. Each segment is treated as a literal prefix (regex special chars are escaped by the lib), so use ``|`` only as the separator -- not as part of a regex pattern within a segment. Add ``|mlx5_`` for Mellanox/RoCE NICs.
    * - ``nccl_debug``
      - ERROR
      - NCCL log level
@@ -1141,6 +1185,15 @@ Use the parameters in these tables to configure the training file.
    * - ``log_dir``
      - ``/home/{user-id}/LOG_DIR``
      - Path where training logs should be written on the host
+   * - ``scripts_dir``
+     - ``/home/{user-id}/SCRIPTS``
+     - Per-node folder where the lib writes generated wrapper scripts (one per rank for distributed runs, single-node otherwise). Mounted into the container via the user's home volume mapping in ``container_config.volume_dict``.
+   * - ``megatron_root``
+     - ``/workspace/Megatron-LM``
+     - Root directory of the Megatron-LM checkout inside the container; ``cd`` targets and training scripts are derived from this.
+   * - ``training_scripts``
+     - ``{"llama-3": "examples/llama/train_llama3.sh", "llama-2": "examples/llama/train_llama2.sh"}``
+     - Mapping from tokenizer family substring to the training-script path relative to ``megatron_root``. The lib picks the entry whose key matches ``tokenizer_model`` via case-insensitive substring search (first match wins, dict insertion order).
 
 ``dataset_source/container_config``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

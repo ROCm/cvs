@@ -5,10 +5,19 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import inspect
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from cvs.lib.parallel.pssh import Pssh
+from cvs.lib.parallel.interfaces import ShardableSshInterface
+
+
+# Dynamically discover supported operations from ABC (computed once at import time)
+
+SUPPORTED_OPERATIONS = {
+    name for name, method in inspect.getmembers(ShardableSshInterface) if getattr(method, '__isabstractmethod__', False)
+}
 
 
 class PsshSharder:
@@ -74,6 +83,8 @@ class PsshSharder:
         """
         Run an SSH operation on a shard of hosts (must be picklable for multiprocessing).
 
+        Dynamically supports all abstract methods defined in ShardableSshInterface.
+
         Args:
             payload: Dict with 'operation' (operation type), 'init' (SSH setup), and operation args
 
@@ -84,29 +95,35 @@ class PsshSharder:
         if not isinstance(operation, str):
             raise TypeError('payload["operation"] must be str, got %r' % (type(operation),))
 
+        # Validate operation is supported by ABC
+        if operation not in SUPPORTED_OPERATIONS:
+            raise ValueError(f'Unknown operation: {operation}. Supported: {sorted(SUPPORTED_OPERATIONS)}')
+
         # Create SSH client for this shard of hosts
         init_kwargs = payload['init']
         init_kwargs['process_output'] = False  # Force raw output mode for sharding
         shard = Pssh(**init_kwargs)
 
         try:
-            # Direct operation calls - no registry needed!
-            if operation == 'exec':
-                result = shard.exec(payload['cmd'], timeout=payload.get('timeout'), print_console=False)
-            elif operation == 'cmd_list':
-                result = shard.exec_cmd_list(
-                    payload['cmd_list'],
-                    timeout=payload.get('timeout'),
-                    print_console=False,
-                )
-            elif operation == 'scp':
-                shard.scp_file(payload['local_file'], payload['remote_file'], recurse=payload.get('recurse', False))
+            # Ensure method exists in Pssh
+            if not hasattr(shard, operation):
+                raise RuntimeError(f'Method {operation} not found in Pssh class')
+
+            shard_method = getattr(shard, operation)
+
+            # Extract operation arguments from payload (excluding 'operation' and 'init')
+            args = {k: v for k, v in payload.items() if k not in ['operation', 'init']}
+
+            # Add common parameters for operations that support them
+            if operation in ['exec', 'exec_cmd_list']:
+                args['print_console'] = False  # Always False for sharded operations
+
+            # Call the method dynamically
+            result = shard_method(**args)
+
+            # Handle operations that should return None (void operations)
+            if operation in ['upload_file', 'reboot_connections']:
                 result = None
-            elif operation == 'reboot':
-                shard.reboot_connections()
-                result = None
-            else:
-                raise ValueError(f'Unknown operation: {operation}')
 
             return {
                 'result': result,

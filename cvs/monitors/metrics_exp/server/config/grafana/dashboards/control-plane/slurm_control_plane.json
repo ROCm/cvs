@@ -1,0 +1,466 @@
+{
+  "uid": "slurm-control-plane",
+  "title": "Slurm Control Plane",
+  "tags": ["control-plane", "slurm", "hpc"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "control_node_group",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(slurm_nodes_total, control_node_group)",
+        "refresh": 2,
+        "multi": false,
+        "includeAll": false,
+        "label": "Control Node Group"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Cluster Compute Overview (compute nodes — NOT the head node)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total Compute Nodes",
+      "description": "Total compute nodes managed by this Slurm cluster",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "targets": [{ "expr": "slurm_nodes_total{control_node_group=\"$control_node_group\"}", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Running Jobs",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "targets": [{ "expr": "slurm_jobs_state{control_node_group=\"$control_node_group\",state=\"running\"}", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Pending Jobs",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "targets": [{ "expr": "slurm_jobs_state{control_node_group=\"$control_node_group\",state=\"pending\"}", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "yellow" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Compute CPU Util %",
+      "description": "% of COMPUTE NODE CPUs used by actively running jobs. This is cluster-wide utilization across all compute nodes — NOT the head node CPU (head node is always near 0% because it only runs slurmctld, not compute jobs).",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "targets": [{ "expr": "100 * slurm_running_cpus{control_node_group=\"$control_node_group\"} / clamp_min(slurm_cpus_total{control_node_group=\"$control_node_group\"}, 1)", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 90 }]
+          }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Running CPUs",
+      "description": "Total CPUs actively used by running jobs across all compute nodes",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "targets": [{ "expr": "slurm_running_cpus{control_node_group=\"$control_node_group\"}", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Total Cluster CPUs",
+      "description": "Total CPUs available across all compute nodes",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "targets": [{ "expr": "slurm_cpus_total{control_node_group=\"$control_node_group\"}", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Head Node Health (the slurmctld server — CPU near 0% is normal, it does not run compute jobs)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "slurmctld",
+      "description": "slurmctld reachability via scontrol ping — works from login nodes",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 6 },
+      "targets": [{ "expr": "slurm_slurmctld_up{control_node_group=\"$control_node_group\"}", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "slurmdbd",
+      "description": "slurmdbd reachability via sacctmgr",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 6 },
+      "targets": [{ "expr": "slurm_slurmdbd_up{control_node_group=\"$control_node_group\"}", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "id": 101,
+      "type": "stat",
+      "title": "Head Node CPU %",
+      "description": "Head node's own CPU usage. Expected to be near 0% — it only runs slurmctld/slurmdbd, not compute jobs.",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 6 },
+      "targets": [{ "expr": "100 - (avg(irate(node_cpu_seconds_total{control_node_group=\"$control_node_group\",mode=\"idle\"}[5m])) * 100)", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "percent" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 102,
+      "type": "stat",
+      "title": "Head Node Memory %",
+      "description": "Head node's own memory usage",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 6 },
+      "targets": [{ "expr": "100 * (1 - node_memory_MemAvailable_bytes{control_node_group=\"$control_node_group\"} / node_memory_MemTotal_bytes{control_node_group=\"$control_node_group\"})", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 75 }, { "color": "red", "value": 90 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 103,
+      "type": "stat",
+      "title": "Head Node Disk %",
+      "description": "Head node's most-used filesystem",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 6 },
+      "targets": [{ "expr": "max(100 * (1 - node_filesystem_avail_bytes{control_node_group=\"$control_node_group\",fstype!~\"tmpfs|devtmpfs|squashfs\"} / node_filesystem_size_bytes{control_node_group=\"$control_node_group\",fstype!~\"tmpfs|devtmpfs|squashfs\"}))", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 75 }, { "color": "red", "value": 90 }] }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Node States & CPU",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 10 }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Node States Over Time",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        { "expr": "slurm_nodes_state{control_node_group=\"$control_node_group\",state=\"idle\"}", "legendFormat": "Idle" },
+        { "expr": "slurm_nodes_state{control_node_group=\"$control_node_group\",state=\"allocated\"}", "legendFormat": "Allocated" },
+        { "expr": "slurm_nodes_state{control_node_group=\"$control_node_group\",state=\"mixed\"}", "legendFormat": "Mixed" },
+        { "expr": "slurm_nodes_state{control_node_group=\"$control_node_group\",state=\"planned\"}", "legendFormat": "Planned" },
+        { "expr": "slurm_nodes_state{control_node_group=\"$control_node_group\",state=\"drained\"}", "legendFormat": "Drained" },
+        { "expr": "slurm_nodes_state{control_node_group=\"$control_node_group\",state=\"down\"}", "legendFormat": "Down" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "CPU — Running vs Total",
+      "description": "running_cpus = sum of CPUs from actively running jobs only",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        { "expr": "slurm_cpus_total{control_node_group=\"$control_node_group\"}", "legendFormat": "Total CPUs" },
+        { "expr": "slurm_running_cpus{control_node_group=\"$control_node_group\"}", "legendFormat": "Running CPUs" },
+        { "expr": "slurm_cpus_allocated{control_node_group=\"$control_node_group\"}", "legendFormat": "Allocated (alloc+mixed nodes)" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Jobs",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Jobs Over Time",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "targets": [
+        { "expr": "slurm_jobs_state{control_node_group=\"$control_node_group\",state=\"running\"}", "legendFormat": "Running" },
+        { "expr": "slurm_jobs_state{control_node_group=\"$control_node_group\",state=\"pending\"}", "legendFormat": "Pending" },
+        { "expr": "slurm_jobs_state{control_node_group=\"$control_node_group\",state=\"completing\"}", "legendFormat": "Completing" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Slurm Memory Allocated vs Total (MB)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "targets": [
+        { "expr": "slurm_memory_total_mb{control_node_group=\"$control_node_group\"}", "legendFormat": "Total" },
+        { "expr": "slurm_memory_allocated_mb{control_node_group=\"$control_node_group\"}", "legendFormat": "Allocated" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "decmbytes" } }
+    },
+    {
+      "id": 25,
+      "type": "row",
+      "title": "Scheduler Health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Backfill Cycle Time (s)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "targets": [
+        { "expr": "slurm_scheduler_backfill_cycle_last_seconds{control_node_group=\"$control_node_group\"}", "legendFormat": "Last" },
+        { "expr": "slurm_scheduler_backfill_cycle_mean_seconds{control_node_group=\"$control_node_group\"}", "legendFormat": "Mean" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "Active Scheduler Threads",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "targets": [{ "expr": "slurm_scheduler_threads_active{control_node_group=\"$control_node_group\"}", "legendFormat": "Threads" }],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "DBD Agent Queue Size",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "targets": [{ "expr": "slurm_scheduler_dbd_agent_queue_size{control_node_group=\"$control_node_group\"}", "legendFormat": "Queue Size" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1000 }] }
+        }
+      }
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Head Node System Resources (node_exporter)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 }
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Head Node Memory Usage %",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 },
+      "targets": [
+        { "expr": "100 * (1 - node_memory_MemAvailable_bytes{control_node_group=\"$control_node_group\"} / node_memory_MemTotal_bytes{control_node_group=\"$control_node_group\"})", "legendFormat": "{{hostname}} Memory %" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 75 }, { "color": "red", "value": 90 }] }
+        }
+      }
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Head Node Disk Usage %",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
+      "targets": [
+        { "expr": "100 * (1 - node_filesystem_avail_bytes{control_node_group=\"$control_node_group\",fstype!~\"tmpfs|devtmpfs|squashfs\"} / node_filesystem_size_bytes{control_node_group=\"$control_node_group\",fstype!~\"tmpfs|devtmpfs|squashfs\"})", "legendFormat": "{{hostname}} {{mountpoint}}" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 75 }, { "color": "red", "value": 90 }] }
+        }
+      }
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Head Node CPU Usage %",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 41 },
+      "targets": [
+        { "expr": "100 - (avg by (hostname) (irate(node_cpu_seconds_total{control_node_group=\"$control_node_group\",mode=\"idle\"}[5m])) * 100)", "legendFormat": "{{hostname}} CPU %" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    },
+    {
+      "id": 40,
+      "type": "row",
+      "title": "Node Details",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 }
+    },
+    {
+      "id": 41,
+      "type": "table",
+      "title": "Node State Table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 50 },
+      "targets": [{ "expr": "slurm_node_info{control_node_group=\"$control_node_group\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "control_node_group": true },
+          "renameByName": { "node": "Node", "partition": "Partition", "state": "State", "cpus": "CPUs", "memory": "Memory (MB)", "reason": "Reason" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "Node", "desc": false }] },
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto" } } }
+    },
+    {
+      "id": 50,
+      "type": "row",
+      "title": "Job Queue",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 60 }
+    },
+    {
+      "id": 51,
+      "type": "table",
+      "title": "Active Job Queue",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 61 },
+      "targets": [{ "expr": "slurm_job_info{control_node_group=\"$control_node_group\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "control_node_group": true },
+          "renameByName": { "job_id": "Job ID", "name": "Name", "user": "User", "partition": "Partition", "state": "State", "cpus": "CPUs", "time_limit": "Time Limit", "reason": "Reason (if pending)" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "Job ID", "desc": true }] },
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto" } } }
+    },
+    {
+      "id": 54,
+      "type": "piechart",
+      "title": "CPU Distribution by User (Running Jobs)",
+      "description": "Share of cluster CPUs consumed by each user's running jobs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 71 },
+      "targets": [{
+        "expr": "sum by (user) (slurm_job_cpu_count{control_node_group=\"$control_node_group\",state=\"running\"})",
+        "legendFormat": "{{user}}",
+        "instant": true
+      }],
+      "options": {
+        "pieType": "donut",
+        "displayLabels": ["name", "percent"],
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "tooltip": { "mode": "single" }
+      },
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 55,
+      "type": "table",
+      "title": "Top CPU Consumers — Job Detail (Running Jobs)",
+      "description": "Top 20 running jobs by CPU count",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 81 },
+      "targets": [{ "expr": "topk(20, slurm_job_cpu_count{control_node_group=\"$control_node_group\",state=\"running\"})", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "control_node_group": true, "state": true },
+          "renameByName": { "job_id": "Job ID", "name": "Job Name", "user": "User", "partition": "Partition", "Value": "CPUs" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "CPUs", "desc": true }] },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "displayMode": "color-background", "filterable": true },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }, { "color": "orange", "value": 384 }, { "color": "red", "value": 768 }] }
+        }
+      }
+    },
+    {
+      "id": 60,
+      "type": "row",
+      "title": "Partitions",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 79 }
+    },
+    {
+      "id": 61,
+      "type": "table",
+      "title": "Partition Summary",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 80 },
+      "targets": [{ "expr": "slurm_partition_info{control_node_group=\"$control_node_group\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "control_node_group": true },
+          "renameByName": { "partition": "Partition", "state": "State", "nodes": "Nodes", "cpus_total": "CPUs Total", "cpus_alloc": "CPUs Allocated" }
+        }}
+      ],
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto" } } }
+    },
+    {
+      "id": 70,
+      "type": "row",
+      "title": "Recent Completed Jobs (last 24h)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 86 }
+    },
+    {
+      "id": 71,
+      "type": "table",
+      "title": "Recent Jobs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 87 },
+      "targets": [{ "expr": "slurm_recent_job_info{control_node_group=\"$control_node_group\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": {
+          "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "control_node_group": true },
+          "renameByName": { "job_id": "Job ID", "name": "Name", "user": "User", "state": "State", "elapsed": "Elapsed", "exit_code": "Exit Code" }
+        }}
+      ],
+      "options": { "sortBy": [{ "displayName": "Job ID", "desc": true }] },
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto" } } }
+    },
+    {
+      "id": 80,
+      "type": "row",
+      "title": "Logs",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 97 }
+    },
+    {
+      "id": 81,
+      "type": "logs",
+      "title": "slurmctld Logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 98 },
+      "targets": [{
+        "datasource": { "type": "loki", "uid": "loki" },
+        "expr": "{control_node_group=\"$control_node_group\"}"
+      }],
+      "options": { "showTime": true, "showLabels": true, "wrapLogMessage": true }
+    }
+  ]
+}

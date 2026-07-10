@@ -9,6 +9,51 @@ from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.container import ContainerOrchestrator
 
 
+VALID_CONTAINER_LIFETIMES = ("no_launch", "per_run", "persistent")
+
+
+def _resolve_container_lifetime(container):
+    """Normalize a container config block to a single resolved ``lifetime`` key.
+
+    The legacy two-axis schema (``enabled`` + ``launch``) is removed in favor of
+    one tri-valued ``container.lifetime``. Mutates and returns the passed dict.
+
+    Resolution rules (first match wins):
+      - ``enabled`` present (any value) -> ``ValueError`` (removed field).
+      - ``launch`` present (any value)  -> ``ValueError`` (removed field). Both
+        removed fields fail loudly rather than being silently mapped, so a stale
+        flag can never quietly override an explicit ``lifetime``.
+      - ``lifetime`` present            -> validated, kept as-is.
+      - none of the above               -> default ``per_run``.
+
+    An empty/absent container block is returned untouched (baremetal path).
+    """
+    if not container:
+        return container
+
+    if 'enabled' in container:
+        raise ValueError(
+            "container.enabled is removed; delete the field and set "
+            "container.lifetime to one of 'no_launch', 'per_run', 'persistent'"
+        )
+
+    if 'launch' in container:
+        raise ValueError(
+            "container.launch is removed; delete the field and set "
+            "container.lifetime ('launch: true' -> 'per_run', "
+            "'launch: false' -> 'no_launch')"
+        )
+
+    if 'lifetime' in container:
+        lifetime = container['lifetime']
+        if lifetime not in VALID_CONTAINER_LIFETIMES:
+            raise ValueError(f"container.lifetime must be one of {VALID_CONTAINER_LIFETIMES}, got {lifetime!r}")
+        return container
+
+    container['lifetime'] = 'per_run'
+    return container
+
+
 class OrchestratorConfig:
     """
     Configuration for orchestrator creation.
@@ -26,8 +71,7 @@ class OrchestratorConfig:
           Example container configuration:
           ```json
           "container": {
-            "enabled": true,
-            "launch": false,
+            "lifetime": "per_run",
             "runtime": {
               "name": "docker",
               "args": {
@@ -47,7 +91,14 @@ class OrchestratorConfig:
             "name": "myuser_rocm_cvs_latest"
           }
           ```
-          launch: Containers are already running, test suite should not start/stop them [default: false]
+          lifetime: Container lifecycle policy [default: 'per_run']
+            - 'no_launch'  : CVS never launches the container. Setup verifies a
+                             container with the configured name is already running
+                             on every host; teardown is a no-op.
+            - 'per_run'    : start at setup, remove at teardown (the default).
+            - 'persistent' : start if absent / attach if present; never torn down
+                             by the run. Pin container.name explicitly under this
+                             mode (the default <user>_<image> name shifts on tag bumps).
     """
 
     def __init__(self, **kwargs):
@@ -72,7 +123,8 @@ class OrchestratorConfig:
         self.priv_key_file = kwargs['priv_key_file']
         self.password = kwargs.get('password')
         self.head_node_dict = kwargs.get('head_node_dict', {})
-        self.container = kwargs.get('container', {})
+        # Normalize here (not in from_configs) so direct construction is validated too.
+        self.container = _resolve_container_lifetime(kwargs.get('container', {}))
 
     def get(self, key, default=None):
         """Get configuration value with default."""
@@ -84,14 +136,20 @@ class OrchestratorConfig:
         Create config from multiple configuration sources.
 
         Merges cluster_config.json and <testsuite>_config.json configurations, with testsuite_config
-        taking precedence for overlapping keys.
+        taking precedence for overlapping keys. Before merging, the cluster_config is run through
+        cvs.lib.utils_lib.resolve_cluster_config_placeholders to substitute {user-id} and enforce
+        the <changeme> guard on cluster-portion fields (username, priv_key_file, container.*) --
+        unresolved <changeme> tokens in the cluster portion trigger sys.exit(1) at this boundary.
+        testsuite_config is then merged in verbatim; testsuite subsections (transferbench, rvs,
+        agfhc, ...) are resolved later by per-test fixtures (resolve_test_config_placeholders),
+        scoped to the subsection the test actually consumes.
 
         Args:
             cluster_config: Cluster configuration (dict or path to cluster_config.json)
                            Required keys: orchestrator, node_dict, username, priv_key_file
                            Optional keys: container,
                            head_node_dict, password (defaults provided for missing optional keys)
-                           Container structure: {enabled: bool, launch: bool, runtime: {name: str, args: dict}, image: str, name: str, ...}
+                           Container structure: {lifetime: 'no_launch'|'per_run'|'persistent', runtime: {name: str, args: dict}, image: str, name: str, ...}
             testsuite_config: Test suite specific configuration (dict or path to <testsuite>_config.json)
                             Can override any keys from cluster_config
 
@@ -111,7 +169,20 @@ class OrchestratorConfig:
             with open(testsuite_config) as f:
                 testsuite_config = json.load(f)
 
-        # Merge configurations
+        # Resolve {user-id} on the CLUSTER PORTION ONLY, before merging. from_configs only
+        # consumes cluster-portion keys (orchestrator, node_dict, username, priv_key_file,
+        # password, head_node_dict, container). Testsuite subsections (transferbench, rvs,
+        # agfhc, ...) belong to per-test fixtures which do their own subsection-scoped
+        # resolution via resolve_test_config_placeholders. Resolving the merged dict here
+        # would walk testsuite subsections that use <changeme> as a legitimate auto-detect
+        # sentinel (e.g. transferbench.rocm_path), causing cross-subsection guard trips on
+        # tests that don't even use that subsection.
+        from cvs.lib.utils_lib import (
+            resolve_cluster_config_placeholders,
+        )  # Lazy: avoids core->lib import at module load
+
+        cluster_config = resolve_cluster_config_placeholders(cluster_config)
+
         merged_config = cluster_config.copy()
         if testsuite_config:
             merged_config.update(testsuite_config)

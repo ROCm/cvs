@@ -15,7 +15,8 @@ class ExecPlugin(SubcommandPlugin):
         parser = subparsers.add_parser("exec", help="Execute a command on all nodes in the cluster")
         parser.add_argument("--cmd", required=True, help="Command to execute on all nodes")
         parser.add_argument(
-            "--cluster_file", help="Path to cluster configuration JSON file (overrides CLUSTER_FILE env var)"
+            "--cluster_file",
+            help="Path to cluster configuration JSON file (takes precedence over CLUSTER_FILE env var)",
         )
         parser.set_defaults(_plugin=self)
         return parser
@@ -24,11 +25,12 @@ class ExecPlugin(SubcommandPlugin):
         return """
 Exec Commands:
   cvs exec --cmd "hostname" --cluster_file cluster.json    Execute hostname on all nodes
-  CLUSTER_FILE=cluster.json cvs exec --cmd "hostname"      Use env var for cluster file"""
+  CLUSTER_FILE=cluster.json cvs exec --cmd "hostname"      Use env var for cluster file (fallback)"""
 
     def run(self, args):
-        # Determine cluster file: env var takes precedence, then --cluster_file
-        cluster_file = os.environ.get('CLUSTER_FILE') or args.cluster_file
+        # CLI flag wins; env var is the fallback. Matches cvs scp and
+        # cvs monitor check_cluster_health for consistency.
+        cluster_file = args.cluster_file or os.environ.get('CLUSTER_FILE')
         if not cluster_file:
             print("Error: No cluster file specified. Set CLUSTER_FILE environment variable or use --cluster_file.")
             sys.exit(1)
@@ -62,8 +64,9 @@ Exec Commands:
 
         # Create Pssh instance (Pssh requires a logger; it calls log.debug/info/warning)
         log = logging.getLogger(__name__)
+        env_vars = cluster.get('env_vars')
         try:
-            pssh = Pssh(log=log, host_list=hosts, user=username, pkey=pkey, stop_on_errors=False)
+            pssh = Pssh(log=log, host_list=hosts, user=username, pkey=pkey, stop_on_errors=False, env_vars=env_vars)
         except Exception as e:
             print(f"Error initializing Pssh: {e}")
             sys.exit(1)

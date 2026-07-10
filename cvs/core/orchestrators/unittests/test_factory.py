@@ -15,12 +15,15 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
+from cvs.core.orchestrators.factory import (
+    OrchestratorConfig,
+    OrchestratorFactory,
+)
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.core.orchestrators.container import ContainerOrchestrator
 
 
-def _make_orch_config(orchestrator="baremetal", with_container=False, launch=False, enabled=True):
+def _make_orch_config(orchestrator="baremetal", with_container=False, lifetime="per_run"):
     """Minimal OrchestratorConfig that satisfies BaremetalOrchestrator and (optionally)
     ContainerOrchestrator __init__ without touching disk or SSH."""
     kwargs = dict(
@@ -34,8 +37,7 @@ def _make_orch_config(orchestrator="baremetal", with_container=False, launch=Fal
     )
     if with_container or orchestrator == "container":
         kwargs["container"] = {
-            "enabled": enabled,
-            "launch": launch,
+            "lifetime": lifetime,
             "image": "rocm/cvs:test",
             "name": "cvs_iter_test",
             "runtime": {"name": "docker", "args": {}},
@@ -127,14 +129,16 @@ class TestOrchestratorConfig(unittest.TestCase):
             )
         self.assertIn("priv_key_file", str(ctx.exception))
 
+    @patch.dict(os.environ, {"USER": "alice", "LOGNAME": "", "USERNAME": ""}, clear=False)
     def test_from_configs_reads_from_file_path(self):
         # Round-trip a real JSON file through from_configs to exercise the
         # path-handling branch (the rvs_cvs.py orch fixture goes through this).
+        # Also pins that {user-id} placeholders are resolved when input came from disk.
         cluster = {
             "orchestrator": "baremetal",
             "node_dict": {"1.1.1.1": {}, "1.1.1.2": {}},
-            "username": "u",
-            "priv_key_file": "/dev/null",
+            "username": "{user-id}",
+            "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
         }
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(cluster, f)
@@ -143,8 +147,110 @@ class TestOrchestratorConfig(unittest.TestCase):
             cfg = OrchestratorConfig.from_configs(path)
             self.assertEqual(cfg.orchestrator, "baremetal")
             self.assertEqual(len(cfg.node_dict), 2)
+            self.assertEqual(cfg.username, "alice")
+            self.assertEqual(cfg.priv_key_file, "/home/alice/.ssh/id_rsa")
         finally:
             os.unlink(path)
+
+    # ------------------------------------------------------------------
+    # Placeholder resolution at the from_configs boundary.
+    #
+    # Pins that {user-id} in the cluster file (and any merged testsuite
+    # overrides) is substituted before the values reach BaremetalOrchestrator /
+    # Pssh / docker run. Env is patched so the substituted value is
+    # deterministic regardless of host $USER (CI / sudo / containers).
+    # ------------------------------------------------------------------
+
+    @patch.dict(os.environ, {"USER": "alice", "LOGNAME": "", "USERNAME": ""}, clear=False)
+    def test_from_configs_resolves_user_id_in_username_and_priv_key(self):
+        cluster = {
+            "node_dict": {"1.1.1.1": {}},
+            "username": "{user-id}",
+            "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+        }
+        cfg = OrchestratorConfig.from_configs(cluster)
+        self.assertEqual(cfg.username, "alice")
+        self.assertEqual(cfg.priv_key_file, "/home/alice/.ssh/id_rsa")
+
+    @patch.dict(os.environ, {"USER": "alice", "LOGNAME": "", "USERNAME": ""}, clear=False)
+    def test_from_configs_resolves_user_id_throughout_container_block(self):
+        # The recursive walk must descend into container at every nesting shape:
+        # top-level string scalar (image, name), and list item under a nested dict
+        # (runtime.args.volumes).
+        cluster = {
+            "orchestrator": "container",
+            "node_dict": {"1.1.1.1": {}},
+            "username": "{user-id}",
+            "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+            "container": {
+                "lifetime": "per_run",
+                "image": "rocm/{user-id}:test",
+                "name": "{user-id}_cvs",
+                "runtime": {
+                    "name": "docker",
+                    "args": {"volumes": ["/home/{user-id}/data:/data"]},
+                },
+            },
+        }
+        cfg = OrchestratorConfig.from_configs(cluster)
+        self.assertEqual(cfg.container["image"], "rocm/alice:test")
+        self.assertEqual(cfg.container["name"], "alice_cvs")
+        self.assertEqual(
+            cfg.container["runtime"]["args"]["volumes"],
+            ["/home/alice/data:/data"],
+        )
+
+    @patch.dict(os.environ, {"USER": "alice", "LOGNAME": "", "USERNAME": ""}, clear=False)
+    def test_from_configs_does_not_resolve_user_id_in_testsuite(self):
+        # Pins the new contract: from_configs runs placeholder resolution on
+        # cluster_config BEFORE the merge, so testsuite-side values pass through
+        # verbatim. Placeholder resolution for testsuite subsections is the per-
+        # test config_dict fixture's responsibility (resolve_test_config_placeholders),
+        # which is scoped to the subsection the test consumes. Resolving the merged
+        # dict at from_configs would walk testsuite subsections and trip the
+        # <changeme> guard on legit auto-detect sentinels (transferbench.rocm_path,
+        # rvs.path) belonging to tests that don't even use that subsection.
+        cluster = {
+            "node_dict": {"1.1.1.1": {}},
+            "username": "literal_user",
+            "priv_key_file": "/dev/null",
+        }
+        testsuite = {"username": "{user-id}"}
+        cfg = OrchestratorConfig.from_configs(cluster, testsuite)
+        self.assertEqual(cfg.username, "{user-id}")
+
+    def test_from_configs_exits_on_unresolved_changeme(self):
+        # Pins that the resolver's <changeme> guard propagates through from_configs
+        # for the cluster portion. Defends against a future change that disables
+        # the guard and silently leaks <changeme> into Pssh / docker run.
+        cluster = {
+            "node_dict": {"1.1.1.1": {}},
+            "username": "<changeme>",
+            "priv_key_file": "/dev/null",
+        }
+        with self.assertRaises(SystemExit) as ctx:
+            OrchestratorConfig.from_configs(cluster)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_from_configs_does_not_trip_changeme_in_testsuite(self):
+        # Regression test for the orch-fixture <changeme> regression: testsuite
+        # subsections (transferbench, rvs, ...) legitimately use <changeme> as a
+        # soft auto-detect sentinel for rocm_path / path. The per-test fixture
+        # (and detect_rocm_path) handles it. from_configs must NOT walk the
+        # testsuite subsections through the <changeme>-strict resolver -- the old
+        # behaviour caused cross-subsection guard trips (e.g. running rvs_cvs
+        # tripped on transferbench.rocm_path: <changeme>).
+        cluster = {
+            "node_dict": {"1.1.1.1": {}},
+            "username": "literal_user",
+            "priv_key_file": "/dev/null",
+        }
+        testsuite = {
+            "transferbench": {"rocm_path": "<changeme>"},
+            "rvs": {"path": "<changeme>/bin", "rocm_path": "<changeme>"},
+        }
+        cfg = OrchestratorConfig.from_configs(cluster, testsuite)
+        self.assertEqual(cfg.username, "literal_user")
 
 
 if __name__ == "__main__":
