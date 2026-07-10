@@ -618,6 +618,29 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         return self.runtime.exec(self.container_id, cmd, hosts, timeout, detailed)
 
+    def exec_cmd_list(self, cmd_list, timeout=None):
+        """
+        Execute different commands on different hosts inside the container.
+
+        Each cmd_list[i] runs inside the container on hosts[i] — the parallel
+        per-host equivalent of exec(). Positional correspondence between
+        cmd_list and the orchestrator's host list is the caller's responsibility.
+
+        Args:
+            cmd_list: List of commands, one per host in host order
+            timeout: Command timeout
+
+        Returns:
+            Dictionary mapping hosts to execution results
+
+        Raises:
+            RuntimeError: If no containers are currently running
+        """
+        if not self.container_id:
+            raise RuntimeError("No containers running. Call setup_containers() first.")
+
+        return self.runtime.exec_cmd_list(self.container_id, cmd_list, timeout)
+
     def exec_on_head(self, cmd, timeout=None):
         """
         Execute command directly on head node (baremetal).
