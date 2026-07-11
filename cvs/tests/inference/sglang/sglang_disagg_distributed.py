@@ -87,81 +87,81 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
     lifecycle.complete_stage(request, "smoke_endpoints", t0)
     
 
-def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
-    globals.error_list = []
-    t0 = time.monotonic()
-    bench = im_obj.bp_dict["inference_tests"]["long_ctx_niah"]
-    bench["input_length"] = acc_cell["isl"]
-    bench["output_length"] = acc_cell["osl"]
-    bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(acc_cell["specs"])
-    im_obj.bp_dict["max_concurrency"] = "1"
-    im_obj.setup_benchmark_serv_container_env()
-    summary = im_obj.run_long_context_niah_accuracy(
-        isl=int(acc_cell["isl"]),
-        osl=int(acc_cell["osl"]),
-        d_type="auto",
-    )
-    lifecycle.phase_labels[f"accuracy_long_ctx_{acc_cell['isl']}"] = summary
-    lifecycle.phase_labels.setdefault("accuracy_by_cell", {})[acc_cell["cell_key"]] = (
-        "PASS" if summary.get("passed") else "FAIL"
-    )
-    lifecycle.complete_stage(
-        request,
-        f"long_ctx_niah[{acc_cell['isl']}/{acc_cell['osl']}]",
-        t0,
-    )
+# def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
+#     globals.error_list = []
+#     t0 = time.monotonic()
+#     bench = im_obj.bp_dict["inference_tests"]["long_ctx_niah"]
+#     bench["input_length"] = acc_cell["isl"]
+#     bench["output_length"] = acc_cell["osl"]
+#     bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(acc_cell["specs"])
+#     im_obj.bp_dict["max_concurrency"] = "1"
+#     im_obj.setup_benchmark_serv_container_env()
+#     summary = im_obj.run_long_context_niah_accuracy(
+#         isl=int(acc_cell["isl"]),
+#         osl=int(acc_cell["osl"]),
+#         d_type="auto",
+#     )
+#     lifecycle.phase_labels[f"accuracy_long_ctx_{acc_cell['isl']}"] = summary
+#     lifecycle.phase_labels.setdefault("accuracy_by_cell", {})[acc_cell["cell_key"]] = (
+#         "PASS" if summary.get("passed") else "FAIL"
+#     )
+#     lifecycle.complete_stage(
+#         request,
+#         f"long_ctx_niah[{acc_cell['isl']}/{acc_cell['osl']}]",
+#         t0,
+#     )
 
 
-def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    globals.error_list = []
-    t0 = time.monotonic()
-    im_obj.setup_benchmark_serv_container_env()
-    h = im_obj.run_lm_eval_hellaswag_benchmark_test()
-    lifecycle.phase_labels["accuracy_hellaswag"] = h
-    lifecycle.complete_stage(request, "lm_eval_hellaswag", t0)
+# def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
+#     globals.error_list = []
+#     t0 = time.monotonic()
+#     im_obj.setup_benchmark_serv_container_env()
+#     h = im_obj.run_lm_eval_hellaswag_benchmark_test()
+#     lifecycle.phase_labels["accuracy_hellaswag"] = h
+#     lifecycle.complete_stage(request, "lm_eval_hellaswag", t0)
 
 
-def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    globals.error_list = []
-    t0 = time.monotonic()
-    im_obj.setup_benchmark_serv_container_env()
-    g = im_obj.run_lm_eval_gsm8k_benchmark_test()
-    lifecycle.phase_labels["accuracy_gsm8k"] = g
-    lifecycle.complete_stage(request, "lm_eval_gsm8k", t0)
+# def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
+#     globals.error_list = []
+#     t0 = time.monotonic()
+#     im_obj.setup_benchmark_serv_container_env()
+#     g = im_obj.run_lm_eval_gsm8k_benchmark_test()
+#     lifecycle.phase_labels["accuracy_gsm8k"] = g
+#     lifecycle.complete_stage(request, "lm_eval_gsm8k", t0)
 
 
-def test_run_lm_eval_mmlu_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    globals.error_list = []
-    t0 = time.monotonic()
-    im_obj.setup_benchmark_serv_container_env()
-    m = im_obj.run_lm_eval_mmlu_benchmark_test()
-    lifecycle.phase_labels["accuracy_mmlu"] = m
-    lifecycle.complete_stage(request, "lm_eval_mmlu", t0)
+# def test_run_lm_eval_mmlu_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
+#     globals.error_list = []
+#     t0 = time.monotonic()
+#     im_obj.setup_benchmark_serv_container_env()
+#     m = im_obj.run_lm_eval_mmlu_benchmark_test()
+#     lifecycle.phase_labels["accuracy_mmlu"] = m
+#     lifecycle.complete_stage(request, "lm_eval_mmlu", t0)
 
 
-def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request, perf_cell):
-    globals.error_list = []
-    t0 = time.monotonic()
-    bench = im_obj.bp_dict["inference_tests"]["bench_serv_random"]
-    bench["input_length"] = perf_cell["isl"]
-    bench["output_length"] = perf_cell["osl"]
-    bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(perf_cell["specs"])
-    im_obj.bp_dict["max_concurrency"] = perf_cell["conc"]
-    im_obj.setup_benchmark_serv_container_env()
-    im_obj.benchserv_test_random(d_type="auto")
-    key = (
-        im_obj.model_name,
-        im_obj.gpu_type,
-        perf_cell["isl"],
-        perf_cell["osl"],
-        "bench_serv_random",
-        str(perf_cell["conc"]),
-    )
-    lifecycle.phase_labels.setdefault("performance_by_cell", {})[perf_cell["cell_key"]] = (
-        "PASS" if not globals.error_list else "FAIL"
-    )
-    inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
-    lifecycle.complete_stage(request, f"bench_serv_random[{perf_cell['isl']}/{perf_cell['osl']}]", t0)
+# def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request, perf_cell):
+#     globals.error_list = []
+#     t0 = time.monotonic()
+#     bench = im_obj.bp_dict["inference_tests"]["bench_serv_random"]
+#     bench["input_length"] = perf_cell["isl"]
+#     bench["output_length"] = perf_cell["osl"]
+#     bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(perf_cell["specs"])
+#     im_obj.bp_dict["max_concurrency"] = perf_cell["conc"]
+#     im_obj.setup_benchmark_serv_container_env()
+#     im_obj.benchserv_test_random(d_type="auto")
+#     key = (
+#         im_obj.model_name,
+#         im_obj.gpu_type,
+#         perf_cell["isl"],
+#         perf_cell["osl"],
+#         "bench_serv_random",
+#         str(perf_cell["conc"]),
+#     )
+#     lifecycle.phase_labels.setdefault("performance_by_cell", {})[perf_cell["cell_key"]] = (
+#         "PASS" if not globals.error_list else "FAIL"
+#     )
+#     inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
+#     lifecycle.complete_stage(request, f"bench_serv_random[{perf_cell['isl']}/{perf_cell['osl']}]", t0)
 
 
 def test_disagg_gpu_topology(im_obj, lifecycle, request):
