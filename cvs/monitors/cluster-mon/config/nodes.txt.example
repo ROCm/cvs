@@ -1,0 +1,8 @@
+# Cluster nodes — one hostname or IP per line.
+# Lines starting with # are ignored.
+# Copy this file to nodes.txt and add your nodes.
+#
+# Examples:
+#   gpu-node-01
+#   gpu-node-02
+#   192.168.1.10

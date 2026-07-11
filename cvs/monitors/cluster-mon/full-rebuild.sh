@@ -45,12 +45,12 @@ echo ""
 
 # Step 4: Initialize configuration with current user
 echo "Step 4: Initializing configuration..."
+mkdir -p config
+
 if [ ! -f "config/cluster.yaml" ]; then
     echo "Creating cluster.yaml from template..."
     cp config/cluster.yaml.example config/cluster.yaml
-    # Update username to actual user
-    sed -i "s/your_username/$ACTUAL_USER/g" config/cluster.yaml
-    echo "✓ cluster.yaml created with username: $ACTUAL_USER"
+    echo "✓ cluster.yaml created"
 else
     echo "✓ cluster.yaml already exists"
 fi
@@ -85,7 +85,7 @@ echo ""
 echo "Step 8: Detecting API URL..."
 
 # Now detect port (after container is running)
-HOST_PORT=$(sudo docker compose port "$CONTAINER_NAME" 8005 2>/dev/null | cut -d: -f2)
+HOST_PORT=$(sudo docker compose port "$CONTAINER_NAME" 8001 2>/dev/null | cut -d: -f2)
 if [ -z "$HOST_PORT" ]; then
     HOST_PORT="8005"  # Fallback default
 fi

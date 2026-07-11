@@ -1,0 +1,32 @@
+cluster:
+  ssh:
+    username: root
+    key_file: ~/.ssh/id_rsa
+    # password: ""           # Set via web UI — never store in this file
+    timeout: 30
+    jump_host:
+      enabled: false
+      host: jumphost.example.com
+      username: root
+      key_file: ~/.ssh/id_rsa
+      node_username: root
+      node_key_file: ~/.ssh/id_rsa
+
+  polling:
+    interval: 60
+    batch_size: 10
+    stagger_delay: 2
+    failure_threshold: 2
+
+  alerts:
+    gpu_temp_threshold: 85.0
+    gpu_util_threshold: 95.0
+
+  rccl:
+    ras_port: 28028
+    poll_interval: 30
+    collective_timeout_secs: 10
+    inspector:
+      enabled: false
+      mode: file
+      poll_interval: 30
