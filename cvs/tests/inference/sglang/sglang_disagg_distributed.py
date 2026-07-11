@@ -182,10 +182,10 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
     _print(inf_res_dict, lifecycle)
 
 
-def test_teardown(orch, lifecycle, request):
-    """Final stage: tear down containers and logs. Runs even if a prior stage failed."""
-    t0 = time.monotonic()
-    orch.teardown_containers()
-    orch.cleanup_log_dir()
-    lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t0)
-    lifecycle.torn_down = True
+# def test_teardown(orch, lifecycle, request):
+#     """Final stage: tear down containers and logs. Runs even if a prior stage failed."""
+#     t0 = time.monotonic()
+#     orch.teardown_containers()
+#     orch.cleanup_log_dir()
+#     lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t0)
+#     lifecycle.torn_down = True
