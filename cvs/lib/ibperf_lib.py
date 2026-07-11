@@ -85,6 +85,12 @@ def check_perftest_dmabuf_support(shdl, binary_path, head_node):
     cmd = f'{binary_path} --help 2>&1 | grep use_rocm_dmabuf | wc -l'
     log.info("Checking dmabuf support: %s", cmd)
     dmabuf_available = False
+
+    # if head_node is None, that would be a programming error
+    # but we still cover the edge case
+    if head_node is None:
+        log.warning("ibperf dmabuf check failed: head_node is None, check programming and re-run")
+        return dmabuf_available
     try:
         dmabuf_check_out = shdl.exec(cmd)
         dmabuf_available = int(dmabuf_check_out[head_node].strip()) > 0
@@ -234,7 +240,10 @@ def run_ib_perf_bw_test(
         log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
         phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
     server_addr = None
-    head_node = cluster_node_list[0]
+
+    # if cluster_node_list is None that would be programming error
+    if cluster_node_list:
+        head_node = cluster_node_list[0]
     dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{bw_test}', head_node)
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
@@ -343,7 +352,9 @@ def run_ib_perf_lat_test(
         log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
         phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
     server_addr = None
-    head_node = cluster_node_list[0]
+    # if cluster_node_list is None that would be programming error
+    if cluster_node_list:
+        head_node = cluster_node_list[0]
     dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{lat_test}', head_node)
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
