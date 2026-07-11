@@ -27,15 +27,27 @@ build/
 *.pid
 backend_wrapper.log
 
-# Config (with secrets)
-config/cluster.yaml
-config/nodes.txt
+# Config directory (contains IPs, hostnames, and access info)
+# Only keep .example files
+config/*
+!config/*.example
+
+# Environment files
 .env
+.env.*
 !.env.example
+backend/.env
+!backend/.env.example
 
 # SSH keys (never commit!)
 .ssh-temp/
 ssh-keys/
+*.pem
+*.key
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
 
 # IDE
 .vscode/
@@ -85,3 +97,6 @@ wheels/
 
 # Local development
 *.local
+
+# Claude Code session files
+.claude/

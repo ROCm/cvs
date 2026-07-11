@@ -207,6 +207,21 @@ function NodeGroupsCard() {
   const [pollInterval, setPollInterval] = useState(120)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [jumpKeyUploadMsg, setJumpKeyUploadMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const handleJumpKeyUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      await api.uploadSshKey(file)
+      const path = `/root/.ssh/${file.name}`
+      setJump({ ...jump, keyFile: path })
+      setJumpKeyUploadMsg({ ok: true, text: `Key '${file.name}' uploaded → ${path}` })
+    } catch (err: any) {
+      setJumpKeyUploadMsg({ ok: false, text: `Upload failed: ${err.message}` })
+    }
+    e.target.value = ''
+  }
 
   // Pre-populate: try node_groups config first, fall back to existing cluster config
   useEffect(() => {
@@ -465,23 +480,33 @@ function NodeGroupsCard() {
               </div>
               <div>
                 {jump.authMethod === 'key' ? (
-                  <>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      Key File Path{' '}
-                      <span className="text-xs text-gray-500 font-normal">(on jump host)</span>
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Private Key <span className="text-xs text-gray-500 font-normal">(for authenticating to jump host)</span>
                     </label>
+                    {/* Upload button */}
+                    <label className="flex items-center gap-2 cursor-pointer w-fit px-3 py-1.5 border border-dashed border-blue-400 dark:border-blue-600 rounded-lg text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
+                      <Upload className="h-3.5 w-3.5" />
+                      Upload key file
+                      <input type="file" className="hidden" onChange={handleJumpKeyUpload} />
+                    </label>
+                    {jumpKeyUploadMsg && (
+                      <p className={`text-xs ${jumpKeyUploadMsg.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                        {jumpKeyUploadMsg.text}
+                      </p>
+                    )}
+                    {/* Path input */}
                     <input
                       type="text"
                       value={jump.keyFile}
-                      placeholder="~/.ssh/id_rsa"
+                      placeholder="/root/.ssh/jumphost.pem"
                       className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-mono bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
                       onChange={e => setJump({ ...jump, keyFile: e.target.value })}
                     />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Path to the SSH private key <strong>on the jump host</strong> used to reach cluster nodes.
-                      The daemon fetches it via SFTP — it is never written into this container.
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Upload auto-fills this path. The key is stored inside the container.
                     </p>
-                  </>
+                  </div>
                 ) : (
                   <>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -490,7 +515,7 @@ function NodeGroupsCard() {
                     <input
                       type="password"
                       value={jump.password}
-                      placeholder="In-memory only"
+                      placeholder="In-memory only — re-enter after restart"
                       className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-blue-500"
                       onChange={e => setJump({ ...jump, password: e.target.value })}
                     />

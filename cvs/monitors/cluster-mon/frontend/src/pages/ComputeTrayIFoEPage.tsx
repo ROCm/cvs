@@ -11,7 +11,7 @@ import { useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { CustomDataTable } from '@/components/ui/DataTable'
-import { useIFoEData } from '@/hooks/useIFoEData'
+import { useIFoEData, PPODVPODData } from '@/hooks/useIFoEData'
 import {
   DonutChart, GroupedBarChart, VerticalBarChart, COLORS, shortName, compactNum,
 } from '@/components/charts/ClusterCharts'
@@ -29,9 +29,220 @@ function portDotColor(portUp: boolean, stationGloballyUsable: boolean): string {
   return '#f59e0b'                              // amber — up but not matched everywhere
 }
 
-function IFoEStationMap({ computePorts }: { computePorts: Record<string, Record<string, any>[]> }) {
-  const trays = Object.keys(computePorts).sort()
+// ---------------------------------------------------------------------------
+// Bitmap-based port coloring (from lane_en_bitmap sysfs)
+// Each hex digit represents one station (2 ports):
+//   f = both UP, 0 = both DOWN, c = P1 UP/P0 DOWN, 3 = P0 UP/P1 DOWN
+// ---------------------------------------------------------------------------
+
+interface BitmapPortColors {
+  port0: string
+  port1: string
+}
+
+function getBitmapColor(hexDigit: string): BitmapPortColors {
+  const digit = hexDigit.toLowerCase()
+  switch (digit) {
+    case 'f': return { port0: '#22c55e', port1: '#22c55e' }  // Both green
+    case '0': return { port0: '#ef4444', port1: '#ef4444' }  // Both red
+    case 'c': return { port0: '#ef4444', port1: '#22c55e' }  // P0 down, P1 up (green)
+    case '3': return { port0: '#22c55e', port1: '#ef4444' }  // P0 up (green), P1 down
+    // Partial states (other hex values)
+    case '7': return { port0: '#22c55e', port1: '#f59e0b' }  // P0 full, P1 partial
+    case 'b': return { port0: '#f59e0b', port1: '#22c55e' }  // P0 partial, P1 full
+    case 'e': return { port0: '#f59e0b', port1: '#22c55e' }  // P0 partial, P1 full
+    case 'd': return { port0: '#22c55e', port1: '#f59e0b' }  // P0 full, P1 partial
+    default:  return { port0: '#d1d5db', port1: '#d1d5db' }  // Gray (unknown/no data)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PPOD/VPOD Topology View
+// ---------------------------------------------------------------------------
+
+function PPODTopologyView({
+  ppodVpodData,
+  computePorts,
+}: {
+  ppodVpodData: Record<string, PPODVPODData>
+  computePorts: Record<string, Record<string, any>[]>
+}) {
+  const trays = Object.keys(ppodVpodData).sort()
   if (!trays.length) return null
+
+  // Group trays by PPOD ID
+  const ppodGroups: Record<string, string[]> = {}
+  const notAdmitted: string[] = []
+
+  for (const tray of trays) {
+    const data = ppodVpodData[tray]
+    const ppodId = data?.ppod_id
+    if (ppodId && ppodId !== 'N/A') {
+      if (!ppodGroups[ppodId]) ppodGroups[ppodId] = []
+      ppodGroups[ppodId].push(tray)
+    } else {
+      notAdmitted.push(tray)
+    }
+  }
+
+  // Within each PPOD, group trays by VPOD ID
+  const buildVPODGroups = (traysInPPOD: string[]): Record<number | 'none', string[]> => {
+    const groups: Record<number | 'none', string[]> = {}
+    for (const tray of traysInPPOD) {
+      const data = ppodVpodData[tray]
+      // Take first VPOD ID (all GPUs on a tray typically share the same VPOD)
+      const vpodId = data?.vpod_ids?.[0]
+      const key = vpodId !== undefined && vpodId >= 0 ? vpodId : 'none'
+      if (!groups[key]) groups[key] = []
+      groups[key].push(tray)
+    }
+    return groups
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">
+          PPOD/VPOD Topology
+          <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
+            Physical and Virtual Pod structure (AFM-admitted trays)
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Legend */}
+        <div className="flex gap-5 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded bg-blue-500" />
+            <span>PPOD (Physical Pod / Rack)</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded bg-green-500" />
+            <span>VPOD (Virtual Pod / Partition)</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded bg-gray-400" />
+            <span>Not AFM-Admitted</span>
+          </div>
+        </div>
+
+        {/* PPOD cards */}
+        {Object.entries(ppodGroups).map(([ppodId, traysInPPOD]) => {
+          const vpodGroups = buildVPODGroups(traysInPPOD)
+          return (
+            <div key={ppodId} className="border-2 border-blue-300 dark:border-blue-700 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <div className="w-3 h-3 rounded bg-blue-500 flex-shrink-0" />
+                <span className="text-sm font-semibold text-blue-700 dark:text-blue-300">
+                  PPOD: <span className="font-mono text-xs break-all">{ppodId}</span>
+                </span>
+                <span className="text-xs text-gray-500">
+                  ({traysInPPOD.length} tray{traysInPPOD.length > 1 ? 's' : ''})
+                </span>
+              </div>
+
+              <div className="space-y-2 ml-4">
+                {Object.entries(vpodGroups)
+                  .sort(([a], [b]) => (a === 'none' ? 1 : b === 'none' ? -1 : Number(a) - Number(b)))
+                  .map(([vpodId, traysInVPOD]) => (
+                    <div key={vpodId} className="border border-green-300 dark:border-green-700 rounded-lg p-2 bg-green-50 dark:bg-green-900/20">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-2.5 h-2.5 rounded bg-green-500" />
+                        <span className="text-xs font-semibold text-green-700 dark:text-green-300">
+                          {vpodId === 'none' ? 'No VPOD' : `VPOD ${vpodId}`}
+                        </span>
+                      </div>
+                      <div className="space-y-1 ml-3">
+                        {traysInVPOD.map(tray => {
+                          const data = ppodVpodData[tray]
+                          const portCount = (computePorts[tray] ?? []).length
+                          const hostname = data?.hostname
+                          return (
+                            <div key={tray} className="flex items-center gap-3 text-xs flex-wrap">
+                              <span className="font-mono text-gray-700 dark:text-gray-300">
+                                {tray}
+                                {hostname && <span className="text-gray-500 ml-1">({hostname})</span>}
+                              </span>
+                              {data?.local_accels?.length > 0 && (
+                                <span className="text-gray-500">
+                                  Accels: <span className="font-mono">{data.local_accels.join(', ')}</span>
+                                </span>
+                              )}
+                              <span className="text-gray-400">
+                                {portCount} port{portCount !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )
+        })}
+
+        {/* Not admitted section */}
+        {notAdmitted.length > 0 && (
+          <div className="border border-gray-300 dark:border-gray-600 rounded-lg p-3 bg-gray-50 dark:bg-gray-800/50">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-3 h-3 rounded bg-gray-400" />
+              <span className="text-sm font-semibold text-gray-600 dark:text-gray-400">
+                Not AFM-Admitted
+              </span>
+              <span className="text-xs text-gray-500">
+                ({notAdmitted.length} tray{notAdmitted.length > 1 ? 's' : ''})
+              </span>
+            </div>
+            <div className="space-y-1 ml-4">
+              {notAdmitted.map(tray => {
+                const portCount = (computePorts[tray] ?? []).length
+                const hostname = ppodVpodData[tray]?.hostname
+                return (
+                  <div key={tray} className="flex items-center gap-3 text-xs">
+                    <span className="font-mono text-gray-600 dark:text-gray-400">
+                      {tray}
+                      {hostname && <span className="text-gray-500 ml-1">({hostname})</span>}
+                    </span>
+                    <span className="text-gray-400">
+                      {portCount} port{portCount !== 1 ? 's' : ''} (no AFM data)
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function IFoEStationMap({
+  computePorts,
+  ppodVpodData,
+}: {
+  computePorts: Record<string, Record<string, any>[]>
+  ppodVpodData?: Record<string, PPODVPODData>
+}) {
+  const allTrays = Object.keys(computePorts)
+  if (!allTrays.length) return null
+
+  // Sort trays by VPOD order: VPOD0 first, then VPOD1, etc., then trays without VPOD at the end
+  const sortedTrays = [...allTrays].sort((a, b) => {
+    const vpodA = ppodVpodData?.[a]?.vpod_ids?.[0]
+    const vpodB = ppodVpodData?.[b]?.vpod_ids?.[0]
+    // Trays without VPOD go to the end (use Infinity)
+    const valA = vpodA !== undefined && vpodA >= 0 ? vpodA : Infinity
+    const valB = vpodB !== undefined && vpodB >= 0 ? vpodB : Infinity
+    if (valA !== valB) return valA - valB
+    // Within same VPOD, sort by IP/hostname
+    return a.localeCompare(b)
+  })
+  const trays = sortedTrays
+
+  // Check if we have bitmap data available
+  const hasBitmapData = ppodVpodData && Object.values(ppodVpodData).some(d => d?.lane_en_bitmaps?.length > 0)
 
   // Build bdfIndex[tray] = sorted list of unique BDFs → index is GPU number
   const bdfIndex: Record<string, string[]> = {}
@@ -75,6 +286,25 @@ function IFoEStationMap({ computePorts }: { computePorts: Record<string, Record<
   const usable = Object.values(globallyUsable).flatMap(g => Object.values(g)).filter(Boolean).length
   const total  = gpuCount * STATION_COUNT
 
+  // Get bitmap hex digit for a specific GPU and station
+  const getBitmapDigit = (tray: string, gpuIdx: number, stationIdx: number): string | null => {
+    const bitmaps = ppodVpodData?.[tray]?.lane_en_bitmaps ?? []
+    const bitmap = bitmaps[gpuIdx]
+    if (!bitmap) return null
+    // bitmap is a hex string where each digit represents one station
+    // Stations are numbered 0-17, so we need to reverse-index the hex string
+    // The bitmap is typically written MSB first, so station 0 is the rightmost digit
+    const charIdx = bitmap.length - 1 - stationIdx
+    if (charIdx < 0 || charIdx >= bitmap.length) return null
+    return bitmap[charIdx]
+  }
+
+  // Get VPOD ID for a tray (first one if multiple)
+  const getVPODId = (tray: string): number | null => {
+    const vpodIds = ppodVpodData?.[tray]?.vpod_ids ?? []
+    return vpodIds.length > 0 ? vpodIds[0] : null
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -82,80 +312,168 @@ function IFoEStationMap({ computePorts }: { computePorts: Record<string, Record<
           IFoE Station Usability Map
           <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
             {trays.length} tray(s) · {usable}/{total} station slots globally usable
-            (both ports up across all trays)
+            {hasBitmapData && ' · bitmap-based coloring'}
           </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Legend */}
         <div className="flex gap-5 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
-          {[
-            { color: '#22c55e', label: 'Both ports UP — globally usable (matched on all trays)' },
-            { color: '#f59e0b', label: 'Port UP — but station not usable across all trays' },
-            { color: '#ef4444', label: 'Port DOWN' },
-            { color: '#d1d5db', label: 'No data' },
-          ].map(({ color, label }) => (
-            <div key={label} className="flex items-center gap-1.5">
-              <div style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
-              <span>{label}</span>
-            </div>
-          ))}
+          {hasBitmapData ? (
+            // Bitmap-based legend
+            <>
+              {[
+                { color: '#22c55e', label: 'Both ports enabled (bitmap = F)' },
+                { color: '#f59e0b', label: 'One port enabled (bitmap = C or 3)' },
+                { color: '#ef4444', label: 'Both ports disabled (bitmap = 0)' },
+                { color: '#d1d5db', label: 'No bitmap data' },
+              ].map(({ color, label }) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                  <span>{label}</span>
+                </div>
+              ))}
+            </>
+          ) : (
+            // Fallback legend (link_status based)
+            <>
+              {[
+                { color: '#22c55e', label: 'Both ports UP — globally usable (matched on all trays)' },
+                { color: '#f59e0b', label: 'Port UP — but station not usable across all trays' },
+                { color: '#ef4444', label: 'Port DOWN' },
+                { color: '#d1d5db', label: 'No data' },
+              ].map(({ color, label }) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                  <span>{label}</span>
+                </div>
+              ))}
+            </>
+          )}
         </div>
 
         {/* Per-tray grids */}
         <div className="space-y-3">
-          {trays.map(tray => (
-            <div key={tray} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
-              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2 font-mono">{tray}</div>
-              <div className="overflow-x-auto">
-                <table className="border-collapse" style={{ fontSize: 10 }}>
-                  <thead>
-                    <tr>
-                      <th className="pr-3 pb-1 text-gray-400 text-right font-normal whitespace-nowrap" style={{ minWidth: 50 }}>
-                        Station →
-                      </th>
-                      {Array.from({ length: STATION_COUNT }, (_, s) => (
-                        <th key={s} className="text-center pb-1 text-gray-400 font-normal" style={{ minWidth: 24, padding: '0 2px' }}>
-                          {s}
+          {trays.map(tray => {
+            const vpodId = getVPODId(tray)
+            const hasVpod = vpodId !== null
+            const hostname = ppodVpodData?.[tray]?.hostname
+            return (
+              <div key={tray} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                <div className="flex items-center gap-3 mb-2 flex-wrap">
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 font-mono">
+                    {tray}
+                    {hostname && <span className="text-gray-500 ml-1">({hostname})</span>}
+                  </span>
+                  {hasVpod && (
+                    <span className="text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 font-medium">
+                      VPOD {vpodId}
+                    </span>
+                  )}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="border-collapse" style={{ fontSize: 10 }}>
+                    <thead>
+                      <tr>
+                        <th className="pr-3 pb-1 text-gray-400 text-right font-normal whitespace-nowrap" style={{ minWidth: 50 }}>
+                          Station →
                         </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Array.from({ length: gpuCount }, (_, g) => {
-                      const bdf = bdfIndex[tray][g] ?? ''
-                      return (
-                        <tr key={g}>
-                          <td className="pr-3 py-1 text-gray-500 dark:text-gray-400 text-right font-medium whitespace-nowrap" title={bdf}>
-                            GPU {g}
-                          </td>
-                          {Array.from({ length: STATION_COUNT }, (_, s) => {
-                            const ports  = portMap[tray][g]?.[s] ?? {}
-                            const noData = ports[0] === undefined && ports[1] === undefined
-                            const gu     = globallyUsable[g][s]
-                            const tip    = `GPU${g} S${s}: P0=${ports[0]===true?'UP':'DOWN'} P1=${ports[1]===true?'UP':'DOWN'}${gu?' ✓ globally usable':''}`
-                            return (
-                              <td key={s} style={{ padding: '3px 2px' }} title={tip}>
-                                <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
-                                  {[0, 1].map(pi => (
-                                    <div key={pi} style={{
-                                      width: 9, height: 9, borderRadius: '50%',
-                                      background: noData ? '#d1d5db' : portDotColor(ports[pi] === true, gu),
-                                      flexShrink: 0,
-                                    }} />
-                                  ))}
-                                </div>
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                        {Array.from({ length: STATION_COUNT }, (_, s) => (
+                          <th key={s} className="text-center pb-1 text-gray-400 font-normal" style={{ minWidth: 28, padding: '0 2px' }}>
+                            {s}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Array.from({ length: gpuCount }, (_, g) => {
+                        const bdf = bdfIndex[tray][g] ?? ''
+                        const accelId = ppodVpodData?.[tray]?.accel_ids?.[g]
+                        const accelState = ppodVpodData?.[tray]?.accel_states?.[g]
+                        // Color code state: green for ready, red for error states, amber for others
+                        const stateColor = accelState === 'ready' ? 'text-green-600 dark:text-green-400' :
+                                           accelState?.includes('error') ? 'text-red-600 dark:text-red-400' :
+                                           'text-amber-600 dark:text-amber-400'
+                        return (
+                          <tr key={g}>
+                            <td className="pr-3 py-1 text-gray-500 dark:text-gray-400 text-right font-medium whitespace-nowrap" title={bdf}>
+                              <div className="flex items-center justify-end gap-1">
+                                {accelState && (
+                                  <span className={`text-[8px] px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-800 ${stateColor}`}>
+                                    {accelState}
+                                  </span>
+                                )}
+                                {accelId !== undefined && (
+                                  <span className="text-[8px] px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-mono">
+                                    A{accelId}
+                                  </span>
+                                )}
+                                <span>GPU {g}</span>
+                              </div>
+                            </td>
+                            {Array.from({ length: STATION_COUNT }, (_, s) => {
+                              const ports  = portMap[tray][g]?.[s] ?? {}
+                              const noData = ports[0] === undefined && ports[1] === undefined
+                              const gu     = globallyUsable[g][s]
+                              const bitmapDigit = getBitmapDigit(tray, g, s)
+                              const useBitmap = hasBitmapData && bitmapDigit !== null
+                              const displayDigit = bitmapDigit?.toUpperCase() ?? ''
+
+                              let colors: { port0: string; port1: string }
+                              if (useBitmap) {
+                                colors = getBitmapColor(bitmapDigit)
+                              } else if (noData) {
+                                colors = { port0: '#d1d5db', port1: '#d1d5db' }
+                              } else {
+                                colors = {
+                                  port0: portDotColor(ports[0] === true, gu),
+                                  port1: portDotColor(ports[1] === true, gu),
+                                }
+                              }
+
+                              const tip = useBitmap
+                                ? `GPU${g} S${s}: bitmap=${displayDigit} (P0=${colors.port0 === '#22c55e' ? 'UP' : colors.port0 === '#ef4444' ? 'DOWN' : 'PARTIAL'}, P1=${colors.port1 === '#22c55e' ? 'UP' : colors.port1 === '#ef4444' ? 'DOWN' : 'PARTIAL'})`
+                                : `GPU${g} S${s}: P0=${ports[0]===true?'UP':'DOWN'} P1=${ports[1]===true?'UP':'DOWN'}${gu?' ✓ globally usable':''}`
+
+                              return (
+                                <td key={s} style={{ padding: '3px 2px' }} title={tip}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                                    {/* Show bitmap hex digit above dots if available (uppercase) */}
+                                    {useBitmap && (
+                                      <div style={{
+                                        fontSize: 8,
+                                        fontFamily: 'monospace',
+                                        color: displayDigit === 'F' ? '#22c55e' : displayDigit === '0' ? '#ef4444' : '#f59e0b',
+                                        lineHeight: 1,
+                                      }}>
+                                        {displayDigit}
+                                      </div>
+                                    )}
+                                    <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+                                      <div style={{
+                                        width: 9, height: 9, borderRadius: '50%',
+                                        background: colors.port0,
+                                        flexShrink: 0,
+                                      }} />
+                                      <div style={{
+                                        width: 9, height: 9, borderRadius: '50%',
+                                        background: colors.port1,
+                                        flexShrink: 0,
+                                      }} />
+                                    </div>
+                                  </div>
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </CardContent>
     </Card>
@@ -377,18 +695,6 @@ export function ComputeTrayIFoEPage() {
             ))}
           </div>
 
-          {/* ── Visual Overview ── */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <ExpandableChartCard title="Port Link Status"
-              small={<div className="flex justify-center"><DonutChart title="" data={[{name:'Link UP',value:upCount,color:COLORS.green},{name:'Link DOWN',value:downCount,color:COLORS.red}]} centerLabel={`${upCount}/${portRows.length}`} centerSub="ports UP" size={170}/></div>}
-              large={<div className="flex justify-center pt-8"><DonutChart title="" data={[{name:'Link UP',value:upCount,color:COLORS.green},{name:'Link DOWN',value:downCount,color:COLORS.red}]} centerLabel={`${upCount}/${portRows.length}`} centerSub="ports UP" size={340}/></div>}
-            />
-            <ExpandableChartCard title="Link Status by Compute Tray" className="md:col-span-2"
-              small={<GroupedBarChart data={Object.entries(data?.compute_ports??{}).map(([tray,ports])=>({name:shortName(tray),UP:(ports as any[]).filter(p=>/link_up/i.test(p.link_status??'')).length,DOWN:(ports as any[]).filter(p=>!/link_up/i.test(p.link_status??'')).length}))} keys={['UP','DOWN']} colors={[COLORS.green,COLORS.red]} height={180}/>}
-              large={<GroupedBarChart data={Object.entries(data?.compute_ports??{}).map(([tray,ports])=>({name:shortName(tray,20),UP:(ports as any[]).filter(p=>/link_up/i.test(p.link_status??'')).length,DOWN:(ports as any[]).filter(p=>!/link_up/i.test(p.link_status??'')).length}))} keys={['UP','DOWN']} colors={[COLORS.green,COLORS.red]} height={450}/>}
-            />
-          </div>
-
           {/* ── FEC Error chart (shown when stats tab active and data available) ── */}
           {(() => {
             const fecRows = flatStats('fec')
@@ -431,26 +737,51 @@ export function ComputeTrayIFoEPage() {
 
           {/* Station Map tab */}
           {mainTab === 'map' && (
-            <IFoEStationMap computePorts={data?.compute_ports ?? {}} />
+            <>
+              {/* PPOD/VPOD Topology View (only if data is available) */}
+              {data?.ppod_vpod && Object.keys(data.ppod_vpod).length > 0 && (
+                <PPODTopologyView
+                  ppodVpodData={data.ppod_vpod as Record<string, PPODVPODData>}
+                  computePorts={data?.compute_ports ?? {}}
+                />
+              )}
+              <IFoEStationMap
+                computePorts={data?.compute_ports ?? {}}
+                ppodVpodData={data?.ppod_vpod as Record<string, PPODVPODData> | undefined}
+              />
+            </>
           )}
 
           {/* Port Status tab */}
           {mainTab === 'status' && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  Port Status — All Compute Trays
-                  <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
-                    {trayCount} tray(s) · {portRows.length} port(s) · afmctl show port
-                  </span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {portRows.length === 0 ? (
-                  <p className="text-sm text-gray-400 italic py-4">
-                    No port data. Nodes with afmctl appear here after detection.
-                  </p>
-                ) : (
+            <div className="space-y-4">
+              {/* Link Status Charts */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <ExpandableChartCard title="Port Link Status"
+                  small={<div className="flex justify-center"><DonutChart title="" data={[{name:'Link UP',value:upCount,color:COLORS.green},{name:'Link DOWN',value:downCount,color:COLORS.red}]} centerLabel={`${upCount}/${portRows.length}`} centerSub="ports UP" size={170}/></div>}
+                  large={<div className="flex justify-center pt-8"><DonutChart title="" data={[{name:'Link UP',value:upCount,color:COLORS.green},{name:'Link DOWN',value:downCount,color:COLORS.red}]} centerLabel={`${upCount}/${portRows.length}`} centerSub="ports UP" size={340}/></div>}
+                />
+                <ExpandableChartCard title="Link Status by Compute Tray" className="md:col-span-2"
+                  small={<GroupedBarChart data={Object.entries(data?.compute_ports??{}).map(([tray,ports])=>({name:tray,UP:(ports as any[]).filter(p=>/link_up/i.test(p.link_status??'')).length,DOWN:(ports as any[]).filter(p=>!/link_up/i.test(p.link_status??'')).length}))} keys={['UP','DOWN']} colors={[COLORS.green,COLORS.red]} height={180}/>}
+                  large={<GroupedBarChart data={Object.entries(data?.compute_ports??{}).map(([tray,ports])=>({name:tray,UP:(ports as any[]).filter(p=>/link_up/i.test(p.link_status??'')).length,DOWN:(ports as any[]).filter(p=>!/link_up/i.test(p.link_status??'')).length}))} keys={['UP','DOWN']} colors={[COLORS.green,COLORS.red]} height={450}/>}
+                />
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Port Status — All Compute Trays
+                    <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
+                      {trayCount} tray(s) · {portRows.length} port(s) · afmctl show port
+                    </span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {portRows.length === 0 ? (
+                    <p className="text-sm text-gray-400 italic py-4">
+                      No port data. Nodes with afmctl appear here after detection.
+                    </p>
+                  ) : (
                   <CustomDataTable
                     columns={portCols}
                     data={normalizedPortRows}
@@ -458,9 +789,10 @@ export function ComputeTrayIFoEPage() {
                     pageLengthOptions={[50, 100, 500]}
                     scrollX={true}
                   />
-                )}
-              </CardContent>
-            </Card>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {/* Statistics tab */}

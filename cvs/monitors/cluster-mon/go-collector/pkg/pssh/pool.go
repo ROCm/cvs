@@ -298,6 +298,45 @@ func (p *Pool) UpdateCredentials(user, keyPath string, keyBytes []byte, password
 	)
 }
 
+// UpdateDialFunc replaces the pool's dial function at runtime.
+// Pass nil to switch to direct TCP connections (no jump host).
+//
+// All cached connections are dropped under connMu (they were established via
+// the old dial function and cannot be re-used). All currently reachable nodes
+// are moved back to unreachable so the background reprobe re-dials them with
+// the new dial function.
+// TriggerReprobe is called at the end so recovery begins immediately.
+//
+// Thread-safe: acquires connMu and stateMu in sequence.
+func (p *Pool) UpdateDialFunc(dialFunc func(network, addr string) (net.Conn, error)) {
+	// Phase 1: Update dialFunc and drop all connections under connMu.
+	p.connMu.Lock()
+	p.dialFunc = dialFunc
+	for h, e := range p.conns {
+		e.cancel()
+		_ = e.client.Close()
+		delete(p.conns, h)
+	}
+	p.connMu.Unlock()
+
+	// Phase 2: Move all reachable nodes to unreachable under stateMu.
+	p.stateMu.Lock()
+	for h := range p.reachable {
+		p.unreachable[h] = struct{}{}
+	}
+	p.reachable = make(map[string]struct{})
+	p.stateMu.Unlock()
+
+	// Phase 3: Trigger immediate reprobe.
+	p.TriggerReprobe()
+
+	mode := "direct"
+	if dialFunc != nil {
+		mode = "tunnelled"
+	}
+	p.logger.Info("pssh_dialfunc_updated", "mode", mode)
+}
+
 // Close cancels the background goroutine and tears down all cached connections.
 func (p *Pool) Close() {
 	p.cancel()

@@ -121,48 +121,57 @@ class JaxTrainingJob:
         self.tc_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.tc_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
 
-        self.tc_dict.setdefault('env_vars', {
-            'GPU_MAX_HW_QUEUES': '2',
-            'HSA_FORCE_FINE_GRAIN_PCIE': '1',
-            'HIP_FORCE_DEV_KERNARG': '1',
-            'XLA_PYTHON_CLIENT_MEM_FRACTION': '0.93',
-            'NCCL_DEBUG': 'ERROR',
-            'NCCL_PROTO': 'Simple',
-            'NCCL_IB_TC': '41',
-            'NCCL_IB_SL': '0',
-            'NCCL_IB_GID_INDEX': '3',
-            'NCCL_CHECKS_DISABLE': '1',
-            'NCCL_CROSS_NIC': '0',
-            'NVTE_ALLOW_NONDETERMINISTIC_ALGO': '1',
-            'NVTE_USE_HIPBLASLT': '1',
-            'NVTE_FUSED_ATTN': '1',
-            'NVTE_CK_USES_BWD_V3': '1',
-            'NVTE_CK_USES_FWD_V3': '1',
-            'NVTE_CK_IS_V3_ATOMIC_FP32': '0',
-            'NVTE_CK_HOW_V3_BF16_CVT': '2',
-            'NVTE_FUSED_ATTN_CK': '1',
-            'NVTE_FUSED_ATTN_AOTRITON': '0',
-        })
+        self.tc_dict.setdefault(
+            'env_vars',
+            {
+                'GPU_MAX_HW_QUEUES': '2',
+                'HSA_FORCE_FINE_GRAIN_PCIE': '1',
+                'HIP_FORCE_DEV_KERNARG': '1',
+                'XLA_PYTHON_CLIENT_MEM_FRACTION': '0.93',
+                'NCCL_DEBUG': 'ERROR',
+                'NCCL_PROTO': 'Simple',
+                'NCCL_IB_TC': '41',
+                'NCCL_IB_SL': '0',
+                'NCCL_IB_GID_INDEX': '3',
+                'NCCL_CHECKS_DISABLE': '1',
+                'NCCL_CROSS_NIC': '0',
+                'NVTE_ALLOW_NONDETERMINISTIC_ALGO': '1',
+                'NVTE_USE_HIPBLASLT': '1',
+                'NVTE_FUSED_ATTN': '1',
+                'NVTE_CK_USES_BWD_V3': '1',
+                'NVTE_CK_USES_FWD_V3': '1',
+                'NVTE_CK_IS_V3_ATOMIC_FP32': '0',
+                'NVTE_CK_HOW_V3_BF16_CVT': '2',
+                'NVTE_FUSED_ATTN_CK': '1',
+                'NVTE_FUSED_ATTN_AOTRITON': '0',
+            },
+        )
 
-        self.tc_dict.setdefault('xla_flags', {
-            'xla_gpu_enable_latency_hiding_scheduler': 'True',
-            'xla_gpu_enable_triton_gemm': 'False',
-            'xla_gpu_memory_limit_slop_factor': '95',
-            'xla_gpu_enable_command_buffer': "''",
-            'xla_gpu_enable_cublaslt': 'True',
-            'xla_gpu_autotune_level': '0',
-            'xla_gpu_enable_reduce_scatter_combine_by_dim': 'false',
-            'xla_gpu_reduce_scatter_combine_threshold_bytes': '8589934592',
-            'xla_gpu_all_reduce_combine_threshold_bytes': '8589934592',
-            'xla_gpu_all_gather_combine_threshold_bytes': '8589934592',
-            'xla_gpu_enable_all_gather_combine_by_dim': 'FALSE',
-        })
+        self.tc_dict.setdefault(
+            'xla_flags',
+            {
+                'xla_gpu_enable_latency_hiding_scheduler': 'True',
+                'xla_gpu_enable_triton_gemm': 'False',
+                'xla_gpu_memory_limit_slop_factor': '95',
+                'xla_gpu_enable_command_buffer': "''",
+                'xla_gpu_enable_cublaslt': 'True',
+                'xla_gpu_autotune_level': '0',
+                'xla_gpu_enable_reduce_scatter_combine_by_dim': 'false',
+                'xla_gpu_reduce_scatter_combine_threshold_bytes': '8589934592',
+                'xla_gpu_all_reduce_combine_threshold_bytes': '8589934592',
+                'xla_gpu_all_gather_combine_threshold_bytes': '8589934592',
+                'xla_gpu_enable_all_gather_combine_by_dim': 'FALSE',
+            },
+        )
 
-        self.tc_dict.setdefault('rdma_lib', {
-            'host_source_file': '/usr/local/lib/libbnxt_re-rdmav34.so',
-            'container_mount_file': '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host',
-            'container_dest_file': '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
-        })
+        self.tc_dict.setdefault(
+            'rdma_lib',
+            {
+                'host_source_file': '/usr/local/lib/libbnxt_re-rdmav34.so',
+                'container_mount_file': '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host',
+                'container_dest_file': '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
+            },
+        )
 
         self.container_image = self.tc_dict['container_image']
         self.container_name = self.tc_dict['container_name']
@@ -234,14 +243,29 @@ class JaxTrainingJob:
         """
         # (base_path, config_subdir, reference_config, train_script_path)
         path_configs = [
-            ('/workspace/maxtext/src/maxtext', 'configs/models', 'llama3-70b.yml', '/workspace/maxtext/src/maxtext/trainers/pre_train/train.py'),
-            ('/workspace/maxtext/src/MaxText', 'configs/models', 'llama3-70b.yml', '/workspace/maxtext/src/MaxText/train.py'),
+            (
+                '/workspace/maxtext/src/maxtext',
+                'configs/models',
+                'llama3-70b.yml',
+                '/workspace/maxtext/src/maxtext/trainers/pre_train/train.py',
+            ),
+            (
+                '/workspace/maxtext/src/MaxText',
+                'configs/models',
+                'llama3-70b.yml',
+                '/workspace/maxtext/src/MaxText/train.py',
+            ),
             ('/workspace/maxtext/MaxText', 'configs', 'llama2_70b_gpu_bs7.yml', '/workspace/maxtext/MaxText/train.py'),
         ]
 
         for base, config_subdir, ref_config, train_script in path_configs:
             if docker_lib.path_exists_in_container(self.phdl, container_name, base):
-                return {'base': base, 'config': f"{base}/{config_subdir}", 'reference_config': ref_config, 'train_script': train_script}
+                return {
+                    'base': base,
+                    'config': f"{base}/{config_subdir}",
+                    'reference_config': ref_config,
+                    'train_script': train_script,
+                }
 
         raise RuntimeError(f"MaxText not found in container '{container_name}'")
 
@@ -254,15 +278,11 @@ class JaxTrainingJob:
 
     def launch_docker_container(self, container_name, image, device_list, volume_dict, env_dict):
         if self.distributed_training is True:
-            docker_lib.launch_docker_container(
-                self.phdl, container_name, image, device_list, volume_dict, env_dict
-            )
+            docker_lib.launch_docker_container(self.phdl, container_name, image, device_list, volume_dict, env_dict)
         else:
             env_dict['JAX_COORDINATOR_IP'] = 'localhost'
             env_dict['NNODES'] = 1
-            docker_lib.launch_docker_container(
-                self.phdl, container_name, image, device_list, volume_dict, env_dict
-            )
+            docker_lib.launch_docker_container(self.phdl, container_name, image, device_list, volume_dict, env_dict)
 
     def exec_nic_setup_scripts(
         self,
@@ -324,9 +344,19 @@ class JaxTrainingJob:
         maxtext_paths = self.get_maxtext_paths(self.container_name)
 
         # Keys in mp_dict that are CVS internal metadata, not MaxText YAML params
-        mp_skip_keys = {'result_dict', 'tokenizer_model', 'model_size', 'batch_size',
-                        'micro_batch_size', 'precision', 'sequence_length',
-                        'tensor_parallelism', 'pipeline_parallelism', 'recompute', 'fsdp'}
+        mp_skip_keys = {
+            'result_dict',
+            'tokenizer_model',
+            'model_size',
+            'batch_size',
+            'micro_batch_size',
+            'precision',
+            'sequence_length',
+            'tensor_parallelism',
+            'pipeline_parallelism',
+            'recompute',
+            'fsdp',
+        }
 
         # Header params that come from training_config_dict or self, not mp_dict
         yml_lines = [
@@ -348,7 +378,9 @@ class JaxTrainingJob:
         self.phdl.exec(cmd)
 
         # Print the generated training config for verification
-        out_dict = self.phdl.exec(f'docker exec {self.container_name} cat {maxtext_paths["config"]}/training_config_for_jax.yml')
+        out_dict = self.phdl.exec(
+            f'docker exec {self.container_name} cat {maxtext_paths["config"]}/training_config_for_jax.yml'
+        )
         for node in out_dict:
             log.info("training_config_for_jax.yml on %s:\n%s", node, out_dict[node])
 

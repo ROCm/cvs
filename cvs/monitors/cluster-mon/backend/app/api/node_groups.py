@@ -103,6 +103,13 @@ async def _register_with_daemon(
     jump_password: Optional[str],
     socket_path: Optional[str] = None,
 ) -> None:
+    """
+    Register hosts with the Go daemon, optionally via jumphost.
+
+    All key files are paths inside the container (uploaded via UI).
+    - key_file: SSH key for authenticating to nodes
+    - jump_key_file: SSH key for authenticating to jumphost
+    """
     if not hosts:
         return
     try:
@@ -113,20 +120,33 @@ async def _register_with_daemon(
         password = ssh_password if auth_method == "password" else None
 
         kwargs: dict = {"socket_path": target_socket}
+
         if jump_enabled and jump_host:
             kwargs["jump_host"] = jump_host
             kwargs["jump_user"] = jump_username
-            kwargs["jump_password"] = jump_password if jump_auth_method == "password" else None
-            kwargs["jump_key"] = (
-                os.path.expanduser(jump_key_file) if jump_auth_method == "key" and jump_key_file else ""
-            )
+            if jump_auth_method == "password" and jump_password:
+                kwargs["jump_password"] = jump_password
+                logger.info(f"[{group_name}] Using password auth for jumphost {jump_host}")
+            elif jump_auth_method == "key" and jump_key_file:
+                # Key file path inside the container
+                expanded_jk = os.path.expanduser(jump_key_file)
+                if os.path.exists(expanded_jk):
+                    kwargs["jump_key"] = expanded_jk
+                    logger.info(f"[{group_name}] Using key auth for jumphost {jump_host}, key={expanded_jk}")
+                else:
+                    logger.warning(f"[{group_name}] Jumphost key not found: {expanded_jk}")
+            else:
+                logger.warning(
+                    f"[{group_name}] Jumphost enabled but no auth method: auth_method={jump_auth_method}, key_file={jump_key_file}"
+                )
+            logger.info(f"[{group_name}] Jumphost kwargs: {kwargs}")
 
         await asyncio.to_thread(
             go_collector._refresh_nodes_in_daemon,
             hosts,
             username,
             key_path,
-            None,
+            None,  # key_bytes not used
             password,
             group_name,
             **kwargs,
@@ -134,7 +154,9 @@ async def _register_with_daemon(
         logger.info(
             f"Registered '{group_name}' with Go daemon ({target_socket}): "
             f"{len(hosts)} hosts, auth={auth_method}, "
-            f"password={'yes' if password else 'no'}"
+            f"key_path={'yes' if key_path else 'no'}, "
+            f"password={'yes' if password else 'no'}, "
+            f"jumphost={'yes' if jump_enabled else 'no'}"
         )
     except Exception as exc:
         logger.warning(f"Could not register '{group_name}' with daemon: {exc}")
@@ -262,6 +284,7 @@ async def reload_config(request: Request):
             ssh_pw = state.node_groups_passwords.get("gpu_nodes")
             jump_pw = state.node_groups_jump_passwords.get("gpu_nodes")
             grp = settings.gpu_nodes
+
             await _register_with_daemon(
                 group_name="cluster",
                 hosts=grp.hosts,
@@ -291,6 +314,7 @@ async def reload_config(request: Request):
             sw = settings.scale_up_switches
             sw_pw = state.node_groups_passwords.get("scale_up_switches")
             sw_jpw = state.node_groups_jump_passwords.get("scale_up_switches")
+
             await _register_with_daemon(
                 group_name="switches",
                 hosts=switch_hosts,

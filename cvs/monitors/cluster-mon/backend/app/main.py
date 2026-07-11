@@ -212,6 +212,8 @@ async def _run_daemon_lifecycle() -> None:
                 args.extend(["--ssh-password", startup_pw])
 
         # Jump host (cluster-level jump host)
+        # Only pass jumphost flags at startup if credentials are available.
+        # If not, daemon starts without jumphost and it's configured later via socket.
         jh = settings.ssh.jump_host
         ng_jh = ng.gpu_nodes.jump_host if ng else None
         active_jh = ng_jh if (ng_jh and ng_jh.enabled and ng_jh.host) else (jh if (jh.enabled and jh.host) else None)
@@ -222,12 +224,18 @@ async def _run_daemon_lifecycle() -> None:
             _jh_pw = getattr(app_state, "node_groups_jump_passwords", {}).get("gpu_nodes") or getattr(
                 app_state, "jump_host_password", None
             )
-            if _jh_host:
+            # Only add jumphost args if we have credentials (key OR password)
+            if _jh_host and (_jh_key or _jh_pw):
                 args.extend(["--jump-host", _jh_host, "--jump-user", _jh_user])
                 if _jh_key:
                     args.extend(["--jump-key", _jh_key])
                 elif _jh_pw:
                     args.extend(["--jump-password", _jh_pw])
+            elif _jh_host:
+                logger.warning(
+                    f"Jumphost {_jh_host} configured but no credentials available at startup. "
+                    "Jumphost will be configured via socket when credentials are provided."
+                )
 
         logger.info(
             f"Starting Go SSH daemon: user={username} "
@@ -493,6 +501,19 @@ async def _reload_configuration_inner():
                     jump_password=app_state.jump_host_password if jump_cfg.enabled else None,
                 )
                 key_path = new_config.ssh.key_file if not app_state.ssh_password else ""
+
+                # Build jumphost kwargs for Go daemon
+                jump_kwargs: dict = {}
+                if jump_cfg.enabled and jump_cfg.host:
+                    jump_kwargs["jump_host"] = jump_cfg.host
+                    jump_kwargs["jump_user"] = jump_cfg.username
+                    if app_state.jump_host_password:
+                        jump_kwargs["jump_password"] = app_state.jump_host_password
+                    elif jump_cfg.key_file:
+                        expanded_jk = os.path.expanduser(jump_cfg.key_file)
+                        if os.path.exists(expanded_jk):
+                            jump_kwargs["jump_key"] = expanded_jk
+
                 await asyncio.to_thread(
                     go_collector._refresh_nodes_in_daemon,
                     nodes,
@@ -501,8 +522,11 @@ async def _reload_configuration_inner():
                     None,
                     app_state.ssh_password,
                     "cluster",
+                    **jump_kwargs,
                 )
-                logger.info(f"SSH manager reinitialized with {len(nodes)} nodes")
+                logger.info(
+                    f"SSH manager reinitialized with {len(nodes)} nodes, jumphost={'yes' if jump_kwargs.get('jump_host') else 'no'}"
+                )
             except Exception as e:
                 logger.error(f"Failed to reinitialize SSH manager: {e}")
                 return {"success": False, "error": str(e), "nodes_count": len(nodes)}
@@ -677,6 +701,20 @@ async def lifespan(app: FastAPI):
                 if os.path.exists(expanded):
                     key_path = expanded
             gpu_pw = app_state.node_groups_passwords.get("gpu_nodes")
+
+            # Build jumphost kwargs if enabled
+            jump_kwargs: dict = {}
+            if grp.jump_host.enabled and grp.jump_host.host:
+                jump_kwargs["jump_host"] = grp.jump_host.host
+                jump_kwargs["jump_user"] = grp.jump_host.username
+                jump_pw = app_state.node_groups_jump_passwords.get("gpu_nodes")
+                if grp.jump_host.auth_method == "password" and jump_pw:
+                    jump_kwargs["jump_password"] = jump_pw
+                elif grp.jump_host.key_file:
+                    expanded_jk = os.path.expanduser(grp.jump_host.key_file)
+                    if os.path.exists(expanded_jk):
+                        jump_kwargs["jump_key"] = expanded_jk
+
             try:
                 await asyncio.to_thread(
                     go_collector._refresh_nodes_in_daemon,
@@ -687,11 +725,13 @@ async def lifespan(app: FastAPI):
                     gpu_pw,
                     "cluster",
                     socket_path=go_collector.CLUSTER_SOCKET,
+                    **jump_kwargs,
                 )
                 logger.info(
                     f"Pushed initial credentials for {len(grp.hosts)} GPU nodes: "
                     f"auth={grp.ssh.auth_method}, key={'yes' if key_path else 'no'}, "
-                    f"password={'yes' if gpu_pw else 'no (re-save Configuration after restart)'}"
+                    f"password={'yes' if gpu_pw else 'no (re-save Configuration after restart)'}, "
+                    f"jumphost={'yes' if jump_kwargs.get('jump_host') else 'no'}"
                 )
             except Exception as exc:
                 logger.warning(f"Could not push initial GPU credentials: {exc}")
@@ -712,6 +752,20 @@ async def lifespan(app: FastAPI):
                 if os.path.exists(expanded):
                     sw_key = expanded
             sw_pw = app_state.node_groups_passwords.get("scale_up_switches")
+
+            # Build jumphost kwargs for switch daemon if enabled
+            sw_jump_kwargs: dict = {}
+            if sw_grp.jump_host.enabled and sw_grp.jump_host.host:
+                sw_jump_kwargs["jump_host"] = sw_grp.jump_host.host
+                sw_jump_kwargs["jump_user"] = sw_grp.jump_host.username
+                sw_jump_pw = app_state.node_groups_jump_passwords.get("scale_up_switches")
+                if sw_grp.jump_host.auth_method == "password" and sw_jump_pw:
+                    sw_jump_kwargs["jump_password"] = sw_jump_pw
+                elif sw_grp.jump_host.key_file:
+                    expanded_jk = os.path.expanduser(sw_grp.jump_host.key_file)
+                    if os.path.exists(expanded_jk):
+                        sw_jump_kwargs["jump_key"] = expanded_jk
+
             try:
                 await asyncio.to_thread(
                     go_collector._refresh_nodes_in_daemon,
@@ -722,11 +776,13 @@ async def lifespan(app: FastAPI):
                     sw_pw,
                     "switches",
                     socket_path=go_collector.SWITCH_SOCKET,
+                    **sw_jump_kwargs,
                 )
                 logger.info(
                     f"Pushed initial credentials for {len(switch_hosts)} switch trays: "
                     f"auth={sw_grp.ssh.auth_method}, key={'yes' if sw_key else 'no'}, "
-                    f"password={'yes' if sw_pw else 'no (re-save Configuration after restart)'}"
+                    f"password={'yes' if sw_pw else 'no (re-save Configuration after restart)'}, "
+                    f"jumphost={'yes' if sw_jump_kwargs.get('jump_host') else 'no'}"
                 )
             except Exception as exc:
                 logger.warning(f"Could not push initial switch credentials: {exc}")

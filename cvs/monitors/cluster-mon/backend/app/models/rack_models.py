@@ -49,6 +49,9 @@ class IFoEDataResponse(BaseModel):
     compute_ports: Dict[str, List[Dict[str, Any]]] = {}
     # Port statistics per tray: {host: {mac: [...], fec: [...], ifcp: [...], pfc: [...]}}
     compute_port_stats: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    # PPOD/VPOD topology data per tray (AFM-admitted trays only):
+    # {host: {ppod_id, vpod_ids, local_accels, vpod_active_accels, lane_en_bitmaps}}
+    ppod_vpod: Optional[Dict[str, Any]] = None
     switch_vlan: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
     switch_mac: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
     topology: List[Dict[str, Any]] = []

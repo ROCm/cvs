@@ -21,15 +21,19 @@ import asyncio
 import json as _json
 import logging
 import re as _re
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from app.collectors.base import BaseCollector, CollectorResult, CollectorState
+from app.collectors.rack_topology import build_topology
+from app.core import go_collector
 from app.collectors.afmctl_parser import (
     parse_afmctl_show_device,
     parse_afmctl_show_port,
     parse_afmctl_stats_gzip_b64,
 )
+
 from app.collectors.sonic_parser import (
     parse_show_vlan_brief,
     parse_show_mac,
@@ -47,9 +51,9 @@ from app.collectors.sonic_parser import (
     parse_interface_counters_json,
     parse_text_table,
 )
-from app.collectors.rack_topology import build_topology
-from app.core import go_collector
 
+# Feature flag: enable PPOD/VPOD topology view (can be disabled for rollback)
+ENABLE_PPOD_VPOD_VIEW = os.environ.get("ENABLE_PPOD_VPOD_VIEW", "true").lower() == "true"
 logger = logging.getLogger(__name__)
 
 _AFMCTL_MISSING_RE = _re.compile(
@@ -65,6 +69,124 @@ def _afmctl_missing(out: str) -> bool:
 
 def _host_unreachable(out: str) -> bool:
     return not out or bool(_HOST_UNREACHABLE_RE.match(out[:50]))
+
+
+# ---------------------------------------------------------------------------
+# PPOD/VPOD sysfs data collection (only for AFM-admitted compute trays)
+# ---------------------------------------------------------------------------
+
+PPOD_VPOD_CMD = """
+echo "===HOSTNAME==="; hostname 2>/dev/null || echo "N/A";
+echo "===PPOD_ID==="; sudo cat /sys/class/drm/card*/device/ualink/ppod_id 2>/dev/null || echo "N/A";
+echo "===VPOD_ID==="; sudo cat /sys/class/drm/card*/device/ualink/vpod_id 2>/dev/null || echo "N/A";
+echo "===LOCAL_ACCELS==="; sudo cat /sys/class/drm/card*/device/ualink/local_accels 2>/dev/null || echo "N/A";
+echo "===VPOD_ACTIVE_ACCELS==="; sudo cat /sys/class/drm/card*/device/ualink/config/vpod_active_accels 2>/dev/null || echo "N/A";
+echo "===LANE_EN_BITMAP==="; sudo cat /sys/class/drm/card*/device/ualink/stations/lane_en_bitmap 2>/dev/null || echo "N/A";
+echo "===ACCEL_ID==="; sudo cat /sys/class/drm/card*/device/ualink/accel_id 2>/dev/null || echo "N/A";
+echo "===ACCEL_STATE==="; cat /sys/class/drm/card*/device/ualink/accel_state 2>/dev/null || echo "N/A"
+"""
+
+
+def parse_ppod_vpod_output(output: str) -> Dict[str, Any]:
+    """
+    Parse combined PPOD/VPOD sysfs output.
+
+    Returns:
+        {
+            'hostname': str or None,     # Hostname of the compute tray
+            'ppod_id': str or None,
+            'vpod_ids': list[int],       # VPOD IDs for each GPU (4 entries typically)
+            'local_accels': list[int],   # Accelerator IDs for local GPUs
+            'vpod_active_accels': list[int],  # All active accels in the VPOD
+            'lane_en_bitmaps': list[str],     # Hex bitmap per GPU (one per card)
+            'accel_ids': list[int],           # Accelerator IDs per GPU
+            'accel_states': list[str],        # State per GPU (ready, unconfigured, etc.)
+        }
+    """
+    result: Dict[str, Any] = {
+        'hostname': None,
+        'ppod_id': None,
+        'vpod_ids': [],
+        'local_accels': [],
+        'vpod_active_accels': [],
+        'lane_en_bitmaps': [],
+        'accel_ids': [],
+        'accel_states': [],
+    }
+
+    if not output or output.startswith(("ABORT", "ERROR")):
+        return result
+
+    current_section = None
+    for line in output.split('\n'):
+        line = line.strip()
+        if line.startswith('===') and line.endswith('==='):
+            current_section = line.strip('=')
+            continue
+        if not line or line == 'N/A':
+            continue
+
+        if current_section == 'HOSTNAME':
+            # Hostname, take the first non-empty line
+            if not result['hostname']:
+                result['hostname'] = line
+        elif current_section == 'PPOD_ID':
+            # UUID format, take the first non-empty line
+            if not result['ppod_id']:
+                result['ppod_id'] = line
+        elif current_section == 'VPOD_ID':
+            # Integer VPOD ID, may have multiple (one per card)
+            try:
+                result['vpod_ids'].append(int(line))
+            except ValueError:
+                pass
+        elif current_section == 'LOCAL_ACCELS':
+            # Comma-separated accelerator IDs or individual lines
+            if ',' in line:
+                for part in line.split(','):
+                    try:
+                        result['local_accels'].append(int(part.strip()))
+                    except ValueError:
+                        pass
+            else:
+                try:
+                    result['local_accels'].append(int(line))
+                except ValueError:
+                    pass
+        elif current_section == 'VPOD_ACTIVE_ACCELS':
+            # Comma-separated or space-separated
+            for sep in [',', ' ']:
+                if sep in line:
+                    for part in line.split(sep):
+                        try:
+                            result['vpod_active_accels'].append(int(part.strip()))
+                        except ValueError:
+                            pass
+                    break
+            else:
+                try:
+                    result['vpod_active_accels'].append(int(line))
+                except ValueError:
+                    pass
+        elif current_section == 'LANE_EN_BITMAP':
+            # Hex string bitmap, one per GPU/card
+            if line.startswith('0x') or all(c in '0123456789abcdefABCDEF' for c in line):
+                result['lane_en_bitmaps'].append(line.upper().replace('0X', ''))
+        elif current_section == 'ACCEL_ID':
+            # Accelerator ID per GPU (integer)
+            try:
+                result['accel_ids'].append(int(line))
+            except ValueError:
+                pass
+        elif current_section == 'ACCEL_STATE':
+            # State per GPU (ready, unconfigured, etc.)
+            result['accel_states'].append(line)
+
+    # Deduplicate lists while preserving order
+    result['local_accels'] = list(dict.fromkeys(result['local_accels']))
+    result['vpod_active_accels'] = list(dict.fromkeys(result['vpod_active_accels']))
+
+    return result
 
 
 def _is_error(out: str) -> bool:
@@ -405,6 +527,25 @@ class RackCollector(BaseCollector):
                     f"pfc={len(compute_port_stats[host]['pfc'])} rows"
                 )
 
+        # ------------------------------------------------------------------
+        # Collect PPOD/VPOD topology data (sysfs files, AFM-admitted only)
+        # ------------------------------------------------------------------
+        ppod_vpod_data: Dict[str, Dict[str, Any]] = {}
+
+        if ENABLE_PPOD_VPOD_VIEW and compute_tray_hosts:
+            logger.info(f"RackCollector: collecting PPOD/VPOD data from {len(compute_tray_hosts)} compute trays")
+            ppod_vpod_raw = await _exec_group(compute_tray_hosts, PPOD_VPOD_CMD, 30)
+
+            for host in compute_tray_hosts:
+                raw_out = ppod_vpod_raw.get(host, "")
+                parsed = parse_ppod_vpod_output(raw_out)
+                ppod_vpod_data[host] = parsed
+                logger.info(
+                    f"PPOD/VPOD for {host}: ppod_id={parsed['ppod_id']}, "
+                    f"vpod_ids={parsed['vpod_ids']}, local_accels={parsed['local_accels']}, "
+                    f"bitmaps={len(parsed['lane_en_bitmaps'])}"
+                )
+
         # Parse amd-smi list for regular nodes
         regular_node_gpus: Dict[str, list] = {}
         for host in regular_node_hosts:
@@ -518,6 +659,7 @@ class RackCollector(BaseCollector):
             "compute_trays": compute_devices,
             "compute_ports": compute_ports,
             "compute_port_stats": compute_port_stats,
+            "ppod_vpod": ppod_vpod_data,  # PPOD/VPOD topology (AFM-admitted trays only)
             "regular_nodes": regular_node_hosts,
             "regular_node_gpus": regular_node_gpus,
             "scale_up_vlan": scaleup_vlan,

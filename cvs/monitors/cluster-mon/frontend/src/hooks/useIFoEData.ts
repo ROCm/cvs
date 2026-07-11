@@ -21,6 +21,17 @@ export interface SwitchMetrics {
   queue_wm:       Record<string, any>[]
 }
 
+export interface PPODVPODData {
+  hostname:           string | null
+  ppod_id:            string | null
+  vpod_ids:           number[]
+  local_accels:       number[]
+  vpod_active_accels: number[]
+  lane_en_bitmaps:    string[]
+  accel_ids:          number[]
+  accel_states:       string[]
+}
+
 export interface IFoEData {
   compute_devices:      Record<string, Record<string, string>[]>
   compute_ports:        Record<string, Record<string, string>[]>
@@ -30,6 +41,8 @@ export interface IFoEData {
     ifcp: Record<string, any>[]
     pfc:  Record<string, any>[]
   }>
+  // PPOD/VPOD topology data (AFM-admitted trays only)
+  ppod_vpod?:          Record<string, PPODVPODData>
   switch_vlan:     Record<string, Record<string, Record<string, string>[]>>
   switch_mac:      Record<string, Record<string, Record<string, string>[]>>
   topology:        TopologyRow[]
