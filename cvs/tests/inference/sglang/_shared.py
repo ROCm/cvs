@@ -81,19 +81,59 @@ SGLANG_DISAGG_TEST_ORDER = {
     "test_poll_for_server_ready": 6,
     "test_launch_proxy_router": 7,
     "test_openai_compatible_http_endpoints": 8,
-    "test_run_lm_eval_hellaswag_benchmark_test": 9,
-    "test_run_lm_eval_gsm8k_benchmark_test": 10,
-    "test_run_lm_eval_mmlu_benchmark_test": 11,
-    "test_run_performance_benchmark_test": 12,
-    "test_disagg_gpu_topology": 13,
-    "test_print_results_table": 14,
+    "test_run_long_context_accuracy": 9,
+    "test_run_lm_eval_hellaswag_benchmark_test": 10,
+    "test_run_lm_eval_gsm8k_benchmark_test": 11,
+    "test_run_lm_eval_mmlu_benchmark_test": 12,
+    "test_run_performance_benchmark_test": 13,
+    "test_disagg_gpu_topology": 14,
+    "test_print_results_table": 15,
+    "test_teardown": 16,
 }
 
 
-def test_print_results_table(inf_res_dict):
-    phase_labels = inf_res_dict.pop("__phase_labels__", None) or {}
+def _flat_threshold_specs(specs: dict) -> dict[str, float]:
+    """Threshold cell specs → {metric: numeric_gate}."""
+    out: dict[str, float] = {}
+    for metric, spec in (specs or {}).items():
+        if isinstance(spec, dict) and "value" in spec:
+            out[metric] = float(spec["value"])
+        elif spec is not None:
+            out[metric] = float(spec)
+    return out
 
-    smoke_results = inf_res_dict.pop("__smoke_probe_results__", None)
+
+def _perf_result(actual, expected, metric_key: str) -> str:
+    if actual is None or expected is None:
+        return "-"
+    a, e = float(actual), float(expected)
+    if "ms" in metric_key.lower():
+        return "PASS" if a <= e else "FAIL"
+    return "PASS" if a >= e else "FAIL"
+
+
+def _thresholds_for_cell(variant_config, isl, osl, conc) -> dict[str, float]:
+    if variant_config is None:
+        return {}
+    tp = (getattr(variant_config, "benchmark_params", None) or {}).get("tensor_parallelism", "-")
+    cell_id = f"ISL={isl},OSL={osl},TP={tp},CONC={conc}"
+    raw = (getattr(variant_config, "thresholds", None) or {}).get(cell_id) or {}
+    return _flat_threshold_specs(raw)
+
+
+def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
+    """Log smoke, lm-eval accuracy, and perf tables (one row per metric per host per ISL/OSL cell)."""
+    phase_labels = getattr(lifecycle, "phase_labels", None) or {}
+    smoke_results = getattr(lifecycle, "smoke_results", None)
+
+    if variant_config is None:
+        try:
+            from cvs.lib.report.registry import get_session_results
+
+            variant_config = get_session_results().get("variant_config")
+        except Exception:
+            variant_config = None
+
     if smoke_results:
         smoke_rows = []
         for line in smoke_results:
@@ -111,9 +151,13 @@ def test_print_results_table(inf_res_dict):
                     tablefmt="github",
                 ),
             )
-        
+
     acc_rows = []
-    for label, key in (("HellaSwag", "accuracy_hellaswag"), ("GSM8K", "accuracy_gsm8k"), ("MMLU", "accuracy_mmlu")):
+    for label, key in (
+        ("HellaSwag", "accuracy_hellaswag"),
+        ("GSM8K", "accuracy_gsm8k"),
+        ("MMLU", "accuracy_mmlu"),
+    ):
         e = phase_labels.get(key)
         if isinstance(e, dict) and "task" in e:
             passed = e.get("passed")
@@ -137,7 +181,73 @@ def test_print_results_table(inf_res_dict):
             ),
         )
 
-    perf_expected = phase_labels.get("performance_expected") or {}
+    bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
+    tp = bp.get("tensor_parallelism", "8")
+    pp = bp.get("pipeline_parallelism", "1")
+
+    _ACC_CELL_RE = re.compile(r"^ACC_ISL=(?P<isl>\d+),OSL=(?P<osl>\d+)$")
+
+    acc_by_cell = phase_labels.get("accuracy_by_cell") or {}
+    if acc_by_cell:
+        long_ctx_rows = []
+        for cell_id, result in sorted(acc_by_cell.items()):
+            m = _ACC_CELL_RE.match(str(cell_id))
+            if not m:
+                continue
+            key = f"accuracy_long_ctx_{m.group('isl')}"
+            e = phase_labels.get(key) or {}
+            long_ctx_rows.append([
+                f"ISL={m.group('isl')}",
+                m.group("osl"),
+                f"{float(e['actual']):.4f}" if e.get("actual") is not None else "-",
+                f"{float(e['expected']):.4f}" if e.get("expected") is not None else "-",
+                result,
+            ])
+        if long_ctx_rows:
+            log.info(
+                "\n\n\n\n======== Long-context accuracy (NIAH) ========\n%s",
+                tabulate(
+                    long_ctx_rows,
+                    headers=["Cell", "OSL", "Pass rate", "Expected", "Result"],
+                    tablefmt="github",
+                ),
+            )
+
+    _CELL_RE = re.compile(
+        r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),CONC=(?P<conc>\d+)$"
+    )
+    bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
+    pp = bp.get("pipeline_parallelism", "1")
+    performance_by_cell = phase_labels.get("performance_by_cell") or {}
+    if performance_by_cell:
+        summary_rows = []
+        for cell_id, result in sorted(
+            performance_by_cell.items(),
+            key=lambda kv: (
+                int(m.group("isl")), int(m.group("osl")), int(m.group("conc"))
+            ) if (m := _CELL_RE.match(str(kv[0]))) else (0, 0, 0),
+        ):
+            m = _CELL_RE.match(str(cell_id))
+            if m:
+                summary_rows.append([
+                    m.group("isl"),
+                    m.group("osl"),
+                    m.group("tp"),
+                    pp,
+                    m.group("conc"),
+                    result,
+                ])
+            else:
+                summary_rows.append(["-", "-", "-", pp, str(cell_id), result])
+       
+        log.info(
+            "\n\n\n\n======== Performance summary (by ISL/OSL cell) ========\n%s",
+            tabulate(
+                summary_rows,
+                headers=["ISL", "OSL", "TP", "PP", "Conc", "Result"],
+                tablefmt="github",
+            ),
+        )
 
     PERF_METRICS = [
         ("Mean TTFT (ms)", "mean_ttft_ms"),
@@ -151,28 +261,33 @@ def test_print_results_table(inf_res_dict):
         ("MFU (estimated)", "mfu"),
     ]
 
-    def _perf_result(actual, expected, metric_key: str) -> str:
-        if actual is None or expected is None:
-            return "-"
-        a, e = float(actual), float(expected)
-        if "ms" in metric_key.lower():
-            return "PASS" if a <= e else "FAIL"
-        return "PASS" if a >= e else "FAIL"
-
+    perf_items = [
+        (k, v)
+        for k, v in inf_res_dict.items()
+        if isinstance(k, tuple) and len(k) == 6 and isinstance(v, dict)
+    ]
+    
     perf_rows = []
-    for key, host_dict in inf_res_dict.items():
+    for key, host_dict in sorted(
+        perf_items,
+        key=lambda kv: (int(kv[0][2]), int(kv[0][3]), int(kv[0][5])),
+    ):
         model, gpu, isl, osl, policy, conc = key
+        expected_map = _thresholds_for_cell(variant_config, isl, osl, conc)
         for host, m in host_dict.items():
             for label, metric_key in PERF_METRICS:
                 actual = m.get(metric_key)
                 if actual is None:
                     continue
-
-                expected = perf_expected.get(metric_key)
+                expected = expected_map.get(metric_key)
                 perf_rows.append(
                     [
                         model,
                         gpu,
+                        isl,
+                        osl,
+                        policy,
+                        conc,
                         host,
                         label,
                         f"{float(actual):.4f}",
@@ -186,9 +301,21 @@ def test_print_results_table(inf_res_dict):
             "\n\n\n\n======== Performance results ========\n%s",
             tabulate(
                 perf_rows,
-                headers=["Model", "GPU", "Host", "Metric", "Actual", "Expected", "Result"],
+                headers=[
+                    "Model",
+                    "GPU",
+                    "ISL",
+                    "OSL",
+                    "Policy",
+                    "Conc",
+                    "Host",
+                    "Metric",
+                    "Actual",
+                    "Expected",
+                    "Result",
+                ],
                 tablefmt="github",
             ),
         )
-    elif not smoke_results and not acc_rows:
+    elif not smoke_results and not acc_rows and not performance_by_cell:
         log.info("inf_res_dict empty, nothing to print")

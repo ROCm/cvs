@@ -4,6 +4,7 @@
     "container_image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260603",
     "_container_image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260601",
     "container_name": "sglang_container",
+	"docker_cmd": "sudo docker",
     "_example_nnodes": "4",
     "nnodes": "2",
     "hf_token_file": "/home/{user-id}/.hf_token",
@@ -63,15 +64,17 @@
         "llama-70b":
              {
 		 "backend": "sglang",
-		 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_llama_70b_threshold.json",
-		 "max_concurrency": "25",
+         "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_llama_70b_threshold.json",
+		 "max_concurrency": "256",
 		 "model": "meta-llama/Llama-3.1-70B-Instruct",
 		 "prefill_policy": "cache_aware",
 		 "decode_policy": "cache_aware",
 		 "tensor_parallelism": "8",
+		 "pipeline_parallelism": "1",
 		 "memory_fraction": "0.85",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
+		 "context_length": "205000",
 		 "inference_tests":
 		  {
 		      "bench_serv_random":
@@ -79,24 +82,9 @@
 			  "backend": "sglang",
 			  "data_set_name": "random",
 			  "num_prompts": "100",
-			  "input_length": "1024",
-			  "output_length": "1024",
 			  "random_range_ratio": "0.5",
 			  "model_num_params": "70000000000",
-			  "peak_gpu_tflops": "1300",
-                          "expected_results":
-		          {
-			       "auto":
-			           {
-
-                   		       "output_throughput_per_sec": "900",
-                                       "mean_ttft_ms": "60000",
-                                       "mean_tpot_ms": "150",
-                                       "mean_e2e_latency_ms": "120000",
-                                       "goodput": "0.99",
-                                       "mfu": "0.02"
-				   }
-			  }
+			  "peak_gpu_tflops": "1300"
 		      },
 		      "bench_serv_generated_shared_prefix":
 		      {
@@ -105,14 +93,15 @@
 			  "gsp_prompts_per_group": "16",
 			  "gsp_system_prompt_len": "0",
 			  "gsp_question_len": "1024",
-			  "gsp_output_len": "1024",
-                          "expected_results":
-		          {
-			       "auto":
-			           {
-				   }
-			  }
+			  "gsp_output_len": "1024"
 		      },
+			  "long_ctx_niah": {
+					"num_prompts": "6",
+					"seed": "42",
+					"request_timeout_sec": "7200",
+					"exec_timeout_sec": "21600",
+					"tolerance_frac": "0.05"
+				},
 		      "lm_eval_hellaswag":
 		      {
 			  "backend": "sglang",
@@ -123,14 +112,7 @@
 			  "limit": "100",
 			  "num_concurrent": "1",
 			  "exec_timeout_sec": "7200",
-			  "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-		          {
-			       "hellaswag":
-			           {
-					"acc_norm,none": 0.23
-				   }
-			  }
+			  "extra_model_args": "tokenizer_backend=huggingface"
 		      },
                       "lm_eval_gsm8k":
                       {
@@ -142,14 +124,7 @@
                           "limit": "100",
                           "num_concurrent": "4",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "gsm8k":
-                                   {
-                                        "exact_match,flexible-extract": 0.96
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface"
                       },
                       "lm_eval_mmlu":
                       {
@@ -161,31 +136,26 @@
                           "limit": "1",
                           "num_concurrent": "1",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "mmlu":
-                                   {
-                                         "acc,none": 0.29
-                                   }
-                          }
-                      }
+                          "extra_model_args": "tokenizer_backend=huggingface"
+		      }
 
                   }
              },
-        "deepseek-r1":
+        "kimi-k2.6":
              {
 		 "backend": "sglang",
-		 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_deepseek_r1_0528_threshold.json",
-		 "max_concurrency": "64",
+                 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_kimi_k2.6_threshold.json",
+		 "max_concurrency": "256",
 		 "_comments_model": "If the model is local, specify the full path of the model",
-		 "model": "/root/models/DeepSeek-R1-0528",
+		 "model": "amd/Kimi-K2.5-W4A8",
 		 "prefill_policy": "cache_aware",
 		 "decode_policy": "cache_aware",
-		 "tensor_parallelism": "16",
-		 "memory_fraction": "0.7",
+		 "tensor_parallelism": "8",
+		 "pipeline_parallelism": "2",
+		 "memory_fraction": "0.80",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
+		 "context_length": "205000",
 		 "inference_tests":
 		  {
 		      "bench_serv_random":
@@ -193,23 +163,9 @@
 			  "backend": "sglang",
 			  "data_set_name": "random",
 			  "num_prompts": "100",
-			  "input_length": "1024",
-			  "output_length": "1024",
 			  "random_range_ratio": "0.5",
                           "model_num_params": "671000000000",
-                          "peak_gpu_tflops": "1300",
-                          "expected_results":
-		          {
-			       "auto":
-			           {
-                   		       "output_throughput_per_sec": "340",
-                                       "mean_ttft_ms": "60000",
-                                       "mean_tpot_ms": "250",
-                                       "mean_e2e_latency_ms": "120000",
-                                       "goodput": "0.99",
-                                       "mfu": "0.25"
-				   }
-			  }
+                          "peak_gpu_tflops": "1300"
 		      },
 		      "bench_serv_generated_shared_prefix":
 		      {
@@ -218,15 +174,16 @@
 			  "gsp_prompts_per_group": "16",
 			  "gsp_system_prompt_len": "0",
 			  "gsp_question_len": "1024",
-			  "gsp_output_len": "1024",
-                          "expected_results":
-		          {
-			       "auto":
-			           {
-				   }
-			  }
+			  "gsp_output_len": "1024"
 		      },
-                      "lm_eval_hellaswag":
+		      "long_ctx_niah": {
+					"num_prompts": "6",
+					"seed": "42",
+					"request_timeout_sec": "7200",
+					"exec_timeout_sec": "21600",
+					"tolerance_frac": "0.05"
+				},
+				"lm_eval_hellaswag":
 		      {
 			  "backend": "sglang",
 			  "lm_eval_model": "local-completions",
@@ -236,14 +193,7 @@
 			  "limit": "100",
 			  "num_concurrent": "1",
 			  "exec_timeout_sec": "7200",
-			  "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-		          {
-			       "hellaswag":
-			           {
-					"acc_norm,none": 0.82
-				   }
-			  }
+			  "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
 		      },
                       "lm_eval_gsm8k":
                       {
@@ -255,14 +205,7 @@
                           "limit": "100",
                           "num_concurrent": "4",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "gsm8k":
-                                   {
-                                        "exact_match,flexible-extract": 0.23
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
                       },
                       "lm_eval_mmlu":
                       {
@@ -274,56 +217,37 @@
                           "limit": "1",
                           "num_concurrent": "1",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "mmlu":
-                                   {
-                                         "acc,none": 0.5
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
                       }
 
 
 		  }
              },
-             "gpt-oss-120b":
+        "deepseek-r1":
              {
 		 "backend": "sglang",
-		 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_gpt_oss_120b_threshold.json",
-		 "max_concurrency": "25",
-		 "model": "openai/gpt-oss-120b",
+         "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_deepseek_r1_0528_threshold.json",
+		 "max_concurrency": "256",
+		 "_comments_model": "If the model is local, specify the full path of the model",
+		 "model": "/root/models/DeepSeek-R1-0528",
 		 "prefill_policy": "cache_aware",
 		 "decode_policy": "cache_aware",
 		 "tensor_parallelism": "8",
-		 "memory_fraction": "0.85",
+		 "pipeline_parallelism": "2",
+		 "memory_fraction": "0.7",
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
+		 "context_length": "205000",
 		 "inference_tests":
-		 {
+		  {
 		      "bench_serv_random":
 		      {
 			  "backend": "sglang",
 			  "data_set_name": "random",
-			  "num_prompts": "100",
-			  "input_length": "1024",
-			  "output_length": "1024",
+			  "num_prompts": "25",
 			  "random_range_ratio": "0.5",
-                          "model_num_params": "5130000000",
-                          "peak_gpu_tflops": "1300",
-                          "expected_results":
-		          {
-			       "auto":
-			           {
-
-                   		       "output_throughput_per_sec": "900",
-                                       "mean_ttft_ms": "60000",
-                                       "mean_tpot_ms": "150",
-                                       "mean_e2e_latency_ms": "120000",
-                                       "goodput": "0.99",
-                                       "mfu": "0.25"
-				   }
-			  }
+			  "model_num_params": "671000000000",
+			  "peak_gpu_tflops": "2615"
 		      },
 		      "bench_serv_generated_shared_prefix":
 		      {
@@ -332,32 +256,26 @@
 			  "gsp_prompts_per_group": "16",
 			  "gsp_system_prompt_len": "0",
 			  "gsp_question_len": "1024",
-			  "gsp_output_len": "1024",
-                          "expected_results":
-		          {
-			       "auto":
-			           {
-				   }
-			  }
+			  "gsp_output_len": "1024"
 		      },
-		      "lm_eval_hellaswag":
+				"long_ctx_niah": {
+					"num_prompts": "6",
+					"seed": "42",
+					"request_timeout_sec": "7200",
+					"exec_timeout_sec": "21600",
+					"tolerance_frac": "0.05"
+				},
+			 "lm_eval_hellaswag":
 		      {
 			  "backend": "sglang",
 			  "lm_eval_model": "local-completions",
 			  "tasks": "hellaswag",
-			  "num_fewshot": "5",
+			  "num_fewshot": "0",
 			  "batch_size": "auto",
 			  "limit": "100",
 			  "num_concurrent": "1",
 			  "exec_timeout_sec": "7200",
-			  "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-		          {
-			       "hellaswag":
-			           {
-					"acc_norm,none": 0.23
-				   }
-			  }
+			  "extra_model_args": "tokenizer_backend=huggingface"
 		      },
                       "lm_eval_gsm8k":
                       {
@@ -369,14 +287,168 @@
                           "limit": "100",
                           "num_concurrent": "4",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "gsm8k":
-                                   {
-                                        "exact_match,flexible-extract": 0.96
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface"
+                      },
+                      "lm_eval_mmlu":
+                      {
+                          "backend": "sglang",
+                          "lm_eval_model": "local-completions",
+                          "tasks": "mmlu",
+                          "num_fewshot": "5",
+                          "batch_size": "auto",
+                          "limit": "1",
+                          "num_concurrent": "1",
+                          "exec_timeout_sec": "7200",
+                          "extra_model_args": "tokenizer_backend=huggingface"
+                      }
+
+
+		  }
+             },
+			 "glm-52-fp8":
+			 {
+				 "backend": "sglang",
+				 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_glm_52_fp8_threshold.json",
+				 "max_concurrency": "256",
+				 "_comments_model": "If the model is local, specify the full path of the model",
+				 "model": "/root/models/GLM-5.2-FP8",
+				 "prefill_policy": "cache_aware",
+				 "decode_policy": "cache_aware",
+				 "tensor_parallelism": "8",
+				 "pipeline_parallelism": "2",
+				 "memory_fraction": "0.8",
+				 "tokenizer_mode": "auto",
+				 "inference_poll_iterations": "16",
+				 "context_length": "205000",
+				 "inference_tests":
+				 {
+					 "bench_serv_random":
+					 {
+						 "backend": "sglang",
+						 "data_set_name": "random",
+						 "num_prompts": "25",
+						 "random_range_ratio": "0.5",
+						 "model_num_params": "744000000000",
+						 "peak_gpu_tflops": "1300"
+					 },
+					 "bench_serv_generated_shared_prefix":
+					 {
+						 "backend": "sglang",
+						 "gsp_num_groups": "1",
+						 "gsp_prompts_per_group": "16",
+						 "gsp_system_prompt_len": "0",
+						 "gsp_question_len": "1024",
+						 "gsp_output_len": "1024"
+					 },
+					 "long_ctx_niah": {
+						"num_prompts": "6",
+						"seed": "42",
+						"request_timeout_sec": "7200",
+						"exec_timeout_sec": "21600",
+						"tolerance_frac": "0.05"
+					},
+					 "lm_eval_hellaswag":
+					 {
+						 "backend": "sglang",
+						 "lm_eval_model": "local-completions",
+						 "tasks": "hellaswag",
+						 "num_fewshot": "0",
+						 "batch_size": "auto",
+						 "limit": "100",
+						 "num_concurrent": "1",
+						 "exec_timeout_sec": "7200",
+						 "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
+					 },
+					 "lm_eval_gsm8k":
+					 {
+						 "backend": "sglang",
+						 "lm_eval_model": "local-completions",
+						 "tasks": "gsm8k",
+						 "num_fewshot": "5",
+						 "batch_size": "auto",
+						 "limit": "100",
+						 "num_concurrent": "4",
+						 "exec_timeout_sec": "7200",
+						 "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
+					 },
+					 "lm_eval_mmlu":
+					 {
+						 "backend": "sglang",
+						 "lm_eval_model": "local-completions",
+						 "tasks": "mmlu",
+						 "num_fewshot": "5",
+						 "batch_size": "auto",
+						 "limit": "1",
+						 "num_concurrent": "1",
+						 "exec_timeout_sec": "7200",
+						 "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
+					 }
+				 }
+			 },
+             "gpt-oss-120b":
+             {
+		 "backend": "sglang",
+                 "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_gpt_oss_120b_threshold.json",
+		 "max_concurrency": "256",
+		 "model": "openai/gpt-oss-120b",
+		 "prefill_policy": "cache_aware",
+		 "decode_policy": "cache_aware",
+		 "tensor_parallelism": "8",
+		 "pipeline_parallelism": "1",
+		 "memory_fraction": "0.85",
+		 "tokenizer_mode": "auto",
+		 "inference_poll_iterations": "16",
+		 "context_length": "205000",
+		 "inference_tests":
+		 {
+		      "bench_serv_random":
+		      {
+			  "backend": "sglang",
+			  "data_set_name": "random",
+			  "num_prompts": "100",
+			  "random_range_ratio": "0.5",
+                          "model_num_params": "5130000000",
+                          "peak_gpu_tflops": "1300"
+		      },
+		      "bench_serv_generated_shared_prefix":
+		      {
+			  "backend": "sglang",
+			  "gsp_num_groups": "1",
+			  "gsp_prompts_per_group": "16",
+			  "gsp_system_prompt_len": "0",
+			  "gsp_question_len": "1024",
+			  "gsp_output_len": "1024"
+		      },
+		      "long_ctx_niah": {
+						"num_prompts": "6",
+						"seed": "42",
+						"request_timeout_sec": "7200",
+						"exec_timeout_sec": "21600",
+						"tolerance_frac": "0.05"
+					},
+		      "lm_eval_hellaswag":
+		      {
+			  "backend": "sglang",
+			  "lm_eval_model": "local-completions",
+			  "tasks": "hellaswag",
+			  "num_fewshot": "5",
+			  "batch_size": "auto",
+			  "limit": "100",
+			  "num_concurrent": "1",
+			  "exec_timeout_sec": "7200",
+			  "extra_model_args": "tokenizer_backend=huggingface"
+		      },
+                      "lm_eval_gsm8k":
+                      {
+                          "backend": "sglang",
+                          "lm_eval_model": "local-completions",
+                          "tasks": "gsm8k",
+                          "num_fewshot": "5",
+                          "batch_size": "auto",
+                          "limit": "100",
+                          "num_concurrent": "4",
+                          "exec_timeout_sec": "7200",
+                          "extra_model_args": "tokenizer_backend=huggingface"
                       },
 		    "lm_eval_mmlu":
                       {
@@ -388,14 +460,7 @@
                           "limit": "1",
                           "num_concurrent": "1",
                           "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface",
-                          "expected_results":
-                          {
-                               "mmlu":
-                                   {
-                                         "acc,none": 0.29
-                                   }
-                          }
+                          "extra_model_args": "tokenizer_backend=huggingface"
                       }
 
 

@@ -541,3 +541,250 @@ class LmEvalBenchmark:
             "passed": False,
             "error": error,
         }
+
+
+LONG_CTX_NIAH_CHECK_RESULT_KEYS = (
+    "task_name",
+    "metric_key",
+    "expected",
+    "tolerance_frac",
+    "log_path",
+    "label",
+)
+
+
+class LongContextNiahBenchmark:
+    """Needle-in-a-haystack long-context accuracy via POST /v1/chat/completions."""
+
+    DEFAULT_METRIC_KEY = "pass_rate"
+    DEFAULT_TASK_NAME = "long_ctx_niah"
+    DEFAULT_TOLERANCE_FRAC = 0.05
+    DEFAULT_EXEC_TIMEOUT_SEC = 21600
+    DEFAULT_REQUEST_TIMEOUT_SEC = 7200
+
+    @classmethod
+    def probe_script(
+        cls,
+        *,
+        port: int,
+        model: str,
+        isl: int,
+        osl: int,
+        num_prompts: int,
+        seed: int,
+        request_timeout_sec: int = DEFAULT_REQUEST_TIMEOUT_SEC,
+    ) -> str:
+        """Python source run inside benchmark container (docker exec)."""
+        return "\n".join(
+            [
+                "import json, random, re, string, sys, urllib.error, urllib.request",
+                "",
+                "def _pip_transformers():",
+                "    import subprocess",
+                "    subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-q', 'transformers'])",
+                "",
+                "try:",
+                "    from transformers import AutoTokenizer",
+                "except Exception:",
+                "    _pip_transformers()",
+                "    from transformers import AutoTokenizer",
+                "",
+                f"PORT = {int(port)}",
+                f"MODEL = {json.dumps(model)}",
+                f"TARGET_ISL = {int(isl)}",
+                f"MAX_TOKENS = {int(osl)}",
+                f"NUM_PROMPTS = {int(num_prompts)}",
+                f"SEED = {int(seed)}",
+                f"REQ_TIMEOUT = {float(request_timeout_sec)}",
+                'BASE = "http://0.0.0.0:%d" % PORT',
+                'URL = BASE + "/v1/chat/completions"',
+                "",
+                "def norm(s):",
+                "    return re.sub(r'\\s+', '', str(s or '').lower())",
+                "",
+                "def chat(prompt):",
+                "    body = {",
+                '        "model": MODEL,',
+                '        "messages": [{"role": "user", "content": prompt}],',
+                '        "max_tokens": MAX_TOKENS,',
+                '        "temperature": 0.0,',
+                "    }",
+                "    data = json.dumps(body).encode('utf-8')",
+                '    req = urllib.request.Request(URL, data=data, headers={"Content-Type": "application/json"}, method="POST")',
+                "    with urllib.request.urlopen(req, timeout=REQ_TIMEOUT) as resp:",
+                "        raw = resp.read().decode('utf-8', errors='replace')",
+                "    obj = json.loads(raw)",
+                '    choices = obj.get("choices") or []',
+                "    if not choices:",
+                '        raise RuntimeError("empty choices")',
+                '    msg = choices[0].get("message") or {}',
+                '    return str(msg.get("content") or "")',
+                "",
+                "def build_prompt(tok, needle):",
+                '    prefix = "The passkey is %s. " % needle',
+                '    suffix = "\\n\\nWhat is the passkey? Reply with only the passkey."',
+                "    prefix_ids = tok.encode(prefix, add_special_tokens=False)",
+                "    suffix_ids = tok.encode(suffix, add_special_tokens=False)",
+                "    filler_budget = TARGET_ISL - len(prefix_ids) - len(suffix_ids)",
+                "    if filler_budget < 1:",
+                '        raise RuntimeError("TARGET_ISL too small for needle prompt skeleton")',
+                '    word = "foo "',
+                "    word_ids = tok.encode(word, add_special_tokens=False)",
+                "    if not word_ids:",
+                '        raise RuntimeError("tokenizer produced empty filler word")',
+                "    reps = (filler_budget // len(word_ids)) + 1",
+                "    filler_ids = (word_ids * reps)[:filler_budget]",
+                "    prompt_ids = prefix_ids + filler_ids + suffix_ids",
+                "    if len(prompt_ids) != TARGET_ISL:",
+                "        raise RuntimeError('prompt token len %d != TARGET_ISL %d' % (len(prompt_ids), TARGET_ISL))",
+                "    return tok.decode(prompt_ids, skip_special_tokens=True), needle",
+                "",
+                "def main():",
+                "    random.seed(SEED)",
+                "    tok = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)",
+                "    results = []",
+                "    correct = 0",
+                "    for i in range(NUM_PROMPTS):",
+                '        needle = "NEEDLE-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))',
+                "        prompt, expected = build_prompt(tok, needle)",
+                "        try:",
+                "            actual = chat(prompt)",
+                "            ok = norm(expected) in norm(actual)",
+                "        except Exception as e:",
+                "            actual = 'ERROR: %s' % e",
+                "            ok = False",
+                "        correct += int(ok)",
+                "        results.append({",
+                '            "sample": i,',
+                '            "expected": expected,',
+                '            "actual": actual,',
+                '            "passed": bool(ok),',
+                "        })",
+                "    total = len(results)",
+                "    out = {",
+                '        "task": "long_ctx_niah",',
+                '        "metric_key": "pass_rate",',
+                '        "isl": TARGET_ISL,',
+                '        "osl": MAX_TOKENS,',
+                '        "correct": correct,',
+                '        "total": total,',
+                '        "pass_rate": (float(correct) / total) if total else 0.0,',
+                '        "results": results,',
+                "    }",
+                "    print(json.dumps(out))",
+                "",
+                'if __name__ == "__main__":',
+                "    main()",
+            ]
+        )
+
+    @classmethod
+    def check_results(
+        cls,
+        text: str,
+        *,
+        task_name: str,
+        metric_key: str,
+        expected: float,
+        tolerance_frac: float = DEFAULT_TOLERANCE_FRAC,
+        log_path: str = "",
+        label: str = "",
+    ) -> tuple[bool, dict[str, Any] | None, str | None]:
+        display = label or task_name
+        log_hint = f" (see {log_path})" if log_path else ""
+
+        if not text or not str(text).strip():
+            return False, None, f"{display} produced no output"
+
+        payload = None
+        for line in reversed(str(text).splitlines()):
+            line = line.strip()
+            if line.startswith("{") and line.endswith("}"):
+                try:
+                    payload = json.loads(line)
+                    break
+                except json.JSONDecodeError:
+                    continue
+        if not isinstance(payload, dict):
+            return False, None, f"{display} output missing JSON summary{log_hint}"
+
+        actual = payload.get(metric_key)
+        if actual is None:
+            return False, None, f"{display} JSON missing {metric_key!r}{log_hint}"
+
+        actual_f = float(actual)
+        expected_f = float(expected)
+        passed = actual_f + tolerance_frac * abs(expected_f) >= expected_f
+        summary = {
+            "task": str(payload.get("task") or task_name),
+            "metric_key": metric_key,
+            "actual": actual_f,
+            "expected": expected_f,
+            "passed": passed,
+            "isl": payload.get("isl"),
+            "osl": payload.get("osl"),
+            "correct": payload.get("correct"),
+            "total": payload.get("total"),
+        }
+        if passed:
+            return True, summary, None
+        return (
+            False,
+            summary,
+            f"{display} pass_rate {actual_f:.4f} below expected {expected_f:.4f} "
+            f"(tol={tolerance_frac * 100:.0f}%)",
+        )
+
+    @classmethod
+    def prepare(
+        cls,
+        i_dict: Mapping[str, Any],
+        *,
+        port: int,
+        model_id: str,
+        isl: int,
+        osl: int,
+        log_dir: str,
+        log_basename: str,
+    ) -> tuple[str, dict[str, Any]]:
+        num_prompts = int(i_dict.get("num_prompts", 16))
+        seed = int(i_dict.get("seed", 42))
+        exec_timeout_sec = int(i_dict.get("exec_timeout_sec", cls.DEFAULT_EXEC_TIMEOUT_SEC))
+        request_timeout_sec = int(
+            i_dict.get("request_timeout_sec", cls.DEFAULT_REQUEST_TIMEOUT_SEC)
+        )
+        tolerance_frac = float(i_dict.get("tolerance_frac", cls.DEFAULT_TOLERANCE_FRAC))
+        log_path = f"{log_dir.rstrip('/')}/benchmark_node/{log_basename}"
+
+        expected_block = i_dict.get("expected_results") or {}
+        auto_expected = expected_block.get("auto") or {}
+        if cls.DEFAULT_METRIC_KEY not in auto_expected:
+            raise KeyError(f"expected_results.auto[{cls.DEFAULT_METRIC_KEY!r}] missing")
+        expected = float(auto_expected[cls.DEFAULT_METRIC_KEY])
+
+        inner_cmd = (
+            f"python3 /tmp/long_ctx_niah_probe.py 2>&1 | tee {shlex.quote(log_path)}"
+        )
+        scoring = {
+            "task_name": cls.DEFAULT_TASK_NAME,
+            "metric_key": cls.DEFAULT_METRIC_KEY,
+            "expected": expected,
+            "tolerance_frac": tolerance_frac,
+            "log_path": log_path,
+            "exec_timeout_sec": exec_timeout_sec,
+            "label": f"long_ctx_niah isl={isl}",
+            "probe_kwargs": {
+                "port": int(port),
+                "model": model_id,
+                "isl": int(isl),
+                "osl": int(osl),
+                "num_prompts": num_prompts,
+                "seed": seed,
+                "request_timeout_sec": request_timeout_sec,
+            },
+        }
+        return inner_cmd, scoring
+
+    @classmethod
+    def check_kwargs_from_scoring(cls, scoring: Mapping[str, Any]) -> dict[str, Any]:
+        return {k: scoring[k] for k in LONG_CTX_NIAH_CHECK_RESULT_KEYS}
