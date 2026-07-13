@@ -9,11 +9,9 @@ Single SGLang disaggregated (PD) benchmark module: model is selected from
 import re
 import time
 
-import pytest
-
 from cvs.lib import docker_lib, globals
 from cvs.lib.utils_lib import fail_test, update_test_result
-from cvs.tests.inference.sglang._shared import test_print_results_table
+from cvs.tests.inference.sglang._shared import test_print_results_table  # noqa: F401
 
 log = globals.log
 

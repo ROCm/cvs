@@ -189,7 +189,6 @@ def placeholder_gated_threshold_cell(
 ) -> Dict[str, Any]:
     """Return one sweep cell's ``client.*`` specs covering every ``GATED_METRICS`` member."""
     loose_ms = {"kind": "max_ms", "value": 1_000_000}
-    loose_tok = {"kind": "min_tok_s", "value": 0}
     return {
         "client.total_token_throughput": {"kind": "min_tok_s", "value": total_token_throughput_min},
         "client.output_throughput": {"kind": "min_tok_s", "value": output_throughput_min},

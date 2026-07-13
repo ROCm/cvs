@@ -1,10 +1,9 @@
 '''Tests for cell card render primitives and interactive viewer scaffold.'''
 
 from dataclasses import replace
-from pathlib import Path
 
 from cvs.lib.report.cell_build import build_all_cells, select_summary_cells
-from cvs.lib.report.inference import render_report_html, write_report
+from cvs.lib.report.inference import write_report
 from cvs.lib.report.render.cell_card import render_cell_card_html
 from cvs.lib.report.unittests._fixtures import (
     generic_inference_report_config,

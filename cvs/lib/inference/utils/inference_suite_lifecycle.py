@@ -46,6 +46,7 @@ except ImportError:
     pytest_html = None
 
 from cvs.lib import globals
+from cvs.lib.inference.utils.cache_probe import du_bytes
 
 log = globals.log
 
@@ -76,9 +77,6 @@ def sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency):
         seq_combo.get("name", "default"),
         concurrency,
     )
-
-
-from cvs.lib.inference.utils.cache_probe import du_bytes
 
 
 def test_launch_container(orch, variant_config, lifecycle, request):
