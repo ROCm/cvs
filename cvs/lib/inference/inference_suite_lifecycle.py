@@ -46,6 +46,7 @@ except ImportError:
     pytest_html = None
 
 from cvs.lib import globals
+from cvs.lib.inference.cache_probe import du_bytes
 
 log = globals.log
 
@@ -76,9 +77,6 @@ def sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency):
         seq_combo.get("name", "default"),
         concurrency,
     )
-
-
-from cvs.lib.inference.cache_probe import du_bytes
 
 
 def test_launch_container(orch, variant_config, lifecycle, request):
@@ -198,10 +196,7 @@ def attach_lifecycle_html_table(item, report):
         return
     if pytest_html is None:
         return
-    body = "".join(
-        f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>"
-        for label, value, unit in rows
-    )
+    body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
     html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
     extras = getattr(report, "extras", [])
     extras.append(pytest_html.extras.html(html))

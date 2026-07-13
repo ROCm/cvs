@@ -57,9 +57,7 @@ METRIC_TIERS: dict[str, tuple[str, ...]] = {
         "success_rate",
         "failed",
     ),
-    "scaling": (
-        "efficiency_pct",
-    ),
+    "scaling": ("efficiency_pct",),
 }
 
 SCALING_METRICS: tuple[str, ...] = METRIC_TIERS["scaling"]
@@ -68,9 +66,7 @@ SCALING_METRIC_UNITS: dict[str, str] = {"efficiency_pct": "%"}
 METRIC_TIER_ORDER: tuple[str, ...] = tuple(METRIC_TIERS.keys()) + ("record",)
 
 _tiered = {m for names in METRIC_TIERS.values() for m in names}
-RECORD_METRICS: tuple[str, ...] = tuple(
-    short for short, _unit in CLIENT_METRICS if short not in _tiered
-)
+RECORD_METRICS: tuple[str, ...] = tuple(short for short, _unit in CLIENT_METRICS if short not in _tiered)
 
 ENFORCED_METRICS = frozenset(_tiered)
 

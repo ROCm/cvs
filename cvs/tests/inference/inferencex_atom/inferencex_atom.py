@@ -12,10 +12,10 @@ import pytest
 from cvs.lib import globals
 from cvs.lib.inference.inference_suite_lifecycle import (
     sweep_cell_result_key,
-    test_launch_container,
-    test_model_fetch,
-    test_setup_sshd,
-    test_teardown,
+    test_launch_container,  # noqa: F401
+    test_model_fetch,  # noqa: F401
+    test_setup_sshd,  # noqa: F401
+    test_teardown,  # noqa: F401
 )
 from cvs.lib.inference.inferencex_atom_orch import InferenceXAtomJob
 from cvs.lib.inference.utils.inferencex_atom_config_loader import (
@@ -46,9 +46,7 @@ def _tier_display_metric(tier):
 def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
-        raise pytest.UsageError(
-            f"--config_file not found or not specified: {config_file!r}"
-        )
+        raise pytest.UsageError(f"--config_file not found or not specified: {config_file!r}")
     with open(config_file) as fp:
         raw = json.load(fp)
     spec = expand_sweep_parametrize(raw.get("sweep", {}), metafunc.fixturenames)
@@ -159,9 +157,7 @@ def test_cell_metrics(
         pytest.fail(f"no threshold specs for tier {metric_tier!r} in cell {cell!r}")
     # ATOM benchmark_serving may omit some tail percentiles even when
     # metric_percentiles requests them; only gate metrics present in actuals.
-    specs = {
-        k: v for k, v in specs.items() if k in actuals and actuals[k] is not None
-    }
+    specs = {k: v for k, v in specs.items() if k in actuals and actuals[k] is not None}
     if not specs:
         pytest.fail(
             f"no assertable threshold specs for tier {metric_tier!r} in cell {cell!r} "
