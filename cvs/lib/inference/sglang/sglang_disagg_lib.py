@@ -370,8 +370,6 @@ class SglangDisaggPD:
     ):
         # Env setup for Prefill Nodes ..
         p_cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "echo '
-
-                    export GPU_ARCHS=gfx942
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
@@ -402,8 +400,6 @@ class SglangDisaggPD:
     ):
         # Env setup for Decode Nodes ..
         d_cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "echo '
-
-                    export GPU_ARCHS=gfx942
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
@@ -434,8 +430,6 @@ class SglangDisaggPD:
     ):
         # Env setup for Proxy Router Node ..
         r_cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "echo '
-
-                    export GPU_ARCHS=gfx942
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
@@ -461,7 +455,6 @@ class SglangDisaggPD:
     ):
         # Env setup for Benchserv node ..
         b_cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "echo '
-
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
