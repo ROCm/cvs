@@ -318,6 +318,47 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
             ["ISL=1024,OSL=1024,TP=8,CONC=128", "ISL=1024,OSL=1024,TP=8,CONC=256"],
         )
 
+    def test_load_w1_mi300x_vllm_multinode_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.framework, "inferencex_atom_vllm_single")
+        self.assertEqual(variant.params.driver, "vllm")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
+        self.assertFalse(variant.enforce_thresholds)
+        self.assertEqual(len(variant.expected_cells()), 15)
+        cell = "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertIn(cell, variant.expected_cells())
+        self.assertEqual(
+            variant.thresholds[cell]["scaling.efficiency_pct"],
+            {"kind": "min", "value": 50},
+        )
+        self.assertEqual(
+            variant.thresholds[cell]["compare.vllm.output_throughput_ratio"],
+            {"kind": "min", "value": 0.85},
+        )
+
+    def test_load_w1_mi355x_vllm_multinode_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi355x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertEqual(variant.framework, "inferencex_atom_vllm_single")
+        self.assertEqual(variant.params.driver, "vllm")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "4000")
+        self.assertFalse(variant.enforce_thresholds)
+        cell = "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertIn(cell, variant.expected_cells())
+
     def test_vllm_framework_rejects_atom_driver(self):
         sweep = Sweep(
             sequence_combinations=[SeqCombo(name="w1", isl="1024", osl="1024")],
