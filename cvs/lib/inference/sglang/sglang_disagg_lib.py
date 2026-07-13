@@ -374,7 +374,6 @@ class SglangDisaggPD:
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
-                    export HSA_FORCE_FINE_GRAIN_PCIE=1
                     export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
@@ -407,7 +406,6 @@ class SglangDisaggPD:
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
-                    export HSA_FORCE_FINE_GRAIN_PCIE=1
                     export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
@@ -440,7 +438,6 @@ class SglangDisaggPD:
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
-                    export HSA_FORCE_FINE_GRAIN_PCIE=1
                     export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
@@ -463,10 +460,11 @@ class SglangDisaggPD:
     ):
         # Env setup for Benchserv node ..
         b_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
+                    export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/venv/lib/python3.14/site-packages/_rocm_sdk_devel/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
-                    export HSA_FORCE_FINE_GRAIN_PCIE=1
                     export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
@@ -570,7 +568,6 @@ class SglangDisaggPD:
                       export SGLANG_USE_AITER=1
                       export AMDGCN_USE_BUFFER_OPS=1
                       export ROCM_QUICK_REDUCE_QUANTIZATION=INT8
-                      pip install tilelang --break-system-packages
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --disaggregation-mode prefill \
                               --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
@@ -587,7 +584,6 @@ class SglangDisaggPD:
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
-                              --context-length {self.bp_dict['context_length']} \
                               --log-level {self.inf_dict['log_level']}' > /tmp/prefill_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
@@ -648,7 +644,6 @@ class SglangDisaggPD:
                       export SGLANG_USE_AITER=1
                       export AMDGCN_USE_BUFFER_OPS=1 
                       export ROCM_QUICK_REDUCE_QUANTIZATION=INT8
-                      pip install tilelang --break-system-packages
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --disaggregation-mode decode \
                               --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
@@ -665,7 +660,6 @@ class SglangDisaggPD:
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
-                              --context-length {self.bp_dict['context_length']} \
                               --log-level {self.inf_dict['log_level']}' > /tmp/decode_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
