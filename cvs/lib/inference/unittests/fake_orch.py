@@ -13,9 +13,7 @@ class FakeOrch:
     def __init__(self, exec_return=None, hosts=None, exec_on_head_return=None):
         self.hosts = list(hosts or ["node0"])
         self.exec_return = exec_return if exec_return is not None else {}
-        self.exec_on_head_return = (
-            exec_on_head_return if exec_on_head_return is not None else self.exec_return
-        )
+        self.exec_on_head_return = exec_on_head_return if exec_on_head_return is not None else self.exec_return
         self.commands = []
         self.exec_on_head_commands = []
 
