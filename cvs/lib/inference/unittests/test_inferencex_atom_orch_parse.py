@@ -21,7 +21,9 @@ _OSL = 1024
 _TP = 8
 
 
-def _fake_variant(*, driver="vllm", nnodes="1", pipeline_parallel_size="1", master_addr="", scaling_baseline_output_throughput=""):
+def _fake_variant(
+    *, driver="vllm", nnodes="1", pipeline_parallel_size="1", master_addr="", scaling_baseline_output_throughput=""
+):
     params = SimpleNamespace(
         driver=driver,
         tensor_parallelism=str(_TP),
