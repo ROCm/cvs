@@ -211,7 +211,7 @@ def detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node):
         return '-x'
 
 
-def determine_mpi_pml_config(mpi_pml, shdl, mpi_path, head_node, net_dev_list, ucx_tls):
+def determine_mpi_pml_config(mpi_pml, shdl, mpi_dir, head_node, net_dev_list, ucx_tls):
     """
     Determine MPI PML (Point-to-Point Messaging Layer) configuration based on user config or auto-detection.
 
@@ -225,32 +225,33 @@ def determine_mpi_pml_config(mpi_pml, shdl, mpi_path, head_node, net_dev_list, u
 
     Returns:
       tuple: (pml_param, ucx_params) where:
-        - pml_param: MCA parameter string for mpirun (e.g., '--mca pml ob1' or '')
-        - ucx_params: UCX environment parameter string for mpirun (e.g., '-x UCX_...' or '')
+        - pml_param: MCA parameter string for mpirun (e.g., '--mca pml ob1' or '--mca pml ucx' or '')
+    UCX_TLS notes:
+      - 'rc,self,sm,tcp' — rc provides tag matching required by PML UCX
+      - 'tcp' alone causes pml init failure (no tag-capable transport)
+      - UCX_NET_DEVICES must use IB names with port suffix (e.g. bnxt_re0:1)
     """
-    if mpi_pml.lower() == "auto":
-        # Auto-detect UCX availability
-        ucx_available = is_ucx_available_in_mpi(shdl, mpi_path, head_node)
-        pml_param = "--mca pml ob1" if not ucx_available else ""
-    elif mpi_pml.lower() == "ucx":
-        # User explicitly requested UCX
-        ucx_available = True
-        pml_param = ""
-        log.info("Using UCX (user-specified)")
-    elif mpi_pml.lower() == "ob1":
-        # User explicitly requested ob1 fallback
-        ucx_available = False
-        pml_param = "--mca pml ob1"
-        log.info("Using pml ob1 (user-specified)")
+    if mpi_pml.lower() == 'ucx':
+        pml_param = '--mca pml ucx'
+        ucx_params = f'-x UCX_NET_DEVICES={net_dev_list} -x UCX_TLS={ucx_tls}'
+
+    elif mpi_pml.lower() == 'ob1':
+        pml_param = '--mca pml ob1'
+        ucx_params = ''
+
     else:
-        log.warning(f"Unknown mpi_pml value '{mpi_pml}', defaulting to auto-detection")
-        ucx_available = is_ucx_available_in_mpi(shdl, mpi_path, head_node)
-        pml_param = "--mca pml ob1" if not ucx_available else ""
+        # auto: check if UCX is linked into libmpi.so
+        ucx_available = is_ucx_available_in_mpi(shdl, mpi_dir, head_node)
+        if ucx_available:
+            log.info('UCX detected in libmpi.so — using pml ucx')
+            pml_param = '--mca pml ucx'
+            ucx_params = f'-x UCX_NET_DEVICES={net_dev_list} -x UCX_TLS={ucx_tls}'
+        else:
+            log.info('UCX not detected — falling back to pml ob1')
+            pml_param = '--mca pml ob1'
+            ucx_params = ''
 
-    ucx_params = (
-        f"-x UCX_UNIFIED_MODE=y -x UCX_NET_DEVICES={net_dev_list} -x UCX_TLS={ucx_tls} " if ucx_available else ""
-    )
-
+    log.info(f'PML: {pml_param}  UCX params: {ucx_params}')
     return pml_param, ucx_params
 
 
@@ -630,6 +631,7 @@ def rccl_regression(
     no_of_local_ranks = int(mpi_params.get('no_of_local_ranks', 8))
     mpi_pml = mpi_params.get('mpi_pml', 'auto')
     mpi_oob_port = mpi_params.get('mpi_oob_port', 'eth0')
+    ucx_tls = mpi_params.get('ucx_tls', 'rc,self,sm,tcp') or 'rc,self,sm,tcp'
 
     no_of_global_ranks = no_of_nodes * no_of_local_ranks
 
@@ -649,10 +651,16 @@ def rccl_regression(
     cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
+    # Auto-detect backend NIC net devices if not provided in mpi_params
+    net_dev_list = mpi_params.get('net_dev_list', '')
+    if not net_dev_list:
+        log.info("'net_dev_list' missing or empty — auto-detecting from backend NICs...")
+        net_dev_list = linux_utils.get_ucx_net_devices(phdl)
+    else:
+        log.info(f"Using net_dev_list from mpi_params: {net_dev_list}")
+
     # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(
-        mpi_pml, shdl, mpi_dir, head_node, mpi_params.get('net_dev_list', ''), mpi_params.get('ucx_tls', 'tcp')
-    )
+    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, shdl, mpi_dir, head_node, net_dev_list, ucx_tls)
 
     # Build RCCL test command
     rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
@@ -806,6 +814,7 @@ def rccl_perf(
     no_of_local_ranks = int(mpi_params.get('no_of_local_ranks', 8))
     mpi_pml = mpi_params.get('mpi_pml', 'auto')
     mpi_oob_port = mpi_params.get('mpi_oob_port', 'eth0')
+    ucx_tls = mpi_params.get('ucx_tls', 'rc,self,sm,tcp') or 'rc,self,sm,tcp'
 
     no_of_global_ranks = no_of_nodes * no_of_local_ranks
 
@@ -832,10 +841,16 @@ def rccl_perf(
     cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
     shdl.exec(cmd)
 
+    # Auto-detect backend NIC net devices if not provided in mpi_params
+    net_dev_list = mpi_params.get('net_dev_list', '')
+    if not net_dev_list:
+        log.info("'net_dev_list' missing or empty — auto-detecting from backend NICs...")
+        net_dev_list = linux_utils.get_ucx_net_devices(phdl)
+    else:
+        log.info(f"Using net_dev_list from mpi_params: {net_dev_list}")
+
     # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(
-        mpi_pml, shdl, mpi_dir, head_node, mpi_params.get('net_dev_list', ''), mpi_params.get('ucx_tls', 'tcp')
-    )
+    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, shdl, mpi_dir, head_node, net_dev_list, ucx_tls)
 
     # Extract RCCL test parameters
     rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
@@ -884,7 +899,6 @@ def rccl_perf(
             # Always wrap in bash to interpret && shell operator
             test_cmd = f'bash -c "{test_cmd}"'
 
-        # Build mpirun command
         cmd = f'''{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \

@@ -858,3 +858,32 @@ def get_gpu_numa_dict(phdl):
 
     log.info("%s", gpu_numa_dict)
     return gpu_numa_dict
+
+
+def get_ucx_net_devices(phdl):
+    """
+    Build UCX_NET_DEVICES string from backend NIC RDMA device names.
+
+    Uses get_gpu_nic_mapping_dict() which maps each GPU card to its nearest
+    backend NIC. The 'rdma_dev' key gives the IB/RDMA device name (e.g. bnxt_re0).
+    UCX_NET_DEVICES requires IB device names with port suffix ':1'
+    (e.g. bnxt_re0:1), NOT ethernet names (ens20np0).
+
+    Returns:
+        str: Comma-separated UCX_NET_DEVICES string,
+             e.g. 'bnxt_re0:1,bnxt_re1:1,bnxt_re2:1,...'
+    """
+    out_dict = get_gpu_nic_mapping_dict(phdl)
+
+    # Use node_0 as representative — NFS/homogeneous cluster, all nodes identical
+    node_0 = list(out_dict.keys())[0]
+    card_list = list(out_dict[node_0].keys())
+
+    ucx_net_devices_list = []
+    for card_no in card_list:
+        rdma_dev = out_dict[node_0][card_no]['rdma_dev']  # e.g. 'bnxt_re0'
+        ucx_net_devices_list.append(f'{rdma_dev}:1')  # UCX needs port suffix :1
+
+    ucx_net_devices = ','.join(ucx_net_devices_list)
+    log.info(f'Auto-detected UCX_NET_DEVICES: {ucx_net_devices}')
+    return ucx_net_devices
