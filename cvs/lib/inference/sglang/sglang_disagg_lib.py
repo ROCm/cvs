@@ -372,7 +372,6 @@ class SglangDisaggPD:
         p_cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "echo '
 
                     export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/venv/lib/python3.14/site-packages/_rocm_sdk_devel/lib:$LD_LIBRARY_PATH
                     export GPU_ARCHS=gfx942
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
@@ -406,7 +405,6 @@ class SglangDisaggPD:
         d_cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "echo '
 
                     export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/venv/lib/python3.14/site-packages/_rocm_sdk_devel/lib:$LD_LIBRARY_PATH
                     export GPU_ARCHS=gfx942
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
@@ -440,7 +438,6 @@ class SglangDisaggPD:
         r_cmd = f'''{get_docker_cmd()} exec {self.container_name} /bin/bash -c "echo '
 
                     export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/venv/lib/python3.14/site-packages/_rocm_sdk_devel/lib:$LD_LIBRARY_PATH
                     export GPU_ARCHS=gfx942
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
