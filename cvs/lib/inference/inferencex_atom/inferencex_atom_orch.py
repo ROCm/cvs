@@ -183,10 +183,7 @@ class InferenceXAtomJob:
         return cls(**kw)
 
     def _node_out_dir(self, rank):
-        return (
-            f"{self.log_dir}/{self.log_subdir}/out-node{rank}/"
-            f"isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
-        )
+        return f"{self.log_dir}/{self.log_subdir}/out-node{rank}/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
 
     def _rank_server_log(self, rank):
         base = self._node_out_dir(rank)
@@ -319,9 +316,7 @@ class InferenceXAtomJob:
                 continue
             env_lines.append(f"export {k}={shlex.quote(str(v))}")
         env_script = "\n".join(env_lines) + "\n"
-        self._exec_all(
-            "bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh")
-        )
+        self._exec_all("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
         if self.distributed:
             for rank in range(self.nnodes):
                 self._exec_all(f"mkdir -p {shlex.quote(self._node_out_dir(rank))}")
@@ -383,9 +378,7 @@ class InferenceXAtomJob:
             rank_env = " && ".join(self._atom_spmd_env_exports(rank))
             env_prefix = f"{rank_env} && " if rank_env else ""
             inner = (
-                f"source /tmp/server_env_script.sh && "
-                f"{env_prefix}"
-                f"nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
+                f"source /tmp/server_env_script.sh && {env_prefix}nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
             )
             if self.distributed:
                 out = self._exec_all("bash -c " + shlex.quote(inner), hosts=[host])
@@ -596,9 +589,7 @@ class InferenceXAtomJob:
         self._exec_head("bash -c " + shlex.quote(client_cmd))
 
     def _atom_result_ready(self):
-        out = self._exec_head(
-            f"test -s {shlex.quote(self._result_artifact)} && echo OK || echo NO"
-        )
+        out = self._exec_head(f"test -s {shlex.quote(self._result_artifact)} && echo OK || echo NO")
         return bool(out) and all("OK" in (v or "") for v in out.values())
 
     def _client_log_failures(self, tail_lines=2000):

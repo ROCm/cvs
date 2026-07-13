@@ -57,9 +57,7 @@ METRIC_TIERS: dict[str, tuple[str, ...]] = {
         "success_rate",
         "failed",
     ),
-    "scaling": (
-        "efficiency_pct",
-    ),
+    "scaling": ("efficiency_pct",),
 }
 
 SCALING_METRICS: tuple[str, ...] = METRIC_TIERS["scaling"]
