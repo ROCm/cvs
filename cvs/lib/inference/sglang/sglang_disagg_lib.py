@@ -378,6 +378,7 @@ class SglangDisaggPD:
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
+                    export GPU_ARCHS=gfx942
 
                     export MASTER_PREFILL_ADDR={self.inf_dict['prefill_coordinator_addr']}
                     export MASTER_PREFILL_PORT={self.inf_dict['prefill_coordinator_port']}
@@ -408,6 +409,7 @@ class SglangDisaggPD:
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
+                    export GPU_ARCHS=gfx942
 
                     export MASTER_DECODE_ADDR={self.inf_dict['decode_coordinator_addr']}
                     export MASTER_DECODE_PORT={self.inf_dict['decode_coordinator_port']}
@@ -438,6 +440,7 @@ class SglangDisaggPD:
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
+                    export GPU_ARCHS=gfx942
 
                     export HF_TOKEN={self.hf_token}
                     '  > /tmp/router_env_script.sh"
@@ -463,6 +466,7 @@ class SglangDisaggPD:
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
+                    export GPU_ARCHS=gfx942
                     export HF_TOKEN={self.hf_token}
                     '  > /tmp/benchmark_env_script.sh"
                     '''
