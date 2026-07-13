@@ -19,6 +19,8 @@ Optional explicit registration::
 
 from __future__ import annotations
 
+from cvs.lib.inference.utils.inference_suite_lifecycle import attach_lifecycle_html_table
+
 from cvs.lib.report.pytest_extras import attach_inference_cell_row_extra
 from cvs.lib.report.registry import bind_session_results, register_suite_report
 from cvs.lib.report.types import InferenceReportConfig
@@ -50,6 +52,5 @@ def attach_inference_suite_report_row_extra(item, report) -> None:
 
 def attach_inference_suite_lifecycle_table(item, report) -> None:
     """Attach per-test lifecycle timing table to pytest-html rows."""
-    from cvs.lib.inference.utils.inference_suite_lifecycle import attach_lifecycle_html_table
 
     attach_lifecycle_html_table(item, report)
