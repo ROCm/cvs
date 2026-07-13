@@ -116,6 +116,26 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
             {"kind": "min", "value": 50},
         )
 
+    def test_load_w1_mi355x_multinode_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "4000")
+        self.assertFalse(variant.enforce_thresholds)
+        self.assertEqual(len(variant.expected_cells()), 15)
+        cell = "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertIn(cell, variant.expected_cells())
+        self.assertEqual(
+            variant.thresholds[cell]["scaling.efficiency_pct"],
+            {"kind": "min", "value": 50},
+        )
+
     def test_load_w1_mi300x_smoke_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
