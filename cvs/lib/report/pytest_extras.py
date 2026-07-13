@@ -84,10 +84,7 @@ def attach_inference_cell_row_extra(item, report) -> None:
         highlight_metric=highlight,
         pytest_html_basename=pytest_basename or None,
     )
-    snippet = (
-        f"<style>{cell_card_css(compact=True)}</style>"
-        f"<div class='cvs-cell-row-extra'>{card}</div>"
-    )
+    snippet = f"<style>{cell_card_css(compact=True)}</style><div class='cvs-cell-row-extra'>{card}</div>"
 
     try:
         import pytest_html

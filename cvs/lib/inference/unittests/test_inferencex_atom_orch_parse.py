@@ -64,12 +64,8 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         w = raw
         self.assertIn("client.output_throughput", metrics)
         self.assertIn("client.mean_ttft_ms", metrics)
-        self.assertAlmostEqual(
-            metrics["client.per_gpu_throughput"], w["total_token_throughput"] / _TP
-        )
-        self.assertAlmostEqual(
-            metrics["client.output_tput_per_gpu"], w["output_throughput"] / _TP
-        )
+        self.assertAlmostEqual(metrics["client.per_gpu_throughput"], w["total_token_throughput"] / _TP)
+        self.assertAlmostEqual(metrics["client.output_tput_per_gpu"], w["output_throughput"] / _TP)
         self.assertEqual(metrics["client.p99_ttft_ms"], w["p99_ttft_ms"])
 
     def test_parse_results_w1_tail_metrics_from_widened_fixture(self):
@@ -185,9 +181,7 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
 
     def test_client_log_failures_traceback(self):
         job = InferenceXAtomJob(
-            orch=FakeOrch(
-                exec_return={"node0": "Traceback (most recent call last):\n  boom"}
-            ),
+            orch=FakeOrch(exec_return={"node0": "Traceback (most recent call last):\n  boom"}),
             variant=_fake_variant(driver="atom"),
             hf_token="tok",
             isl="1024",

@@ -119,7 +119,7 @@ def test_launch_proxy_router(im_obj):
 def test_openai_compatible_http_endpoints(im_obj, inf_res_dict):
     globals.error_list = []
     results = im_obj.verify_openai_compatible_endpoints()
-    inf_res_dict["__smoke_probe_results__"] = results  
+    inf_res_dict["__smoke_probe_results__"] = results
     update_test_result()
 
 

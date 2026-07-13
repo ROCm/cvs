@@ -100,20 +100,13 @@ class InferenceXAtomJob:
         self.atom_server_args = list(variant.roles.server.atom_args)
         self.server_env = dict(variant.roles.server.env)
 
-        self.out_dir = (
-            f"{self.log_dir}/{self.log_subdir}/out-node0/"
-            f"isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
-        )
+        self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
         self.server_log = (
-            f"{self.out_dir}/atom_server.log"
-            if self.driver == "atom"
-            else f"{self.out_dir}/vllm_serve_server.log"
+            f"{self.out_dir}/atom_server.log" if self.driver == "atom" else f"{self.out_dir}/vllm_serve_server.log"
         )
         self.client_log = f"{self.out_dir}/client.log"
         self._result_artifact = (
-            f"{self.out_dir}/{self.result_stem}.json"
-            if self.driver == "atom"
-            else f"{self.out_dir}/{self.result_stem}"
+            f"{self.out_dir}/{self.result_stem}.json" if self.driver == "atom" else f"{self.out_dir}/{self.result_stem}"
         )
 
         self._precheck_wait = server_precheck_wait_s
@@ -247,10 +240,7 @@ class InferenceXAtomJob:
             serve_cmd = " ".join(shlex.quote(str(a)) for a in self._atom_server_argv())
         else:
             serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv())
-        inner = (
-            f"source /tmp/server_env_script.sh && "
-            f"nohup {serve_cmd} > {shlex.quote(self.server_log)} 2>&1 &"
-        )
+        inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(self.server_log)} 2>&1 &"
         out = self.orch.exec("bash -c " + shlex.quote(inner))
         label = "atom" if self.driver == "atom" else "vllm"
         for host, output in out.items():
@@ -259,9 +249,7 @@ class InferenceXAtomJob:
 
     def _atom_health_ok(self):
         url = f"http://localhost:{self.port_no}/health"
-        out = self.orch.exec(
-            f"curl -sf {shlex.quote(url)} -o /dev/null && echo OK || echo NO"
-        )
+        out = self.orch.exec(f"curl -sf {shlex.quote(url)} -o /dev/null && echo OK || echo NO")
         return bool(out) and all("OK" in (v or "") for v in out.values())
 
     def _atom_warmup_ok(self):
@@ -306,9 +294,7 @@ class InferenceXAtomJob:
                     poll_out = self.orch.exec(f"tail -30 {shlex.quote(self.server_log)}")
                     for host, output in poll_out.items():
                         if self.EARLY_FAILURE_RE.search(output or ""):
-                            raise RuntimeError(
-                                f"atom server early failure on {host}: {output[-500:]}"
-                            )
+                            raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
                 time.sleep(self._server_poll_wait)
                 continue
             log.info("server health ready (iter=%d)", it)
@@ -329,10 +315,7 @@ class InferenceXAtomJob:
             log.info("stopping atom server")
             self.orch.exec(
                 "bash -c "
-                + shlex.quote(
-                    "pkill -f 'atom.entrypoints.openai_server' || "
-                    "pkill -f 'openai_server' || true"
-                )
+                + shlex.quote("pkill -f 'atom.entrypoints.openai_server' || pkill -f 'openai_server' || true")
             )
         else:
             log.info("stopping vllm server")
@@ -515,9 +498,7 @@ class InferenceXAtomJob:
             try:
                 raw = json.loads(text)
             except (json.JSONDecodeError, ValueError) as e:
-                raise RuntimeError(
-                    f"unparseable results artifact on {host}: {self._result_artifact}: {e}"
-                ) from e
+                raise RuntimeError(f"unparseable results artifact on {host}: {self._result_artifact}: {e}") from e
             if self.driver == "atom":
                 raw.setdefault("random_input_len", int(self.isl))
                 raw.setdefault("random_output_len", int(self.osl))

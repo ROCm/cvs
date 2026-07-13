@@ -87,10 +87,7 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
 
     def expected_cells(self) -> List[str]:
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
-        return [
-            self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency)
-            for r in self.sweep.runs
-        ]
+        return [self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency) for r in self.sweep.runs]
 
     @model_validator(mode="after")
     def _check_thresholds_cover_sweep(self):

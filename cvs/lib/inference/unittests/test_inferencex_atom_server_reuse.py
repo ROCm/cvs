@@ -78,9 +78,7 @@ class TestExpandSweepParametrize(unittest.TestCase):
                 {"combo": "w1_1k_1k", "concurrency": 256},
             ],
         }
-        _, argvalues, ids = expand_sweep_parametrize(
-            sweep, ("seq_combo", "concurrency")
-        )
+        _, argvalues, ids = expand_sweep_parametrize(sweep, ("seq_combo", "concurrency"))
         self.assertEqual(len(argvalues), 2)
         self.assertEqual(ids, ["w1_1k_1k-conc128", "w1_1k_1k-conc256"])
 
