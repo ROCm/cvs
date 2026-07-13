@@ -131,12 +131,6 @@ def load_acc_cells_for_collection(config_file: str) -> list[dict[str, Any]]:
         pytest.fail(f"No ACC_ISL=... accuracy cells in {threshold_path}")
     return cells
 
-def _resolve_docker_cmd(cluster_dict, inference_dict) -> str:
-    return (
-        inference_dict.get("docker_cmd")
-        or cluster_dict.get("docker_cmd")
-        or "docker"
-    )
 
 def _threshold_file_path(bp_dict: Mapping[str, Any]) -> str | None:
     path = bp_dict.get("threshold_file")
@@ -318,11 +312,6 @@ class _Lifecycle:
 
 
 # ---------- fixtures ----------
-
-@pytest.fixture(scope="module", autouse=True)
-def _configure_docker_cmd(cluster_dict, inference_dict):
-    import cvs.lib.docker_lib as docker_lib
-    docker_lib.set_docker_cmd(_resolve_docker_cmd(cluster_dict, inference_dict))
 
 @pytest.fixture(scope="module")
 def cluster_dict(pytestconfig):

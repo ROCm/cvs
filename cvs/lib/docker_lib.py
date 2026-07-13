@@ -15,22 +15,10 @@ from cvs.lib.verify_lib import *
 
 log = globals.log
 
-_DEFAULT_DOCKER_CMD = "docker"
-_docker_cmd = _DEFAULT_DOCKER_CMD
-
-def set_docker_cmd(cmd: str) -> None:
-    global _docker_cmd
-    _docker_cmd = (cmd or "docker").strip()
-
-def get_docker_cmd() -> str:
-    return _docker_cmd
-    
-def docker_cmd(subcmd: str) -> str:
-    return f"{get_docker_cmd()} {subcmd.lstrip()}"
 
 def get_running_docker_containers(phdl):
     cont_dict = {}
-    out_dict = phdl.exec(docker_cmd('ps --format="{{json .}}"'))
+    out_dict = phdl.exec('docker ps --format="{{json .}}"')
     for node in out_dict.keys():
         cont_dict[node] = {}
         for line in out_dict[node].split("\n"):
@@ -40,7 +28,7 @@ def get_running_docker_containers(phdl):
 
 
 def check_if_docker_client_running(phdl):
-    out_dict = phdl.exec(docker_cmd("ps"))
+    out_dict = phdl.exec('docker ps')
     for node in out_dict.keys():
         if not re.search('CONTAINER', out_dict[node], re.I):
             fail_test(f'Docker Not running on node {node} .. pls check')
@@ -49,24 +37,23 @@ def check_if_docker_client_running(phdl):
 
 
 def killall_docker_containers(phdl):
-    dc = get_docker_cmd()
-    phdl.exec(docker_cmd(f'kill $({dc} ps -q)'))
+    phdl.exec('docker kill $(docker ps -q)')
 
 
 def kill_docker_container(phdl, container_name):
-    phdl.exec(docker_cmd(f"kill {container_name}"))
+    phdl.exec(f'docker kill {container_name}')
 
 
 def delete_all_containers_and_volumes(phdl):
     # out_dict = phdl.exec('docker rm -vf $(docker ps -aq)')
     log.info('Deleting all containers and volumes')
     # out_dict = phdl.exec('docker system prune -a --volumes --force', timeout=60*10)
-    phdl.exec(docker_cmd("system prune --force"), timeout=60 * 10)
+    phdl.exec('docker system prune --force', timeout=60 * 10)
 
 
 def delete_all_images(phdl):
-    dc = get_docker_cmd()
-    phdl.exec(docker_cmd(f"rmi -f $({dc} images -aq)"))
+    phdl.exec('docker rmi -f $(docker images -aq)')
+
 
 def old_install_docker_on_ubuntu(phdl):
     phdl.exec('sudo apt-get -y update')
@@ -97,7 +84,7 @@ def old_install_docker_on_ubuntu(phdl):
 
 
 def install_docker_on_ubuntu(phdl):
-    phdl.exec('sudo rm /petc/apt/keyrings/docker.gpg')
+    phdl.exec('sudo rm /etc/apt/keyrings/docker.gpg')
     phdl.exec('sudo rm /etc/apt/sources.list.d/docker.list')
     phdl.exec('sudo apt-get -y update')
     phdl.exec('sudo apt install -y apt-transport-https ca-certificates curl software-properties-common')
@@ -122,10 +109,8 @@ def launch_docker_container(
     shm_size='64G',
     timeout=60 * 10,
 ):
-    cmd = docker_cmd(
-        f"run -d --network {network} --ipc {network} "
-        "--cap-add=IPC_LOCK --security-opt seccomp=unconfined --privileged "
-    )
+    cmd = f'docker run -d --network {network} --ipc {network} \
+            --cap-add=IPC_LOCK --security-opt seccomp=unconfined --privileged '
     for device in device_list:
         cmd = cmd + f' --device {device} '
     for src_vol in volume_dict.keys():
@@ -149,11 +134,11 @@ def launch_docker_container(
             fail_test('Failed to launch containers, please check logs')
             return
 
-    out_dict = phdl.exec(docker_cmd("ps"))
+    out_dict = phdl.exec('docker ps')
     for node in out_dict.keys():
         if not re.search(f'{container_name}', out_dict[node]):
             time.sleep(60)
-            out_dict_n = phdl.exec(docker_cmd("ps"))
+            out_dict_n = phdl.exec('docker ps')
             for node in out_dict_n.keys():
                 if not re.search(f'{container_name}', out_dict_n[node], re.I):
                     out_dict = phdl.exec(cmd, timeout=timeout)
@@ -173,10 +158,7 @@ def path_exists_in_container(phdl, container_name, path):
     Returns:
         bool: True if path exists, False otherwise
     """
-    cmd = (
-        f'{get_docker_cmd()} exec {container_name} '
-        f'test -d {path} && echo "1" || echo "0"'
-    )
+    cmd = f'docker exec {container_name} test -d {path} && echo "1" || echo "0"'
     result = phdl.exec(cmd)
     # Check the first node in the host list
     first_node = list(result.keys())[0] if result else None

@@ -4,7 +4,6 @@
     "container_image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260603",
     "_container_image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260601",
     "container_name": "sglang_container",
-	"docker_cmd": "sudo docker",
     "_example_nnodes": "4",
     "nnodes": "2",
     "hf_token_file": "/home/{user-id}/.hf_token",

@@ -7,7 +7,6 @@ import time
 from typing import Any
 
 from cvs.lib import docker_lib, globals
-from cvs.lib.docker_lib import docker_cmd
 from cvs.lib.utils_lib import fail_test
 
 log = globals.log
@@ -74,7 +73,7 @@ class SglangDisaggOrchestrator:
         log.info("Verify if the containers have been launched properly")
         ok = True
         for key in self.launch_handle_keys():
-            out_dict = self.handles[key].exec(docker_cmd("ps"))
+            out_dict = self.handles[key].exec("docker ps")
             for node, out in out_dict.items():
                 if not re.search(re.escape(self.container_name), out or "", re.I):
                     fail_test(f"Failed to launch container on node {node}")
