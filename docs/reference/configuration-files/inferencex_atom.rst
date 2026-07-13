@@ -103,7 +103,7 @@ for the W1 MI300X reference.
       }
     }
 
-  Every member of :data:`cvs.lib.inference.utils.inferencex_atom_parsing.GATED_METRICS` needs a
+  Every member of :data:`cvs.lib.inference.inferencex_atom.inferencex_atom_parsing.GATED_METRICS` needs a
   spec in each cell when ``enforce_thresholds`` is true. W1 perf gates include
   ``per_gpu_throughput``, ``output_tput_per_gpu``, ``p99_ttft_ms``, and ``p95_tpot_ms``.
 
@@ -171,6 +171,6 @@ Top-level blocks follow the DTNI variant schema. InferenceX ATOM-specific keys:
      - named ISL/OSL + ``{combo, concurrency}``
      - Explicit cell list (not a cartesian product).
 
-Metric tiers and parsing live in :mod:`cvs.lib.inference.utils.inferencex_atom_parsing`
+Metric tiers and parsing live in :mod:`cvs.lib.inference.inferencex_atom.inferencex_atom_parsing`
 (see ``cvs/lib/inference/utils/docs/inferencex-atom-parsing.md``). Legacy monolithic JSON
 (``config`` + ``benchmark_params``) and the deprecated ``inferencemax`` suite are not used.

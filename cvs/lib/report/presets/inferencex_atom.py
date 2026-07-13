@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any, List, Tuple
 
 from cvs.lib.inference.utils.inference_suite_results_table import INFERENCEX_ATOM_RESULTS_COLUMNS
-from cvs.lib.inference.utils.inferencex_atom_parsing import (
+from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import (
     CLIENT_METRIC_UNITS,
     METRIC_TIER_ORDER,
     tier_metric_specs,

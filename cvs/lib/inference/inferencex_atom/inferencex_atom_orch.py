@@ -20,7 +20,7 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.inferencex_atom_parsing import to_client_metrics
+from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import to_client_metrics
 
 log = globals.log
 

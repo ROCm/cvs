@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from cvs.lib.inference.inferencex_atom_orch import InferenceXAtomJob
+from cvs.lib.inference.inferencex_atom.inferencex_atom_orch import InferenceXAtomJob
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
 
 _HERE = Path(__file__).parent

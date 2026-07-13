@@ -17,13 +17,13 @@ from cvs.lib.inference.utils.inference_suite_lifecycle import (
     test_setup_sshd,  # noqa: F401
     test_teardown,  # noqa: F401
 )
-from cvs.lib.inference.inferencex_atom_orch import InferenceXAtomJob
-from cvs.lib.inference.utils.inferencex_atom_config_loader import (
+from cvs.lib.inference.inferencex_atom.inferencex_atom_orch import InferenceXAtomJob
+from cvs.lib.inference.inferencex_atom.inferencex_atom_config_loader import (
     expand_sweep_parametrize,
     reuse_server_flag,
     server_session_key,
 )
-from cvs.lib.inference.utils.inferencex_atom_parsing import (
+from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import (
     CLIENT_METRIC_UNITS as _METRIC_UNITS,
     METRIC_TIERS,
     RECORD_METRICS,

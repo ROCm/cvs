@@ -26,7 +26,7 @@ class _LegacyInferenceXAtomInferenceJobPlaceholder:
 
     def __init__(self, *args, **kwargs):
         raise NotImplementedError(
-            "InferenceMax is deprecated. Use ``cvs.lib.inference.inferencex_atom_orch.InferenceXAtomJob`` "
+            "InferenceMax is deprecated. Use ``cvs.lib.inference.inferencex_atom.inferencex_atom_orch.InferenceXAtomJob`` "
             "with ``ContainerOrchestrator`` from the tests under ``cvs.tests.inference.inferencex_atom`` "
             "(``inferencex_atom_single`` suite and schema_version 1 configs)."
         )

@@ -22,7 +22,7 @@ from cvs.lib.inference.utils.inferencing_config_loader import (
     validate_sweep_selector,
     validate_thresholds_cover_sweep,
 )
-from cvs.lib.inference.utils.inferencex_atom_parsing import GATED_METRICS
+from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
 
 
@@ -150,7 +150,7 @@ def server_session_key(variant_config, isl, osl):
 
 def expand_sweep_parametrize(sweep, fixturenames):
     """Build pytest parametrize args for inference or metric-tier collection."""
-    from cvs.lib.inference.utils.inferencex_atom_parsing import METRIC_TIER_ORDER
+    from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import METRIC_TIER_ORDER
 
     cases, ids = expand_sweep(sweep)
     if "metric_tier" in fixturenames:
