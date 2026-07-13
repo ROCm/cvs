@@ -7,7 +7,7 @@ Unit tests for inference_suite_lifecycle helpers.
 
 import unittest
 
-from cvs.lib.inference.cache_probe import du_bytes
+from cvs.lib.inference.utils.cache_probe import du_bytes
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
 
 

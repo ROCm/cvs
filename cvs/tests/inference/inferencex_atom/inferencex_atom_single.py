@@ -10,7 +10,7 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.inference_suite_lifecycle import (
+from cvs.lib.inference.utils.inference_suite_lifecycle import (
     sweep_cell_result_key,
     test_launch_container,
     test_model_fetch,

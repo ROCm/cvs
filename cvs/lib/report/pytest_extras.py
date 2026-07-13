@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from cvs.lib.inference.inference_suite_lifecycle import sweep_cell_result_key
+from cvs.lib.inference.utils.inference_suite_lifecycle import sweep_cell_result_key
 from cvs.lib.report.cell_build import build_cell_record
 from cvs.lib.report.registry import get_suite_report_config
 from cvs.lib.report.render.cell_card import cell_card_css, render_cell_card_html

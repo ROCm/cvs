@@ -10,7 +10,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.inference.inference_suite_lifecycle import (
+from cvs.lib.inference.utils.inference_suite_lifecycle import (
     InferenceLifecycle,
     html_metric_table_header,
     html_metric_table_row,

@@ -10,7 +10,7 @@ of copying launch / sshd / model-fetch / teardown blocks.
 
 **Suite module** — import stage tests so pytest collects them::
 
-    from cvs.lib.inference.inference_suite_lifecycle import (
+    from cvs.lib.inference.utils.inference_suite_lifecycle import (
         test_launch_container,
         test_model_fetch,
         test_setup_sshd,
@@ -19,7 +19,7 @@ of copying launch / sshd / model-fetch / teardown blocks.
 
 **conftest.py** — wire shared fixtures and HTML hooks::
 
-    from cvs.lib.inference.inference_suite_lifecycle import (
+    from cvs.lib.inference.utils.inference_suite_lifecycle import (
         InferenceLifecycle,
         attach_lifecycle_html_table,
         html_metric_table_header,
@@ -27,7 +27,7 @@ of copying launch / sshd / model-fetch / teardown blocks.
         sort_lifecycle_items,
     )
 
-Also provides ``sweep_cell_result_key``; see :mod:`cvs.lib.inference.cache_probe` for ``du_bytes``.
+Also provides ``sweep_cell_result_key``; see :mod:`cvs.lib.inference.utils.cache_probe` for ``du_bytes``.
 
 Optional HTML/JSON suite report: add ``cvs/lib/report/presets/<cvs_run_stem>.py`` (see
 ``cvs/lib/report/README.md``); root ``cvs/conftest.py`` auto-wires hooks when ``--html`` is set.
@@ -78,7 +78,7 @@ def sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency):
     )
 
 
-from cvs.lib.inference.cache_probe import du_bytes
+from cvs.lib.inference.utils.cache_probe import du_bytes
 
 
 def test_launch_container(orch, variant_config, lifecycle, request):

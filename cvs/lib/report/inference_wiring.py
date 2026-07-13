@@ -50,6 +50,6 @@ def attach_inference_suite_report_row_extra(item, report) -> None:
 
 def attach_inference_suite_lifecycle_table(item, report) -> None:
     """Attach per-test lifecycle timing table to pytest-html rows."""
-    from cvs.lib.inference.inference_suite_lifecycle import attach_lifecycle_html_table
+    from cvs.lib.inference.utils.inference_suite_lifecycle import attach_lifecycle_html_table
 
     attach_lifecycle_html_table(item, report)
