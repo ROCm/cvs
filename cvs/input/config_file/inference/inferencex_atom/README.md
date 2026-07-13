@@ -28,10 +28,13 @@ Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc
 |---------|-----|-------|
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke` | MI300X | Quick path check (C=128, 128 prompts) |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` | MI300X | W1 perf, portable min-SLO thresholds, server reuse across sweep |
-| `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` | MI300X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); `enforce_thresholds: false` until lab confirm |
+| `mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf` | MI300X | **M4 vLLM parity** sibling of W1 perf (`framework: inferencex_atom_vllm_single`) |
+| `mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi` | MI300X | **M4 vLLM parity** 2-node (`nnodes=2`, `PP=2`); scaling + optional `compare.vllm.*` |
+| `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` | MI300X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); enforced thresholds + scaling gate |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | MI300X | W1 FP8+MTP3 |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf` | MI355X | W1 perf (CI seeds, `enforce_thresholds: false`) |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` | MI355X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); `enforce_thresholds: false` until lab confirm |
+| `mi355x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi` | MI355X | **M4 vLLM parity** 2-node; `enforce_thresholds: false` until lab confirm |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | MI355X | W1 FP8+MTP3 |
 | `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` | MI300X | GPT-OSS uplift placeholder (`driver: vllm`, inline `serve_args`) |
 | `mi355x_inferencex-atom-single_gpt-oss-120b_bf16` | MI355X | GPT-OSS uplift placeholder |
@@ -40,7 +43,7 @@ ATOM server CLI is inline in each config under `roles.server.atom_args` (vLLM-st
 
 ## Cluster + container naming
 
-Use `cvs/input/cluster_file/mi300x_atom_single.json` or `mi355x_atom_single.json` for single-node runs. For **multinode** (M5), use `mi300x_atom_multi.json` or `mi355x_atom_multi.json` with two entries in `node_dict` and set `params.master_addr` in the variant config to the head node's VPC IP. `params.nnodes` must match the cluster host count; `test_setup_sshd` starts in-container sshd on port 2224 when `len(node_dict) > 1`. The cluster `container.name` must match the variant (`inferencex_atom_mi300x` / `inferencex_atom_mi355x` / `inferencex_atom_mi300x_multi` / `inferencex_atom_mi355x_multi`); the suite deep-merges variant container settings over the cluster file.
+Use `cvs/input/cluster_file/mi300x_atom_single.json` or `mi355x_atom_single.json` for single-node runs. For **multinode**, use `mi300x_atom_multi.json` or `mi355x_atom_multi.json` with two entries in `node_dict` and set `params.master_addr` in the variant config to the head node's VPC IP. `params.nnodes` must match the cluster host count; `test_setup_sshd` starts in-container sshd on port 2224 when `len(node_dict) > 1`. The cluster `container.name` must match the variant (`inferencex_atom_mi300x` / `inferencex_atom_mi355x` / `inferencex_atom_mi300x_multi` / `inferencex_atom_mi355x_multi` / `inferencex_atom_vllm_mi300x` / `inferencex_atom_vllm_mi300x_multi` / `inferencex_atom_vllm_mi355x_multi`); the suite deep-merges variant container settings over the cluster file.
 
 ## Shared suite helpers (reusable by other inference suites)
 
@@ -222,6 +225,107 @@ LOG=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi355x.log
 cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/mi355x_atom_multi.json \
   --config_file "$MULTI_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json" \
+  --html="$HTML" \
+  --self-contained-html \
+  --log-file="$LOG" \
+  -vvv -s
+
+echo "HTML: $HTML"
+echo "LOG:  $LOG"
+```
+
+## W1 vLLM parity (MI300X, M4)
+
+Same sweep cells as ATOM W1 perf. Uses ``cvs run inferencex_atom_vllm_single`` (not legacy ``vllm_single``). Set ``container.image`` to your ROCm vLLM image. Optional ``run_card.parity_reference_json`` enables ``compare.vllm.*`` ratio gates (see ``mi300x_inferencex-atom-single_deepseek-r1_fp8_atom_reference.example.json``).
+
+```bash
+cd ~/cvs && source .cvs_venv/bin/activate
+
+VLLM_DIR=~/input/config_file/inference/inferencex_atom/vllm_perf
+mkdir -p "$VLLM_DIR"
+
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_config.json \
+  --output "$VLLM_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_config.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_threshold.json \
+  --output "$VLLM_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_threshold.json"
+cvs copy-config mi300x_atom_single.json --output ~/input/cluster_file/mi300x_atom_single.json
+
+# After a green ATOM W1 run, copy cell metrics into a reference JSON and set
+# run_card.parity_reference_json in the vLLM config.
+
+TS=$(date +%Y%m%d_%H%M%S)
+HTML=~/cvs_results/${TS}_ix-atom-vllm-parity_mi300x.html
+LOG=~/cvs_results/${TS}_ix-atom-vllm-parity_mi300x.log
+
+cvs run inferencex_atom_vllm_single \
+  --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
+  --config_file "$VLLM_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_config.json" \
+  --html="$HTML" \
+  --self-contained-html \
+  --log-file="$LOG" \
+  -vvv -s
+
+echo "HTML: $HTML"
+echo "LOG:  $LOG"
+```
+
+## W1 vLLM parity multinode (MI300X)
+
+Same 15-cell sweep as ATOM `perf_multi`. Uses ``mi300x_atom_multi.json`` and vLLM pipeline parallelism across nodes (`PP=2`, `nnodes=2`). Populate ``run_card.parity_reference_json`` from a green ATOM multinode run for ``compare.vllm.*`` gates.
+
+```bash
+cd ~/cvs && source .cvs_venv/bin/activate
+
+VLLM_MULTI_DIR=~/input/config_file/inference/inferencex_atom/vllm_perf_multi
+mkdir -p "$VLLM_MULTI_DIR"
+
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_config.json \
+  --output "$VLLM_MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_config.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_threshold.json \
+  --output "$VLLM_MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_threshold.json"
+cvs copy-config mi300x_atom_multi.json --output ~/input/cluster_file/mi300x_atom_multi.json
+
+# Edit cluster + config: replace {head-node-ip} / {worker-node-ip}, set container.image and params.master_addr.
+
+TS=$(date +%Y%m%d_%H%M%S)
+HTML=~/cvs_results/${TS}_ix-atom-vllm-parity-multi_mi300x.html
+LOG=~/cvs_results/${TS}_ix-atom-vllm-parity-multi_mi300x.log
+
+cvs run inferencex_atom_vllm_single \
+  --cluster_file ~/input/cluster_file/mi300x_atom_multi.json \
+  --config_file "$VLLM_MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_config.json" \
+  --html="$HTML" \
+  --self-contained-html \
+  --log-file="$LOG" \
+  -vvv -s
+
+echo "HTML: $HTML"
+echo "LOG:  $LOG"
+```
+
+## W1 vLLM parity multinode (MI355X)
+
+Same sweep matrix as MI355X ATOM multinode. Thresholds are seeded; ``enforce_thresholds`` stays ``false`` until a 2-node MI355X lab run confirms.
+
+```bash
+cd ~/cvs && source .cvs_venv/bin/activate
+
+VLLM_MULTI_DIR=~/input/config_file/inference/inferencex_atom/mi355x_vllm_multi
+mkdir -p "$VLLM_MULTI_DIR"
+
+cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_config.json \
+  --output "$VLLM_MULTI_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_config.json"
+cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_threshold.json \
+  --output "$VLLM_MULTI_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_threshold.json"
+cvs copy-config mi355x_atom_multi.json --output ~/input/cluster_file/mi355x_atom_multi.json
+
+TS=$(date +%Y%m%d_%H%M%S)
+HTML=~/cvs_results/${TS}_ix-atom-vllm-parity-multi_mi355x.html
+LOG=~/cvs_results/${TS}_ix-atom-vllm-parity-multi_mi355x.log
+
+cvs run inferencex_atom_vllm_single \
+  --cluster_file ~/input/cluster_file/mi355x_atom_multi.json \
+  --config_file "$VLLM_MULTI_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_config.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \

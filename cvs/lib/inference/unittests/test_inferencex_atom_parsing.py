@@ -59,6 +59,26 @@ class TestInferenceXAtomParsing(unittest.TestCase):
         specs = tier_metric_specs(cell, "scaling")
         self.assertEqual(specs, {"scaling.efficiency_pct": {"kind": "min", "value": 50}})
 
+    def test_tier_metric_specs_compare_vllm(self):
+        cell = {
+            "compare.vllm.output_throughput_ratio": {"kind": "min", "value": 0.85},
+            "client.output_throughput": {"kind": "min_tok_s", "value": 1},
+        }
+        specs = tier_metric_specs(cell, "compare")
+        self.assertEqual(
+            specs,
+            {"compare.vllm.output_throughput_ratio": {"kind": "min", "value": 0.85}},
+        )
+
+    def test_compare_vllm_metrics(self):
+        from cvs.lib.inference.utils.inferencex_atom_parsing import compare_vllm_metrics
+
+        actual = {"client.output_throughput": 2000, "client.mean_ttft_ms": 440}
+        reference = {"client.output_throughput": 2500, "client.mean_ttft_ms": 400}
+        out = compare_vllm_metrics(actual, reference)
+        self.assertAlmostEqual(out["compare.vllm.output_throughput_ratio"], 0.8)
+        self.assertAlmostEqual(out["compare.vllm.mean_ttft_ms_ratio"], 1.1)
+
     def test_gated_metrics_subset_of_client_metrics(self):
         client_short = {short for short, _unit in CLIENT_METRICS}
         missing = GATED_METRICS - client_short

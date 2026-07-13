@@ -1,0 +1,11 @@
+{
+  "_comment": "Example ATOM reference metrics for M4 compare.* gates. Populate client.* scalars from a green inferencex_atom run per cell_key. Multinode cells include PP= and NNODES= segments (e.g. ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16).",
+  "ISL=1024,OSL=1024,TP=8,CONC=128": {
+    "client.output_throughput": 3000,
+    "client.mean_ttft_ms": 400
+  },
+  "ISL=1024,OSL=1024,TP=8,CONC=256": {
+    "client.output_throughput": 5000,
+    "client.mean_ttft_ms": 450
+  }
+}

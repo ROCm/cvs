@@ -303,6 +303,124 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         _, _, ids = expand_sweep_parametrize(sweep, ("metric_tier",))
         self.assertIn("w1-conc128-throughput", ids)
 
+    def test_load_w1_mi300x_vllm_parity_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.framework, "inferencex_atom_vllm_single")
+        self.assertEqual(variant.params.driver, "vllm")
+        self.assertIn("trust-remote-code", variant.roles.server.serve_args)
+        self.assertEqual(
+            variant.expected_cells(),
+            ["ISL=1024,OSL=1024,TP=8,CONC=128", "ISL=1024,OSL=1024,TP=8,CONC=256"],
+        )
+
+    def test_load_w1_mi300x_vllm_multinode_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.framework, "inferencex_atom_vllm_single")
+        self.assertEqual(variant.params.driver, "vllm")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
+        self.assertFalse(variant.enforce_thresholds)
+        self.assertEqual(len(variant.expected_cells()), 15)
+        cell = "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertIn(cell, variant.expected_cells())
+        self.assertEqual(
+            variant.thresholds[cell]["scaling.efficiency_pct"],
+            {"kind": "min", "value": 50},
+        )
+        self.assertEqual(
+            variant.thresholds[cell]["compare.vllm.output_throughput_ratio"],
+            {"kind": "min", "value": 0.85},
+        )
+
+    def test_load_w1_mi355x_vllm_multinode_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi355x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf_multi_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertEqual(variant.framework, "inferencex_atom_vllm_single")
+        self.assertEqual(variant.params.driver, "vllm")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "4000")
+        self.assertFalse(variant.enforce_thresholds)
+        cell = "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertIn(cell, variant.expected_cells())
+
+    def test_vllm_framework_rejects_atom_driver(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="w1", isl="1024", osl="1024")],
+            runs=[Run(combo="w1", concurrency=128)],
+        )
+        thresholds = {"ISL=1024,OSL=1024,TP=8,CONC=128": placeholder_gated_threshold_cell()}
+        with self.assertRaises(ValueError):
+            InferenceXAtomVariantConfig(
+                schema_version=1,
+                framework="inferencex_atom_vllm_single",
+                gpu_arch="mi300x",
+                enforce_thresholds=False,
+                paths={
+                    "shared_fs": "/home/x",
+                    "models_dir": "/home/x/models",
+                    "log_dir": "/home/x/LOGS",
+                    "hf_token_file": "/home/x/.hf",
+                },
+                model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
+                container={
+                    "name": "c",
+                    "image": "img",
+                    "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
+                },
+                roles={"server": {"serve_args": {"trust-remote-code": True}}},
+                params={"driver": "atom", "tensor_parallelism": "8"},
+                sweep=sweep,
+                thresholds=thresholds,
+            )
+
+    def test_server_session_key_differs_for_serve_args(self):
+        from types import SimpleNamespace
+
+        base = SimpleNamespace(
+            model=SimpleNamespace(id="m"),
+            params=SimpleNamespace(
+                driver="vllm",
+                tensor_parallelism="8",
+                nnodes="1",
+                pipeline_parallel_size="1",
+                master_addr="",
+                master_port="29501",
+            ),
+            roles=SimpleNamespace(server=SimpleNamespace(serve_args={"kv-cache-dtype": "fp8"})),
+        )
+        other = SimpleNamespace(
+            model=SimpleNamespace(id="m"),
+            params=SimpleNamespace(
+                driver="vllm",
+                tensor_parallelism="8",
+                nnodes="1",
+                pipeline_parallel_size="1",
+                master_addr="",
+                master_port="29501",
+            ),
+            roles=SimpleNamespace(server=SimpleNamespace(serve_args={"kv-cache-dtype": "bf16"})),
+        )
+        self.assertNotEqual(
+            server_session_key(base, "1024", "1024"),
+            server_session_key(other, "1024", "1024"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

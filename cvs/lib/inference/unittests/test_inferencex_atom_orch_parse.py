@@ -275,6 +275,59 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         self.assertNotIn("--distributed-executor-backend", launch_cmds[0])
         self.assertIn("openai_server", launch_cmds[0])
 
+    def test_distributed_vllm_start_server_uses_node_rank_and_pp(self):
+        orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="vllm", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        job.start_server()
+        launch_cmds = [c for c, hosts in orch.commands if hosts]
+        self.assertEqual(len(launch_cmds), 2)
+        self.assertIn("vllm serve", launch_cmds[0])
+        self.assertNotIn("openai_server", launch_cmds[0])
+        self.assertIn("--node-rank 0", launch_cmds[0])
+        self.assertIn("--node-rank 1", launch_cmds[1])
+        self.assertIn("--nnodes 2", launch_cmds[0])
+        self.assertIn("--pipeline-parallel-size 2", launch_cmds[0])
+        self.assertIn("--master-addr 10.0.0.1", launch_cmds[0])
+        self.assertIn("--distributed-executor-backend mp", launch_cmds[0])
+
+    def test_vllm_distributed_argv(self):
+        job = InferenceXAtomJob(
+            orch=FakeOrch(hosts=["10.0.0.1", "10.0.0.2"]),
+            variant=_fake_variant(driver="vllm", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        argv = job._vllm_distributed_argv(rank=1)
+        self.assertEqual(
+            argv,
+            [
+                "--node-rank",
+                "1",
+                "--master-addr",
+                "10.0.0.1",
+                "--master-port",
+                "29501",
+                "--nnodes",
+                "2",
+                "--pipeline-parallel-size",
+                "2",
+                "--distributed-executor-backend",
+                "mp",
+            ],
+        )
+
     def test_distributed_atom_spmd_env_and_dp_when_tp_allows(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
         variant = _fake_variant(driver="atom", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1")

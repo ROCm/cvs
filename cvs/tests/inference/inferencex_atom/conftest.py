@@ -33,10 +33,15 @@ def _log_variant_run_card(variant_config):
         f"model={variant_config.model.id}",
     ]
     atom_args = variant_config.roles.server.atom_args
+    serve_args = variant_config.roles.server.serve_args
     if atom_args:
         parts.append(f"atom_args={len(atom_args)} tokens")
+    if serve_args:
+        parts.append(f"serve_args={len(serve_args)} keys")
     if rc.atom_image_pin:
         parts.append(f"image_pin={rc.atom_image_pin}")
+    if rc.vllm_image_pin:
+        parts.append(f"vllm_image_pin={rc.vllm_image_pin}")
     if rc.upstream_run_url:
         parts.append(f"upstream_run={rc.upstream_run_url}")
     if rc.notes:
@@ -58,6 +63,7 @@ LIFECYCLE_RANK = {
     "test_setup_sshd": 1,
     "test_model_fetch": 2,
     "test_inferencex_atom_inference": 3,
+    "test_inferencex_atom_vllm_inference": 3,
     "test_cell_metrics": 4,
     "test_print_results_table": 5,
     "test_teardown": 6,
