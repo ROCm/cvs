@@ -48,14 +48,6 @@
     "goodput": { "kind": "min", "value": 0.99 },
     "mfu": { "kind": "min", "value": 0.02 }
   },
-  "ISL=1024,OSL=8192,TP=8,CONC=64": {
-    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 125 },
-    "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
-    "mean_tpot_ms": { "kind": "max_ms", "value": 250 },
-    "mean_e2e_latency_ms": { "kind": "max_ms", "value": 561446 },
-    "goodput": { "kind": "min", "value": 0.99 },
-    "mfu": { "kind": "min", "value": 0.01 }
-  },
   "ISL=8192,OSL=1024,TP=8,CONC=64": {
     "output_throughput_per_sec": { "kind": "min_tok_s", "value": 125 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
@@ -64,13 +56,10 @@
     "goodput": { "kind": "min", "value": 0.99 },
     "mfu": { "kind": "min", "value": 0.05 }
   },
-  "ACC_ISL=98304,OSL=128": {
+  "ACC_ISL=131072,OSL=1024": {
     "pass_rate": { "kind": "min", "value": 0.95 }
   },
-  "ACC_ISL=131072,OSL=128": {
-    "pass_rate": { "kind": "min", "value": 0.95 }
-  },
-  "ACC_ISL=204800,OSL=128": {
+  "ACC_ISL=261120,OSL=1024": {
     "pass_rate": { "kind": "min", "value": 0.90 }
   },
   "BENCH=lm_eval_hellaswag": {

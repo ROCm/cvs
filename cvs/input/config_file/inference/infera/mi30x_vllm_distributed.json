@@ -1,0 +1,52 @@
+{
+    "active_benchmark": "kimi-k2.6-mxfp4",
+    "enforce_thresholds": false,
+    "config": {
+        "container_image": "<changeme-infera-vllm-image>",
+        "container_name": "infera_container",
+        "nnodes": "2",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "shm_size": "128G",
+        "log_dir": "/home/{user-id}/LOGS/infera",
+        "nic_type": "thor2",
+        "nccl_ib_hca_list": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+        "nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+        "hca_id_prefix": "rdma",
+        "mount_vol": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so",
+        "nccl_socket_ifname": "eno0",
+        "gloo_socket_ifname": "eno0",
+        "gloo_tcp_ifname": "eno0",
+        "nccl_ib_gid_index": "3",
+        "nccl_debug": "ERROR",
+        "prefill_node_list": ["10.32.80.110"],
+        "decode_node_list": ["10.32.80.111"],
+        "proxy_router_node": "10.32.80.110",
+        "benchmark_serv_node": "10.32.80.110",
+        "etcd_host": "10.32.80.110",
+        "etcd_port": "2379",
+        "frontend_port": "8000",
+        "prefill_serv_port": "30001",
+        "decode_serv_port": "30002",
+        "proxy_router_serv_port": "8000",
+        "container_config": {
+            "device_list": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
+            "volume_dict": {
+                "/home/{user-id}": "/home/{user-id}",
+                "/mnt/dtni/models": "/models",
+                "/dev/infiniband": "/dev/infiniband",
+                "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+                "/lib/libibverbs.d": "/lib/libibverbs.d"
+            },
+            "env_dict": {}
+        }
+    },
+    "benchmark_params": {
+        "kimi-k2.6-mxfp4": {
+            "backend": "infera",
+            "model": "/models/Kimi-K2.6-MXFP4",
+            "served_model_name": "Kimi-K2.6-MXFP4",
+            "tensor_parallelism": "8",
+            "memory_fraction": "0.90"
+        }
+    }
+}
