@@ -167,25 +167,34 @@ def _try_parse(text: str) -> list:
     return parsed
 
 
-def capture_gpu_metrics(orch, nodes=None) -> dict:
+def capture_gpu_metrics(orch, nodes=None, timeout_s=None) -> dict:
     """One amd-smi exec on the host node(s). Returns flat {gpu.* metrics} dict.
 
     Single-node (nodes=None): orch must have .exec_on_head(cmd) -> {host: str}.
-    Multi-node (nodes provided): nodes is a list of (label, hosts) pairs where
-    hosts is a list of hostnames passed to orch.exec(cmd, hosts=hosts) -> {host: str}.
-    All nodes' GPU entries are merged before aggregation. Return type is
-    identical in both cases.
+    Multi-node (nodes provided, incl. []): nodes is a list of (label, hosts)
+    pairs where hosts is a list of hostnames passed to
+    orch.exec(cmd, hosts=hosts) -> {host: str}. nodes=[] is a valid "zero
+    nodes" case: no exec call is made and all fields come back None, the same
+    no-op result an empty raw list produces. All nodes' GPU entries are merged
+    before aggregation. Return type is identical in both cases.
 
-    Exceptions from exec calls propagate to the caller (poll_gpu_metrics handles them).
+    timeout_s: optional timeout (seconds) passed through to orch.exec/
+    exec_on_head. None means no timeout (blocks until the remote call
+    returns), matching this function's historical behavior.
+
+    Exceptions from exec calls (including a timeout firing) propagate to the
+    caller (poll_gpu_metrics handles them).
     """
     all_entries = []
     if nodes is None:
-        out = orch.exec_on_head("amd-smi metric --json")
+        kwargs = {"timeout": timeout_s} if timeout_s is not None else {}
+        out = orch.exec_on_head("amd-smi metric --json", **kwargs)
         for _host, text in out.items():
             all_entries.extend(_try_parse(text))
     else:
+        kwargs = {"timeout": timeout_s} if timeout_s is not None else {}
         for _label, hosts in nodes:
-            out = orch.exec("amd-smi metric --json", hosts=hosts)
+            out = orch.exec("amd-smi metric --json", hosts=hosts, **kwargs)
             for _host, text in out.items():
                 all_entries.extend(_try_parse(text))
     return parse_gpu_metrics(all_entries)
@@ -220,21 +229,23 @@ def _node_label_tag(nodes) -> str:
     return "[" + "+".join(lbl for lbl, _hosts in nodes) + "] "
 
 
-def _capture_multi_node(orch, nodes) -> "tuple[dict, dict[str, int | None]]":
+def _capture_multi_node(orch, nodes, timeout_s=None) -> "tuple[dict, dict[str, int | None]]":
     """One amd-smi exec per (label, hosts) pair.
 
     Returns (merged_snapshot, per_node_vram) computed from a single exec round:
     merged_snapshot is parse_gpu_metrics() over every node's GPU entries combined
     (same shape as capture_gpu_metrics), per_node_vram is {label: used_vram_mb}.
 
-    Degrades per label: if orch.exec raises for a node, that label's entries are
-    excluded from the merge and its per-node VRAM is None.
+    Degrades per label: if orch.exec raises (including a timeout_s firing) for
+    a node, that label's entries are excluded from the merge and its per-node
+    VRAM is None.
     """
     all_entries = []
     per_node_vram: "dict[str, int | None]" = {}
+    kwargs = {"timeout": timeout_s} if timeout_s is not None else {}
     for label, hosts in nodes:
         try:
-            out = orch.exec("amd-smi metric --json", hosts=hosts)
+            out = orch.exec("amd-smi metric --json", hosts=hosts, **kwargs)
             node_entries = []
             for _host, text in out.items():
                 node_entries.extend(_try_parse(text))
@@ -256,19 +267,34 @@ def poll_gpu_metrics(
     model_load_s=None,
     model_load_memory_mb=None,
     nodes=None,
+    timeout_s=None,
 ) -> list:
     """Poll GPU metrics while an inference client is running.
 
     Calls capture_gpu_metrics repeatedly until is_done_fn() returns True
     or max_consecutive_failures consecutive exceptions are raised.
     Returns list of raw snapshot dicts (failed polls excluded).
-    Never raises. Writes per-poll lines + summary to log_path if given.
+    Never raises for amd-smi/parsing failures — those are caught, counted,
+    and logged. is_done_fn() is called outside that guard and any exception
+    it raises propagates to the caller (a broken done-predicate is a caller
+    bug, not a polling failure). Writes per-poll lines + summary to log_path
+    if given.
 
     nodes: optional list of (label, hosts) pairs for multi-node polling, where
     hosts is a list of hostnames passed to orch.exec(cmd, hosts=hosts). When
-    provided, all nodes are polled once per iteration and merged into a single
-    reading. Log lines are tagged with node labels; summary includes per-node
-    VRAM. When None (default), uses orch.exec_on_head — single-node behaviour.
+    provided (including nodes=[], the zero-node case: no exec call is made,
+    every field comes back None), all nodes are polled once per iteration and
+    merged into a single reading. In multi-node mode, a round where every
+    listed node failed is itself counted as one consecutive failure (same as
+    a raised exception in single-node mode); a partial success/failure round
+    still counts as success, preserving per-label degradation. Log lines are
+    tagged with node labels; summary includes per-node VRAM. When nodes=None
+    (default), uses orch.exec_on_head — single-node behaviour.
+
+    timeout_s: optional timeout (seconds) passed through to orch.exec/
+    exec_on_head on every poll. A timeout firing is caught like any other
+    amd-smi failure and counted toward max_consecutive_failures. None means
+    no timeout (blocks until the remote call returns).
     """
     log = logging.getLogger(__name__)
     readings: list = []
@@ -276,20 +302,22 @@ def poll_gpu_metrics(
     poll_n = 0
     consecutive_failures = 0
     # Per-node VRAM tracking: {label: last_successful_used_vram}
-    node_last_vram: "dict[str, int | None]" = {lbl: None for lbl, _ in nodes} if nodes else {}
+    node_last_vram: "dict[str, int | None]" = {lbl: None for lbl, _ in nodes} if nodes is not None else {}
     node_tag = _node_label_tag(nodes)
 
     while True:
         poll_n += 1
         snap = None
         try:
-            if nodes:
-                snap, per_node = _capture_multi_node(orch, nodes)
+            if nodes is not None:
+                snap, per_node = _capture_multi_node(orch, nodes, timeout_s=timeout_s)
                 for lbl, vram in per_node.items():
                     if vram is not None:
                         node_last_vram[lbl] = vram
+                if len(nodes) > 0 and not any(v is not None for v in per_node.values()):
+                    raise RuntimeError(f"all nodes failed this round: {list(per_node)}")
             else:
-                snap = capture_gpu_metrics(orch, nodes=None)
+                snap = capture_gpu_metrics(orch, nodes=None, timeout_s=timeout_s)
         except Exception as exc:
             consecutive_failures += 1
             line = (

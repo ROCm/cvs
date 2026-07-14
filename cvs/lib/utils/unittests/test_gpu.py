@@ -1140,5 +1140,341 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
             os.unlink(log_path)
 
 
+# ===========================================================================
+# Hardening spec (plans/gpu-py-polling-reliability.md) — NEW behaviors.
+#
+# These tests are authored GREENFIELD against the three reliability fixes that
+# are NOT yet implemented. They are expected to be RED until the fixes land,
+# and must not disturb the 73 characterization tests above.
+#
+# Classification of the units they exercise:
+#   poll_gpu_metrics    -> subsystem / stateful loop. State carried across
+#                          rounds is `consecutive_failures`; the failure cap is
+#                          a liveness guard (Fan-out Deadline, taxonomy #11).
+#   capture_gpu_metrics -> I/O subsystem at the orch.exec / orch.exec_on_head
+#                          seam; timeout is threaded to that boundary.
+#
+# poll_gpu_metrics failure-accounting transition table (multi-node):
+#   | round outcome                    | consecutive_failures | round result |
+#   |----------------------------------|----------------------|--------------|
+#   | all nodes produced entries       | reset to 0           | reading kept |
+#   | SOME nodes up, some down (mixed) | reset to 0 (success) | reading kept |  <- Issue 1: must NOT count
+#   | ZERO nodes produced entries      | += 1                 | no reading   |  <- Issue 1: must count
+#   | consecutive_failures == cap      | -> loop terminates   | stop polling |
+# ===========================================================================
+
+
+def _gpu_json(used_vram=1000, gfx=80.0):
+    """Serialize one amd-smi GPU entry as the JSON string orch.exec returns."""
+    import json
+
+    return json.dumps(
+        [_full_gpu_entry(gfx=gfx, total=used_vram + 1000, used=used_vram, free=1000)]
+    )
+
+
+class TestPollGpuMetricsFailureAccounting(unittest.TestCase):
+    """Issue 1 — multi-node total failure must count toward the failure cap,
+    while partial (per-label) degradation must NOT.
+
+    These are lifecycle tests over the `consecutive_failures` state carried
+    across poll rounds: a legal transition (partial failure stays a success and
+    the loop keeps running to is_done), the previously-missing illegal one
+    (every node down -> the round is a failure and the cap eventually fires),
+    and the liveness guarantee that the loop terminates instead of spinning
+    forever on a wholly-dead fan-out.
+    """
+
+    def _make_snap(self, used_vram=1000):
+        return {
+            "gpu.used_vram": used_vram,
+            "gpu.gfx_activity": 90.0,
+            "gpu.umc_activity": 20.0,
+            "gpu.mm_activity": None,
+            "gpu.free_vram": 500,
+            "gpu.total_vram": 1500,
+            "gpu.energy_j": 50.0,
+        }
+
+    def test_all_nodes_fail_round_trips_failure_cap(self):
+        """Illegal transition (was silently a success): every node fails every
+        round. Driven through the REAL _capture_multi_node via an orch.exec that
+        raises for all hosts, so this holds regardless of where the fix places
+        the raise. With is_done_fn never truly done, the loop MUST stop on the
+        cap and return zero readings — not accumulate all-None 'successes'.
+
+        is_done_fn returns True only after 20 calls purely as a safety valve so
+        a broken (pre-fix) implementation cannot hang the test; the real signal
+        is `readings == []`.
+        """
+        orch = MagicMock()
+        orch.exec.side_effect = RuntimeError("ssh failed for every host")
+        nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
+        done_calls = {"n": 0}
+
+        def _is_done():
+            done_calls["n"] += 1
+            return done_calls["n"] >= 20  # safety valve, not the assertion
+
+        with patch("time.sleep"):
+            readings = poll_gpu_metrics(
+                orch,
+                is_done_fn=_is_done,
+                poll_interval_s=0,
+                max_consecutive_failures=2,
+                nodes=nodes,
+            )
+
+        self.assertEqual(readings, [])
+
+    def test_all_nodes_fail_via_capture_multi_node_seam(self):
+        """Same illegal transition, asserted at the seam the spec names: when
+        _capture_multi_node reports every label as None (per_node all-None),
+        poll_gpu_metrics must treat the round as a failure and stop on the cap.
+        """
+        snap = self._make_snap()
+        all_none = {"prefill-0": None, "decode-0": None}
+        nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
+        done_calls = {"n": 0}
+
+        def _is_done():
+            done_calls["n"] += 1
+            return done_calls["n"] >= 20  # safety valve
+
+        with (
+            patch(
+                "cvs.lib.utils.gpu._capture_multi_node",
+                return_value=(snap, all_none),
+            ),
+            patch("time.sleep"),
+        ):
+            readings = poll_gpu_metrics(
+                MagicMock(),
+                is_done_fn=_is_done,
+                poll_interval_s=0,
+                max_consecutive_failures=2,
+                nodes=nodes,
+            )
+
+        self.assertEqual(readings, [])
+
+    def test_partial_node_failure_does_not_trip_failure_cap(self):
+        """Legal transition preserved: one node up, one node down every round is
+        a SUCCESS (per-label degradation). Over 5 rounds with
+        max_consecutive_failures=2 the loop must NOT stop early — it runs until
+        is_done_fn, producing one reading per round. Regression guard that the
+        Issue 1 fix does not start counting partial failures.
+        """
+        orch = MagicMock()
+
+        def _exec(cmd, hosts=None, **kw):
+            if hosts == ["good"]:
+                return {"good": _gpu_json(used_vram=1000)}
+            raise RuntimeError("bad node down")
+
+        orch.exec.side_effect = _exec
+        nodes = [("good-0", ["good"]), ("bad-0", ["bad"])]
+        done_calls = {"n": 0}
+
+        def _is_done():
+            done_calls["n"] += 1
+            return done_calls["n"] >= 5
+
+        with patch("time.sleep"):
+            readings = poll_gpu_metrics(
+                orch,
+                is_done_fn=_is_done,
+                poll_interval_s=0,
+                max_consecutive_failures=2,
+                nodes=nodes,
+            )
+
+        self.assertEqual(len(readings), 5)
+
+    def test_partial_failure_seam_keeps_reading(self):
+        """Same legal transition at the _capture_multi_node seam: a mixed
+        per_node (one None, one live) is a success — the aggregate reading is
+        kept and the loop is not aborted.
+        """
+        snap = self._make_snap(5000)
+        mixed = {"prefill-0": None, "decode-0": 3000}
+        nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
+
+        with (
+            patch(
+                "cvs.lib.utils.gpu._capture_multi_node",
+                return_value=(snap, mixed),
+            ),
+            patch("time.sleep"),
+        ):
+            readings = poll_gpu_metrics(
+                MagicMock(),
+                is_done_fn=lambda: True,
+                poll_interval_s=0,
+                max_consecutive_failures=2,
+                nodes=nodes,
+            )
+
+        self.assertEqual(len(readings), 1)
+        self.assertEqual(readings[0]["gpu.used_vram"], 5000)
+
+
+class TestGpuMetricsTimeout(unittest.TestCase):
+    """Issue 3 — a caller-supplied timeout must be threaded down to the orch
+    transport (orch.exec / orch.exec_on_head), and a timeout firing must be
+    counted like any other failure.
+
+    Assertions pin the *explicit* timeout the caller passes rather than the
+    default value: the spec leaves the default timeout deliberately unresolved
+    (open question / possibly a required parameter), so pinning a specific
+    default here would encode a decision the spec has not made.
+    """
+
+    def test_capture_single_node_passes_timeout_to_exec_on_head(self):
+        orch = MagicMock()
+        orch.exec_on_head.return_value = {"node0": _gpu_json()}
+        capture_gpu_metrics(orch, timeout_s=7)
+        _args, kwargs = orch.exec_on_head.call_args
+        self.assertEqual(kwargs.get("timeout"), 7)
+
+    def test_capture_multi_node_passes_timeout_to_exec(self):
+        orch = MagicMock()
+
+        def _exec(cmd, hosts=None, **kw):
+            return {hosts[0]: _gpu_json()}
+
+        orch.exec.side_effect = _exec
+        capture_gpu_metrics(
+            orch,
+            nodes=[("prefill-0", ["p"]), ("decode-0", ["d"])],
+            timeout_s=5,
+        )
+        self.assertTrue(orch.exec.called)
+        for call in orch.exec.call_args_list:
+            _args, kwargs = call
+            with self.subTest(call=call):
+                self.assertEqual(kwargs.get("timeout"), 5)
+
+    def test_poll_threads_timeout_to_capture_single_node(self):
+        """poll_gpu_metrics forwards its timeout_s down to capture_gpu_metrics
+        in single-node mode (nodes=None)."""
+        seen = {}
+
+        def _cap(o, nodes=None, timeout_s=None, **kw):
+            seen["timeout_s"] = timeout_s
+            return {
+                "gpu.used_vram": 1000,
+                "gpu.gfx_activity": 80.0,
+                "gpu.umc_activity": 60.0,
+                "gpu.mm_activity": 1.0,
+                "gpu.free_vram": 5000,
+                "gpu.total_vram": 6000,
+                "gpu.energy_j": 100.0,
+            }
+
+        with (
+            patch("cvs.lib.utils.gpu.capture_gpu_metrics", side_effect=_cap),
+            patch("time.sleep"),
+        ):
+            poll_gpu_metrics(
+                MagicMock(),
+                is_done_fn=lambda: True,
+                poll_interval_s=0,
+                timeout_s=8,
+            )
+        self.assertEqual(seen.get("timeout_s"), 8)
+
+    def test_poll_multinode_threads_timeout_to_orch_exec(self):
+        """In multi-node mode, poll_gpu_metrics' timeout_s must reach the orch
+        transport as timeout= on every per-label exec call (driven through the
+        real _capture_multi_node)."""
+        orch = MagicMock()
+
+        def _exec(cmd, hosts=None, **kw):
+            return {hosts[0]: _gpu_json()}
+
+        orch.exec.side_effect = _exec
+        nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
+        with patch("time.sleep"):
+            poll_gpu_metrics(
+                orch,
+                is_done_fn=lambda: True,
+                poll_interval_s=0,
+                timeout_s=9,
+                nodes=nodes,
+            )
+        self.assertTrue(orch.exec.called)
+        for call in orch.exec.call_args_list:
+            _args, kwargs = call
+            with self.subTest(call=call):
+                self.assertEqual(kwargs.get("timeout"), 9)
+
+    def test_timeout_s_is_optional_for_capture(self):
+        """Backward-compat: existing callers pass no timeout_s. Adding the
+        parameter must keep it OPTIONAL (a default), never required — otherwise
+        every existing caller (and the 73 characterization tests) breaks."""
+        orch = MagicMock()
+        orch.exec_on_head.return_value = {"node0": _gpu_json()}
+        try:
+            out = capture_gpu_metrics(orch)  # no timeout_s
+        except TypeError as exc:  # noqa: BLE001
+            self.fail(f"timeout_s must be optional, not required: {exc!r}")
+        self.assertEqual(set(out.keys()), set(ALL_KEYS))
+
+    def test_single_node_timeout_exception_counted_as_failure(self):
+        """A timeout raised by the transport is counted like any other failure:
+        in single-node mode a persistently-timing-out capture must trip the cap
+        and stop the loop (returning no readings), exactly as a RuntimeError
+        does today."""
+
+        class _FakeTimeout(Exception):
+            pass
+
+        with (
+            patch(
+                "cvs.lib.utils.gpu.capture_gpu_metrics",
+                side_effect=_FakeTimeout("amd-smi timed out"),
+            ),
+            patch("time.sleep"),
+        ):
+            readings = poll_gpu_metrics(
+                MagicMock(),
+                is_done_fn=lambda: False,
+                poll_interval_s=0,
+                max_consecutive_failures=3,
+            )
+        self.assertEqual(readings, [])
+
+
+class TestEmptyNodesListConsistency(unittest.TestCase):
+    """nodes=[] (zero labeled nodes, distinct from nodes=None) must behave
+    identically in capture_gpu_metrics and poll_gpu_metrics: no exec call at
+    all, all-None result. Found live: capture_gpu_metrics used `nodes is None`
+    to pick single- vs multi-node mode while poll_gpu_metrics used a truthy
+    check (`if nodes:`), so nodes=[] took the multi-node (no-op) branch in
+    capture_gpu_metrics but silently fell back to the single-node
+    exec_on_head branch in poll_gpu_metrics.
+    """
+
+    def test_capture_gpu_metrics_empty_nodes_calls_neither_transport(self):
+        orch = MagicMock()
+        result = capture_gpu_metrics(orch, nodes=[])
+        orch.exec.assert_not_called()
+        orch.exec_on_head.assert_not_called()
+        self.assertEqual(set(result.keys()), set(ALL_KEYS))
+        self.assertTrue(all(v is None for v in result.values()))
+
+    def test_poll_gpu_metrics_empty_nodes_calls_neither_transport(self):
+        orch = MagicMock()
+        with patch("time.sleep"):
+            readings = poll_gpu_metrics(
+                orch, is_done_fn=lambda: True, poll_interval_s=0, nodes=[]
+            )
+        orch.exec.assert_not_called()
+        orch.exec_on_head.assert_not_called()
+        self.assertEqual(len(readings), 1)
+        self.assertTrue(all(v is None for v in readings[0].values()))
+
+
 if __name__ == "__main__":
     unittest.main()
