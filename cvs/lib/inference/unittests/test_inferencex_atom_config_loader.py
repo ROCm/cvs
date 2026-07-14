@@ -2,13 +2,13 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for cvs.lib.inference.utils.inferencex_atom_config_loader.
+Unit tests for cvs.lib.inference.inferencex_atom.inferencex_atom_config_loader.
 '''
 
 import unittest
 from pathlib import Path
 
-from cvs.lib.inference.utils.inferencex_atom_config_loader import (
+from cvs.lib.inference.inferencex_atom.inferencex_atom_config_loader import (
     InferenceXAtomVariantConfig,
     expand_sweep,
     expand_sweep_parametrize,
@@ -185,7 +185,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
 
     def test_placeholder_threshold_cell_covers_gated_metrics(self):
         cell = placeholder_gated_threshold_cell()
-        from cvs.lib.inference.utils.inferencex_atom_parsing import GATED_METRICS
+        from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import GATED_METRICS
 
         for short in GATED_METRICS:
             self.assertIn(f"client.{short}", cell, short)

@@ -272,9 +272,7 @@ class InferenceBaseJob:
         self,
     ):
         eager_line = (
-            "\n                    export VLLM_ENFORCE_EAGER=1"
-            if self.if_dict.get("vllm_enforce_eager")
-            else ""
+            "\n                    export VLLM_ENFORCE_EAGER=1" if self.if_dict.get("vllm_enforce_eager") else ""
         )
         s_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                     export MODEL={self.bp_dict['model']}
