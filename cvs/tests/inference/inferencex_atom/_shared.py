@@ -3,7 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 '''
 
-from cvs.lib.inference.inference_suite_results_table import (
+from cvs.lib.inference.utils.inference_suite_results_table import (
     INFERENCEX_ATOM_RESULTS_COLUMNS,
     make_print_results_table,
 )

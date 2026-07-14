@@ -17,7 +17,7 @@ and run with ``--html``. No conftest changes required.
 from __future__ import annotations
 
 # TODO: column preset + parsing helpers from your suite
-# from cvs.lib.inference.inference_suite_results_table import MY_SUITE_RESULTS_COLUMNS
+# from cvs.lib.inference.utils.inference_suite_results_table import MY_SUITE_RESULTS_COLUMNS
 # from cvs.lib.inference.utils.my_parsing import CLIENT_METRIC_UNITS, tier_metric_specs, METRIC_TIER_ORDER
 from cvs.lib.report.presets.builder import make_inference_report_config
 
