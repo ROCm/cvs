@@ -93,16 +93,12 @@ class HtmlReportManager:
 
         log_content = []
         for section_name, section_content in report.sections:
-            log_content.append(
-                f"<h3>{html.escape(section_name)}</h3>"
-                f"<pre>{html.escape(section_content)}</pre>"
-            )
+            log_content.append(f"<h3>{html.escape(section_name)}</h3><pre>{html.escape(section_content)}</pre>")
 
         if log_content:
             # Persist a standalone html log page per test.
             log_path.write_text(
-                f"<html><body><h1>{html.escape(report.nodeid)}</h1>"
-                f"{''.join(log_content)}</body></html>",
+                f"<html><body><h1>{html.escape(report.nodeid)}</h1>{''.join(log_content)}</body></html>",
                 encoding="utf-8",
             )
             log.info("Wrote external test log: %s", log_path)

@@ -25,6 +25,7 @@ __all__ = [
 
 _SMOKE_LINE_RE = re.compile(r"^(.+) -> (Pass|Fail) \((\d+)\)$")
 
+
 def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> str:
     """Pick which ``benchmark_params`` entry to run.
 
@@ -43,8 +44,7 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
     if env_key:
         if env_key not in bp:
             raise ValueError(
-                f"SGLANG_BENCHMARK_KEY={env_key!r} not found in benchmark_params "
-                f"({config_path}); valid: {sorted(bp)!r}"
+                f"SGLANG_BENCHMARK_KEY={env_key!r} not found in benchmark_params ({config_path}); valid: {sorted(bp)!r}"
             )
         log.info("Using benchmark variant from env SGLANG_BENCHMARK_KEY=%r", env_key)
         return env_key
@@ -53,8 +53,7 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
     if explicit is not None:
         if explicit not in bp:
             raise ValueError(
-                f"active_benchmark={explicit!r} not found in benchmark_params "
-                f"({config_path}); valid: {sorted(bp)!r}"
+                f"active_benchmark={explicit!r} not found in benchmark_params ({config_path}); valid: {sorted(bp)!r}"
             )
         log.info("Using benchmark variant from active_benchmark=%r", explicit)
         return str(explicit)
@@ -111,7 +110,7 @@ def test_print_results_table(inf_res_dict):
                     tablefmt="github",
                 ),
             )
-        
+
     acc_rows = []
     for label, key in (("HellaSwag", "accuracy_hellaswag"), ("GSM8K", "accuracy_gsm8k"), ("MMLU", "accuracy_mmlu")):
         e = phase_labels.get(key)

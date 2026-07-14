@@ -22,7 +22,7 @@ from cvs.lib.inference.utils.inferencing_config_loader import (
     validate_sweep_selector,
     validate_thresholds_cover_sweep,
 )
-from cvs.lib.inference.utils.inferencex_atom_parsing import GATED_METRICS
+from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
 
 
@@ -87,10 +87,7 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
 
     def expected_cells(self) -> List[str]:
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
-        return [
-            self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency)
-            for r in self.sweep.runs
-        ]
+        return [self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency) for r in self.sweep.runs]
 
     @model_validator(mode="after")
     def _check_thresholds_cover_sweep(self):
@@ -153,7 +150,7 @@ def server_session_key(variant_config, isl, osl):
 
 def expand_sweep_parametrize(sweep, fixturenames):
     """Build pytest parametrize args for inference or metric-tier collection."""
-    from cvs.lib.inference.utils.inferencex_atom_parsing import METRIC_TIER_ORDER
+    from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import METRIC_TIER_ORDER
 
     cases, ids = expand_sweep(sweep)
     if "metric_tier" in fixturenames:
@@ -192,7 +189,6 @@ def placeholder_gated_threshold_cell(
 ) -> Dict[str, Any]:
     """Return one sweep cell's ``client.*`` specs covering every ``GATED_METRICS`` member."""
     loose_ms = {"kind": "max_ms", "value": 1_000_000}
-    loose_tok = {"kind": "min_tok_s", "value": 0}
     return {
         "client.total_token_throughput": {"kind": "min_tok_s", "value": total_token_throughput_min},
         "client.output_throughput": {"kind": "min_tok_s", "value": output_throughput_min},

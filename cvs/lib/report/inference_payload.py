@@ -68,9 +68,7 @@ def sweep_has_multi_shape_comparison(cells: List[dict]) -> bool:
     return len(shapes) >= 2 and len(concurrencies) >= 2
 
 
-def build_chart_series(
-    config: InferenceReportConfig, cells: List[dict]
-) -> Dict[str, List[dict]]:
+def build_chart_series(config: InferenceReportConfig, cells: List[dict]) -> Dict[str, List[dict]]:
     """Per-metric sweep charts grouped by ISL/OSL shape.
 
     Each metric maps to a list of ``{isl, osl, label, points}`` entries so
@@ -180,11 +178,7 @@ def _build_run_card_display(
         run_card_rows.append((label, value, is_link))
 
     run_card_display = extend_run_card_display(run_card_rows, prov)
-    run_card_display = [
-        (label, value, is_link)
-        for label, value, is_link in run_card_display
-        if label != "CVS version"
-    ]
+    run_card_display = [(label, value, is_link) for label, value, is_link in run_card_display if label != "CVS version"]
     display_labels = {label for label, _value, _link in run_card_display}
     if prov.get("cvs_version") and "CVS" not in display_labels:
         run_card_display.append(("CVS", str(prov["cvs_version"]), False))
@@ -246,9 +240,7 @@ def build_inference_report_payload(
     if cvs_version:
         prov.setdefault("cvs_version", cvs_version)
 
-    run_card_display, run_card_notes, generated_at = _build_run_card_display(
-        config, variant_config, prov
-    )
+    run_card_display, run_card_notes, generated_at = _build_run_card_display(config, variant_config, prov)
 
     chart_series = build_chart_series(config, cells)
     panels = _build_panels(config, cells, report_dir)
