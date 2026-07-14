@@ -39,6 +39,7 @@ def _threshold_file_path(bp_dict: Mapping[str, Any]) -> str | None:
         return str(path).strip()
     return None
 
+
 def _resolve_threshold_path(threshold_path: str) -> Path:
     """Resolve an absolute or repo-relative threshold path from config."""
     path = Path(threshold_path)
@@ -177,10 +178,7 @@ def thresholds_dict(benchmark_params, benchmark_variant):
     """Load thresholds from the path in ``threshold_file``."""
     threshold_path_str = _threshold_file_path(benchmark_params)
     if not threshold_path_str:
-        pytest.fail(
-            f"benchmark_params[{benchmark_variant!r}] missing "
-            "'threshold_file' in --config_file"
-        )
+        pytest.fail(f"benchmark_params[{benchmark_variant!r}] missing 'threshold_file' in --config_file")
 
     threshold_path = _resolve_threshold_path(threshold_path_str)
     thresholds = _load_thresholds_file(threshold_path)

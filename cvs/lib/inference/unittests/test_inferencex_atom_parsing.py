@@ -5,7 +5,7 @@ All rights reserved.
 
 import unittest
 
-from cvs.lib.inference.utils.inferencex_atom_parsing import (
+from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import (
     CLIENT_METRICS,
     ENFORCED_METRICS,
     GATED_METRICS,

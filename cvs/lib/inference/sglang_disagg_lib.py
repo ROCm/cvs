@@ -33,8 +33,10 @@ inference_err_dict = {
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
 
+
 def textwrap_for_yml(msg_string):
     return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
+
 
 def _as_node_list(value):
     """
@@ -48,9 +50,11 @@ def _as_node_list(value):
         return [value]
     return list(value)
 
+
 def _first_float(pattern, text):
     m = re.search(pattern, text, re.I)
     return m.group(1) if m else None
+
 
 LM_EVAL_SPECS = {
     "lm_eval_hellaswag": {
@@ -142,7 +146,7 @@ class SglangDisaggPD:
             'mount_vol',
             '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
         )
-        
+
         self.prefill_node_list = self.inf_dict['prefill_node_list']
         self.decode_node_list = self.inf_dict['decode_node_list']
         self.prefill_nnodes = len(self.prefill_node_list)
@@ -316,10 +320,10 @@ class SglangDisaggPD:
             # override the gid_index to 3 for broadcom
             self.nccl_ib_gid_index = 3
             cmd = (
-                    f'docker exec {self.container_name} /bin/bash -c "sudo '
-                    f'cp {self.mount_vol}.host {self.mount_vol}; '
-                    f'sleep 2; ibv_devinfo; sleep 2;" '
-                )
+                f'docker exec {self.container_name} /bin/bash -c "sudo '
+                f'cp {self.mount_vol}.host {self.mount_vol}; '
+                f'sleep 2; ibv_devinfo; sleep 2;" '
+            )
             pout_dict = self.p_phdl.exec(cmd)
             dout_dict = self.d_phdl.exec(cmd)
             hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
@@ -705,7 +709,6 @@ class SglangDisaggPD:
         self.poll_for_server_ready(0, 'prefill')
         self.poll_for_server_ready(0, 'decode')
 
-    
     # Helper function for launching Proxy Router
     def launch_proxy_router(
         self,
@@ -792,7 +795,6 @@ class SglangDisaggPD:
         log.info('Waiting 120 secs after launching proxy router script')
         time.sleep(120)
 
-    
     # Helper function for running SGLang serving benchmark with random dataset
     def benchserv_test_random(self, d_type='auto'):
         """
@@ -848,7 +850,7 @@ class SglangDisaggPD:
         self.b_phdl.exec(formatted_cmd, timeout=500)
         time.sleep(5)
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
-        
+
         # MFU (derived from same bench metrics as TTFT/TPOT)
         peak_tflops = float(i_dict.get("peak_gpu_tflops", 1300))
         num_params = float(i_dict.get("model_num_params", 70e9))
@@ -857,9 +859,7 @@ class SglangDisaggPD:
         for node, m in (self.inference_results_dict or {}).items():
             duration = float(m.get("benchmark_duration") or 0)
             in_tok = float(m.get("total_input_tokens") or 0)
-            out_tok = float(
-                m.get("total_generated_tokens") or m.get("Total generated tokens:") or 0
-            )
+            out_tok = float(m.get("total_generated_tokens") or m.get("Total generated tokens:") or 0)
             if duration > 0 and num_gpus > 0:
                 achieved = 6.0 * num_params * (in_tok + out_tok)
                 peak = peak_tflops * 1e12 * num_gpus * duration
@@ -877,7 +877,7 @@ class SglangDisaggPD:
                 f"echo '============ Derived Benchmark Results ============' >> {log_path} && "
                 f"echo 'Goodput (successful / total): {sr} / {tr}  =>  {gp}' >> {log_path} && "
                 f"echo 'Output token throughput per GPU (tok/s/GPU): {tpg}' >> {log_path} && "
-                 f"echo 'MFU (estimated): {mfu}' >> {log_path} && "
+                f"echo 'MFU (estimated): {mfu}' >> {log_path} && "
                 f"echo '=====================================================================' >> {log_path}"
             )
             cmd = f"docker exec {self.container_name} /bin/bash -c {shlex.quote(inner)}"
@@ -982,7 +982,7 @@ class SglangDisaggPD:
         self.inference_results_dict = {}
         log.info('Inside get_inference_results_dict')
         log.info("%s", out_dict)
-        
+
         for node in out_dict.keys():
             self.inference_results_dict[node] = {}
             if re.search('Successful requests:', out_dict[node], re.I):
@@ -1425,40 +1425,26 @@ class SglangDisaggPD:
         probe_err: Optional[str] = None
         results: dict[str, tuple[int, Any]] = {}
         if not raw_out or not str(raw_out).strip():
-            probe_err = (
-                f"OpenAI-compatible probe produced no output node {bench_host!r}: "
-                f"{out_dict!r}"
-            )
+            probe_err = f"OpenAI-compatible probe produced no output node {bench_host!r}: {out_dict!r}"
         else:
             lines_out = str(raw_out).strip().splitlines()
             if not lines_out:
-                probe_err = (
-                    f"OpenAI-compatible probe empty lines after strip on node "
-                    f"{bench_host!r}: {raw_out!r}"
-                )
+                probe_err = f"OpenAI-compatible probe empty lines after strip on node {bench_host!r}: {raw_out!r}"
             else:
                 last_line = lines_out[-1]
                 try:
                     parsed = json.loads(last_line)
                 except json.JSONDecodeError as e:
-                    probe_err = (
-                        f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
-                    )
+                    probe_err = f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
                 else:
                     if not isinstance(parsed, dict):
-                        probe_err = (
-                            f"OpenAI-compatible probe expected JSON object, got "
-                            f"{type(parsed).__name__!r}"
-                        )
+                        probe_err = f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}"
                     else:
                         for step, val in parsed.items():
                             if isinstance(val, (list, tuple)) and len(val) == 2:
                                 results[step] = (int(val[0]), val[1])
                             else:
-                                probe_err = (
-                                    f"OpenAI-compatible probe bad shape at "
-                                    f"{step!r}: {val!r}"
-                                )
+                                probe_err = f"OpenAI-compatible probe bad shape at {step!r}: {val!r}"
                                 break
 
         if probe_err is not None:
@@ -1488,8 +1474,7 @@ class SglangDisaggPD:
     def run_lm_eval_mmlu_benchmark_test(self, _d_type="auto"):
         return self.run_lm_eval_benchmark_test("lm_eval_mmlu", _d_type=_d_type)
 
-
-    # Helper function for running LM-Eval benchmarks    
+    # Helper function for running LM-Eval benchmarks
     def run_lm_eval_benchmark_test(self, bench_key: str, _d_type="auto"):
         spec = LM_EVAL_SPECS[bench_key]
         log.info("#================ * * * =========================#")

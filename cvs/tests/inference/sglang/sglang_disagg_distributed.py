@@ -9,11 +9,9 @@ Single SGLang disaggregated (PD) benchmark module: model is selected from
 import re
 import time
 
-import pytest
-
 from cvs.lib import docker_lib, globals
 from cvs.lib.utils_lib import fail_test, update_test_result
-from cvs.tests.inference.sglang._shared import test_print_results_table
+from cvs.tests.inference.sglang._shared import test_print_results_table  # noqa: F401
 
 log = globals.log
 
@@ -119,7 +117,7 @@ def test_launch_proxy_router(im_obj):
 def test_openai_compatible_http_endpoints(im_obj, inf_res_dict):
     globals.error_list = []
     results = im_obj.verify_openai_compatible_endpoints()
-    inf_res_dict["__smoke_probe_results__"] = results  
+    inf_res_dict["__smoke_probe_results__"] = results
     update_test_result()
 
 

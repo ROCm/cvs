@@ -758,7 +758,7 @@ VLLM test scripts
 
 Single-node vLLM benchmarks use one parametrized suite, ``vllm_single``. Each **variant**
 is a directory under ``cvs/input/config_file/inference/vllm_single/<variant>/`` containing
-``*_config.json`` and a sibling ``*_threshold.json`` (see :func:`cvs.lib.inference.utils.inferencing_config_loader.load_variant` for vLLM, or :func:`cvs.lib.inference.utils.inferencex_atom_config_loader.load_variant` for InferenceX ATOM).
+``*_config.json`` and a sibling ``*_threshold.json`` (see :func:`cvs.lib.inference.utils.inferencing_config_loader.load_variant` for vLLM, or :func:`cvs.lib.inference.inferencex_atom.inferencex_atom_config_loader.load_variant` for InferenceX ATOM).
 Point ``--config_file`` at the variant's ``*_config.json`` and ``--cluster_file`` at a cluster
 JSON that matches your hardware (for example ``input/cluster_file/mi300x_vllm_single.json``).
 

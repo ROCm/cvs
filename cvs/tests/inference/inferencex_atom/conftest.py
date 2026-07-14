@@ -10,13 +10,13 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.inference.inference_suite_lifecycle import (
+from cvs.lib.inference.utils.inference_suite_lifecycle import (
     InferenceLifecycle,
     html_metric_table_header,
     html_metric_table_row,
     sort_lifecycle_items,
 )
-from cvs.lib.inference.utils.inferencex_atom_config_loader import (
+from cvs.lib.inference.inferencex_atom.inferencex_atom_config_loader import (
     load_variant,
     orchestrator_container_from_variant,
 )
