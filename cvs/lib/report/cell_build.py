@@ -144,17 +144,12 @@ def build_cell_record(
                 "unit": config.metric_units.get(short, ""),
                 "spec": spec,
                 "status": metric_pass(full, actual, spec) if enforce and spec else "record",
-                "bar_pct": bar_pct(float(actual), spec)
-                if spec is not None and actual is not None
-                else None,
+                "bar_pct": bar_pct(float(actual), spec) if spec is not None and actual is not None else None,
                 "margin": margin_text(actual, spec) if spec else None,
             }
         )
 
-    tiers = {
-        tier: tier_status(config, actuals, thresholds_cell, tier, enforce)
-        for tier in config.metric_tier_order
-    }
+    tiers = {tier: tier_status(config, actuals, thresholds_cell, tier, enforce) for tier in config.metric_tier_order}
     pytest_links = resolve_pytest_nodeids_for_cell(config, lifecycle_report, conc)
 
     return {
@@ -183,7 +178,10 @@ def build_all_cells(
     lifecycle_report: Mapping[str, list],
 ) -> List[dict]:
     cells: List[dict] = []
-    for key, host_dict in sorted(inf_res_dict.items(), key=lambda kv: (kv[0][4], kv[0][5]) if isinstance(kv[0], tuple) and len(kv[0]) >= 6 else (0, 0)):
+    for key, host_dict in sorted(
+        inf_res_dict.items(),
+        key=lambda kv: (kv[0][4], kv[0][5]) if isinstance(kv[0], tuple) and len(kv[0]) >= 6 else (0, 0),
+    ):
         if not isinstance(key, tuple) or len(key) != 6:
             continue
         if not isinstance(host_dict, dict) or not host_dict:

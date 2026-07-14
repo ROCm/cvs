@@ -8,12 +8,12 @@ Unit tests for InferenceX ATOM server-reuse helpers and sweep parametrization.
 import unittest
 from types import SimpleNamespace
 
-from cvs.lib.inference.utils.inferencex_atom_config_loader import (
+from cvs.lib.inference.inferencex_atom.inferencex_atom_config_loader import (
     expand_sweep_parametrize,
     reuse_server_flag,
     server_session_key,
 )
-from cvs.lib.inference.utils.inferencex_atom_parsing import METRIC_TIER_ORDER
+from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import METRIC_TIER_ORDER
 
 
 class TestServerReuseHelpers(unittest.TestCase):
@@ -78,9 +78,7 @@ class TestExpandSweepParametrize(unittest.TestCase):
                 {"combo": "w1_1k_1k", "concurrency": 256},
             ],
         }
-        _, argvalues, ids = expand_sweep_parametrize(
-            sweep, ("seq_combo", "concurrency")
-        )
+        _, argvalues, ids = expand_sweep_parametrize(sweep, ("seq_combo", "concurrency"))
         self.assertEqual(len(argvalues), 2)
         self.assertEqual(ids, ["w1_1k_1k-conc128", "w1_1k_1k-conc256"])
 
