@@ -3,6 +3,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
@@ -10,6 +11,7 @@ from cvs.lib.preflight.node_smoke import (
     _JSON_BEGIN,
     _JSON_END,
     _resolve_dump_path,
+    NodeSmokeCheck,
     build_node_smoke_flags,
     build_remote_node_smoke_command,
     parse_node_smoke_output,
@@ -98,5 +100,42 @@ class TestParseNodeSmokeOutput(unittest.TestCase):
         self.assertEqual(parsed["status"], "FAIL")
 
 
+class TestNodeSmokeCheckRun(unittest.TestCase):
+    def _config(self):
+        return {
+            "node_smoke": {
+                "connectivity_mode": "run",
+                "auto_setup": False,
+                "primus_dir": "/home/testuser/Primus",
+                "venv_activate": "/home/testuser/envs/preflight/.venv/bin/activate",
+            }
+        }
+
+    def test_exec_cmd_list_aligns_with_reachable_hosts_subset(self):
+        """cmd_list[i] must match reachable_hosts[i]; non-target hosts get 'true'."""
+        phdl = MagicMock()
+        phdl.reachable_hosts = ["node0", "node1", "node2"]
+        phdl.exec_cmd_list.return_value = {
+            "node0": "wrote /tmp/smoke/a.json status=PASS\n",
+            "node1": "skipped",
+            "node2": "wrote /tmp/smoke/c.json status=PASS\n",
+        }
+
+        checker = NodeSmokeCheck(phdl, ["node0", "node2"], self._config())
+        results = checker.run()
+
+        cmd_list = phdl.exec_cmd_list.call_args[0][0]
+        self.assertEqual(len(cmd_list), len(phdl.reachable_hosts))
+        self.assertEqual(cmd_list[1], "true")
+        self.assertIn("primus-cli", cmd_list[0])
+        self.assertIn("primus-cli", cmd_list[2])
+        self.assertIn("export NODE_RANK=0", cmd_list[0])
+        self.assertIn("export NODE_RANK=1", cmd_list[2])
+        self.assertEqual(set(results["node_results"]), {"node0", "node2"})
+        self.assertEqual(results["node_results"]["node0"]["node_rank"], 0)
+        self.assertEqual(results["node_results"]["node2"]["node_rank"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
+

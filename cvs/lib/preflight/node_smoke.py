@@ -357,6 +357,8 @@ class NodeSmokeCheck(PreflightCheck):
         nnodes = len(hosts)
         master_addr = hosts[0]
         smoke_flags = self._smoke_flags()
+        hosts_set = set(hosts)
+        host_ranks = {host: rank for rank, host in enumerate(hosts)}
 
         self.log_info(
             f"Launching Primus node_smoke on {nnodes} node(s) "
@@ -364,34 +366,39 @@ class NodeSmokeCheck(PreflightCheck):
         )
 
         commands: List[str] = []
-        for rank, host in enumerate(hosts):
-            commands.append(
-                build_remote_node_smoke_command(
-                    primus_dir=self.primus_dir,
-                    venv_activate=self.venv_activate,
-                    node_rank=rank,
-                    nnodes=nnodes,
-                    master_addr=master_addr,
-                    master_port=self.master_port,
-                    gpus_per_node=self.gpus_per_node,
-                    dump_path=self.dump_path,
-                    smoke_flags=smoke_flags,
-                    nccl_socket_ifname=self.nccl_socket_ifname,
-                    gloo_socket_ifname=self.gloo_socket_ifname,
-                    nccl_ib_hca=self.nccl_ib_hca,
-                    nccl_ib_gid_index=self.nccl_ib_gid_index,
+        for h in self.phdl.reachable_hosts:
+            if h not in hosts_set:
+                commands.append("true")
+            else:
+                commands.append(
+                    build_remote_node_smoke_command(
+                        primus_dir=self.primus_dir,
+                        venv_activate=self.venv_activate,
+                        node_rank=host_ranks[h],
+                        nnodes=nnodes,
+                        master_addr=master_addr,
+                        master_port=self.master_port,
+                        gpus_per_node=self.gpus_per_node,
+                        dump_path=self.dump_path,
+                        smoke_flags=smoke_flags,
+                        nccl_socket_ifname=self.nccl_socket_ifname,
+                        gloo_socket_ifname=self.gloo_socket_ifname,
+                        nccl_ib_hca=self.nccl_ib_hca,
+                        nccl_ib_gid_index=self.nccl_ib_gid_index,
+                    )
                 )
-            )
 
         out_dict = self.phdl.exec_cmd_list(commands, timeout=self.ssh_timeout)
 
         node_results: Dict[str, Any] = {}
         for host, output in out_dict.items():
+            if host not in hosts_set:
+                continue
             parsed = parse_node_smoke_output(output)
             node_results[host] = {
                 "status": parsed["status"],
                 "fail_reasons": parsed["fail_reasons"],
-                "node_rank": hosts.index(host) if host in hosts else -1,
+                "node_rank": host_ranks[host],
                 "node_payload": parsed.get("node_payload"),
             }
             if parsed["status"] == "FAIL":
@@ -418,3 +425,4 @@ class NodeSmokeCheck(PreflightCheck):
         if setup_results is not None:
             self.results["setup_results"] = setup_results
         return self.results
+
