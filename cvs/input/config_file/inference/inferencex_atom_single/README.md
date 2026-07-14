@@ -44,8 +44,8 @@ Use `cvs/input/cluster_file/mi300x_atom_single.json` or `mi355x_atom_single.json
 
 | Module | Purpose |
 |--------|---------|
-| `cvs/lib/inference/inference_suite_lifecycle.py` | Lifecycle stage tests, `InferenceLifecycle`, pytest HTML hooks |
-| `cvs/lib/inference/inference_suite_results_table.py` | Configurable results table (`make_print_results_table`) |
+| `cvs/lib/inference/utils/inference_suite_lifecycle.py` | Lifecycle stage tests, `InferenceLifecycle`, pytest HTML hooks |
+| `cvs/lib/inference/utils/inference_suite_results_table.py` | Configurable results table (`make_print_results_table`) |
 | `cvs/lib/inference/unittests/fake_orch.py` | `FakeOrch` for Job parse unit tests |
 
 `inferencex_atom_single` imports these today; `vllm_single` may adopt them in a follow-up without duplicating code.
