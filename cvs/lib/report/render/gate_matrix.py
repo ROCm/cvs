@@ -52,8 +52,7 @@ def render_gate_matrix_html(gate_matrix: List[dict], tier_order: Iterable[str]) 
     rows = "".join(
         f"<tr><td>{html.escape(row['label'])}</td>"
         + "".join(
-            f"<td class='matrix-{html.escape(row['tiers'].get(t, 'na'))}'>"
-            f"{html.escape(row['tiers'].get(t, 'na'))}</td>"
+            f"<td class='matrix-{html.escape(row['tiers'].get(t, 'na'))}'>{html.escape(row['tiers'].get(t, 'na'))}</td>"
             for t in tiers
         )
         + "</tr>"
