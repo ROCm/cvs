@@ -370,7 +370,6 @@ class SglangDisaggPD:
         # Env setup for Prefill Nodes ..
         p_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                     export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/venv/lib/python3.14/site-packages/_rocm_sdk_devel/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
@@ -378,7 +377,6 @@ class SglangDisaggPD:
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
-                    export GPU_ARCHS=gfx942
 
                     export MASTER_PREFILL_ADDR={self.inf_dict['prefill_coordinator_addr']}
                     export MASTER_PREFILL_PORT={self.inf_dict['prefill_coordinator_port']}
@@ -402,7 +400,6 @@ class SglangDisaggPD:
         # Env setup for Decode Nodes ..
         d_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                     export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/venv/lib/python3.14/site-packages/_rocm_sdk_devel/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
@@ -410,7 +407,6 @@ class SglangDisaggPD:
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
-                    export GPU_ARCHS=gfx942
 
                     export MASTER_DECODE_ADDR={self.inf_dict['decode_coordinator_addr']}
                     export MASTER_DECODE_PORT={self.inf_dict['decode_coordinator_port']}
@@ -434,7 +430,6 @@ class SglangDisaggPD:
         # Env setup for Proxy Router Node ..
         r_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                     export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/venv/lib/python3.14/site-packages/_rocm_sdk_devel/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
@@ -442,7 +437,6 @@ class SglangDisaggPD:
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
-                    export GPU_ARCHS=gfx942
 
                     export HF_TOKEN={self.hf_token}
                     '  > /tmp/router_env_script.sh"
@@ -461,7 +455,6 @@ class SglangDisaggPD:
         # Env setup for Benchserv node ..
         b_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
                     export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/venv/lib/python3.14/site-packages/_rocm_sdk_devel/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
@@ -469,7 +462,6 @@ class SglangDisaggPD:
                     export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
-                    export GPU_ARCHS=gfx942
                     export HF_TOKEN={self.hf_token}
                     '  > /tmp/benchmark_env_script.sh"
                     '''
@@ -842,6 +834,7 @@ class SglangDisaggPD:
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
                       source /tmp/benchmark_env_script.sh && \
+                      pip install --upgrade --no-deps sglang[all] && \
                       python3 -m sglang.bench_serving --backend {i_dict['backend']} \
                       --dataset-name random \
                       --num-prompts {i_dict['num_prompts']} \
