@@ -1,5 +1,5 @@
 {
-  "_comment": "2-node MI300X example for inferencex_atom multinode (M5). Replace mgmt_ip / node_dict with lab IPs. head_node_dict.mgmt_ip should match the rank-0 (master) node VPC IP used in params.master_addr.",
+  "_comment": "2-node MI300X example for inferencex_atom multinode (M5). Replace mgmt_ip / node_dict with lab IPs. head_node_dict.mgmt_ip should match the rank-0 (master) node VPC IP used in params.master_addr. Model weights expected under /home/models on each GPU node (mounted by variant config).",
   "orchestrator": "container",
   "username": "{user-id}",
   "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
