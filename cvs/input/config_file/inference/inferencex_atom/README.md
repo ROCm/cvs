@@ -40,6 +40,8 @@ Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc
 
 ATOM server CLI is inline in each config under `roles.server.atom_args` (vLLM-style, same as `roles.server.serve_args` on `vllm_single`). MTP3 variants also set `params.bench_extra_args`.
 
+**Model cache path:** shipped configs set `paths.models_dir` to `/home/models` and mount `/home/models:/home/models` into the container. Logs and HF token paths still use `{shared_fs}` under the SSH user home.
+
 ## Cluster + container naming
 
 Use `cvs/input/cluster_file/mi300x_atom_single.json` or `mi355x_atom_single.json` for single-node runs. For **multinode** (M5), use `mi300x_atom_multi.json` or `mi355x_atom_multi.json` with two entries in `node_dict` and set `params.master_addr` in the variant config to the head node's VPC IP. `params.nnodes` must match the cluster host count; `test_setup_sshd` starts in-container sshd on port 2224 when `len(node_dict) > 1`. The cluster `container.name` must match the variant (`inferencex_atom_mi300x` / `inferencex_atom_mi355x` / `inferencex_atom_mi300x_multi` / `inferencex_atom_mi355x_multi`); the suite deep-merges variant container settings over the cluster file.
@@ -82,11 +84,11 @@ source .cvs_venv/bin/activate
   |------|----------|------------------------------|
   | `cvs run`, venv, `~/input/`, `~/cvs_results/` | Yes | No |
   | `priv_key_file`, `~/.hf_token` (read locally by pytest) | Yes | No |
-  | `~/models` (when `model.remote: 0`) | No | Yes |
+  | `/home/models` (when `model.remote: 0`) | No | Yes |
   | `rocm/atom-dev` image, `sudo docker` | No | Yes |
   | `~/LOGS/` (server/bench logs via volume mount) | No | Yes |
 
-- Preflight from the launcher: `ssh -i ~/.ssh/<key> <user>@<mgmt_ip> 'sudo docker images | grep atom-dev; du -sh ~/models'`
+- Preflight from the launcher: `ssh -i ~/.ssh/<key> <user>@<mgmt_ip> 'sudo docker images | grep atom-dev; du -sh /home/models'`
 
 ## Smoke (MI300X)
 

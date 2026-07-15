@@ -135,8 +135,8 @@ Top-level blocks follow the DTNI variant schema. InferenceX ATOM-specific keys:
      - ``true`` / ``false``
      - When true, ``test_cell_metrics`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all`.
    * - ``paths.*``
-     - ``shared_fs``, ``models_dir``, ``log_dir``, ``hf_token_file``
-     - Placeholder-substituted paths (``{user-id}`` resolved at load).
+     - ``shared_fs``, ``models_dir`` (``/home/models``), ``log_dir``, ``hf_token_file``
+     - ``models_dir`` is an absolute HF hub cache path on GPU nodes; variant configs also bind-mount ``/home/models`` into the container.
    * - ``model.id``
      - ``deepseek-ai/DeepSeek-R1-0528``
      - HuggingFace model id for ATOM server and bench.
