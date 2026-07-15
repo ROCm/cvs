@@ -1,0 +1,93 @@
+{
+  "_comment": "DTNI baseline sweep: 1K/1K + 8K/1K × C=4-256 (14 cells). max_model_length=10240 fits 8192+1024 with headroom. enforce_thresholds false until MI355X lab calibration.",
+  "schema_version": 1,
+  "framework": "inferencex_atom",
+  "gpu_arch": "mi355x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_threshold.json",
+  "run_card": {
+    "upstream_run_url": "https://github.com/ROCm/ATOM/actions/runs/27912164002",
+    "atom_image_pin": "rocm/atom-dev:nightly_202606211542",
+    "notes": "DTNI baseline matrix; threshold seeds only until lab confirm"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "{shared_fs}/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "deepseek-ai/DeepSeek-R1-0528",
+    "remote": 0,
+    "precision": "fp8"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "inferencex_atom_mi355x",
+    "image": "rocm/atom-dev:nightly_202606211542",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": [
+        "-tp",
+        "8",
+        "--kv_cache_dtype",
+        "fp8",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true"
+      }
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "8",
+    "random_range_ratio": "0.8",
+    "num_prompts": "1000",
+    "max_model_length": "10240",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60"
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {"name": "baseline_1k_1k", "isl": "1024", "osl": "1024"},
+      {"name": "baseline_8k_1k", "isl": "8192", "osl": "1024"}
+    ],
+    "runs": [
+      {"combo": "baseline_1k_1k", "concurrency": 4},
+      {"combo": "baseline_1k_1k", "concurrency": 8},
+      {"combo": "baseline_1k_1k", "concurrency": 16},
+      {"combo": "baseline_1k_1k", "concurrency": 32},
+      {"combo": "baseline_1k_1k", "concurrency": 64},
+      {"combo": "baseline_1k_1k", "concurrency": 128},
+      {"combo": "baseline_1k_1k", "concurrency": 256},
+      {"combo": "baseline_8k_1k", "concurrency": 4},
+      {"combo": "baseline_8k_1k", "concurrency": 8},
+      {"combo": "baseline_8k_1k", "concurrency": 16},
+      {"combo": "baseline_8k_1k", "concurrency": 32},
+      {"combo": "baseline_8k_1k", "concurrency": 64},
+      {"combo": "baseline_8k_1k", "concurrency": 128},
+      {"combo": "baseline_8k_1k", "concurrency": 256}
+    ]
+  }
+}
