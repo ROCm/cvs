@@ -191,7 +191,11 @@ class VariantConfig(_Forbid):
     def _check_distributed_consistency(self):
         nn = int(self.params.nnodes)
         pp = int(self.params.pipeline_parallel_size)
-        if nn > 1 and pp == 1:
+        # Ray backend uses its own distributed orchestration and does not require
+        # pipeline parallelism (pp=1 is the expected ray multi-node configuration).
+        # Only the exact lowercase string "ray" triggers this relaxation (AC6).
+        is_ray = self.roles.server.serve_args.get("distributed-executor-backend") == "ray"
+        if nn > 1 and pp == 1 and not is_ray:
             raise ValueError(f"nnodes={nn} > 1 requires pipeline_parallel_size > 1 (got pp={pp})")
         if pp > 1 and nn == 1:
             raise ValueError(f"pipeline_parallel_size={pp} > 1 requires nnodes > 1 (got nnodes={nn})")

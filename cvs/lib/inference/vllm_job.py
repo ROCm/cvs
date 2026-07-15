@@ -155,6 +155,16 @@ class VllmJob:
 
     # ---------- derived builders ----------
 
+    @property
+    def _is_ray_backend(self):
+        """True iff the server is configured to use the ray distributed executor.
+
+        Checks serve_args at call time (not a cached snapshot) so callers that
+        mutate serve_args after construction see the updated value.  Only the
+        exact lowercase string 'ray' matches (AC6/AC8 case-sensitivity).
+        """
+        return self.serve_args.get("distributed-executor-backend") == "ray"
+
     _MML_PAD = 8
 
     def _derive_max_model_len(self):
@@ -199,7 +209,10 @@ class VllmJob:
         # value silently wins); the explicit config value takes precedence here.
         if "max-model-len" not in self.serve_args:
             argv += ["--max-model-len", self._derive_max_model_len()]
-        if int(self.nnodes) > 1:
+        if int(self.nnodes) > 1 and not self._is_ray_backend:
+            # mp multi-node: inject the full distributed-executor block.
+            # Ray multi-node omits all of these (AC16); the backend flag arrives
+            # via _flatten_serve_args below (AC17).
             argv += [
                 "--node-rank",
                 str(rank),
@@ -216,6 +229,8 @@ class VllmJob:
             ]
             if rank > 0:
                 argv.append("--headless")
+        if int(self.nnodes) > 1 and self._is_ray_backend and int(self.pp) > 1:
+            argv += ["--pipeline-parallel-size", str(self.pp)]
         argv.extend(self._flatten_serve_args(self.serve_args))
         return argv
 
@@ -276,20 +291,60 @@ class VllmJob:
             rank_dir = self.out_dir.replace("out-node0", f"out-node{rank}")
             self.orch.exec(f"mkdir -p {shlex.quote(rank_dir)}")
 
+    def _bootstrap_ray_cluster(self):
+        """Bootstrap a Ray cluster across all hosts before launching vllm serve.
+
+        Sequence (AC9-11, AC26-27):
+          1. Head: ``ray start --head --port=<master_port>``
+          2. Workers: ``ray start --address=<head>:<port>`` (one per worker rank)
+          3. Any non-zero exit code OR EARLY_FAILURE_RE match in output raises
+             RuntimeError before serve is attempted.
+        """
+        head = self.orch.hosts[0]
+        # Step 1: bootstrap head node.
+        head_cmd = f"ray start --head --port={self.master_port}"
+        out = self.orch.exec(head_cmd, hosts=[head], detailed=True)
+        for h, result in (out or {}).items():
+            if result.get("exit_code", 0) != 0 or self.EARLY_FAILURE_RE.search(result.get("output", "") or ""):
+                raise RuntimeError(f"ray bootstrap failed on {h} rank 0")
+        # Step 2: bootstrap each worker node.
+        for rank, host in enumerate(self.orch.hosts):
+            if rank == 0:
+                continue
+            worker_cmd = f"ray start --address={self.master_addr}:{self.master_port}"
+            out = self.orch.exec(worker_cmd, hosts=[host], detailed=True)
+            for h, result in (out or {}).items():
+                if result.get("exit_code", 0) != 0 or self.EARLY_FAILURE_RE.search(result.get("output", "") or ""):
+                    raise RuntimeError(f"ray bootstrap failed on {h} rank {rank}")
+
     def start_server(self):
         """Launch vllm serve on each host with the correct --node-rank.
 
-        enumerate(orch.hosts) yields (rank, host). On single-node this is one
-        (0, head) iteration. On multinode each host gets its own targeted exec.
+        For ray multi-node: bootstrap the Ray cluster first (head then workers),
+        then launch vllm serve on the head node only (AC9-15).
+        For mp or single-node: launch vllm serve on every host in rank order.
         """
-        for rank, host in enumerate(self.orch.hosts):
-            serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(rank))
-            rank_log = self._rank_log(rank)
+        if self._is_ray_backend and int(self.nnodes) > 1:
+            # Ray multi-node: cluster bootstrap then head-only serve (AC12).
+            self._bootstrap_ray_cluster()
+            head = self.orch.hosts[0]
+            serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(0))
+            rank_log = self._rank_log(0)
             inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
-            out = self.orch.exec("bash -c " + shlex.quote(inner), hosts=[host])
-            for h, output in out.items():
+            out = self.orch.exec("bash -c " + shlex.quote(inner), hosts=[head])
+            for h, output in (out or {}).items():
                 if self.EARLY_FAILURE_RE.search(output or ""):
-                    raise RuntimeError(f"vllm server failed to launch on {h} (rank {rank}): {output[-500:]}")
+                    raise RuntimeError(f"vllm server failed to launch on {h} (rank 0): {output[-500:]}")
+        else:
+            # mp multi-node or single-node (any backend): serve on every host.
+            for rank, host in enumerate(self.orch.hosts):
+                serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(rank))
+                rank_log = self._rank_log(rank)
+                inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
+                out = self.orch.exec("bash -c " + shlex.quote(inner), hosts=[host])
+                for h, output in (out or {}).items():
+                    if self.EARLY_FAILURE_RE.search(output or ""):
+                        raise RuntimeError(f"vllm server failed to launch on {h} (rank {rank}): {output[-500:]}")
 
     def is_ready(self):
         """Check readiness on each node using its own per-rank log path.
@@ -314,8 +369,16 @@ class VllmJob:
         return True
 
     def _check_early_failure(self, emit_tail: bool = False):
-        """Check per-rank logs on each host for early failure / fatal patterns."""
+        """Check per-rank logs on each host for early failure / fatal patterns.
+
+        Ray worker nodes (rank > 0 under ray multi-node) do not produce a
+        per-rank server log because vllm serve only runs on the head under ray.
+        Tailing/grepping a non-existent log on a worker would spuriously fail
+        or hang, so workers are skipped entirely (AC22).
+        """
         for rank, host in enumerate(self.orch.hosts):
+            if self._is_ray_backend and int(self.nnodes) > 1 and rank > 0:
+                continue
             rank_log = self._rank_log(rank)
             out = self.orch.exec(f"tail -30 {shlex.quote(rank_log)}", hosts=[host])
             for h, output in (out or {}).items():
@@ -354,10 +417,17 @@ class VllmJob:
         raise RuntimeError("vllm server did not become ready before timeout")
 
     def stop_server(self):
-        """Broadcast pkill to ALL nodes so no stray shard lingers."""
+        """Broadcast pkill to ALL nodes so no stray shard lingers.
+
+        For ray multi-node, additionally broadcasts ``ray stop`` after the pkill
+        to tear down the Ray cluster (AC18-19).  Idempotent: can be called
+        multiple times without raising (AC21, t35).
+        """
         log.info("stopping vllm server")
         self.orch.exec("bash -c 'pkill -f \"vllm serve\" || true'")
         time.sleep(5)
+        if self._is_ray_backend and int(self.nnodes) > 1:
+            self.orch.exec("ray stop")
 
     # ---------- client side (head-only) ----------
 
