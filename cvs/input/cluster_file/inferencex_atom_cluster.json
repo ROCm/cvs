@@ -1,5 +1,5 @@
 {
-  "_comment": "2-node MI300X example for inferencex_atom multinode (M5). Replace mgmt_ip / node_dict with lab IPs. head_node_dict.mgmt_ip should match the rank-0 (master) node VPC IP used in params.master_addr. Model weights expected under /home/models on each GPU node (mounted by variant config).",
+  "_comment": "InferenceX ATOM cluster template. Edit node_dict to match variant params.nnodes (1 host for single-node sweeps; 2+ for multinode). Set head_node_dict.mgmt_ip to the rank-0 VPC IP (params.master_addr for nnodes>1). Model weights under /home/models on each GPU node. Variant config overrides container image/name.",
   "orchestrator": "container",
   "username": "{user-id}",
   "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
@@ -20,7 +20,7 @@
   "container": {
     "lifetime": "per_run",
     "image": "rocm/atom-dev:latest",
-    "name": "inferencex_atom_mi300x_multi",
+    "name": "inferencex_atom",
     "runtime": {
       "name": "docker",
       "args": {
