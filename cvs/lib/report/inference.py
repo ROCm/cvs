@@ -187,6 +187,24 @@ def publish_inference_suite_report(
         pytest_html_href=pytest_href,
         log_file_href=log_href,
     )
+    from cvs.lib.report.provenance import format_image_display
+    from cvs.lib.report.registry import get_session_results
+
+    store = get_session_results()
+    runtime = store.get("runtime_provenance") or {}
+    if isinstance(runtime, dict):
+        provenance.update({k: str(v) for k, v in runtime.items() if v})
+    if not provenance.get("image_display"):
+        image_pin = getattr(getattr(variant_config, "run_card", None), "atom_image_pin", "") or ""
+        if image_pin:
+            provenance.setdefault("image_tag", image_pin)
+            provenance["image_display"] = format_image_display(image_tag=image_pin)
+    launch_builder = getattr(config, "launch_provenance_builder", None)
+    if launch_builder and variant_config is not None:
+        try:
+            provenance.update({k: str(v) for k, v in launch_builder(variant_config).items() if v})
+        except Exception as exc:
+            log.warning("Could not build launch provenance: %s", exc)
     artifacts = write_report(
         out_dir / f"{config.report_basename}.html",
         config=config,
