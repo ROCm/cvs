@@ -8,7 +8,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 import getpass
 import re
+import shlex
 from cvs.core.runtimes import RuntimeFactory
+from cvs.lib.report.provenance import format_image_display
 
 
 # Default container configuration - matches the original docker command
@@ -536,6 +538,58 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         self.container_id = container_name
         self.log.info(f"Verified container '{container_name}' is running on all hosts")
         return True
+
+    @staticmethod
+    def _ssh_command_output(result) -> str:
+        if not isinstance(result, dict):
+            return ""
+        for value in result.values():
+            if isinstance(value, dict):
+                if value.get("exit_code") not in (0, None):
+                    continue
+                return str(value.get("output") or "").strip()
+            if value:
+                return str(value).strip()
+        return ""
+
+    def capture_image_provenance(self, container_name: str | None = None) -> dict[str, str]:
+        """Resolve the running container image tag, ID, and digest on the head host."""
+        name = container_name or self.container_id
+        if not name:
+            return {}
+
+        image_tag = str(self.container_config.get("image") or "")
+        head = self.runtime.orchestrator.head
+        quoted = shlex.quote(name)
+
+        image_id = self._ssh_command_output(
+            head.exec(
+                f"sudo docker inspect --format '{{{{.Image}}}}' {quoted}",
+                timeout=30,
+                detailed=True,
+            )
+        )
+        image_digest = ""
+        if image_id:
+            image_digest = self._ssh_command_output(
+                head.exec(
+                    f"sudo docker image inspect --format '{{{{index .RepoDigests 0}}}}' {shlex.quote(image_id)}",
+                    timeout=30,
+                    detailed=True,
+                )
+            )
+
+        image_display = format_image_display(
+            image_tag=image_tag,
+            image_digest=image_digest,
+            image_id=image_id,
+        )
+        return {
+            "image_tag": image_tag,
+            "image_id": image_id,
+            "image_digest": image_digest,
+            "image_display": image_display,
+        }
 
     def teardown_containers(self):
         """

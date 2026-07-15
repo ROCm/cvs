@@ -92,6 +92,12 @@ def test_launch_container(orch, variant_config, lifecycle, request):
     if not orch.verify_containers_running(name):
         lifecycle.failed = True
         pytest.fail(f"container {name} not running after setup_containers()")
+    try:
+        from cvs.lib.report.registry import bind_runtime_provenance
+
+        bind_runtime_provenance(**orch.capture_image_provenance(name))
+    except Exception as exc:
+        log.warning("Could not capture container image provenance: %s", exc)
 
 
 def test_setup_sshd(orch, lifecycle, request):
