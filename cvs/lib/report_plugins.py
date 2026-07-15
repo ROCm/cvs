@@ -141,7 +141,7 @@ class HtmlReportManager:
             return None
 
         try:
-            source_path = Path(html_file)
+            source_path = Path(html_file).resolve()
             if not source_path.exists():
                 log.warning("HTML file not found, cannot add to report: %s", source_path)
                 return None
@@ -149,11 +149,12 @@ class HtmlReportManager:
             # Ensure log directory exists
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
-            # Copy file to log directory with same name
-            dest_path = self.log_dir / source_path.name
-            shutil.copy2(source_path, dest_path)
-
-            log.info("Added HTML file to report bundle: %s -> %s", source_path, dest_path)
+            dest_path = (self.log_dir / source_path.name).resolve()
+            if source_path == dest_path:
+                log.info("HTML file already in report bundle: %s", source_path)
+            else:
+                shutil.copy2(source_path, dest_path)
+                log.info("Added HTML file to report bundle: %s -> %s", source_path, dest_path)
 
             # Return relative path for potential linking
             rel_path = dest_path.relative_to(self.htmlpath.parent)
