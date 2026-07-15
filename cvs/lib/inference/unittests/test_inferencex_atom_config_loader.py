@@ -171,6 +171,8 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.params.num_prompts, "128")
+        self.assertEqual(variant.paths.models_dir, "/home/models")
+        self.assertIn("/home/models:/home/models", variant.container.runtime.args["volumes"])
         self.assertEqual(variant.expected_cells(), ["ISL=1024,OSL=1024,TP=8,CONC=128"])
 
     def test_load_w1_mi355x_atom_perf_variant_and_thresholds(self):
