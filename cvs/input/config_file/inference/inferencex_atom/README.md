@@ -28,9 +28,11 @@ Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc
 |---------|-----|-------|
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke` | MI300X | Quick path check (C=128, 128 prompts) |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` | MI300X | W1 perf, portable min-SLO thresholds, server reuse across sweep |
+| `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep` | MI300X | **DTNI baseline matrix:** 1K/1K + 8K/1K × C=4–256 (14 cells); `max_model_length=10240` |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` | MI300X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); `enforce_thresholds: false` until lab confirm |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | MI300X | W1 FP8+MTP3 |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf` | MI355X | W1 perf (CI seeds, `enforce_thresholds: false`) |
+| `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep` | MI355X | **DTNI baseline matrix:** 1K/1K + 8K/1K × C=4–256 (14 cells); threshold seeds, `enforce_thresholds: false` |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` | MI355X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); `enforce_thresholds: false` until lab confirm |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | MI355X | W1 FP8+MTP3 |
 | `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` | MI300X | GPT-OSS uplift placeholder (`driver: vllm`, inline `serve_args`) |
@@ -150,6 +152,39 @@ LOG=~/cvs_results/${TS}_ix-atom-w1-perf_mi300x.log
 cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
   --config_file "$PERF_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json" \
+  --html="$HTML" \
+  --self-contained-html \
+  --log-file="$LOG" \
+  -vvv -s
+
+echo "HTML: $HTML"
+echo "LOG:  $LOG"
+```
+
+## W1 perf baseline sweep (MI300X) — DTNI matrix
+
+DTNI baseline matrix: **1K/1K** and **8K/1K** at **C=4, 8, 16, 32, 64, 128, 256** (14 cells). `max_model_length=10240`. Expect a long run (~several hours); server is reused within each shape.
+
+```bash
+cd ~/cvs
+make install
+source .cvs_venv/bin/activate
+
+BASELINE_DIR=~/input/config_file/inference/inferencex_atom/baseline_sweep
+mkdir -p "$BASELINE_DIR"
+
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_config.json \
+  --output "$BASELINE_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_config.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_threshold.json \
+  --output "$BASELINE_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_threshold.json"
+
+TS=$(date +%Y%m%d_%H%M%S)
+HTML=~/cvs_results/${TS}_ix-atom-baseline-sweep_mi300x.html
+LOG=~/cvs_results/${TS}_ix-atom-baseline-sweep_mi300x.log
+
+cvs run inferencex_atom \
+  --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
+  --config_file "$BASELINE_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_config.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \
