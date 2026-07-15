@@ -15,6 +15,7 @@ _SESSION: dict[str, Any] = {
     "inf_res_dict": None,
     "variant_config": None,
     "lifecycle_report": None,
+    "runtime_provenance": None,
 }
 
 
@@ -55,6 +56,16 @@ def bind_session_results(
             _SESSION["lifecycle_report"] = lifecycle_report
 
 
+def bind_runtime_provenance(**fields: str) -> None:
+    """Capture host/runtime metadata (e.g. resolved container image digest)."""
+    if not fields:
+        return
+    existing = _SESSION.get("runtime_provenance")
+    merged = dict(existing) if isinstance(existing, dict) else {}
+    merged.update({k: str(v) for k, v in fields.items() if v})
+    _SESSION["runtime_provenance"] = merged
+
+
 def get_session_results() -> dict[str, Any]:
     return dict(_SESSION)
 
@@ -63,3 +74,4 @@ def clear_session_results() -> None:
     _SESSION["inf_res_dict"] = None
     _SESSION["variant_config"] = None
     _SESSION["lifecycle_report"] = None
+    _SESSION["runtime_provenance"] = None
