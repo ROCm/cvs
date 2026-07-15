@@ -58,6 +58,9 @@ def test_write_interactive_viewer(tmp_path):
     assert '"cell_id"' in text
     assert "chart.js" in text
     assert "comparison-grid" in text
+    assert "interactivity-block" in text
+    assert "interactivity-chart-wrap" in text
+    assert "buildInteractivityChart" in text
     assert 'id="overview"' in text
 
 
