@@ -1,5 +1,5 @@
 {
-  "_comment": "DTNI baseline sweep: 1K/1K + 8K/1K × C=4-256 (14 cells). max_model_length=10240 fits 8192+1024 with headroom. enforce_thresholds false until MI355X lab calibration.",
+  "_comment": "DTNI baseline sweep: 1K/1K + 8K/1K \u00d7 C=4-256 (14 cells). max_model_length=10240 fits 8192+1024 with headroom. enforce_thresholds false until MI355X lab calibration.",
   "schema_version": 1,
   "framework": "inferencex_atom",
   "gpu_arch": "mi355x",
@@ -12,7 +12,7 @@
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
-    "models_dir": "{shared_fs}/models",
+    "models_dir": "/home/models",
     "log_dir": "{shared_fs}/LOGS",
     "hf_token_file": "{shared_fs}/.hf_token"
   },
@@ -33,7 +33,8 @@
         "privileged": true,
         "shm_size": "128G",
         "volumes": [
-          "/home/{user-id}:/home/{user-id}"
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
         ],
         "devices": [
           "/dev/dri",
@@ -70,24 +71,74 @@
   },
   "sweep": {
     "sequence_combinations": [
-      {"name": "baseline_1k_1k", "isl": "1024", "osl": "1024"},
-      {"name": "baseline_8k_1k", "isl": "8192", "osl": "1024"}
+      {
+        "name": "baseline_1k_1k",
+        "isl": "1024",
+        "osl": "1024"
+      },
+      {
+        "name": "baseline_8k_1k",
+        "isl": "8192",
+        "osl": "1024"
+      }
     ],
     "runs": [
-      {"combo": "baseline_1k_1k", "concurrency": 4},
-      {"combo": "baseline_1k_1k", "concurrency": 8},
-      {"combo": "baseline_1k_1k", "concurrency": 16},
-      {"combo": "baseline_1k_1k", "concurrency": 32},
-      {"combo": "baseline_1k_1k", "concurrency": 64},
-      {"combo": "baseline_1k_1k", "concurrency": 128},
-      {"combo": "baseline_1k_1k", "concurrency": 256},
-      {"combo": "baseline_8k_1k", "concurrency": 4},
-      {"combo": "baseline_8k_1k", "concurrency": 8},
-      {"combo": "baseline_8k_1k", "concurrency": 16},
-      {"combo": "baseline_8k_1k", "concurrency": 32},
-      {"combo": "baseline_8k_1k", "concurrency": 64},
-      {"combo": "baseline_8k_1k", "concurrency": 128},
-      {"combo": "baseline_8k_1k", "concurrency": 256}
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 4
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 8
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 16
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 32
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 64
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 128
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 256
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 4
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 8
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 16
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 32
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 64
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 128
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 256
+      }
     ]
   }
 }
