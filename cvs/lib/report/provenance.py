@@ -9,10 +9,10 @@ from typing import Any, List, Mapping, Tuple
 RunCardRow = Tuple[str, str, bool]
 
 
-def git_commit_short() -> str:
+def _git_run(args: list[str]) -> str:
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+            ["git", *args],
             capture_output=True,
             text=True,
             check=True,
@@ -21,6 +21,57 @@ def git_commit_short() -> str:
         return result.stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def git_commit_short() -> str:
+    return _git_run(["rev-parse", "--short", "HEAD"])
+
+
+def git_branch_name() -> str:
+    branch = _git_run(["rev-parse", "--abbrev-ref", "HEAD"])
+    return "" if branch == "HEAD" else branch
+
+
+def git_worktree_dirty() -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=2,
+        )
+        return bool(result.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def format_git_ref(*, commit: str = "", branch: str = "", dirty: bool = False) -> str:
+    if not commit and not branch:
+        return ""
+    parts: list[str] = []
+    if commit:
+        parts.append(commit)
+    if branch:
+        parts.append(branch)
+    ref = " @ ".join(parts) if len(parts) == 2 else parts[0]
+    if dirty:
+        ref = f"{ref} (dirty)"
+    return ref
+
+
+def format_image_display(*, image_tag: str = "", image_digest: str = "", image_id: str = "") -> str:
+    digest = image_digest or image_id
+    if digest:
+        short = digest
+        if "@" in short:
+            short = short.split("@", 1)[1]
+        if short.startswith("sha256:") and len(short) > 19:
+            short = f"{short[:19]}\u2026"
+        if image_tag:
+            return f"{image_tag} @ {short}"
+        return short
+    return image_tag or "\u2014"
 
 
 def build_inference_report_provenance(
@@ -42,8 +93,17 @@ def build_inference_report_provenance(
         "config_file": str(config_file) if config_file else "",
     }
     commit = git_commit_short()
+    branch = git_branch_name()
+    dirty = git_worktree_dirty()
     if commit:
         provenance["git_commit"] = commit
+    if branch:
+        provenance["git_branch"] = branch
+    if dirty:
+        provenance["git_dirty"] = "true"
+    git_ref = format_git_ref(commit=commit, branch=branch, dirty=dirty)
+    if git_ref:
+        provenance["git_ref"] = git_ref
     if pytest_html_path or pytest_html_href:
         from pathlib import Path
 
@@ -62,8 +122,20 @@ def provenance_run_card_rows(provenance: Mapping[str, Any]) -> List[RunCardRow]:
     rows: List[RunCardRow] = []
     if provenance.get("cvs_version"):
         rows.append(("CVS version", str(provenance["cvs_version"]), False))
-    if provenance.get("git_commit"):
-        rows.append(("Git commit", str(provenance["git_commit"]), False))
+    git_ref = provenance.get("git_ref") or provenance.get("git_commit")
+    if git_ref:
+        rows.append(("Git ref", str(git_ref), False))
+    image_display = provenance.get("image_display")
+    if not image_display:
+        image_display = format_image_display(
+            image_tag=str(provenance.get("image_tag") or ""),
+            image_digest=str(provenance.get("image_digest") or ""),
+            image_id=str(provenance.get("image_id") or ""),
+        )
+    if image_display and image_display != "\u2014":
+        rows.append(("Image", str(image_display), False))
+    if provenance.get("launch_summary"):
+        rows.append(("Launch", str(provenance["launch_summary"]), False))
     if provenance.get("cluster_file"):
         rows.append(("Cluster file", str(provenance["cluster_file"]), False))
     if provenance.get("config_file"):
