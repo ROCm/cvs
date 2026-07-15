@@ -7,11 +7,11 @@
   "threshold_json": "mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "Smoke test only — validates ATOM server+bench path; run mi300x_inferencex-atom-single_deepseek-r1_fp8_perf for calibration"
+    "notes": "Smoke test only \u2014 validates ATOM server+bench path; run mi300x_inferencex-atom-single_deepseek-r1_fp8_perf for calibration"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
-    "models_dir": "{shared_fs}/models",
+    "models_dir": "/home/models",
     "log_dir": "{shared_fs}/LOGS",
     "hf_token_file": "{shared_fs}/.hf_token"
   },
@@ -32,7 +32,8 @@
         "privileged": true,
         "shm_size": "128G",
         "volumes": [
-          "/home/{user-id}:/home/{user-id}"
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
         ],
         "devices": [
           "/dev/dri",
