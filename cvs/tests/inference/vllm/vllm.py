@@ -85,10 +85,6 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
 
 
-def _num_prompts_for(osl, concurrency):
-    return str(concurrency * 20) if int(osl) >= 8192 else str(concurrency * 50)
-
-
 def _du_bytes(orch, path):
     """Total bytes under `path` inside the container, or 0 if it doesn't exist yet."""
     out = orch.exec(f"bash -c {shlex.quote(f'du -sb {shlex.quote(path)} 2>/dev/null | cut -f1')}")
@@ -232,7 +228,7 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         isl=isl,
         osl=osl,
         concurrency=concurrency,
-        num_prompts=_num_prompts_for(osl, concurrency),
+        num_prompts=variant_config.params.num_prompts,
         ib_hcas=getattr(lifecycle, "ib_hcas", []),
         goodput_slo=seq_combo.get("goodput_slo"),
         client_poll_count=int(variant_config.params.client_poll_count),
