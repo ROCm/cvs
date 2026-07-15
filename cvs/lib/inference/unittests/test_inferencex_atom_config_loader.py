@@ -152,6 +152,26 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         self.assertIn("client.output_throughput", variant.thresholds[cell])
         self.assertEqual(variant.thresholds[cell]["client.success_rate"]["value"], 1)
 
+    def test_load_baseline_sweep_multinode_mi300x_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_multinode_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.params.max_model_length, "10240")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
+        self.assertTrue(variant.enforce_thresholds)
+        self.assertEqual(len(variant.expected_cells()), 14)
+        cell = "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=4"
+        self.assertIn(cell, variant.expected_cells())
+        self.assertEqual(
+            variant.thresholds[cell]["scaling.efficiency_pct"],
+            {"kind": "min", "value": 50},
+        )
+
     def test_load_baseline_sweep_mi355x_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (

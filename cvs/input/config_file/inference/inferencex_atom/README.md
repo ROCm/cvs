@@ -29,6 +29,7 @@ Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke` | MI300X | Quick path check (C=128, 128 prompts) |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` | MI300X | W1 perf, portable min-SLO thresholds, server reuse across sweep |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep` | MI300X | **DTNI baseline matrix:** 1K/1K + 8K/1K × C=4–256 (14 cells); `max_model_length=10240` |
+| `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_multinode` | MI300X | **2-node** DTNI baseline matrix (same 14 cells); `PP=2`, `nnodes=2`, scaling gates |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` | MI300X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); `enforce_thresholds: false` until lab confirm |
 | `mi300x_inferencex-atom-single_deepseek-r1_fp8_mtp3` | MI300X | W1 FP8+MTP3 |
 | `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf` | MI355X | W1 perf (CI seeds, `enforce_thresholds: false`) |
@@ -50,8 +51,8 @@ Ship one template: `cvs/input/cluster_file/inferencex_atom_cluster.json`. Copy i
 
 | Variant type | `params.nnodes` | `node_dict` |
 |--------------|-----------------|-------------|
-| Smoke, baseline sweep, single-node perf | `1` (default) | **Head node only** — remove the worker entry |
-| Multinode perf | `2` | Head + worker |
+| Smoke, baseline sweep (single-node) | `1` (default) | **Head node only** — remove the worker entry |
+| Baseline sweep multinode, multinode perf | `2` | Head + worker |
 
 For multinode variants, set `params.master_addr` to the head VPC IP (same as `head_node_dict.mgmt_ip`). `test_setup_sshd` runs when `len(node_dict) > 1`. Variant config overrides cluster `container.image` and `container.name`.
 
@@ -196,6 +197,42 @@ LOG=~/cvs_results/${TS}_ix-atom-baseline-sweep_mi300x.log
 cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
   --config_file "$BASELINE_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_config.json" \
+  --html="$HTML" \
+  --self-contained-html \
+  --log-file="$LOG" \
+  -vvv -s
+
+echo "HTML: $HTML"
+echo "LOG:  $LOG"
+```
+
+## W1 perf baseline sweep multinode (MI300X, 2-node)
+
+Same **14-cell** DTNI matrix as single-node baseline sweep (1K/1K + 8K/1K × C=4–256), with `nnodes=2`, `PP=2`, and `scaling.efficiency_pct` gates. Expect a long run (~4–8 hours). Use a **2-host** `inferencex_atom_cluster.json` and set `params.master_addr` to the head VPC IP after `copy-config` (replace `{head-node-ip}` placeholder).
+
+```bash
+cd ~/cvs
+make install
+source .cvs_venv/bin/activate
+
+BASELINE_MULTI_DIR=~/input/config_file/inference/inferencex_atom/baseline_sweep_multinode
+mkdir -p "$BASELINE_MULTI_DIR"
+
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_multinode_config.json \
+  --output "$BASELINE_MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_multinode_config.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_multinode_threshold.json \
+  --output "$BASELINE_MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_multinode_threshold.json"
+cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
+
+# Ensure node_dict lists head + worker. Edit cluster IPs and set master_addr in the copied config.
+
+TS=$(date +%Y%m%d_%H%M%S)
+HTML=~/cvs_results/${TS}_ix-atom-baseline-sweep-multinode_mi300x.html
+LOG=~/cvs_results/${TS}_ix-atom-baseline-sweep-multinode_mi300x.log
+
+cvs run inferencex_atom \
+  --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
+  --config_file "$BASELINE_MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_multinode_config.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \
