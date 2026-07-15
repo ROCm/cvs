@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, List, Tuple
 
 from cvs.lib.inference.utils.inference_suite_results_table import INFERENCEX_ATOM_RESULTS_COLUMNS
+from cvs.lib.inference.inferencex_atom.inferencex_atom_launch import build_launch_provenance
 from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import (
     CLIENT_METRIC_UNITS,
     METRIC_TIER_ORDER,
@@ -43,7 +44,6 @@ def _atom_run_card_display(variant: Any, provenance: dict) -> List[Tuple[str, st
         ("Model", variant.model.id, False),
         ("GPU", variant.gpu_arch, False),
         ("Driver", variant.params.driver, False),
-        ("Image pin", rc.atom_image_pin or "\u2014", False),
         ("TP", str(variant.params.tensor_parallelism), False),
         thresholds_run_card_row(variant),
     ]
@@ -79,4 +79,5 @@ INFERENCEX_ATOM_REPORT_CONFIG = make_inference_report_config(
     row_card_test_names=("test_cell_metrics",),
     viewer_cell_threshold=16,
     run_card_display_builder=_atom_run_card_display,
+    launch_provenance_builder=build_launch_provenance,
 )

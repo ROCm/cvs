@@ -149,6 +149,12 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .meta-v { font-size: 0.9rem; font-weight: 500; word-break: break-word; }
 .meta-v a { color: var(--accent2); text-decoration: none; }
 .meta-v a:hover { text-decoration: underline; }
+.cmd-pre { margin: 0; padding: 0.85rem 1rem; border-radius: 8px; border: 1px solid var(--border);
+  background: rgba(0,0,0,0.25); font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.78rem; line-height: 1.4; white-space: pre-wrap; word-break: break-word; overflow-x: auto; }
+.cmd-block { margin-bottom: 1rem; }
+.cmd-block h3 { margin: 0 0 0.5rem; font-size: 0.75rem; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); }
 .notes { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
 .tl-row { display: flex; gap: 3px; min-height: 52px; border-radius: 8px; overflow: hidden; }
 .tl-seg { background: linear-gradient(180deg, #2d3548 0%, #232836 100%);
@@ -237,6 +243,27 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
 }
 """
         + gate_heatmap_css()
+    )
+
+
+def render_launch_panel_html(panel: dict) -> str:
+    if not panel:
+        return ""
+    example = panel.get("example_cell") or ""
+    example_note = (
+        f"<p class='muted'>Representative commands for first sweep cell "
+        f"<code>{html.escape(str(example))}</code>. Server env is written to "
+        f"<code>/tmp/server_env_script.sh</code> at runtime.</p>"
+        if example
+        else "<p class='muted'>Representative launch commands from the variant config. "
+        "Server env is written to <code>/tmp/server_env_script.sh</code> at runtime.</p>"
+    )
+    server_cmd = html.escape(str(panel.get("server_cmd") or ""))
+    bench_cmd = html.escape(str(panel.get("bench_cmd") or ""))
+    return (
+        f"{example_note}"
+        f"<div class='cmd-block'><h3>Server</h3><pre class='cmd-pre'>{server_cmd}</pre></div>"
+        f"<div class='cmd-block'><h3>Benchmark client</h3><pre class='cmd-pre'>{bench_cmd}</pre></div>"
     )
 
 
@@ -395,6 +422,15 @@ def render_report_html(payload: dict) -> str:
 
     model_label = next((v for lbl, v, _ in payload.get("run_card_display", []) if lbl == "Model"), "run")
 
+    launch_panel = (payload.get("panels") or {}).get("launch")
+    launch_html = render_launch_panel_html(launch_panel) if launch_panel else ""
+    launch_nav = "<a href='#launch'>Launch</a>" if launch_html else ""
+    launch_section = (
+        f"<section class='panel' id='launch'><h2>Launch commands</h2>{launch_html}</section>"
+        if launch_html
+        else ""
+    )
+
     viewer_nav = ""
     if viewer_name:
         viewer_nav = f"<a href='{html.escape(viewer_name)}'>Viewer</a>"
@@ -402,6 +438,7 @@ def render_report_html(payload: dict) -> str:
     nav = (
         "<nav class='report-nav'>"
         "<a href='#run-card'>Run card</a>"
+        f"{launch_nav}"
         "<a href='#lifecycle'>Lifecycle</a>"
         "<a href='#sweep'>Sweep</a>"
         "<a href='#gates'>Gates</a>"
@@ -419,6 +456,7 @@ def render_report_html(payload: dict) -> str:
 <p class="subtitle">{html.escape(report['subtitle'])}</p></div>{status_badge_html(overall)}</div>
 {nav}
 <section class="panel" id="run-card"><h2>Run card</h2><div class="meta-grid">{hero_html}</div>{notes_html}</section>
+{launch_section}
 <section class="panel" id="lifecycle"><h2>Lifecycle timeline</h2><div class="tl-row">{timeline_html}</div></section>
 <section class="panel" id="sweep"><h2>Sweep analytics</h2><div class="summary-grid">{summary_html}</div>{sweep_viewer_banner}{sweep_chart_hint}{charts_html}</section>
 <section class="panel" id="gates"><h2>Gate matrix</h2><div class="matrix-wrap">{matrix_html}{heatmap_section}</div></section>
