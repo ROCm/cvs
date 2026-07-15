@@ -197,6 +197,26 @@ tr.changed td { background: rgba(255,107,53,0.1); }
       <div class="chart-wrap chart-wrap-tall" id="tradeoff-chart-wrap"></div>
     </article>
   </div>
+  <div class="subsection" id="interactivity-block" style="display:none">
+    <div class="subsection-head">
+      <p class="subsection-title">Interactivity</p>
+      <div class="toolbar-inline" style="flex-wrap:wrap">
+        <label><input type="checkbox" id="interactivity-log-scale" checked/> Log Y</label>
+        <label><input type="checkbox" id="interactivity-labels" checked/> Labels</label>
+        <label>TPOT
+          <select id="interactivity-tpot-metric" aria-label="TPOT metric for interactivity chart">
+            <option value="client.mean_tpot_ms" selected>Mean TPOT</option>
+            <option value="client.p99_tpot_ms">P99 TPOT</option>
+            <option value="client.median_tpot_ms">Median TPOT</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <p class="subsection-hint">Interactivity = 1/TPOT (tok/s/user) vs output throughput per GPU · lines trace increasing concurrency per shape</p>
+    <article class="chart-card chart-card-wide">
+      <div class="chart-wrap chart-wrap-tall" id="interactivity-chart-wrap"></div>
+    </article>
+  </div>
 </section>
 
 <section class="panel" id="heatmap" style="display:none">
@@ -242,6 +262,9 @@ let allCells = [];
 let chartInstances = [];
 let comparisonChartMode = 'bar';
 let tradeoffLatencyMetric = 'client.mean_ttft_ms';
+let interactivityTpotMetric = 'client.mean_tpot_ms';
+let interactivityLogScale = true;
+let interactivityShowLabels = true;
 let heatmapMetricKey = 'client.output_throughput';
 let marginMetricKey = 'client.output_throughput';
 let prevRunByKey = null;
@@ -252,6 +275,12 @@ const TRADEOFF_LATENCY_LABELS = {
   'client.p99_ttft_ms': 'P99 TTFT',
   'client.mean_tpot_ms': 'Mean TPOT',
   'client.p99_tpot_ms': 'P99 TPOT',
+};
+
+const INTERACTIVITY_TPOT_LABELS = {
+  'client.mean_tpot_ms': 'Mean TPOT',
+  'client.p99_tpot_ms': 'P99 TPOT',
+  'client.median_tpot_ms': 'Median TPOT',
 };
 
 const HEATMAP_METRICS = {
@@ -460,7 +489,9 @@ function destroyCharts() {
   clearEl('percentile-grid');
   const tradeoffWrap = $('tradeoff-chart-wrap');
   if (tradeoffWrap) tradeoffWrap.innerHTML = '';
-  ['comparison-block', 'per-shape-block', 'percentile-block', 'margin-block', 'tradeoff-block'].forEach(id => {
+  const interactivityWrap = $('interactivity-chart-wrap');
+  if (interactivityWrap) interactivityWrap.innerHTML = '';
+  ['comparison-block', 'per-shape-block', 'percentile-block', 'margin-block', 'tradeoff-block', 'interactivity-block'].forEach(id => {
     const el = $(id);
     if (el) el.style.display = 'none';
   });
@@ -656,6 +687,54 @@ function throughputMetricKey() {
   return (reportData.report || {}).headline_metric || 'client.output_throughput';
 }
 
+function tpFromCellId(cellId) {
+  const match = String(cellId || '').match(/TP=(\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
+function perGpuThroughput(cell) {
+  const direct = metricNum(cell, 'client.output_tput_per_gpu')
+    ?? metricNum(cell, 'client.per_gpu_throughput');
+  if (direct != null) return direct;
+  const tput = metricNum(cell, throughputMetricKey());
+  const tp = tpFromCellId(cell.cell_id);
+  if (tput == null || !tp) return null;
+  return tput / tp;
+}
+
+function interactivityFromTpotMs(tpotMs) {
+  if (tpotMs == null || tpotMs <= 0) return null;
+  return 1000 / tpotMs;
+}
+
+function interactivityPointLabel(cell) {
+  const tp = tpFromCellId(cell.cell_id);
+  const conc = Number(cell.concurrency);
+  const tpPart = tp ? 'TP' + tp + ' ' : '';
+  return tpPart + 'C=' + conc;
+}
+
+const interactivityPointLabelPlugin = {
+  id: 'interactivityPointLabels',
+  afterDatasetsDraw(chart, _args, opts) {
+    if (!opts || !opts.enabled) return;
+    const { ctx } = chart;
+    chart.data.datasets.forEach((dataset, di) => {
+      const meta = chart.getDatasetMeta(di);
+      meta.data.forEach((element, index) => {
+        const raw = dataset.data[index];
+        if (!raw || !raw.pointLabel) return;
+        ctx.save();
+        ctx.fillStyle = '#c8d0e0';
+        ctx.font = '10px "Segoe UI", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(raw.pointLabel, element.x, element.y - 10);
+        ctx.restore();
+      });
+    });
+  },
+};
+
 function makeTradeoffChart(canvas, datasets, latencyLabel) {
   const ch = new Chart(canvas, {
     type: 'scatter',
@@ -761,6 +840,137 @@ function buildTradeoffChart(rows) {
   const canvas = document.createElement('canvas');
   wrap.appendChild(canvas);
   makeTradeoffChart(canvas, datasets, latLabel);
+  block.style.display = 'block';
+  return true;
+}
+
+function makeInteractivityChart(canvas, datasets, tpotLabel, logY, showLabels) {
+  const yScale = logY
+    ? {
+        type: 'logarithmic',
+        title: { display: true, text: 'Token throughput per GPU (tok/s/gpu)', color: '#9aa3b5', font: { size: 11 } },
+        ticks: { color: '#9aa3b5' },
+        grid: { color: '#2a2f3d' },
+      }
+    : {
+        type: 'linear',
+        title: { display: true, text: 'Token throughput per GPU (tok/s/gpu)', color: '#9aa3b5', font: { size: 11 } },
+        ticks: { color: '#9aa3b5' },
+        grid: { color: '#2a2f3d' },
+      };
+  const ch = new Chart(canvas, {
+    type: 'scatter',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: true },
+      plugins: {
+        legend: { labels: { color: '#e8eaef', boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          backgroundColor: '#2a3142',
+          borderColor: '#3a4255',
+          borderWidth: 1,
+          titleColor: '#e8eaef',
+          bodyColor: '#c8d0e0',
+          callbacks: {
+            label(ctx) {
+              const p = ctx.raw;
+              const st = p.status ? ' · ' + p.status.toUpperCase() : '';
+              return ctx.dataset.label + ': '
+                + Number(p.x).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' tok/s/user, '
+                + Number(p.y).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' tok/s/gpu · '
+                + p.pointLabel + st;
+            },
+          },
+        },
+        zoom: {
+          pan: { enabled: true, mode: 'xy' },
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' },
+        },
+        interactivityPointLabels: { enabled: showLabels },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          title: {
+            display: true,
+            text: 'Interactivity (tok/s/user) · 1/' + tpotLabel,
+            color: '#9aa3b5',
+            font: { size: 11 },
+          },
+          ticks: { color: '#9aa3b5' },
+          grid: { color: '#2a2f3d' },
+        },
+        y: yScale,
+      },
+    },
+    plugins: [interactivityPointLabelPlugin],
+  });
+  chartInstances.push(ch);
+  return ch;
+}
+
+function buildInteractivityChart(rows) {
+  const block = $('interactivity-block');
+  const wrap = $('interactivity-chart-wrap');
+  if (!block || !wrap) return false;
+
+  wrap.innerHTML = '';
+  block.style.display = 'none';
+
+  const tpotKey = interactivityTpotMetric;
+  const tpotLabel = INTERACTIVITY_TPOT_LABELS[tpotKey] || 'TPOT';
+  const shapes = [...shapeGroups(rows).entries()];
+  const datasets = [];
+
+  shapes.forEach(([shapeKey, shapeRows], index) => {
+    const [isl, osl] = shapeKey.split('|');
+    const label = shapeLabel(isl, osl);
+    const points = shapeRows
+      .map(c => {
+        const x = interactivityFromTpotMs(metricNum(c, tpotKey));
+        const y = perGpuThroughput(c);
+        const conc = Number(c.concurrency);
+        if (x == null || y == null || y <= 0 || Number.isNaN(conc)) return null;
+        return {
+          x,
+          y,
+          conc,
+          status: cellStatus(c),
+          pointLabel: interactivityPointLabel(c),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.conc - b.conc);
+    if (!points.length) return;
+
+    const color = CHART_COLORS[index % CHART_COLORS.length];
+    const dashed = LINE_DASHES[index % LINE_DASHES.length];
+    datasets.push({
+      label: label,
+      data: points,
+      showLine: points.length > 1,
+      tension: 0.15,
+      borderColor: color,
+      backgroundColor: color,
+      borderWidth: 2.5,
+      borderDash: dashed,
+      pointRadius: 5,
+      pointHoverRadius: 7,
+      pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
+      pointBackgroundColor: points.map(p => (p.status === 'fail' ? '#ff5c6a' : color)),
+      pointBorderColor: '#1a1d27',
+      pointBorderWidth: 2,
+      order: dashed.length ? index : index + 10,
+    });
+  });
+
+  if (!datasets.length) return false;
+
+  const canvas = document.createElement('canvas');
+  wrap.appendChild(canvas);
+  makeInteractivityChart(canvas, datasets, tpotLabel, interactivityLogScale, interactivityShowLabels);
   block.style.display = 'block';
   return true;
 }
@@ -1007,6 +1217,7 @@ function buildCharts(rows) {
   buildPercentileCharts(rows);
   buildMarginCharts(rows);
   buildTradeoffChart(rows);
+  buildInteractivityChart(rows);
 
   if (chartInstances.length) chartsPanel.style.display = 'block';
   else chartsPanel.style.display = 'none';
@@ -1205,6 +1416,27 @@ const tradeoffLatencySel = $('tradeoff-latency-metric');
 if (tradeoffLatencySel) {
   tradeoffLatencySel.addEventListener('change', () => {
     tradeoffLatencyMetric = tradeoffLatencySel.value;
+    render();
+  });
+}
+const interactivityTpotSel = $('interactivity-tpot-metric');
+if (interactivityTpotSel) {
+  interactivityTpotSel.addEventListener('change', () => {
+    interactivityTpotMetric = interactivityTpotSel.value;
+    render();
+  });
+}
+const interactivityLogSel = $('interactivity-log-scale');
+if (interactivityLogSel) {
+  interactivityLogSel.addEventListener('change', () => {
+    interactivityLogScale = interactivityLogSel.checked;
+    render();
+  });
+}
+const interactivityLabelsSel = $('interactivity-labels');
+if (interactivityLabelsSel) {
+  interactivityLabelsSel.addEventListener('change', () => {
+    interactivityShowLabels = interactivityLabelsSel.checked;
     render();
   });
 }
