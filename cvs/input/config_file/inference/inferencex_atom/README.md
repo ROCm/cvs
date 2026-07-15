@@ -42,9 +42,18 @@ ATOM server CLI is inline in each config under `roles.server.atom_args` (vLLM-st
 
 **Model cache path:** shipped configs set `paths.models_dir` to `/home/models` and mount `/home/models:/home/models` into the container. Logs and HF token paths still use `{shared_fs}` under the SSH user home.
 
-## Cluster + container naming
+## Cluster file
 
-Use `cvs/input/cluster_file/mi300x_atom_single.json` or `mi355x_atom_single.json` for single-node runs. For **multinode** (M5), use `mi300x_atom_multi.json` or `mi355x_atom_multi.json` with two entries in `node_dict` and set `params.master_addr` in the variant config to the head node's VPC IP. `params.nnodes` must match the cluster host count; `test_setup_sshd` starts in-container sshd on port 2224 when `len(node_dict) > 1`. The cluster `container.name` must match the variant (`inferencex_atom_mi300x` / `inferencex_atom_mi355x` / `inferencex_atom_mi300x_multi` / `inferencex_atom_mi355x_multi`); the suite deep-merges variant container settings over the cluster file.
+Ship one template: `cvs/input/cluster_file/inferencex_atom_cluster.json`. Copy it to `~/input/cluster_file/inferencex_atom_cluster.json` and edit IPs, SSH user, and key path.
+
+**Host count must match the variant:** `len(node_dict)` must equal `params.nnodes` in the config you pass to `--config_file`.
+
+| Variant type | `params.nnodes` | `node_dict` |
+|--------------|-----------------|-------------|
+| Smoke, baseline sweep, single-node perf | `1` (default) | **Head node only** — remove the worker entry |
+| Multinode perf | `2` | Head + worker |
+
+For multinode variants, set `params.master_addr` to the head VPC IP (same as `head_node_dict.mgmt_ip`). `test_setup_sshd` runs when `len(node_dict) > 1`. Variant config overrides cluster `container.image` and `container.name`.
 
 ## Shared suite helpers (reusable by other inference suites)
 
@@ -77,7 +86,7 @@ make install
 source .cvs_venv/bin/activate
 ```
 
-- Edit `~/input/cluster_file/mi300x_atom_single.json` (or `mi355x_atom_single.json`): node IPs, `username`, `priv_key_file`, `container.image`.
+- Edit `~/input/cluster_file/inferencex_atom_cluster.json`: node IPs, `username`, `priv_key_file`. Trim `node_dict` to one host for single-node variants.
 - **Launcher vs GPU node:** CVS pytest runs on the launcher; `ContainerOrchestrator` SSHes to cluster nodes and runs `sudo docker` there. Local Docker on the launcher is not used. Prerequisites split by host:
 
   | Item | Launcher | GPU node (cluster `mgmt_ip`) |
@@ -107,14 +116,14 @@ cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek
   --output "$SMOKE_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_config.json"
 cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_threshold.json \
   --output "$SMOKE_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_threshold.json"
-cvs copy-config mi300x_atom_single.json --output ~/input/cluster_file/mi300x_atom_single.json
+cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
 
 TS=$(date +%Y%m%d_%H%M%S)
 HTML=~/cvs_results/${TS}_ix-atom-smoke_mi300x.html
 LOG=~/cvs_results/${TS}_ix-atom-smoke_mi300x.log
 
 cvs run inferencex_atom \
-  --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
+  --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
   --config_file "$SMOKE_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_config.json" \
   --html="$HTML" \
   --self-contained-html \
@@ -152,7 +161,7 @@ HTML=~/cvs_results/${TS}_ix-atom-w1-perf_mi300x.html
 LOG=~/cvs_results/${TS}_ix-atom-w1-perf_mi300x.log
 
 cvs run inferencex_atom \
-  --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
+  --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
   --config_file "$PERF_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json" \
   --html="$HTML" \
   --self-contained-html \
@@ -185,7 +194,7 @@ HTML=~/cvs_results/${TS}_ix-atom-baseline-sweep_mi300x.html
 LOG=~/cvs_results/${TS}_ix-atom-baseline-sweep_mi300x.log
 
 cvs run inferencex_atom \
-  --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
+  --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
   --config_file "$BASELINE_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_config.json" \
   --html="$HTML" \
   --self-contained-html \
@@ -212,7 +221,9 @@ cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek
   --output "$MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json"
 cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_threshold.json \
   --output "$MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_threshold.json"
-cvs copy-config mi300x_atom_multi.json --output ~/input/cluster_file/mi300x_atom_multi.json
+cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
+
+# Ensure node_dict lists head + worker (params.nnodes=2 in multinode variant).
 
 # Edit cluster + config: replace {head-node-ip} / {worker-node-ip} and set params.master_addr.
 
@@ -221,7 +232,7 @@ HTML=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi300x.html
 LOG=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi300x.log
 
 cvs run inferencex_atom \
-  --cluster_file ~/input/cluster_file/mi300x_atom_multi.json \
+  --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
   --config_file "$MULTI_DIR/mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json" \
   --html="$HTML" \
   --self-contained-html \
@@ -248,7 +259,9 @@ cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom-single_deepseek
   --output "$MULTI_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json"
 cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_threshold.json \
   --output "$MULTI_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_threshold.json"
-cvs copy-config mi355x_atom_multi.json --output ~/input/cluster_file/mi355x_atom_multi.json
+cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
+
+# Ensure node_dict lists head + worker (params.nnodes=2 in multinode variant).
 
 # Edit cluster + config: replace {head-node-ip} / {worker-node-ip} and set params.master_addr.
 
@@ -257,7 +270,7 @@ HTML=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi355x.html
 LOG=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi355x.log
 
 cvs run inferencex_atom \
-  --cluster_file ~/input/cluster_file/mi355x_atom_multi.json \
+  --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
   --config_file "$MULTI_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_multi_config.json" \
   --html="$HTML" \
   --self-contained-html \
@@ -284,14 +297,14 @@ cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom-single_deepseek
   --output "$PERF_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json"
 cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json \
   --output "$PERF_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json"
-cvs copy-config mi355x_atom_single.json --output ~/input/cluster_file/mi355x_atom_single.json
+cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
 
 TS=$(date +%Y%m%d_%H%M%S)
 HTML=~/cvs_results/${TS}_ix-atom-w1-perf_mi355x.html
 LOG=~/cvs_results/${TS}_ix-atom-w1-perf_mi355x.log
 
 cvs run inferencex_atom \
-  --cluster_file ~/input/cluster_file/mi355x_atom_single.json \
+  --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
   --config_file "$PERF_DIR/mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json" \
   --html="$HTML" \
   --self-contained-html \

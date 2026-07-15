@@ -33,7 +33,7 @@ threshold file sits beside the config you pass to ``--config_file``. Alternative
 ``"threshold_json"`` in the config to an explicit path. See the in-tree README at
 ``cvs/input/config_file/inference/inferencex_atom/README.md`` for copy-paste commands.
 
-**Cluster file:** use ``cvs/input/cluster_file/mi300x_atom_single.json`` (or ``mi355x_atom_single.json``).
+**Cluster file:** use ``cvs/input/cluster_file/inferencex_atom_cluster.json``. Edit ``node_dict`` so host count matches variant ``params.nnodes`` (one host for single-node sweeps; two for multinode).
 Container ``name`` must match the variant (``inferencex_atom_mi300x`` / ``inferencex_atom_mi355x``);
 the suite deep-merges variant ``container`` over the cluster file.
 
