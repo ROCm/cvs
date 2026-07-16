@@ -201,30 +201,12 @@
       "_comment_nccl_ib_gid_index": "Optional NCCL_IB_GID_INDEX override. Defaults to node_check.gid_index.",
 
       "ssh_timeout": 300,
-      "_comment_ssh_timeout": "SSH timeout in seconds for each node's node_smoke invocation (~30s Tier 1; use 600+ with tier2_perf).",
-
-      "tier2_perf": false,
-      "_comment_tier2_perf": "Enable Tier 2 perf sanity (--tier2-perf): 8192³ GEMM TFLOPS, HBM D2D copy bandwidth, local multi-GPU RCCL all-reduce. Requires NCCL_IB_HCA / NCCL_SOCKET_IFNAME (see launch_nodesmoke_ssh.sh).",
-
-      "gemm_tflops_min": 600,
-      "_comment_gemm_tflops_min": "Tier 2 FAIL below this large GEMM TFLOPS (--gemm-tflops-min). MI300X healthy nodes typically exceed 600.",
-
-      "hbm_gbs_min": 2000,
-      "_comment_hbm_gbs_min": "Tier 2 FAIL below this HBM device-to-device bandwidth in GB/s (--hbm-gbs-min). MI300X healthy ≈ 4500–5000.",
-
-      "rccl_gbs_min": 100,
-      "_comment_rccl_gbs_min": "Tier 2 FAIL below this local multi-GPU RCCL all-reduce bandwidth in GB/s (--rccl-gbs-min).",
-
-      "rccl_size_mb": 64,
-      "_comment_rccl_size_mb": "Tier 2 local RCCL all-reduce tensor size in MB (--rccl-size-mb).",
-
-      "rccl_timeout_sec": 120,
-      "_comment_rccl_timeout_sec": "Tier 2 local RCCL all-reduce hard timeout in seconds (--rccl-timeout-sec).",
+      "_comment_ssh_timeout": "SSH timeout in seconds for each node's node_smoke invocation (~30s; increase for slow nodes).",
 
       "extra_args": [],
       "_comment_extra_args": "Additional node_smoke CLI flags forwarded to primus-cli. Example: [\"--no-clean-dump-path\"]."
     },
-
+    
     "reporting": {
       "_comment": "Post-test reporting and output",
 

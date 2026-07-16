@@ -6,13 +6,13 @@ This document explains how to configure the GPU cluster preflight checks system.
 
 The preflight checks system validates essential cluster health before running performance tests like IB performance tests, RCCL training, and inference workloads. It performs the following validations:
 
-1. **Node Health** - Checks GPU visibility, AMDGPU/KFD, kernel health, and ROCm consistency
-2. **MI4XX Scale-up Fabric Admission** - Optionally validates AIFM/AFM/vPOD membership, station masks, and IFoE port state
-3. **IFoE L2 Connectivity (AIMVT-180; opt-in)** - Optionally runs strict `afmctl test ping` coverage before TransferBench and RDMA
-4. **TransferBench** - Optionally validates the IFoE data path per node or with a multi-rank cluster run
-5. **Primus Node Smoke (opt-in)** - Per-node host / GPU / RDMA roll-call via `primus-cli direct -- node_smoke`
-6. **GID and Interface Consistency** - Ensures configured RDMA interfaces and GID entries are present and consistent
-7. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
+1. **GID Consistency** - Ensures RDMA interfaces have valid GID entries
+2. **RDMA Connectivity** - Tests node-to-node RDMA communication using ibv_rc_pingpong
+3. **ROCm Version Consistency** - Verifies consistent ROCm versions across nodes
+4. **Interface Name Consistency** - Validates RDMA interface naming patterns
+5. **IFoE L2 Connectivity (AIMVT-180; opt-in)** - Runs `afmctl test ping`
+   on each node and enforces per-port and Summary pass/fail accounting
+6. **Primus Node Smoke (opt-in)** - Per-node host / GPU / RDMA roll-call via `primus-cli direct -- node_smoke`
 
 ## Configuration File Structure
 
@@ -79,15 +79,13 @@ The preflight configuration uses a **nested structure organized by subsystem** f
 
 ```
 preflight/
-├── node_check/                 # Generation-independent node validation
-├── connectivity_check/        # Connectivity tests grouped by protocol
-│   ├── rdma/                  # RDMA inventory, GID, and pairwise connectivity
-│   └── ifoe/                  # MI4XX scale-up fabric checks
-│       ├── l2ping/            # Strict IFoE L2 connectivity gate
-│       └── transferbench/     # IFoE data-path validation
-├── node_smoke/                # Primus node_smoke per-node health screening (opt-in)
-├── reporting/                 # Output and report generation
-└── debug/                     # Debug and troubleshooting options
+├── debug/                # Debug and troubleshooting options  
+├── node_check/           # Individual node validation parameters
+├── connectivity_check/   # Inter-node connectivity tests
+│   ├── rdma/             # RDMA-specific parameters (including nodes_per_full_mesh_group)
+│   └── ifoe/             # IFoE L2 ping parameters (AIMVT-180; opt-in)
+├── node_smoke/           # Primus node_smoke per-node health screening (opt-in)
+└── reporting/           # Output and report generation
 ```
 
 ### Execution Flow
@@ -328,6 +326,52 @@ Set `NCCL_IB_HCA`, `NCCL_SOCKET_IFNAME`, and `NCCL_IB_GID_INDEX` (via `node_smok
 
 Tier 2 runs need a longer SSH budget; when `tier2_perf` is enabled the effective timeout is at least 600 seconds even if `ssh_timeout` is lower.
 
+#### Node Smoke Settings (`node_smoke`) — opt-in (Primus Tier 1)
+
+Runs Primus `node_smoke` on each reachable node via `primus-cli direct --single -- node_smoke`
+over parallel SSH (no Slurm required). Reference: Primus `docs/node-smoke-test-instruction.md`
+on branch `dev/preflight-direct-test`.
+
+- **`connectivity_mode`** (default: `"skip"`)
+  - `"run"` — execute node_smoke on every reachable node
+  - `"skip"` — preflight records a SKIPPED result and does not invoke Primus
+- **`auto_setup`** (default: `true`)
+  - Clone/update Primus and create the venv with minimal deps (ROCm PyTorch) before node_smoke
+- **`setup_timeout`** (default: `600`)
+  - SSH timeout (seconds) for the per-node Primus auto_setup step
+- **`force_reclone`** (default: `false`)
+  - Remove `primus_dir` and clone fresh on every run (destructive)
+- **`shared_install`** (default: `true`)
+  - Leader node clones/installs on shared NFS home; other nodes wait (recommended for shared home)
+- **`pip_install_mode`** (default: `"minimal"`)
+  - `"minimal"` — ROCm PyTorch only; `"requirements"` — `pip install -r requirements.txt`; `"skip"` — venv only
+- **`torch_pip_index_url`** (default: `"https://download.pytorch.org/whl/rocm6.2"`)
+  - PyTorch wheel index for minimal install; match your ROCm version
+- **`primus_git_url`** (default: `"https://github.com/AMD-AIG-AIMA/Primus.git"`)
+- **`primus_git_branch`** (default: `"dev/preflight-direct-test"`)
+- **`primus_git_recurse_submodules`** (default: `false`)
+- **`primus_dir`** (default: `"/home/{user-id}/INSTALL/Primus"`)
+  - Required when `connectivity_mode` is `"run"`; `{user-id}` is resolved at runtime
+- **`venv_activate`** (default: `"/home/{user-id}/envs/preflight/.venv/bin/activate"`)
+  - Required when `connectivity_mode` is `"run"`
+- **`gpus_per_node`** (default: `8`)
+- **`master_port`** (default: `1234`)
+- **`dump_path`** (default: `""`)
+  - Per-node smoke JSON output; empty uses `<reporting.artifacts_root_dir>/node_smoke`
+- **`expected_rdma_nics`** (default: `null`)
+  - Defaults to `len(node_check.rdma_interfaces)` when null
+- **`ulimit_l_min_gb`** (default: `32`) — FAIL below this memlock limit; `0` disables
+- **`shm_min_gb`** (default: `8`) — FAIL below this `/dev/shm` size; `0` disables
+- **`skip_dmesg`** (default: `false`)
+- **`allow_foreign_procs`** (default: `false`)
+- **`allowed_procs`** (default: `"gpuagent,rocm-smi-daemon,amd-smi,dcgm-exporter"`)
+- **`require_tools`** (default: `""`) — empty = warn only
+- **`nccl_socket_ifname`** / **`gloo_socket_ifname`** (default: `""`)
+- **`nccl_ib_hca`** (default: `""`) — defaults to comma-joined `node_check.rdma_interfaces`
+- **`nccl_ib_gid_index`** (default: `null`) — defaults to `node_check.gid_index`
+- **`ssh_timeout`** (default: `300`)
+- **`extra_args`** (default: `[]`) — additional flags forwarded to primus-cli
+
 ### Reporting Settings (`reporting`)
 
 - **`generate_html_report`** (default: `true`)
@@ -405,35 +449,6 @@ Tier 2 runs need a longer SSH budget; when `tier2_perf` is enabled the effective
       "rdma": {
         "connectivity_mode": "skip"
       }
-    }
-  }
-}
-```
-
-### Enable Primus Node Smoke with Tier 2 perf
-
-```json
-{
-  "preflight": {
-    "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.4.2",
-      "rdma_interfaces": ["rdma0", "rdma1", "rdma2", "rdma3", "rdma4", "rdma5", "rdma6", "rdma7"]
-    },
-    "node_smoke": {
-      "connectivity_mode": "run",
-      "auto_setup": true,
-      "shared_install": true,
-      "primus_dir": "/home/{user-id}/INSTALL/Primus",
-      "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
-      "gpus_per_node": 8,
-      "tier2_perf": true,
-      "gemm_tflops_min": 700,
-      "hbm_gbs_min": 4500,
-      "rccl_gbs_min": 180,
-      "nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
-      "nccl_ib_gid_index": 3,
-      "ssh_timeout": 600
     }
   }
 }
@@ -542,22 +557,7 @@ cvs run preflight_checks \
    - Update `connectivity_check.rdma.interfaces` to match your cluster setup
    - Ensure all expected interfaces are present on each node
 
-5. **Node-Health Failures**
-   - Compare `gpus_per_node` with `amd-smi list`
-   - Verify AMDGPU and KFD are loaded and inspect kernel errors in `dmesg`
-   - Confirm `expected_rocm_version` matches `amd-smi version`
-
-6. **IFoE Fabric or L2 Failures**
-   - Confirm AIFM/AFM services and the in-band node agent are healthy
-   - Inspect the HTML report for vPOD, station-mask, down-port, and coverage errors
-   - Verify `afmctl` is installed and available through the cluster environment
-
-7. **TransferBench Failures**
-   - Review the captured TransferBench output and exit status in the report
-   - Confirm all admitted nodes resolve to one consistent vPOD
-   - Reduce to `scope: "node"` to isolate a failing host before retrying cluster scope
-
-8. **Node Smoke Failures**
+5. **Node Smoke Failures**
    - Set `node_smoke.connectivity_mode` to `"run"` (default is `"skip"`)
    - Verify `primus_dir` and `venv_activate`, or enable `auto_setup: true`
    - On shared NFS home, use `shared_install: true` to avoid parallel clone races
@@ -614,8 +614,3 @@ cvs run rccl_multinode_default_cvs --cluster_file cluster.json --config_file rcc
 ```
 
 This ensures your cluster is healthy before running resource-intensive performance tests.
-
-Within preflight, the mandatory order is node health and optional scale-up
-fabric admission, then l2ping, then TransferBench, followed by RDMA checks.
-Setting `connectivity_check.rdma.connectivity_mode` to `"skip"` skips RDMA
-without disabling the independent IFoE gates.

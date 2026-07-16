@@ -60,7 +60,11 @@ def _with_setup_lock(primus_dir: str, body: str) -> str:
 
 def _git_sync_existing_repo(primus_q: str, branch_q: str, recurse_submodules: bool) -> str:
     """Fetch, checkout, and optionally update submodules on an existing clone."""
-    submodule_cmd = "git submodule update --init --recursive" if recurse_submodules else "true"
+    submodule_cmd = (
+        "git submodule update --init --recursive"
+        if recurse_submodules
+        else "true"
+    )
     return (
         f"git fetch origin {branch_q} && "
         f"(git checkout {branch_q} || git checkout -B {branch_q} origin/{branch_q}) && "
@@ -89,7 +93,11 @@ def build_primus_clone_or_update_command(
     cleanup = _remove_broken_primus_dir(primus_q)
 
     if force_reclone:
-        return f"rm -rf {primus_q} && mkdir -p {parent_q} && git clone {clone_flags} {url_q} {primus_q}"
+        return (
+            f"rm -rf {primus_q} && "
+            f"mkdir -p {parent_q} && "
+            f"git clone {clone_flags} {url_q} {primus_q}"
+        )
 
     return (
         f"if [ -d {primus_q}/.git ]; then "
@@ -152,13 +160,20 @@ def build_primus_venv_install_command(
     venv_parent_q = shlex.quote(os.path.dirname(_venv_root_from_activate(venv_activate)) or ".")
     index_q = shlex.quote(torch_pip_index_url)
 
-    create_venv = f"if [ ! -f {activate_q} ]; then mkdir -p {venv_parent_q} && python3 -m venv {venv_root_q}; fi"
+    create_venv = (
+        f"if [ ! -f {activate_q} ]; then "
+        f"mkdir -p {venv_parent_q} && python3 -m venv {venv_root_q}; "
+        f"fi"
+    )
 
     mode = (pip_install_mode or "minimal").strip().lower()
     if mode == "skip":
         install = "true"
     elif mode == "requirements":
-        install = f"bash -c 'source {activate_q} && cd {primus_q} && pip install -r requirements.txt --no-cache-dir'"
+        install = (
+            f"bash -c 'source {activate_q} && cd {primus_q} && "
+            f"pip install -r requirements.txt --no-cache-dir'"
+        )
     else:
         # minimal: ROCm torch only (Primus node_smoke). No pip install -e .
         install = (
@@ -224,7 +239,9 @@ class PrimusSetup(PreflightCheck):
         )
         self.force_reclone = _config_flag_enabled(get_nested_config(cfg, "node_smoke", "force_reclone", False))
         self.pip_install_mode = get_nested_config(cfg, "node_smoke", "pip_install_mode", "minimal")
-        self.torch_pip_index_url = get_nested_config(cfg, "node_smoke", "torch_pip_index_url", _DEFAULT_TORCH_INDEX)
+        self.torch_pip_index_url = get_nested_config(
+            cfg, "node_smoke", "torch_pip_index_url", _DEFAULT_TORCH_INDEX
+        )
         self.setup_timeout = int(get_nested_config(cfg, "node_smoke", "setup_timeout", 600))
         self.shared_install = _config_flag_enabled(
             get_nested_config(cfg, "node_smoke", "shared_install", True), default=True

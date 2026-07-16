@@ -101,7 +101,6 @@ class PreflightReportGenerator(PreflightCheck):
         interface_results = self.results.get('interface_names', {})
         node_health_results = self.results.get('node_health', {})
         ifoe_l2_results = self.results.get('ifoe_l2_connectivity', {})
-        tb_smoke_results = self.results.get('transferbench_smoke', {})
         node_smoke_results = self.results.get('node_smoke', {})
         reachability_results = self.results.get('node_reachability')
         ssh_connectivity_results = self.results.get('ssh_connectivity')
@@ -561,6 +560,46 @@ class PreflightReportGenerator(PreflightCheck):
             'failed_nodes': failed_nodes,
             'unknown_nodes': unknown_nodes,
             'tier2_perf': bool(node_smoke_results.get('tier2_perf')),
+            'summary': summary_text,
+        }
+
+    def _summarize_node_smoke_results(self, node_smoke_results):
+        """Summarize Primus node_smoke check results."""
+        if not node_smoke_results or node_smoke_results.get('skipped'):
+            msg = (
+                node_smoke_results.get('message')
+                if isinstance(node_smoke_results, dict)
+                else 'Primus node_smoke check not performed'
+            )
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': msg or 'Primus node_smoke check skipped',
+            }
+
+        node_results = node_smoke_results.get('node_results') or {}
+        total_nodes = len(node_results)
+        failed_nodes = list(
+            node_smoke_results.get('failed_nodes')
+            or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+        )
+        unknown_nodes = list(
+            node_smoke_results.get('unknown_nodes')
+            or [n for n, r in node_results.items() if r.get('status') not in ('PASS', 'FAIL')]
+        )
+        passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
+        status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
+        summary_text = f"{passing_nodes}/{total_nodes} nodes passed Primus node_smoke"
+        if unknown_nodes:
+            summary_text += f"; {len(unknown_nodes)} unknown"
+        return {
+            'status': status,
+            'total_nodes': total_nodes,
+            'passing_nodes': passing_nodes,
+            'failed_nodes': failed_nodes,
+            'unknown_nodes': unknown_nodes,
             'summary': summary_text,
         }
 
@@ -1097,118 +1136,6 @@ class PreflightReportGenerator(PreflightCheck):
         """
         return html
 
-    def _generate_node_health_html(self, health_results):
-        """Render generic GPU and optional MI4XX fabric health diagnostics."""
-        if not health_results:
-            return ""
-        if health_results.get('skipped') or health_results.get('status') == 'SKIPPED':
-            message = health_results.get('message', 'Node-health admission is not enabled')
-            return f"""
-        <section>
-            <h2>Node-Health Admission</h2>
-            <p><em>{html.escape(str(message))}</em></p>
-        </section>
-        """
-
-        node_results = health_results.get('node_results') or {}
-        membership = health_results.get('vpod_membership') or {}
-        fabric_checks = bool(health_results.get('fabric_checks'))
-        coverage = health_results.get('coverage') or {}
-        shared_vpod = membership.get('vpod_accelerators') or []
-        missing_nodes = coverage.get('missing_nodes') or []
-        status = health_results.get('status', 'UNKNOWN')
-        status_class = 'status-pass' if status == 'PASS' else 'status-fail'
-        vpod_text = (
-            f"shared AFM accelerator membership <code>{html.escape(str(shared_vpod))}</code>"
-            if shared_vpod
-            else ('AFM vPOD accelerator membership unavailable' if fabric_checks else 'fabric checks disabled')
-        )
-        coverage_text = ''
-        if missing_nodes:
-            coverage_text = (
-                '<p class="error-summary">Declared node(s) not admitted: '
-                + html.escape(', '.join(map(str, missing_nodes)))
-                + '</p>'
-            )
-        membership_errors = membership.get('errors') or []
-        membership_error_html = ''
-        if membership_errors:
-            membership_error_html = (
-                '<ul class="error-list">'
-                + ''.join(f'<li>{html.escape(str(error))}</li>' for error in membership_errors)
-                + '</ul>'
-            )
-
-        rows = []
-        for node in sorted(node_results):
-            result = node_results[node]
-            devices = result.get('afm_devices') or []
-            device_states = (
-                '; '.join(
-                    f"{device.get('bdf', '?')}: {device.get('config_phase', '?')}/"
-                    f"{device.get('virtualization_mode', '?')}"
-                    for device in devices
-                )
-                or 'not reported'
-            )
-            masks = result.get('station_masks') or {}
-            mask_text = '; '.join(f"{bdf}: {mask}" for bdf, mask in sorted(masks.items())) or 'not reported'
-            port_inventory = result.get('afm_port_inventory') or {}
-            up_port_text = (
-                '; '.join(
-                    f"{bdf}: {entry.get('enabled_station_up_ports', 0)}/"
-                    f"{entry.get('expected_enabled_ports', 0)} mask-enabled UP "
-                    f"({entry.get('up_ports', 0)} physical UP)"
-                    for bdf, entry in sorted(port_inventory.items())
-                )
-                or 'not reported'
-            )
-            errors = result.get('errors') or []
-            error_html = (
-                '—'
-                if not errors
-                else '<ul style="margin:0;color:#721c24;">'
-                + ''.join(f'<li>{html.escape(str(error))}</li>' for error in errors)
-                + '</ul>'
-            )
-            node_status = result.get('status', 'UNKNOWN')
-            fabric_cells = ''
-            if fabric_checks:
-                fabric_cells = (
-                    f'<td>{html.escape(device_states)}</td>'
-                    f'<td><code>{html.escape(mask_text)}</code></td>'
-                    f'<td>{html.escape(up_port_text)}</td>'
-                )
-            rows.append(
-                '<tr>'
-                f'<td><code>{html.escape(str(node))}</code></td>'
-                f'<td><span class="status-{"pass" if node_status == "PASS" else "fail"}">{html.escape(str(node_status))}</span></td>'
-                f'<td>{len(result.get("gpu_inventory") or [])}</td>'
-                f'{fabric_cells}'
-                f'<td>{error_html}</td>'
-                '</tr>'
-            )
-
-        fabric_headers = (
-            '<th>AFM devices</th><th>Station masks</th><th>AFM enabled-station ports</th>' if fabric_checks else ''
-        )
-        return f"""
-        <section>
-            <h2>Node-Health Admission</h2>
-            <p><span class="{status_class}">{html.escape(str(status))}</span>. This mandatory, read-only gate validates
-            AMDGPU/KFD, GPU inventory, and kernel health{'; with fabric checks enabled it also validates AIFM, AFM ACTIVE bare-metal vPOD state, and IFoE station/port coherence' if fabric_checks else ''}.
-            vPOD: {vpod_text}.</p>
-            {coverage_text}
-            {membership_error_html}
-            <table>
-                <thead>
-                    <tr><th>Node</th><th>Status</th><th>GPUs</th>{fabric_headers}<th>Issues</th></tr>
-                </thead>
-                <tbody>{''.join(rows)}</tbody>
-            </table>
-        </section>
-        """
-
     def _generate_node_smoke_html(self, node_smoke_results):
         """Generate Primus node_smoke section — failed nodes and fail reasons."""
         if not node_smoke_results:
@@ -1227,26 +1154,21 @@ class PreflightReportGenerator(PreflightCheck):
         if not node_results:
             return ""
 
-        failed_nodes = {n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')}
+        failed_nodes = {
+            n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')
+        }
         dump_path = node_smoke_results.get('dump_path', '')
 
         if not failed_nodes:
             passing = len([n for n, r in node_results.items() if r.get('status') == 'PASS'])
-            tier2_html = ""
-            if node_smoke_results.get('tier2_perf'):
-                thresholds = node_smoke_results.get('tier2_thresholds') or {}
-                tier2_html = f"""
-            <p>Tier 2 perf enabled: GEMM &ge; {html.escape(str(thresholds.get('gemm_tflops_min', '?')))} TFLOPS,
-            HBM &ge; {html.escape(str(thresholds.get('hbm_gbs_min', '?')))} GB/s,
-            local RCCL &ge; {html.escape(str(thresholds.get('rccl_gbs_min', '?')))} GB/s.</p>"""
             return f"""
         <section>
             <h2>Primus Node Smoke</h2>
-            <p>All <code>{passing}</code> node(s) passed Primus node_smoke.</p>{tier2_html}
+            <p>All <code>{passing}</code> node(s) passed Primus node_smoke.</p>
         </section>
         """
 
-        html_out = """
+        html_out = f"""
         <section>
             <h2>Primus Node Smoke — Failures</h2>
             <p class="error-summary">The following nodes failed Primus node_smoke checks:</p>
@@ -1280,9 +1202,7 @@ class PreflightReportGenerator(PreflightCheck):
             </table>
         """
         if dump_path:
-            html_out += (
-                f"<p>Per-node JSON written under <code>{html.escape(str(dump_path))}/smoke/</code> on each node.</p>"
-            )
+            html_out += f"<p>Per-node JSON written under <code>{html.escape(str(dump_path))}/smoke/</code> on each node.</p>"
         html_out += """
         </section>
         """

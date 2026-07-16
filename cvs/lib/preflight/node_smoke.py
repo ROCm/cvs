@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from cvs.lib.preflight.base import PreflightCheck
 
@@ -77,12 +77,6 @@ def build_node_smoke_flags(
     allow_foreign_procs: bool = False,
     allowed_procs: Optional[str] = None,
     require_tools: Optional[str] = None,
-    tier2_perf: bool = False,
-    gemm_tflops_min: Optional[float] = None,
-    hbm_gbs_min: Optional[float] = None,
-    rccl_gbs_min: Optional[float] = None,
-    rccl_size_mb: Optional[int] = None,
-    rccl_timeout_sec: Optional[int] = None,
     extra_args: Optional[List[str]] = None,
 ) -> str:
     """Build primus-cli ``node_smoke`` CLI flags."""
@@ -115,19 +109,6 @@ def build_node_smoke_flags(
 
     if require_tools:
         flags.append(f"--require-tools {shlex.quote(str(require_tools))}")
-
-    if tier2_perf:
-        flags.append("--tier2-perf")
-        if gemm_tflops_min is not None:
-            flags.append(f"--gemm-tflops-min {float(gemm_tflops_min)}")
-        if hbm_gbs_min is not None:
-            flags.append(f"--hbm-gbs-min {float(hbm_gbs_min)}")
-        if rccl_gbs_min is not None:
-            flags.append(f"--rccl-gbs-min {float(rccl_gbs_min)}")
-        if rccl_size_mb is not None and int(rccl_size_mb) > 0:
-            flags.append(f"--rccl-size-mb {int(rccl_size_mb)}")
-        if rccl_timeout_sec is not None and int(rccl_timeout_sec) > 0:
-            flags.append(f"--rccl-timeout-sec {int(rccl_timeout_sec)}")
 
     if extra_args:
         for arg in extra_args:
@@ -260,6 +241,7 @@ class NodeSmokeCheck(PreflightCheck):
         self.master_port = int(get_nested_config(cfg, "node_smoke", "master_port", 1234))
         self.ssh_timeout = int(get_nested_config(cfg, "node_smoke", "ssh_timeout", 300))
 
+        artifacts_root = get_nested_config(cfg, "reporting", "artifacts_root_dir", "/tmp/preflight")
         self.dump_path = _resolve_dump_path(cfg)
 
         rdma_ifaces = node_check.get("rdma_interfaces") or []
@@ -282,9 +264,9 @@ class NodeSmokeCheck(PreflightCheck):
         self.require_tools = get_nested_config(cfg, "node_smoke", "require_tools", "")
 
         self.nccl_socket_ifname = get_nested_config(cfg, "node_smoke", "nccl_socket_ifname", "") or None
-        self.gloo_socket_ifname = (
-            get_nested_config(cfg, "node_smoke", "gloo_socket_ifname", self.nccl_socket_ifname) or None
-        )
+        self.gloo_socket_ifname = get_nested_config(
+            cfg, "node_smoke", "gloo_socket_ifname", self.nccl_socket_ifname
+        ) or None
 
         rdma_allowlist = get_nested_config(cfg, "node_smoke", "rdma_nic_allowlist", None)
         if not rdma_allowlist and rdma_ifaces:
@@ -304,13 +286,6 @@ class NodeSmokeCheck(PreflightCheck):
         extra = get_nested_config(cfg, "node_smoke", "extra_args", [])
         self.extra_args = [str(arg) for arg in extra if arg] if isinstance(extra, (list, tuple)) else []
         self.auto_setup = _config_flag_enabled(get_nested_config(cfg, "node_smoke", "auto_setup", True), default=True)
-
-        self.tier2_perf = _config_flag_enabled(get_nested_config(cfg, "node_smoke", "tier2_perf", False))
-        self.gemm_tflops_min = float(get_nested_config(cfg, "node_smoke", "gemm_tflops_min", 600.0))
-        self.hbm_gbs_min = float(get_nested_config(cfg, "node_smoke", "hbm_gbs_min", 2000.0))
-        self.rccl_gbs_min = float(get_nested_config(cfg, "node_smoke", "rccl_gbs_min", 100.0))
-        self.rccl_size_mb = int(get_nested_config(cfg, "node_smoke", "rccl_size_mb", 64))
-        self.rccl_timeout_sec = int(get_nested_config(cfg, "node_smoke", "rccl_timeout_sec", 120))
 
     def _validate_prerequisites(self) -> Optional[str]:
         if not self.primus_dir:
@@ -333,20 +308,8 @@ class NodeSmokeCheck(PreflightCheck):
             allow_foreign_procs=self.allow_foreign_procs,
             allowed_procs=self.allowed_procs,
             require_tools=self.require_tools,
-            tier2_perf=self.tier2_perf,
-            gemm_tflops_min=self.gemm_tflops_min if self.tier2_perf else None,
-            hbm_gbs_min=self.hbm_gbs_min if self.tier2_perf else None,
-            rccl_gbs_min=self.rccl_gbs_min if self.tier2_perf else None,
-            rccl_size_mb=self.rccl_size_mb if self.tier2_perf else None,
-            rccl_timeout_sec=self.rccl_timeout_sec if self.tier2_perf else None,
             extra_args=self.extra_args,
         )
-
-    def _effective_ssh_timeout(self) -> int:
-        """Tier 2 perf (GEMM + HBM + local RCCL) needs a longer per-node budget."""
-        if self.tier2_perf:
-            return max(self.ssh_timeout, 600)
-        return self.ssh_timeout
 
     def run(self) -> Dict[str, Any]:
         if self.mode in ("skip", "off", "disabled", "false", "0"):
@@ -397,15 +360,9 @@ class NodeSmokeCheck(PreflightCheck):
         hosts_set = set(hosts)
         host_ranks = {host: rank for rank, host in enumerate(hosts)}
 
-        tier2_note = (
-            f", tier2_perf=ON (gemm>={self.gemm_tflops_min} TFLOPS, "
-            f"hbm>={self.hbm_gbs_min} GB/s, rccl>={self.rccl_gbs_min} GB/s)"
-            if self.tier2_perf
-            else ""
-        )
         self.log_info(
             f"Launching Primus node_smoke on {nnodes} node(s) "
-            f"(primus_dir={self.primus_dir}, dump_path={self.dump_path}{tier2_note})"
+            f"(primus_dir={self.primus_dir}, dump_path={self.dump_path})"
         )
 
         commands: List[str] = []
@@ -431,7 +388,7 @@ class NodeSmokeCheck(PreflightCheck):
                     )
                 )
 
-        out_dict = self.phdl.exec_cmd_list(commands, timeout=self._effective_ssh_timeout())
+        out_dict = self.phdl.exec_cmd_list(commands, timeout=self.ssh_timeout)
 
         node_results: Dict[str, Any] = {}
         for host, output in out_dict.items():
@@ -464,17 +421,8 @@ class NodeSmokeCheck(PreflightCheck):
             "node_results": node_results,
             "dump_path": self.dump_path,
             "primus_dir": self.primus_dir,
-            "tier2_perf": self.tier2_perf,
-            "tier2_thresholds": {
-                "gemm_tflops_min": self.gemm_tflops_min,
-                "hbm_gbs_min": self.hbm_gbs_min,
-                "rccl_gbs_min": self.rccl_gbs_min,
-                "rccl_size_mb": self.rccl_size_mb,
-                "rccl_timeout_sec": self.rccl_timeout_sec,
-            }
-            if self.tier2_perf
-            else None,
         }
         if setup_results is not None:
             self.results["setup_results"] = setup_results
         return self.results
+

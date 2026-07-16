@@ -55,32 +55,6 @@ class TestBuildNodeSmokeFlags(unittest.TestCase):
         self.assertIn("--no-clean-dump-path", flags)
         self.assertIn("--allow-foreign-procs", flags)
 
-    def test_tier2_perf_flags(self):
-        flags = build_node_smoke_flags(
-            dump_path="/tmp/smoke",
-            tier2_perf=True,
-            gemm_tflops_min=700,
-            hbm_gbs_min=4500,
-            rccl_gbs_min=180,
-            rccl_size_mb=64,
-            rccl_timeout_sec=120,
-        )
-        self.assertIn("--tier2-perf", flags)
-        self.assertIn("--gemm-tflops-min 700", flags)
-        self.assertIn("--hbm-gbs-min 4500", flags)
-        self.assertIn("--rccl-gbs-min 180", flags)
-        self.assertIn("--rccl-size-mb 64", flags)
-        self.assertIn("--rccl-timeout-sec 120", flags)
-
-    def test_tier2_perf_off_omits_threshold_flags(self):
-        flags = build_node_smoke_flags(
-            dump_path="/tmp/smoke",
-            tier2_perf=False,
-            gemm_tflops_min=700,
-        )
-        self.assertNotIn("--tier2-perf", flags)
-        self.assertNotIn("--gemm-tflops-min", flags)
-
 
 class TestBuildRemoteCommand(unittest.TestCase):
     def test_includes_distributed_env_and_json_markers(self):
@@ -161,25 +135,7 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
         self.assertEqual(results["node_results"]["node0"]["node_rank"], 0)
         self.assertEqual(results["node_results"]["node2"]["node_rank"], 1)
 
-    def test_tier2_perf_extends_ssh_timeout(self):
-        phdl = MagicMock()
-        phdl.reachable_hosts = ["node0"]
-        phdl.exec_cmd_list.return_value = {"node0": "wrote /tmp/smoke/a.json status=PASS\n"}
-
-        cfg = self._config()
-        cfg["node_smoke"]["tier2_perf"] = True
-        cfg["node_smoke"]["ssh_timeout"] = 300
-        checker = NodeSmokeCheck(phdl, ["node0"], cfg)
-        checker.run()
-
-        timeout = phdl.exec_cmd_list.call_args.kwargs.get("timeout") or phdl.exec_cmd_list.call_args[1].get("timeout")
-        self.assertEqual(timeout, 600)
-        cmd = phdl.exec_cmd_list.call_args[0][0][0]
-        self.assertIn("--tier2-perf", cmd)
-        self.assertIn("--gemm-tflops-min 600", cmd)
-        self.assertIn("--hbm-gbs-min 2000", cmd)
-        self.assertIn("--rccl-gbs-min 100", cmd)
-
 
 if __name__ == "__main__":
     unittest.main()
+
