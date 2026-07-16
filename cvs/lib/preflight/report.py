@@ -100,6 +100,7 @@ class PreflightReportGenerator(PreflightCheck):
         rocm_results = self.results.get('rocm_versions', {})
         interface_results = self.results.get('interface_names', {})
         ifoe_l2_results = self.results.get('ifoe_l2_connectivity', {})
+        node_smoke_results = self.results.get('node_smoke', {})
         reachability_results = self.results.get('node_reachability')
         ssh_connectivity_results = self.results.get('ssh_connectivity')
         summary = {
@@ -107,6 +108,7 @@ class PreflightReportGenerator(PreflightCheck):
             'checks': {
                 'ssh_reachability': self._summarize_reachability_results(reachability_results),
                 'gid_consistency': self._summarize_gid_results(gid_results),
+                'node_smoke': self._summarize_node_smoke_results(node_smoke_results),
                 'ifoe_l2_connectivity': self._summarize_ifoe_l2_results(ifoe_l2_results),
                 'rdma_connectivity': self._summarize_connectivity_results(connectivity_results),
                 'rocm_versions': self._summarize_rocm_results(rocm_results),
@@ -144,6 +146,15 @@ class PreflightReportGenerator(PreflightCheck):
 
         if summary['checks']['interface_names']['status'] == 'FAIL':
             summary['recommendations'].append("Standardize RDMA interface naming across cluster nodes")
+
+        if summary['checks']['node_smoke']['status'] == 'FAIL':
+            summary['recommendations'].append(
+                "Review Primus node_smoke failures (GPU health, RDMA roll-call, host limits) before benchmarking"
+            )
+        elif summary['checks']['node_smoke']['status'] == 'SKIPPED':
+            summary['recommendations'].append(
+                "Consider enabling node_smoke.connectivity_mode='run' for per-node GPU/RDMA health screening"
+            )
 
         if summary['overall_status'] == 'PASS':
             summary['recommendations'].append("All preflight checks passed - cluster is ready for performance testing")
@@ -330,6 +341,46 @@ class PreflightReportGenerator(PreflightCheck):
             'summary': summary_text,
         }
 
+    def _summarize_node_smoke_results(self, node_smoke_results):
+        """Summarize Primus node_smoke check results."""
+        if not node_smoke_results or node_smoke_results.get('skipped'):
+            msg = (
+                node_smoke_results.get('message')
+                if isinstance(node_smoke_results, dict)
+                else 'Primus node_smoke check not performed'
+            )
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': msg or 'Primus node_smoke check skipped',
+            }
+
+        node_results = node_smoke_results.get('node_results') or {}
+        total_nodes = len(node_results)
+        failed_nodes = list(
+            node_smoke_results.get('failed_nodes')
+            or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+        )
+        unknown_nodes = list(
+            node_smoke_results.get('unknown_nodes')
+            or [n for n, r in node_results.items() if r.get('status') not in ('PASS', 'FAIL')]
+        )
+        passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
+        status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
+        summary_text = f"{passing_nodes}/{total_nodes} nodes passed Primus node_smoke"
+        if unknown_nodes:
+            summary_text += f"; {len(unknown_nodes)} unknown"
+        return {
+            'status': status,
+            'total_nodes': total_nodes,
+            'passing_nodes': passing_nodes,
+            'failed_nodes': failed_nodes,
+            'unknown_nodes': unknown_nodes,
+            'summary': summary_text,
+        }
+
     def _summarize_reachability_results(self, reachability_results):
         """Summarize SSH reachability check results."""
         if not reachability_results:
@@ -431,6 +482,7 @@ class PreflightReportGenerator(PreflightCheck):
 
             {self._generate_executive_summary_html(summary)}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
+            {self._generate_node_smoke_html(results.get('node_smoke', {}))}
             {self._generate_ifoe_l2_html(results.get('ifoe_l2_connectivity', {}))}
             {self._generate_connectivity_html(results.get('rdma_connectivity', {}))}
             {self._generate_ssh_connectivity_html(results.get('ssh_connectivity', {}))}
@@ -844,6 +896,78 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
         return html
+
+    def _generate_node_smoke_html(self, node_smoke_results):
+        """Generate Primus node_smoke section — failed nodes and fail reasons."""
+        if not node_smoke_results:
+            return ""
+
+        if node_smoke_results.get('skipped'):
+            msg = node_smoke_results.get('message', 'Primus node_smoke check skipped')
+            return f"""
+        <section>
+            <h2>Primus Node Smoke</h2>
+            <p><em>{html.escape(msg)}</em></p>
+        </section>
+        """
+
+        node_results = node_smoke_results.get('node_results') or {}
+        if not node_results:
+            return ""
+
+        failed_nodes = {
+            n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')
+        }
+        dump_path = node_smoke_results.get('dump_path', '')
+
+        if not failed_nodes:
+            passing = len([n for n, r in node_results.items() if r.get('status') == 'PASS'])
+            return f"""
+        <section>
+            <h2>Primus Node Smoke</h2>
+            <p>All <code>{passing}</code> node(s) passed Primus node_smoke.</p>
+        </section>
+        """
+
+        html_out = f"""
+        <section>
+            <h2>Primus Node Smoke — Failures</h2>
+            <p class="error-summary">The following nodes failed Primus node_smoke checks:</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>Status</th>
+                        <th>Fail Reasons</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+
+        for node, result in sorted(failed_nodes.items()):
+            reasons = result.get('fail_reasons') or []
+            if not reasons and result.get('node_payload'):
+                reasons = list(result['node_payload'].get('fail_reasons') or [])
+            reasons_str = html.escape('; '.join(str(r) for r in reasons) if reasons else 'See node logs')
+            status = html.escape(str(result.get('status', 'FAIL')))
+            html_out += f"""
+                <tr>
+                    <td>{html.escape(node)}</td>
+                    <td>{status}</td>
+                    <td>{reasons_str}</td>
+                </tr>
+            """
+
+        html_out += """
+                </tbody>
+            </table>
+        """
+        if dump_path:
+            html_out += f"<p>Per-node JSON written under <code>{html.escape(str(dump_path))}/smoke/</code> on each node.</p>"
+        html_out += """
+        </section>
+        """
+        return html_out
 
     def _generate_ifoe_l2_html(self, ifoe_results):
         """Generate IFoE L2 connectivity section - failure details and a per-node breakdown."""
