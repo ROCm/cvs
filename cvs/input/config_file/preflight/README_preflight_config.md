@@ -12,6 +12,7 @@ The preflight checks system validates essential cluster health before running pe
 4. **Interface Name Consistency** - Validates RDMA interface naming patterns
 5. **IFoE L2 Connectivity (AIMVT-180; opt-in)** - Runs `afmctl test ping`
    on each node and enforces per-port and Summary pass/fail accounting
+6. **Primus Node Smoke (opt-in)** - Per-node host / GPU / RDMA roll-call via `primus-cli direct -- node_smoke`
 
 ## Configuration File Structure
 
@@ -37,6 +38,13 @@ The preflight configuration file follows this structure:
         "inter_full_mesh_group_pairs_per_wave": "auto"
       }
     },
+    "node_smoke": {
+      "connectivity_mode": "skip",
+      "auto_setup": true,
+      "primus_dir": "/home/{user-id}/INSTALL/Primus",
+      "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
+      "gpus_per_node": 8
+    },
     "reporting": {
       "generate_html_report": "true",
       "artifacts_root_dir": "/tmp/{user-id}/preflight",
@@ -59,6 +67,7 @@ preflight/
 ├── connectivity_check/   # Inter-node connectivity tests
 │   ├── rdma/             # RDMA-specific parameters (including nodes_per_full_mesh_group)
 │   └── ifoe/             # IFoE L2 ping parameters (AIMVT-180; opt-in)
+├── node_smoke/           # Primus node_smoke per-node health screening (opt-in)
 └── reporting/           # Output and report generation
 ```
 
@@ -199,6 +208,52 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
 - **`ssh_timeout`** (default: `180`)
   - Per-invocation SSH timeout (seconds); raise for high `pings_per_port`
 
+#### Node Smoke Settings (`node_smoke`) — opt-in (Primus Tier 1)
+
+Runs Primus `node_smoke` on each reachable node via `primus-cli direct --single -- node_smoke`
+over parallel SSH (no Slurm required). Reference: Primus `docs/node-smoke-test-instruction.md`
+on branch `dev/preflight-direct-test`.
+
+- **`connectivity_mode`** (default: `"skip"`)
+  - `"run"` — execute node_smoke on every reachable node
+  - `"skip"` — preflight records a SKIPPED result and does not invoke Primus
+- **`auto_setup`** (default: `true`)
+  - Clone/update Primus and create the venv with minimal deps (ROCm PyTorch) before node_smoke
+- **`setup_timeout`** (default: `600`)
+  - SSH timeout (seconds) for the per-node Primus auto_setup step
+- **`force_reclone`** (default: `false`)
+  - Remove `primus_dir` and clone fresh on every run (destructive)
+- **`shared_install`** (default: `true`)
+  - Leader node clones/installs on shared NFS home; other nodes wait (recommended for shared home)
+- **`pip_install_mode`** (default: `"minimal"`)
+  - `"minimal"` — ROCm PyTorch only; `"requirements"` — `pip install -r requirements.txt`; `"skip"` — venv only
+- **`torch_pip_index_url`** (default: `"https://download.pytorch.org/whl/rocm6.2"`)
+  - PyTorch wheel index for minimal install; match your ROCm version
+- **`primus_git_url`** (default: `"https://github.com/AMD-AIG-AIMA/Primus.git"`)
+- **`primus_git_branch`** (default: `"dev/preflight-direct-test"`)
+- **`primus_git_recurse_submodules`** (default: `false`)
+- **`primus_dir`** (default: `"/home/{user-id}/INSTALL/Primus"`)
+  - Required when `connectivity_mode` is `"run"`; `{user-id}` is resolved at runtime
+- **`venv_activate`** (default: `"/home/{user-id}/envs/preflight/.venv/bin/activate"`)
+  - Required when `connectivity_mode` is `"run"`
+- **`gpus_per_node`** (default: `8`)
+- **`master_port`** (default: `1234`)
+- **`dump_path`** (default: `""`)
+  - Per-node smoke JSON output; empty uses `<reporting.artifacts_root_dir>/node_smoke`
+- **`expected_rdma_nics`** (default: `null`)
+  - Defaults to `len(node_check.rdma_interfaces)` when null
+- **`ulimit_l_min_gb`** (default: `32`) — FAIL below this memlock limit; `0` disables
+- **`shm_min_gb`** (default: `8`) — FAIL below this `/dev/shm` size; `0` disables
+- **`skip_dmesg`** (default: `false`)
+- **`allow_foreign_procs`** (default: `false`)
+- **`allowed_procs`** (default: `"gpuagent,rocm-smi-daemon,amd-smi,dcgm-exporter"`)
+- **`require_tools`** (default: `""`) — empty = warn only
+- **`nccl_socket_ifname`** / **`gloo_socket_ifname`** (default: `""`)
+- **`nccl_ib_hca`** (default: `""`) — defaults to comma-joined `node_check.rdma_interfaces`
+- **`nccl_ib_gid_index`** (default: `null`) — defaults to `node_check.gid_index`
+- **`ssh_timeout`** (default: `300`)
+- **`extra_args`** (default: `[]`) — additional flags forwarded to primus-cli
+
 ### Reporting Settings (`reporting`)
 
 - **`generate_html_report`** (default: "true")
@@ -277,6 +332,28 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
 }
 ```
 
+### Enable Primus Node Smoke
+
+```json
+{
+  "preflight": {
+    "node_check": {
+      "gid_index": "3",
+      "expected_rocm_version": "6.4.2",
+      "rdma_interfaces": ["rdma0", "rdma1", "rdma2", "rdma3", "rdma4", "rdma5", "rdma6", "rdma7"]
+    },
+    "node_smoke": {
+      "connectivity_mode": "run",
+      "auto_setup": true,
+      "shared_install": true,
+      "primus_dir": "/home/{user-id}/INSTALL/Primus",
+      "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
+      "gpus_per_node": 8
+    }
+  }
+}
+```
+
 ### Advanced Configuration with Debug and Tuning
 
 ```json
@@ -317,6 +394,11 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
 # Basic usage with default config
 cvs run preflight_checks --cluster_file cluster.json --config_file preflight_config.json
 
+# Run only the node_smoke check
+cvs run preflight_checks test_node_smoke \
+  --cluster_file cluster.json \
+  --config_file preflight_config.json
+
 # With custom HTML output
 cvs run preflight_checks \
   --cluster_file cluster.json \
@@ -351,12 +433,23 @@ cvs run preflight_checks \
    - Update rdma_interfaces list to match your cluster setup
    - Ensure all expected interfaces are present on each node
 
+5. **Node Smoke Failures**
+   - Set `node_smoke.connectivity_mode` to `"run"` (default is `"skip"`)
+   - Verify `primus_dir` and `venv_activate`, or enable `auto_setup: true`
+   - On shared NFS home, use `shared_install: true` to avoid parallel clone races
+   - Match `torch_pip_index_url` to your ROCm version
+   - Review per-node fail reasons in the preflight HTML report
+
 ### Performance Considerations
 
 **RDMA Connectivity Testing Times:**
 - **Basic mode**: ~30 seconds for 8 nodes
 - **Full mesh mode**: ~5-10 minutes for 8 nodes
 - **Skip mode**: fastest path when validating only node-local checks
+
+**Node Smoke Testing Times:**
+- **First run with auto_setup**: several minutes per node (clone + ROCm PyTorch install)
+- **Subsequent runs**: ~30–60 seconds per node
 
 **Parallel Processing Impact:**
 - **Small nodes_per_full_mesh_group (16-32)**: More rounds, less resource usage per node, better for resource-constrained environments

@@ -896,6 +896,112 @@ class PreflightConnectivityCheckConfig(BaseModel):
     rdma: PreflightRdmaConfig = Field(default_factory=PreflightRdmaConfig, description="RDMA connectivity settings")
 
 
+class PreflightNodeSmokeConfig(BaseModel):
+    """Primus node_smoke settings (primus-cli direct -- node_smoke)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    connectivity_mode: str = Field(
+        default="skip",
+        description="Primus node_smoke mode: 'run' (host/GPU/RDMA roll-call) or 'skip' (default)",
+    )
+    auto_setup: bool = Field(
+        default=True,
+        description="Clone/update Primus and prepare venv on each node before node_smoke",
+    )
+    setup_timeout: int = Field(default=600, ge=60, description="SSH timeout in seconds for Primus auto_setup")
+    force_reclone: bool = Field(
+        default=False,
+        description="Remove primus_dir and clone fresh on every run (destructive)",
+    )
+    shared_install: bool = Field(
+        default=True,
+        description=(
+            "When true (default), clone and venv setup run only on the first reachable node; "
+            "other nodes wait for the shared NFS home install. Set false only if each node has "
+            "a local primus_dir/venv_activate path."
+        ),
+    )
+    pip_install_mode: str = Field(
+        default="minimal",
+        description="Venv deps: minimal (torch only), requirements, or skip",
+    )
+    torch_pip_index_url: str = Field(
+        default="https://download.pytorch.org/whl/rocm6.2",
+        description="PyTorch ROCm wheel index URL for minimal pip_install_mode",
+    )
+    primus_git_url: str = Field(
+        default="https://github.com/AMD-AIG-AIMA/Primus.git",
+        description="Primus repository URL for auto_setup clone",
+    )
+    primus_git_branch: str = Field(
+        default="dev/preflight-direct-test",
+        description="Git branch to checkout during auto_setup",
+    )
+    primus_git_recurse_submodules: bool = Field(
+        default=False,
+        description="Clone git submodules during auto_setup (not required for node_smoke)",
+    )
+    primus_dir: str = Field(
+        default="/home/{user-id}/INSTALL/Primus",
+        description="Path to cloned Primus repo under the user's home directory (required when connectivity_mode is 'run')",
+    )
+    venv_activate: str = Field(
+        default="/home/{user-id}/envs/preflight/.venv/bin/activate",
+        description="Path to Python venv activate script on each node (required when connectivity_mode is 'run')",
+    )
+    gpus_per_node: int = Field(default=8, ge=1, description="GPUs per node for node_smoke")
+    master_port: int = Field(default=1234, ge=1024, le=65535, description="Distributed master port for node_smoke")
+    dump_path: str = Field(
+        default="",
+        description="Per-node dump directory for smoke JSON (default: <artifacts_root_dir>/node_smoke)",
+    )
+    expected_rdma_nics: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Hard-fail when training RDMA NIC count differs (default: len(node_check.rdma_interfaces))",
+    )
+    ulimit_l_min_gb: float = Field(default=32.0, ge=0, description="Minimum RLIMIT_MEMLOCK in GiB (0 disables)")
+    shm_min_gb: float = Field(default=8.0, ge=0, description="Minimum /dev/shm size in GiB (0 disables)")
+    skip_dmesg: bool = Field(default=False, description="Skip dmesg error scan (e.g. unprivileged containers)")
+    allow_foreign_procs: bool = Field(
+        default=False,
+        description="Do not FAIL nodes with foreign GPU processes (still reported)",
+    )
+    allowed_procs: str = Field(
+        default="gpuagent,rocm-smi-daemon,amd-smi,dcgm-exporter",
+        description="Comma-separated process names allowed to hold GPUs",
+    )
+    require_tools: str = Field(
+        default="",
+        description="Comma-separated CLI tools that must exist in PATH (empty = warn only)",
+    )
+    nccl_socket_ifname: str = Field(default="", description="NCCL_SOCKET_IFNAME override for node_smoke")
+    gloo_socket_ifname: str = Field(default="", description="GLOO_SOCKET_IFNAME override (defaults to nccl_socket_ifname)")
+    nccl_ib_hca: str = Field(default="", description="NCCL_IB_HCA override (defaults to node_check.rdma_interfaces)")
+    nccl_ib_gid_index: Optional[int] = Field(
+        default=None,
+        description="NCCL_IB_GID_INDEX override (defaults to node_check.gid_index)",
+    )
+    rdma_nic_allowlist: str = Field(
+        default="",
+        description="Training NIC allowlist for node_smoke (defaults to node_check.rdma_interfaces)",
+    )
+    ssh_timeout: int = Field(default=300, ge=30, description="SSH timeout in seconds for each node_smoke run")
+    extra_args: List[str] = Field(
+        default_factory=list,
+        description="Additional node_smoke CLI flags forwarded to primus-cli",
+    )
+
+    @field_validator("connectivity_mode")
+    @classmethod
+    def validate_node_smoke_mode(cls, v: str) -> str:
+        valid_modes = ["run", "skip"]
+        if v not in valid_modes:
+            raise ValueError(f"node_smoke.connectivity_mode must be one of: {', '.join(valid_modes)}")
+        return v
+
+
 class PreflightReportingConfig(BaseModel):
     """Report generation and output settings."""
 
@@ -935,6 +1041,9 @@ class PreflightConfigFile(BaseModel):
     )
     connectivity_check: PreflightConnectivityCheckConfig = Field(
         default_factory=PreflightConnectivityCheckConfig, description="Inter-node connectivity tests"
+    )
+    node_smoke: PreflightNodeSmokeConfig = Field(
+        default_factory=PreflightNodeSmokeConfig, description="Primus node_smoke checks"
     )
     reporting: PreflightReportingConfig = Field(
         default_factory=PreflightReportingConfig, description="Report generation and output settings"
