@@ -393,8 +393,8 @@ class VllmJob:
                 hosts=[host],
             )
             for h, r in (out or {}).items():
-                if r.get("exit_code") == 0 and r.get("stdout", "").strip():
-                    raise RuntimeError(f"vllm server fatal error on {h} (rank {rank}): {r['stdout'].strip()[-500:]}")
+                if r.get("exit_code") == 0 and r.get("output", "").strip():
+                    raise RuntimeError(f"vllm server fatal error on {h} (rank {rank}): {r['output'].strip()[-500:]}")
 
     def wait_ready(self):
         log.info("waiting %ds for server log to materialise", self._precheck_wait)
