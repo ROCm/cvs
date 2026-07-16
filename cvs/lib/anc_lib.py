@@ -25,6 +25,8 @@ suites live here (``CPU_GROUPS`` / ``GPU_GROUPS``).
 
 import os
 import re
+import tarfile
+from datetime import datetime
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
@@ -80,17 +82,77 @@ GPU_GROUPS = [
 ]
 
 # --- Artifact / return-code parsing --------------------------------------
-# ANC prints "Log Directory: <path>" near the top of stdout; every artifact
-# (journal.log, console.log, summary.json, ...) is written under this dir.
-LOG_DIRECTORY_RE = re.compile(r"Log Directory:\s*(\S+)")
+# ANC prints "Log directory: <path>" (case varies) near the end of its run;
+# every artifact (journal.log, console.log, summary.json, ...) lives under it.
+LOG_DIRECTORY_RE = re.compile(r"Log directory:\s*(\S+)", re.IGNORECASE)
 
-# ANC records its return code near the end of console.log, e.g.
+# ANC records its final program return code, e.g.
 #   "Program exiting with return code ANC_SUCCESS [0]".
 # The FINAL such line is authoritative: [0] (ANC_SUCCESS) is the only PASS.
 ANC_RETURN_CODE_RE = re.compile(r"return code\s+(\S+)\s*\[(-?\d+)\]")
 
-MANDATORY_ARTIFACTS = ("journal.log", "console.log")
-OPTIONAL_ARTIFACTS = ("summary.json", "errors.json", "system_monitor.json")
+# The "Items: N Total | ... PASSED, ... FAILED, ..." summary line in the ANC
+# run summary; surfaced verbatim so the CVS result shows the pass/fail counts.
+ANC_ITEMS_SUMMARY_RE = re.compile(r"^\s*Items:\s*\d+\s*Total\b.*$", re.MULTILINE)
+
+# A per-item FAILED row in the ANC Results Details table, e.g.
+#   "FAILED      i305 mithac      VENICE ES  ANC_ITEM_TIMEOUT".
+ANC_FAILED_ITEM_RE = re.compile(r"^\s*FAILED\s+\S+.*$", re.MULTILINE)
+
+# console.log is the only artifact we must have (holds the verdict). Everything
+# else is pulled best-effort as part of the whole-directory copy.
+CONSOLE_LOG = "console.log"
+
+# --- Config-driven console + log-path behaviour --------------------------
+# When config anc.print_all_to_console is falsey, the (potentially huge) ANC
+# group-run output is suppressed from the console; install/ldconfig/version
+# diagnostics always print. Default: print everything.
+PRINT_ALL_TO_CONSOLE_KEY = "print_all_to_console"
+
+# config anc.log_folder_path is where the ANC log directory is copied. It may
+# contain "{runner_log_folder}" (resolved to run_config's runner_log_folder),
+# "<test_name>" (the suite's test name, e.g. test_cpu), and "<timestamp>" (a
+# per-run stamp so repeated runs of the same test do not overwrite each other).
+LOG_FOLDER_PATH_KEY = "log_folder_path"
+DEFAULT_LOG_FOLDER_PATH = "{runner_log_folder}/anc_logs/<test_name>/<timestamp>"
+
+
+def _as_bool(value, default=True):
+    '''Interpret a config value (str/bool/None) as a boolean.'''
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
+
+
+def new_run_timestamp():
+    '''Return a filesystem-safe timestamp (YYYYmmdd-HHMMSS) for a run folder.'''
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def resolve_anc_log_folder(config_dict, test_name, timestamp):
+    '''
+    Resolve config anc.log_folder_path into an absolute destination directory.
+
+    Substitutes "{runner_log_folder}" (from run_config, via
+    resolve_runner_results_base), "<test_name>", and "<timestamp>". Falls back
+    to DEFAULT_LOG_FOLDER_PATH when the key is unset. When the template has no
+    "<timestamp>" token, the stamp is appended so repeated runs stay separate.
+    '''
+    template = config_dict.get("anc", {}).get(
+        LOG_FOLDER_PATH_KEY, DEFAULT_LOG_FOLDER_PATH
+    )
+    runner_base = resolve_runner_results_base(config_dict.get("run_config", {}))
+    path = template.replace("{runner_log_folder}", runner_base)
+    path = path.replace("<test_name>", test_name)
+    if "<timestamp>" in path:
+        path = path.replace("<timestamp>", timestamp)
+    else:
+        path = os.path.join(path, timestamp)
+    if "~" in path:
+        path = os.path.expanduser(path)
+    return os.path.abspath(path)
 
 # Default per-run execution timeout (2 hours); override via
 # config["anc"]["test_timeout"].
@@ -545,75 +607,102 @@ def _claim_remote_logs(single, host, user, log_dir):
                     exc)
 
 
-def _list_remote_files(single, host, log_dir):
-    '''List file names directly under log_dir (None on SSH error).'''
-    try:
-        out = single.exec(f"ls -1 '{log_dir}' 2>/dev/null", timeout=30)
-    except Exception as exc:
-        log.warning("Node %s: could not list log dir %s: %s", host, log_dir, exc)
-        return None
-    return set((out.get(host, "") or "").split())
-
-
-def _download_artifact(single, host, remote_path, dest_dir, name):
-    '''Download a single artifact (None on failure).'''
-    try:
-        result = single.download_file(remote_path, os.path.join(dest_dir, name))
-        local_path = result.get(host, os.path.join(dest_dir, name))
-        log.info("Node %s: downloaded %s -> %s", host, name, local_path)
-        return local_path
-    except Exception as exc:  # copy failure must fail the test
-        log.error("Node %s: failed to download %s: %s", host, remote_path, exc)
-        return None
-
-
-def _download_artifacts(single, host, log_dir, dest_dir):
+def _pull_log_dir(single, host, user, log_dir, dest_dir):
     '''
-    Download mandatory and optional ANC artifacts for a node.
+    Copy the ENTIRE ANC log directory from the node into dest_dir.
+
+    ANC writes every artifact (console.log, journal.log, per-item logs, json
+    summaries, ...) under its "Log directory". Rather than cherry-picking
+    files, tar the whole directory on the node, download the tarball, and
+    extract it locally so the full ANC log tree is preserved.
 
     Returns:
-      tuple[dict, str | None]: (local_paths_by_name, infra_failure_reason).
+      tuple[str | None, str | None]: (console_log_path, failure_reason).
+      console_log_path is the local path to the extracted console.log on
+      success; failure_reason is set (and path None) on any collection error.
     '''
-    remote_names = _list_remote_files(single, host, log_dir)
-    if remote_names is None:
-        return {}, f"could not list log directory: {log_dir}"
+    # ANC ran under sudo; reclaim ownership so the plain SSH user can read/tar.
+    _claim_remote_logs(single, host, user, log_dir)
 
-    local_paths = {}
+    log_dir = log_dir.rstrip("/")
+    base = os.path.basename(log_dir)
+    parent = os.path.dirname(log_dir)
+    remote_tar = f"/tmp/anc_{base}.tar.gz"
 
-    for name in MANDATORY_ARTIFACTS:
-        if name not in remote_names:
-            return local_paths, f"mandatory artifact missing: {log_dir}/{name}"
-        local = _download_artifact(single, host, f"{log_dir}/{name}", dest_dir,
-                                   name)
-        if local is None:
-            return local_paths, (
-                f"failed to download mandatory artifact: {log_dir}/{name}"
-            )
-        local_paths[name] = local
+    try:
+        single.exec(f"tar -czf '{remote_tar}' -C '{parent}' '{base}'",
+                    timeout=600)
+    except Exception as exc:
+        return None, f"could not archive log dir {log_dir}: {exc}"
 
-    for name in OPTIONAL_ARTIFACTS:
-        if name not in remote_names:
-            log.info("Node %s: optional artifact not present: %s", host, name)
-            continue
-        local = _download_artifact(single, host, f"{log_dir}/{name}", dest_dir,
-                                   name)
-        if local is not None:
-            local_paths[name] = local
+    local_tar = os.path.join(dest_dir, f"{base}.tar.gz")
+    try:
+        single.download_file(remote_tar, local_tar)
+    except Exception as exc:
+        return None, f"could not download log archive from {log_dir}: {exc}"
+    finally:
+        try:
+            single.exec(f"rm -f '{remote_tar}'", timeout=30)
+        except Exception as exc:  # best-effort cleanup
+            log.warning("Node %s: could not remove remote tar %s: %s", host,
+                        remote_tar, exc)
 
-    return local_paths, None
+    try:
+        with tarfile.open(local_tar) as tf:
+            tf.extractall(dest_dir)
+    except Exception as exc:
+        return None, f"could not extract log archive for {log_dir}: {exc}"
+    finally:
+        try:
+            os.remove(local_tar)
+        except OSError:
+            pass
+
+    extracted_dir = os.path.join(dest_dir, base)
+    log.info("Node %s: ANC logs copied to %s", host, extracted_dir)
+
+    console_path = os.path.join(extracted_dir, CONSOLE_LOG)
+    if not os.path.isfile(console_path):
+        return None, f"{CONSOLE_LOG} not found under {log_dir}"
+    return console_path, None
 
 
-def _evaluate_node(cluster_dict, host, output, base, test_name):
+def _summarize_failure(console_text):
     '''
-    Collect artifacts for one node and decide whether it passed.
+    Build a concise failure detail string from ANC's console.log summary.
+
+    Pulls the "Items: N Total | ..." summary line plus any per-item FAILED
+    rows so the CVS failure message shows both the counts and which items
+    failed.
+    '''
+    parts = []
+    items = ANC_ITEMS_SUMMARY_RE.search(console_text)
+    if items:
+        parts.append(items.group(0).strip())
+    failed_rows = [m.strip() for m in ANC_FAILED_ITEM_RE.findall(console_text)]
+    if failed_rows:
+        parts.append("failed items: " + " | ".join(failed_rows))
+    return "; ".join(parts)
+
+
+def _evaluate_node(cluster_dict, host, output, log_base, test_name):
+    '''
+    Collect the ANC log directory for one node and decide whether it passed.
+
+    ``output`` is the captured ANC console text (full when
+    print_all_to_console, else just the "Log directory:" line) used only to
+    locate the log-directory path. The whole log directory is then copied under
+    ``<log_base>/<ip>_<hostname>/`` and the verdict is taken from console.log's
+    final "Program exiting with return code ANC_SUCCESS [0]" line. On failure,
+    the item summary and FAILED rows are surfaced.
 
     Returns:
       str | None: A failure reason for this node, or None if the node passed.
     '''
-    ld_match = LOG_DIRECTORY_RE.search(output)
+    ld_match = LOG_DIRECTORY_RE.search(output or "")
     if not ld_match:
-        log.error("Node %s: could not determine Log Directory from output", host)
-        return "could not determine Log Directory from output"
+        log.error("Node %s: could not determine Log directory from output", host)
+        return "could not determine Log directory from ANC output"
     log_dir = ld_match.group(1)
     log.info("Node %s: ANC %s log directory: %s", host, test_name, log_dir)
 
@@ -628,23 +717,20 @@ def _evaluate_node(cluster_dict, host, output, base, test_name):
         return f"could not open SSH handle for artifact collection: {exc}"
 
     label = _node_label(single, host, cluster_dict)
-    dest_dir = os.path.join(base, "anc", label, test_name)
+    dest_dir = os.path.join(log_base, label)
     os.makedirs(dest_dir, exist_ok=True)
 
-    # ANC ran under sudo; reclaim ownership so SFTP (plain user) can read.
-    _claim_remote_logs(single, host, cluster_dict["username"], log_dir)
-
-    local_paths, infra_reason = _download_artifacts(single, host, log_dir,
-                                                     dest_dir)
+    console_path, infra_reason = _pull_log_dir(
+        single, host, cluster_dict["username"], log_dir, dest_dir
+    )
     if infra_reason:
         return infra_reason
 
-    console_path = local_paths["console.log"]
     try:
         with open(console_path, encoding="utf-8", errors="replace") as fh:
             console_text = fh.read()
     except Exception as exc:
-        return f"could not read downloaded console.log: {exc}"
+        return f"could not read collected console.log: {exc}"
 
     rc_matches = ANC_RETURN_CODE_RE.findall(console_text)
     if not rc_matches:
@@ -652,10 +738,14 @@ def _evaluate_node(cluster_dict, host, output, base, test_name):
         return "ANC return code not found in console.log"
 
     rc_name, rc_value = rc_matches[-1][0], int(rc_matches[-1][1])
-    log.info("Node %s: ANC %s return code is %s [%s]", host, test_name,
+    log.info("Node %s: ANC %s program return code is %s [%s]", host, test_name,
              rc_name, rc_value)
     if rc_value != 0:
-        return f"non-zero ANC return code {rc_name} [{rc_value}]"
+        detail = _summarize_failure(console_text)
+        reason = f"ANC returned {rc_name} [{rc_value}]"
+        if detail:
+            reason = f"{reason}; {detail}"
+        return reason
 
     return None
 
@@ -665,26 +755,58 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name):
     Run one or more ANC groups in a single invocation on all nodes.
 
     Executes ``cd <ANC_DIR> && sudo ./anc.py -g <groups...>`` on every node,
-    collects journal.log/console.log (mandatory) plus summary.json/errors.json/
-    system_monitor.json (when present), and PASSES only when every node reports
-    a final ANC_SUCCESS [0] return code. Failures across parallel nodes are
-    aggregated into a SINGLE test failure.
+    copies the ENTIRE ANC log directory to the configured log_folder_path
+    (``{runner_log_folder}/anc_logs/<test_name>`` by default, under a per-node
+    ``<ip>_<hostname>/`` subdir), and PASSES only when every node's console.log
+    ends with ANC_SUCCESS [0]. On failure the item summary and FAILED rows are
+    surfaced. Failures across parallel nodes are aggregated into a SINGLE test
+    failure.
+
+    Console behaviour is config-driven: when anc.print_all_to_console is truthy
+    (default), the full ANC group output is echoed to the console; when falsey,
+    ANC output is suppressed and only the "Log directory:" line is captured
+    (the verdict always comes from the collected console.log either way).
 
     Parameters:
       groups:    list of ANC group names passed to ``anc.py -g``.
-      test_name: name used for the artifact subpath (e.g. "test_cpu").
+      test_name: name used for the log path and messages (e.g. "test_cpu").
     '''
     globals.error_list = []
 
     anc_cfg = config_dict["anc"]
     timeout = anc_cfg.get("test_timeout", DEFAULT_ANC_TEST_TIMEOUT)
-    base = resolve_runner_results_base(config_dict.get("run_config", {}))
+    print_all = _as_bool(anc_cfg.get(PRINT_ALL_TO_CONSOLE_KEY), default=True)
+    timestamp = new_run_timestamp()
+    log_base = resolve_anc_log_folder(config_dict, test_name, timestamp)
+    os.makedirs(log_base, exist_ok=True)
     expected_nodes = list(cluster_dict["node_dict"].keys())
     groups_arg = " ".join(groups)
 
-    cmd = f"cd '{ANC_DIR}' && sudo ./anc.py -g {groups_arg}"
-    log.info("ANC '%s': running '%s' (timeout=%ss, artifacts under %s)",
-             test_name, cmd, timeout, os.path.join(base, "anc"))
+    # Announce the resolved (substituted) log directory up front so the user
+    # knows exactly where this run's ANC logs will land.
+    log.info("=" * 72)
+    log.info("ANC '%s': logs for this run -> %s", test_name, log_base)
+    log.info("=" * 72)
+
+    if print_all:
+        # Run ANC normally so its full output streams back, and print it.
+        cmd = f"cd '{ANC_DIR}' && sudo ./anc.py -g {groups_arg}"
+    else:
+        # Suppress the (potentially huge) ANC output: redirect stdout/stderr to
+        # a per-run file on the node and echo ONLY the "Log directory:" line.
+        # The verdict is sourced from the collected console.log regardless.
+        remote_stdout = "/tmp/anc_run_$$.out"
+        cmd = (
+            f"cd '{ANC_DIR}' && "
+            f"sudo ./anc.py -g {groups_arg} > '{remote_stdout}' 2>&1; "
+            f"grep -i 'Log directory:' '{remote_stdout}' | tail -1; "
+            f"rm -f '{remote_stdout}'"
+        )
+
+    log.info("ANC '%s': running %d group(s) (print_all_to_console=%s, "
+             "timeout=%ss, logs under %s)", test_name, len(groups), print_all,
+             timeout, log_base)
+    log.info("ANC '%s': groups=%s", test_name, groups_arg)
 
     try:
         out_dict = phdl.exec(cmd, timeout=timeout)
@@ -693,7 +815,9 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name):
         update_test_result()
         return
 
-    print_test_output(log, out_dict)
+    # Echo full ANC output only when print_all_to_console is enabled.
+    if print_all:
+        print_test_output(log, out_dict)
 
     if not out_dict:
         fail_test(f"ANC {test_name}: no output / no reachable nodes")
@@ -707,8 +831,8 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name):
             log.error("Node %s: ANC %s FAILED - %s", host, test_name, reason)
             failed_nodes[host] = reason
             continue
-        reason = _evaluate_node(cluster_dict, host, out_dict[host] or "", base,
-                                test_name)
+        reason = _evaluate_node(cluster_dict, host, out_dict[host] or "",
+                                log_base, test_name)
         if reason:
             log.error("Node %s: ANC %s FAILED - %s", host, test_name, reason)
             failed_nodes[host] = reason
@@ -721,3 +845,48 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name):
         )
 
     update_test_result()
+
+
+# =========================================================================
+# Per-group test scaffolding
+# =========================================================================
+class AncGroupTest:
+    '''
+    Base class for a single-ANC-group suite.
+
+    A per-group suite subclasses this and sets ``GROUP`` to the ANC group name.
+    Running the suite installs/verifies ANC and fixes ROCm ldconfig as
+    pre-tasks, then runs just that one group. The test name (and therefore the
+    log subpath ``.../anc_logs/test_<GROUP>/<timestamp>``) is ``test_<GROUP>``.
+
+    The per-group suite files under cpu/ and gpu/ are GENERATED from the group
+    lists in this module by build_tools/gen_anc_suites.py (``make
+    gen-anc-suites``); do not hand-edit them. To add/remove a group, edit
+    CPU_GROUPS / GPU_GROUPS here and regenerate.
+
+    Fixtures cluster_dict / config_dict / phdl come from the ANC conftest.py.
+    '''
+
+    GROUP = None  # set by subclass, e.g. "cpu_all"
+
+    def test_install_anc(self, phdl, config_dict):
+        '''Pre-task: install/verify ANC before running the group.'''
+        log.info("ANC group '%s' Pre-Task: install/verify ANC", self.GROUP)
+        install_anc(phdl, config_dict)
+
+    def test_rocm_ldconfig(self, phdl):
+        '''Pre-task: ensure ROCm libs are resolvable before running the group.'''
+        log.info("ANC group '%s' Pre-Task: ensure ROCm ldconfig", self.GROUP)
+        ensure_rocm_ldconfig(phdl)
+
+    def test_group(self, phdl, cluster_dict, config_dict):
+        '''Run this suite's single ANC group and collect/judge its logs.'''
+        assert self.GROUP, "AncGroupTest subclass must set GROUP"
+        run_anc_groups(
+            phdl, cluster_dict, config_dict, [self.GROUP], f"test_{self.GROUP}"
+        )
+
+
+def anc_group_class_name(group):
+    '''Return the CamelCase test-class name for a group (e.g. cpu_all->CpuAll).'''
+    return "".join(part.capitalize() for part in group.split("_"))

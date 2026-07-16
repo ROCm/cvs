@@ -7,9 +7,12 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 '''
-Shared pytest fixtures for the ANC CVS suites (anc_installation, anc_test_cpu,
-anc_test_gpu). Each suite loads the same cluster/config JSON and opens one
-parallel-SSH handle across all nodes.
+Shared pytest fixtures for the ANC CVS suites (anc_installation, the per-group
+suites under cpu/ and gpu/, and the exec-all suites). Each suite loads the same
+cluster/config JSON and opens one parallel-SSH handle across all nodes.
+
+This conftest lives at tests/anc/ so its fixtures also apply to the generated
+per-group suites in the cpu/ and gpu/ subfolders.
 '''
 
 import json

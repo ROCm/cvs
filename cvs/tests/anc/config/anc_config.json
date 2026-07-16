@@ -6,6 +6,8 @@
         "anc_version": "1.4.7",
         "anc_release_url": "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.4.7/anc-release-helios-nda-1.4.7-rpm-linux-x64.tar.gz",
         "cvs_home": "{home}/cvs",
-        "anc_root_dir": "anc"
+        "anc_root_dir": "anc",
+        "print_all_to_console": "True",
+        "log_folder_path": "{runner_log_folder}/anc_logs/<test_name>/<timestamp>"
     }
 }

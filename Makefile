@@ -16,7 +16,7 @@ PYLINT = $(RUFF_VENV_DIR)/bin/pylint
 CVS = $(TEST_VENV_DIR)/bin/cvs
 
 .PHONY: all help sdist build test-venv cvs-venv install installtest ut test \
-        doc-venv html-doc clean_doc_venv \
+        doc-venv html-doc clean_doc_venv gen-anc-suites \
         clean_test_venv clean_cvs_venv clean_sdist clean_pycache clean
 
 all: build test-venv installtest test
@@ -39,8 +39,19 @@ help:
 	@echo "  unsafe-lint-fix - Interactive unsafe lint fixes"
 	@echo "  html-doc        - Build and serve docs with live-reload at http://localhost:$(DOC_PORT)"
 	@echo "                    Override port: make html-doc DOC_PORT=9090"
+	@echo "  gen-anc-suites  - Regenerate per-group ANC suite files from anc_lib group lists"
 	@echo "  all             - Run build, test-venv, installtest, and test"
 	@echo "  clean           - Remove virtual environment, build artifacts, and Python cache files"
+
+gen-anc-suites:
+	@echo "Generating per-group ANC suite files from anc_lib group lists..."
+	@if [ -x "$(CVS_VENV_DIR)/bin/python" ]; then \
+		"$(CVS_VENV_DIR)/bin/python" build_tools/gen_anc_suites.py; \
+	elif [ -x "$(TEST_VENV_DIR)/bin/python" ]; then \
+		"$(TEST_VENV_DIR)/bin/python" build_tools/gen_anc_suites.py; \
+	else \
+		$(PYTHON) build_tools/gen_anc_suites.py; \
+	fi
 
 sdist: clean_sdist
 	@echo "Building source distribution..."
