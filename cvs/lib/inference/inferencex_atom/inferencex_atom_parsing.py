@@ -69,7 +69,10 @@ ENFORCED_METRICS = frozenset(_tiered)
 
 def to_client_metrics(raw, *, tp, isl):
     """Map an ATOM ``results.json`` dict to the ``client.*`` namespace for IX."""
-    m = _vllm_to_client_metrics(raw, tp=tp, isl=isl)
+    # InferenceX ATOM has no pipeline-parallel concept (single-node TP only,
+    # see InferenceXAtomParams/InferenceXAtomJob) -- pp=1 keeps per_gpu_throughput
+    # numerically identical to before to_client_metrics required pp.
+    m = _vllm_to_client_metrics(raw, tp=tp, isl=isl, pp="1")
     m["client.output_tput_per_gpu"] = _safe_div(raw.get("output_throughput"), tp)
     return m
 
