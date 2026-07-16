@@ -5,11 +5,19 @@ This directory packages the ANC validation suite as CVS tests:
 | File | `cvs run` command | Purpose |
 | --- | --- | --- |
 | `anc_installation.py` | `cvs run anc_installation` | Download and install the ANC tool on every node. |
-| `anc_cvs.py` | `cvs run anc_cvs` | Run the ANC CPU/GPU validation groups and collect their artifacts. |
+| `anc_test_cpu.py` | `cvs run anc_test_cpu` | Install ANC (pre-task) then run the ANC **CPU** validation groups and collect artifacts. |
+| `anc_test_gpu.py` | `cvs run anc_test_gpu` | Install ANC (pre-task) then run the ANC **GPU** validation groups and collect artifacts. |
 
-`anc_cvs.py` **presumes ANC is already installed** at `<cvs_home>/<anc_root_dir>`
-on every node, so `anc_installation` must be run first (or ANC installed by some
-other means).
+The `anc_test_cpu` / `anc_test_gpu` suites **install ANC themselves** as a
+pre-task (skipping the install when every node already reports the configured
+`anc_version`), so you do not need to run `anc_installation` first. Shared
+logic — package install by archive flavour (deb/rpm/tar), version check, group
+execution, and artifact collection — lives in `cvs/lib/anc_lib.py`;
+shared pytest fixtures live in this directory's `conftest.py`.
+
+The CPU/GPU group sets are defined by `CPU_GROUPS` / `GPU_GROUPS` in
+`anc_lib.py` and run in a single `anc.py -g <groups...>` invocation per suite.
+ANC is invoked from its installed location `/opt/amdtools/anc/anc.py`.
 
 ---
 
@@ -20,9 +28,9 @@ other means).
 
   ```bash
   make install
-  source tesla_venv/bin/activate
+  source fremont_venv/bin/activate
   cvs --version          # sanity check
-  cvs list               # anc_installation and anc_cvs should appear
+  cvs list               # anc_installation, anc_test_cpu, anc_test_gpu should appear
   ```
 
   See the repository root `README.md` for full build/setup details.
@@ -94,9 +102,11 @@ works even when the runner and nodes have different home paths.
 
 ## 3. Install ANC on the target nodes
 
-ANC must be present at `<cvs_home>/<anc_root_dir>` on every **target node**
-(the nodes the test runs against) before `anc_cvs` can run. You can install it
-in either of two ways.
+The `anc_test_cpu` / `anc_test_gpu` suites install ANC as a pre-task, so a
+separate install step is **optional**. Run `anc_installation` on its own when
+you want to install/refresh ANC without running a validation group. ANC is
+installed to `/opt/amdtools/anc` (deb/rpm), with the entrypoint at
+`/opt/amdtools/anc/anc.py`. You can install it in either of the ways below.
 
 ### Option A - from the head node (recommended)
 
@@ -140,21 +150,34 @@ This is exactly the sequence performed by `anc_installation` - see
 
 ## 4. Run the ANC validation tests
 
+Each suite first installs/verifies ANC (pre-task), then runs its group set on
+**all** nodes in parallel with a single `anc.py -g <groups...>` invocation.
+
+CPU validation:
+
 ```bash
-cvs run anc_cvs \
+cvs run anc_test_cpu \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/tests/anc/config/anc_config.json
 ```
 
-This runs two tests on **all** nodes in parallel:
-
-- `test_cpu` -> `sudo ./anc.py --group cpu_all`
-- `test_gpu` -> `sudo ./anc.py --group gpu_mfg_l10`
-
-To run just one of them, use pytest's `-k` filter (forwarded by `cvs run`):
+GPU validation:
 
 ```bash
-cvs run anc_cvs -k test_cpu \
+cvs run anc_test_gpu \
+  --cluster_file cvs/input/cluster_file/cluster.json \
+  --config_file cvs/tests/anc/config/anc_config.json
+```
+
+- `anc_test_cpu` runs `sudo ./anc.py -g <CPU_GROUPS>`
+- `anc_test_gpu` runs `sudo ./anc.py -g <GPU_GROUPS>`
+
+The exact group lists are defined by `CPU_GROUPS` / `GPU_GROUPS` in
+`cvs/lib/anc_lib.py`. To skip the install pre-task and run only the
+group test, add pytest's `-k` filter (forwarded by `cvs run`):
+
+```bash
+cvs run anc_test_cpu -k test_cpu \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/tests/anc/config/anc_config.json
 ```
