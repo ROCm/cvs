@@ -1,0 +1,44 @@
+{
+    "host_precheck": {
+        "_comment": "Configuration for host_precheck.py CVS test suite",
+
+        "rdma_devices": [
+            "ionic_0", "ionic_1", "ionic_2", "ionic_3",
+            "ionic_4", "ionic_5", "ionic_6", "ionic_7"
+        ],
+
+        "required_limits": [
+            "root soft memlock unlimited",
+            "root hard memlock unlimited",
+            "root soft nofile 1048576",
+            "root hard nofile 1048576",
+            "ubuntu soft memlock unlimited",
+            "ubuntu hard memlock unlimited",
+            "ubuntu soft nofile 1048576",
+            "ubuntu hard nofile 1048576"
+        ],
+
+        "bnxt_re_version": "236.1.155.0",
+        "bnxt_en_version": "1.10.3-236.1.155.0",
+
+        "ionic_nic_count": 8,
+        "ionic_fw_version": "1.117.5-a-56",
+        "ionic_host_sw_version": "1.117.5-a-56",
+
+        "rdma_netdev_map": {
+            "ionic_0": "ens1f0np0",
+            "ionic_1": "ens1f1np0",
+            "ionic_2": "ens2f0np0",
+            "ionic_3": "ens2f1np0",
+            "ionic_4": "ens3f0np0",
+            "ionic_5": "ens3f1np0",
+            "ionic_6": "ens4f0np0",
+            "ionic_7": "ens4f1np0"
+        },
+
+        "dcqcn_enabled": false,
+        "pfc_enabled": false,
+        "qos_enabled": false
+    }
+}
+
