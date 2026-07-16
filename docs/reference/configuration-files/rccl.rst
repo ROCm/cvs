@@ -338,6 +338,49 @@ All cluster configurations require an environment script to be sourced before RC
 
 The environment script contains essential RCCL/NCCL/UCX tuning parameters and paths required for proper test execution.
 
+Known issue: bnxt_re (Thor2) multi-node GPU Direct RDMA failure
+=================================================================
+
+**Symptom:** on bnxt_re (Broadcom Thor2) clusters, multi-node RCCL/NCCL jobs fail
+symmetrically on every node during ``ncclCommInitRank`` with:
+
+.. code-block:: text
+
+  NET/IB: Peermem not available, falling back to GPU Direct RDMA (DMAbuf) for device 0
+  Call to ibv_reg_mr_iova2 failed with error Bad address
+
+with a matching kernel-side error in ``dmesg``:
+
+.. code-block:: text
+
+  infiniband bng_re0: bng_re_reg_user_mr: ib_umem_get failed! rc = -14
+
+**Root cause:** this is not a per-node config or cabling issue -- it reproduces
+identically on every node because it is a build/config gap. RCCL's
+``src/transport/net.cc`` only compiles its ROCm-native GPU memory registration
+path (``hsa_amd_portable_export_dmabuf``) when built against
+``HIP_VERSION < 71260540``. On newer ROCm builds (``HIP_VERSION >= 71260540``),
+it instead takes a CUDA-style code path that additionally requires
+``ncclCuMemEnable()`` (``NCCL_CUMEM_ENABLE``) to be true. Because
+``NCCL_CUMEM_ENABLE`` defaults to ``0`` on ROCm/RCCL, that condition is never
+met, so RCCL silently falls through to a plain (non-DMA-BUF) ``ibv_reg_mr_iova2``
+call on a raw GPU device pointer. Without a peer-memory kernel module,
+``bnxt_re``'s driver cannot pin that pointer via ``get_user_pages`` and rejects
+it with ``EFAULT`` ("Bad address").
+
+**Fix:** set ``NCCL_CUMEM_ENABLE=1`` (alongside ``NCCL_DMABUF_ENABLE=1``) in the
+environment script used for bnxt_re/Thor2 clusters. ``input/env_file/rccl/thor2_env_script.sh``
+sets this by default. Enabling CUMEM also lets NCCL recognize GPUs on a
+UALoE/scale-up fabric as directly P2P-reachable (``P2P/CUMEMMNNVL``), bypassing
+the NET/IB transport -- and its DMA-BUF gap -- entirely when a scale-up fabric
+is present.
+
+Verified on a 2-node bnxt_re/Helios cluster (4 GPUs/node, 8 ranks total): with
+``NCCL_CUMEM_ENABLE=0`` every collective failed at ``ncclCommInitRank``; with
+``NCCL_CUMEM_ENABLE=1`` all collectives (``all_reduce_perf``, ``all_gather_perf``,
+``reduce_scatter_perf``, ``alltoall_perf``, ``broadcast_perf``; fp32 and bf16;
+1 KB-1 GB) passed.
+
 Validation and artifacts
 ========================
 
