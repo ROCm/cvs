@@ -39,7 +39,9 @@
             "verify_lat_dip": "True",
             "_comment_cvs_exec_timeout": "Optional. CVS-side outer cap on the SSH-exec call wrapping mpirun (seconds, default 2400).",
             "cvs_exec_timeout": "2400",
-            "rccl_result_file": "/home/{user-id}/rccl_result_file.json"
+            "rccl_result_file": "/home/{user-id}/rccl_result_file.json",
+            "pairwise_min_bw": "300",
+            "_comment_pairwise_min_bw": "Minimum bus BW in GB/s for Phase 1 pairwise and Phase 2 incremental checks. Set to 0 to skip BW check."
         },
 
         "_comment_regression": "New regression object format using NCCL_* environment variable names. Creates Cartesian product of all combinations. Channel config uses 'min-max' format (e.g., '16-16') or 'default'. Tree algorithm is automatically filtered to only run with all_reduce_perf collective.",
