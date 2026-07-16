@@ -41,7 +41,20 @@ def _safe_div(num, den):
         return None
 
 
-def to_client_metrics(raw, *, tp, isl):
+def _gpu_count(tp, pp):
+    """int(tp) * int(pp), or None if either is missing/None/non-numeric.
+
+    Pure, never raises. Degrades to None on anything int() can't coerce
+    (missing, empty string, non-numeric string, wrong type) so callers can
+    feed the result straight into `_safe_div`'s existing None/0 guard.
+    """
+    try:
+        return int(tp) * int(pp)
+    except (TypeError, ValueError):
+        return None
+
+
+def to_client_metrics(raw, *, tp, isl, pp):
     """Map a stock `vllm bench serve` results dict to the `client.*` namespace.
 
     `raw` is the already-parsed JSON the load generator writes to its
@@ -50,8 +63,10 @@ def to_client_metrics(raw, *, tp, isl):
     no orchestration -- the caller is responsible for fetching and json-loading
     the artifact and for raising on missing/unparseable input.
 
-    `tp` (tensor parallelism) and `isl` (input sequence length) are the only
-    out-of-band scalars the derivations need.
+    `tp` (tensor parallelism), `isl` (input sequence length), and `pp`
+    (pipeline parallelism) are the only out-of-band scalars the derivations
+    need. `pp` is required (no default) so every call site is forced to state
+    its GPU topology explicitly; single-node callers pass `pp="1"`.
     """
     m = {f"client.{k}": v for k, v in raw.items()}
     # Friendly alias: stock's request_goodput -> client.goodput
@@ -77,7 +92,7 @@ def to_client_metrics(raw, *, tp, isl):
         if failed is not None:
             m["client.failed"] = failed
 
-    m["client.per_gpu_throughput"] = _safe_div(ttot, tp)
+    m["client.per_gpu_throughput"] = _safe_div(ttot, _gpu_count(tp, pp))
     m["client.normalized_ttft_ms_per_tok"] = _safe_div(mean_ttft, isl)
     m["client.decode_latency_ratio"] = _safe_div(p99_itl, p50_itl)
     m["client.decode_throughput_p50"] = _safe_div(1000.0, median_tpot)
