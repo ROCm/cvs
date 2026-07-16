@@ -1,6 +1,7 @@
 import pytest
 import sys
 import os
+import json
 
 from .list_plugin import ListPlugin
 
@@ -61,6 +62,26 @@ Run Commands:
             getattr(args, "extra_pytest_args", []),
         )
 
+    def _validate_json_config(self, path, label):
+        """Validate that a config file exists and is valid JSON."""
+        if not os.path.exists(path):
+            print(f"Error: {label} does not exist: {path}")
+            sys.exit(1)
+        if not os.path.isfile(path):
+            print(f"Error: {label} is not a file: {path}")
+            sys.exit(1)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"Error: {label} is not valid JSON: {path}")
+            print(f"  {e}")
+            sys.exit(1)
+        except OSError as e:
+            print(f"Error: unable to read {label}: {path}")
+            print(f"  {e}")
+            sys.exit(1)
+
     def run_test(
         self,
         test_name,
@@ -74,6 +95,10 @@ Run Commands:
         capture,
         extra_pytest_args,
     ):
+        # Pre-flight check: validate both JSON config files before pytest runs.
+        self._validate_json_config(cluster_file, "--cluster_file")
+        self._validate_json_config(config_file, "--config_file")
+
         module_path = self._find_test(test_name)
         if not module_path:
             print(f"Error: Unknown test '{test_name}'")
