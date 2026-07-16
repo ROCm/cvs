@@ -148,35 +148,6 @@ def pytest_collection_modifyitems(items):
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
 
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    """Attach THIS test's recorded rows to its HTML report detail panel.
-
-    Renders only the rows recorded against the current item's nodeid (so each
-    stage shows its own timings, not every stage's), and reads the unit per row
-    (durations in `s`, the fetch size in `GB`) instead of a fixed "seconds"
-    header. Guarded: a no-op when pytest-html is not installed (the `extras`
-    plugin attribute is absent), so the suite still runs under a bare pytest.
-    """
-    outcome = yield
-    report = outcome.get_result()
-    if report.when != "call":
-        return
-    lc = item.funcargs.get("lifecycle")
-    rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
-    if not rows:
-        return
-    try:
-        import pytest_html
-    except ImportError:
-        return
-    body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
-    html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
-    extras = getattr(report, "extras", [])
-    extras.append(pytest_html.extras.html(html))
-    report.extras = extras
-
-
 def pytest_html_results_table_header(cells):
     """Add Value + Unit columns just before the trailing Links column.
 
