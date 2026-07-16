@@ -21,9 +21,13 @@ subtrees:
     title: Run tests with the container backend
   - file: how-to/run-cluster
     title: Monitor the health of GPU clusters
+  - file: how-to/extend-cvs
+    title: Extend CVS with custom tests
 
 - caption: Reference
   entries:
+  - file: reference/extensions
+    title: Extensions
   - file: reference/configuration-files/configure-config
     title: Test configuration files
     subtrees:

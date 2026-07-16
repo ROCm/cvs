@@ -40,14 +40,10 @@ def get_version():
             cvs_version = "unknown"
     versions.append(f"cvs: {cvs_version}")
 
-    # Get extension version if configured
-    extension_pkg_name = config.get_package_name()
-    if extension_pkg_name != "cvs":
-        try:
-            ext_version = metadata.version(extension_pkg_name)
-        except metadata.PackageNotFoundError:
-            ext_version = "unknown"
-        versions.append(f"{extension_pkg_name}: {ext_version}")
+    # Get versions for every discovered extension (pip metadata, plug-list,
+    # CVS_EXTENSION_PKG_NAMES, or legacy Pattern 1).
+    for ext in config.get_extensions():
+        versions.append(f"{ext.name}: {ext.version}")
 
     return "\n".join(versions)
 

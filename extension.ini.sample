@@ -11,16 +11,35 @@
 #   - This allows cvs to auto-discover extension configuration during runtime
 #   - CVS will look for extension.ini in site-packages/cvs/extension.ini
 #
-# Pattern 2: Standalone extension package(s)
+# Pattern 2: Standalone extension package(s) via environment variable
 #   - Set CVS_EXTENSION_PKG_NAMES environment variable to your extension package name(s)
 #     Example: export CVS_EXTENSION_PKG_NAMES=my_cvs_extension
 #     Example: export CVS_EXTENSION_PKG_NAMES=ext1,ext2,ext3
-#   - CVS will look for extension.ini in each package in order (comma-separated list)
-#   - If CVS_EXTENSION_PKG_NAMES is not set, CVS looks in site-packages/cvs/extension.ini
-#   - Useful when you don't bundle cvs as a submodule
+#   - Each named package is discovered; CVS reads its extension.ini from the
+#     package directory. Useful for CI overrides and non-pip (tar-extracted) packages.
+#
+# Pattern 3: pip metadata auto-discovery (recommended for pip-installable extensions)
+#   - Register an entry point in your extension's pyproject.toml / setup.py:
+#       [project.entry-points."cvs.extensions"]
+#       ext1 = "ext1"
+#   - Any extension installed in the same environment as cvs is auto-discovered,
+#     with no environment variable required.
+#   - Config (tests_dirs/input_dirs) is read from pip metadata first: if the entry
+#     point object exposes `tests_dirs`/`input_dirs`, those are used; otherwise CVS
+#     falls back to the extension.ini shipped inside the package.
+#
+# Pattern 4: Persistent plug-list (cvs extension --plug)
+#   - Run: cvs extension --plug ext1,ext2   (persists to <sys.prefix>/etc/cvs/extensions.txt)
+#   - Remove with: cvs extension --unplug ext2
+#   - A persistent, per-venv equivalent of CVS_EXTENSION_PKG_NAMES. Ideal for
+#     non-pip packages you want registered without re-exporting an env var each session.
+#
+# All discovered extensions are de-duplicated by name and listed by 'cvs --version'
+# and 'cvs extension --list', each with its own version.
 #
 # CONFIGURATION OPTIONS:
-# - package_name: Name of the extension package (shown alongside cvs in version output)
+# - package_name: Name of the extension package (used for Pattern 1 legacy discovery
+#   and shown alongside cvs in version output)
 # - tests_dirs: Comma-separated paths to test directories (relative to site-packages root)
 # - input_dirs: Comma-separated paths to input/config directories (relative to site-packages root)
 
@@ -62,8 +81,5 @@ tests_dirs = cvs_extension/tests
 #
 # Example with multiple directories:
 #   input_dirs = cvs_extension/input1,cvs_extension/input2
-input_dirs = cvs_extension/input1,cvs_extension/input2
-
-# Example with multiple directories:
 #   input_dirs = cvs_extension/input,other_extension/configs
 input_dirs = cvs_extension/input

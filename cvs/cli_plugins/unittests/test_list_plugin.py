@@ -92,8 +92,10 @@ class TestListPluginExtension(unittest.TestCase):
 
             # Mock ExtensionConfig to return extension test directory
             mock_config = mock_config_class.return_value
-            # get_tests_dirs now returns tuples (module_path, abs_path)
-            mock_config.get_tests_dirs.return_value = [("test_extension_pkg.ext_tests", ext_tests_dir)]
+            # get_tests_dirs returns (pkg_name, module_path, abs_path) triples
+            mock_config.get_tests_dirs.return_value = [
+                ("test_extension_pkg", "test_extension_pkg.ext_tests", ext_tests_dir)
+            ]
             mock_config.get_package_name.return_value = "test_extension_pkg"
 
             # Patch discover_tests to use mock config
@@ -118,15 +120,14 @@ class TestListPluginExtension(unittest.TestCase):
 
             # Mock ExtensionConfig
             mock_config = mock_config_class.return_value
-            # get_tests_dirs now returns tuples (module_path, abs_path)
-            mock_config.get_tests_dirs.return_value = [("ext_pkg.ext_tests", ext_tests_dir)]
+            # get_tests_dirs returns (pkg_name, module_path, abs_path) triples
+            mock_config.get_tests_dirs.return_value = [("ext_pkg", "ext_pkg.ext_tests", ext_tests_dir)]
             mock_config.get_package_name.return_value = "ext_pkg"
 
             with patch("cvs.cli_plugins.list_plugin.ExtensionConfig", return_value=mock_config):
                 ListPlugin()
-                # The plugin should have called get_tests_dirs and get_package_name
+                # The plugin should have called get_tests_dirs
                 mock_config.get_tests_dirs.assert_called()
-                mock_config.get_package_name.assert_called()
 
     def test_list_tests_no_argument(self):
         """Test list_tests method with no argument lists all tests by package"""

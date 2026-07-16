@@ -28,12 +28,14 @@ The component public repository is located at `https://github.com/ROCm/cvs <http
     * :doc:`Execute arbitrary commands on cluster nodes <how-to/execute-cluster-commands>`
     * :doc:`Copy files and directories to cluster nodes <how-to/copy-to-cluster>`
     * :doc:`Monitor the health of GPU clusters <how-to/run-cluster>`
+    * :doc:`Extend CVS with custom tests <how-to/extend-cvs>`
 
 .. grid:: 1
   :gutter: 3
 
   .. grid-item-card:: Reference
 
+    * :doc:`Extensions <reference/extensions>`
     * :doc:`Test configuration files <reference/configuration-files/configure-config>`
 
 To contribute to the documentation, refer to

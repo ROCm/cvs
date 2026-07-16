@@ -34,14 +34,15 @@ class ListPlugin(SubcommandPlugin):
             cvs_tests_path = f"{CORE_PKG_NAME}.{CORE_TESTS_DIR}"
             all_tests_dirs.append((CORE_PKG_NAME, cvs_tests_path, cvs_tests_dir))
 
-        # Extension tests directories - get_tests_dirs now returns tuples (module_path, abs_path)
-        for module_path, abs_path in config.get_tests_dirs():
+        # Extension tests directories - get_tests_dirs returns (pkg_name, module_path, abs_path)
+        # triples so each extension is bucketed under its own package name.
+        for pkg_name, module_path, abs_path in config.get_tests_dirs():
             if os.path.exists(abs_path):
-                all_tests_dirs.append((config.get_package_name(), module_path, abs_path))
+                all_tests_dirs.append((pkg_name, module_path, abs_path))
 
         # Discover tests from all directories
         for pkg_name, tests_path, tests_dir in all_tests_dirs:
-            test_map[pkg_name] = {}
+            test_map.setdefault(pkg_name, {})
             for root, dirs, files in os.walk(tests_dir):
                 for file in files:
                     if file.endswith(".py") and file != "__init__.py":

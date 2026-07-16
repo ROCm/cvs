@@ -85,6 +85,12 @@ done
 # Test: cvs copy-config --list
 run_test "cvs copy-config --list" "$CVS copy-config --list"
 
+# Test: cvs extension --list (list discovered extensions)
+run_test "cvs extension --list" "$CVS extension --list"
+
+# Test: cvs extension --help
+run_test "cvs extension --help" "$CVS extension --help"
+
 # Test: cvs monitor (list all monitors)
 run_test "cvs monitor" "$CVS monitor"
 
