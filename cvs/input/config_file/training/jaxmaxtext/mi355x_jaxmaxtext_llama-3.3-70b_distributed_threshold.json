@@ -1,0 +1,11 @@
+{
+  "_comment": "Thresholds for Llama-3.3-70B BF16 on MI355X distributed. enforce_thresholds=false -> record-only until calibrated.",
+
+  "STEPS=30,BATCH=6,SEQLEN=8192,NODES=1": {
+    "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 350.0 },
+    "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 700.0 },
+    "training.tokens_per_sec_total":   { "kind": "min", "value": 0 },
+    "training.final_loss":             { "kind": "max", "value": 15.0 },
+    "training.loss_decreased":         { "kind": "min", "value": 1 }
+  }
+}
