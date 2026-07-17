@@ -244,7 +244,9 @@ def _variant(serve_args=None, nnodes="2", pp="2", ib_netdev="enp159s0np0", tp="8
         params=params,
         model=SimpleNamespace(id="/models/test-model"),
         paths=SimpleNamespace(log_dir="/logs", models_dir="/models"),
-        roles=SimpleNamespace(server=SimpleNamespace(serve_args=dict(serve_args or {}), env=dict(env or {}), ib_netdev=ib_netdev)),
+        roles=SimpleNamespace(
+            server=SimpleNamespace(serve_args=dict(serve_args or {}), env=dict(env or {}), ib_netdev=ib_netdev)
+        ),
     )
 
 
@@ -789,7 +791,9 @@ class TestStartServerRayBootstrap(unittest.TestCase):
         self.assertIn("rank 2", msg)
         # The loop DID reach the earlier ranks before failing at the last worker.
         self.assertTrue([c for c in _calls_to(orch, HEAD) if "ray start" in c], "head must have bootstrapped")
-        self.assertTrue([c for c in _calls_to(orch, WORKER) if "ray start" in c], "rank-1 worker must have bootstrapped")
+        self.assertTrue(
+            [c for c in _calls_to(orch, WORKER) if "ray start" in c], "rank-1 worker must have bootstrapped"
+        )
         # No serve launched anywhere after the abort.
         self.assertEqual([c for c, _ in orch.calls if "vllm serve" in c], [])
 
