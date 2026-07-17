@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "framework": "jax_maxtext",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi300x_jax-maxtext_llama-3.3-70b_single_threshold.json",
+
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "{shared_fs}/cache/maxtext",
+    "log_dir": "{shared_fs}/LOGS/jax_maxtext",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+
+  "model": {
+    "id": "llama3.3-70b",
+    "remote": 0,
+    "precision": "bfloat16"
+  },
+
+  "container": {
+    "lifetime": "per_run",
+    "name": "rocm-jax-maxtext-llama3.3-70b-single",
+    "image": "rocm/jax-training:maxtext-v26.3",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm-size": "256G",
+        "volume": [
+          "/home/{user-id}:/home/{user-id}",
+          "/tmp/TRAINING_LOGS:/workspace/maxtext/output"
+        ]
+      }
+    }
+  },
+
+  "training": {
+    "distributed": false,
+    "steps": 30,
+    "enable_checkpointing": false,
+    "train_module": "maxtext.trainers.pre_train.train",
+
+    "maxtext_config": {
+      "base_config": "base.yml",
+      "hardware": "gpu",
+      "attention": "cudnn_flash_te",
+      "dtype": "bfloat16",
+      "dataset_type": "synthetic",
+      "remat_policy": "full",
+      "use_iota_embed": true,
+      "scan_layers": true,
+      "per_device_batch_size": 2,
+      "max_target_length": 8192,
+      "async_checkpointing": false,
+      "quantization": "",
+      "weight_dtype": "bfloat16",
+      "shardy": false,
+      "logits_dot_in_fp32": false,
+      "megablox": false,
+      "packing": true,
+      "enable_goodput_recording": false,
+      "monitor_goodput": false,
+      "optimizer_memory_host_offload": false,
+      "param_scan_axis": 1,
+      "ici_fsdp_parallelism": 8,
+      "ici_data_parallelism": 1,
+      "ici_sequence_parallelism": 1,
+      "ici_tensor_parallelism": 1,
+      "ici_pipeline_parallelism": 1,
+      "max_segments_per_seq": 32,
+      "skip_first_n_steps_for_profiler": 3
+    },
+
+    "tokenizer": {
+      "hf_model_id": "NousResearch/Meta-Llama-3-70B",
+      "tokenizer_path": "{paths.models_dir}/Meta-Llama-70-B"
+    },
+
+    "nic_type": "none",
+
+    "env_vars": {
+      "GPU_MAX_HW_QUEUES": "2",
+      "HSA_FORCE_FINE_GRAIN_PCIE": "1",
+      "HIP_FORCE_DEV_KERNARG": "1",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.93",
+      "NCCL_DEBUG": "ERROR",
+      "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "1",
+      "NVTE_USE_HIPBLASLT": "1",
+      "NVTE_FUSED_ATTN": "1",
+      "NVTE_CK_USES_BWD_V3": "1",
+      "NVTE_CK_USES_FWD_V3": "1",
+      "NVTE_CK_IS_V3_ATOMIC_FP32": "0",
+      "NVTE_CK_HOW_V3_BF16_CVT": "2",
+      "NVTE_FUSED_ATTN_CK": "1",
+      "NVTE_FUSED_ATTN_AOTRITON": "0"
+    },
+
+    "xla_flags": {
+      "xla_gpu_enable_latency_hiding_scheduler": "True",
+      "xla_gpu_enable_triton_gemm": "False",
+      "xla_gpu_memory_limit_slop_factor": "95",
+      "xla_gpu_enable_command_buffer": "",
+      "xla_gpu_enable_cublaslt": "True",
+      "xla_gpu_autotune_level": "0"
+    }
+  }
+}

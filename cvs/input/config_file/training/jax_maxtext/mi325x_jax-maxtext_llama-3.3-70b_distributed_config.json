@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "framework": "jax_maxtext",
+  "gpu_arch": "mi325x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_jax-maxtext_llama-3.3-70b_distributed_threshold.json",
+
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "{shared_fs}/cache/maxtext",
+    "log_dir": "{shared_fs}/LOGS/jax_maxtext",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+
+  "model": {
+    "id": "llama3.3-70b",
+    "remote": 0,
+    "precision": "bfloat16"
+  },
+
+  "container": {
+    "lifetime": "per_run",
+    "name": "rocm-jax-maxtext-llama3.3-70b",
+    "image": "rocm/jax-training:maxtext-v26.3",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm-size": "256G",
+        "volume": [
+          "/home/{user-id}:/home/{user-id}",
+          "/dev/infiniband:/dev/infiniband",
+          "/tmp/TRAINING_LOGS:/workspace/maxtext/output"
+        ]
+      }
+    }
+  },
+
+  "training": {
+    "distributed": true,
+    "steps": 30,
+    "enable_checkpointing": false,
+    "train_module": "maxtext.trainers.pre_train.train",
+
+    "maxtext_config": {
+      "base_config": "base.yml",
+      "hardware": "gpu",
+      "attention": "cudnn_flash_te",
+      "dtype": "bfloat16",
+      "dataset_type": "synthetic",
+      "remat_policy": "full",
+      "use_iota_embed": true,
+      "scan_layers": true,
+      "per_device_batch_size": 3,
+      "max_target_length": 8192,
+      "async_checkpointing": false,
+      "quantization": "",
+      "weight_dtype": "bfloat16",
+      "shardy": false,
+      "logits_dot_in_fp32": false,
+      "megablox": false,
+      "packing": true,
+      "enable_goodput_recording": false,
+      "monitor_goodput": false,
+      "optimizer_memory_host_offload": false,
+      "param_scan_axis": 1,
+      "ici_fsdp_parallelism": 8,
+      "ici_data_parallelism": 1,
+      "ici_sequence_parallelism": 1,
+      "ici_tensor_parallelism": 1,
+      "ici_pipeline_parallelism": 1,
+      "dcn_data_parallelism": -1,
+      "dcn_fsdp_parallelism": 1,
+      "dcn_pipeline_parallelism": 1,
+      "dcn_tensor_parallelism": 1,
+      "dcn_sequence_parallelism": 1,
+      "max_segments_per_seq": 32,
+      "skip_first_n_steps_for_profiler": 3
+    },
+
+    "tokenizer": {
+      "hf_model_id": "NousResearch/Meta-Llama-3-70B",
+      "tokenizer_path": "{paths.models_dir}/Meta-Llama-70-B"
+    },
+
+    "nic_type": "thor2",
+
+    "rdma_lib": {
+      "host_source_file": "/usr/local/lib/libbnxt_re-rdmav34.so",
+      "container_mount_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+      "container_dest_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so"
+    },
+
+    "env_vars": {
+      "GPU_MAX_HW_QUEUES": "2",
+      "HSA_FORCE_FINE_GRAIN_PCIE": "1",
+      "HIP_FORCE_DEV_KERNARG": "1",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.93",
+      "NCCL_DEBUG": "ERROR",
+      "NCCL_PROTO": "Simple",
+      "NCCL_IB_TC": "41",
+      "NCCL_IB_SL": "0",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_CHECKS_DISABLE": "1",
+      "NCCL_CROSS_NIC": "0",
+      "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "1",
+      "NVTE_USE_HIPBLASLT": "1",
+      "NVTE_FUSED_ATTN": "1",
+      "NVTE_CK_USES_BWD_V3": "1",
+      "NVTE_CK_USES_FWD_V3": "1",
+      "NVTE_CK_IS_V3_ATOMIC_FP32": "0",
+      "NVTE_CK_HOW_V3_BF16_CVT": "2",
+      "NVTE_FUSED_ATTN_CK": "1",
+      "NVTE_FUSED_ATTN_AOTRITON": "0"
+    },
+
+    "xla_flags": {
+      "xla_gpu_enable_latency_hiding_scheduler": "True",
+      "xla_gpu_enable_triton_gemm": "False",
+      "xla_gpu_memory_limit_slop_factor": "95",
+      "xla_gpu_enable_command_buffer": "",
+      "xla_gpu_enable_cublaslt": "True",
+      "xla_gpu_autotune_level": "0",
+      "xla_gpu_enable_reduce_scatter_combine_by_dim": "false",
+      "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592",
+      "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592",
+      "xla_gpu_all_gather_combine_threshold_bytes": "8589934592",
+      "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
+    },
+
+    "nccl": {
+      "ib_hca_list": "<changeme>",
+      "ib_hca": "<changeme>",
+      "socket_ifname": "enp159s0np0",
+      "gloo_socket_ifname": "enp159s0np0",
+      "ib_tc": "41",
+      "ib_sl": "0",
+      "ib_gid_index": "3"
+    },
+
+    "jax_distributed": {
+      "coordinator_ip": "<changeme>",
+      "coordinator_port": "12346",
+      "initialization_timeout_seconds": "1800",
+      "heartbeat_timeout_seconds": "900"
+    }
+  }
+}
