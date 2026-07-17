@@ -1,0 +1,31 @@
+{
+    "_comment": "ANC test configuration. Keys prefixed with '_comment' are documentation only and ignored at runtime.",
+    "anc": {
+        "_comment_description": "Human-readable label for this suite; shown in logs/reports.",
+        "description": "Automated Network Connectivity checks",
+
+        "_comment_test_timeout": "Per-group execution timeout in seconds (7200 = 2 hours). ANC is killed if a group exceeds this.",
+        "test_timeout": 7200,
+
+        "_comment_anc_version": "Expected ANC version. The install pre-task skips (re)installation when this version is already present on the node, and post-verifies the install matches.",
+        "anc_version": "1.4.7",
+
+        "_comment_anc_release_url": "URL of the ANC release archive to download and install. Flavour (deb/rpm/tar) is auto-detected from the filename.",
+        "anc_release_url": "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.4.7/anc-release-helios-nda-1.4.7-rpm-linux-x64.tar.gz",
+
+        "_comment_cvs_home": "Working/install root on each node. '{home}' resolves to the SSH user's home directory.",
+        "cvs_home": "{home}/cvs",
+
+        "_comment_anc_root_dir": "Directory name under cvs_home where ANC is staged.",
+        "anc_root_dir": "anc",
+
+        "_comment_print_all_to_console": "'True' echoes ANC group output to the console; 'False' suppresses it (install/ldconfig/version diagnostics still print).",
+        "print_all_to_console": "True",
+
+        "_comment_log_folder_path": "Controller-side destination for collected ANC logs. '{home}' -> /home/<userid>; '<test_name>' -> the group's test name (e.g. test_ampttk_full); '<timestamp>' -> per-run stamp (appended automatically if omitted).",
+        "log_folder_path": "{home}/cvs_logs/anc_logs/<test_name>/<timestamp>",
+
+        "_comment_ADD_ANC_LOGS_TO_HTML_REPORTS": "'True' always bundles the collected ANC log tree into the pytest-html report zip. 'False' (default) bundles it only when the test fails, so passing runs stay lean while failures always carry their logs.",
+        "ADD_ANC_LOGS_TO_HTML_REPORTS": "False"
+    }
+}

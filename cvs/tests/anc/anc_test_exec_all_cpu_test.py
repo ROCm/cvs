@@ -47,9 +47,10 @@ class TestAncExecAllCpuCoreTasks:
     '''Run every CPU group sequentially, one test (and log dir) per group.'''
 
     @pytest.mark.parametrize("group", anc_lib.CPU_GROUPS)
-    def test_cpu_group(self, phdl, cluster_dict, config_dict, group):
+    def test_cpu_group(self, phdl, cluster_dict, config_dict, group, request):
         '''Run one CPU group and collect/judge its logs independently.'''
         log.info("ANC exec-all CPU: running group '%s'", group)
         anc_lib.run_anc_groups(
-            phdl, cluster_dict, config_dict, [group], f"test_{group}"
+            phdl, cluster_dict, config_dict, [group], f"test_{group}",
+            request=request,
         )

@@ -29,6 +29,21 @@ from cvs.lib import globals
 log = globals.log
 
 
+# Merge any extra report links stashed on the test item during the run (e.g. ANC
+# log archives attached by anc_lib._attach_anc_logs_to_html). pytest-html 4.x
+# renders links from report.extras; the core makereport hook sets report.extras
+# first, so this wrapper appends afterwards on the "call" phase. Applies to the
+# per-group cpu/ and gpu/ suites and the exec-all suites under this directory.
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):  # noqa: ARG001
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call":
+        pending = getattr(item, "_anc_html_extras", None)
+        if pending:
+            report.extras = list(getattr(report, "extras", [])) + list(pending)
+
+
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
     '''Path to the ANC cluster JSON file, provided via --cluster_file.'''

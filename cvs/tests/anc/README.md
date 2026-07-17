@@ -2,6 +2,12 @@
 
 This directory packages the ANC validation suite as CVS tests.
 
+> **ANC requires root permissions to execute.** Every ANC group is invoked as
+> `sudo ./anc.py`, and artifact collection archives ANC's root-owned log
+> directory with `sudo tar`. The runner must therefore have **passwordless
+> `sudo`** on each target node (see [Prerequisites](#1-prerequisites)). Without
+> root, ANC will not run and log collection will fail.
+
 **Installation:**
 
 | File | `cvs run` command | Purpose |
@@ -71,8 +77,11 @@ fail is read from each run's `console.log` final `ANC_SUCCESS [0]`.
   See the repository root `README.md` for full build/setup details.
 
 - Passwordless SSH from the runner to every node (key-based), and passwordless
-  `sudo` on each node. ANC runs as `sudo ./anc.py`, and artifact collection
-  reclaims log ownership with `sudo chown`.
+  `sudo` (root) on each node. **ANC requires root to execute** — it runs as
+  `sudo ./anc.py`, and artifact collection archives the root-owned log directory
+  with `sudo tar` and then chowns the tarball back to the SSH user. After the
+  logs are pulled to the controller they are chowned to the user running the
+  test.
 
 ---
 
@@ -108,7 +117,7 @@ Provide your SSH user, private key, and the nodes to target:
 
 ### Config file
 
-The ANC config lives at `config/anc_config.json`:
+The ANC config lives at `cvs/input/config_file/anc/anc_config.json`:
 
 ```json
 {
@@ -116,22 +125,36 @@ The ANC config lives at `config/anc_config.json`:
     "anc": {
         "description": "Automated Network Connectivity checks",
         "test_timeout": 7200,
-        "anc_release_url": "https://.../anc-release-helios-nda-1.3.2-tar-linux-x64.tar.gz",
+        "anc_version": "1.4.7",
+        "anc_release_url": "https://.../anc-release-helios-nda-1.4.7-rpm-linux-x64.tar.gz",
         "cvs_home": "{home}/cvs",
-        "anc_root_dir": "anc"
+        "anc_root_dir": "anc",
+        "print_all_to_console": "True",
+        "log_folder_path": "{home}/cvs_logs/anc_logs/<test_name>/<timestamp>",
+        "ADD_ANC_LOGS_TO_HTML_REPORTS": "False"
     }
 }
 ```
 
+Each key is documented inline in the shipped config via a matching
+`_comment_<key>` sibling (keys prefixed with `_comment` are ignored at runtime).
+
 | Key | Meaning |
 | --- | --- |
 | `test_timeout` | Per-group execution timeout in seconds (default 7200 = 2 h). |
-| `anc_release_url` | ANC release tarball URL (used by `anc_installation`). |
+| `anc_version` | Expected ANC version; install pre-task skips (re)install when already present and post-verifies the match. |
+| `anc_release_url` | ANC release archive URL (used by `anc_installation`). Flavour (deb/rpm/tar) is auto-detected from the filename. |
 | `cvs_home` | Install root on each node. `{home}` resolves to the SSH user's home. |
 | `anc_root_dir` | ANC directory name under `cvs_home`. ANC is run from `<cvs_home>/<anc_root_dir>`. |
+| `print_all_to_console` | `True` echoes ANC group output to console; `False` suppresses it (diagnostics still print). |
+| `log_folder_path` | Controller-side destination for collected logs. Tokens: `{home}` → `/home/<userid>`, `<test_name>` → the group's test name, `<timestamp>` → per-run stamp (appended if omitted). |
+| `ADD_ANC_LOGS_TO_HTML_REPORTS` | `True` always bundles the collected ANC log tree (as a `.tar.gz` with a clickable link) into the pytest-html report zip. `False` (default) bundles it **only when the test fails**. |
 
 `{home}` is resolved on the controller from the cluster file's `username`, so it
-works even when the runner and nodes have different home paths.
+works even when the runner and nodes have different home paths. With the default
+`log_folder_path`, logs land at
+`/home/<userid>/cvs_logs/anc_logs/<test_name>/<timestamp>` (under a per-node
+`<ip>_<hostname>/` subdir).
 
 ---
 
@@ -152,7 +175,7 @@ file:
 ```bash
 cvs run anc_installation \
   --cluster_file cvs/input/cluster_file/cluster.json \
-  --config_file cvs/tests/anc/config/anc_config.json
+  --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
 This downloads the `anc_release_url` tarball, extracts ANC into
@@ -193,7 +216,7 @@ CPU validation:
 ```bash
 cvs run anc_test_cpu \
   --cluster_file cvs/input/cluster_file/cluster.json \
-  --config_file cvs/tests/anc/config/anc_config.json
+  --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
 GPU validation:
@@ -201,7 +224,7 @@ GPU validation:
 ```bash
 cvs run anc_test_gpu \
   --cluster_file cvs/input/cluster_file/cluster.json \
-  --config_file cvs/tests/anc/config/anc_config.json
+  --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
 - `anc_test_cpu` runs `sudo ./anc.py -g <CPU_GROUPS>`
@@ -214,7 +237,7 @@ group test, add pytest's `-k` filter (forwarded by `cvs run`):
 ```bash
 cvs run anc_test_cpu -k test_cpu \
   --cluster_file cvs/input/cluster_file/cluster.json \
-  --config_file cvs/tests/anc/config/anc_config.json
+  --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
 ---
@@ -258,3 +281,17 @@ Collected files:
 - **Mandatory:** `journal.log`, `console.log`.
 - **Optional (collected when present):** `summary.json`, `errors.json`,
   `system_monitor.json`.
+
+### In the HTML report
+
+When you pass `--html`, each group's collected ANC log tree can also be bundled
+into the report zip as a single `.tar.gz` with a clickable **"ANC logs: <test>"**
+link, controlled by `ADD_ANC_LOGS_TO_HTML_REPORTS`:
+
+- `True` — always attach (pass or fail).
+- `False` (default) — attach **only when the test fails** (the link is labelled
+  `... (FAILED)`), so passing runs keep the report small while failures always
+  ship their full logs.
+
+The full tree is always written to `log_folder_path` regardless of this flag;
+the flag only governs what gets embedded in the HTML report bundle.

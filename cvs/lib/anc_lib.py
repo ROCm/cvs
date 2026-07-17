@@ -116,6 +116,12 @@ PRINT_ALL_TO_CONSOLE_KEY = "print_all_to_console"
 LOG_FOLDER_PATH_KEY = "log_folder_path"
 DEFAULT_LOG_FOLDER_PATH = "{runner_log_folder}/anc_logs/<test_name>/<timestamp>"
 
+# config anc.ADD_ANC_LOGS_TO_HTML_REPORTS controls whether the collected ANC
+# log tree is bundled into the pytest-html report zip. When True, always attach.
+# When False (default), attach ONLY when the test failed (so passing runs stay
+# lean but failures always carry their evidence).
+ADD_ANC_LOGS_TO_HTML_KEY = "ADD_ANC_LOGS_TO_HTML_REPORTS"
+
 
 def _as_bool(value, default=True):
     '''Interpret a config value (str/bool/None) as a boolean.'''
@@ -598,13 +604,27 @@ def _node_label(single, host, cluster_dict):
     return _sanitize_path_component(f"{ip}_{hostname}")
 
 
-def _claim_remote_logs(single, host, user, log_dir):
-    '''chown ANC's (root-owned) log dir back to the SSH user for SFTP.'''
+def _chown_tree_to_runner(host, root_path):
+    '''Recursively chown an extracted log tree to the current process's UID/GID.
+
+    Best-effort: if the runner lacks privileges to chown (e.g. some entry is
+    root-owned and the process is unprivileged), log a warning rather than
+    failing the whole log-collection step.
+    '''
+    uid = os.getuid()
+    gid = os.getgid()
     try:
-        single.exec(f"sudo chown -R {user} '{log_dir}'", timeout=60)
-    except Exception as exc:  # best-effort; download reports if still locked
-        log.warning("Node %s: could not chown log dir %s: %s", host, log_dir,
-                    exc)
+        os.chown(root_path, uid, gid)
+        for dirpath, dirnames, filenames in os.walk(root_path):
+            for name in dirnames + filenames:
+                try:
+                    os.chown(os.path.join(dirpath, name), uid, gid)
+                except OSError as exc:
+                    log.warning("Node %s: could not chown %s: %s", host,
+                                os.path.join(dirpath, name), exc)
+    except OSError as exc:
+        log.warning("Node %s: could not chown log tree %s: %s", host,
+                    root_path, exc)
 
 
 def _pull_log_dir(single, host, user, log_dir, dest_dir):
@@ -621,23 +641,29 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
       console_log_path is the local path to the extracted console.log on
       success; failure_reason is set (and path None) on any collection error.
     '''
-    # ANC ran under sudo; reclaim ownership so the plain SSH user can read/tar.
-    _claim_remote_logs(single, host, user, log_dir)
-
     log_dir = log_dir.rstrip("/")
     base = os.path.basename(log_dir)
     parent = os.path.dirname(log_dir)
     remote_tar = f"/tmp/anc_{base}.tar.gz"
 
+    # ANC ran under sudo, so log_dir (and its parents, e.g. /root/logs) are
+    # root-owned and unreadable by the plain SSH user. Build the archive under
+    # sudo, then chown it back so SFTP can pull it. `&&` so a tar failure aborts
+    # before the (silent-on-nonzero) exec proceeds to download a missing file.
+    archive_cmd = (
+        f"sudo tar -czf '{remote_tar}' -C '{parent}' '{base}' "
+        f"&& sudo chown {user} '{remote_tar}'"
+    )
     try:
-        single.exec(f"tar -czf '{remote_tar}' -C '{parent}' '{base}'",
-                    timeout=600)
+        single.exec(archive_cmd, timeout=600)
     except Exception as exc:
         return None, f"could not archive log dir {log_dir}: {exc}"
 
     local_tar = os.path.join(dest_dir, f"{base}.tar.gz")
+    # download_file suffixes the local path with '_<host>' (per-host collision
+    # avoidance) and returns {host: actual_path}; use that, not local_tar.
     try:
-        single.download_file(remote_tar, local_tar)
+        downloaded = single.download_file(remote_tar, local_tar)
     except Exception as exc:
         return None, f"could not download log archive from {log_dir}: {exc}"
     finally:
@@ -646,6 +672,14 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
         except Exception as exc:  # best-effort cleanup
             log.warning("Node %s: could not remove remote tar %s: %s", host,
                         remote_tar, exc)
+
+    local_tar = None
+    if isinstance(downloaded, dict) and downloaded:
+        # single-node handle: prefer the host key, else the only entry.
+        local_tar = downloaded.get(host) or next(iter(downloaded.values()))
+    if not local_tar or not os.path.isfile(local_tar):
+        return None, (f"could not archive log dir {log_dir}: remote archive "
+                      f"was not created (check sudo/tar permissions on node)")
 
     try:
         with tarfile.open(local_tar) as tf:
@@ -659,6 +693,10 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
             pass
 
     extracted_dir = os.path.join(dest_dir, base)
+    # ANC archived its logs as root, so entries may carry root ownership. Give
+    # the whole extracted tree back to the user running the test so the logs are
+    # readable/removable without sudo on this box.
+    _chown_tree_to_runner(host, extracted_dir)
     log.info("Node %s: ANC logs copied to %s", host, extracted_dir)
 
     console_path = os.path.join(extracted_dir, CONSOLE_LOG)
@@ -750,7 +788,76 @@ def _evaluate_node(cluster_dict, host, output, log_base, test_name):
     return None
 
 
-def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name):
+def _attach_anc_logs_to_html(request, config_dict, test_name, log_base, failed):
+    '''
+    Bundle this run's collected ANC log tree into the pytest-html report zip.
+
+    The core HtmlReportManager only zips flat files in its report log dir, so
+    the whole per-run ANC tree (log_base, with per-node subdirs) is tarred into a
+    single archive, copied into that dir via add_html_to_report (so it lands in
+    the zip), and linked from the test row via a stashed pytest-html url extra
+    (merged by the repo-root pytest_runtest_makereport hook).
+
+    Gating (per config anc.ADD_ANC_LOGS_TO_HTML_REPORTS):
+      - flag True  -> always attach.
+      - flag False -> attach only when the test failed.
+
+    Best-effort: never turn a reporting problem into a test failure.
+    '''
+    if request is None:
+        return
+    mgr = getattr(request.config, "_html_report_manager", None)
+    if mgr is None or not getattr(mgr, "is_enabled", False):
+        return
+
+    always = _as_bool(config_dict.get("anc", {}).get(ADD_ANC_LOGS_TO_HTML_KEY),
+                      default=False)
+    if not always and not failed:
+        log.info("ANC '%s': skipping HTML log attach (test passed and "
+                 "%s is False)", test_name, ADD_ANC_LOGS_TO_HTML_KEY)
+        return
+
+    if not os.path.isdir(log_base) or not os.listdir(log_base):
+        log.warning("ANC '%s': no collected logs at %s to attach to HTML "
+                    "report", test_name, log_base)
+        return
+
+    tar_path = f"{log_base.rstrip(os.sep)}.tar.gz"
+    try:
+        with tarfile.open(tar_path, "w:gz") as tf:
+            tf.add(log_base, arcname=os.path.basename(log_base.rstrip(os.sep)))
+    except Exception as exc:  # best-effort; do not fail the test
+        log.warning("ANC '%s': could not archive logs for HTML report: %s",
+                    test_name, exc)
+        return
+
+    link_name = f"ANC logs: {test_name}" + (" (FAILED)" if failed else "")
+    try:
+        # Copies the archive into the report's log dir (so it lands in the zip)
+        # and returns its path relative to the main report for linking.
+        rel_path = mgr.add_html_to_report(tar_path, request=request)
+        if rel_path:
+            # pytest-html 4.x renders links from report.extras (not
+            # user_properties); stash the extra so the repo-root
+            # pytest_runtest_makereport hook can merge it in for this test.
+            try:
+                import pytest_html
+                extra = pytest_html.extras.url(rel_path, name=link_name)
+                pending = getattr(request.node, "_anc_html_extras", [])
+                pending.append(extra)
+                request.node._anc_html_extras = pending
+            except Exception as exc:  # link is best-effort; file is already in zip
+                log.warning("ANC '%s': archived logs added to zip but could not "
+                            "add report link: %s", test_name, exc)
+        log.info("ANC '%s': attached logs to HTML report as '%s'",
+                 test_name, link_name)
+    except Exception as exc:  # best-effort
+        log.warning("ANC '%s': could not attach logs to HTML report: %s",
+                    test_name, exc)
+
+
+def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
+                   request=None):
     '''
     Run one or more ANC groups in a single invocation on all nodes.
 
@@ -844,6 +951,12 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name):
             f"{len(expected_nodes)} node(s): {details}"
         )
 
+    # Attach collected logs to the HTML report before update_test_result() may
+    # raise: always when the flag is set, otherwise only on failure.
+    _attach_anc_logs_to_html(
+        request, config_dict, test_name, log_base, bool(failed_nodes)
+    )
+
     update_test_result()
 
 
@@ -879,11 +992,12 @@ class AncGroupTest:
         log.info("ANC group '%s' Pre-Task: ensure ROCm ldconfig", self.GROUP)
         ensure_rocm_ldconfig(phdl)
 
-    def test_group(self, phdl, cluster_dict, config_dict):
+    def test_group(self, phdl, cluster_dict, config_dict, request):
         '''Run this suite's single ANC group and collect/judge its logs.'''
         assert self.GROUP, "AncGroupTest subclass must set GROUP"
         run_anc_groups(
-            phdl, cluster_dict, config_dict, [self.GROUP], f"test_{self.GROUP}"
+            phdl, cluster_dict, config_dict, [self.GROUP], f"test_{self.GROUP}",
+            request=request,
         )
 
 
