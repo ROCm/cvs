@@ -135,13 +135,15 @@ def pytest_generate_tests(metafunc):
     with open(config_file) as fp:
         cfg = json.load(fp)
     rccl = cfg.get("rccl", {})
+    # The NCCL knob matrix (`regression`) is OPTIONAL for the A/B perf-regression
+    # test. Perf regression is a question about collective x dtype x message size
+    # under the production env; sweeping NCCL knobs (PXN, channels, ALGO/PROTO,
+    # P2P, ...) is extra *coverage*, not a prerequisite for a verdict. When absent
+    # we run each collective once under the env_source_script defaults.
     regression = dict(rccl.get("regression", {}))
-    if not regression:
-        log.error("No regression object found in config - required for A/B parametrization")
-        return
 
     # Paired channel handling (min/max kept paired, not Cartesian) - identical to
-    # the single-sided regression test.
+    # the single-sided regression test. No-op when `regression` is empty.
     has_min = "NCCL_MIN_NCHANNELS" in regression
     has_max = "NCCL_MAX_NCHANNELS" in regression
     if has_min != has_max:
@@ -162,25 +164,33 @@ def pytest_generate_tests(metafunc):
         if isinstance(value, list) and value:
             env_axes.append((key, value))
 
-    if env_axes and "rccl_collective" in metafunc.fixturenames:
+    if "rccl_collective" in metafunc.fixturenames:
         rccl_collective_list = rccl.get("rccl_collective", ["all_reduce_perf"])
-        env_fixture_names = [name for name, _ in env_axes]
-        env_domains = [dict(env_axes)[name] for name in env_fixture_names]
         env_params, env_ids = [], []
 
-        channel_fixture_names = []
-        if paired_channels is not None:
-            channel_fixture_names = ["NCCL_MIN_NCHANNELS", "NCCL_MAX_NCHANNELS"]
-            env_domains.append(paired_channels)
+        if env_axes:
+            # Optional NCCL knob matrix: Cartesian product over each env axis.
+            env_fixture_names = [name for name, _ in env_axes]
+            env_domains = [dict(env_axes)[name] for name in env_fixture_names]
 
-        for env_combo in itertools.product(*env_domains):
-            env_dict = dict(zip(env_fixture_names + channel_fixture_names, env_combo))
+            channel_fixture_names = []
             if paired_channels is not None:
-                min_ch, max_ch = env_dict.pop("NCCL_MIN_NCHANNELS")
-                env_dict["NCCL_MIN_NCHANNELS"] = min_ch
-                env_dict["NCCL_MAX_NCHANNELS"] = max_ch
-            env_params.append(env_dict)
-            env_ids.append("|".join(f"{k}={v}" for k, v in env_dict.items()))
+                channel_fixture_names = ["NCCL_MIN_NCHANNELS", "NCCL_MAX_NCHANNELS"]
+                env_domains.append(paired_channels)
+
+            for env_combo in itertools.product(*env_domains):
+                env_dict = dict(zip(env_fixture_names + channel_fixture_names, env_combo))
+                if paired_channels is not None:
+                    min_ch, max_ch = env_dict.pop("NCCL_MIN_NCHANNELS")
+                    env_dict["NCCL_MIN_NCHANNELS"] = min_ch
+                    env_dict["NCCL_MAX_NCHANNELS"] = max_ch
+                env_params.append(env_dict)
+                env_ids.append("|".join(f"{k}={v}" for k, v in env_dict.items()))
+        else:
+            # Default perf-regression path: one run per collective under the
+            # production env (env_source_script), no NCCL knob override.
+            env_params = [{}]
+            env_ids = ["default"]
 
         metafunc.parametrize("rccl_collective", rccl_collective_list)
         metafunc.parametrize("regression_params", env_params, ids=env_ids)
@@ -194,6 +204,42 @@ def pytest_generate_tests(metafunc):
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+def _resolve_detect_thresholds(detector_overrides, ab_cfg, out_dir):
+    """
+    In detect mode, override config thresholds with the ones calibrated on THIS
+    hardware (``ab_derived_thresholds.json`` written by a prior control run), so the
+    gate never silently runs on stale numbers. Pure/testable: returns a (possibly
+    new) detector_overrides dict and never raises.
+
+    Escape hatch: ``ab_regression.use_derived_thresholds: false`` forces the config
+    thresholds. If the derived file is missing/unreadable, config thresholds stand.
+    """
+    if not ab_cfg.get('use_derived_thresholds', True):
+        return detector_overrides
+
+    derived_path = os.path.join(out_dir, 'ab_derived_thresholds.json')
+    cfg_thr = detector_overrides.get("thresholds")
+    try:
+        with open(derived_path) as fp:
+            derived_thr = (json.load(fp) or {}).get('thresholds')
+    except FileNotFoundError:
+        log.warning("No calibrated thresholds at %s; using config thresholds %s. "
+                    "Run a control-mode calibration first.", derived_path, cfg_thr)
+        return detector_overrides
+    except ValueError as exc:
+        log.warning("Could not parse %s (%s); using config thresholds %s.",
+                    derived_path, exc, cfg_thr)
+        return detector_overrides
+
+    if derived_thr:
+        log.info("Using calibrated thresholds from %s: %s (overriding config)",
+                 derived_path, derived_thr)
+        return {**detector_overrides, "thresholds": derived_thr}
+
+    log.warning("%s has no 'thresholds'; using config thresholds %s.", derived_path, cfg_thr)
+    return detector_overrides
+
+
 def _side_params(base_rccl_test_params, side_cfg, data_type=None):
     """Build a per-side copy of rccl_test_params with the build's tests dir / lib path."""
     params = copy.deepcopy(base_rccl_test_params)
@@ -314,6 +360,19 @@ def test_ab_pair(phdl, shdl, cluster_dict, config_dict, rccl_collective, regress
     globals.error_list = []
 
     ab_cfg = config_dict.get('ab_regression', {})
+
+    # Excluded (collective, dtype) combinations. Used for combos that are broken
+    # UPSTREAM (e.g. a collective that fails rccl-tests data verification on this
+    # ROCm/RCCL revision) — running them would only exhaust retries and then HARD
+    # FAIL the whole gate job, masking the real verdict. We pytest.skip them so the
+    # gate stays green/meaningful for the working matrix; revisit when upstream
+    # fixes the combo. Each entry is a [collective, data_type] pair, e.g.
+    #   "skip_keys": [["alltoall_perf", "bfloat16"]]
+    skip_keys = {(str(c), str(d)) for c, d in ab_cfg.get('skip_keys', [])}
+    if (str(rccl_collective), str(data_type)) in skip_keys:
+        pytest.skip(f"{rccl_collective}/{data_type} excluded via ab_regression.skip_keys "
+                    f"(known upstream issue; not a gate failure)")
+
     repeats = int(ab_cfg.get('repeats', 7))
     control_mode = bool(ab_cfg.get('control_mode', False))
 
@@ -326,7 +385,7 @@ def test_ab_pair(phdl, shdl, cluster_dict, config_dict, rccl_collective, regress
     reference_cfg = {**reference_cfg, "label": reference_cfg.get("label", "ref")}
     candidate_cfg = {**candidate_cfg, "label": candidate_cfg.get("label", "cand")}
 
-    params_str = ' '.join(f'{k}={v}' for k, v in regression_params.items())
+    params_str = ' '.join(f'{k}={v}' for k, v in regression_params.items()) or 'default'
     group_key = f'{rccl_collective}-d={data_type}-{params_str}'
     ab_runs.setdefault(group_key, {"a": [], "b": []})
 
@@ -382,6 +441,10 @@ def test_ab_analyze(request, config_dict):
                 json.dump(derived, fp, indent=2)
             # Apply derived thresholds for the (sanity) detection below.
             detector_overrides = {**detector_overrides, "thresholds": derived["thresholds"]}
+    else:
+        # Detect mode: prefer thresholds calibrated on THIS hardware (written by a
+        # prior control run) over the potentially-stale values baked into the config.
+        detector_overrides = _resolve_detect_thresholds(detector_overrides, ab_cfg, out_dir)
 
     for group_key, runs in ab_runs.items():
         report = regression_lib.detect_regressions(runs["a"], runs["b"], config=detector_overrides or None)

@@ -263,7 +263,17 @@ def _read_json_from_head_node(shdl, head_node, remote_path, log_label):
         local_path = paths[head_node]
         log.info('SFTP download succeeded for %s <- %s:%s', log_label, head_node, remote_path)
         with open(local_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            content = f.read().strip()
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            # Legacy rccl-tests (-x) occasionally append duplicate JSON blobs;
+            # accept the first valid value so paired A/B runs can proceed.
+            if 'Extra data' in str(e):
+                obj, _ = json.JSONDecoder().raw_decode(content)
+                log.warning('Parsed first JSON value only for %s; trailing data ignored', log_label)
+                return obj
+            raise
 
 
 def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
@@ -817,6 +827,16 @@ def rccl_regression(
     rccl_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
     cvs_exec_timeout = int(cvs_params.get('cvs_exec_timeout', 2400))
 
+    # Per-collective wall-clock timeout (seconds). A hung collective (e.g. an
+    # alltoall MPI/kernel deadlock) is NOT stopped by the parallel-ssh read
+    # timeout — that only abandons the SSH read and leaves mpirun + ranks alive,
+    # holding GPUs and wedging the whole CI. We therefore wrap the REMOTE mpirun
+    # in coreutils `timeout`, so the compute node kills the process tree itself.
+    # On expiry mpirun exits 124, the result file is absent/partial, and the
+    # caller's retry/cleanup path takes over (instead of hanging indefinitely).
+    # Configurable via rccl_test_params.per_collective_timeout_sec (0 disables).
+    per_collective_timeout = int(rccl_test_params.get('per_collective_timeout_sec', 900))
+
     # Detect which output file argument is supported by the RCCL test binary
     rccl_test_binary_path = f'{rccl_tests_dir}/{test_name}'
     output_flag = detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node)
@@ -854,11 +874,18 @@ def rccl_regression(
     if env_overrides:
         env_override_params = ' '.join([f'-x {k}={v}' for k, v in env_overrides.items()])
 
+    # Per-collective timeout wrapper around the REMOTE mpirun. --kill-after sends
+    # SIGKILL if mpirun ignores the initial SIGTERM (a wedged PRRTE often does).
+    # 0/negative disables the wrapper.
+    timeout_prefix = ''
+    if per_collective_timeout > 0:
+        timeout_prefix = f'timeout --signal=TERM --kill-after=30s {per_collective_timeout}s '
+
     # Build mpirun command.
     # plm_rsh_args disables interactive host-key prompts so PRRTE can ssh-launch
     # ranks on the other allocated nodes non-interactively (required for multi-node
     # runs; harmless single-node). Mirrors the older working recipe.
-    cmd = f'''{mpi_dir}/bin/mpirun \
+    cmd = f'''{timeout_prefix}{mpi_dir}/bin/mpirun \
         --allow-run-as-root \
         -np {no_of_global_ranks} \
         --hostfile /tmp/rccl_hosts_file.txt \
@@ -876,8 +903,14 @@ def rccl_regression(
     log.info("%s", cmd)
     log.info('%%%%%%%%%%%%%%%%')
 
+    # Let the remote coreutils `timeout` fire FIRST (clean kill + 124), so keep the
+    # SSH read timeout comfortably larger than the per-collective budget.
+    exec_timeout = cvs_exec_timeout
+    if per_collective_timeout > 0:
+        exec_timeout = max(cvs_exec_timeout, per_collective_timeout + 120)
+
     try:
-        out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
+        out_dict = shdl.exec(cmd, timeout=exec_timeout)
         output = out_dict[head_node]
         scan_rccl_logs(output)
         # Write a clean, reproducible record (launch command + rccl-tests output)
@@ -1019,6 +1052,17 @@ def rccl_perf(
     rccl_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
     cvs_exec_timeout = int(cvs_params.get('cvs_exec_timeout', 2400))
 
+    # Per-collective wall-clock timeout — see rccl_regression() for rationale. The
+    # remote mpirun is wrapped in coreutils `timeout` so a hung collective is killed
+    # on the node instead of leaking ranks/GPUs. 0 disables.
+    per_collective_timeout = int(rccl_test_params.get('per_collective_timeout_sec', 900))
+    exec_timeout = cvs_exec_timeout
+    if per_collective_timeout > 0:
+        exec_timeout = max(cvs_exec_timeout, per_collective_timeout + 120)
+    timeout_prefix = ''
+    if per_collective_timeout > 0:
+        timeout_prefix = f'timeout --signal=TERM --kill-after=30s {per_collective_timeout}s '
+
     all_raw_results = []
     all_validated_results = []
     base_path = Path(rccl_result_file)
@@ -1050,7 +1094,7 @@ def rccl_perf(
             test_cmd = f'bash -c "{test_cmd}"'
 
         # Build mpirun command
-        cmd = f'''{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
+        cmd = f'''{timeout_prefix}{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile /tmp/rccl_hosts_file.txt \
         --bind-to numa \
@@ -1066,7 +1110,7 @@ def rccl_perf(
         log.info("%s", cmd)
         log.info('%%%%%%%%%%%%%%%%')
         try:
-            out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
+            out_dict = shdl.exec(cmd, timeout=exec_timeout)
             output = out_dict[head_node]
             # print(output)
             scan_rccl_logs(output)
