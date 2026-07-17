@@ -624,9 +624,7 @@ class TestCaptureGpuMetrics(unittest.TestCase):
         import json
 
         orch = MagicMock()
-        orch.exec_on_head.return_value = {
-            "node0": json.dumps({"gpu_data": [_full_gpu_entry(gfx=42)]})
-        }
+        orch.exec_on_head.return_value = {"node0": json.dumps({"gpu_data": [_full_gpu_entry(gfx=42)]})}
         out = capture_gpu_metrics(orch)
         self.assertEqual(set(out.keys()), set(ALL_KEYS))
         self.assertEqual(out["gpu.gfx_activity"], 42)
@@ -880,24 +878,31 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
 
     def _make_gpu_json(self, used_vram: int, gfx: float = 80.0) -> str:
         import json
-        return json.dumps([{
-            "usage": {
-                "gfx_activity": {"value": gfx},
-                "umc_activity": {"value": 10.0},
-                "mm_activity": {"value": "N/A"},
-            },
-            "mem_usage": {
-                "used_vram": {"value": used_vram},
-                "total_vram": {"value": used_vram + 1000},
-                "free_vram": {"value": 1000},
-            },
-            "energy": {"total_energy_consumption": {"value": 50.0}},
-        }])
+
+        return json.dumps(
+            [
+                {
+                    "usage": {
+                        "gfx_activity": {"value": gfx},
+                        "umc_activity": {"value": 10.0},
+                        "mm_activity": {"value": "N/A"},
+                    },
+                    "mem_usage": {
+                        "used_vram": {"value": used_vram},
+                        "total_vram": {"value": used_vram + 1000},
+                        "free_vram": {"value": 1000},
+                    },
+                    "energy": {"total_energy_consumption": {"value": 50.0}},
+                }
+            ]
+        )
 
     def _make_exec_by_hosts(self, host_to_vram: dict, gfx: float = 80.0):
         """Build an orch.exec side_effect keyed by the hosts= kwarg."""
+
         def _exec(cmd, hosts=None):
             return {h: self._make_gpu_json(host_to_vram[h], gfx) for h in hosts}
+
         return _exec
 
     def test_nodes_none_calls_exec_on_head(self):
@@ -905,6 +910,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
         orch = MagicMock()
         orch.exec_on_head.return_value = {"host0": self._make_gpu_json(1000)}
         from cvs.lib.utils.gpu import capture_gpu_metrics
+
         result = capture_gpu_metrics(orch, nodes=None)
         orch.exec_on_head.assert_called_once_with("amd-smi metric --json")
         self.assertEqual(result["gpu.used_vram"], 1000)
@@ -912,10 +918,9 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
     def test_nodes_provided_calls_orch_exec_with_hosts_not_exec_on_head(self):
         """nodes provided: orch.exec(cmd, hosts=...) is called, orch.exec_on_head is NOT."""
         orch = MagicMock()
-        orch.exec.side_effect = self._make_exec_by_hosts(
-            {"prefill-host": 2000, "decode-host": 3000}
-        )
+        orch.exec.side_effect = self._make_exec_by_hosts({"prefill-host": 2000, "decode-host": 3000})
         from cvs.lib.utils.gpu import capture_gpu_metrics
+
         capture_gpu_metrics(
             orch,
             nodes=[("prefill-0", ["prefill-host"]), ("decode-0", ["decode-host"])],
@@ -929,9 +934,8 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
         orch = MagicMock()
         orch.exec.side_effect = self._make_exec_by_hosts({"p": 2000, "d": 3000})
         from cvs.lib.utils.gpu import capture_gpu_metrics
-        result = capture_gpu_metrics(
-            orch, nodes=[("prefill-0", ["p"]), ("decode-0", ["d"])]
-        )
+
+        result = capture_gpu_metrics(orch, nodes=[("prefill-0", ["p"]), ("decode-0", ["d"])])
         self.assertEqual(result["gpu.used_vram"], 5000)
 
     def test_nodes_activity_averaged_across_nodes(self):
@@ -944,9 +948,8 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
 
         orch.exec.side_effect = _exec
         from cvs.lib.utils.gpu import capture_gpu_metrics
-        result = capture_gpu_metrics(
-            orch, nodes=[("prefill-0", ["p"]), ("decode-0", ["d"])]
-        )
+
+        result = capture_gpu_metrics(orch, nodes=[("prefill-0", ["p"]), ("decode-0", ["d"])])
         self.assertAlmostEqual(result["gpu.gfx_activity"], 80.0)
 
     def test_nodes_exception_propagates(self):
@@ -954,6 +957,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
         orch = MagicMock()
         orch.exec.side_effect = RuntimeError("ssh failed")
         from cvs.lib.utils.gpu import capture_gpu_metrics
+
         with self.assertRaises(RuntimeError):
             capture_gpu_metrics(orch, nodes=[("prefill-0", ["p"])])
 
@@ -965,23 +969,32 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
 
         def _exec(cmd, hosts=None):
             vram = {"p": 1000, "d": 2000}[hosts[0]]
-            return {hosts[0]: json.dumps({"gpu_data": [
-                {
-                    "usage": {"gfx_activity": {"value": 50.0},
-                              "umc_activity": {"value": 10.0},
-                              "mm_activity": {"value": "N/A"}},
-                    "mem_usage": {"used_vram": {"value": vram},
-                                  "total_vram": {"value": vram + 100},
-                                  "free_vram": {"value": 100}},
-                    "energy": {"total_energy_consumption": {"value": 1.0}},
-                }
-            ]})}
+            return {
+                hosts[0]: json.dumps(
+                    {
+                        "gpu_data": [
+                            {
+                                "usage": {
+                                    "gfx_activity": {"value": 50.0},
+                                    "umc_activity": {"value": 10.0},
+                                    "mm_activity": {"value": "N/A"},
+                                },
+                                "mem_usage": {
+                                    "used_vram": {"value": vram},
+                                    "total_vram": {"value": vram + 100},
+                                    "free_vram": {"value": 100},
+                                },
+                                "energy": {"total_energy_consumption": {"value": 1.0}},
+                            }
+                        ]
+                    }
+                )
+            }
 
         orch.exec.side_effect = _exec
         from cvs.lib.utils.gpu import capture_gpu_metrics
-        result = capture_gpu_metrics(
-            orch, nodes=[("prefill-0", ["p"]), ("decode-0", ["d"])]
-        )
+
+        result = capture_gpu_metrics(orch, nodes=[("prefill-0", ["p"]), ("decode-0", ["d"])])
         self.assertEqual(result["gpu.used_vram"], 3000)
 
 
@@ -1001,7 +1014,9 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
 
     def test_log_line_tagged_with_node_labels(self):
         """When nodes provided, log lines include '[label1+label2] ' tag."""
-        import tempfile, os
+        import tempfile
+        import os
+
         snap = self._make_snap()
         per_node = {"prefill-0": 2000, "decode-0": 3000}
         nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
@@ -1017,9 +1032,13 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
                 patch("time.sleep"),
             ):
                 from cvs.lib.utils.gpu import poll_gpu_metrics
+
                 poll_gpu_metrics(
-                    MagicMock(), is_done_fn=lambda: True,
-                    poll_interval_s=0, log_path=log_path, nodes=nodes,
+                    MagicMock(),
+                    is_done_fn=lambda: True,
+                    poll_interval_s=0,
+                    log_path=log_path,
+                    nodes=nodes,
                 )
             with open(log_path) as _f:
                 content = _f.read()
@@ -1029,7 +1048,9 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
 
     def test_summary_contains_per_node_vram(self):
         """Summary block includes node_vram_mb lines for each label."""
-        import tempfile, os
+        import tempfile
+        import os
+
         snap = self._make_snap(1000)
         per_node = {"prefill-0": 2000, "decode-0": 3000}
         nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
@@ -1045,9 +1066,13 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
                 patch("time.sleep"),
             ):
                 from cvs.lib.utils.gpu import poll_gpu_metrics
+
                 poll_gpu_metrics(
-                    MagicMock(), is_done_fn=lambda: True,
-                    poll_interval_s=0, log_path=log_path, nodes=nodes,
+                    MagicMock(),
+                    is_done_fn=lambda: True,
+                    poll_interval_s=0,
+                    log_path=log_path,
+                    nodes=nodes,
                 )
             content = open(log_path).read()
             self.assertIn("node_vram_mb [prefill-0]", content)
@@ -1058,7 +1083,9 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
 
     def test_no_node_tag_when_nodes_none(self):
         """Without nodes, log lines have no '[...]' node tag."""
-        import tempfile, os
+        import tempfile
+        import os
+
         snap = self._make_snap()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
             log_path = f.name
@@ -1068,9 +1095,13 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
                 patch("time.sleep"),
             ):
                 from cvs.lib.utils.gpu import poll_gpu_metrics
+
                 poll_gpu_metrics(
-                    MagicMock(), is_done_fn=lambda: True,
-                    poll_interval_s=0, log_path=log_path, nodes=None,
+                    MagicMock(),
+                    is_done_fn=lambda: True,
+                    poll_interval_s=0,
+                    log_path=log_path,
+                    nodes=None,
                 )
             content = open(log_path).read()
             self.assertNotIn("per-node vram", content)
@@ -1079,7 +1110,9 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
 
     def test_inline_vram_failure_degrades_gracefully(self):
         """If per-label orch.exec raises for one node, that label gets None; aggregate unaffected."""
-        import tempfile, os
+        import tempfile
+        import os
+
         snap = self._make_snap(5000)
         per_node = {"prefill-0": None, "decode-0": 3000}
         nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
@@ -1095,9 +1128,13 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
                 patch("time.sleep"),
             ):
                 from cvs.lib.utils.gpu import poll_gpu_metrics
+
                 readings = poll_gpu_metrics(
-                    MagicMock(), is_done_fn=lambda: True,
-                    poll_interval_s=0, log_path=log_path, nodes=nodes,
+                    MagicMock(),
+                    is_done_fn=lambda: True,
+                    poll_interval_s=0,
+                    log_path=log_path,
+                    nodes=nodes,
                 )
             # Aggregate reading was not aborted
             self.assertEqual(len(readings), 1)
@@ -1111,7 +1148,9 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
 
     def test_is_done_fn_exception_not_misattributed_as_poll_failure(self):
         """is_done_fn raising must NOT be counted as an amd-smi/exec failure."""
-        import tempfile, os
+        import tempfile
+        import os
+
         snap = self._make_snap()
         calls = {"n": 0}
 
@@ -1129,10 +1168,14 @@ class TestPollGpuMetricsMultiNode(unittest.TestCase):
                 patch("time.sleep"),
             ):
                 from cvs.lib.utils.gpu import poll_gpu_metrics
+
                 with self.assertRaises(RuntimeError):
                     poll_gpu_metrics(
-                        MagicMock(), is_done_fn=_is_done,
-                        poll_interval_s=0, log_path=log_path, nodes=None,
+                        MagicMock(),
+                        is_done_fn=_is_done,
+                        poll_interval_s=0,
+                        log_path=log_path,
+                        nodes=None,
                     )
             content = open(log_path).read()
             self.assertNotIn("FAILED", content)
@@ -1168,9 +1211,7 @@ def _gpu_json(used_vram=1000, gfx=80.0):
     """Serialize one amd-smi GPU entry as the JSON string orch.exec returns."""
     import json
 
-    return json.dumps(
-        [_full_gpu_entry(gfx=gfx, total=used_vram + 1000, used=used_vram, free=1000)]
-    )
+    return json.dumps([_full_gpu_entry(gfx=gfx, total=used_vram + 1000, used=used_vram, free=1000)])
 
 
 class TestPollGpuMetricsFailureAccounting(unittest.TestCase):
@@ -1467,9 +1508,7 @@ class TestEmptyNodesListConsistency(unittest.TestCase):
     def test_poll_gpu_metrics_empty_nodes_calls_neither_transport(self):
         orch = MagicMock()
         with patch("time.sleep"):
-            readings = poll_gpu_metrics(
-                orch, is_done_fn=lambda: True, poll_interval_s=0, nodes=[]
-            )
+            readings = poll_gpu_metrics(orch, is_done_fn=lambda: True, poll_interval_s=0, nodes=[])
         orch.exec.assert_not_called()
         orch.exec_on_head.assert_not_called()
         self.assertEqual(len(readings), 1)

@@ -2,11 +2,10 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Shared test helpers for the vllm_single suite.
+Shared test helpers for the unified vllm suite.
 
-`test_print_results_table` is exported via `from ._shared import *` so each
-framework-specific suite file picks it up as a sibling test that pytest
-runs LAST (lexically after `test_vllm_inference`).
+`test_print_results_table` is exported and imported by `vllm.py` as a sibling
+test that pytest runs LAST (lexically after `test_vllm_inference`).
 '''
 
 from tabulate import tabulate
