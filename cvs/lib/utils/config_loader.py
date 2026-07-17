@@ -10,7 +10,7 @@ container/paths/model/image schema, the 3-pass placeholder substitution, the
 `substitute_config` helper that reads a variant `config.json` + sibling
 `*threshold.json` and resolves placeholders. A per-framework module subclasses
 `BaseVariantConfig` and adds its own `Params`/`Sweep`/`cell_key` (see
-`cvs.lib.inference.utils.inferencing_config_loader` for the vllm flavour).
+`cvs.lib.inference.utils.vllm_config_loader` for the vllm flavour).
 
 3-pass placeholder substitution:
   1. cluster placeholders (`{user-id}`) anywhere

@@ -345,10 +345,7 @@ def poll_gpu_metrics(
         # is never misattributed as a polling failure.
         done = is_done_fn()
         done_tag = "  [done]" if done else ""
-        line = (
-            f"[gpu {label} {poll_n}/?] {node_tag}"
-            f"used_vram={used} MB  gfx={gfx}%  umc={umc}%  mm={mm}%{done_tag}"
-        )
+        line = f"[gpu {label} {poll_n}/?] {node_tag}used_vram={used} MB  gfx={gfx}%  umc={umc}%  mm={mm}%{done_tag}"
         log_lines.append(line)
         if done:
             break
