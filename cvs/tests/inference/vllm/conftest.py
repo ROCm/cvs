@@ -59,7 +59,7 @@ class _Lifecycle:
     code. They share this object: `failed` lets a broken stage skip the rest
     instead of cascading; `torn_down` lets the explicit teardown test suppress
     the fixture's leak-guard finalizer; `report` maps a test's nodeid to the
-    rows it recorded, each carrying its own unit, so pytest_runtest_makereport
+    rows it recorded, each carrying its own unit, so attach_inference_suite_lifecycle_table
     renders only that test's stages -- not every stage on every row.
     """
 
