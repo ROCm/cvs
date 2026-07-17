@@ -1328,7 +1328,7 @@ class SglangDisaggPD:
                 if metric in thresholds
             }
             for metric, spec in thresholds.items():
-                log.info("%%% metric_name %s kind=%s", metric, spec.get("kind"))
+                log.info("metric_name %s kind=%s", metric, spec.get("kind"))
                 if metric in actuals:
                     log.info(
                         "%% %s actual=%s expected=%s",
