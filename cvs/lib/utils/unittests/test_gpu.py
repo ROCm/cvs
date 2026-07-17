@@ -553,8 +553,6 @@ class TestCaptureGpuMetrics(unittest.TestCase):
     def _make_orch(self, raw_gpu_list):
         """Return a mock orchestrator whose exec_on_head result decodes to raw_gpu_list.
 
-        amd-smi is a host-side tool; capture_gpu_metrics uses exec_on_head so
-        the command runs on the bare-metal node, not inside the container.
         The real ContainerOrchestrator.exec_on_head(cmd) returns {host: str};
         we mock the same shape so tests are grounded in the actual interface contract.
         """

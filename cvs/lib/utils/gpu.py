@@ -168,15 +168,21 @@ def _try_parse(text: str) -> list:
 
 
 def capture_gpu_metrics(orch, nodes=None, timeout_s=None) -> dict:
-    """One amd-smi exec on the host node(s). Returns flat {gpu.* metrics} dict.
+    """One amd-smi exec on the node(s). Returns flat {gpu.* metrics} dict.
+
+    amd-smi runs fine from inside the benchmark container -- GPU device
+    files (/dev/kfd, /dev/dri) are passed through, so this uses the same
+    orch.exec_on_head()/orch.exec() calls as every other command in the
+    suite (server launch, client run, log tailing, etc.), with no special
+    host-vs-container routing needed.
 
     Single-node (nodes=None): orch must have .exec_on_head(cmd) -> {host: str}.
     Multi-node (nodes provided, incl. []): nodes is a list of (label, hosts)
     pairs where hosts is a list of hostnames passed to
-    orch.exec(cmd, hosts=hosts) -> {host: str}. nodes=[] is a valid "zero
-    nodes" case: no exec call is made and all fields come back None, the same
-    no-op result an empty raw list produces. All nodes' GPU entries are merged
-    before aggregation. Return type is identical in both cases.
+    orch.exec(cmd, hosts=hosts) -> {host: str}. nodes=[] is a valid
+    "zero nodes" case: no exec call is made and all fields come back None, the
+    same no-op result an empty raw list produces. All nodes' GPU entries are
+    merged before aggregation. Return type is identical in both cases.
 
     timeout_s: optional timeout (seconds) passed through to orch.exec/
     exec_on_head. None means no timeout (blocks until the remote call
@@ -236,9 +242,9 @@ def _capture_multi_node(orch, nodes, timeout_s=None) -> "tuple[dict, dict[str, i
     merged_snapshot is parse_gpu_metrics() over every node's GPU entries combined
     (same shape as capture_gpu_metrics), per_node_vram is {label: used_vram_mb}.
 
-    Degrades per label: if orch.exec raises (including a timeout_s firing) for
-    a node, that label's entries are excluded from the merge and its per-node
-    VRAM is None.
+    Degrades per label: if orch.exec raises (including a timeout_s
+    firing) for a node, that label's entries are excluded from the merge and
+    its per-node VRAM is None.
     """
     all_entries = []
     per_node_vram: "dict[str, int | None]" = {}
@@ -281,15 +287,16 @@ def poll_gpu_metrics(
     if given.
 
     nodes: optional list of (label, hosts) pairs for multi-node polling, where
-    hosts is a list of hostnames passed to orch.exec(cmd, hosts=hosts). When
-    provided (including nodes=[], the zero-node case: no exec call is made,
-    every field comes back None), all nodes are polled once per iteration and
-    merged into a single reading. In multi-node mode, a round where every
-    listed node failed is itself counted as one consecutive failure (same as
-    a raised exception in single-node mode); a partial success/failure round
-    still counts as success, preserving per-label degradation. Log lines are
-    tagged with node labels; summary includes per-node VRAM. When nodes=None
-    (default), uses orch.exec_on_head — single-node behaviour.
+    hosts is a list of hostnames passed to orch.exec(cmd, hosts=hosts).
+    When provided (including nodes=[], the zero-node case: no exec call is
+    made, every field comes back None), all nodes are polled once per
+    iteration and merged into a single reading. In multi-node mode, a round
+    where every listed node failed is itself counted as one consecutive
+    failure (same as a raised exception in single-node mode); a partial
+    success/failure round still counts as success, preserving per-label
+    degradation. Log lines are tagged with node labels; summary includes
+    per-node VRAM. When nodes=None (default), uses orch.exec_on_head —
+    single-node behaviour.
 
     timeout_s: optional timeout (seconds) passed through to orch.exec/
     exec_on_head on every poll. A timeout firing is caught like any other
