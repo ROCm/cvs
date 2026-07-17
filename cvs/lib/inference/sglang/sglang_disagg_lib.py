@@ -52,6 +52,51 @@ def _first_float(pattern, text):
     m = re.search(pattern, text, re.I)
     return m.group(1) if m else None
 
+
+def _is_sglang_latency_metric(metric_name: str) -> bool:
+    """Latency metrics pass when actual <= expected."""
+    name = metric_name.lower()
+    return "ms" in name or "latency" in name
+
+
+def _is_sglang_higher_is_better_metric(metric_name: str) -> bool:
+    """Throughput, req/s, goodput, MFU — pass when actual >= expected."""
+    if _is_sglang_latency_metric(metric_name):
+        return False
+    name = metric_name.lower()
+    return any(
+        token in name
+        for token in (
+            "throughput",
+            "goodput",
+            "mfu",
+            "request_throughput",
+        )
+    )
+
+
+def _normalize_sglang_threshold_spec(metric_name: str, spec: Any) -> dict[str, Any]:
+    """Map threshold JSON specs (or legacy flat floats) to evaluate_all kinds."""
+    if isinstance(spec, dict) and spec.get("kind"):
+        return spec
+    value = float(spec["value"] if isinstance(spec, dict) and "value" in spec else spec)
+    if _is_sglang_latency_metric(metric_name):
+        return {"kind": "max_ms", "value": value}
+    if _is_sglang_higher_is_better_metric(metric_name):
+        kind = "min_tok_s" if "throughput" in metric_name.lower() else "min"
+        return {"kind": kind, "value": value}
+    return {"kind": "min", "value": value}
+
+
+def _coerce_sglang_actual(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 LM_EVAL_SPECS = {
     "lm_eval_hellaswag": {
         "display": "HellaSwag",
@@ -1258,69 +1303,45 @@ class SglangDisaggPD:
         Validate inference benchmark results against expected performance
         thresholds and check for system-level errors.
 
-        Purpose:
-        --------
-        This method verifies that:
-        - Inference completed successfully on all nodes
-        - Performance metrics meet or exceed expected baselines
-        - Latency metrics stay below defined thresholds
-        - No kernel-level (dmesg) errors occurred during inference
+        Comparison rules (via ``evaluate_all`` + threshold ``kind``):
+        - Throughput, req/s, goodput, MFU: actual >= expected
+        - Latency (*_ms, *latency*): actual <= expected
 
-        It acts as the final gate for inference validation.
+        Threshold entries may be full specs ``{"kind": ..., "value": ...}`` from
+        threshold.json or legacy flat floats from ``flat_expected_from_specs``.
         """
-        log.info('Verify Inference Completion Msg')
-        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+        log.info("Verify Inference Completion Msg")
+        log.info("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
         log.info("%s", self.inference_results_dict)
-        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-        # ------------------------------------------------------------------
-        # Validate metrics on a per-node basis
-        # ------------------------------------------------------------------
-        for node in self.inference_results_dict.keys():
-            log.info('%%%% node {}'.format(node))
-            for metric_name in expected_result_dict.keys():
-                log.info('%%% metric_name {}'.format(metric_name))
-                if metric_name in self.inference_results_dict[node].keys():
-                    # latency metric, so actual should be lower than expected ..
-                    log.info('%% metric found in inference results ^^^')
-                    # ------------------------------------------------------
-                    # Latency metrics (e.g., TTFT, TPOT)
-                    #
-                    # For latency, lower values are better.
-                    # Fail if actual latency exceeds expected threshold.
-                    # ------------------------------------------------------
-                    if re.search('ms', metric_name, re.I):
-                        log.info("%s", self.inference_results_dict[node][metric_name])
-                        log.info("%s", expected_result_dict[metric_name])
-                        if float(self.inference_results_dict[node][metric_name]) > float(
-                            expected_result_dict[metric_name]
-                        ):
-                            fail_test(
-                                f"FAIL - The metric {metric_name} actual value higher than expected \
-                                Actual = {self.inference_results_dict[node][metric_name]},  \
-                                Expected = {expected_result_dict[metric_name]}"
-                            )
-                    # ------------------------------------------------------
-                    # Throughput and count metrics
-                    #
-                    # For throughput, higher values are better.
-                    # Fail if actual throughput is lower than expected.
-                    # ------------------------------------------------------
-                    else:
-                        if float(self.inference_results_dict[node][metric_name]) < float(
-                            expected_result_dict[metric_name]
-                        ):
-                            fail_test(
-                                f"FAIL - The metric {metric_name} actual value lower than expected \
-                                Actual = {self.inference_results_dict[node][metric_name]}, \
-                                Expected = {expected_result_dict[metric_name]}"
-                            )
+        log.info("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
 
-        # ------------------------------------------------------------------
-        # Perform kernel-level (dmesg) error checks
-        #
-        # This ensures no silent hardware or driver errors occurred during
-        # inference (e.g., GPU resets, RDMA failures, IOMMU errors).
-        # ------------------------------------------------------------------
+        thresholds = {
+            metric: _normalize_sglang_threshold_spec(metric, spec)
+            for metric, spec in expected_result_dict.items()
+        }
+
+        for node in self.inference_results_dict.keys():
+            log.info("%%%% node %s", node)
+            actuals = {
+                metric: _coerce_sglang_actual(value)
+                for metric, value in self.inference_results_dict[node].items()
+                if metric in thresholds
+            }
+            for metric, spec in thresholds.items():
+                log.info("%%% metric_name %s kind=%s", metric, spec.get("kind"))
+                if metric in actuals:
+                    log.info(
+                        "%% %s actual=%s expected=%s",
+                        metric,
+                        actuals[metric],
+                        spec.get("value"),
+                    )
+            try:
+                evaluate_all(actuals, thresholds)
+            except ThresholdViolation as exc:
+                for msg in exc.violations:
+                    fail_test(f"FAIL - {msg}")
+
         self.inference_end_time = self.p_phdl.exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
         verify_dmesg_for_errors(self.p_phdl, self.inference_start_time, self.inference_end_time)

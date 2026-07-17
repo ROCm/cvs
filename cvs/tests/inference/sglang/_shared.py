@@ -116,7 +116,8 @@ def _thresholds_for_cell(variant_config, isl, osl, conc) -> dict[str, float]:
     if variant_config is None:
         return {}
     tp = (getattr(variant_config, "benchmark_params", None) or {}).get("tensor_parallelism", "-")
-    cell_id = f"ISL={isl},OSL={osl},TP={tp},CONC={conc}"
+    pp = (getattr(variant_config, "benchmark_params", None) or {}).get("pipeline_parallelism", "-")
+    cell_id = f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={conc}"
     raw = (getattr(variant_config, "thresholds", None) or {}).get(cell_id) or {}
     return _flat_threshold_specs(raw)
 
@@ -214,7 +215,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
             )
 
     _CELL_RE = re.compile(
-        r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),CONC=(?P<conc>\d+)$"
+        r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$"
     )
     bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
     pp = bp.get("pipeline_parallelism", "1")
@@ -233,7 +234,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                     m.group("isl"),
                     m.group("osl"),
                     m.group("tp"),
-                    pp,
+                    m.group("pp"),
                     m.group("conc"),
                     result,
                 ])

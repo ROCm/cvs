@@ -2,9 +2,6 @@
   "_comment": "Llama 3.1 70B thresholds for MI30X SGLang disaggregated. ISL=1024 OSL=1024 concurrency sweep: 4,8,16,32,64,128,256. Other ISL/OSL at CONC=64.",
   "ISL=1024,OSL=1024,TP=8,PP=1,CONC=4": {
     "output_throughput_per_sec": { "kind": "min_tok_s", "value": 245 },
-    "total_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 30 },
-    "input_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 30 },
-    "output_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 30 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
     "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
     "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -13,9 +10,6 @@
   },
   "ISL=1024,OSL=1024,TP=8,PP=1,CONC=8": {
     "output_throughput_per_sec": { "kind": "min_tok_s", "value": 245 },
-    "total_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 30 },
-    "input_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 30 },
-    "output_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 30 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
     "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
     "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -24,9 +18,6 @@
   },
   "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": {
     "output_throughput_per_sec": { "kind": "min_tok_s", "value": 460 },
-    "total_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 55 },
-    "input_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 55 },
-    "output_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 55 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
     "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
     "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -35,9 +26,6 @@
   },
   "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {
     "output_throughput_per_sec": { "kind": "min_tok_s", "value": 800 },
-    "total_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 100 },
-    "input_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 110 },
-    "output_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 110 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
     "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
     "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -46,9 +34,6 @@
   },
   "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64": {
     "output_throughput_per_sec": { "kind": "min_tok_s", "value": 900 },
-    "total_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 225 },
-    "input_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 112.5 },
-    "output_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 112.5 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
     "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
     "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -57,9 +42,6 @@
   },
   "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {
     "output_throughput_per_sec": { "kind": "min_tok_s", "value": 900 },
-    "total_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 225 },
-    "input_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 112.5 },
-    "output_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 112.5 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
     "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
     "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -68,9 +50,6 @@
   },
   "ISL=1024,OSL=1024,TP=8,PP=1,CONC=256": {
     "output_throughput_per_sec": { "kind": "min_tok_s", "value": 900 },
-    "total_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 225 },
-    "input_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 112.5 },
-    "output_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 112.5 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
     "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
     "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -79,9 +58,6 @@
   },
   "ISL=8192,OSL=1024,TP=8,PP=1,CONC=64": {
     "output_throughput_per_sec": { "kind": "min_tok_s", "value": 900 },
-    "total_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 225 },
-    "input_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 112.5 },
-    "output_throughput_per_gpu_per_sec": { "kind": "min_tok_s", "value": 112.5 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
     "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
     "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },

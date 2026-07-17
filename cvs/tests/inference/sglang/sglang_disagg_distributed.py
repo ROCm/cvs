@@ -145,7 +145,7 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request
     bench = im_obj.bp_dict["inference_tests"]["bench_serv_random"]
     bench["input_length"] = perf_cell["isl"]
     bench["output_length"] = perf_cell["osl"]
-    bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(perf_cell["specs"])
+    bench.setdefault("expected_results", {})["auto"] = dict(perf_cell["specs"])
     im_obj.bp_dict["max_concurrency"] = perf_cell["conc"]
     im_obj.setup_benchmark_serv_container_env()
     im_obj.benchserv_test_random(d_type="auto")

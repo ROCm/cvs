@@ -45,7 +45,7 @@ log = globals.log
 # ---------- threshold helpers (unchanged) ----------
 
 _PERF_CELL_RE = re.compile(
-        r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),CONC=(?P<conc>\d+)$"
+        r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$"
 )
 
 _ACC_CELL_RE = re.compile(
@@ -168,7 +168,8 @@ def perf_cell_key(bp_dict: Mapping[str, Any]) -> str:
     return (
         f"ISL={bench.get('input_length', '-')},"
         f"OSL={bench.get('output_length', '-')},"
-        f"TP={bp_dict.get('tensor_parallelism', '-')},"
+        f"TP={bp_dict.get('tensor_parallelism', '8')},"
+        f"PP={bp_dict.get('pipeline_parallelism', '1')},"
         f"CONC={bp_dict.get('max_concurrency', '-')}"
     )
 
@@ -244,7 +245,8 @@ class SglangVariantConfig:
 
     def cell_key(self, isl, osl, concurrency) -> str:
         tp = self.benchmark_params.get("tensor_parallelism", "-")
-        return f"ISL={isl},OSL={osl},TP={tp},CONC={concurrency}"
+        pp = self.benchmark_params.get("pipeline_parallelism", "-")
+        return f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={concurrency}"
 
 
 def load_sglang_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangVariantConfig:
