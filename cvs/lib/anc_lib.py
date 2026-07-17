@@ -111,16 +111,78 @@ PRINT_ALL_TO_CONSOLE_KEY = "print_all_to_console"
 
 # config anc.log_folder_path is where the ANC log directory is copied. It may
 # contain "{runner_log_folder}" (resolved to run_config's runner_log_folder),
-# "<test_name>" (the suite's test name, e.g. test_cpu), and "<timestamp>" (a
-# per-run stamp so repeated runs of the same test do not overwrite each other).
+# "<node>" (the per-node "<ip>_<hostname>" label), "<test_name>" (the suite's
+# test name, e.g. test_cpu), and "<timestamp>" (a per-run stamp so repeated runs
+# of the same test do not overwrite each other). "<node>" comes first by default
+# so a multi-node run groups every test/timestamp under each node's own folder.
 LOG_FOLDER_PATH_KEY = "log_folder_path"
-DEFAULT_LOG_FOLDER_PATH = "{runner_log_folder}/anc_logs/<test_name>/<timestamp>"
+DEFAULT_LOG_FOLDER_PATH = "{runner_log_folder}/anc_logs/<node>/<test_name>/<timestamp>"
 
 # config anc.ADD_ANC_LOGS_TO_HTML_REPORTS controls whether the collected ANC
 # log tree is bundled into the pytest-html report zip. When True, always attach.
 # When False (default), attach ONLY when the test failed (so passing runs stay
 # lean but failures always carry their evidence).
 ADD_ANC_LOGS_TO_HTML_KEY = "ADD_ANC_LOGS_TO_HTML_REPORTS"
+
+# config anc.COLLECT_HTML_REPORTS ("True" by default) makes the ANC suites
+# generate a pytest-html report even when no --html is passed on the command
+# line. config anc.html_report_path is the destination template; it accepts the
+# same tokens as log_folder_path ("{runner_log_folder}", "<node>",
+# "<test_name>", "<timestamp>") plus "{home}" (already resolved by the config
+# placeholder pass). Because pytest-html creates ONE report per session before
+# any SSH connection exists, "<node>" here resolves to the FIRST node in the
+# cluster file's node_dict (label built from the cluster file alone, no SSH). An
+# explicit --html on the command line always wins over this.
+COLLECT_HTML_REPORTS_KEY = "COLLECT_HTML_REPORTS"
+HTML_REPORT_PATH_KEY = "html_report_path"
+DEFAULT_HTML_REPORT_PATH = (
+    "{runner_log_folder}/html_reports/<node>/<test_name>/<timestamp>"
+)
+
+
+def cluster_node_label_from_file(cluster_dict):
+    '''
+    Build the "<ip>_<hostname>" label for the FIRST node using only the cluster
+    file (no SSH). Used for the session-level HTML report path, which must be
+    resolved before any node connection exists. Returns "unknown_node" when the
+    cluster file has no node_dict entries.
+    '''
+    node_dict = cluster_dict.get("node_dict", {}) or {}
+    hosts = list(node_dict.keys())
+    if not hosts:
+        return "unknown_node"
+    host = hosts[0]
+    info = node_dict.get(host, {}) or {}
+    ip = info.get("vpc_ip")
+    if not ip or ip == "NA":
+        ip = host
+    # No SSH here, so hostname == the cluster-file host key (best-effort match to
+    # the per-node log folder label, which appends the SSH-resolved hostname).
+    return _sanitize_path_component(f"{ip}_{host}")
+
+
+def resolve_anc_html_report_path(config_dict, cluster_dict, test_name,
+                                 timestamp):
+    '''
+    Resolve config anc.html_report_path into an absolute *.html file path for the
+    auto-collected pytest-html report. Substitutes "{runner_log_folder}",
+    "<node>" (first cluster node's label, from the file only), "<test_name>", and
+    "<timestamp>". The resolved template is treated as a directory; the report
+    file "<test_name>.html" is placed inside it.
+    '''
+    template = config_dict.get("anc", {}).get(
+        HTML_REPORT_PATH_KEY, DEFAULT_HTML_REPORT_PATH
+    )
+    runner_base = resolve_runner_results_base(config_dict.get("run_config", {}))
+    node = cluster_node_label_from_file(cluster_dict)
+    path = template.replace("{runner_log_folder}", runner_base)
+    path = path.replace("<node>", node)
+    path = path.replace("<test_name>", test_name)
+    path = path.replace("<timestamp>", timestamp)
+    if "~" in path:
+        path = os.path.expanduser(path)
+    path = os.path.abspath(path)
+    return os.path.join(path, f"{test_name}.html")
 
 
 def _as_bool(value, default=True):
@@ -137,14 +199,20 @@ def new_run_timestamp():
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
-def resolve_anc_log_folder(config_dict, test_name, timestamp):
+def resolve_anc_log_folder(config_dict, test_name, timestamp, node=None):
     '''
     Resolve config anc.log_folder_path into an absolute destination directory.
 
     Substitutes "{runner_log_folder}" (from run_config, via
-    resolve_runner_results_base), "<test_name>", and "<timestamp>". Falls back
-    to DEFAULT_LOG_FOLDER_PATH when the key is unset. When the template has no
+    resolve_runner_results_base), "<node>" (the per-node "<ip>_<hostname>"
+    label), "<test_name>", and "<timestamp>". Falls back to
+    DEFAULT_LOG_FOLDER_PATH when the key is unset. When the template has no
     "<timestamp>" token, the stamp is appended so repeated runs stay separate.
+
+    When ``node`` is None the "<node>" token is left intact (used for the
+    run-start banner, which shows the pattern before any node is known). When a
+    node label is given but the template lacks a "<node>" token, the label is
+    appended so per-node artifacts never collide.
     '''
     template = config_dict.get("anc", {}).get(
         LOG_FOLDER_PATH_KEY, DEFAULT_LOG_FOLDER_PATH
@@ -152,6 +220,11 @@ def resolve_anc_log_folder(config_dict, test_name, timestamp):
     runner_base = resolve_runner_results_base(config_dict.get("run_config", {}))
     path = template.replace("{runner_log_folder}", runner_base)
     path = path.replace("<test_name>", test_name)
+    if node is not None:
+        if "<node>" in path:
+            path = path.replace("<node>", node)
+        else:
+            path = os.path.join(path, node)
     if "<timestamp>" in path:
         path = path.replace("<timestamp>", timestamp)
     else:
@@ -723,24 +796,29 @@ def _summarize_failure(console_text):
     return "; ".join(parts)
 
 
-def _evaluate_node(cluster_dict, host, output, log_base, test_name):
+def _evaluate_node(cluster_dict, config_dict, host, output, test_name,
+                   timestamp):
     '''
     Collect the ANC log directory for one node and decide whether it passed.
 
     ``output`` is the captured ANC console text (full when
     print_all_to_console, else just the "Log directory:" line) used only to
-    locate the log-directory path. The whole log directory is then copied under
-    ``<log_base>/<ip>_<hostname>/`` and the verdict is taken from console.log's
-    final "Program exiting with return code ANC_SUCCESS [0]" line. On failure,
-    the item summary and FAILED rows are surfaced.
+    locate the log-directory path. The per-node destination is resolved from
+    config anc.log_folder_path with the "<node>" token set to this node's
+    "<ip>_<hostname>" label (default layout
+    ``.../anc_logs/<node>/<test_name>/<timestamp>/``); the whole log directory is
+    copied there and the verdict is taken from console.log's final "Program
+    exiting with return code ANC_SUCCESS [0]" line. On failure, the item summary
+    and FAILED rows are surfaced.
 
     Returns:
-      str | None: A failure reason for this node, or None if the node passed.
+      tuple[str | None, str | None]: (failure reason or None if the node passed,
+      the per-node destination directory or None if it was never created).
     '''
     ld_match = LOG_DIRECTORY_RE.search(output or "")
     if not ld_match:
         log.error("Node %s: could not determine Log directory from output", host)
-        return "could not determine Log directory from ANC output"
+        return "could not determine Log directory from ANC output", None
     log_dir = ld_match.group(1)
     log.info("Node %s: ANC %s log directory: %s", host, test_name, log_dir)
 
@@ -752,28 +830,29 @@ def _evaluate_node(cluster_dict, host, output, log_base, test_name):
             pkey=cluster_dict["priv_key_file"],
         )
     except Exception as exc:  # infra failure must fail the test
-        return f"could not open SSH handle for artifact collection: {exc}"
+        return f"could not open SSH handle for artifact collection: {exc}", None
 
     label = _node_label(single, host, cluster_dict)
-    dest_dir = os.path.join(log_base, label)
+    dest_dir = resolve_anc_log_folder(config_dict, test_name, timestamp,
+                                      node=label)
     os.makedirs(dest_dir, exist_ok=True)
 
     console_path, infra_reason = _pull_log_dir(
         single, host, cluster_dict["username"], log_dir, dest_dir
     )
     if infra_reason:
-        return infra_reason
+        return infra_reason, dest_dir
 
     try:
         with open(console_path, encoding="utf-8", errors="replace") as fh:
             console_text = fh.read()
     except Exception as exc:
-        return f"could not read collected console.log: {exc}"
+        return f"could not read collected console.log: {exc}", dest_dir
 
     rc_matches = ANC_RETURN_CODE_RE.findall(console_text)
     if not rc_matches:
         log.error("Node %s: ANC return code not found in console.log", host)
-        return "ANC return code not found in console.log"
+        return "ANC return code not found in console.log", dest_dir
 
     rc_name, rc_value = rc_matches[-1][0], int(rc_matches[-1][1])
     log.info("Node %s: ANC %s program return code is %s [%s]", host, test_name,
@@ -783,20 +862,23 @@ def _evaluate_node(cluster_dict, host, output, log_base, test_name):
         reason = f"ANC returned {rc_name} [{rc_value}]"
         if detail:
             reason = f"{reason}; {detail}"
-        return reason
+        return reason, dest_dir
 
-    return None
+    return None, dest_dir
 
 
-def _attach_anc_logs_to_html(request, config_dict, test_name, log_base, failed):
+def _attach_anc_logs_to_html(request, config_dict, test_name, node_dirs,
+                             timestamp, failed):
     '''
-    Bundle this run's collected ANC log tree into the pytest-html report zip.
+    Bundle this run's collected ANC log trees into the pytest-html report zip.
 
-    The core HtmlReportManager only zips flat files in its report log dir, so
-    the whole per-run ANC tree (log_base, with per-node subdirs) is tarred into a
-    single archive, copied into that dir via add_html_to_report (so it lands in
-    the zip), and linked from the test row via a stashed pytest-html url extra
-    (merged by the repo-root pytest_runtest_makereport hook).
+    Per-node logs no longer share a single per-run parent (the default layout is
+    ``.../anc_logs/<node>/<test_name>/<timestamp>/``), so every node's collected
+    directory in ``node_dirs`` is tarred into ONE archive under a
+    ``<node_label>/`` arcname, copied into the report log dir via
+    add_html_to_report (so it lands in the zip), and linked from the test row via
+    a stashed pytest-html url extra (merged by the repo-root
+    pytest_runtest_makereport hook).
 
     Gating (per config anc.ADD_ANC_LOGS_TO_HTML_REPORTS):
       - flag True  -> always attach.
@@ -817,15 +899,33 @@ def _attach_anc_logs_to_html(request, config_dict, test_name, log_base, failed):
                  "%s is False)", test_name, ADD_ANC_LOGS_TO_HTML_KEY)
         return
 
-    if not os.path.isdir(log_base) or not os.listdir(log_base):
-        log.warning("ANC '%s': no collected logs at %s to attach to HTML "
-                    "report", test_name, log_base)
+    present = [d for d in node_dirs if d and os.path.isdir(d) and os.listdir(d)]
+    if not present:
+        log.warning("ANC '%s': no collected logs to attach to HTML report",
+                    test_name)
         return
 
-    tar_path = f"{log_base.rstrip(os.sep)}.tar.gz"
+    # No shared per-run parent anymore, so write the archive under the runner
+    # base and name it by test + timestamp; each node's tree goes in under its
+    # own "<ip>_<hostname>/" arcname.
+    runner_base = resolve_runner_results_base(config_dict.get("run_config", {}))
+    os.makedirs(runner_base, exist_ok=True)
+    tar_path = os.path.join(runner_base, f"{test_name}_{timestamp}_anc_logs.tar.gz")
     try:
         with tarfile.open(tar_path, "w:gz") as tf:
-            tf.add(log_base, arcname=os.path.basename(log_base.rstrip(os.sep)))
+            for node_dir in present:
+                node_dir = node_dir.rstrip(os.sep)
+                # Prefer a runner-base-relative arcname (e.g.
+                # "<node>/<test_name>/<timestamp>") so each node's tree is
+                # distinct inside the archive; fall back to the leaf name if the
+                # dir somehow sits outside the runner base.
+                try:
+                    arcname = os.path.relpath(node_dir, runner_base)
+                    if arcname.startswith(".."):
+                        arcname = os.path.basename(node_dir)
+                except ValueError:
+                    arcname = os.path.basename(node_dir)
+                tf.add(node_dir, arcname=arcname)
     except Exception as exc:  # best-effort; do not fail the test
         log.warning("ANC '%s': could not archive logs for HTML report: %s",
                     test_name, exc)
@@ -863,11 +963,11 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
 
     Executes ``cd <ANC_DIR> && sudo ./anc.py -g <groups...>`` on every node,
     copies the ENTIRE ANC log directory to the configured log_folder_path
-    (``{runner_log_folder}/anc_logs/<test_name>`` by default, under a per-node
-    ``<ip>_<hostname>/`` subdir), and PASSES only when every node's console.log
-    ends with ANC_SUCCESS [0]. On failure the item summary and FAILED rows are
-    surfaced. Failures across parallel nodes are aggregated into a SINGLE test
-    failure.
+    (``{runner_log_folder}/anc_logs/<node>/<test_name>/<timestamp>`` by default,
+    where ``<node>`` is that node's ``<ip>_<hostname>`` label), and PASSES only
+    when every node's console.log ends with ANC_SUCCESS [0]. On failure the item
+    summary and FAILED rows are surfaced. Failures across parallel nodes are
+    aggregated into a SINGLE test failure.
 
     Console behaviour is config-driven: when anc.print_all_to_console is truthy
     (default), the full ANC group output is echoed to the console; when falsey,
@@ -884,15 +984,17 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
     timeout = anc_cfg.get("test_timeout", DEFAULT_ANC_TEST_TIMEOUT)
     print_all = _as_bool(anc_cfg.get(PRINT_ALL_TO_CONSOLE_KEY), default=True)
     timestamp = new_run_timestamp()
-    log_base = resolve_anc_log_folder(config_dict, test_name, timestamp)
-    os.makedirs(log_base, exist_ok=True)
+    # Per-node destinations are resolved individually in _evaluate_node (each
+    # substitutes its own "<node>" label). Here we only compute the pattern with
+    # "<node>" left intact, purely to announce where logs will land.
+    log_pattern = resolve_anc_log_folder(config_dict, test_name, timestamp)
     expected_nodes = list(cluster_dict["node_dict"].keys())
     groups_arg = " ".join(groups)
 
     # Announce the resolved (substituted) log directory up front so the user
     # knows exactly where this run's ANC logs will land.
     log.info("=" * 72)
-    log.info("ANC '%s': logs for this run -> %s", test_name, log_base)
+    log.info("ANC '%s': logs for this run -> %s", test_name, log_pattern)
     log.info("=" * 72)
 
     if print_all:
@@ -912,7 +1014,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
 
     log.info("ANC '%s': running %d group(s) (print_all_to_console=%s, "
              "timeout=%ss, logs under %s)", test_name, len(groups), print_all,
-             timeout, log_base)
+             timeout, log_pattern)
     log.info("ANC '%s': groups=%s", test_name, groups_arg)
 
     try:
@@ -932,14 +1034,18 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
         return
 
     failed_nodes = {}
+    node_dirs = []
     for host in expected_nodes:
         if host not in out_dict:
             reason = "node produced no output (did not run / unreachable)"
             log.error("Node %s: ANC %s FAILED - %s", host, test_name, reason)
             failed_nodes[host] = reason
             continue
-        reason = _evaluate_node(cluster_dict, host, out_dict[host] or "",
-                                log_base, test_name)
+        reason, dest_dir = _evaluate_node(cluster_dict, config_dict, host,
+                                          out_dict[host] or "", test_name,
+                                          timestamp)
+        if dest_dir:
+            node_dirs.append(dest_dir)
         if reason:
             log.error("Node %s: ANC %s FAILED - %s", host, test_name, reason)
             failed_nodes[host] = reason
@@ -954,7 +1060,8 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
     # Attach collected logs to the HTML report before update_test_result() may
     # raise: always when the flag is set, otherwise only on failure.
     _attach_anc_logs_to_html(
-        request, config_dict, test_name, log_base, bool(failed_nodes)
+        request, config_dict, test_name, node_dirs, timestamp,
+        bool(failed_nodes)
     )
 
     update_test_result()
@@ -970,7 +1077,8 @@ class AncGroupTest:
     A per-group suite subclasses this and sets ``GROUP`` to the ANC group name.
     Running the suite installs/verifies ANC and fixes ROCm ldconfig as
     pre-tasks, then runs just that one group. The test name (and therefore the
-    log subpath ``.../anc_logs/test_<GROUP>/<timestamp>``) is ``test_<GROUP>``.
+    log subpath ``.../anc_logs/<node>/test_<GROUP>/<timestamp>``) is
+    ``test_<GROUP>``.
 
     The per-group suite files under cpu/ and gpu/ are GENERATED from the group
     lists in this module by build_tools/gen_anc_suites.py (``make

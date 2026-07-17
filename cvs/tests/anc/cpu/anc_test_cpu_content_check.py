@@ -13,7 +13,7 @@ Do NOT edit by hand. ANC single-group suite for the "cpu_content_check" group (c
 Edit the group lists in cvs/lib/anc_lib.py and re-run
 ``make gen-anc-suites`` to regenerate. Installs/verifies ANC and fixes ROCm
 ldconfig as pre-tasks, then runs the "cpu_content_check" group; logs go to
-{runner_log_folder}/anc_logs/test_cpu_content_check/<timestamp>.
+{runner_log_folder}/anc_logs/<node>/test_cpu_content_check/<timestamp>.
 '''
 
 from cvs.lib.anc_lib import AncGroupTest

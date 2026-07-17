@@ -12,7 +12,7 @@ ANC "run all GPU groups" suite.
 Installs/verifies ANC and fixes ROCm ldconfig ONCE as pre-tasks, then runs
 every GPU group (anc_lib.GPU_GROUPS) sequentially, each as its own parametrized
 test so its logs are captured separately under
-``{runner_log_folder}/anc_logs/test_<group>/<timestamp>``.
+``{runner_log_folder}/anc_logs/<node>/test_<group>/<timestamp>``.
 
 For a single group, run its standalone suite instead, e.g.
 ``cvs run anc_test_hbm_lvl1``.

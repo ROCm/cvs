@@ -22,10 +22,16 @@
         "_comment_print_all_to_console": "'True' echoes ANC group output to the console; 'False' suppresses it (install/ldconfig/version diagnostics still print).",
         "print_all_to_console": "True",
 
-        "_comment_log_folder_path": "Controller-side destination for collected ANC logs. '{home}' -> /home/<userid>; '<test_name>' -> the group's test name (e.g. test_ampttk_full); '<timestamp>' -> per-run stamp (appended automatically if omitted).",
-        "log_folder_path": "{home}/cvs_logs/anc_logs/<test_name>/<timestamp>",
+        "_comment_log_folder_path": "Controller-side destination for collected ANC logs. '{home}' -> /home/<userid>; '<node>' -> the node's '<ip>_<hostname>' label (put it before '<test_name>' so multi-node runs group each node's tests together); '<test_name>' -> the group's test name (e.g. test_ampttk_full); '<timestamp>' -> per-run stamp (appended automatically if omitted).",
+        "log_folder_path": "{home}/cvs_logs/anc_logs/<node>/<test_name>/<timestamp>",
 
         "_comment_ADD_ANC_LOGS_TO_HTML_REPORTS": "'True' always bundles the collected ANC log tree into the pytest-html report zip. 'False' (default) bundles it only when the test fails, so passing runs stay lean while failures always carry their logs.",
-        "ADD_ANC_LOGS_TO_HTML_REPORTS": "False"
+        "ADD_ANC_LOGS_TO_HTML_REPORTS": "False",
+
+        "_comment_COLLECT_HTML_REPORTS": "'True' (default) auto-generates a pytest-html report even when no --html is passed on the command line, written to html_report_path. 'False' disables auto-collection (a report is produced only if you pass --html explicitly). An explicit --html on the command line always overrides html_report_path.",
+        "COLLECT_HTML_REPORTS": "True",
+
+        "_comment_html_report_path": "Destination directory template for the auto-collected HTML report (the report file <test_name>.html is placed inside). Same tokens as log_folder_path. Because pytest-html makes ONE report per session before any node connects, '<node>' here resolves to the FIRST cluster node (label built from the cluster file only, no SSH).",
+        "html_report_path": "{home}/cvs_logs/html_reports/<node>/<test_name>/<timestamp>"
     }
 }

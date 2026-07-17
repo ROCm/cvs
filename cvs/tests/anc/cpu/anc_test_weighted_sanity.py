@@ -13,7 +13,7 @@ Do NOT edit by hand. ANC single-group suite for the "weighted_sanity" group (cpu
 Edit the group lists in cvs/lib/anc_lib.py and re-run
 ``make gen-anc-suites`` to regenerate. Installs/verifies ANC and fixes ROCm
 ldconfig as pre-tasks, then runs the "weighted_sanity" group; logs go to
-{runner_log_folder}/anc_logs/test_weighted_sanity/<timestamp>.
+{runner_log_folder}/anc_logs/<node>/test_weighted_sanity/<timestamp>.
 '''
 
 from cvs.lib.anc_lib import AncGroupTest

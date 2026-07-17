@@ -13,7 +13,7 @@ Do NOT edit by hand. ANC single-group suite for the "miidct_full" group (cpu).
 Edit the group lists in cvs/lib/anc_lib.py and re-run
 ``make gen-anc-suites`` to regenerate. Installs/verifies ANC and fixes ROCm
 ldconfig as pre-tasks, then runs the "miidct_full" group; logs go to
-{runner_log_folder}/anc_logs/test_miidct_full/<timestamp>.
+{runner_log_folder}/anc_logs/<node>/test_miidct_full/<timestamp>.
 '''
 
 from cvs.lib.anc_lib import AncGroupTest
