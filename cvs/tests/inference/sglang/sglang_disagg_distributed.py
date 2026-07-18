@@ -170,7 +170,7 @@ def test_disagg_gpu_topology(im_obj, lifecycle, request):
     im_obj.sglang_disagg_gpu_counts()
     lifecycle.complete_stage(request, "gpu_topology", t0)
 
-def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
+def test_print_results_table(inf_res_dict, lifecycle, variant_config):
     from cvs.lib.report.registry import bind_session_results
     from cvs.tests.inference.sglang._shared import test_print_results_table as _print
 
@@ -179,7 +179,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
         variant_config=variant_config,
         lifecycle=lifecycle,
     )
-    _print(inf_res_dict, lifecycle)
+    _print(inf_res_dict, lifecycle, variant_config)
 
 
 def test_teardown(orch, lifecycle, request):

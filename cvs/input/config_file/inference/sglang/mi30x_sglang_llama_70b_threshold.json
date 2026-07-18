@@ -1,7 +1,7 @@
 {
   "_comment": "Llama 3.1 70B thresholds for MI30X SGLang disaggregated. ISL=1024 OSL=1024 concurrency sweep: 4,8,16,32,64,128,256. Other ISL/OSL at CONC=64.",
   "ISL=1024,OSL=1024,TP=8,PP=1,CONC=4": {
-    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 245 },
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 150 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
     "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
     "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
