@@ -415,7 +415,7 @@ class SglangDisaggPD:
     ):
         # Env setup for Prefill Nodes ..
         p_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
-                    export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
@@ -445,7 +445,7 @@ class SglangDisaggPD:
     ):
         # Env setup for Decode Nodes ..
         d_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
-                    export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
@@ -475,7 +475,7 @@ class SglangDisaggPD:
     ):
         # Env setup for Proxy Router Node ..
         r_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
-                    export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
@@ -500,7 +500,7 @@ class SglangDisaggPD:
     ):
         # Env setup for Benchserv node ..
         b_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
-                    export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH
                     export NCCL_DEBUG={self.inf_dict['nccl_debug']}
                     export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
                     export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
@@ -606,6 +606,7 @@ class SglangDisaggPD:
                       export SGLANG_USE_AITER=1
                       export AMDGCN_USE_BUFFER_OPS=1
                       export ROCM_QUICK_REDUCE_QUANTIZATION=INT8
+                      export GPU_ARCHS=gfx942
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --disaggregation-mode prefill \
                               --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
@@ -682,6 +683,7 @@ class SglangDisaggPD:
                       export SGLANG_USE_AITER=1
                       export AMDGCN_USE_BUFFER_OPS=1 
                       export ROCM_QUICK_REDUCE_QUANTIZATION=INT8
+                      export GPU_ARCHS=gfx942
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --disaggregation-mode decode \
                               --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
