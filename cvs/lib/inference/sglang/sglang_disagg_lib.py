@@ -882,7 +882,8 @@ class SglangDisaggPD:
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
                       source /tmp/benchmark_env_script.sh && \
-                      python3 -m sglang.bench_serving --backend {i_dict['backend']} \
+                      python3 -m sglang.benchmark.serving \
+                      --backend {i_dict['backend']} \
                       --dataset-name random \
                       --num-prompts {i_dict['num_prompts']} \
                       --max-concurrency {self.bp_dict['max_concurrency']} \
