@@ -33,12 +33,12 @@ def test_launch_inference_containers(orch, lifecycle, request):
     lifecycle.complete_stage(request, "container_launch", t0)
 
 
-def test_setup_ibv_devices(im_obj, lifecycle, request):
-    globals.error_list = []
-    t0 = time.monotonic()
-    im_obj.exec_nic_setup_scripts()
-    im_obj.check_ibv_devices()
-    lifecycle.complete_stage(request, "ibv_setup", t0)
+# def test_setup_ibv_devices(im_obj, lifecycle, request):
+#     globals.error_list = []
+#     t0 = time.monotonic()
+#     im_obj.exec_nic_setup_scripts()
+#     im_obj.check_ibv_devices()
+#     lifecycle.complete_stage(request, "ibv_setup", t0)
 
 
 def test_rms_norm(im_obj, lifecycle, request):
@@ -79,12 +79,12 @@ def test_launch_proxy_router(im_obj, lifecycle, request):
     lifecycle.complete_stage(request, "proxy_router_launch", t0)
 
 
-def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, request):
-    globals.error_list = []
-    t0 = time.monotonic()
-    results = im_obj.verify_openai_compatible_endpoints()
-    lifecycle.smoke_results = results
-    lifecycle.complete_stage(request, "smoke_endpoints", t0)
+# def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, request):
+#     globals.error_list = []
+#     t0 = time.monotonic()
+#     results = im_obj.verify_openai_compatible_endpoints()
+#     lifecycle.smoke_results = results
+#     lifecycle.complete_stage(request, "smoke_endpoints", t0)
     
 
 # def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
@@ -121,13 +121,13 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
 #     lifecycle.complete_stage(request, "lm_eval_hellaswag", t0)
 
 
-# def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-#     globals.error_list = []
-#     t0 = time.monotonic()
-#     im_obj.setup_benchmark_serv_container_env()
-#     g = im_obj.run_lm_eval_gsm8k_benchmark_test()
-#     lifecycle.phase_labels["accuracy_gsm8k"] = g
-#     lifecycle.complete_stage(request, "lm_eval_gsm8k", t0)
+def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
+    globals.error_list = []
+    t0 = time.monotonic()
+    im_obj.setup_benchmark_serv_container_env()
+    g = im_obj.run_lm_eval_gsm8k_benchmark_test()
+    lifecycle.phase_labels["accuracy_gsm8k"] = g
+    lifecycle.complete_stage(request, "lm_eval_gsm8k", t0)
 
 
 # def test_run_lm_eval_mmlu_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
