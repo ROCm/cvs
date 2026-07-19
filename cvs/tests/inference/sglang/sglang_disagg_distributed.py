@@ -36,8 +36,8 @@ def test_launch_inference_containers(orch, lifecycle, request):
 def test_setup_ibv_devices(im_obj, lifecycle, request):
     globals.error_list = []
     t0 = time.monotonic()
-    im_obj.check_ibv_devices()
     im_obj.exec_nic_setup_scripts()
+    im_obj.check_ibv_devices()
     lifecycle.complete_stage(request, "ibv_setup", t0)
 
 
