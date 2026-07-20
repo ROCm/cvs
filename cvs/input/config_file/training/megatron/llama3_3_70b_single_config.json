@@ -21,19 +21,19 @@
     "verify_network_errors": "False"
   },
   "model_params": {
-    "model_name": "llama3_1_8b",
-    "tokenizer_model": "meta-llama/Llama-3.1-8B",
-    "model_size": "8",
+    "model_name": "llama3_3_70b",
+    "tokenizer_model": "meta-llama/Llama-3.3-70B-Instruct",
+    "model_size": "70",
     "sequence_length": "8192",
-    "recompute": "0",
-    "fsdp": "0",
+    "recompute": "1",
+    "fsdp": "1",
     "tensor_parallelism": "1",
     "pipeline_parallelism": "1",
     "precision": "TE_FP8"
   },
   "container": {
     "lifetime": "per_run",
-    "name": "megatron_llama3_1_8b_single",
+    "name": "megatron_llama3_3_70b_single",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
@@ -54,10 +54,10 @@
   },
   "sweep": {
     "combinations": {
-      "llama3_1_8b-mi325-bs128-mbs4-fp8": {
-        "name": "llama3_1_8b_mbs4_gbs128_TE_FP8",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
+      "llama3_3_70b-mi325-bs96-mbs3-fp8": {
+        "name": "llama3_3_70b_mbs3_gbs96_TE_FP8",
+        "global_batch_size": "96",
+        "micro_batch_size": "3",
         "precision": "TE_FP8",
         "result_dict": {
           "throughput_per_gpu": "100",
@@ -66,35 +66,11 @@
           "mem_usage": "0"
         }
       },
-      "llama3_1_8b-mi325-bs128-mbs4-bf16": {
-        "name": "llama3_1_8b_mbs4_gbs128_TE_BF16",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
+      "llama3_3_70b-mi325-bs96-mbs3-bf16": {
+        "name": "llama3_3_70b_mbs3_gbs96_TE_BF16",
+        "global_batch_size": "96",
+        "micro_batch_size": "3",
         "precision": "TE_BF16",
-        "result_dict": {
-          "throughput_per_gpu": "100",
-          "elapsed_time_per_iteration": "500",
-          "tokens_per_gpu": "1000",
-          "mem_usage": "0"
-        }
-      },
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp4": {
-        "name": "llama3_1_8b_mbs4_gbs128_MXFP4",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
-        "precision": "MXFP4",
-        "result_dict": {
-          "throughput_per_gpu": "100",
-          "elapsed_time_per_iteration": "500",
-          "tokens_per_gpu": "1000",
-          "mem_usage": "0"
-        }
-      },
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp8": {
-        "name": "llama3_1_8b_mbs4_gbs128_MXFP8",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
-        "precision": "MXFP8",
         "result_dict": {
           "throughput_per_gpu": "100",
           "elapsed_time_per_iteration": "500",
@@ -104,10 +80,8 @@
       }
     },
     "runs": [
-      "llama3_1_8b-mi325-bs128-mbs4-fp8",
-      "llama3_1_8b-mi325-bs128-mbs4-bf16",
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp4",
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp8"
+      "llama3_3_70b-mi325-bs96-mbs3-fp8",
+      "llama3_3_70b-mi325-bs96-mbs3-bf16"
     ]
   }
 }

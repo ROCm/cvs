@@ -4,18 +4,19 @@ All rights reserved. This notice is intended as a precaution against inadvertent
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 
-Parametrized Megatron single-node training suite.
+Parametrized Megatron distributed (multi-node) training suite.
 One config per model; sweep.combinations + sweep.runs drive parametrization.
 
-Each sweep combo runs in its OWN freshly-launched container: launch -> train ->
+Each sweep combo runs in its OWN freshly-launched container set: launch -> train ->
 verify -> save results -> teardown. Combos never share port 6000, log files, or
 scripts dir, and each combo's dmesg/verify window is scoped to its own run.
 The image is pulled only on the first launch (cached thereafter), so recycling
-the container per combo is cheap.
+the containers per combo is cheap.
 '''
 
 import json
 import os
+import re
 import time
 
 import pytest
@@ -63,13 +64,13 @@ def pytest_generate_tests(metafunc):
 
 
 def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch_size, precision, result_dict, train_res_dict, lifecycle, request):
-    """Run the full per-combo lifecycle in a dedicated container.
+    """Run the full per-combo lifecycle in a dedicated container set.
 
-    Launches a fresh container for this combo, runs single-node Megatron
-    training for the given micro_batch_size / global_batch_size, verifies and
-    stores the results, then ALWAYS tears the container down (finally) so the
-    next combo starts on a clean node — freeing port 6000, the training log, and
-    the scripts dir. The image is pulled only on the first launch (cached
+    Launches fresh containers for this combo, runs distributed Megatron training
+    for the given micro_batch_size / global_batch_size across all nodes, verifies
+    and stores the results, then ALWAYS tears the containers down (finally) so the
+    next combo starts on a clean cluster — freeing port 6000, the training log,
+    and the scripts dir. The image is pulled only on the first launch (cached
     afterwards), so relaunch per combo is cheap.
 
     Model-level params (tp, pp, precision, etc.) come from variant_config.model_params.
@@ -79,12 +80,25 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
     nodeid = request.node.nodeid
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
 
-    # A container is about to exist; the orch leak-guard should own cleanup until
+    # A container set is about to exist; the orch leak-guard should own cleanup until
     # this combo's own teardown (finally) confirms it is gone.
     lifecycle.torn_down = False
 
     try:
-        # Stage 1: launch a fresh container for this combo (was test_launch_container).
+        # Stage 0: disable firewall — required for distributed runs to avoid
+        # inter-node MPI threads timing out against the Rendezvous endpoint.
+        t = time.monotonic()
+        out_dict = orch.exec("sudo service ufw status")
+        for node, out in (out_dict or {}).items():
+            if not re.search("inactive", out or "", re.I):
+                orch.exec("sudo service ufw stop")
+        out_dict = orch.exec("sudo ufw status")
+        for node, out in (out_dict or {}).items():
+            if not re.search("inactive|disabled", out or "", re.I):
+                pytest.fail(f"failed to disable firewall on node {node}")
+        lifecycle.record(nodeid, "firewall_disable", time.monotonic() - t)
+
+        # Stage 1: launch fresh containers for this combo.
         t = time.monotonic()
         ok = orch.setup_containers()
         lifecycle.record(nodeid, "container_launch", time.monotonic() - t)
@@ -93,18 +107,16 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
         if not orch.verify_containers_running(name):
             pytest.fail(f"container {name} not running after setup_containers()")
 
-        # Stage 2: start sshd (was test_setup_sshd). Single-node runs skip
-        # starting the in-container sshd (it exists only for inter-node MPI), so
-        # only probe 2224 when there is more than one host.
+        # Stage 2: start sshd — distributed runs always require inter-node MPI
+        # so sshd on 2224 is mandatory on all nodes.
         t = time.monotonic()
         ok = orch.setup_sshd()
         lifecycle.record(nodeid, "sshd_setup", time.monotonic() - t)
         if not ok:
             pytest.fail("setup_sshd() returned False")
-        if len(orch.hosts) > 1:
-            probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
-            if not any("OK" in (v or "") for v in (probe or {}).values()):
-                pytest.fail("sshd not listening on 2224 after setup_sshd()")
+        probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
+        if not any("OK" in (v or "") for v in (probe or {}).values()):
+            pytest.fail("sshd not listening on 2224 after setup_sshd()")
 
         # Stage 3: training.
         globals.error_list = []
@@ -116,13 +128,12 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
             global_batch_size=global_batch_size,
             precision=precision,
             result_dict=result_dict,
-            distributed_training=False,
+            distributed_training=True,
             tune_model_params=False,
             run_label=request.node.callspec.id,
         )
 
         t = time.monotonic()
-        mt_obj.exec_nic_setup_scripts()
         mt_obj.build_training_job_cmd()
         mt_obj.start_training_job()
         mt_obj.poll_for_training_completion()
@@ -137,23 +148,21 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
         train_res_dict[combo_key] = mt_obj.training_results_dict
         update_test_result()
     finally:
-        # Teardown (was test_teardown) — always recycle the container so the next
-        # combo starts on a clean node even if a stage above failed.
+        # Teardown — always recycle the containers so the next combo starts on a
+        # clean cluster even if a stage above failed.
         t = time.monotonic()
         orch.teardown_containers()
         lifecycle.record(nodeid, "teardown", time.monotonic() - t)
         if orch.verify_containers_running(name):
             log.error("container %s still running after teardown_containers()", name)
         else:
-            # This combo's container is gone; suppress the module-end leak-guard
-            # so it does not tear down a second time.
             lifecycle.torn_down = True
 
 
 def test_throughput(variant_config, micro_batch_size, global_batch_size, precision, result_dict, train_res_dict, lifecycle, request):
     """Assert each metric in the combo's result_dict threshold spec is met.
 
-    Reads results saved by test_training (the container is already gone; no
+    Reads results saved by test_training (containers are already gone; no
     container is needed here). Thresholds are inline per combo in the config file
     under sweep.combinations.<id>.result_dict. Skips cleanly if training did not
     record results for this combo or enforce_thresholds is false.

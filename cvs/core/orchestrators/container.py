@@ -103,8 +103,8 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         # Start with dynamic user-specific mounts (from original command)
         volumes = [
-            f"/home/{user}:/workspace",  # User home directory
-            f"/home/{user}/.ssh:/host_ssh",  # SSH keys for multinode
+            # f"/home/{user}:/workspace",  # User home directory
+            f"/home/{user}/.ssh:/host_ssh"  # SSH keys for multinode
         ]
 
         # Merge with config.json runtime args

@@ -79,10 +79,15 @@ def _parse_training_results(output):
     return out
 
 
-def _is_training_complete(output):
-    """Return True if the training-log text shows a completion indicator
-    matching any pattern in TRAINING_PROGRESS_PATTERNS."""
-    return any(re.search(p, output, re.I) for p in TRAINING_PROGRESS_PATTERNS)
+def _is_training_complete(output, total_iters):
+    """Return True only when the final iteration line is present.
+
+    Megatron emits `iteration <cur>/<total>` on every step (both old and new
+    build formats), so the last iteration `<total>/<total>` marks true
+    completion. Checking for any per-iteration throughput line instead would
+    fire after step 1 and cut slow runs short."""
+    n = int(total_iters)
+    return bool(re.search(rf'iteration\s+{n}\s*/\s*{n}\b', output))
 
 
 def _has_nan_inf_results(output):
@@ -178,6 +183,7 @@ class MegatronTrainingJob:
         distributed_training=False,
         tune_model_params=False,
         scripts_dir=None,
+        run_label=None,
     ):
         """
         Initialize job configuration from a MegatronVariantConfig + sweep-level params.
@@ -202,6 +208,7 @@ class MegatronTrainingJob:
         self.tune_model_params = tune_model_params
 
         self.job_cmd = ''
+        self.job_cmd_list = []
         self.training_results_dict = {}
 
         self.rdma_stats_dict_before = {}
@@ -269,6 +276,13 @@ class MegatronTrainingJob:
         pdict.pop('model_name', None)
 
         self.expected_result_dict = result_dict or {}
+
+        # Per-combo log dir so sweep combos don't overwrite each other's
+        # training.log. Label is the sweep combination name (run_label); falls
+        # back to a model_name/mbs/gbs/precision tag when none is provided.
+        raw_label = run_label or f"{self.model_name}_mbs{micro_batch_size}_gbs{global_batch_size}_{pdict['precision']}"
+        self.run_label = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))
+        self.combo_log_dir = f'{self.log_dir}/megatron-logs/{self.run_label}'
 
         pdict.setdefault('tokenizer_model', 'meta-llama/Llama-3.1-70B')
         pdict.setdefault('model_size', 70)
@@ -429,7 +443,7 @@ class MegatronTrainingJob:
             # Build base cmd; NODE_RANK={i} is injected per-host in start_training_job
             cmd = (
                 cmd
-                + f'cd {self.megatron_root}; RECOMPUTE={self.recompute} '
+                + f'RECOMPUTE={self.recompute} '
                 + f'SEQ_LENGTH={self.sequence_length} '
                 + f'{self.mbs_env}={self.micro_batch_size} {self.gbs_env}={self.global_batch_size} '
                 + f'TP={self.tensor_parallelism} '
@@ -448,7 +462,7 @@ class MegatronTrainingJob:
             # Single node training case, run same cmd on all nodes.
             cmd = (
                 cmd
-                + f'cd {self.megatron_root}; RECOMPUTE={self.recompute} '
+                + f'RECOMPUTE={self.recompute} '
                 + f'SEQ_LENGTH={self.sequence_length} '
                 + f'{self.mbs_env}={self.micro_batch_size} {self.gbs_env}={self.global_batch_size} '
                 + f'TP={self.tensor_parallelism} '
@@ -493,13 +507,13 @@ class MegatronTrainingJob:
 
         # Create per-node log dirs inside container on all hosts in parallel
         self.orch.exec_cmd_list([
-            f'mkdir -p {self.log_dir}/megatron-logs/out-node{i}'
+            f'mkdir -p {self.combo_log_dir}/out-node{i}'
             for i in range(n)
         ])
 
         # Patch TRAIN_LOG path in training script on all hosts in parallel (inside container)
         self.orch.exec_cmd_list([
-            f'sed -i "/^TRAIN_LOG=/c\\TRAIN_LOG={self.log_dir}/megatron-logs/out-node{i}/training.log" {self.training_script}'
+            f'sed -i "/^TRAIN_LOG=/c\\TRAIN_LOG={self.combo_log_dir}/out-node{i}/training.log" {self.training_script}'
             for i in range(n)
         ])
 
@@ -520,7 +534,7 @@ class MegatronTrainingJob:
             # Launch wrapper scripts inside container on all nodes in parallel
             self.orch.exec_cmd_list([
                 f'nohup {self.scripts_dir}/distributed_wrapper_script_{i}.sh > '
-                f'{self.log_dir}/megatron-logs/out-node{i}/training.log 2>&1 &'
+                f'{self.combo_log_dir}/out-node{i}/training.log 2>&1 &'
                 for i in range(n)
             ])
         else:
@@ -532,7 +546,7 @@ class MegatronTrainingJob:
             # Launch inside container
             self.orch.exec(
                 f'nohup {self.scripts_dir}/single_node_wrapper_script.sh > '
-                f'{self.log_dir}/megatron-logs/out-node0/training.log 2>&1 &'
+                f'{self.combo_log_dir}/out-node0/training.log 2>&1 &'
             )
         time.sleep(50)
 
@@ -564,7 +578,7 @@ class MegatronTrainingJob:
 
         # Head node (node 0) is always the master — read its log via bare-host SSH
         out_dict = self.orch.head.exec(
-            f'cat {self.log_dir}/megatron-logs/out-node0/training.log | tail -15'
+            f'cat {self.combo_log_dir}/out-node0/training.log | tail -15'
         )
         output = list(out_dict.values())[0]
 
@@ -616,7 +630,7 @@ class MegatronTrainingJob:
 
         # Head node (node 0) is always the master — read its log via bare-host SSH
         out_dict = self.orch.head.exec(
-            f'cat {self.log_dir}/megatron-logs/out-node0/training.log'
+            f'cat {self.combo_log_dir}/out-node0/training.log'
         )
         output = list(out_dict.values())[0]
 
@@ -672,11 +686,11 @@ class MegatronTrainingJob:
                 fail_test('Failures seen in training logs, Aborting!!!')
                 return
             out_dict = self.orch.head.exec(
-                f'cat {self.log_dir}/megatron-logs/out-node0/training.log'
+                f'cat {self.combo_log_dir}/out-node0/training.log'
             )
             output = list(out_dict.values())[0]
 
-            if not _is_training_complete(output):
+            if not _is_training_complete(output, self.iterations):
                 log.info('Training still in progress')
             else:
                 if _has_nan_inf_results(output):
@@ -786,7 +800,7 @@ class MegatronTrainingJob:
                                 )
 
         # Scan Dmesg for errors ..
-        verify_dmesg_for_errors(self.orch.all, self.training_start_time, self.training_end_time)
+        verify_dmesg_for_errors(self.orch.all, self.training_start_time, self.training_end_time, till_end_flag=False)
 
         log.info('^^^^^^^^^^^^^^^^^^^^')
         log.info('training_results_dict')

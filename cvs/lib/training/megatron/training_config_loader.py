@@ -15,8 +15,10 @@ enforce_thresholds gates whether those inline thresholds are asserted in
 test_throughput.
 
 Both megatron_single and megatron_distributed are covered by MegatronVariantConfig
-via the framework field. The test suite reads variant_config.framework to decide
-whether to pass distributed_training=True to MegatronTrainingJob.
+via the framework field, which is a validated schema tag / config discriminator.
+Topology is not selected from it at runtime: each test suite hardcodes its own
+distributed_training value (megatron_single.py -> False, megatron_distributed.py
+-> True) when constructing MegatronTrainingJob.
 '''
 
 from __future__ import annotations
