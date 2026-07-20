@@ -90,11 +90,13 @@ def _prune_stale(subdir, keep_filenames):
             continue
         path = os.path.join(subdir, name)
         try:
+            # Read the whole (tiny) file: the marker sits in the second
+            # docstring, past byte 360, so a small fixed read would miss it.
             with open(path) as fh:
-                head = fh.read(400)
+                content = fh.read()
         except OSError:
             continue
-        if GENERATED_MARKER in head:
+        if GENERATED_MARKER in content:
             os.remove(path)
             print(f"pruned {os.path.relpath(path, REPO_ROOT)}")
 

@@ -7,7 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 '''
-Shared ANC (Automated Node Checkout) machinery for the ANC CVS suites.
+Shared ANC (AMD Node Check) machinery for the ANC CVS suites.
 
 This module holds the logic reused across the ANC suites so each suite file
 stays thin:
@@ -179,8 +179,9 @@ def resolve_anc_html_report_path(config_dict, cluster_dict, test_name,
     path = path.replace("<node>", node)
     path = path.replace("<test_name>", test_name)
     path = path.replace("<timestamp>", timestamp)
-    if "~" in path:
-        path = os.path.expanduser(path)
+    # expanduser only expands a LEADING ~ (a mid-path ~ is a literal dir name,
+    # not a home reference, and must not expand); it is a no-op otherwise.
+    path = os.path.expanduser(path)
     path = os.path.abspath(path)
     return os.path.join(path, f"{test_name}.html")
 
@@ -229,8 +230,9 @@ def resolve_anc_log_folder(config_dict, test_name, timestamp, node=None):
         path = path.replace("<timestamp>", timestamp)
     else:
         path = os.path.join(path, timestamp)
-    if "~" in path:
-        path = os.path.expanduser(path)
+    # expanduser only expands a LEADING ~ (a mid-path ~ is a literal dir name,
+    # not a home reference, and must not expand); it is a no-op otherwise.
+    path = os.path.expanduser(path)
     return os.path.abspath(path)
 
 # Default per-run execution timeout (2 hours); override via
@@ -242,7 +244,7 @@ DEFAULT_ANC_TEST_TIMEOUT = 7200
 # files are present under these dirs but not in the dynamic-linker cache, so
 # tools fail with "librocblas.so.5: cannot open shared object file". The
 # ldconfig pre-task registers whichever of these dirs exist and refreshes the
-# cache. Ordered so the truncating write targets the first existing dir.
+# cache (the conf file is truncated once, then each existing dir is appended).
 ROCM_LIB_DIRS = ["/opt/rocm/lib", "/opt/rocm/lib64"]
 
 # Library used to decide whether the ROCm dirs still need to be registered.
@@ -252,6 +254,26 @@ LDCONFIG_TARGET_LIB = "librocblas"
 # =========================================================================
 # Package installation
 # =========================================================================
+def _assert_shell_safe(anc_cfg, keys):
+    '''
+    Reject config values that would break the single-quoted remote shell strings.
+
+    The install commands wrap config values (cvs_home, anc_release_url, ...) in
+    single quotes when interpolating them into the remote command. A value that
+    itself contains a single quote would break that quoting. Config is trusted,
+    so rather than shell-escape everywhere we validate at this boundary and fail
+    fast with a clear message.
+    '''
+    for key in keys:
+        value = anc_cfg.get(key)
+        if value is not None and "'" in str(value):
+            raise ValueError(
+                f"ANC config value {key}={value!r} contains a single quote, "
+                f"which is not supported (it would break the remote shell "
+                f"command quoting). Remove the quote from the value."
+            )
+
+
 def detect_package_type(anc_release_url):
     '''
     Infer the ANC package flavour from the release archive name.
@@ -279,15 +301,23 @@ def node_version_matches(phdl, expected_version):
     '''
     Query ``ANC_BIN --version`` on every node and report version matches.
 
+    The version is matched as a whole token (bounded by non-version characters),
+    not a substring, so expecting "1.4.7" does NOT match "1.4.70" or "1.4.7-rc".
+
     Returns:
-      dict[str, bool]: host -> True when ``expected_version`` appears in the
-      node's ``anc.py --version`` output (False if ANC is absent or reports a
-      different version).
+      dict[str, bool]: host -> True when ``expected_version`` appears as a
+      standalone version token in the node's ``anc.py --version`` output (False
+      if ANC is absent or reports a different version).
     '''
     out_dict = phdl.exec(f"{ANC_BIN} --version 2>&1 || true", timeout=60)
     print_test_output(log, out_dict)
+    # Boundaries are any char that isn't part of a version token (digits, dots,
+    # hyphens, alphanumerics) so "1.4.7" won't match inside "1.4.70"/"1.4.7-rc".
+    version_re = re.compile(
+        r"(?<![\w.\-])" + re.escape(expected_version) + r"(?![\w.\-])"
+    )
     return {
-        host: (expected_version in (output or ""))
+        host: bool(version_re.search(output or ""))
         for host, output in out_dict.items()
     }
 
@@ -308,6 +338,9 @@ def install_anc(phdl, config_dict):
     globals.error_list = []
 
     anc_cfg = config_dict["anc"]
+    # Values interpolated into single-quoted remote shell strings by the
+    # sub-installers; reject quotes up front (config is trusted, boundary check).
+    _assert_shell_safe(anc_cfg, ("cvs_home", "anc_release_url"))
     anc_version = anc_cfg.get("anc_version")
     anc_release_url = anc_cfg["anc_release_url"]
     pkg_type = detect_package_type(anc_release_url)
@@ -325,6 +358,9 @@ def install_anc(phdl, config_dict):
             update_test_result()
             return
 
+    # The sub-installers only record failures via fail_test (they do NOT report
+    # the result themselves); install_anc is the single owner of
+    # update_test_result so the whole install is reported exactly once.
     if pkg_type == "deb":
         _install_anc_deb(phdl, config_dict)
     elif pkg_type == "rpm":
@@ -336,15 +372,11 @@ def install_anc(phdl, config_dict):
         update_test_result()
         return
 
-    # Bail if the install phase already recorded failures.
-    if globals.error_list:
-        update_test_result()
-        return
-
-    # Final verification: confirm the target version is now on all nodes.
-    if anc_version:
+    # Final verification: confirm the target version is now on all nodes. Skip
+    # it if the install phase already recorded failures (a bad install can't
+    # pass version verification, and this keeps the failure detail focused).
+    if anc_version and not globals.error_list:
         log.info("ANC final verification: expecting version %s", anc_version)
-        globals.error_list = []
         matches = node_version_matches(phdl, anc_version)
         for host, ok in matches.items():
             if ok:
@@ -354,7 +386,8 @@ def install_anc(phdl, config_dict):
                     f"ANC version verification failed on {host}: "
                     f"expected {anc_version} from '{ANC_BIN} --version'"
                 )
-        update_test_result()
+
+    update_test_result()
 
 
 def _install_anc_rpm(phdl, config_dict):
@@ -364,9 +397,10 @@ def _install_anc_rpm(phdl, config_dict):
     Downloads and extracts the release tarball, installs the resulting
     ``anc*.rpm`` files with ``dnf install`` (deps resolved from configured
     repos), then smoke-tests with ``ANC_BIN --help``.
-    '''
-    globals.error_list = []
 
+    Records failures via fail_test; the caller (install_anc) owns the single
+    update_test_result reporting call.
+    '''
     anc_cfg = config_dict["anc"]
     cvs_home = anc_cfg["cvs_home"]
     anc_release_url = anc_cfg["anc_release_url"]
@@ -385,7 +419,9 @@ def _install_anc_rpm(phdl, config_dict):
         f"rm -f '{tarball}' && "
         # Install via dnf so declared deps are resolved from the repos.
         f"echo 'Installing ANC .rpm package(s)...' && "
-        f"rpms=$(ls anc*.rpm 2>/dev/null) && "
+        # `|| true` so an empty glob doesn't abort the whole script under
+        # `set -e` (failed command substitution); the -z check below reports it.
+        f"rpms=$(ls anc*.rpm 2>/dev/null || true) && "
         f"if [ -z \"$rpms\" ]; then echo 'NO_RPM_FOUND' && exit 1; fi && "
         f"sudo dnf install -y $rpms && "
         f"rm -f $rpms && "
@@ -410,8 +446,6 @@ def _install_anc_rpm(phdl, config_dict):
         else:
             log.info("Node %s: ANC .rpm installed and verified", host)
 
-    update_test_result()
-
 
 def _install_anc_deb(phdl, config_dict):
     '''
@@ -420,9 +454,10 @@ def _install_anc_deb(phdl, config_dict):
     Downloads and extracts the release tarball, installs the resulting
     ``anc*.deb`` files with ``dpkg -i``, then smoke-tests with
     ``ANC_BIN --help``.
-    '''
-    globals.error_list = []
 
+    Records failures via fail_test; the caller (install_anc) owns the single
+    update_test_result reporting call.
+    '''
     anc_cfg = config_dict["anc"]
     cvs_home = anc_cfg["cvs_home"]
     anc_release_url = anc_cfg["anc_release_url"]
@@ -444,10 +479,16 @@ def _install_anc_deb(phdl, config_dict):
         # unsatisfiable "depends on python3" check. Force past dependency
         # problems and then configure so the tool is set up regardless.
         f"echo 'Installing ANC .deb package(s)...' && "
-        f"debs=$(ls anc*.deb 2>/dev/null) && "
+        # `|| true` so an empty glob doesn't abort the whole script under
+        # `set -e` (failed command substitution); the -z check below reports it.
+        f"debs=$(ls anc*.deb 2>/dev/null || true) && "
         f"if [ -z \"$debs\" ]; then echo 'NO_DEB_FOUND' && exit 1; fi && "
         f"sudo dpkg -i --force-depends $debs && "
-        f"sudo dpkg --configure --force-depends -a && "
+        # Configure ONLY the ANC packages (by name), not `-a` (which would
+        # configure every pending package on the node). Names come from the
+        # .deb control field so we never touch unrelated half-installed pkgs.
+        f"pkgs=$(for d in $debs; do dpkg-deb -f \"$d\" Package; done) && "
+        f"sudo dpkg --configure --force-depends $pkgs && "
         f"rm -f $debs && "
         f"echo '--- Verification ---' && "
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
@@ -470,52 +511,58 @@ def _install_anc_deb(phdl, config_dict):
         else:
             log.info("Node %s: ANC .deb installed and verified", host)
 
-    update_test_result()
-
 
 def _install_anc_tar(phdl, config_dict):
     '''
     Install ANC from the tar release on remote nodes (fresh install each run).
 
-    Extracts anc-tool and anc-content into cvs_home, removes
-    ``anc_root_dir/content/base``, then validates exe_path entries with the
-    bundled validate_exe_paths.py script.
-    '''
-    globals.error_list = []
+    The tar release's ``anc-tool`` / ``anc-content`` payloads are relocatable
+    (top-level ``anc/`` and ``anc/content/`` + sibling tool dirs). Extracting
+    BOTH into ``ANC_TOOLS_PREFIX`` (/opt/amdtools) reproduces exactly the layout
+    the deb/rpm packages install (verified against the 1.4.7 packages), so ANC
+    ends up at ``ANC_BIN`` (/opt/amdtools/anc/anc.py) and the content YAMLs'
+    hard-coded ``exe_path: /opt/amdtools/...`` entries resolve. The release
+    archive is staged in ``cvs_home`` only for the download/unpack; the tools
+    themselves always live under /opt/amdtools regardless of flavour.
 
+    ``content/base`` (a no_op placeholder) is deliberately kept, matching the
+    deb/rpm install. Extraction into /opt/amdtools needs sudo, so the runner must
+    have passwordless sudo (already required to run ANC).
+
+    Records failures via fail_test; the caller (install_anc) owns the single
+    update_test_result reporting call.
+    '''
     anc_cfg = config_dict["anc"]
     cvs_home = anc_cfg["cvs_home"]
-    anc_root_dir = anc_cfg["anc_root_dir"]
     anc_release_url = anc_cfg["anc_release_url"]
     tarball = anc_release_url.rsplit("/", 1)[-1]
 
-    log.info("ANC: install tar release on remote nodes (cvs_home=%s, root=%s)",
-             cvs_home, anc_root_dir)
+    log.info("ANC: install tar release on remote nodes "
+             "(cvs_home=%s, install prefix=%s)", cvs_home, ANC_TOOLS_PREFIX)
 
     install_cmd = (
         f"set -e && "
         f"mkdir -p '{cvs_home}' && cd '{cvs_home}' && "
-        f"if [ -d '{anc_root_dir}' ]; then "
-        f"echo 'Removing existing {anc_root_dir}...' && "
-        f"rm -rf '{anc_root_dir}'; "
-        f"fi && "
         f"echo 'Downloading ANC release...' && "
         f"wget -q '{anc_release_url}' -O '{tarball}' && "
         f"echo 'Extracting outer archive...' && "
         f"tar -xzf '{tarball}' && "
         f"rm -f '{tarball}' && "
-        f"echo 'Extracting anc-tool archive to {cvs_home}...' && "
-        f"tar -xzf anc-tool*.tar.gz && "
+        # Fresh install: drop any prior ANC tree, then extract both payloads
+        # into /opt/amdtools so the layout matches the deb/rpm packages.
+        f"echo 'Removing existing {ANC_DIR}...' && "
+        f"sudo rm -rf '{ANC_DIR}' && "
+        f"sudo mkdir -p '{ANC_TOOLS_PREFIX}' && "
+        f"echo 'Extracting anc-tool archive to {ANC_TOOLS_PREFIX}...' && "
+        f"sudo tar -xzf anc-tool*.tar.gz -C '{ANC_TOOLS_PREFIX}' && "
         f"rm -f anc-tool*.tar.gz && "
-        f"echo 'Extracting anc-content archive to {cvs_home}...' && "
-        f"tar -xzf anc-content*.tar.gz && "
+        f"echo 'Extracting anc-content archive to {ANC_TOOLS_PREFIX}...' && "
+        f"sudo tar -xzf anc-content*.tar.gz -C '{ANC_TOOLS_PREFIX}' && "
         f"rm -f anc-content*.tar.gz && "
-        f"echo 'Removing {anc_root_dir}/content/base...' && "
-        f"rm -rf '{anc_root_dir}/content/base' && "
         f"echo '--- Directory listing (2 levels) ---' && "
-        f"find . -maxdepth 2 -type d | sort && "
+        f"find '{ANC_TOOLS_PREFIX}' -maxdepth 2 -type d | sort && "
         f"echo '--- Verification ---' && "
-        f"test -d '{anc_root_dir}' && echo 'ANC_INSTALL_SUCCESS'"
+        f"test -f '{ANC_BIN}' && echo 'ANC_INSTALL_SUCCESS'"
     )
 
     out_dict = phdl.exec(install_cmd, timeout=300)
@@ -525,17 +572,18 @@ def _install_anc_tar(phdl, config_dict):
         if "ANC_INSTALL_SUCCESS" not in output:
             fail_test(
                 f"ANC installation failed on {host}: "
-                f"'{anc_root_dir}' not found under {cvs_home}"
+                f"'{ANC_BIN}' not found after extracting into {ANC_TOOLS_PREFIX}"
             )
         else:
             log.info("Node %s: ANC directory installed successfully", host)
 
+    # Skip exe_path validation if the extraction already failed (nothing to
+    # validate); the caller reports the recorded failure.
     if globals.error_list:
-        update_test_result()
         return
 
     # Validate exe_path entries with the bundled script.
-    content_dir = f"{cvs_home}/{anc_root_dir}/content"
+    content_dir = f"{ANC_DIR}/content"
     local_script = os.path.join(RESOURCES_DIR, "validate_exe_paths.py")
     remote_script = "/tmp/validate_exe_paths.py"
 
@@ -564,8 +612,6 @@ def _install_anc_tar(phdl, config_dict):
         else:
             fail_test(f"Unexpected validation output on {host}: {output.strip()}")
 
-    update_test_result()
-
 
 # =========================================================================
 # ROCm shared-library resolution (ldconfig)
@@ -593,15 +639,20 @@ def ensure_rocm_ldconfig(phdl):
     log.info("ANC Pre-Task: ensure ROCm libs resolvable (%s)",
              LDCONFIG_TARGET_LIB)
 
-    # Build the conf file from whichever ROCM_LIB_DIRS exist (first write
-    # truncates, rest append), then ldconfig and re-verify.
+    # Build the conf file from whichever ROCM_LIB_DIRS exist. Truncate ONCE up
+    # front, then append every existing dir; this keeps the decision independent
+    # of which dirs happen to exist (a plain index-based first-write-truncates
+    # scheme skips the truncate when the first dir is absent, so lines would
+    # accumulate on repeated runs). At least one dir exists when this runs
+    # ("found" is set below), so an empty conf file is never left behind.
+    conf_file = "/etc/ld.so.conf.d/rocm.conf"
     conf_lines = " && ".join(
-        (
+        [f"echo -n '' | sudo tee {conf_file} >/dev/null"]
+        + [
             f"if [ -d '{d}' ]; then echo '{d}' | "
-            f"sudo tee {'-a ' if i else ''}/etc/ld.so.conf.d/rocm.conf "
-            f">/dev/null; fi"
-        )
-        for i, d in enumerate(ROCM_LIB_DIRS)
+            f"sudo tee -a {conf_file} >/dev/null; fi"
+            for d in ROCM_LIB_DIRS
+        ]
     )
 
     check = (
@@ -756,7 +807,14 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
 
     try:
         with tarfile.open(local_tar) as tf:
-            tf.extractall(dest_dir)
+            # filter="data" sanitizes members (no absolute paths / "../" escapes)
+            # and silences the 3.12+ extractall deprecation. The param was added
+            # in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+; fall back for
+            # older interpreters (repo targets python>=3.9).
+            try:
+                tf.extractall(dest_dir, filter="data")
+            except TypeError:
+                tf.extractall(dest_dir)
     except Exception as exc:
         return None, f"could not extract log archive for {log_dir}: {exc}"
     finally:

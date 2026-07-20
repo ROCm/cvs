@@ -1,4 +1,4 @@
-# ANC (Automated Node Checkout) CVS Tests
+# ANC (AMD Node Check) CVS Tests
 
 This directory packages the ANC validation suite as CVS tests.
 
@@ -73,7 +73,8 @@ or fail is read from each run's `console.log` final `ANC_SUCCESS [0]`.
   make install
   source fremont_venv/bin/activate
   cvs --version          # sanity check
-  cvs list               # anc_installation, anc_test_cpu, anc_test_gpu should appear
+  cvs list               # anc_installation, the per-group anc_test_* suites, and
+                         # anc_test_exec_all_cpu_test / anc_test_exec_all_gpu_test
   ```
 
   See the repository root `README.md` for full build/setup details.
@@ -125,12 +126,11 @@ The ANC config lives at `cvs/input/config_file/anc/anc_config.json`:
 {
     "_comment": "ANC test configuration",
     "anc": {
-        "description": "Automated Network Connectivity checks",
+        "description": "AMD Node Check",
         "test_timeout": 7200,
         "anc_version": "1.4.7",
         "anc_release_url": "https://.../anc-release-helios-nda-1.4.7-rpm-linux-x64.tar.gz",
         "cvs_home": "{home}/cvs",
-        "anc_root_dir": "anc",
         "print_all_to_console": "True",
         "log_folder_path": "{home}/cvs_logs/anc_logs/<node>/<test_name>/<timestamp>",
         "ADD_ANC_LOGS_TO_HTML_REPORTS": "False",
@@ -148,8 +148,7 @@ Each key is documented inline in the shipped config via a matching
 | `test_timeout` | Per-group execution timeout in seconds (default 7200 = 2 h). |
 | `anc_version` | Expected ANC version; install pre-task skips (re)install when already present and post-verifies the match. |
 | `anc_release_url` | ANC release archive URL (used by `anc_installation`). Flavour (deb/rpm/tar) is auto-detected from the filename. |
-| `cvs_home` | Install root on each node. `{home}` resolves to the SSH user's home. |
-| `anc_root_dir` | ANC directory name under `cvs_home`. ANC is run from `<cvs_home>/<anc_root_dir>`. |
+| `cvs_home` | Staging dir on each node for the release download/unpack (tar flavour). `{home}` resolves to the SSH user's home. ANC itself always installs to `/opt/amdtools/anc`. |
 | `print_all_to_console` | `True` echoes ANC group output to console; `False` suppresses it (diagnostics still print). |
 | `log_folder_path` | Controller-side destination for collected logs. Tokens: `{home}` → `/home/<userid>`, `<node>` → the node's `<ip>_<hostname>` label, `<test_name>` → the group's test name, `<timestamp>` → per-run stamp (appended if omitted). |
 | `ADD_ANC_LOGS_TO_HTML_REPORTS` | `True` always bundles the collected ANC log tree (as a `.tar.gz` with a clickable link) into the pytest-html report zip. `False` (default) bundles it **only when the test fails**. |
@@ -166,11 +165,12 @@ is that node's `<ip>_<hostname>` label.
 
 ## 3. Install ANC on the target nodes
 
-The `anc_test_cpu` / `anc_test_gpu` suites install ANC as a pre-task, so a
-separate install step is **optional**. Run `anc_installation` on its own when
-you want to install/refresh ANC without running a validation group. ANC is
-installed to `/opt/amdtools/anc` (deb/rpm), with the entrypoint at
-`/opt/amdtools/anc/anc.py`. You can install it in either of the ways below.
+Every ANC validation suite installs ANC as a pre-task, so a separate install
+step is **optional**. Run `anc_installation` on its own when you want to
+install/refresh ANC without running a validation group. ANC always installs to
+`/opt/amdtools/anc` (for all three flavours — deb, rpm, and tar), with the
+entrypoint at `/opt/amdtools/anc/anc.py`. You can install it in either of the
+ways below.
 
 ### Option A - from the head node (recommended)
 
@@ -184,64 +184,80 @@ cvs run anc_installation \
   --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
-This downloads the `anc_release_url` tarball, extracts ANC into
-`<cvs_home>/<anc_root_dir>` on every target node, and validates the install.
+This downloads the `anc_release_url` archive, installs ANC to `/opt/amdtools/anc`
+on every target node (the flavour — deb/rpm/tar — is auto-detected from the
+filename), and validates the install.
 
 ### Option B - manually on a target node
 
 If you do not want to run `anc_installation`, install ANC directly on the target
-node. Download and extract the release tarball, then install the two `anc-tool`
-and `anc-content` archives obtained from that extraction:
+node. The example below is for the **tar** flavour: download and extract the
+release archive in a staging dir, then extract the two `anc-tool` and
+`anc-content` archives into `/opt/amdtools` so the layout matches the deb/rpm
+packages:
 
 ```bash
-cd "$HOME/cvs"   # <cvs_home>
+cd "$HOME/cvs"   # staging dir (cvs_home); only used for the download/unpack
 
 # Download and extract the ANC release
-wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.3.2/anc-release-helios-nda-1.3.2-tar-linux-x64.tar.gz" \
+wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.4.7/anc-release-helios-nda-1.4.7-tar-linux-x64.tar.gz" \
   -O anc-release.tar.gz
 tar -xzf anc-release.tar.gz && rm -f anc-release.tar.gz
 
-# Install the tool and content archives produced by the extraction above
-tar -xzf anc-tool*.tar.gz    && rm -f anc-tool*.tar.gz
-tar -xzf anc-content*.tar.gz && rm -f anc-content*.tar.gz
-rm -rf anc/content/base      # <anc_root_dir>/content/base
+# Extract the tool and content archives into /opt/amdtools (needs sudo)
+sudo rm -rf /opt/amdtools/anc
+sudo mkdir -p /opt/amdtools
+sudo tar -xzf anc-tool*.tar.gz    -C /opt/amdtools && rm -f anc-tool*.tar.gz
+sudo tar -xzf anc-content*.tar.gz -C /opt/amdtools && rm -f anc-content*.tar.gz
 ```
 
-This is exactly the sequence performed by `anc_installation` - see
-[`anc_installation.py`, lines 273-305](https://github.com/AMD-ROCm-Internal/cvs-internal/blob/ashmishr/anc-cvs-interlock/cvs/tests/anc/anc_installation.py#L273-L305).
+For the **deb**/**rpm** flavours, install the extracted `anc*.deb` / `anc*.rpm`
+packages instead (`sudo dpkg -i` / `sudo dnf install`); they lay ANC down under
+`/opt/amdtools/anc` directly. This is the sequence performed by
+[`anc_installation.py`](anc_installation.py) (which delegates to
+`cvs/lib/anc_lib.py`).
 
 ---
 
 ## 4. Run the ANC validation tests
 
-Each suite first installs/verifies ANC (pre-task), then runs its group set on
-**all** nodes in parallel with a single `anc.py -g <groups...>` invocation.
+Each suite first installs/verifies ANC and fixes ROCm ldconfig (pre-tasks), then
+runs its group(s) on **all** nodes in parallel with a single
+`anc.py -g <groups...>` invocation.
 
-CPU validation:
+**Single group** — run one ANC group by its own suite name:
 
 ```bash
-cvs run anc_test_cpu \
+cvs run anc_test_cpu_all \
+  --cluster_file cvs/input/cluster_file/cluster.json \
+  --config_file cvs/input/config_file/anc/anc_config.json
+
+cvs run anc_test_hbm_lvl1 \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
-GPU validation:
+**All groups in a set** — the run-all suites install ANC + ldconfig ONCE, then
+run every group in the CPU (or GPU) set sequentially, each as its own
+parametrized test with its own log dir:
 
 ```bash
-cvs run anc_test_gpu \
+cvs run anc_test_exec_all_cpu_test \
+  --cluster_file cvs/input/cluster_file/cluster.json \
+  --config_file cvs/input/config_file/anc/anc_config.json
+
+cvs run anc_test_exec_all_gpu_test \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
 ```
-
-- `anc_test_cpu` runs `sudo ./anc.py -g <CPU_GROUPS>`
-- `anc_test_gpu` runs `sudo ./anc.py -g <GPU_GROUPS>`
 
 The exact group lists are defined by `CPU_GROUPS` / `GPU_GROUPS` in
-`cvs/lib/anc_lib.py`. To skip the install pre-task and run only the
-group test, add pytest's `-k` filter (forwarded by `cvs run`):
+`cvs/lib/anc_lib.py` (see the full list in the "Per-group suites"
+section above). To skip the install/ldconfig pre-tasks and run only the group
+test, add pytest's `-k` filter (forwarded by `cvs run`):
 
 ```bash
-cvs run anc_test_cpu -k test_cpu \
+cvs run anc_test_cpu_all -k test_group \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
 ```
@@ -252,17 +268,17 @@ cvs run anc_test_cpu -k test_cpu \
 
 For each test, a node **passes** only when:
 
-- ANC's run produced a `Log Directory: <path>` line (the run actually started),
-- `journal.log` and `console.log` were collected from that directory, and
+- ANC's run produced a `Log directory: <path>` line (the run actually started),
+- `console.log` was collected from that directory (the entire log directory is
+  pulled back; `console.log` is the only file that must be present), and
 - the **final** `return code <NAME> [<int>]` line in `console.log` is
   `ANC_SUCCESS [0]`.
 
 A node **fails** when any of the following occur:
 
 - the run could not be executed (SSH/exec/permission error, no output, or no
-  `Log Directory` in the output),
-- a mandatory log (`journal.log` / `console.log`) is missing or could not be
-  copied, or
+  `Log directory` in the output),
+- `console.log` is missing or could not be copied, or
 - the final ANC return code is non-zero (anything other than `ANC_SUCCESS [0]`).
 
 Failures across multiple parallel nodes are aggregated into a **single** test
@@ -272,21 +288,25 @@ failure (one failure per test, not one per node).
 
 ## 6. Artifacts
 
-Per node and per test, artifacts are downloaded to:
+Per node and per test, artifacts are downloaded to the resolved
+`log_folder_path` (default layout):
 
 ```
-<runner_log_folder>/anc/<ip>_<hostname>/<test_name>/
+<runner_log_folder>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/
 ```
 
-- `<runner_log_folder>` comes from `run_config["runner_log_folder"]` and defaults
-  to `/tmp/cvs_results`.
-- `<test_name>` is `test_cpu` or `test_gpu`.
+- `<runner_log_folder>` comes from `run_config["runner_log_folder"]` (or `{home}`
+  in the shipped config) — see the `log_folder_path` token table above.
+- `<ip>_<hostname>` is the per-node label; `<test_name>` is the group's test name
+  (e.g. `test_cpu_all`); `<timestamp>` keeps repeated runs separate.
 
 Collected files:
 
-- **Mandatory:** `journal.log`, `console.log`.
-- **Optional (collected when present):** `summary.json`, `errors.json`,
-  `system_monitor.json`.
+- The **entire** ANC log directory is pulled back (whatever ANC wrote:
+  `console.log`, `journal.log`, `summary.json`, per-item logs, …).
+- **Required:** `console.log` (holds the verdict). If it is missing, the node
+  fails. Every other file is collected best-effort as part of the whole-directory
+  copy.
 
 ### In the HTML report
 

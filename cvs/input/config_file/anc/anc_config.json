@@ -2,7 +2,7 @@
     "_comment": "ANC test configuration. Keys prefixed with '_comment' are documentation only and ignored at runtime.",
     "anc": {
         "_comment_description": "Human-readable label for this suite; shown in logs/reports.",
-        "description": "Automated Network Connectivity checks",
+        "description": "AMD Node Check",
 
         "_comment_test_timeout": "Per-group execution timeout in seconds (7200 = 2 hours). ANC is killed if a group exceeds this.",
         "test_timeout": 7200,
@@ -13,11 +13,8 @@
         "_comment_anc_release_url": "URL of the ANC release archive to download and install. Flavour (deb/rpm/tar) is auto-detected from the filename.",
         "anc_release_url": "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.4.7/anc-release-helios-nda-1.4.7-rpm-linux-x64.tar.gz",
 
-        "_comment_cvs_home": "Working/install root on each node. '{home}' resolves to the SSH user's home directory.",
+        "_comment_cvs_home": "Staging dir on each node for the release download/unpack (tar flavour). '{home}' resolves to the SSH user's home directory. ANC itself always installs to /opt/amdtools/anc regardless of flavour.",
         "cvs_home": "{home}/cvs",
-
-        "_comment_anc_root_dir": "Directory name under cvs_home where ANC is staged.",
-        "anc_root_dir": "anc",
 
         "_comment_print_all_to_console": "'True' echoes ANC group output to the console; 'False' suppresses it (install/ldconfig/version diagnostics still print).",
         "print_all_to_console": "True",
