@@ -870,13 +870,14 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name,
     and FAILED rows are surfaced.
 
     Returns:
-      tuple[str | None, str | None]: (failure reason or None if the node passed,
-      the per-node destination directory or None if it was never created).
+      tuple[str | None, str | None, str | None]: (failure reason or None if the
+      node passed, the per-node destination directory or None if it was never
+      created, the "<ip>_<hostname>" node label or None if SSH never opened).
     '''
     ld_match = LOG_DIRECTORY_RE.search(output or "")
     if not ld_match:
         log.error("Node %s: could not determine Log directory from output", host)
-        return "could not determine Log directory from ANC output", None
+        return "could not determine Log directory from ANC output", None, None
     log_dir = ld_match.group(1)
     log.info("Node %s: ANC %s log directory: %s", host, test_name, log_dir)
 
@@ -888,7 +889,7 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name,
             pkey=cluster_dict["priv_key_file"],
         )
     except Exception as exc:  # infra failure must fail the test
-        return f"could not open SSH handle for artifact collection: {exc}", None
+        return f"could not open SSH handle for artifact collection: {exc}", None, None
 
     label = _node_label(single, host, cluster_dict)
     dest_dir = resolve_anc_log_folder(config_dict, test_name, timestamp,
@@ -899,18 +900,18 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name,
         single, host, cluster_dict["username"], log_dir, dest_dir
     )
     if infra_reason:
-        return infra_reason, dest_dir
+        return infra_reason, dest_dir, label
 
     try:
         with open(console_path, encoding="utf-8", errors="replace") as fh:
             console_text = fh.read()
     except Exception as exc:
-        return f"could not read collected console.log: {exc}", dest_dir
+        return f"could not read collected console.log: {exc}", dest_dir, label
 
     rc_matches = ANC_RETURN_CODE_RE.findall(console_text)
     if not rc_matches:
         log.error("Node %s: ANC return code not found in console.log", host)
-        return "ANC return code not found in console.log", dest_dir
+        return "ANC return code not found in console.log", dest_dir, label
 
     rc_name, rc_value = rc_matches[-1][0], int(rc_matches[-1][1])
     log.info("Node %s: ANC %s program return code is %s [%s]", host, test_name,
@@ -920,23 +921,27 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name,
         reason = f"ANC returned {rc_name} [{rc_value}]"
         if detail:
             reason = f"{reason}; {detail}"
-        return reason, dest_dir
+        return reason, dest_dir, label
 
-    return None, dest_dir
+    return None, dest_dir, label
 
 
-def _attach_anc_logs_to_html(request, config_dict, test_name, node_dirs,
+def _attach_anc_logs_to_html(request, config_dict, test_name, node_entries,
                              timestamp, failed):
     '''
     Bundle this run's collected ANC log trees into the pytest-html report zip.
 
-    Per-node logs no longer share a single per-run parent (the default layout is
-    ``.../anc_logs/<node>/<test_name>/<timestamp>/``), so every node's collected
-    directory in ``node_dirs`` is tarred into ONE archive under a
-    ``<node_label>/`` arcname, copied into the report log dir via
-    add_html_to_report (so it lands in the zip), and linked from the test row via
-    a stashed pytest-html url extra (merged by the repo-root
-    pytest_runtest_makereport hook).
+    ``node_entries`` is a list of ``(node_dir, node_label)`` pairs. Every node's
+    collected directory is tarred into ONE archive under its own
+    ``<node_label>/`` arcname (the "<ip>_<hostname>" label, which is unique per
+    node), copied into the report log dir via add_html_to_report (so it lands in
+    the zip), and linked from the test row via a stashed pytest-html url extra
+    (merged by the repo-root pytest_runtest_makereport hook).
+
+    The node label is used as the arcname (rather than a runner-base-relative
+    path) because the on-disk log_folder_path may live anywhere (the shipped
+    default is under {home}, not the runner base), so a relative path is not a
+    reliable per-node discriminator and would collapse to a shared component.
 
     Gating (per config anc.ADD_ANC_LOGS_TO_HTML_REPORTS):
       - flag True  -> always attach.
@@ -957,32 +962,35 @@ def _attach_anc_logs_to_html(request, config_dict, test_name, node_dirs,
                  "%s is False)", test_name, ADD_ANC_LOGS_TO_HTML_KEY)
         return
 
-    present = [d for d in node_dirs if d and os.path.isdir(d) and os.listdir(d)]
+    present = [
+        (d, label) for d, label in node_entries
+        if d and os.path.isdir(d) and os.listdir(d)
+    ]
     if not present:
         log.warning("ANC '%s': no collected logs to attach to HTML report",
                     test_name)
         return
 
-    # No shared per-run parent anymore, so write the archive under the runner
-    # base and name it by test + timestamp; each node's tree goes in under its
-    # own "<ip>_<hostname>/" arcname.
+    # Write the archive under the runner base, named by test + timestamp; each
+    # node's tree goes in under its own unique "<ip>_<hostname>/" arcname so
+    # multi-node runs never overwrite each other inside the tarball.
     runner_base = resolve_runner_results_base(config_dict.get("run_config", {}))
     os.makedirs(runner_base, exist_ok=True)
     tar_path = os.path.join(runner_base, f"{test_name}_{timestamp}_anc_logs.tar.gz")
     try:
         with tarfile.open(tar_path, "w:gz") as tf:
-            for node_dir in present:
+            seen = {}
+            for node_dir, label in present:
                 node_dir = node_dir.rstrip(os.sep)
-                # Prefer a runner-base-relative arcname (e.g.
-                # "<node>/<test_name>/<timestamp>") so each node's tree is
-                # distinct inside the archive; fall back to the leaf name if the
-                # dir somehow sits outside the runner base.
-                try:
-                    arcname = os.path.relpath(node_dir, runner_base)
-                    if arcname.startswith(".."):
-                        arcname = os.path.basename(node_dir)
-                except ValueError:
-                    arcname = os.path.basename(node_dir)
+                # Unique per-node arcname from the node label; fall back to the
+                # leaf dir name if a label is somehow missing, and disambiguate
+                # any duplicate arcname so no node's tree is overwritten.
+                arcname = label or os.path.basename(node_dir)
+                if arcname in seen:
+                    seen[arcname] += 1
+                    arcname = f"{arcname}_{seen[arcname]}"
+                else:
+                    seen[arcname] = 0
                 tf.add(node_dir, arcname=arcname)
     except Exception as exc:  # best-effort; do not fail the test
         log.warning("ANC '%s': could not archive logs for HTML report: %s",
@@ -1092,18 +1100,21 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
         return
 
     failed_nodes = {}
-    node_dirs = []
+    node_entries = []
     for host in expected_nodes:
         if host not in out_dict:
             reason = "node produced no output (did not run / unreachable)"
             log.error("Node %s: ANC %s FAILED - %s", host, test_name, reason)
             failed_nodes[host] = reason
             continue
-        reason, dest_dir = _evaluate_node(cluster_dict, config_dict, host,
-                                          out_dict[host] or "", test_name,
-                                          timestamp)
+        reason, dest_dir, label = _evaluate_node(
+            cluster_dict, config_dict, host, out_dict[host] or "", test_name,
+            timestamp,
+        )
         if dest_dir:
-            node_dirs.append(dest_dir)
+            # Fall back to the host key for the arcname label if SSH-based
+            # labelling failed, so every collected dir stays distinct.
+            node_entries.append((dest_dir, label or _sanitize_path_component(host)))
         if reason:
             log.error("Node %s: ANC %s FAILED - %s", host, test_name, reason)
             failed_nodes[host] = reason
@@ -1118,7 +1129,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
     # Attach collected logs to the HTML report before update_test_result() may
     # raise: always when the flag is set, otherwise only on failure.
     _attach_anc_logs_to_html(
-        request, config_dict, test_name, node_dirs, timestamp,
+        request, config_dict, test_name, node_entries, timestamp,
         bool(failed_nodes)
     )
 
