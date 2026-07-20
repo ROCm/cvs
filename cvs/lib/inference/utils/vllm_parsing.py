@@ -181,3 +181,85 @@ GATED_METRICS = {
     "success_rate",
     "failed",
 }
+
+# `(label, client.* key)` columns for the report's results table and the
+# console table in `_shared.py::test_print_results_table` -- kept in sync
+# with that table's headers. First 7 are the fixed positional columns
+# `inference_payload.build_results_table` always emits (Model, GPU, ISL, OSL,
+# Policy, Conc, Host); only `metric_keys[7:]` are looked up per host.
+VLLM_RESULTS_COLUMNS = (
+    ("Model", None),
+    ("GPU", None),
+    ("ISL", None),
+    ("OSL", None),
+    ("Policy", None),
+    ("Conc", None),
+    ("Host", None),
+    ("Req/s", "client.request_throughput"),
+    ("Total tok/s", "client.total_token_throughput"),
+    ("Mean TTFT (ms)", "client.mean_ttft_ms"),
+    ("P95 TTFT (ms)", "client.p95_ttft_ms"),
+    ("Mean TPOT (ms)", "client.mean_tpot_ms"),
+    ("P95 TPOT (ms)", "client.p95_tpot_ms"),
+    ("P99 ITL (ms)", "client.p99_itl_ms"),
+    ("Goodput (req/s)", "client.goodput"),
+)
+
+# Report gate-matrix tiers. Membership is seeded from GATED_METRICS so the
+# report's tier partition exactly mirrors what the suite enforces: every name
+# in GATED_METRICS must land in exactly one non-record tier (pinned by a unit
+# test), and `set(METRIC_TIERS) <= set(METRIC_TIER_ORDER)` must hold (true by
+# construction below) or `cell_build.tier_status` would silently drop metrics
+# whose tier isn't iterated.
+METRIC_TIERS: dict[str, tuple[str, ...]] = {
+    "throughput": (
+        "total_token_throughput",
+        "output_throughput",
+    ),
+    "ttft": (
+        "mean_ttft_ms",
+        "median_ttft_ms",
+        "p90_ttft_ms",
+        "p95_ttft_ms",
+        "p99_ttft_ms",
+    ),
+    "tpot": (
+        "mean_tpot_ms",
+        "median_tpot_ms",
+        "p90_tpot_ms",
+        "p95_tpot_ms",
+        "p99_tpot_ms",
+    ),
+    "latency": (
+        "mean_itl_ms",
+        "median_itl_ms",
+        "p95_itl_ms",
+        "p99_itl_ms",
+        "mean_e2el_ms",
+        "median_e2el_ms",
+        "p90_e2el_ms",
+        "p95_e2el_ms",
+        "p99_e2el_ms",
+    ),
+    "health": (
+        "success_rate",
+        "failed",
+    ),
+}
+
+METRIC_TIER_ORDER: tuple[str, ...] = tuple(METRIC_TIERS.keys()) + ("record",)
+
+_tiered = {m for names in METRIC_TIERS.values() for m in names}
+RECORD_METRICS: tuple[str, ...] = tuple(short for short, _unit in CLIENT_METRICS if short not in _tiered)
+
+
+def tier_metric_specs(thresholds_cell: dict, tier: str) -> dict[str, dict]:
+    """Return ``client.*`` threshold specs for one tier in a sweep cell."""
+    names = RECORD_METRICS if tier == "record" else METRIC_TIERS.get(tier, ())
+    specs = {}
+    for short in names:
+        full = f"client.{short}"
+        spec = thresholds_cell.get(full)
+        if spec is not None:
+            specs[full] = spec
+    return specs
