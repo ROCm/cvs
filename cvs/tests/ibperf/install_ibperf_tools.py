@@ -7,17 +7,19 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import pytest
 
+import logging
 import re
 import json
 
 
+from cvs.lib import ibperf_lib
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
 from cvs.lib import globals
 
-log = globals.log
+log = logging.getLogger(__name__)
 
 ib_bw_dict = {}
 ib_lat_dict = {}
@@ -84,7 +86,12 @@ def cluster_dict(cluster_file):
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info("%s", cluster_dict)
+    log.info(
+        'Loaded cluster config: %d nodes, user=%s',
+        len(cluster_dict.get('node_dict', {})),
+        cluster_dict.get('username'),
+    )
+    log.debug('Cluster config: %s', cluster_dict)
     return cluster_dict
 
 
@@ -106,7 +113,12 @@ def config_dict(config_file, cluster_dict):
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    log.info("%s", config_dict)
+    log.info(
+        'Loaded ibperf config: install_dir=%s, install_perf_package=%s',
+        config_dict.get('install_dir'),
+        config_dict.get('install_perf_package'),
+    )
+    log.debug('Ibperf config: %s', config_dict)
     return config_dict
 
 
@@ -130,14 +142,16 @@ def phdl(cluster_dict):
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
       - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
     """
-    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
+    log.info('Connecting to %d cluster nodes via parallel SSH', len(node_list))
+    log.debug('Cluster nodes: %s', node_list)
     if len(node_list) < 2:
         raise ValueError('At least 2 nodes are required to run this test')
     if len(node_list) % 2 != 0:
         log.info(
-            f'Odd number of nodes ({len(node_list)}) detected; popping last node from the cluster to make the count even'
+            'Odd number of nodes (%d); excluding last node to form server/client pairs',
+            len(node_list),
         )
         node_list.pop()
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -189,94 +203,58 @@ def vpc_node_list(cluster_dict):
         raise ValueError('At least 2 nodes are required to run this test')
 
     if len(node_list) % 2 != 0:
-        log.info(
-            f'Odd number of nodes ({len(node_list)}) detected; popping last node from the cluster to make the count even'
-        )
         node_list.pop()
     for node in node_list:
         vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
     return vpc_node_list
 
 
-def detect_rocm_path(phdl, config_rocm_path):
-    """
-    Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
-    Args:
-        phdl: Parallel SSH handle
-        config_rocm_path (str): Configured ROCm path from config file ('<changeme>' for auto-detect)
-    Returns:
-        str: Detected ROCm path
-    """
-    # If rocm_path is explicitly configured, validate and use it
-    if config_rocm_path and config_rocm_path != '<changeme>':
-        out_dict = phdl.exec(
-            f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
-        )
-        for node, output in out_dict.items():
-            if output.strip() and 'libamdhip64.so' in output:
-                log.info(f'Using configured ROCm path: {config_rocm_path} (validated)')
-                return config_rocm_path
-            else:
-                log.warning(
-                    f'Configured ROCm path {config_rocm_path} does not contain required libraries, will auto-detect'
-                )
-
-    # Auto-detect ROCm path
-    log.info('Auto-detecting ROCm path...')
-
-    # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
-    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
-    for node, output in out_dict.items():
-        if output and '/opt/rocm/core-' in output:
-            rocm_path = output.strip()
-            validate_dict = phdl.exec(
-                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
-            )
-            for _, lib_output in validate_dict.items():
-                if lib_output.strip() and 'libamdhip64.so' in lib_output:
-                    log.info(f'Detected ROCm path (new layout): {rocm_path}')
-                    return rocm_path
-
-    # Fall back to legacy /opt/rocm
-    out_dict = phdl.exec('test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1')
-    for node, output in out_dict.items():
-        if output.strip() and 'libamdhip64.so' in output:
-            log.info('Detected ROCm path (legacy layout): /opt/rocm')
-            return '/opt/rocm'
-
-    log.warning('Could not detect ROCm path with required libraries, defaulting to /opt/rocm')
-    return '/opt/rocm'
-
-
 def test_install_ib_perf(phdl, shdl, config_dict):
-    # We install on the first node using shdl handle
-    # install standard rdma packages
     globals.error_list = []
 
     if re.search('true', config_dict['install_perf_package'], re.I):
-        shdl.exec(f'mkdir -p {config_dict["install_dir"]}')
-        phdl.exec('sudo apt update -y', timeout=200)
-        phdl.exec('sudo apt install -y git build-essential autoconf automake libtool pkg-config', timeout=200)
-        phdl.exec('sudo apt install -y libibverbs-dev librdmacm-dev ibverbs-providers rdma-core', timeout=200)
-        phdl.exec('sudo apt install -y libibumad-dev')
-        phdl.exec('sudo apt install -y libpci-dev')
-        phdl.exec('sudo apt install -y numactl')
-        shdl.exec(f'cd {config_dict["install_dir"]}; git clone https://github.com/linux-rdma/perftest')
-        shdl.exec(f'cd {config_dict["install_dir"]}/perftest; ./autogen.sh', timeout=100)
-        rocm_path = detect_rocm_path(shdl, config_dict.get('rocm_dir', '<changeme>'))
-        log.info(f'Using ROCm path for perftest configure: {rocm_path}')
-        shdl.exec(
-            f'cd {config_dict["install_dir"]}/perftest; ./configure --prefix={config_dict["install_dir"]}/perftest --with-rocm={rocm_path} --enable-rocm',
+        install_dir = config_dict['install_dir']
+        log.info('Installing perftest to %s', install_dir)
+        shdl.exec(f'mkdir -p {install_dir}', print_console=False)
+        phdl.exec('sudo apt update -y', timeout=200, print_console=False)
+        phdl.exec(
+            'sudo apt install -y git build-essential autoconf automake libtool pkg-config',
             timeout=200,
+            print_console=False,
         )
-        shdl.exec(f'cd {config_dict["install_dir"]}/perftest; make', timeout=100)
-        shdl.exec(f'cd {config_dict["install_dir"]}/perftest; make install', timeout=100)
+        phdl.exec(
+            'sudo apt install -y libibverbs-dev librdmacm-dev ibverbs-providers rdma-core',
+            timeout=200,
+            print_console=False,
+        )
+        phdl.exec('sudo apt install -y libibumad-dev', print_console=False)
+        phdl.exec('sudo apt install -y libpci-dev', print_console=False)
+        phdl.exec('sudo apt install -y numactl', print_console=False)
+        shdl.exec(f'cd {install_dir}; git clone https://github.com/linux-rdma/perftest', print_console=False)
+        shdl.exec(f'cd {install_dir}/perftest; ./autogen.sh', timeout=100, print_console=False)
+        rocm_path = ibperf_lib.detect_rocm_path(shdl, config_dict.get('rocm_dir', '<changeme>'))
+        shdl.exec(
+            f'cd {install_dir}/perftest; ./configure --prefix={install_dir}/perftest --with-rocm={rocm_path} --enable-rocm',
+            timeout=200,
+            print_console=False,
+        )
+        shdl.exec(f'cd {install_dir}/perftest; make', timeout=100, print_console=False)
+        shdl.exec(f'cd {install_dir}/perftest; make install', timeout=100, print_console=False)
 
-        # Verify if the installation went fine ..
-        out_dict = phdl.exec(f'{config_dict["install_dir"]}/perftest/ib_write_bw -h | grep -i rocm --color=never')
+        out_dict = phdl.exec(
+            f'{install_dir}/perftest/ib_write_bw -h | grep -i rocm --color=never',
+            print_console=False,
+        )
+        verified_nodes = 0
         for node in out_dict.keys():
             if not re.search('GPUDirect RDMA', out_dict[node], re.I):
                 fail_test(
                     f'IB Perf package installation on node {node} failed, ib_write_bw not showing expected use_rocm output'
                 )
+            else:
+                verified_nodes += 1
+        if verified_nodes:
+            log.info('Perftest installation verified on %d node(s)', verified_nodes)
+    else:
+        log.info('Skipping perftest installation (install_perf_package is not true)')
     update_test_result()

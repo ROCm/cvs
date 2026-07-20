@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import pytest
 
+import logging
 import re
 import json
 
@@ -19,7 +20,7 @@ from cvs.lib.verify_lib import *
 
 from cvs.lib import globals
 
-log = globals.log
+log = logging.getLogger(__name__)
 
 ib_bw_dict = {}
 ib_lat_dict = {}
@@ -86,7 +87,12 @@ def cluster_dict(cluster_file):
 
     # Resolve path placeholders like {user-id} in cluster config
     cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info("%s", cluster_dict)
+    log.info(
+        'Loaded cluster config: %d nodes, user=%s',
+        len(cluster_dict.get('node_dict', {})),
+        cluster_dict.get('username'),
+    )
+    log.debug('Cluster config: %s', cluster_dict)
     return cluster_dict
 
 
@@ -108,7 +114,13 @@ def config_dict(config_file, cluster_dict):
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    log.info("%s", config_dict)
+    log.info(
+        'Loaded ibperf config: install_dir=%s, msg_sizes=%s, qp_counts=%s',
+        config_dict.get('install_dir'),
+        config_dict.get('msg_size_list'),
+        config_dict.get('qp_count_list'),
+    )
+    log.debug('Ibperf config: %s', config_dict)
     return config_dict
 
 
@@ -132,16 +144,19 @@ def phdl(cluster_dict):
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
       - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
     """
-    log.info("%s", cluster_dict)
     env_vars = cluster_dict.get("env_vars")
     node_list = list(cluster_dict['node_dict'].keys())
+    log.info('Connecting to %d cluster nodes via parallel SSH', len(node_list))
+    log.debug('Cluster nodes: %s', node_list)
 
     if len(node_list) < 2:
         raise ValueError("At least 2 nodes are required to run this test")
 
     if len(node_list) % 2 != 0:
         log.info(
-            f'Odd number of nodes ({len(node_list)}) detected; popping last node {node_list[-1]} from the cluster to make the count even'
+            'Odd number of nodes (%d); excluding last node %s to form server/client pairs',
+            len(node_list),
+            node_list[-1],
         )
         node_list.pop()
     phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
@@ -191,9 +206,6 @@ def vpc_node_list(cluster_dict):
     if len(node_list) < 2:
         raise ValueError('At least 2 nodes are required to run this test')
     if len(node_list) % 2 != 0:
-        log.info(
-            f'Odd number of nodes ({len(node_list)}) detected; popping last node from the cluster to make the count even'
-        )
         node_list.pop()
     for node in node_list:
         vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
@@ -205,19 +217,12 @@ def vpc_node_list(cluster_dict):
 
 @pytest.mark.parametrize("bw_test", ["ib_write_bw", "ib_read_bw", "ib_send_bw"])
 def test_ib_bw_perf(phdl, bw_test, config_dict):
-    # Get IB_backend_nics for each node
-    # Get the NIC to GPU mapping dict
-    # Generate the command list for all nodes
-    # Run the commands
-    # Get the bandwidth numbers as a dict for each node and NIC/GPU for every msg size
-
     globals.error_list = []
     ib_bw_dict[bw_test] = {}
 
     gpu_nic_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
     gpu_numa_dict = linux_utils.get_gpu_numa_dict(phdl)
 
-    log.info("%s", gpu_nic_dict)
     bck_nic_dict_lshw = linux_utils.get_backend_nic_dict(phdl)
     rdma_nic_dict = linux_utils.get_active_rdma_nic_dict(phdl)
 
@@ -225,7 +230,6 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
     for node in rdma_nic_dict.keys():
         bck_nic_dict[node] = {}
         for rdma_dev in rdma_nic_dict[node].keys():
-            log.info("%s", bck_nic_dict_lshw[node])
             if rdma_nic_dict[node][rdma_dev]['eth_device'] in bck_nic_dict_lshw[node]:
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
 
@@ -233,9 +237,11 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
     for msg_size in config_dict['msg_size_list']:
         ib_bw_dict[bw_test][msg_size] = {}
         for qp_count in config_dict['qp_count_list']:
-            # Log a message to Dmesg to create a timestamp record
-            start_time = phdl.exec('date +"%a %b %e %H:%M"')
-            phdl.exec(f'echo "Starting Test {bw_test} for {msg_size} and QP count {qp_count}" | sudo -n tee /dev/kmsg')
+            start_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
+            phdl.exec(
+                f'echo "Starting Test {bw_test} for {msg_size} and QP count {qp_count}" | sudo -n tee /dev/kmsg',
+                print_console=False,
+            )
             ib_bw_dict[bw_test][msg_size][qp_count] = ibperf_lib.run_ib_perf_bw_test(
                 phdl,
                 bw_test,
@@ -250,7 +256,7 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
                 int(config_dict['duration']),
                 rocm_path=rocm_path,
             )
-            end_time = phdl.exec('date +"%a %b %e %H:%M"')
+            end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
             verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
             if re.search('True', config_dict['verify_bw'], re.I):
                 ibperf_lib.verify_expected_bw(
@@ -261,8 +267,7 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
                     config_dict['expected_results'],
                 )
 
-    log.info('%%%%%%%%% ib_bw_dict %%%%%%%%%%')
-    log.info("%s", ib_bw_dict)
+    log.debug('ib_bw_dict: %s', ib_bw_dict)
     update_test_result()
 
 
@@ -281,20 +286,17 @@ def test_ib_lat_perf(phdl, lat_test, config_dict):
     for node in rdma_nic_dict.keys():
         bck_nic_dict[node] = {}
         for rdma_dev in rdma_nic_dict[node].keys():
-            log.info("%s", bck_nic_dict_lshw[node])
             if rdma_nic_dict[node][rdma_dev]['eth_device'] in bck_nic_dict_lshw[node]:
                 bck_nic_dict[node][rdma_dev] = rdma_nic_dict[node][rdma_dev]
-
-    log.info(f'%%%%%% bck_nic_dict %%%%% {bck_nic_dict}')
-    log.info(f'%%%%%% gpu_nic_dict %%%%% {gpu_nic_dict}')
-    log.info(f'%%%%%% gpu_numa_dict %%%%% {gpu_numa_dict}')
 
     rocm_path = ibperf_lib.detect_rocm_path(phdl, config_dict.get('rocm_dir', ''))
     for msg_size in config_dict['msg_size_list']:
         ib_lat_dict[lat_test][msg_size] = {}
-        # Log a message to Dmesg to create a timestamp record
-        start_time = phdl.exec('date +"%a %b %e %H:%M"')
-        phdl.exec(f'echo "Starting Test {lat_test} for {msg_size}" | sudo -n tee /dev/kmsg')
+        start_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
+        phdl.exec(
+            f'echo "Starting Test {lat_test} for {msg_size}" | sudo -n tee /dev/kmsg',
+            print_console=False,
+        )
         ib_lat_dict[lat_test][msg_size] = ibperf_lib.run_ib_perf_lat_test(
             phdl,
             lat_test,
@@ -307,15 +309,14 @@ def test_ib_lat_perf(phdl, lat_test, config_dict):
             int(config_dict['port_no']),
             rocm_path=rocm_path,
         )
-        end_time = phdl.exec('date +"%a %b %e %H:%M"')
+        end_time = phdl.exec('date +"%a %b %e %H:%M"', print_console=False)
         verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=True)
         if re.search('True', config_dict['verify_bw'], re.I):
             ibperf_lib.verify_expected_lat(
                 lat_test, msg_size, ib_lat_dict[lat_test][msg_size], config_dict['expected_results']
             )
 
-    log.info('%%%%%%%%%%% ib_lat_dict %%%%%%%%%')
-    log.info("%s", ib_lat_dict)
+    log.debug('ib_lat_dict: %s', ib_lat_dict)
     update_test_result()
 
 

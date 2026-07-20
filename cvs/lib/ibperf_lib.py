@@ -5,11 +5,90 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import logging
 import re
 import time
 import xlsxwriter
 
-from cvs.lib.utils_lib import *
+from cvs.lib.utils_lib import fail_test
+
+log = logging.getLogger(__name__)
+
+# Cached one-time probe results for the current process (per binary / ROCm config key).
+_dmabuf_support_cache = {}
+_rocm_path_cache = {}
+
+
+def _log_bw_summary(msg_size, res_dict, instance_no=None):
+    if not res_dict:
+        return
+    bws = []
+    for node in sorted(res_dict):
+        bw = res_dict[node]['bw']
+        pps = res_dict[node]['pps']
+        bws.append(float(bw))
+        log.debug('Node %s gpu=%s BW=%s MPPS=%s', node, instance_no, bw, pps)
+    if instance_no is not None and bws:
+        log.debug(
+            'BW msg_size=%s gpu=%s: avg=%.2f Gbps across %d nodes',
+            msg_size,
+            instance_no,
+            sum(bws) / len(bws),
+            len(bws),
+        )
+
+
+def _log_lat_summary(msg_size, res_dict, instance_no=None):
+    if not res_dict:
+        return
+    avgs = []
+    parts = []
+    for node in sorted(res_dict):
+        lat = res_dict[node]['t_avg']
+        avgs.append(float(lat))
+        parts.append(f'{node}={lat}')
+        log.debug('Node %s msg_size %s: avg latency=%s us', node, msg_size, lat)
+    if not avgs:
+        return
+    inst_label = f' gpu={instance_no}' if instance_no is not None else ''
+    log.debug(
+        'Latency msg_size=%s%s: avg=%.2f us [%s]',
+        msg_size,
+        inst_label,
+        sum(avgs) / len(avgs),
+        ', '.join(parts),
+    )
+
+
+def _log_bw_run_done(bw_test, msg_size, qp_count, result_dict):
+    all_bws = []
+    for node in result_dict:
+        for inst in result_dict.get(node, {}):
+            all_bws.append(float(result_dict[node][inst]['bw']))
+    if all_bws:
+        log.info(
+            '%s: msg_size=%s qp=%s done, BW avg=%.2f Gbps (%d GPUs)',
+            bw_test,
+            msg_size,
+            qp_count,
+            sum(all_bws) / len(all_bws),
+            len(all_bws),
+        )
+
+
+def _log_lat_run_done(lat_test, msg_size, result_dict):
+    all_lats = []
+    for node in result_dict:
+        for inst in result_dict.get(node, {}):
+            all_lats.append(float(result_dict[node][inst]['t_avg']))
+    if all_lats:
+        log.info(
+            '%s: msg_size=%s done, latency avg=%.2f us (%d GPUs)',
+            lat_test,
+            msg_size,
+            sum(all_lats) / len(all_lats),
+            len(all_lats),
+        )
 
 
 def detect_rocm_path(phdl, config_rocm_path):
@@ -25,50 +104,62 @@ def detect_rocm_path(phdl, config_rocm_path):
     Returns:
         str: Detected ROCm path
     """
+    cache_key = config_rocm_path if config_rocm_path else '<auto>'
+    if cache_key in _rocm_path_cache:
+        log.debug('Using cached ROCm path for %s: %s', cache_key, _rocm_path_cache[cache_key])
+        return _rocm_path_cache[cache_key]
+
     if config_rocm_path and config_rocm_path != '<changeme>':
         out_dict = phdl.exec(
-            f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+            f'test -d {config_rocm_path}/lib && ls {config_rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1',
+            print_console=False,
         )
         for node, output in out_dict.items():
             if output.strip() and 'libamdhip64.so' in output:
-                log.info(f'Using configured ROCm path: {config_rocm_path} (validated)')
+                log.info('ROCm path: %s (configured)', config_rocm_path)
+                _rocm_path_cache[cache_key] = config_rocm_path
                 return config_rocm_path
             else:
                 log.warning(
                     f'Configured ROCm path {config_rocm_path} does not contain required libraries, will auto-detect'
                 )
 
-    log.info('Auto-detecting ROCm path...')
-
     # Try new ROCm 7.x structure first (/opt/rocm/core-X.Y)
-    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
+    out_dict = phdl.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1', print_console=False)
     for node, output in out_dict.items():
         if output and '/opt/rocm/core-' in output:
             rocm_path = output.strip()
             validate_dict = phdl.exec(
-                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1'
+                f'test -d {rocm_path}/lib && ls {rocm_path}/lib/libamdhip64.so* 2>/dev/null | head -1',
+                print_console=False,
             )
             for _, lib_output in validate_dict.items():
                 if lib_output.strip() and 'libamdhip64.so' in lib_output:
-                    log.info(f'Detected ROCm path (new layout): {rocm_path}')
+                    log.info('ROCm path: %s (auto-detected, new layout)', rocm_path)
+                    _rocm_path_cache[cache_key] = rocm_path
                     return rocm_path
 
     # Fall back to legacy /opt/rocm
-    out_dict = phdl.exec('test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1')
+    out_dict = phdl.exec(
+        'test -d /opt/rocm/lib && ls /opt/rocm/lib/libamdhip64.so* 2>/dev/null | head -1',
+        print_console=False,
+    )
     for node, output in out_dict.items():
         if output.strip() and 'libamdhip64.so' in output:
-            log.info('Detected ROCm path (legacy layout): /opt/rocm')
+            log.info('ROCm path: /opt/rocm (auto-detected, legacy layout)')
+            _rocm_path_cache[cache_key] = '/opt/rocm'
             return '/opt/rocm'
 
     log.warning('Could not detect ROCm path with required libraries, defaulting to /opt/rocm')
+    _rocm_path_cache[cache_key] = '/opt/rocm'
     return '/opt/rocm'
 
 
-def get_ib_bw_pps(phdl, msg_size, cmd):
+def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
     res_dict = {}
 
     # Run some of the standard verifications
-    out_dict = phdl.exec(cmd)
+    out_dict = phdl.exec(cmd, print_console=False)
     err_pattern = (
         "Couldn't initialize ROCm device|Failed to init|Unable to open file descriptor|ERROR|FAIL|Segmentation fault"
     )
@@ -81,8 +172,8 @@ def get_ib_bw_pps(phdl, msg_size, cmd):
 
     # Collect the BW, PPS numbers
     for i in range(1, 10):
-        log.info(f'starting iteration {i} to collect numbers')
-        out_dict = phdl.exec(cmd)
+        log.debug('BW collection iteration %d for msg_size %s', i, msg_size)
+        out_dict = phdl.exec(cmd, print_console=False)
         for node in out_dict.keys():
             res_dict[node] = {}
             pattern = r"{}\s+\d+\s+[0-9\.]+\s+([0-9\.]+)\s+([0-9\.]+)".format(msg_size)
@@ -90,23 +181,23 @@ def get_ib_bw_pps(phdl, msg_size, cmd):
                 match = re.search(pattern, out_dict[node])
                 res_dict[node]['bw'] = match.group(1)
                 res_dict[node]['pps'] = match.group(2)
-                log.info(f"Node {node} BW - {res_dict[node]['bw']}, MPPS - {res_dict[node]['pps']}")
                 continue
             else:
-                log.info('Sleeping 10 secs for test to complete')
+                log.debug('Node %s: results not ready, sleeping 10s (iteration %d)', node, i)
                 time.sleep(10)
             fail_test(
                 f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}'
             )
             fail_test(f'ERROR !!! pls check log file for errors on node {node}')
+    _log_bw_summary(msg_size, res_dict, instance_no)
     return res_dict
 
 
-def get_ib_lat_numb(phdl, msg_size, cmd):
+def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None):
     res_dict = {}
 
     # Run some of the standard verifications
-    out_dict = phdl.exec(cmd)
+    out_dict = phdl.exec(cmd, print_console=False)
     err_pattern = (
         "Couldn't initialize ROCm device|Failed to init|Unable to open file descriptor|ERROR|FAIL|Segmentation fault"
     )
@@ -118,10 +209,10 @@ def get_ib_lat_numb(phdl, msg_size, cmd):
         if re.search(err_pattern, out_dict[node], re.I):
             fail_test(f'IB Test failed - Error patterns seen on node {node}')
 
-    # Collect the BW, PPS numbers
+    # Collect the latency numbers
     for i in range(1, 4):
-        log.info(f'starting iteration {i} to collect numbers')
-        out_dict = phdl.exec(cmd)
+        log.debug('Latency collection iteration %d for msg_size %s', i, msg_size)
+        out_dict = phdl.exec(cmd, print_console=False)
         for node in out_dict.keys():
             pattern = "{}[\t\s]+[0-9]+[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)".format(
                 msg_size
@@ -135,24 +226,24 @@ def get_ib_lat_numb(phdl, msg_size, cmd):
                 res_dict[node]['t_stdev'] = match.group(5)
                 res_dict[node]['t_99_pct'] = match.group(6)
                 res_dict[node]['t_99_9_pct'] = match.group(7)
-                log.info(f'Node {node} Avg Lat - {res_dict[node]["t_avg"]}')
                 continue
             else:
-                log.info('Sleeping 10 secs for test to complete')
+                log.debug('Node %s: latency results not ready, sleeping 10s (iteration %d)', node, i)
                 time.sleep(10)
             fail_test(
                 f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}'
             )
             fail_test(f'ERROR !!! pls check log file for errors on node {node}')
+    _log_lat_summary(msg_size, res_dict, instance_no)
     return res_dict
 
 
 def verify_expected_bw(bw_test, msg_size, qp_count, res_dict, expected_res):
-    log.info(f'Verifying expected BW for test {bw_test} msg_size {msg_size} QP count {qp_count}')
-    log.info("%s", list(expected_res.keys()))
-    log.info("%s", res_dict)
+    log.info('Verifying expected BW: %s msg_size=%s qp=%s', bw_test, msg_size, qp_count)
+    log.debug('Expected results keys: %s', list(expected_res.keys()))
+    log.debug('Result dict: %s', res_dict)
     if bw_test in expected_res.keys():
-        log.info("%s", list(expected_res[bw_test].keys()))
+        log.debug('Expected %s keys: %s', bw_test, list(expected_res[bw_test].keys()))
         if msg_size in expected_res[bw_test].keys():
             if qp_count in expected_res[bw_test][msg_size].keys():
                 for node in res_dict.keys():
@@ -163,11 +254,11 @@ def verify_expected_bw(bw_test, msg_size, qp_count, res_dict, expected_res):
 
 
 def verify_expected_lat(lat_test, msg_size, res_dict, expected_res):
-    log.info(f'Verifying expected BW for test {lat_test} msg_size {msg_size}')
-    log.info("%s", list(expected_res.keys()))
-    log.info("%s", res_dict)
+    log.info('Verifying expected latency: %s msg_size=%s', lat_test, msg_size)
+    log.debug('Expected results keys: %s', list(expected_res.keys()))
+    log.debug('Result dict: %s', res_dict)
     if lat_test in expected_res.keys():
-        log.info("%s", list(expected_res[lat_test].keys()))
+        log.debug('Expected %s keys: %s', lat_test, list(expected_res[lat_test].keys()))
         if msg_size in expected_res[lat_test].keys():
             for node in res_dict.keys():
                 if float(res_dict[node]['lat']) >= float(expected_res[lat_test][msg_size]):
@@ -190,16 +281,27 @@ def run_ib_perf_bw_test(
     duration=60,
     rocm_path='',
 ):
+    log.info(
+        '%s: msg_size=%s qp=%s start (%ss, %d nodes)',
+        bw_test,
+        msg_size,
+        qp_count,
+        duration,
+        len(bck_nic_dict),
+    )
     app_port = port_no
     result_dict = {}
     i = 0
     cmd_dict = {}
-    phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt')
-    phdl.exec('sudo rm -rf /tmp/ib_perf*')
-    phdl.exec('touch /tmp/ib_cmds_file.txt')
+    phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt', print_console=False)
+    phdl.exec('sudo rm -rf /tmp/ib_perf*', print_console=False)
+    phdl.exec('touch /tmp/ib_cmds_file.txt', print_console=False)
     if rocm_path:
-        log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
-        phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
+        log.debug('Setting LD_LIBRARY_PATH to %s/lib for perftest binaries', rocm_path)
+        phdl.exec(
+            f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt',
+            print_console=False,
+        )
     server_addr = None
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
@@ -243,44 +345,53 @@ def run_ib_perf_bw_test(
         for node in cmd_dict.keys():
             cmd_list.append(cmd_dict[node][j])
         # print(cmd_list)
-        phdl.exec_cmd_list(cmd_list)
+        phdl.exec_cmd_list(cmd_list, print_console=False)
 
-    # Clean up any stale instances of ib_write_bw from earlier runs ..
-    phdl.exec(f'killall {bw_test}')
+    # Clean up any stale instances from earlier runs (ignore if none running)
+    log.debug('Killing stale %s processes before starting test', bw_test)
+    phdl.exec(f'killall {bw_test} 2>/dev/null || true', print_console=False)
     time.sleep(2)
-    phdl.exec('source /tmp/ib_cmds_file.txt')
+    phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
 
     time.sleep(20)
 
     for instance_no in range(0, inst_count):
-        log.info('instance_no - {}'.format(instance_no))
         try:
-            bw_pps_dict = get_ib_bw_pps(phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs')
+            bw_pps_dict = get_ib_bw_pps(phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs', instance_no=instance_no)
             for node in bw_pps_dict.keys():
                 result_dict[node][instance_no] = {}
                 result_dict[node][instance_no]['pps'] = bw_pps_dict[node]['pps']
                 result_dict[node][instance_no]['bw'] = bw_pps_dict[node]['bw']
         except Exception:
-            log.error('FAILED to get BW, PPS numbers for size - {} qp_count {}'.format(msg_size, qp_count))
+            log.error(
+                'Failed to collect BW/PPS for msg_size=%s qp_count=%s instance=%d',
+                msg_size,
+                qp_count,
+                instance_no,
+                exc_info=True,
+            )
 
-    log.info('%%%%%%%%%% BW result_dict %%%%%%%%%%')
-    log.info("%s", result_dict)
+    _log_bw_run_done(bw_test, msg_size, qp_count, result_dict)
     return result_dict
 
 
 def run_ib_perf_lat_test(
     phdl, lat_test, gpu_numa_dict, gpu_nic_dict, bck_nic_dict, app_path, msg_size, gid_index, port_no=1516, rocm_path=''
 ):
+    log.info('%s: msg_size=%s start (%d nodes)', lat_test, msg_size, len(bck_nic_dict))
     app_port = port_no
     result_dict = {}
     i = 0
     cmd_dict = {}
-    phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt')
-    phdl.exec('sudo rm -rf /tmp/ib_perf*')
-    phdl.exec('touch /tmp/ib_cmds_file.txt')
+    phdl.exec('sudo rm -rf /tmp/ib_cmds_file.txt', print_console=False)
+    phdl.exec('sudo rm -rf /tmp/ib_perf*', print_console=False)
+    phdl.exec('touch /tmp/ib_cmds_file.txt', print_console=False)
     if rocm_path:
-        log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
-        phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
+        log.debug('Setting LD_LIBRARY_PATH to %s/lib for perftest binaries', rocm_path)
+        phdl.exec(
+            f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt',
+            print_console=False,
+        )
     server_addr = None
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
@@ -324,21 +435,20 @@ def run_ib_perf_lat_test(
         for node in cmd_dict.keys():
             cmd_list.append(cmd_dict[node][j])
         # print(cmd_list)
-        phdl.exec_cmd_list(cmd_list)
+        phdl.exec_cmd_list(cmd_list, print_console=False)
 
-    # Clean up any stale instances of ib_write_bw from earlier runs ..
-    phdl.exec(f'killall {lat_test}')
+    # Clean up any stale instances from earlier runs (ignore if none running)
+    log.debug('Killing stale %s processes before starting test', lat_test)
+    phdl.exec(f'killall {lat_test} 2>/dev/null || true', print_console=False)
     time.sleep(2)
-    phdl.exec('source /tmp/ib_cmds_file.txt')
+    phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
 
     # wait for the duration of test
     time.sleep(20)
 
     for instance_no in range(0, inst_count):
-        log.info('instance_no - {}'.format(instance_no))
         try:
-            lat_dict = get_ib_lat_numb(phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs')
-            log.info(f'%%%%% lat_dict = {lat_dict}')
+            lat_dict = get_ib_lat_numb(phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs', instance_no=instance_no)
             for node in bck_nic_dict.keys():
                 result_dict[node][instance_no] = {}
                 result_dict[node][instance_no]['t_min'] = lat_dict[node]['t_min']
@@ -348,16 +458,15 @@ def run_ib_perf_lat_test(
                 result_dict[node][instance_no]['t_stdev'] = lat_dict[node]['t_stdev']
                 result_dict[node][instance_no]['t_99_pct'] = lat_dict[node]['t_99_pct']
                 result_dict[node][instance_no]['t_99_9_pct'] = lat_dict[node]['t_99_9_pct']
-                log.info('***** result_dict for lat = {result_dict[node][instance_no]')
         except Exception:
             log.error(
-                'FAILED to get latency numbers for size - {}'.format(
-                    msg_size,
-                )
+                'Failed to collect latency for msg_size=%s instance=%d',
+                msg_size,
+                instance_no,
+                exc_info=True,
             )
 
-    log.info('%%%%%%%%%% LAT result_dict %%%%%%%%%%')
-    log.info("%s", result_dict)
+    _log_lat_run_done(lat_test, msg_size, result_dict)
     return result_dict
 
 
@@ -567,8 +676,6 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
 
             avg_bw_data = average_of_lists(split_bw_list)
             avg_pps_data = average_of_lists(split_pps_list)
-            log.info("%s", split_bw_list)
-            log.info("%s", split_bw_gpu0_list)
             avg_bw_gpu0_data = average_of_lists(split_bw_gpu0_list)
             avg_bw_gpu1_data = average_of_lists(split_bw_gpu1_list)
             avg_bw_gpu2_data = average_of_lists(split_bw_gpu2_list)
@@ -587,7 +694,6 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
             avg_pps_gpu6_data = average_of_lists(split_pps_gpu6_list)
             avg_pps_gpu7_data = average_of_lists(split_pps_gpu7_list)
 
-            log.info(f'avg is {avg_bw_data}')
             # Merge cols for Node IP
             worksheet.merge_range("A2:A3", "Node IP", bold)
             worksheet.merge_range("B2:B3", "Msg Size", bold)
@@ -666,7 +772,6 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
 
             row_end = 4 + len(d_msg_size_list)
 
-            log.info(f'row_end {row_end}')
             chart.add_series(
                 {
                     "name": "={}!$B$2".format(sheet_name),
@@ -689,6 +794,7 @@ def generate_ibperf_bw_chart(res_dict, excel_file='ib_bw_pps_perf.xlsx'):
             worksheet.insert_chart(x_chart_index, y_chart_index, chart)
 
     workbook.close()
+    log.info('BW performance chart saved: %s', excel_file)
 
 
 def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
@@ -852,11 +958,6 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
                 d_avg_tstdev_list.append(tot_tstdev / 8)
                 d_avg_t99pct_list.append(tot_t99pct / 8)
 
-        log.info(f'%%%%% d_avg_tmin_list = {d_avg_tmin_list}')
-        log.info(f'%%%%% d_avg_tmax_list = {d_avg_tmax_list}')
-        log.info(f'%%%%% d_avg_tavg_list = {d_avg_tavg_list}')
-        log.info(f'%%%%% d_avg_tstdev_list = {d_avg_tstdev_list}')
-        log.info(f'%%%%% d_avg_t99pct_list = {d_avg_t99pct_list}')
         split_tmin_list = split_list_into_n_chunks(d_avg_tmin_list, len(node_list))
         split_tmax_list = split_list_into_n_chunks(d_avg_tmax_list, len(node_list))
         split_tavg_list = split_list_into_n_chunks(d_avg_tavg_list, len(node_list))
@@ -908,9 +1009,6 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
         split_t99pct_gpu6_list = split_list_into_n_chunks(d_t99pct_gpu_6_list, len(node_list))
         split_t99pct_gpu7_list = split_list_into_n_chunks(d_t99pct_gpu_7_list, len(node_list))
 
-        log.info("%s", split_tmin_list)
-        log.info("%s", split_tmax_list)
-        log.info("%s", split_tavg_list)
         avg_tmin_data = average_of_lists(split_tmin_list)
         avg_tmax_data = average_of_lists(split_tmax_list)
         avg_tavg_data = average_of_lists(split_tavg_list)
@@ -1108,7 +1206,6 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
 
         row_end = 4 + len(d_msg_size_list)
 
-        log.info(f'row_end {row_end}')
         chart.add_series(
             {
                 "name": "={}!$B$2".format(sheet_name),
@@ -1131,3 +1228,4 @@ def generate_ibperf_lat_chart(res_dict, excel_file='ib_lat_perf.xlsx'):
         worksheet.insert_chart(x_chart_index, y_chart_index, chart)
 
     workbook.close()
+    log.info('Latency performance chart saved: %s', excel_file)
