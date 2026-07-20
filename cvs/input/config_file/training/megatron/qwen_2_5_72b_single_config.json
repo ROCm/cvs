@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "framework": "megatron_single",
+  "gpu_arch": "mi325",
+  "enforce_thresholds": false,
+  "config": {
+    "hf_token_file": "/home/{user-id}/.hf_token",
+    "log_dir": "/home/{user-id}/LOGS/megatron",
+    "scripts_dir": "/home/{user-id}/SCRIPTS/megatron",
+    "data_cache_dir": "/home/{user-id}/cache",
+    "rocm_dir": "",
+    "megatron_root": "/workspace/Megatron-LM",
+    "training_iterations": "10",
+    "nnodes": "1",
+    "nic_type": "thor2",
+    "nccl_socket_ifname": "ensf1np1",
+    "gloo_socket_ifname": "ensf1np1",
+    "nccl_ib_gid_index": "3",
+    "nccl_debug": "ERROR",
+    "master_address": "127.0.0.1",
+    "verify_network_errors": "False"
+  },
+  "model_params": {
+    "model_name": "qwen2_5_72b",
+    "tokenizer_model": "Qwen/Qwen2.5-72B",
+    "model_size": "72",
+    "sequence_length": "8192",
+    "recompute": "1",
+    "fsdp": "1",
+    "tensor_parallelism": "1",
+    "pipeline_parallelism": "1",
+    "precision": "BF16"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "megatron_qwen2_5_72b_single",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/dev/infiniband:/dev/infiniband"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    }
+  },
+  "sweep": {
+    "combinations": {
+      "qwen2_5_72b-mi325-bs256-mbs16-bf16": {
+        "name": "qwen2_5_72b_mbs16_gbs256_BF16",
+        "global_batch_size": "256",
+        "micro_batch_size": "16",
+        "precision": "BF16",
+        "result_dict": {
+          "throughput_per_gpu": "100",
+          "elapsed_time_per_iteration": "500",
+          "tokens_per_gpu": "1000",
+          "mem_usage": "0"
+        }
+      }
+    },
+    "runs": [
+      "qwen2_5_72b-mi325-bs256-mbs16-bf16"
+    ]
+  }
+}

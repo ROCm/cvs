@@ -63,16 +63,17 @@ def hf_token(variant_config):
 
 
 class _Lifecycle:
-    """Cross-test state for the lifecycle-as-tests model.
+    """Cross-test state for the per-combo lifecycle model.
 
-    Container launch and teardown are individual tests (timed, pass/fail rows
-    in the HTML) rather than fixture body code. They share this object:
-    `failed` lets a broken stage skip the rest; `torn_down` suppresses the
-    fixture leak-guard; `report` maps each nodeid to its recorded timings.
+    Each combo's container launch, training, and teardown are timed sub-stages
+    of test_training. `report` maps each nodeid to its recorded (label, value,
+    unit) rows, which pytest_runtest_makereport renders into the HTML detail
+    panel. `torn_down` suppresses the orch fixture leak-guard: test_training
+    sets it True after its own teardown so the module-end finalizer does not
+    tear down a second time.
     """
 
     def __init__(self):
-        self.failed = False
         self.torn_down = False
         self.report = {}  # nodeid -> list[(label, value, unit)]
 
@@ -92,13 +93,13 @@ def train_res_dict():
 
 @pytest.fixture(scope="module")
 def orch(cluster_dict, variant_config, lifecycle):
-    """Construct a ContainerOrchestrator and own ONLY its teardown safety net.
+    """Construct a ContainerOrchestrator and own a final teardown safety net.
 
-    The actual container launch happens in test_launch_container so it appears
-    as a timed row. This fixture builds the object and registers a leak-guard:
-    if a mid-sweep test fails before test_teardown runs, the container is still
-    torn down here. When test_teardown ran successfully it sets
-    lifecycle.torn_down, so the finalizer no-ops (no double teardown).
+    Each combo's test_training launches and tears down its own container in a
+    finally block, setting lifecycle.torn_down=True afterwards. This finalizer
+    only fires when torn_down is False -- i.e. a combo crashed hard before its
+    own teardown ran -- so nothing leaks past the module without double-tearing
+    down in the normal case.
     """
     container_block = _deep_merge(cluster_dict.get("container", {}), variant_config.container.model_dump())
     testsuite_config = {"orchestrator": "container", "container": container_block}
@@ -106,20 +107,17 @@ def orch(cluster_dict, variant_config, lifecycle):
     o = OrchestratorFactory.create_orchestrator(log, cfg)
     yield o
     if not lifecycle.torn_down:
-        log.info("orch fixture leak-guard: tearing down container (explicit teardown did not run)")
+        log.info("orch fixture leak-guard: tearing down container (per-combo teardown did not run)")
         o.teardown_containers()
 
 
 
 def pytest_collection_modifyitems(items):
-    """Pin lifecycle test order explicitly instead of relying on definition order."""
+    """Pin test order: each combo's test_training (which owns the full container
+    lifecycle) runs before any test_throughput, which only reads saved results."""
     rank = {
-        "test_cleanup_stale_containers": 0,
-        "test_launch_container": 1,
-        "test_setup_sshd": 2,
-        "test_training": 3,
-        "test_throughput": 4,
-        "test_teardown": 5,
+        "test_training": 0,
+        "test_throughput": 1,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
