@@ -48,14 +48,15 @@ class TestAncInstallPreTasks:
 
         update_test_result()
 
-    def test_download_install_anc_in_node_cvs_home(self, phdl, config_dict):
+    def test_download_install_anc_in_node_cvs_home(self, phdl, cluster_dict,
+                                                   config_dict):
         '''
         Install ANC on all nodes, dispatching by release-archive flavour
         (deb/rpm/tar) with an optional anc_version precheck / post-verify.
 
         See cvs.lib.anc_lib.install_anc for the full behaviour.
         '''
-        anc_lib.install_anc(phdl, config_dict)
+        anc_lib.install_anc(phdl, cluster_dict, config_dict)
 
 
 class TestAncInstallCoreTasks:

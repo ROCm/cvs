@@ -32,15 +32,15 @@ log = globals.log
 class TestAncExecAllGpuPreTasks:
     '''Pre-tasks: install ANC and ensure ROCm libs, once for the whole run.'''
 
-    def test_install_anc(self, phdl, config_dict):
+    def test_install_anc(self, phdl, cluster_dict, config_dict):
         '''Install/verify ANC once before running all GPU groups.'''
         log.info("ANC exec-all GPU Pre-Task: install/verify ANC")
-        anc_lib.install_anc(phdl, config_dict)
+        anc_lib.install_anc(phdl, cluster_dict, config_dict)
 
-    def test_rocm_ldconfig(self, phdl):
+    def test_rocm_ldconfig(self, phdl, cluster_dict):
         '''Ensure ROCm libs resolvable once before running all GPU groups.'''
         log.info("ANC exec-all GPU Pre-Task: ensure ROCm ldconfig")
-        anc_lib.ensure_rocm_ldconfig(phdl)
+        anc_lib.ensure_rocm_ldconfig(phdl, cluster_dict)
 
 
 class TestAncExecAllGpuCoreTasks:

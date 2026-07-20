@@ -274,6 +274,34 @@ def _assert_shell_safe(anc_cfg, keys):
             )
 
 
+def _expected_nodes(cluster_dict):
+    '''Return the full list of expected hosts from the cluster file.'''
+    return list(cluster_dict.get("node_dict", {}).keys())
+
+
+def _fail_unreachable_nodes(cluster_dict, out_dict, action):
+    '''
+    fail_test every expected node absent from an exec result (unreachable).
+
+    ``phdl.exec`` only returns REACHABLE hosts, so a node that is down / did not
+    respond simply drops out of ``out_dict``. Callers that judge pass/fail from
+    ``out_dict`` alone would silently treat such a node as a success. This flags
+    every expected host missing from ``out_dict`` as a failed ``action`` (e.g.
+    "install", "ldconfig").
+
+    Returns:
+      list[str]: the expected hosts that were missing from ``out_dict``.
+    '''
+    expected = _expected_nodes(cluster_dict)
+    missing = [host for host in expected if host not in (out_dict or {})]
+    for host in missing:
+        fail_test(
+            f"ANC {action} failed on {host}: node produced no output "
+            f"(unreachable / did not run)"
+        )
+    return missing
+
+
 def detect_package_type(anc_release_url):
     '''
     Infer the ANC package flavour from the release archive name.
@@ -322,16 +350,20 @@ def node_version_matches(phdl, expected_version):
     }
 
 
-def install_anc(phdl, config_dict):
+def install_anc(phdl, cluster_dict, config_dict):
     '''
     Install ANC on all nodes, dispatching by release-archive flavour.
 
     The packaging kind is inferred from the ``anc_release_url`` archive name
     (``-deb-`` / ``-rpm-`` / ``-tar-``) and the matching installer is invoked.
-    When ``anc_version`` is set in config, a precheck runs first: if every node
-    already reports that version via ``anc.py --version``, installation is
-    skipped. After installing, the same version check runs as the final step to
-    confirm the target version is present on all nodes.
+    When ``anc_version`` is set in config, a precheck runs first: install is
+    skipped ONLY if every expected node already reports that version via
+    ``anc.py --version``. After installing, the same version check runs as the
+    final step to confirm the target version is present on all nodes.
+
+    Node coverage: ``phdl.exec`` returns only reachable hosts, so any expected
+    node (from ``cluster_dict["node_dict"]``) that is unreachable is treated as
+    a failed install rather than silently passing.
 
     Reports pass/fail via fail_test / update_test_result (call from a test).
     '''
@@ -346,11 +378,15 @@ def install_anc(phdl, config_dict):
     pkg_type = detect_package_type(anc_release_url)
     log.info("ANC package type detected from archive: %s", pkg_type)
 
-    # Precheck: skip install if all nodes already run the target version.
+    expected = _expected_nodes(cluster_dict)
+
+    # Precheck: skip install only when EVERY expected node already runs the
+    # target version. A missing (unreachable) node yields matches.get(host)
+    # == None -> falsy, so we never skip on incomplete coverage.
     if anc_version:
         log.info("ANC precheck: expecting version %s", anc_version)
         matches = node_version_matches(phdl, anc_version)
-        if matches and all(matches.values()):
+        if expected and all(matches.get(host) for host in expected):
             log.info(
                 "ANC %s already installed on all nodes; skipping install",
                 anc_version,
@@ -360,26 +396,33 @@ def install_anc(phdl, config_dict):
 
     # The sub-installers only record failures via fail_test (they do NOT report
     # the result themselves); install_anc is the single owner of
-    # update_test_result so the whole install is reported exactly once.
+    # update_test_result so the whole install is reported exactly once. Each
+    # sub-installer also flags any expected node missing from its output.
     if pkg_type == "deb":
-        _install_anc_deb(phdl, config_dict)
+        _install_anc_deb(phdl, cluster_dict, config_dict)
     elif pkg_type == "rpm":
-        _install_anc_rpm(phdl, config_dict)
+        _install_anc_rpm(phdl, cluster_dict, config_dict)
     elif pkg_type == "tar":
-        _install_anc_tar(phdl, config_dict)
+        _install_anc_tar(phdl, cluster_dict, config_dict)
     else:
         fail_test(f"ANC '{pkg_type}' package installation is not yet supported")
         update_test_result()
         return
 
-    # Final verification: confirm the target version is now on all nodes. Skip
-    # it if the install phase already recorded failures (a bad install can't
-    # pass version verification, and this keeps the failure detail focused).
+    # Final verification: confirm the target version is now on all expected
+    # nodes. Skip it if the install phase already recorded failures (a bad
+    # install can't pass version verification, and this keeps the failure
+    # detail focused).
     if anc_version and not globals.error_list:
         log.info("ANC final verification: expecting version %s", anc_version)
         matches = node_version_matches(phdl, anc_version)
-        for host, ok in matches.items():
-            if ok:
+        for host in expected:
+            if host not in matches:
+                fail_test(
+                    f"ANC version verification failed on {host}: node produced "
+                    f"no output (unreachable / did not run)"
+                )
+            elif matches[host]:
                 log.info("Node %s: ANC version %s confirmed", host, anc_version)
             else:
                 fail_test(
@@ -390,7 +433,7 @@ def install_anc(phdl, config_dict):
     update_test_result()
 
 
-def _install_anc_rpm(phdl, config_dict):
+def _install_anc_rpm(phdl, cluster_dict, config_dict):
     '''
     Install ANC from .rpm package(s) on remote nodes (fresh install each run).
 
@@ -446,8 +489,10 @@ def _install_anc_rpm(phdl, config_dict):
         else:
             log.info("Node %s: ANC .rpm installed and verified", host)
 
+    _fail_unreachable_nodes(cluster_dict, out_dict, ".rpm install")
 
-def _install_anc_deb(phdl, config_dict):
+
+def _install_anc_deb(phdl, cluster_dict, config_dict):
     '''
     Install ANC from .deb package(s) on remote nodes (fresh install each run).
 
@@ -511,8 +556,10 @@ def _install_anc_deb(phdl, config_dict):
         else:
             log.info("Node %s: ANC .deb installed and verified", host)
 
+    _fail_unreachable_nodes(cluster_dict, out_dict, ".deb install")
 
-def _install_anc_tar(phdl, config_dict):
+
+def _install_anc_tar(phdl, cluster_dict, config_dict):
     '''
     Install ANC from the tar release on remote nodes (fresh install each run).
 
@@ -577,8 +624,10 @@ def _install_anc_tar(phdl, config_dict):
         else:
             log.info("Node %s: ANC directory installed successfully", host)
 
-    # Skip exe_path validation if the extraction already failed (nothing to
-    # validate); the caller reports the recorded failure.
+    _fail_unreachable_nodes(cluster_dict, out_dict, "tar install")
+
+    # Skip exe_path validation if the extraction/reachability already failed
+    # (nothing to validate); the caller reports the recorded failure.
     if globals.error_list:
         return
 
@@ -612,11 +661,13 @@ def _install_anc_tar(phdl, config_dict):
         else:
             fail_test(f"Unexpected validation output on {host}: {output.strip()}")
 
+    _fail_unreachable_nodes(cluster_dict, validate_dict, "exe_path validation")
+
 
 # =========================================================================
 # ROCm shared-library resolution (ldconfig)
 # =========================================================================
-def ensure_rocm_ldconfig(phdl):
+def ensure_rocm_ldconfig(phdl, cluster_dict):
     '''
     Make ROCm shared libraries resolvable on every node before ANC runs.
 
@@ -632,6 +683,10 @@ def ensure_rocm_ldconfig(phdl):
       3. If present, register the existing ROCM_LIB_DIRS in
          /etc/ld.so.conf.d/rocm.conf, run ``sudo ldconfig``, and re-check that
          the lib now resolves -> OK, else FAIL.
+
+    Node coverage: any expected node (from ``cluster_dict["node_dict"]``) that
+    is unreachable (absent from the exec output) is failed rather than silently
+    passing.
 
     Reports pass/fail via fail_test / update_test_result (call from a test).
     '''
@@ -697,6 +752,8 @@ def ensure_rocm_ldconfig(phdl):
             fail_test(
                 f"Unexpected ldconfig check output on {host}: {text.strip()}"
             )
+
+    _fail_unreachable_nodes(cluster_dict, out_dict, "ldconfig")
 
     update_test_result()
 
@@ -1159,15 +1216,15 @@ class AncGroupTest:
 
     GROUP = None  # set by subclass, e.g. "cpu_all"
 
-    def test_install_anc(self, phdl, config_dict):
+    def test_install_anc(self, phdl, cluster_dict, config_dict):
         '''Pre-task: install/verify ANC before running the group.'''
         log.info("ANC group '%s' Pre-Task: install/verify ANC", self.GROUP)
-        install_anc(phdl, config_dict)
+        install_anc(phdl, cluster_dict, config_dict)
 
-    def test_rocm_ldconfig(self, phdl):
+    def test_rocm_ldconfig(self, phdl, cluster_dict):
         '''Pre-task: ensure ROCm libs are resolvable before running the group.'''
         log.info("ANC group '%s' Pre-Task: ensure ROCm ldconfig", self.GROUP)
-        ensure_rocm_ldconfig(phdl)
+        ensure_rocm_ldconfig(phdl, cluster_dict)
 
     def test_group(self, phdl, cluster_dict, config_dict, request):
         '''Run this suite's single ANC group and collect/judge its logs.'''
