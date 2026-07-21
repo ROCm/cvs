@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from cvs.core.orchestrators.base import Orchestrator
 from cvs.lib.parallel_ssh_lib import Pssh
+from cvs.lib.utils_lib import with_sudo_fallback
 
 
 class BaremetalOrchestrator(Orchestrator):
@@ -188,8 +189,9 @@ class BaremetalOrchestrator(Orchestrator):
         for host in mpi_hosts:
             host_file_params += f'{host} slots={ranks_per_host}\n'
 
-        # Create hostfile on head node
-        cmd = 'sudo rm -f /tmp/mpi_hosts.txt'
+        # Create hostfile on head node; safe to retry under sudo since
+        # `rm -f` is idempotent.
+        cmd = with_sudo_fallback('rm -f /tmp/mpi_hosts.txt')
         self.exec_on_head(cmd)
 
         cmd = f'bash -c \'echo "{host_file_params}" > /tmp/mpi_hosts.txt\''
