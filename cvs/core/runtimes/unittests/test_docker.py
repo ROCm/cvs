@@ -283,7 +283,9 @@ class TestDockerRuntimeExecCmdList(unittest.TestCase):
                 self.assertEqual(len(rendered), 2)
                 for cmd in rendered:
                     self.assertNotIn("||", cmd, f"[{label}] must not use the old fallback form: {cmd!r}")
-                    self.assertEqual(cmd, f"{sudo_prefix}docker exec cvs_iter_test bash -c {cmd.split('bash -c ', 1)[1]}")
+                    self.assertEqual(
+                        cmd, f"{sudo_prefix}docker exec cvs_iter_test bash -c {cmd.split('bash -c ', 1)[1]}"
+                    )
                     self.assertTrue(cmd.startswith(f"{sudo_prefix}docker exec cvs_iter_test bash -c "))
 
     def test_exec_cmd_list_reads_sudo_prefix_once_not_per_item(self):

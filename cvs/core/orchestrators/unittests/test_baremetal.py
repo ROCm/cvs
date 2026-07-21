@@ -94,7 +94,9 @@ class TestBaremetalOrchestrator(unittest.TestCase):
                     )
 
                 first_call_cmd = orch.head.exec.call_args_list[0][0][0]
-                self.assertNotIn("||", first_call_cmd, f"[{label}] must not use the old fallback form: {first_call_cmd!r}")
+                self.assertNotIn(
+                    "||", first_call_cmd, f"[{label}] must not use the old fallback form: {first_call_cmd!r}"
+                )
                 self.assertEqual(first_call_cmd, f"{sudo_prefix}rm -f /tmp/mpi_hosts.txt")
 
 
