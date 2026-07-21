@@ -6,7 +6,7 @@ JAX MaxText training suite — single test file for both single-node and distrib
 
 The mode is determined by the config file passed at runtime via --config_file.
 The config's `training.distributed` field drives skipping of distributed-only
-stages (sshd, RDMA, NIC setup).
+stages (RDMA, NIC setup).
 '''
 
 import time
@@ -14,8 +14,8 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.training.jax_maxtext_training_lib import MaxTextTrainingJob
-from cvs.lib.training.utils.maxtext_parsing import TRAINING_METRICS, TRAINING_METRIC_UNITS
+from cvs.lib.training.jax.jaxmaxtext_training_lib import MaxTextTrainingJob
+from cvs.lib.training.jax.utils.maxtext_parsing import TRAINING_METRICS, TRAINING_METRIC_UNITS
 from cvs.lib.utils.verdict import evaluate_all
 
 import importlib.util as _ilu
@@ -51,27 +51,8 @@ def test_launch_container(orch, variant_config, lifecycle, request):
         pytest.fail(f"container {name} not running after setup_containers()")
 
 
-def test_setup_sshd(orch, variant_config, lifecycle, request):
-    """Stage 2: start sshd in the container (distributed only)."""
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
-    if not variant_config.training.distributed:
-        pytest.skip("single-node: sshd not needed")
-    t = time.monotonic()
-    ok = orch.setup_sshd()
-    lifecycle.record(request.node.nodeid, "sshd_setup", time.monotonic() - t)
-    if not ok:
-        lifecycle.failed = True
-        pytest.fail("setup_sshd() returned False")
-    if len(orch.hosts) > 1:
-        probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
-        if not any("OK" in (v or "") for v in (probe or {}).values()):
-            lifecycle.failed = True
-            pytest.fail("sshd not listening on 2224 after setup_sshd()")
-
-
 def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 3: copy RDMA library into container (distributed + thor2 NIC only)."""
+    """Stage 2: copy RDMA library into container (distributed + thor2 NIC only)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     if not variant_config.training.distributed:
@@ -85,7 +66,7 @@ def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_setup_nic(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 4: run NIC setup scripts (distributed only)."""
+    """Stage 3: run NIC setup scripts (distributed only)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     if not variant_config.training.distributed:
@@ -97,7 +78,7 @@ def test_setup_nic(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 5: download HF tokenizer into models dir."""
+    """Stage 4: download HF tokenizer into models dir."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     t = time.monotonic()
@@ -107,7 +88,7 @@ def test_setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_training_run(orch, variant_config, hf_token, training_res_dict, lifecycle, request):
-    """Stage 6: build training command, start training, poll for completion, parse results."""
+    """Stage 5: build training command, start training, poll for completion, parse results."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 

@@ -6,7 +6,7 @@ All rights reserved.
 from tabulate import tabulate
 
 from cvs.lib import globals
-from cvs.lib.training.utils.maxtext_parsing import TRAINING_METRICS
+from cvs.lib.training.jax.utils.maxtext_parsing import TRAINING_METRICS
 
 log = globals.log
 

@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Training-specific config schema for the jax_maxtext suite.
+Training-specific config schema for the jaxmaxtext suite.
 
 The framework-agnostic machinery (paths/model/container schema, the 3-pass
 placeholder substitution, the `enforce_thresholds` gate, and the
@@ -23,7 +23,7 @@ import warnings
 from typing import Any, Dict, Literal
 
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Allow, _Forbid, substitute_config
-from cvs.lib.training.utils.maxtext_parsing import GATED_METRICS
+from cvs.lib.training.jax.utils.maxtext_parsing import GATED_METRICS
 
 
 class Tokenizer(_Forbid):
@@ -58,7 +58,7 @@ class TrainingConfig(_Allow):
     distributed: bool = True
     steps: int = 30
     enable_checkpointing: bool = False
-    train_module: str = "maxtext.trainers.pre_train.train"
+    train_script: str = "/workspace/maxtext/src/MaxText/train.py"
     maxtext_config: Dict[str, Any] = {}
     tokenizer: Tokenizer
     nic_type: str = "thor2"
@@ -104,7 +104,7 @@ def validate_thresholds_cover_training(
 
 
 class TrainingVariantConfig(BaseVariantConfig):
-    framework: Literal["jax_maxtext"]
+    framework: Literal["jaxmaxtext"]
     gpu_arch: str
     training: TrainingConfig
 
@@ -129,7 +129,7 @@ class TrainingVariantConfig(BaseVariantConfig):
 
 
 def load_training_variant(config_path, cluster_dict):
-    """Load and validate a jax_maxtext variant config + its sibling threshold file.
+    """Load and validate a jaxmaxtext variant config + its sibling threshold file.
 
     Delegates the file read + placeholder substitution + threshold discovery to
     the generic `substitute_config`, then attaches the thresholds and builds the

@@ -6,7 +6,7 @@ Standalone JAX MaxText training job driven by a ContainerOrchestrator.
 
 This class talks only to `orch.exec`, which already routes into the running
 container, and to a typed `TrainingVariantConfig` (see
-`cvs.lib.training.utils.training_config_loader`).
+`cvs.lib.training.jax.utils.training_config_loader`).
 
 All container interaction goes through `orch.exec()`. No direct Pssh or
 docker_lib. The training command, env script, and MaxText YAML config are
@@ -24,7 +24,7 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.training.utils.maxtext_parsing import parse_training_log, extract_step_metrics
+from cvs.lib.training.jax.utils.maxtext_parsing import parse_training_log, extract_step_metrics
 
 log = globals.log
 
@@ -50,9 +50,9 @@ class MaxTextTrainingJob:
     env script, MaxText YAML config, launches training in the background
     inside the container, polls until complete, and parses the resulting log.
 
-    The `orch` instance is expected to already have `setup_containers()` and
-    `setup_sshd()` called against it (by the test fixture); lifecycle is
-    explicitly NOT owned here.
+    The `orch` instance is expected to already have `setup_containers()`
+    called against it (by the test fixture); lifecycle is explicitly NOT
+    owned here.
     """
 
     def __init__(self, orch, variant, hf_token):
@@ -61,7 +61,7 @@ class MaxTextTrainingJob:
         self.hf_token = hf_token
         self.training = variant.training
         self.log_dir = variant.paths.log_dir
-        self.out_dir = f"{self.log_dir}/jax_maxtext"
+        self.out_dir = f"{self.log_dir}/jaxmaxtext"
         self.num_nodes = len(orch.hosts)
         self.num_gpus = self.num_nodes * 8
 
@@ -76,6 +76,7 @@ class MaxTextTrainingJob:
 
     def setup_training_env(self):
         """Write env script and MaxText YAML config into the container."""
+        self.orch.exec("mkdir -p /tmp/jax")
         self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
         for i in range(self.num_nodes):
             self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}/out-node{i}")
@@ -120,13 +121,13 @@ class MaxTextTrainingJob:
             lines.append("export NCCL_P2P_DISABLE=0")
 
         env_script = "\n".join(lines) + "\n"
-        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/maxtext_env.sh"))
+        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/jax/maxtext_env.sh"))
 
     def _write_maxtext_yaml(self):
         """Write the MaxText YAML config into the container."""
         mc = dict(self.training.maxtext_config)
 
-        mc["run_name"] = f"jax_maxtext_{self.variant.model.id}"
+        mc["run_name"] = f"jaxmaxtext_{self.variant.model.id}"
         mc["steps"] = self.training.steps
         mc["enable_checkpointing"] = self.training.enable_checkpointing
         mc["base_output_directory"] = self.out_dir
@@ -142,7 +143,7 @@ class MaxTextTrainingJob:
                 yml_lines.append(f"{k}: {v}")
 
         yml_content = "\n".join(yml_lines) + "\n"
-        self.orch.exec("bash -c " + shlex.quote(f"cat > /tmp/maxtext_config.yml <<'YMLEOF'\n{yml_content}YMLEOF"))
+        self.orch.exec("bash -c " + shlex.quote(f"cat > /tmp/jax/maxtext_config.yml <<'YMLEOF'\n{yml_content}YMLEOF"))
 
     # ---------- RDMA / NIC setup ----------
 
@@ -180,7 +181,7 @@ class MaxTextTrainingJob:
             return
 
         dl_cmd = (
-            f"source /tmp/maxtext_env.sh && "
+            f"source /tmp/jax/maxtext_env.sh && "
             f"huggingface-cli download {shlex.quote(hf_model)} --local-dir {shlex.quote(tok.tokenizer_path)}"
         )
         log.info("downloading tokenizer: %s -> %s", hf_model, tok.tokenizer_path)
@@ -193,7 +194,7 @@ class MaxTextTrainingJob:
         for i in range(self.num_nodes):
             launcher_lines = [
                 "#!/bin/bash",
-                "source /tmp/maxtext_env.sh",
+                "source /tmp/jax/maxtext_env.sh",
             ]
 
             if self.training.distributed:
@@ -204,6 +205,7 @@ class MaxTextTrainingJob:
                         f"export JAX_COORDINATOR_IP={shlex.quote(coordinator_ip)}",
                         f"export JAX_COORDINATOR_PORT={shlex.quote(jax_dist.coordinator_port)}",
                         f"export NNODES={self.num_nodes}",
+                        f"export NODE_RANK={i}",
                         f"export JAX_PROCESS_INDEX={i}",
                         f"export JAX_DISTRIBUTED_INITIALIZATION_TIMEOUT_SECONDS={jax_dist.initialization_timeout_seconds}",
                         f"export JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS={jax_dist.heartbeat_timeout_seconds}",
@@ -215,6 +217,7 @@ class MaxTextTrainingJob:
                         "export JAX_COORDINATOR_IP=localhost",
                         "export JAX_COORDINATOR_PORT=12346",
                         "export NNODES=1",
+                        "export NODE_RANK=0",
                         "export JAX_PROCESS_INDEX=0",
                     ]
                 )
@@ -222,32 +225,23 @@ class MaxTextTrainingJob:
             launcher_lines.append("export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/")
             log_file = f"{self.out_dir}/out-node{i}/training.log"
             launcher_lines.append(
-                f"cd /workspace/maxtext && python -m {self.training.train_module} "
-                f"/tmp/maxtext_config.yml 2>&1 | tee {shlex.quote(log_file)}"
+                f"cd /workspace/maxtext && python {shlex.quote(self.training.train_script)} "
+                f"/tmp/jax/maxtext_config.yml 2>&1 | tee {shlex.quote(log_file)}"
             )
 
             script_content = "\n".join(launcher_lines) + "\n"
-            script_path = f"/tmp/training_launcher_node{i}.sh"
+            script_path = f"/tmp/jax/training_launcher_node{i}.sh"
             self.orch.exec(
                 "bash -c "
                 + shlex.quote(f"printf '%s' {shlex.quote(script_content)} > {script_path} && chmod +x {script_path}")
             )
-
-    def _build_train_argv(self):
-        argv = [
-            "python",
-            "-m",
-            self.training.train_module,
-            "/tmp/maxtext_config.yml",
-        ]
-        return argv
 
     def start_training(self):
         """Launch training in background via nohup on all nodes."""
         log.info("starting training on %d node(s)", self.num_nodes)
 
         for i in range(self.num_nodes):
-            script_path = f"/tmp/training_launcher_node{i}.sh"
+            script_path = f"/tmp/jax/training_launcher_node{i}.sh"
             redirect_log = f"{self.out_dir}/out-node{i}/training_redirect_logs"
             inner = f"nohup bash {script_path} > {shlex.quote(redirect_log)} 2>&1 &"
             self.orch.exec("bash -c " + shlex.quote(inner))

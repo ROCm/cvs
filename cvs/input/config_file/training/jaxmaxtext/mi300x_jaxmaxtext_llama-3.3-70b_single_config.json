@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "framework": "jax_maxtext",
+  "framework": "jaxmaxtext",
   "gpu_arch": "mi300x",
   "enforce_thresholds": false,
-  "threshold_json": "mi300x_jax-maxtext_llama-3.3-70b_distributed_threshold.json",
+  "threshold_json": "mi300x_jaxmaxtext_llama-3.3-70b_single_threshold.json",
 
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "{shared_fs}/cache/maxtext",
-    "log_dir": "{shared_fs}/LOGS/jax_maxtext",
+    "log_dir": "{shared_fs}/LOGS/jaxmaxtext",
     "hf_token_file": "{shared_fs}/.hf_token"
   },
 
@@ -20,7 +20,7 @@
 
   "container": {
     "lifetime": "per_run",
-    "name": "rocm-jax-maxtext-llama3.3-70b",
+    "name": "rocm-jaxmaxtext-llama3.3-70b-single",
     "image": "rocm/jax-training:maxtext-v26.3",
     "runtime": {
       "name": "docker",
@@ -31,7 +31,6 @@
         "shm-size": "256G",
         "volume": [
           "/home/{user-id}:/home/{user-id}",
-          "/dev/infiniband:/dev/infiniband",
           "/tmp/TRAINING_LOGS:/workspace/maxtext/output"
         ]
       }
@@ -39,10 +38,10 @@
   },
 
   "training": {
-    "distributed": true,
+    "distributed": false,
     "steps": 30,
     "enable_checkpointing": false,
-    "train_module": "maxtext.trainers.pre_train.train",
+    "train_script": "/workspace/maxtext/src/MaxText/train.py",
 
     "maxtext_config": {
       "base_config": "base.yml",
@@ -71,11 +70,6 @@
       "ici_sequence_parallelism": 1,
       "ici_tensor_parallelism": 1,
       "ici_pipeline_parallelism": 1,
-      "dcn_data_parallelism": -1,
-      "dcn_fsdp_parallelism": 1,
-      "dcn_pipeline_parallelism": 1,
-      "dcn_tensor_parallelism": 1,
-      "dcn_sequence_parallelism": 1,
       "max_segments_per_seq": 32,
       "skip_first_n_steps_for_profiler": 3
     },
@@ -85,13 +79,7 @@
       "tokenizer_path": "{paths.models_dir}/Meta-Llama-70-B"
     },
 
-    "nic_type": "thor2",
-
-    "rdma_lib": {
-      "host_source_file": "/usr/local/lib/libbnxt_re-rdmav34.so",
-      "container_mount_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
-      "container_dest_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so"
-    },
+    "nic_type": "none",
 
     "env_vars": {
       "GPU_MAX_HW_QUEUES": "2",
@@ -99,12 +87,6 @@
       "HIP_FORCE_DEV_KERNARG": "1",
       "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.93",
       "NCCL_DEBUG": "ERROR",
-      "NCCL_PROTO": "Simple",
-      "NCCL_IB_TC": "41",
-      "NCCL_IB_SL": "0",
-      "NCCL_IB_GID_INDEX": "3",
-      "NCCL_CHECKS_DISABLE": "1",
-      "NCCL_CROSS_NIC": "0",
       "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "1",
       "NVTE_USE_HIPBLASLT": "1",
       "NVTE_FUSED_ATTN": "1",
@@ -122,29 +104,7 @@
       "xla_gpu_memory_limit_slop_factor": "95",
       "xla_gpu_enable_command_buffer": "",
       "xla_gpu_enable_cublaslt": "True",
-      "xla_gpu_autotune_level": "0",
-      "xla_gpu_enable_reduce_scatter_combine_by_dim": "false",
-      "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592",
-      "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592",
-      "xla_gpu_all_gather_combine_threshold_bytes": "8589934592",
-      "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
-    },
-
-    "nccl": {
-      "ib_hca_list": "<changeme>",
-      "ib_hca": "<changeme>",
-      "socket_ifname": "enp159s0np0",
-      "gloo_socket_ifname": "enp159s0np0",
-      "ib_tc": "41",
-      "ib_sl": "0",
-      "ib_gid_index": "3"
-    },
-
-    "jax_distributed": {
-      "coordinator_ip": "<changeme>",
-      "coordinator_port": "12346",
-      "initialization_timeout_seconds": "1800",
-      "heartbeat_timeout_seconds": "900"
+      "xla_gpu_autotune_level": "0"
     }
   }
 }

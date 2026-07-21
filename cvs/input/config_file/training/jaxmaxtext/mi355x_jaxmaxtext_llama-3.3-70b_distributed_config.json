@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "framework": "jax_maxtext",
-  "gpu_arch": "mi325x",
+  "framework": "jaxmaxtext",
+  "gpu_arch": "mi355x",
   "enforce_thresholds": false,
-  "threshold_json": "mi325x_jax-maxtext_llama-3.3-70b_distributed_threshold.json",
+  "threshold_json": "mi355x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json",
 
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "{shared_fs}/cache/maxtext",
-    "log_dir": "{shared_fs}/LOGS/jax_maxtext",
+    "log_dir": "{shared_fs}/LOGS/jaxmaxtext",
     "hf_token_file": "{shared_fs}/.hf_token"
   },
 
@@ -20,7 +20,7 @@
 
   "container": {
     "lifetime": "per_run",
-    "name": "rocm-jax-maxtext-llama3.3-70b",
+    "name": "rocm-jaxmaxtext-llama3.3-70b",
     "image": "rocm/jax-training:maxtext-v26.3",
     "runtime": {
       "name": "docker",
@@ -42,7 +42,7 @@
     "distributed": true,
     "steps": 30,
     "enable_checkpointing": false,
-    "train_module": "maxtext.trainers.pre_train.train",
+    "train_script": "/workspace/maxtext/src/MaxText/train.py",
 
     "maxtext_config": {
       "base_config": "base.yml",
@@ -53,7 +53,7 @@
       "remat_policy": "full",
       "use_iota_embed": true,
       "scan_layers": true,
-      "per_device_batch_size": 3,
+      "per_device_batch_size": 6,
       "max_target_length": 8192,
       "async_checkpointing": false,
       "quantization": "",

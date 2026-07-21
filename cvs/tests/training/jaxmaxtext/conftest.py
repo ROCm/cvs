@@ -10,7 +10,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.training.utils.training_config_loader import load_training_variant
+from cvs.lib.training.jax.utils.training_config_loader import load_training_variant
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log
@@ -103,14 +103,13 @@ def pytest_collection_modifyitems(items):
     """Pin the lifecycle order explicitly."""
     rank = {
         "test_launch_container": 0,
-        "test_setup_sshd": 1,
-        "test_setup_rdma": 2,
-        "test_setup_nic": 3,
-        "test_setup_tokenizer": 4,
-        "test_training_run": 5,
-        "test_metric": 6,
-        "test_print_results_table": 7,
-        "test_teardown": 8,
+        "test_setup_rdma": 1,
+        "test_setup_nic": 2,
+        "test_setup_tokenizer": 3,
+        "test_training_run": 4,
+        "test_metric": 5,
+        "test_print_results_table": 6,
+        "test_teardown": 7,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 

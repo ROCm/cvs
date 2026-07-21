@@ -22,48 +22,49 @@ Platform-specific batch sizes (from the requirements table):
 
 ## 1. Files to create
 
-### 1.1 Library: `cvs/lib/training/jax_maxtext_training_lib.py`
+### 1.1 Library: `cvs/lib/training/jax/jaxmaxtext_training_lib.py`
 
 The driver class. Common for both single-node and multi-node runs.
 
-### 1.2 Config loader: `cvs/lib/training/utils/training_config_loader.py`
+### 1.2 Config loader: `cvs/lib/training/jax/utils/training_config_loader.py`
 
 Pydantic schema subclassing `BaseVariantConfig` from `cvs/lib/utils/config_loader.py`.
 
-### 1.3 Metric parsing: `cvs/lib/training/utils/maxtext_parsing.py`
+### 1.3 Metric parsing: `cvs/lib/training/jax/utils/maxtext_parsing.py`
 
 Pure functions to parse MaxText training log output into namespaced metrics dict.
 
-### 1.4 Suite test file: `cvs/tests/training/jax_maxtext/jax_maxtext_training.py`
+### 1.4 Suite test file: `cvs/tests/training/jaxmaxtext/jaxmaxtext_training.py`
 
 Single test file for both single-node and distributed. The mode is determined by the config file passed at runtime.
 
-### 1.5 Suite conftest: `cvs/tests/training/jax_maxtext/conftest.py`
+### 1.5 Suite conftest: `cvs/tests/training/jaxmaxtext/conftest.py`
 
 Fixtures, lifecycle state, HTML hooks.
 
-### 1.6 Suite shared: `cvs/tests/training/jax_maxtext/_shared.py`
+### 1.6 Suite shared: `cvs/tests/training/jaxmaxtext/_shared.py`
 
 `test_print_results_table` — the summary table test.
 
-### 1.7 Config files (per platform, in `cvs/input/config_file/training/jax_maxtext/`)
+### 1.7 Config files (per platform, in `cvs/input/config_file/training/jaxmaxtext/`)
 
 | File | Purpose |
 |---|---|
-| `mi300x_jax-maxtext_llama-3.3-70b_distributed_config.json` | MI300X distributed config |
-| `mi300x_jax-maxtext_llama-3.3-70b_distributed_threshold.json` | MI300X distributed thresholds |
-| `mi300x_jax-maxtext_llama-3.3-70b_single_config.json` | MI300X single-node config |
-| `mi300x_jax-maxtext_llama-3.3-70b_single_threshold.json` | MI300X single-node thresholds |
-| `mi325x_jax-maxtext_llama-3.3-70b_distributed_config.json` | MI325X distributed config |
-| `mi325x_jax-maxtext_llama-3.3-70b_distributed_threshold.json` | MI325X distributed thresholds |
-| `mi355x_jax-maxtext_llama-3.3-70b_distributed_config.json` | MI355X distributed config |
-| `mi355x_jax-maxtext_llama-3.3-70b_distributed_threshold.json` | MI355X distributed thresholds |
+| `mi300x_jaxmaxtext_llama-3.3-70b_distributed_config.json` | MI300X distributed config |
+| `mi300x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json` | MI300X distributed thresholds |
+| `mi300x_jaxmaxtext_llama-3.3-70b_single_config.json` | MI300X single-node config |
+| `mi300x_jaxmaxtext_llama-3.3-70b_single_threshold.json` | MI300X single-node thresholds |
+| `mi325x_jaxmaxtext_llama-3.3-70b_distributed_config.json` | MI325X distributed config |
+| `mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json` | MI325X distributed thresholds |
+| `mi355x_jaxmaxtext_llama-3.3-70b_distributed_config.json` | MI355X distributed config |
+| `mi355x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json` | MI355X distributed thresholds |
 
 ### 1.8 Package init files
 
 - `cvs/lib/training/__init__.py`
-- `cvs/lib/training/utils/__init__.py`
-- `cvs/tests/training/jax_maxtext/__init__.py`
+- `cvs/lib/training/jax/__init__.py`
+- `cvs/lib/training/jax/utils/__init__.py`
+- `cvs/tests/training/jaxmaxtext/__init__.py`
 
 ---
 
@@ -78,15 +79,15 @@ training-specific sections.
 ```jsonc
 {
   "schema_version": 1,
-  "framework": "jax_maxtext",
+  "framework": "jaxmaxtext",
   "gpu_arch": "mi300x",
   "enforce_thresholds": false,
-  "threshold_json": "mi300x_jax-maxtext_llama-3.3-70b_distributed_threshold.json",
+  "threshold_json": "mi300x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json",
 
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "{shared_fs}/cache/maxtext",
-    "log_dir": "{shared_fs}/LOGS/jax_maxtext",
+    "log_dir": "{shared_fs}/LOGS/jaxmaxtext",
     "hf_token_file": "{shared_fs}/.hf_token"
   },
 
@@ -98,7 +99,7 @@ training-specific sections.
 
   "container": {
     "lifetime": "per_run",
-    "name": "rocm-jax-maxtext-llama3.3-70b",
+    "name": "rocm-jaxmaxtext-llama3.3-70b",
     "image": "rocm/jax-training:maxtext-v26.3.1",
     "runtime": {
       "name": "docker",
@@ -122,10 +123,10 @@ training-specific sections.
     "steps": 30,
     "enable_checkpointing": false,
 
-    // Path to train.py inside the container.
+    // Full path to train.py inside the container.
     // The driver sources the env script, then runs:
-    //   python -m maxtext.trainers.pre_train.train <yml_config> [overrides...]
-    "train_module": "maxtext.trainers.pre_train.train",
+    //   python <train_script> <yml_config>
+    "train_script": "/workspace/maxtext/src/MaxText/train.py",
 
     // MaxText YAML config keys (written into a temp YAML inside the container).
     // These are the complete model/training params; the driver generates a YAML
@@ -292,7 +293,7 @@ class TrainingConfig(_Allow):
     distributed: bool = True
     steps: int = 30
     enable_checkpointing: bool = False
-    train_module: str = "maxtext.trainers.pre_train.train"
+    train_script: str = "/workspace/maxtext/src/MaxText/train.py"
     maxtext_config: Dict[str, Any] = {}
     tokenizer: Tokenizer
     nic_type: str = "thor2"
@@ -303,7 +304,7 @@ class TrainingConfig(_Allow):
     jax_distributed: JaxDistributed = JaxDistributed()
 
 class TrainingVariantConfig(BaseVariantConfig):
-    framework: Literal["jax_maxtext"]
+    framework: Literal["jaxmaxtext"]
     gpu_arch: str
     training: TrainingConfig
     # Inherits: schema_version, enforce_thresholds, threshold_json,
@@ -331,7 +332,7 @@ def load_training_variant(config_path: str, cluster_dict: dict) -> TrainingVaria
 
 ---
 
-## 4. Driver: `jax_maxtext_training_lib.py`
+## 4. Driver: `jaxmaxtext_training_lib.py`
 
 ### 4.1 Class: `MaxTextTrainingJob`
 
@@ -346,7 +347,7 @@ class MaxTextTrainingJob:
         self.hf_token = hf_token
         self.training = variant.training
         self.log_dir = variant.paths.log_dir
-        self.out_dir = f"{self.log_dir}/jax_maxtext"
+        self.out_dir = f"{self.log_dir}/jaxmaxtext"
         self.training_log = f"{self.out_dir}/training.log"
         # Populated after training completes
         self.step_metrics = []      # list of per-step dicts
@@ -361,7 +362,7 @@ class MaxTextTrainingJob:
 | `setup_rdma_lib()` | Copy host RDMA library into container (thor2 NIC workaround) | `orch.exec()` to `cp` files |
 | `exec_nic_setup_scripts()` | Run NIC setup scripts inside container (Broadcom workarounds) | `orch.exec()` |
 | `setup_tokenizer()` | Download HuggingFace tokenizer into the models dir | `orch.exec()` to run `hf download` |
-| `build_training_cmd()` | Assemble the `python -m maxtext.trainers.pre_train.train <yml> [overrides]` command string. For distributed: set JAX_COORDINATOR_IP, NNODES, node-specific JAX_PROCESS_INDEX. Writes a launcher script. | `orch.exec()` to write launcher script |
+| `build_training_cmd()` | Assemble the `python <train_script> <yml>` command string. For distributed: set JAX_COORDINATOR_IP, NNODES, NODE_RANK, node-specific JAX_PROCESS_INDEX. Writes a per-node launcher script under `/tmp/jax/`. | `orch.exec()` to write launcher script |
 | `start_training()` | Launch training in background via nohup | `orch.exec("bash -c 'nohup ... &'")` |
 | `is_complete()` | Check training log for completion marker or errors | `orch.exec("grep ...")` with `detailed=True` |
 | `poll_for_completion()` | Poll `is_complete()` with timeout; detect NaN/errors early | `orch.exec("tail ...")` per poll |
@@ -370,38 +371,31 @@ class MaxTextTrainingJob:
 
 ### 4.3 Training command construction
 
-The driver builds the training command in Python (no external `.sh` scripts),
-following the vllm_single pattern. The env script is sourced first, then the
-MaxText train module is invoked.
+The driver builds the training command in Python (no external `.sh` scripts).
+Dynamic values (`run_name`, `steps`, `base_output_directory`, `tokenizer_path`,
+`enable_checkpointing`) are baked into the generated YAML by `_write_maxtext_yaml()`,
+so the launcher simply passes the YAML path to `train.py`. All generated files
+(`maxtext_env.sh`, `maxtext_config.yml`, `training_launcher_node{i}.sh`) live
+under `/tmp/jax/` inside the container.
 
-```python
-def _build_train_argv(self):
-    """Build the python -m maxtext.trainers.pre_train.train arg list."""
-    argv = [
-        "python", "-m", self.training.train_module,
-        "/tmp/maxtext_config.yml",  # generated YAML
-    ]
-    # CLI overrides for dynamic values
-    argv.extend([
-        f"run_name=jax_maxtext_{self.variant.model.id}",
-        f"steps={self.training.steps}",
-        f"base_output_directory={self.out_dir}",
-        f"tokenizer_path={self.training.tokenizer.tokenizer_path}",
-    ])
-    if self.training.enable_checkpointing:
-        argv.append("enable_checkpointing=True")
-    else:
-        argv.append("enable_checkpointing=False")
-    return argv
-```
+`build_training_cmd()` writes one launcher script per node. Each script sources
+the env file, exports the JAX distributed env vars, then invokes the full
+`train_script` path with the generated YAML:
 
-For distributed training, the launcher script per node sets:
 ```bash
-export JAX_COORDINATOR_IP=<coordinator_ip>
+#!/bin/bash
+source /tmp/jax/maxtext_env.sh
+export JAX_COORDINATOR_IP=<coordinator_ip>   # localhost for single-node
 export JAX_COORDINATOR_PORT=<port>
 export NNODES=<num_nodes>
-export JAX_PROCESS_INDEX=<node_index>  # derived from host position
+export NODE_RANK=<node_index>                # node id (0-based)
+export JAX_PROCESS_INDEX=<node_index>        # derived from host position
+export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/
+cd /workspace/maxtext && python <train_script> /tmp/jax/maxtext_config.yml 2>&1 | tee <log_file>
 ```
+
+For single-node runs the same script sets `JAX_COORDINATOR_IP=localhost`,
+`NNODES=1`, `NODE_RANK=0`, `JAX_PROCESS_INDEX=0`.
 
 The coordinator IP is determined from `orch.hosts[0]` (head node) at runtime
 rather than from config, so the same config works on different clusters.
@@ -460,13 +454,12 @@ behavior.
 
 ---
 
-## 5. Suite: `cvs/tests/training/jax_maxtext/`
+## 5. Suite: `cvs/tests/training/jaxmaxtext/`
 
 ### 5.1 Lifecycle-as-tests (test order)
 
 ```
 test_launch_container          # orch.setup_containers()
-test_setup_sshd                # orch.setup_sshd() (distributed only)
 test_setup_rdma                # RDMA lib copy (distributed + thor2 only)
 test_setup_nic                 # NIC setup scripts (distributed only)
 test_setup_tokenizer           # HF tokenizer download
@@ -514,30 +507,23 @@ def pytest_generate_tests(metafunc):
 def pytest_collection_modifyitems(items):
     rank = {
         "test_launch_container": 0,
-        "test_setup_sshd": 1,
-        "test_setup_rdma": 2,
-        "test_setup_nic": 3,
-        "test_setup_tokenizer": 4,
-        "test_training_run": 5,
-        "test_metric": 6,
-        "test_print_results_table": 7,
-        "test_teardown": 8,
+        "test_setup_rdma": 1,
+        "test_setup_nic": 2,
+        "test_setup_tokenizer": 3,
+        "test_training_run": 4,
+        "test_metric": 5,
+        "test_print_results_table": 6,
+        "test_teardown": 7,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 ```
 
-### 5.5 `jax_maxtext_training.py` — test functions
+### 5.5 `jaxmaxtext_training.py` — test functions
 
 ```python
 def test_launch_container(orch, variant_config, lifecycle, request):
     """Launch the container. Verify it is running."""
     # Same pattern as vllm_single.py test_launch_container
-
-def test_setup_sshd(orch, lifecycle, request):
-    """Start sshd inside the container (distributed only; single-node skips)."""
-    if not variant_config.training.distributed:
-        pytest.skip("single-node: sshd not needed")
-    # Same pattern as vllm
 
 def test_setup_rdma(orch, variant_config, lifecycle, request):
     """Copy RDMA library into container (thor2 NIC only)."""
@@ -628,21 +614,21 @@ def test_print_results_table(training_res_dict):
 
 ```bash
 # Distributed (multi-node) run
-cvs run jax_maxtext_training \
+cvs run jaxmaxtext_training \
   --cluster_file ./cluster.json \
-  --config_file ./input/config_file/training/jax_maxtext/mi300x_jax-maxtext_llama-3.3-70b_distributed_config.json \
+  --config_file ./input/config_file/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_distributed_config.json \
   --html=report.html --self-contained-html --capture=tee-sys
 
 # Single-node run (same test file, different config)
-cvs run jax_maxtext_training \
+cvs run jaxmaxtext_training \
   --cluster_file ./cluster.json \
-  --config_file ./input/config_file/training/jax_maxtext/mi300x_jax-maxtext_llama-3.3-70b_single_config.json \
+  --config_file ./input/config_file/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single_config.json \
   --html=report.html --self-contained-html --capture=tee-sys
 ```
 
-The test file is the same (`jax_maxtext_training.py`); only the `--config_file`
+The test file is the same (`jaxmaxtext_training.py`); only the `--config_file`
 differs. The config's `training.distributed` field drives skipping of
-distributed-only stages (sshd, RDMA, NIC setup, JAX coordinator env vars).
+distributed-only stages (RDMA, NIC setup, JAX coordinator env vars).
 
 ---
 
@@ -654,7 +640,7 @@ The existing `jax_training_lib.py` + `jax_llama3_1_70b_distributed.py` use raw
 `Pssh` handles and `docker_lib` directly. The new implementation uses the
 `ContainerOrchestrator` via the `orch` fixture:
 
-| Old (existing jax tests) | New (jax_maxtext) |
+| Old (existing jax tests) | New (jaxmaxtext) |
 |---|---|
 | `docker_lib.launch_docker_container(phdl, ...)` | `orch.setup_containers()` |
 | `docker_lib.kill_docker_container(phdl, ...)` | `orch.teardown_containers()` |
@@ -703,18 +689,18 @@ when loss drops below a target.
 
 | Step | Task | Files |
 |---|---|---|
-| 1 | Create package directories + `__init__.py` | `cvs/lib/training/`, `cvs/lib/training/utils/`, `cvs/tests/training/jax_maxtext/` |
-| 2 | Write config loader with pydantic models | `cvs/lib/training/utils/training_config_loader.py` |
-| 3 | Write metric parsing module | `cvs/lib/training/utils/maxtext_parsing.py` |
-| 4 | Write the driver class | `cvs/lib/training/jax_maxtext_training_lib.py` |
-| 5 | Write suite conftest (fixtures, ordering, HTML hooks) | `cvs/tests/training/jax_maxtext/conftest.py` |
-| 6 | Write the test module | `cvs/tests/training/jax_maxtext/jax_maxtext_training.py` |
-| 7 | Write the shared results table | `cvs/tests/training/jax_maxtext/_shared.py` |
-| 8 | Write MI300X distributed config + threshold pair | `cvs/input/config_file/training/jax_maxtext/mi300x_jax-maxtext_llama-3.3-70b_distributed_{config,threshold}.json` |
-| 9 | Write MI300X single-node config + threshold pair | `cvs/input/config_file/training/jax_maxtext/mi300x_jax-maxtext_llama-3.3-70b_single_{config,threshold}.json` |
+| 1 | Create package directories + `__init__.py` | `cvs/lib/training/`, `cvs/lib/training/jax/`, `cvs/lib/training/jax/utils/`, `cvs/tests/training/jaxmaxtext/` |
+| 2 | Write config loader with pydantic models | `cvs/lib/training/jax/utils/training_config_loader.py` |
+| 3 | Write metric parsing module | `cvs/lib/training/jax/utils/maxtext_parsing.py` |
+| 4 | Write the driver class | `cvs/lib/training/jax/jaxmaxtext_training_lib.py` |
+| 5 | Write suite conftest (fixtures, ordering, HTML hooks) | `cvs/tests/training/jaxmaxtext/conftest.py` |
+| 6 | Write the test module | `cvs/tests/training/jaxmaxtext/jaxmaxtext_training.py` |
+| 7 | Write the shared results table | `cvs/tests/training/jaxmaxtext/_shared.py` |
+| 8 | Write MI300X distributed config + threshold pair | `cvs/input/config_file/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_distributed_{config,threshold}.json` |
+| 9 | Write MI300X single-node config + threshold pair | `cvs/input/config_file/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single_{config,threshold}.json` |
 | 10 | Write MI325X and MI355X config + threshold pairs | Remaining platform configs |
 | 11 | Run `make fmt && make lint` and fix issues | All new files |
-| 12 | Add unit tests for config loader and parsing | `cvs/lib/training/utils/unittests/` |
+| 12 | Add unit tests for config loader and parsing | `cvs/lib/training/jax/utils/unittests/` |
 | 13 | Run `make test` to verify unit tests + CLI smoke tests pass | — |
 
 ---
@@ -727,7 +713,7 @@ Per the requirements, the following existing files are left untouched:
 - `cvs/tests/training/jax/jax_llama3_1_70b_*.py` — the old JAX test files
 - `cvs/input/config_file/training/jax/mi300x_jax_llama3_1_*.json` — the old configs
 
-The new implementation is entirely parallel, under `jax_maxtext/` directories.
+The new implementation is entirely parallel, under `jaxmaxtext/` directories.
 
 ---
 
