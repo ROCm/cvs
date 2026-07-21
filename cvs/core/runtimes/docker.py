@@ -279,7 +279,9 @@ class DockerRuntime:
         Returns:
             Dictionary mapping hosts to execution results
         """
-        exec_cmd_list = [f"sudo docker exec {container_name} bash -c {shlex.quote(cmd)}" for cmd in cmd_list]
+        exec_cmd_list = [
+            with_sudo_fallback(f"docker exec {container_name} bash -c {shlex.quote(cmd)}") for cmd in cmd_list
+        ]
         return self.orchestrator.all.exec_cmd_list(exec_cmd_list, timeout=timeout)
 
     def exec_on_head(self, container_name, cmd, timeout=None):

@@ -259,5 +259,34 @@ class TestDockerRuntimeRegistryLogin(unittest.TestCase):
         self.assertFalse(any("docker login" in c for c in calls))
 
 
+class TestDockerRuntimeExecCmdList(unittest.TestCase):
+    def test_exec_cmd_list_uses_sudo_fallback_not_unconditional_sudo(self):
+        # exec_cmd_list must follow the same `cmd || sudo -n cmd` fallback
+        # convention as every other docker invocation in this file, not an
+        # unconditional `sudo docker exec ...` -- otherwise a rootless docker
+        # setup with no sudo available at all would fail outright instead of
+        # running the plain (already-permitted) command.
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1", "host2"]
+        orchestrator.all.exec_cmd_list.return_value = {
+            "host1": {"output": "", "exit_code": 0},
+            "host2": {"output": "", "exit_code": 0},
+        }
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.exec_cmd_list("cvs_iter_test", ["echo one", "echo two"], timeout=None)
+
+        rendered = orchestrator.all.exec_cmd_list.call_args[0][0]
+        self.assertEqual(len(rendered), 2)
+        for cmd in rendered:
+            self.assertNotRegex(
+                cmd,
+                r"^sudo docker exec",
+                f"exec_cmd_list must not hardcode unconditional sudo:\n{cmd}",
+            )
+            self.assertIn(" || sudo -n ", cmd)
+            self.assertTrue(cmd.startswith("docker exec cvs_iter_test bash -c "))
+
+
 if __name__ == "__main__":
     unittest.main()
