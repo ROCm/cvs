@@ -212,6 +212,28 @@ class DockerRuntime:
             return pssh.exec(exec_cmd, timeout=timeout, detailed=detailed)
 
         return self.orchestrator.all.exec(exec_cmd, timeout=timeout, detailed=detailed)
+    
+
+    def exec_cmd_list(self, container_name, cmd_list, timeout=None):
+        """Execute different commands on different hosts inside the container.
+
+        Each command is wrapped in `docker exec bash -c` — the parallel
+        per-host equivalent of exec(). Positional correspondence between
+        cmd_list and reachable_hosts is the caller's responsibility.
+
+        Args:
+            container_name: Running container name
+            cmd_list: List of commands, one per host in host order
+            timeout: Command timeout
+
+        Returns:
+            Dictionary mapping hosts to execution results
+        """
+        exec_cmd_list = [
+            f"sudo docker exec {container_name} bash -c {shlex.quote(cmd)}"
+            for cmd in cmd_list
+        ]
+        return self.orchestrator.all.exec_cmd_list(exec_cmd_list, timeout=timeout)
 
     def exec_on_head(self, container_name, cmd, timeout=None):
         """Execute command directly on head node (container). See exec() for
