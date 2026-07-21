@@ -616,7 +616,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             raise RuntimeError("No containers running. Call setup_containers() first.")
 
         return self.runtime.exec(self.container_id, cmd, hosts, timeout, detailed)
-    
+
     def exec_cmd_list(self, cmd_list, timeout=None):
         """
         Execute different commands on different hosts inside the container.
@@ -639,7 +639,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             raise RuntimeError("No containers running. Call setup_containers() first.")
 
         return self.runtime.exec_cmd_list(self.container_id, cmd_list, timeout)
-    
+
     def exec_on_head(self, cmd, timeout=None):
         """
         Execute command directly on head node (baremetal).
