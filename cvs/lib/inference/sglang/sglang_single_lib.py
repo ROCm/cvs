@@ -132,7 +132,6 @@ class SglangSingle:
         self.bp_dict.setdefault('max_concurrency', '64')
         self.bp_dict.setdefault('model', 'openai/gpt-oss-120b')
         self.bp_dict.setdefault('tensor_parallelism', '8')
-        self.bp_dict.setdefault('pipeline_parallelism', '1')
         self.bp_dict.setdefault('memory_fraction', '0.85')
         self.bp_dict.setdefault('inference_poll_iterations', '16')
 
@@ -166,7 +165,6 @@ class SglangSingle:
                       export SGLANG_USE_AITER=1
                       export AMDGCN_USE_BUFFER_OPS=1
                       export ROCM_QUICK_REDUCE_QUANTIZATION=INT8
-                      export GPU_ARCHS=gfx942
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --host 0.0.0.0 \
                               --port {self.router_serv_port} \
@@ -174,7 +172,6 @@ class SglangSingle:
                               --kv-cache-dtype {kv_cache_dtype} \
                               --trust-remote-code \
                               --tp-size {self.bp_dict['tensor_parallelism']} \
-                              --pp-size {self.bp_dict['pipeline_parallelism']} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
@@ -324,8 +321,7 @@ class SglangSingle:
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
 
         tp = int(self.bp_dict.get('tensor_parallelism', 1))
-        pp = int(self.bp_dict.get('pipeline_parallelism', 1))
-        num_gpus = tp * pp
+        num_gpus = tp
         peak_tflops = float(i_dict.get('peak_gpu_tflops', 1300))
         num_params = float(i_dict.get('model_num_params', 70e9))
         for node, m in (self.inference_results_dict or {}).items():
@@ -465,7 +461,6 @@ class SglangSingle:
 
     def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
         tp = int(self.bp_dict['tensor_parallelism'])
-        pp = int(self.bp_dict.get('pipeline_parallelism', 1))
         per_node = {}
         for node, payload in self.b_phdl.exec('sudo amd-smi metric --json').items():
             count = 0
@@ -488,7 +483,6 @@ class SglangSingle:
         occupied = sum(per_node.values())
         return {
             'configured_tp': tp,
-            'configured_pp': pp,
             'server_per_node': per_node,
             'server_occupied_gpus': occupied,
         }
