@@ -6,8 +6,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 # Unit tests for cvs/core/orchestrators/baremetal.py: BaremetalOrchestrator construction
-# and command-dispatch surface (exec, exec_on_head, cleanup) used by the migrated
-# rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH.
+# and command-dispatch surface (exec, exec_on_head, cleanup, sudo_prefix) used by the
+# migrated rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH.
 
 import unittest
 from unittest.mock import MagicMock, patch
@@ -72,28 +72,86 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         self.assertTrue(orch.cleanup(orch.hosts))
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
-    def test_build_mpi_cmd_hostfile_cleanup_uses_sudo_fallback(self, _mock_pssh):
-        # The stale-hostfile `rm -f` on the head node must use the same
-        # `cmd || sudo -n cmd` fallback as every other privileged command,
-        # not an unconditional sudo or a plain command that fails outright
-        # when sudo is actually required.
+    def test_build_mpi_cmd_hostfile_cleanup_uses_sudo_prefix(self, _mock_pssh):
+        # The stale-hostfile `rm -f` on the head node must be built from a single
+        # deterministic prefix (via sudo_prefix()), never the old `cmd || sudo -n
+        # cmd` retry form -- which double-runs the command whenever it fails for
+        # any reason, not just permission-denied.
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         orch.head = MagicMock()
         orch.head.exec.return_value = {"10.0.0.1": {"output": "", "exit_code": 0}}
 
-        orch.build_mpi_cmd(
-            rank_cmd="echo hi",
-            mpi_hosts=["10.0.0.1", "10.0.0.2"],
-            ranks_per_host=1,
-            env_vars={},
-            mpi_install_dir="/opt/mpi",
-        )
+        for label, sudo_prefix in [("no_sudo", ""), ("passwordless_sudo", "sudo -n ")]:
+            with self.subTest(scenario=label):
+                orch.head.exec.reset_mock()
+                with patch.object(orch, "sudo_prefix", return_value=sudo_prefix):
+                    orch.build_mpi_cmd(
+                        rank_cmd="echo hi",
+                        mpi_hosts=["10.0.0.1", "10.0.0.2"],
+                        ranks_per_host=1,
+                        env_vars={},
+                        mpi_install_dir="/opt/mpi",
+                    )
 
-        first_call_cmd = orch.head.exec.call_args_list[0][0][0]
-        self.assertNotRegex(
-            first_call_cmd, r"^sudo rm", f"hostfile cleanup must not hardcode unconditional sudo:\n{first_call_cmd}"
-        )
-        self.assertIn(" || sudo -n ", first_call_cmd)
+                first_call_cmd = orch.head.exec.call_args_list[0][0][0]
+                self.assertNotIn("||", first_call_cmd, f"[{label}] must not use the old fallback form: {first_call_cmd!r}")
+                self.assertEqual(first_call_cmd, f"{sudo_prefix}rm -f /tmp/mpi_hosts.txt")
+
+
+class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
+    """Covers BaremetalOrchestrator.sudo_prefix(): the probe-once mechanism that
+    replaced with_sudo_fallback's per-command `cmd || sudo -n cmd` retry."""
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_sudo_prefix_returns_sudo_prefix_when_passwordless_sudo_available(self, mock_pssh):
+        pssh_instance = MagicMock()
+        pssh_instance.exec.return_value = {"10.0.0.1": "0", "10.0.0.2": "0"}
+        mock_pssh.return_value = pssh_instance
+
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+
+        self.assertEqual(orch.sudo_prefix(), "sudo -n ")
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_sudo_prefix_returns_empty_when_sudo_unavailable(self, mock_pssh):
+        pssh_instance = MagicMock()
+        pssh_instance.exec.return_value = {"10.0.0.1": "1", "10.0.0.2": "1"}
+        mock_pssh.return_value = pssh_instance
+
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+
+        self.assertEqual(orch.sudo_prefix(), "")
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_sudo_prefix_warns_on_host_disagreement_but_still_returns_a_value(self, mock_pssh):
+        # AC: hosts disagreeing on sudo need must log a warning but must NOT
+        # raise or branch per-host -- the fleet-wide answer is the first
+        # value in the probe dict's insertion order.
+        pssh_instance = MagicMock()
+        pssh_instance.exec.return_value = {"10.0.0.1": "0", "10.0.0.2": "1"}
+        mock_pssh.return_value = pssh_instance
+
+        log = MagicMock()
+        orch = BaremetalOrchestrator(log, _make_orch_config())
+
+        self.assertEqual(orch.sudo_prefix(), "sudo -n ")
+        log.warning.assert_called_once()
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_sudo_prefix_probes_at_most_once_across_multiple_calls(self, mock_pssh):
+        # Regression test for the bug being fixed: the passwordless-sudo probe
+        # must fire ONCE per orchestrator instance for its whole lifetime, no
+        # matter how many times sudo_prefix() is subsequently called.
+        pssh_instance = MagicMock()
+        pssh_instance.exec.return_value = {"10.0.0.1": "0", "10.0.0.2": "0"}
+        mock_pssh.return_value = pssh_instance
+
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+
+        results = [orch.sudo_prefix() for _ in range(3)]
+
+        self.assertEqual(results, ["sudo -n "] * 3)
+        pssh_instance.exec.assert_called_once_with("sudo -n true >/dev/null 2>&1; echo $?")
 
 
 if __name__ == "__main__":

@@ -7,8 +7,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import shlex
 
-from cvs.lib.utils_lib import with_sudo_fallback
-
 
 class DockerRuntime:
     """Docker container runtime implementation."""
@@ -19,9 +17,7 @@ class DockerRuntime:
 
     def check_image_exists(self, image_name):
         """Check if the Docker image exists on all nodes."""
-        cmd = with_sudo_fallback(
-            f"docker images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep -q '^{image_name}$'"
-        )
+        cmd = f"{self.orchestrator.sudo_prefix()}docker images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep -q '^{image_name}$'"
         result = self.orchestrator.all.exec(cmd, timeout=30, detailed=True)
         # If grep succeeds (exit 0), image exists; if not, not found
         return all(res.get('exit_code') == 0 for res in result.values())
@@ -47,15 +43,13 @@ class DockerRuntime:
 
         server = registry_config.get('server', '')
         # `docker login` (the stage that needs sudo for daemon-socket access) is
-        # the SECOND stage of this pipe. `cmd || sudo -n cmd` only prefixes sudo
-        # onto cmd's first token, so on a bare pipeline that would leave `docker
-        # login` unprivileged in the fallback branch too. Wrap the whole pipeline
-        # in `sh -c` so it is one command and sudo applies to all of it.
+        # the SECOND stage of this pipe, so wrap the whole pipeline in `sh -c`
+        # and prefix that so sudo applies to all of it, not just the first token.
         inner = (
             f"cat {shlex.quote(password_file)} | docker login {shlex.quote(server)} "
             f"--username {shlex.quote(username)} --password-stdin"
         )
-        cmd = with_sudo_fallback(f"sh -c {shlex.quote(inner)}")
+        cmd = f"{self.orchestrator.sudo_prefix()}sh -c {shlex.quote(inner)}"
         result = self.orchestrator.all.exec(cmd, timeout=30, print_console=False, detailed=True)
         success = all(res.get('exit_code') == 0 for res in result.values())
         if not success:
@@ -168,13 +162,13 @@ class DockerRuntime:
             if not self.registry_login(runtime_args_config['registry']):
                 return False
 
-        cmd = with_sudo_fallback(f"docker run -d --name {container_name} {all_args_str} {image} sleep infinity")
+        cmd = f"{self.orchestrator.sudo_prefix()}docker run -d --name {container_name} {all_args_str} {image} sleep infinity"
 
         self.log.info(f"Starting long-running containers on {len(self.orchestrator.hosts)} nodes: {container_name}")
         self.log.debug(f"Container start command: {cmd}")
 
         # Remove any existing container with the same name
-        remove_cmd = f"{with_sudo_fallback(f'docker rm -f {container_name}')} || true"
+        remove_cmd = f"{self.orchestrator.sudo_prefix()}docker rm -f {container_name} || true"
         self.orchestrator.all.exec(remove_cmd, timeout=30, print_console=False)
 
         result = self.orchestrator.all.exec(cmd, timeout=60, detailed=True)
@@ -203,9 +197,7 @@ class DockerRuntime:
             actually-running container name found on that host, or empty), and
             'exit_code' (int, exit code of the underlying ``docker ps`` probe).
         """
-        cmd = with_sudo_fallback(
-            f"docker ps --filter name=^{container_name}$ --filter status=running --format '{{{{.Names}}}}'"
-        )
+        cmd = f"{self.orchestrator.sudo_prefix()}docker ps --filter name=^{container_name}$ --filter status=running --format '{{{{.Names}}}}'"
         raw = self.orchestrator.all.exec(cmd, timeout=30, detailed=True)
         out = {}
         for host, res in raw.items():
@@ -226,10 +218,7 @@ class DockerRuntime:
 
         self.log.info(f"Stopping containers: {container_name}")
 
-        # Force remove container (stops if running). 2>/dev/null is folded into
-        # the base command (not appended after the fallback) so it applies to
-        # both the plain and sudo attempts, not just the last one in the chain.
-        cmd = f"{with_sudo_fallback(f'docker rm -f {container_name} 2>/dev/null')} || true"
+        cmd = f"{self.orchestrator.sudo_prefix()}docker rm -f {container_name} 2>/dev/null || true"
         result = self.orchestrator.all.exec(cmd, timeout=30, print_console=False, detailed=True)
 
         success = all(output['exit_code'] == 0 for output in result.values())
@@ -245,7 +234,7 @@ class DockerRuntime:
         redirects) run inside the container -- docker exec uses execve with
         no implicit shell.
         """
-        exec_cmd = with_sudo_fallback(f"docker exec {container_name} bash -c {shlex.quote(cmd)}")
+        exec_cmd = f"{self.orchestrator.sudo_prefix()}docker exec {container_name} bash -c {shlex.quote(cmd)}"
         if hosts:
             # Build a fresh Pssh for the host subset, mirroring
             # BaremetalOrchestrator.exec's subset branch.
@@ -279,15 +268,14 @@ class DockerRuntime:
         Returns:
             Dictionary mapping hosts to execution results
         """
-        exec_cmd_list = [
-            with_sudo_fallback(f"docker exec {container_name} bash -c {shlex.quote(cmd)}") for cmd in cmd_list
-        ]
+        sudo_prefix = self.orchestrator.sudo_prefix()
+        exec_cmd_list = [f"{sudo_prefix}docker exec {container_name} bash -c {shlex.quote(cmd)}" for cmd in cmd_list]
         return self.orchestrator.all.exec_cmd_list(exec_cmd_list, timeout=timeout)
 
     def exec_on_head(self, container_name, cmd, timeout=None):
         """Execute command directly on head node (container). See exec() for
         the bash -c wrap rationale."""
-        exec_cmd = with_sudo_fallback(f"docker exec {container_name} bash -c {shlex.quote(cmd)}")
+        exec_cmd = f"{self.orchestrator.sudo_prefix()}docker exec {container_name} bash -c {shlex.quote(cmd)}"
         return self.orchestrator.head.exec(exec_cmd, timeout=timeout)
 
     @staticmethod
@@ -351,7 +339,7 @@ class DockerRuntime:
 
     def load_image(self, tar_path, timeout=None):
         """Load container image from tar file on all hosts."""
-        cmd = with_sudo_fallback(f"docker load < {tar_path}")
+        cmd = f"{self.orchestrator.sudo_prefix()}docker load < {tar_path}"
         timeout = timeout or 600  # Default 10 minutes
 
         # Load on all hosts for image distribution

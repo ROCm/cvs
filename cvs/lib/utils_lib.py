@@ -166,15 +166,6 @@ def convert_phdl_json_to_dict(dict_json):
     return out_dict
 
 
-def with_sudo_fallback(cmd):
-    """Try `cmd` without sudo first; fall back to non-interactive sudo
-    (-n avoids hanging if a password would be required) only if the plain
-    attempt fails. Only safe for commands where a permission-denied run
-    fails before any side effect, or where the command is idempotent, so
-    the fallback never double-runs a side-effecting command."""
-    return f'{cmd} || sudo -n {cmd}'
-
-
 def get_passwordless_sudo_status(phdl):
     """
     Return whether passwordless sudo is available on each node.

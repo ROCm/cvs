@@ -7,7 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from cvs.core.orchestrators.base import Orchestrator
 from cvs.lib.parallel_ssh_lib import Pssh
-from cvs.lib.utils_lib import with_sudo_fallback
+from cvs.lib.utils_lib import get_passwordless_sudo_status
 
 
 class BaremetalOrchestrator(Orchestrator):
@@ -33,6 +33,9 @@ class BaremetalOrchestrator(Orchestrator):
 
         # Set orchestrator type for runtime identification
         self.orchestrator_type = "baremetal"
+
+        # Cached result of the passwordless-sudo probe; None means not yet probed.
+        self._needs_sudo = None
 
         # SSH port for MPI communication (overridable by subclasses)
         self.ssh_port = 22
@@ -104,6 +107,26 @@ class BaremetalOrchestrator(Orchestrator):
                 stop_on_errors=self.stop_on_errors,
             )
             return pssh.exec(cmd, timeout=timeout, detailed=detailed)
+
+    def sudo_prefix(self):
+        """
+        Return the command prefix needed for privileged commands, probing
+        passwordless-sudo availability at most once per orchestrator instance.
+
+        CVS's sudo model is passwordless-or-none, so a single boolean answer
+        (rather than per-command retry) is sufficient. The fleet-wide answer
+        is taken from the first host's result; if hosts disagree, a warning
+        is logged but the first-host answer is still used for every command.
+
+        Returns:
+            str: 'sudo -n ' if passwordless sudo is available, else ''.
+        """
+        if self._needs_sudo is None:
+            sudo_status = get_passwordless_sudo_status(self.all)
+            if len(set(sudo_status.values())) > 1:
+                self.log.warning(f"Hosts disagree on passwordless sudo availability: {sudo_status}")
+            self._needs_sudo = next(iter(sudo_status.values()), False)
+        return 'sudo -n ' if self._needs_sudo else ''
 
     def exec_on_head(self, cmd, timeout=None, detailed=False):
         """
@@ -189,9 +212,8 @@ class BaremetalOrchestrator(Orchestrator):
         for host in mpi_hosts:
             host_file_params += f'{host} slots={ranks_per_host}\n'
 
-        # Create hostfile on head node; safe to retry under sudo since
-        # `rm -f` is idempotent.
-        cmd = with_sudo_fallback('rm -f /tmp/mpi_hosts.txt')
+        # Create hostfile on head node.
+        cmd = f'{self.sudo_prefix()}rm -f /tmp/mpi_hosts.txt'
         self.exec_on_head(cmd)
 
         cmd = f'bash -c \'echo "{host_file_params}" > /tmp/mpi_hosts.txt\''
