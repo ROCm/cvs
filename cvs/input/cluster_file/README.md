@@ -62,7 +62,7 @@ RDMA-ready container; the keys below are only needed to extend or override.
 | `network` | str | `"host"` | `--network` mode. `host` for clusters sharing the host net stack. |
 | `ipc` | str | `"host"` | `--ipc` mode. `host` enables cross-process IPC required for RDMA. |
 | `privileged` | bool | `true` | `--privileged`. Required for device passthrough and RDMA. |
-| `volumes` | list | `[]` (appended) | `host:container[:ro]` mounts. The container always also receives `/home/$user:/workspace` and `/home/$user/.ssh:/host_ssh` injected by the orchestrator. |
+| `volumes` | list | `[]` (appended) | `host:container[:ro]` mounts. The container always also receives `/home/$user/.ssh:/host_ssh` injected by the orchestrator. |
 | `devices` | list | `["/dev/kfd","/dev/dri","/dev/infiniband"]` (appended) | Device passthroughs. Per-host `/dev/infiniband/*` is also discovered at runtime. |
 | `cap_add` | list | `["SYS_PTRACE","IPC_LOCK","SYS_ADMIN"]` (appended) | Linux capabilities. |
 | `security_opt` | list | `["seccomp=unconfined","apparmor=unconfined"]` (appended) | Security profile relaxations needed for RDMA + ptrace. |

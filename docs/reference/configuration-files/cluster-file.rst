@@ -178,7 +178,7 @@ When ``runtime.name`` is ``docker``, the keys below configure the underlying ``d
      - ``--privileged``. Required for device passthrough and RDMA.
    * - ``volumes``
      - Appended
-     - List of ``host:container[:ro]`` mounts. The container always also receives ``/home/$user:/workspace`` and ``/home/$user/.ssh:/host_ssh`` injected by the orchestrator.
+     - List of ``host:container[:ro]`` mounts. The container always also receives ``/home/$user/.ssh:/host_ssh`` injected by the orchestrator.
    * - ``devices``
      - ``["/dev/kfd", "/dev/dri", "/dev/infiniband"]`` (appended)
      - Device passthroughs. Per-host ``/dev/infiniband/*`` is also discovered at runtime.
