@@ -2,9 +2,9 @@
     "config": {
         "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
         "container_name": "flux-benchmark",
-        "hf_token_file": "/home/{user-id}/.hf_token",
-        "hf_home": "/home/{user-id}",
-        "output_base_dir": "/home/{user-id}/cvs_flux_output",
+        "hf_token_file": "{home}/.hf_token",
+        "hf_home": "{home}/.cache/huggingface",
+        "output_base_dir": "{home}/cvs_flux_output",
         "model_repo": "black-forest-labs/FLUX.1-dev",
         "model_rev": "",
         "container_config": {
@@ -32,6 +32,7 @@
             "ring_degree": 1,
             "use_torch_compile": true,
             "torchrun_nproc": 8,
+            "_expected_results_comment": "Validation thresholds below are placeholders. Tune them for your target cluster, software stack, and benchmark conditions before using them as pass/fail criteria.",
             "expected_results": {
                 "auto": {
                     "max_avg_pipe_time_s": 10.0
