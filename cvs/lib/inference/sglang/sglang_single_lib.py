@@ -165,6 +165,7 @@ class SglangSingle:
                       export SGLANG_USE_AITER=1
                       export AMDGCN_USE_BUFFER_OPS=1
                       export ROCM_QUICK_REDUCE_QUANTIZATION=INT8
+                      export GPU_ARCHS=gfx942
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --host 0.0.0.0 \
                               --port {self.router_serv_port} \
