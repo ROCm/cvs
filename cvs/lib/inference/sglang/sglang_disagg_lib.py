@@ -429,6 +429,7 @@ class SglangDisaggPD:
 
                     export MODEL={self.bp_dict['model']}
                     export TP={self.bp_dict['tensor_parallelism']}
+                    export PP={self.bp_dict['pipeline_parallelism']}
                     export HF_TOKEN={self.hf_token}
                     '  > /tmp/prefill_env_script.sh"
                     '''
@@ -459,6 +460,7 @@ class SglangDisaggPD:
 
                     export MODEL={self.bp_dict['model']}
                     export TP={self.bp_dict['tensor_parallelism']}
+                    export PP={self.bp_dict['pipeline_parallelism']}
                     export HF_TOKEN={self.hf_token}
                     '  > /tmp/decode_env_script.sh"
                     '''
