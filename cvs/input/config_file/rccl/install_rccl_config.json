@@ -1,0 +1,28 @@
+{
+    "_comment": "Minimal RCCL JSON for cvs/tests/rccl/install_rccl_test.py only. Adjust paths for your cluster shared storage and ROCm layout.",
+    "rccl": {
+        "_comment_rccl_tests_dir": "Where sparse checkout is built and *_perf symlinks are created (must be visible on all nodes if shared filesystem).",
+        "rccl_tests_dir": "/opt/rccl-tests-install",
+
+        "_comment_rccl_tests_repo": "Mono-repo containing projects/rccl-tests (sparse clone).",
+        "rccl_tests_repo": "https://github.com/ROCm/rocm-systems.git",
+
+        "_comment_rccl_tests_branch": "Branch passed to git clone -b.",
+        "rccl_tests_branch": "develop",
+
+        "_comment_rocm_path_var": "ROCm root for hipcc/rocm_agent_enumerator and UCX --with-rocm. install.sh --rocm_home.",
+        "rocm_path_var": "/opt/rocm",
+
+        "_comment_rccl_path_var": "RCCL install prefix for install.sh --rccl_home. Often same as rocm_path_var when RCCL is under ROCm.",
+        "rccl_path_var": "/opt/rocm",
+
+        "_comment_mpi_path_var": "Open MPI prefix (directory containing bin/mpirun). Required for multi-node runs (num_nodes>1). If mpirun is missing here, UCX/OpenMPI are built into this path. Single-node: may be omitted.",
+        "mpi_path_var": "/usr",
+
+        "_comment_ucx_version": "Used only when MPI is auto-installed (multi-node and mpirun missing at mpi_path_var).",
+        "ucx_version": "1.18.0",
+
+        "_comment_ompi_version": "Used only when MPI is auto-installed.",
+        "ompi_version": "5.0.7"
+    }
+}
