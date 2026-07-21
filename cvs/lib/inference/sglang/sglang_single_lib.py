@@ -19,17 +19,15 @@ import time
 from typing import Any, Optional
 
 from cvs.lib import globals
-from cvs.lib.inference.sglang.sglang_disagg_lib import (
+from cvs.lib.inference.sglang.sglang_common import (
     LM_EVAL_SPECS,
-    _DEFAULT_ADD_CLI_FLAGS,
-    _DEFAULT_ADD_EXPORT_ENV,
-    _as_node_list,
-    _coerce_sglang_actual,
-    _first_float,
-    _normalize_sglang_threshold_spec,
-    _resolve_client_host,
     add_cli_flags_block,
     add_export_env_block,
+    as_node_list,
+    coerce_sglang_actual,
+    first_float,
+    normalize_sglang_threshold_spec,
+    resolve_client_host,
     textwrap_for_yml,
 )
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
@@ -72,7 +70,7 @@ class SglangSingle:
             'mount_vol',
             '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
         )
-        self.benchmark_serv_node = _as_node_list(self.inf_dict['benchmark_serv_node'])
+        self.benchmark_serv_node = as_node_list(self.inf_dict['benchmark_serv_node'])
 
         self.b_phdl = b_phdl
         if self.b_phdl is None:
@@ -114,7 +112,7 @@ class SglangSingle:
     @property
     def client_host(self) -> str:
         """HTTP client target when smoke/bench/lm-eval run inside the same container."""
-        return _resolve_client_host(self.inf_dict, unified_server=True)
+        return resolve_client_host(self.inf_dict, unified_server=True)
 
     def _apply_inf_defaults(self) -> None:
         self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
@@ -138,8 +136,6 @@ class SglangSingle:
         self.bp_dict.setdefault('tensor_parallelism', '8')
         self.bp_dict.setdefault('memory_fraction', '0.85')
         self.bp_dict.setdefault('inference_poll_iterations', '16')
-        self.bp_dict.setdefault('add_export_env', list(_DEFAULT_ADD_EXPORT_ENV))
-        self.bp_dict.setdefault('add_flags', list(_DEFAULT_ADD_CLI_FLAGS))
 
     def setup_server_container_env(self) -> None:
         """Write and source ``/tmp/server_env_script.sh`` on the benchmark node."""
@@ -367,13 +363,13 @@ class SglangSingle:
                 (r'Median E2E Latency \(ms\):\s+([0-9\.]+)', 'median_e2e_latency_ms'),
                 (r'P99 E2E Latency \(ms\):\s+([0-9\.]+)', 'p99_e2e_latency_ms'),
             ):
-                val = _first_float(pattern, text)
+                val = first_float(pattern, text)
                 if val:
                     self.inference_results_dict[node][key] = val
 
             # Goodput: successful_requests / total_requests
-            total_req = _first_float(r'Total requests:\s+([0-9]+)', text)
-            failed_req = _first_float(r'Failed requests:\s+([0-9]+)', text)
+            total_req = first_float(r'Total requests:\s+([0-9]+)', text)
+            failed_req = first_float(r'Failed requests:\s+([0-9]+)', text)
             succ = self.inference_results_dict[node].get('successful_requests')
             if total_req:
                 self.inference_results_dict[node]['total_requests'] = total_req
@@ -407,12 +403,12 @@ class SglangSingle:
 
     def verify_inference_results(self, test_name, expected_result_dict):
         thresholds = {
-            metric: _normalize_sglang_threshold_spec(metric, spec)
+            metric: normalize_sglang_threshold_spec(metric, spec)
             for metric, spec in expected_result_dict.items()
         }
         for node in self.inference_results_dict:
             actuals = {
-                metric: _coerce_sglang_actual(value)
+                metric: coerce_sglang_actual(value)
                 for metric, value in self.inference_results_dict[node].items()
                 if metric in thresholds
             }

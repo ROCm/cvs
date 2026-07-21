@@ -74,6 +74,8 @@
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
 		 "context_length": "205000",
+		 "add_export_env": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8", "GPU_ARCHS=gfx942"],
+		 "add_flags": ["--attention-backend aiter"],
 		 "inference_tests":
 		  {
 		      "bench_serv_random":

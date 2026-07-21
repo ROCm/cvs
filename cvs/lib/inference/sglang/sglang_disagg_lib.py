@@ -11,9 +11,20 @@ import os
 import re
 import shlex
 import time
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from cvs.lib import globals
+from cvs.lib.inference.sglang.sglang_common import (
+    LM_EVAL_SPECS,
+    add_cli_flags_block,
+    add_export_env_block,
+    as_node_list as _as_node_list,
+    coerce_sglang_actual as _coerce_sglang_actual,
+    first_float as _first_float,
+    normalize_sglang_threshold_spec as _normalize_sglang_threshold_spec,
+    resolve_client_host as _resolve_client_host,
+    textwrap_for_yml,
+)
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, LongContextNiahBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import *
 from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
@@ -34,109 +45,10 @@ inference_err_dict = {
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
 
-def textwrap_for_yml(msg_string):
-    return '\n'.join([m.lstrip() for m in msg_string.split('\n')])
 
-def _as_node_list(value):
-    """
-    Normalize cluster JSON node field to a list of host strings.
-
-    Config may use a single hostname/IP string or a list. ``list(str)``
-    would split into characters (e.g. ``'10.0.0.1'`` -> ``'1'``), breaking
-    SSH and HTTP clients.
-    """
-    if isinstance(value, str):
-        return [value]
-    return list(value)
-
-
-def _resolve_client_host(inf_dict, *, unified_server: bool = False) -> str:
-    """HTTP target for smoke/bench/lm-eval clients running inside a container.
-
-    ``0.0.0.0`` is invalid as a client address. Unified single-node runs use
-    ``127.0.0.1`` (server and client in one container). Disagg runs use the
-    proxy router node when it differs from the benchmark node.
-    """
-    explicit = inf_dict.get('client_host')
-    if explicit:
-        return str(explicit)
-    if unified_server:
-        return '127.0.0.1'
-    proxy = _as_node_list(inf_dict['proxy_router_node'])[0]
-    bench = _as_node_list(inf_dict['benchmark_serv_node'])[0]
-    if proxy == bench:
-        return '127.0.0.1'
-    return proxy
-
-def _first_float(pattern, text):
-    m = re.search(pattern, text, re.I)
-    return m.group(1) if m else None
-
-
-def _is_sglang_latency_metric(metric_name: str) -> bool:
-    """Latency metrics pass when actual <= expected."""
-    name = metric_name.lower()
-    return "ms" in name or "latency" in name
-
-
-def _is_sglang_higher_is_better_metric(metric_name: str) -> bool:
-    """Throughput, req/s, goodput, MFU — pass when actual >= expected."""
-    if _is_sglang_latency_metric(metric_name):
-        return False
-    name = metric_name.lower()
-    return any(
-        token in name
-        for token in (
-            "throughput",
-            "goodput",
-            "mfu",
-            "request_throughput",
-        )
-    )
-
-
-def _normalize_sglang_threshold_spec(metric_name: str, spec: Any) -> dict[str, Any]:
-    """Map threshold JSON specs (or legacy flat floats) to evaluate_all kinds."""
-    if isinstance(spec, dict) and spec.get("kind"):
-        return spec
-    value = float(spec["value"] if isinstance(spec, dict) and "value" in spec else spec)
-    if _is_sglang_latency_metric(metric_name):
-        return {"kind": "max_ms", "value": value}
-    if _is_sglang_higher_is_better_metric(metric_name):
-        kind = "min_tok_s" if "throughput" in metric_name.lower() else "min"
-        return {"kind": kind, "value": value}
-    return {"kind": "min", "value": value}
-
-
-def _coerce_sglang_actual(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-LM_EVAL_SPECS = {
-    "lm_eval_hellaswag": {
-        "display": "HellaSwag",
-        "default_metric": "acc_norm",
-        "default_metric_key": "acc_norm,none",
-        "default_num_concurrent": "1",
-    },
-    "lm_eval_gsm8k": {
-        "display": "GSM8K",
-        "default_metric": "exact_match",
-        "default_metric_key": "exact_match,flexible-extract",
-        "default_num_concurrent": "4",
-    },
-    "lm_eval_mmlu": {
-        "display": "MMLU",
-        "default_metric": "acc",
-        "default_metric_key": "acc,none",
-        "default_num_concurrent": "1",
-    },
-}
+def add_flags_export_block(bp_dict: Mapping[str, Any], indent: str = '                      ') -> str:
+    """Backward-compatible alias for :func:`add_export_env_block`."""
+    return add_export_env_block(bp_dict, indent=indent)
 
 
 class SglangDisaggPD:
@@ -643,10 +555,7 @@ class SglangDisaggPD:
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.prefill_nnodes}
                       export NODE_RANK={i}
-                      export SGLANG_USE_AITER=1
-                      export AMDGCN_USE_BUFFER_OPS=1
-                      export ROCM_QUICK_REDUCE_QUANTIZATION=INT8
-                      export GPU_ARCHS=gfx942
+{add_flags_export_block(self.bp_dict)}
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --disaggregation-mode prefill \
                               --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
@@ -662,7 +571,7 @@ class SglangDisaggPD:
                               --dist-init-addr {dist_init_addr} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
-                              --attention-backend aiter \
+{add_cli_flags_block(self.bp_dict)}
                               --log-level {self.inf_dict['log_level']}' > /tmp/prefill_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
@@ -720,10 +629,7 @@ class SglangDisaggPD:
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.decode_nnodes}
                       export NODE_RANK={i}
-                      export SGLANG_USE_AITER=1
-                      export AMDGCN_USE_BUFFER_OPS=1 
-                      export ROCM_QUICK_REDUCE_QUANTIZATION=INT8
-                      export GPU_ARCHS=gfx942
+{add_flags_export_block(self.bp_dict)}
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --disaggregation-mode decode \
                               --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
@@ -739,7 +645,7 @@ class SglangDisaggPD:
                               --dist-init-addr {dist_init_addr} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
-                              --attention-backend aiter \
+{add_cli_flags_block(self.bp_dict)}
                               --log-level {self.inf_dict['log_level']}' > /tmp/decode_launch_script.sh" '''
             formatted_cmd = textwrap_for_yml(cmd)
             cmd_list.append(formatted_cmd)
