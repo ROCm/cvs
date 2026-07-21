@@ -49,6 +49,25 @@ def _as_node_list(value):
         return [value]
     return list(value)
 
+
+def _resolve_client_host(inf_dict, *, unified_server: bool = False) -> str:
+    """HTTP target for smoke/bench/lm-eval clients running inside a container.
+
+    ``0.0.0.0`` is invalid as a client address. Unified single-node runs use
+    ``127.0.0.1`` (server and client in one container). Disagg runs use the
+    proxy router node when it differs from the benchmark node.
+    """
+    explicit = inf_dict.get('client_host')
+    if explicit:
+        return str(explicit)
+    if unified_server:
+        return '127.0.0.1'
+    proxy = _as_node_list(inf_dict['proxy_router_node'])[0]
+    bench = _as_node_list(inf_dict['benchmark_serv_node'])[0]
+    if proxy == bench:
+        return '127.0.0.1'
+    return proxy
+
 def _first_float(pattern, text):
     m = re.search(pattern, text, re.I)
     return m.group(1) if m else None
@@ -255,6 +274,11 @@ class SglangDisaggPD:
         self.inf_dict.setdefault('nccl_debug', 'ERROR')
         self.inf_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.inf_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
+        self.inf_dict.setdefault('log_level', 'info')
+        self.inf_dict.setdefault('prefill_serv_port', '30001')
+        self.inf_dict.setdefault('decode_serv_port', '30002')
+        self.inf_dict.setdefault('proxy_router_port', '8000')
+        self.inf_dict.setdefault('proxy_router_serv_port', '8000')
         self.inf_dict.setdefault('max_concurrent_requests', '-1')
         self.inf_dict.setdefault('queue_size', '100')
         self.inf_dict.setdefault('queue_timeout_secs', '60')
@@ -302,7 +326,21 @@ class SglangDisaggPD:
 
         log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
         log.info(f'benchmark_params_dict = {self.bp_dict}')
+        log.info(
+            'disagg client_host=%s router_serv_port=%s',
+            self.client_host,
+            self.router_serv_port,
+        )
         log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+
+    @property
+    def router_serv_port(self) -> str:
+        """Client-facing proxy router port (bench/smoke/lm-eval)."""
+        return str(self.inf_dict['proxy_router_serv_port'])
+
+    @property
+    def client_host(self) -> str:
+        return _resolve_client_host(self.inf_dict, unified_server=False)
 
     # Helper function for installing container packages
     def install_container_packages(
@@ -821,7 +859,7 @@ class SglangDisaggPD:
                               {prefill_str} \
                               {decode_str} \
                               --host 0.0.0.0 \
-                              --port {self.inf_dict['proxy_router_port']} \
+                              --port {self.router_serv_port} \
                               --log-dir {self.inf_dict['log_dir']} \
                       '  > /tmp/proxy_router_launch_script.sh"
                     '''
@@ -893,7 +931,7 @@ class SglangDisaggPD:
                       --random-input {i_dict['input_length']} \
                       --random-output {i_dict['output_length']} \
                       --random-range-ratio {i_dict['random_range_ratio']} \
-                      --host 0.0.0.0 --port {self.inf_dict['proxy_router_serv_port']} \
+                      --host {self.client_host} --port {self.router_serv_port} \
                       > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1" '''
         formatted_cmd = textwrap_for_yml(cmd)
         self.b_phdl.exec(formatted_cmd, timeout=1000)
@@ -1431,10 +1469,10 @@ class SglangDisaggPD:
         POST /v1/chat/completions, POST /v1/completions, and structured JSON
         (book) via chat completions.
         """
-        port = int(self.inf_dict["proxy_router_serv_port"])
+        port = int(self.router_serv_port)
         model_name = self.bp_dict["model"]
 
-        probe_src = OpenAIProbe.probe_script(port, model_name)
+        probe_src = OpenAIProbe.probe_script(port, model_name, host=self.client_host)
         b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                   mkdir -p {self.log_dir}/benchmark_node; \
@@ -1443,7 +1481,8 @@ class SglangDisaggPD:
                   rm -f /tmp/openai_mq_probe.py" '''
         formatted_cmd = textwrap_for_yml(cmd)
         log.info(
-            "OpenAI endpoint probe inside benchmark container (0.0.0.0:%r), same pattern as GSM8K/benchserv",
+            "OpenAI endpoint probe inside benchmark container (%s:%r), same pattern as GSM8K/benchserv",
+            self.client_host,
             port,
         )
         out_dict = self.b_phdl.exec(
@@ -1532,7 +1571,8 @@ class SglangDisaggPD:
         i_dict = self.bp_dict["inference_tests"][bench_key]
         inner_cmd, scoring = LmEvalBenchmark.prepare(
             i_dict,
-            port=int(self.inf_dict["proxy_router_serv_port"]),
+            port=int(self.router_serv_port),
+            host=self.client_host,
             model_id=self.bp_dict["model"],
             task_name=task_name,
             default_tasks=task_name,
@@ -1577,12 +1617,13 @@ class SglangDisaggPD:
         """NIAH long-context accuracy at fixed ISL/OSL via /v1/chat/completions."""
         bench_key = "long_ctx_niah"
         i_dict = self.bp_dict["inference_tests"][bench_key]
-        port = int(self.inf_dict["proxy_router_serv_port"])
+        port = int(self.router_serv_port)
         log_basename = f"long_ctx_niah_isl{isl}_osl{osl}.log"
 
         inner_cmd, scoring = LongContextNiahBenchmark.prepare(
             i_dict,
             port=port,
+            host=self.client_host,
             model_id=self.bp_dict["model"],
             isl=int(isl),
             osl=int(osl),

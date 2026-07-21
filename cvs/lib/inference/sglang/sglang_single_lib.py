@@ -5,7 +5,8 @@ All rights reserved.
 Single-node SGLang inference controller (no PD disaggregation).
 
 One container on ``benchmark_serv_node`` runs a unified ``sglang.launch_server``
-on ``router_serv_port``. Benchmark/smoke/lm-eval traffic hits that port directly.
+on ``proxy_router_serv_port``. Benchmark/smoke/lm-eval traffic hits that port
+via ``client_host`` (default ``127.0.0.1`` inside the container).
 '''
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from cvs.lib.inference.sglang.sglang_disagg_lib import (
     _coerce_sglang_actual,
     _first_float,
     _normalize_sglang_threshold_spec,
+    _resolve_client_host,
     textwrap_for_yml,
 )
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
@@ -67,8 +69,6 @@ class SglangSingle:
             '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
         )
         self.benchmark_serv_node = _as_node_list(self.inf_dict['benchmark_serv_node'])
-        self.serv_host = self.benchmark_serv_node[0]
-        self.serv_port = str(self.inf_dict['proxy_router_serv_port'])
 
         self.b_phdl = b_phdl
         if self.b_phdl is None:
@@ -92,10 +92,25 @@ class SglangSingle:
 
         log.info('single-node inference_dict = %s', self.inf_dict)
         log.info('single-node benchmark_params_dict = %s', self.bp_dict)
+        log.info(
+            'single-node client_host=%s router_serv_port=%s',
+            self.client_host,
+            self.router_serv_port,
+        )
 
     @property
     def server_log_path(self) -> str:
         return f"{self.log_dir}/server_node/server.log"
+
+    @property
+    def router_serv_port(self) -> str:
+        """Unified server listen/client port (``proxy_router_serv_port``)."""
+        return str(self.inf_dict['proxy_router_serv_port'])
+
+    @property
+    def client_host(self) -> str:
+        """HTTP client target when smoke/bench/lm-eval run inside the same container."""
+        return _resolve_client_host(self.inf_dict, unified_server=True)
 
     def _apply_inf_defaults(self) -> None:
         self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
@@ -110,7 +125,7 @@ class SglangSingle:
         self.inf_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.inf_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
         self.inf_dict.setdefault('log_level', 'info')
-        self.inf_dict.setdefault('prefill_serv_port', '8000')
+        self.inf_dict.setdefault('proxy_router_serv_port', '8000')
 
     def _apply_bp_defaults(self) -> None:
         self.bp_dict.setdefault('backend', 'sglang')
@@ -146,18 +161,20 @@ class SglangSingle:
 
     def launch_server(self, dtype='auto', kv_cache_dtype='auto') -> None:
         """Launch one unified SGLang server (no PD disaggregation)."""
-        log.info('Launch unified SGLang server on %s:%s', self.serv_host, self.serv_port)
+        log.info('Launch unified SGLang server on 0.0.0.0:%s', self.router_serv_port)
         launch_body = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export SGLANG_USE_AITER=1
                       export AMDGCN_USE_BUFFER_OPS=1
                       export ROCM_QUICK_REDUCE_QUANTIZATION=INT8
+                      export GPU_ARCHS=gfx942
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
-                              --host {self.serv_host} \
-                              --port {self.serv_port} \
+                              --host 0.0.0.0 \
+                              --port {self.router_serv_port} \
                               --dtype {dtype} \
                               --kv-cache-dtype {kv_cache_dtype} \
                               --trust-remote-code \
                               --tp-size {self.bp_dict['tensor_parallelism']} \
+                              --pp-size {self.bp_dict['pipeline_parallelism']} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
@@ -233,13 +250,20 @@ class SglangSingle:
                 fail_test(f'Some failures observed in test rmsnorm on node {node}')
 
     def verify_openai_compatible_endpoints(self) -> list[str]:
-        port = int(self.serv_port)
-        probe_src = OpenAIProbe.probe_script(port, self.bp_dict['model'])
+        port = int(self.router_serv_port)
+        probe_src = OpenAIProbe.probe_script(
+            port, self.bp_dict['model'], host=self.client_host
+        )
         b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                   mkdir -p {self.log_dir}/benchmark_node; \
                   echo '{b64}' | base64 -d > /tmp/openai_mq_probe.py && \
                   python3 /tmp/openai_mq_probe.py && rm -f /tmp/openai_mq_probe.py" '''
+        log.info(
+            'OpenAI endpoint probe inside benchmark container (%s:%r)',
+            self.client_host,
+            port,
+        )
         out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=min(900, 480 + 180))
         bench_host = self.benchmark_serv_node[0]
         raw_out = out_dict.get(bench_host) or next(iter(out_dict.values()), None)
@@ -293,7 +317,7 @@ class SglangSingle:
                       --random-input {i_dict['input_length']} \
                       --random-output {i_dict['output_length']} \
                       --random-range-ratio {i_dict['random_range_ratio']} \
-                      --host 0.0.0.0 --port {self.serv_port} \
+                      --host {self.client_host} --port {self.router_serv_port} \
                       > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1" '''
         self.b_phdl.exec(textwrap_for_yml(cmd), timeout=1000)
         time.sleep(5)
@@ -401,7 +425,8 @@ class SglangSingle:
         i_dict = self.bp_dict['inference_tests'][bench_key]
         inner_cmd, scoring = LmEvalBenchmark.prepare(
             i_dict,
-            port=int(self.serv_port),
+            port=int(self.router_serv_port),
+            host=self.client_host,
             model_id=self.bp_dict['model'],
             task_name=task_name,
             default_tasks=task_name,

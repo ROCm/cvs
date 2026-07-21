@@ -62,6 +62,7 @@ class OpenAIProbe:
         port: int,
         model: str,
         *,
+        host: str = "0.0.0.0",
         timeout_s: float = TIMEOUT_S,
         chat_max_tokens: int = CHAT_MAX_TOKENS,
         completion_max_tokens: int = COMPLETION_MAX_TOKENS,
@@ -82,7 +83,7 @@ class OpenAIProbe:
                 f"COMP_MAX = {int(completion_max_tokens)}",
                 f"BOOK_MAX = {int(structured_book_max_tokens)}",
                 f"MODEL = {json.dumps(model)}",
-                'BASE = "http://0.0.0.0:%d" % PORT',
+                f'BASE = "http://{host}:{int(port)}"',
                 "",
                 "def req(method, path, body=None):",
                 "    url = BASE + path",
@@ -304,14 +305,14 @@ class LmEvalBenchmark:
         return float(m.group(1)) if m else None
 
     @staticmethod
-    def openai_base_url(port: int, lm_eval_model: str) -> str:
+    def openai_base_url(port: int, lm_eval_model: str, host: str = "0.0.0.0") -> str:
         """Build base_url for lm-eval's local-completions / local-chat-completions."""
         path = (
             "/v1/chat/completions"
             if "chat" in lm_eval_model.lower()
             else "/v1/completions"
         )
-        return f"http://0.0.0.0:{int(port)}{path}"
+        return f"http://{host}:{int(port)}{path}"
 
     @classmethod
     def build_model_args(
@@ -453,6 +454,7 @@ class LmEvalBenchmark:
         i_dict: Mapping[str, Any],
         *,
         port: int,
+        host: str = "0.0.0.0",
         model_id: str,
         task_name: str,
         default_tasks: str,
@@ -468,7 +470,7 @@ class LmEvalBenchmark:
         Returns ``(inner_cmd, scoring_config)``.
         """
         lm_eval_model = str(i_dict.get("lm_eval_model", cls.DEFAULT_LM_EVAL_MODEL))
-        base_url = cls.openai_base_url(port, lm_eval_model)
+        base_url = cls.openai_base_url(port, lm_eval_model, host=host)
         num_concurrent = str(i_dict.get("num_concurrent", default_num_concurrent))
         tasks = str(i_dict.get("tasks", default_tasks))
         num_fewshot = str(i_dict.get("num_fewshot", cls.DEFAULT_NUM_FEWSHOT))
@@ -572,6 +574,7 @@ class LongContextNiahBenchmark:
         osl: int,
         num_prompts: int,
         seed: int,
+        host: str = "0.0.0.0",
         request_timeout_sec: int = DEFAULT_REQUEST_TIMEOUT_SEC,
     ) -> str:
         """Python source run inside benchmark container (docker exec)."""
@@ -596,7 +599,7 @@ class LongContextNiahBenchmark:
                 f"NUM_PROMPTS = {int(num_prompts)}",
                 f"SEED = {int(seed)}",
                 f"REQ_TIMEOUT = {float(request_timeout_sec)}",
-                'BASE = "http://0.0.0.0:%d" % PORT',
+                f'BASE = "http://{host}:{int(port)}"',
                 'URL = BASE + "/v1/chat/completions"',
                 "",
                 "def norm(s):",
@@ -741,6 +744,7 @@ class LongContextNiahBenchmark:
         i_dict: Mapping[str, Any],
         *,
         port: int,
+        host: str = "0.0.0.0",
         model_id: str,
         isl: int,
         osl: int,
@@ -775,6 +779,7 @@ class LongContextNiahBenchmark:
             "label": f"long_ctx_niah isl={isl}",
             "probe_kwargs": {
                 "port": int(port),
+                "host": host,
                 "model": model_id,
                 "isl": int(isl),
                 "osl": int(osl),
