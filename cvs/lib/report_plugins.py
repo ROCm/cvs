@@ -358,14 +358,14 @@ class HtmlReportManager:
         if not self._custom_test_reports:
             return ""
 
-        html = '<div><h2>Reports</h2><ul>'
+        reports_html = '<div><h2>Reports</h2><ul>'
         for report in self._custom_test_reports:
             path = html.escape(str(report["path"]))
             name = html.escape(str(report["name"]))
-            html += f'<li><a href="{path}" target="_blank">{name}</a></li>'
-        html += "</ul></div>"
+            reports_html += f'<li><a href="{path}" target="_blank">{name}</a></li>'
+        reports_html += "</ul></div>"
 
-        return html
+        return reports_html
 
     def generate_suite_reports(self, session):
         """Write registered suite report HTML/JSON into the pytest bundle before zip."""
