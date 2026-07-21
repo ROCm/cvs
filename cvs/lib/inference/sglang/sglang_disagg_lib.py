@@ -46,11 +46,6 @@ inference_err_dict = {
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
 
 
-def add_flags_export_block(bp_dict: Mapping[str, Any], indent: str = '                      ') -> str:
-    """Backward-compatible alias for :func:`add_export_env_block`."""
-    return add_export_env_block(bp_dict, indent=indent)
-
-
 class SglangDisaggPD:
     def __init__(
         self,
@@ -381,6 +376,7 @@ class SglangDisaggPD:
                     export TP={self.bp_dict['tensor_parallelism']}
                     export PP={self.bp_dict['pipeline_parallelism']}
                     export HF_TOKEN={self.hf_token}
+{add_export_env_block(self.bp_dict, indent='                    ')}
                     '  > /tmp/prefill_env_script.sh"
                     '''
         time.sleep(3)
@@ -412,6 +408,7 @@ class SglangDisaggPD:
                     export TP={self.bp_dict['tensor_parallelism']}
                     export PP={self.bp_dict['pipeline_parallelism']}
                     export HF_TOKEN={self.hf_token}
+{add_export_env_block(self.bp_dict, indent='                    ')}
                     '  > /tmp/decode_env_script.sh"
                     '''
         time.sleep(3)
@@ -555,7 +552,6 @@ class SglangDisaggPD:
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.prefill_nnodes}
                       export NODE_RANK={i}
-{add_flags_export_block(self.bp_dict)}
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --disaggregation-mode prefill \
                               --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
@@ -629,7 +625,6 @@ class SglangDisaggPD:
             cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
                       export NNODES={self.decode_nnodes}
                       export NODE_RANK={i}
-{add_flags_export_block(self.bp_dict)}
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --disaggregation-mode decode \
                               --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
