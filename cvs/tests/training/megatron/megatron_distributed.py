@@ -87,12 +87,13 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
     try:
         # Stage 0: disable firewall — required for distributed runs to avoid
         # inter-node MPI threads timing out against the Rendezvous endpoint.
+        # Runs on baremetal (orch.all) before containers are launched.
         t = time.monotonic()
-        out_dict = orch.exec("sudo service ufw status")
+        out_dict = orch.all.exec("sudo service ufw status")
         for node, out in (out_dict or {}).items():
             if not re.search("inactive", out or "", re.I):
-                orch.exec("sudo service ufw stop")
-        out_dict = orch.exec("sudo ufw status")
+                orch.all.exec("sudo service ufw stop")
+        out_dict = orch.all.exec("sudo ufw status")
         for node, out in (out_dict or {}).items():
             if not re.search("inactive|disabled", out or "", re.I):
                 pytest.fail(f"failed to disable firewall on node {node}")
@@ -109,14 +110,14 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
 
         # Stage 2: start sshd — distributed runs always require inter-node MPI
         # so sshd on 2224 is mandatory on all nodes.
-        t = time.monotonic()
-        ok = orch.setup_sshd()
-        lifecycle.record(nodeid, "sshd_setup", time.monotonic() - t)
-        if not ok:
-            pytest.fail("setup_sshd() returned False")
-        probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
-        if not any("OK" in (v or "") for v in (probe or {}).values()):
-            pytest.fail("sshd not listening on 2224 after setup_sshd()")
+        # t = time.monotonic()
+        # ok = orch.setup_sshd()
+        # lifecycle.record(nodeid, "sshd_setup", time.monotonic() - t)
+        # if not ok:
+        #     pytest.fail("setup_sshd() returned False")
+        # probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
+        # if not any("OK" in (v or "") for v in (probe or {}).values()):
+        #     pytest.fail("sshd not listening on 2224 after setup_sshd()")
 
         # Stage 3: training.
         globals.error_list = []

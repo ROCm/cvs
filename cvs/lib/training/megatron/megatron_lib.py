@@ -370,7 +370,7 @@ class MegatronTrainingJob:
           * Fails the test if the expected device string is not detected.
 
         Assumptions:
-          - self.phdl provides exec(...) to run commands on all nodes/hosts.
+          - self.orch provides exec(...) to run commands inside containers on all nodes.
           - Docker is installed and the container is already running on each node.
           - The source and destination library paths are correct for the target image.
           - fail_test(...) is available in scope to abort on setup failures.
@@ -383,9 +383,11 @@ class MegatronTrainingJob:
                 # override the gid_index to 3 for broadcom
                 self.nccl_ib_gid_index = 3
                 out_dict = self.orch.exec(
-                    'sudo cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host '
-                    '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; '
-                    'sleep 2; ibv_devinfo; sleep 2;'
+                    'if [ -f /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host ]; then \
+                    sudo cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
+                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
+                    fi; \
+                    sleep 2;ibv_devinfo;sleep 2;'
                 )
                 # Treat `hca_id_pattern` as a `|`-separated list of literal
                 # NIC-name prefixes. Each segment is `re.escape`d so users
