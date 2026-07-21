@@ -239,6 +239,71 @@ def resolve_anc_log_folder(config_dict, test_name, timestamp, node=None):
 # config["anc"]["test_timeout"].
 DEFAULT_ANC_TEST_TIMEOUT = 7200
 
+# --- Package-install timeout + download progress -------------------------
+# The install exec's timeout is parallel-ssh's read_timeout: an INACTIVITY
+# (per-read) timeout, not a total wall-clock budget. It fires only when the SSH
+# channel produces no output for this many seconds. ANC release archives are
+# large (the 1.4.x content deb is ~550 MB) and download speed is unpredictable,
+# so the download is the slowest, most variable step. Two things keep it from
+# tripping this timeout spuriously:
+#   1. The download runs with a periodic progress heartbeat (see
+#      _download_with_progress_snippet) so the channel is never silent while
+#      bytes are flowing, no matter how slow the link is. A genuine stall is
+#      caught by wget's own --timeout/--tries (NOT by this exec's inactivity
+#      timeout, which the heartbeat deliberately keeps from firing): a hung
+#      read aborts wget non-zero and fails the install.
+#   2. This default is generous (30 min) so the silent phases that follow
+#      (dpkg/dnf install, tar extract of the large content payload) also fit.
+# Override via config["anc"]["install_timeout"]. This is SCOPED TO INSTALL ONLY;
+# the ANC group-run timeout (test_timeout) is unaffected.
+DEFAULT_ANC_INSTALL_TIMEOUT = 1800
+INSTALL_TIMEOUT_KEY = "install_timeout"
+
+# How often (seconds) the download heartbeat prints partial-file size. Must be
+# comfortably smaller than DEFAULT_ANC_INSTALL_TIMEOUT so the heartbeat keeps
+# the channel active well within the inactivity window.
+ANC_DOWNLOAD_PROGRESS_INTERVAL = 15
+
+
+def _install_timeout(anc_cfg):
+    '''Return the install exec inactivity timeout (config-overridable).'''
+    return anc_cfg.get(INSTALL_TIMEOUT_KEY, DEFAULT_ANC_INSTALL_TIMEOUT)
+
+
+def _download_with_progress_snippet(url, dest, interval=ANC_DOWNLOAD_PROGRESS_INTERVAL):
+    '''
+    Build a shell snippet that downloads ``url`` to ``dest`` while emitting a
+    periodic progress line, and exits non-zero if the download fails.
+
+    ``wget -q`` is silent for the entire (potentially multi-minute) download,
+    which would trip the exec's inactivity timeout on a slow link. Instead run
+    wget in the background and, every ``interval`` seconds, echo the partial
+    file size so the SSH channel keeps producing output while bytes flow. The
+    whole thing is wrapped in a subshell whose exit status is wget's (via
+    ``wait``), so it composes with the surrounding ``set -e && ...`` chain: a
+    failed download aborts the install exactly as a plain ``wget && `` would.
+
+    Because the heartbeat keeps the SSH channel active, the exec's inactivity
+    timeout no longer catches a hung download. wget's own ``--timeout`` /
+    ``--tries`` do that instead: a stalled read aborts after a few minutes,
+    wget exits non-zero, and the ``set -e`` chain fails rather than hanging
+    until the (large) install_timeout elapses.
+
+    ``url`` and ``dest`` are single-quoted here; callers validate config values
+    for embedded single quotes (see _assert_shell_safe) before interpolation.
+    '''
+    return (
+        f"( wget -q --timeout=60 --tries=3 '{url}' -O '{dest}' & "
+        f"wpid=$!; "
+        f"while kill -0 $wpid 2>/dev/null; do "
+        f"sleep {interval}; "
+        f"if [ -f '{dest}' ]; then "
+        f"echo \"ANC download progress: $(du -h '{dest}' 2>/dev/null | cut -f1) downloaded\"; "
+        f"fi; "
+        f"done; "
+        f"wait $wpid )"
+    )
+
 # --- ROCm shared-library resolution --------------------------------------
 # ANC tools (e.g. computerocker) link against ROCm libs. On some nodes the .so
 # files are present under these dirs but not in the dynamic-linker cache, so
@@ -456,7 +521,7 @@ def _install_anc_rpm(phdl, cluster_dict, config_dict):
         f"set -e && "
         f"mkdir -p '{cvs_home}' && cd '{cvs_home}' && "
         f"echo 'Downloading ANC release...' && "
-        f"wget -q '{anc_release_url}' -O '{tarball}' && "
+        f"{_download_with_progress_snippet(anc_release_url, tarball)} && "
         f"echo 'Extracting outer archive...' && "
         f"tar -xzf '{tarball}' && "
         f"rm -f '{tarball}' && "
@@ -472,7 +537,7 @@ def _install_anc_rpm(phdl, cluster_dict, config_dict):
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=300)
+    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -515,7 +580,7 @@ def _install_anc_deb(phdl, cluster_dict, config_dict):
         f"set -e && "
         f"mkdir -p '{cvs_home}' && cd '{cvs_home}' && "
         f"echo 'Downloading ANC release...' && "
-        f"wget -q '{anc_release_url}' -O '{tarball}' && "
+        f"{_download_with_progress_snippet(anc_release_url, tarball)} && "
         f"echo 'Extracting outer archive...' && "
         f"tar -xzf '{tarball}' && "
         f"rm -f '{tarball}' && "
@@ -539,7 +604,7 @@ def _install_anc_deb(phdl, cluster_dict, config_dict):
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=300)
+    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():
@@ -591,7 +656,7 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
         f"set -e && "
         f"mkdir -p '{cvs_home}' && cd '{cvs_home}' && "
         f"echo 'Downloading ANC release...' && "
-        f"wget -q '{anc_release_url}' -O '{tarball}' && "
+        f"{_download_with_progress_snippet(anc_release_url, tarball)} && "
         f"echo 'Extracting outer archive...' && "
         f"tar -xzf '{tarball}' && "
         f"rm -f '{tarball}' && "
@@ -612,7 +677,7 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
         f"test -f '{ANC_BIN}' && echo 'ANC_INSTALL_SUCCESS'"
     )
 
-    out_dict = phdl.exec(install_cmd, timeout=300)
+    out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
     print_test_output(log, out_dict)
 
     for host, output in out_dict.items():

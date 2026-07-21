@@ -128,6 +128,7 @@ The ANC config lives at `cvs/input/config_file/anc/anc_config.json`:
     "anc": {
         "description": "AMD Node Check",
         "test_timeout": 7200,
+        "install_timeout": 1800,
         "anc_version": "1.4.7",
         "anc_release_url": "https://.../anc-release-helios-nda-1.4.7-rpm-linux-x64.tar.gz",
         "cvs_home": "{home}/cvs",
@@ -145,7 +146,8 @@ Each key is documented inline in the shipped config via a matching
 
 | Key | Meaning |
 | --- | --- |
-| `test_timeout` | Per-group execution timeout in seconds (default 7200 = 2 h). |
+| `test_timeout` | Per-group execution timeout in seconds (default 7200 = 2 h). Applies to ANC group runs only, not install. |
+| `install_timeout` | Package download+install **inactivity** timeout in seconds (default 1800 = 30 min), used only by `anc_installation` / the install pre-task. It is a per-read (no-output) timeout, not a total budget: the download emits a periodic progress heartbeat so a slow link never trips it, while a genuine stall still fails. Independent of `test_timeout`. |
 | `anc_version` | Expected ANC version; install pre-task skips (re)install when already present and post-verifies the match. |
 | `anc_release_url` | ANC release archive URL (used by `anc_installation`). Flavour (deb/rpm/tar) is auto-detected from the filename. |
 | `cvs_home` | Staging dir on each node for the release download/unpack (tar flavour). `{home}` resolves to the SSH user's home. ANC itself always installs to `/opt/amdtools/anc`. |

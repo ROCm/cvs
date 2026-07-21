@@ -7,11 +7,14 @@
         "_comment_test_timeout": "Per-group execution timeout in seconds (7200 = 2 hours). ANC is killed if a group exceeds this.",
         "test_timeout": 7200,
 
+        "_comment_install_timeout": "Package download+install INACTIVITY timeout in seconds (1800 = 30 min), used only by anc_installation / the install pre-task. It is a per-read (no-output) timeout, not a total budget: the download prints a periodic progress heartbeat so a slow link never trips it, while a genuine stall still fails. Raise this only if download+extract of the large content package legitimately needs longer between output lines.",
+        "install_timeout": 1800,
+
         "_comment_anc_version": "Expected ANC version. The install pre-task skips (re)installation when this version is already present on the node, and post-verifies the install matches.",
-        "anc_version": "1.4.7",
+        "anc_version": "1.4.8",
 
         "_comment_anc_release_url": "URL of the ANC release archive to download and install. Flavour (deb/rpm/tar) is auto-detected from the filename.",
-        "anc_release_url": "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.4.7/anc-release-helios-nda-1.4.7-rpm-linux-x64.tar.gz",
+        "anc_release_url": "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.4.8/anc-release-helios-nda-1.4.8-deb-linux-x64.tar.gz",
 
         "_comment_cvs_home": "Staging dir on each node for the release download/unpack (tar flavour). '{home}' resolves to the SSH user's home directory. ANC itself always installs to /opt/amdtools/anc regardless of flavour.",
         "cvs_home": "{home}/cvs",
