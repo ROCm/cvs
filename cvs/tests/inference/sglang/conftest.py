@@ -2,7 +2,10 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Fixtures and hooks for ``sglang_disagg_distributed`` (multi-node PSSH + Docker).
+Fixtures and hooks for SGLang inference suites (``sglang_single`` and ``sglang_disagg_distributed``).
+
+``sglang_single.py`` uses ``SglangSingle`` (one unified server on
+``benchmark_serv_node``). ``sglang_disagg_distributed.py`` uses ``SglangDisaggPD``.
 
 ``--config_file`` must be JSON with top-level ``"config"`` and ``"benchmark_params"``.
 Use ``active_benchmark`` (or ``SGLANG_BENCHMARK_KEY``) when multiple models are defined.
@@ -27,7 +30,8 @@ import pytest
 from cvs.lib import globals
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
-from cvs.lib.inference.sglang.sglang_disagg_orchestrator import SglangDisaggOrchestrator
+from cvs.lib.inference.sglang.sglang_orchestrator import SglangDisaggOrchestrator, SglangSingleOrchestrator
+from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
 from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
@@ -35,37 +39,31 @@ from cvs.lib.utils_lib import (
     update_test_result,
 )
 
-from cvs.tests.inference.sglang._shared import SGLANG_DISAGG_TEST_ORDER, resolve_benchmark_variant_key
-
+from cvs.tests.inference.sglang._shared import (
+    SGLANG_SINGLE_TEST_ORDER,
+    SGLANG_TEST_ORDER,
+    resolve_benchmark_variant_key,
+)
 
 
 log = globals.log
 
 
-# ---------- threshold helpers (unchanged) ----------
+def _use_sglang_single(request) -> bool:
+    """``sglang_single.py`` uses unified single-node ``SglangSingle``."""
+    return getattr(request.module, "__name__", "").endswith("sglang_single")
+
+
+# ---------- threshold helpers ----------
 
 _PERF_CELL_RE = re.compile(
-        r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$"
+    r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$"
 )
 
 _ACC_CELL_RE = re.compile(
     r"^ACC_ISL=(?P<isl>\d+),OSL=(?P<osl>\d+)$"
 )
 
-def pytest_generate_tests(metafunc):
-    config_file = metafunc.config.getoption("config_file")
-    if not config_file or not os.path.isfile(config_file):
-        return
-
-    if "perf_cell" in metafunc.fixturenames:
-        cells = load_perf_cells_for_collection(config_file)
-        ids = [f"isl{c['isl']}-osl{c['osl']}-c{c['conc']}" for c in cells]
-        metafunc.parametrize("perf_cell", cells, ids=ids)
-
-    if "acc_cell" in metafunc.fixturenames:
-        cells = load_acc_cells_for_collection(config_file)
-        ids = [f"acc-isl{c['isl']}-osl{c['osl']}" for c in cells]
-        metafunc.parametrize("acc_cell", cells, ids=ids)
 
 def perf_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, Any]]:
     """All ISL/OSL performance cells from a threshold file (excludes BENCH= keys)."""
@@ -88,19 +86,6 @@ def perf_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, 
     return cells
 
 
-def load_perf_cells_for_collection(config_file: str) -> list[dict[str, Any]]:
-    """Collection-time loader (no fixtures yet — mirrors vLLM sweep)."""
-    with open(config_file, encoding="utf-8") as fp:
-        root = json.load(fp)
-    variant_key = resolve_benchmark_variant_key(root, config_file)
-    bp = root["benchmark_params"][variant_key]
-    threshold_path = _resolve_threshold_path(_threshold_file_path(bp))
-    thresholds = _load_thresholds_file(threshold_path)
-    cells = perf_cells_from_thresholds(thresholds)
-    if not cells:
-        pytest.fail(f"No ISL=... performance cells in {threshold_path}")
-    return cells
-
 def acc_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, Any]]:
     cells = []
     for cell_key, specs in thresholds.items():
@@ -116,19 +101,6 @@ def acc_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, A
             "specs": specs,
         })
     cells.sort(key=lambda c: int(c["isl"]))
-    return cells
-
-
-def load_acc_cells_for_collection(config_file: str) -> list[dict[str, Any]]:
-    with open(config_file, encoding="utf-8") as fp:
-        root = json.load(fp)
-    variant_key = resolve_benchmark_variant_key(root, config_file)
-    bp = root["benchmark_params"][variant_key]
-    threshold_path = _resolve_threshold_path(_threshold_file_path(bp))
-    thresholds = _load_thresholds_file(threshold_path)
-    cells = acc_cells_from_thresholds(thresholds)
-    if not cells:
-        pytest.fail(f"No ACC_ISL=... accuracy cells in {threshold_path}")
     return cells
 
 
@@ -186,6 +158,49 @@ def flat_expected_from_specs(specs: Mapping[str, Any]) -> dict[str, float]:
         else:
             out[metric] = float(spec)
     return out
+
+
+def load_perf_cells_for_collection(config_file: str) -> list[dict[str, Any]]:
+    """Collection-time loader (no fixtures yet — mirrors vLLM sweep)."""
+    with open(config_file, encoding="utf-8") as fp:
+        root = json.load(fp)
+    variant_key = resolve_benchmark_variant_key(root, config_file)
+    bp = root["benchmark_params"][variant_key]
+    threshold_path = _resolve_threshold_path(_threshold_file_path(bp))
+    thresholds = _load_thresholds_file(threshold_path)
+    cells = perf_cells_from_thresholds(thresholds)
+    if not cells:
+        pytest.fail(f"No ISL=... performance cells in {threshold_path}")
+    return cells
+
+
+def load_acc_cells_for_collection(config_file: str) -> list[dict[str, Any]]:
+    with open(config_file, encoding="utf-8") as fp:
+        root = json.load(fp)
+    variant_key = resolve_benchmark_variant_key(root, config_file)
+    bp = root["benchmark_params"][variant_key]
+    threshold_path = _resolve_threshold_path(_threshold_file_path(bp))
+    thresholds = _load_thresholds_file(threshold_path)
+    cells = acc_cells_from_thresholds(thresholds)
+    if not cells:
+        pytest.fail(f"No ACC_ISL=... accuracy cells in {threshold_path}")
+    return cells
+
+
+def pytest_generate_tests(metafunc):
+    config_file = metafunc.config.getoption("config_file")
+    if not config_file or not os.path.isfile(config_file):
+        return
+
+    if "perf_cell" in metafunc.fixturenames:
+        cells = load_perf_cells_for_collection(config_file)
+        ids = [f"isl{c['isl']}-osl{c['osl']}-c{c['conc']}" for c in cells]
+        metafunc.parametrize("perf_cell", cells, ids=ids)
+
+    if "acc_cell" in metafunc.fixturenames:
+        cells = load_acc_cells_for_collection(config_file)
+        ids = [f"acc-isl{c['isl']}-osl{c['osl']}" for c in cells]
+        metafunc.parametrize("acc_cell", cells, ids=ids)
 
 
 def _inject_thresholds_into_bp_dict(bp_dict: dict[str, Any], thresholds: Mapping[str, Any]) -> None:
@@ -441,9 +456,10 @@ def b_phdl(cluster_dict, inference_dict):
 
 
 @pytest.fixture(scope="module")
-def gpu_type(p_phdl, cluster_dict):
-    head_node = p_phdl.host_list[0]
-    smi_out_dict = p_phdl.exec("rocm-smi -a | head -30")
+def gpu_type(request, variant_config, p_phdl, b_phdl):
+    phdl = b_phdl if _use_sglang_single(request) else p_phdl
+    head_node = phdl.host_list[0]
+    smi_out_dict = phdl.exec("rocm-smi -a | head -30")
     smi_out = smi_out_dict[head_node]
     return get_model_from_rocm_smi_output(smi_out)
 
@@ -455,6 +471,7 @@ def inf_res_dict():
 
 @pytest.fixture(scope="module")
 def im_obj(
+    request,
     p_phdl,
     d_phdl,
     r_phdl,
@@ -463,6 +480,15 @@ def im_obj(
     variant_config,
     hf_token,
 ):
+    if _use_sglang_single(request):
+        return SglangSingle(
+            variant_config.model,
+            variant_config.inference,
+            variant_config.benchmark_params,
+            hf_token,
+            b_phdl,
+            gpu_type,
+        )
     return SglangDisaggPD(
         variant_config.model,
         variant_config.inference,
@@ -476,8 +502,11 @@ def im_obj(
     )
 
 @pytest.fixture(scope="module")
-def orch(p_phdl, d_phdl, r_phdl, b_phdl, variant_config, lifecycle):
-    o = SglangDisaggOrchestrator(variant_config.inference, p_phdl, d_phdl, r_phdl, b_phdl)
+def orch(request, p_phdl, d_phdl, r_phdl, b_phdl, variant_config, lifecycle):
+    if _use_sglang_single(request):
+        o = SglangSingleOrchestrator(variant_config.inference, b_phdl)
+    else:
+        o = SglangDisaggOrchestrator(variant_config.inference, p_phdl, d_phdl, r_phdl, b_phdl)
     yield o
     if not lifecycle.torn_down:
         log.info("orch leak-guard: tearing down containers")
@@ -488,8 +517,12 @@ def orch(p_phdl, d_phdl, r_phdl, b_phdl, variant_config, lifecycle):
 # ---------- pytest hooks ----------
 
 def pytest_collection_modifyitems(items):
-    rank = SGLANG_DISAGG_TEST_ORDER
-    items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
+    def rank_for(item):
+        mod = getattr(item.module, "__name__", "")
+        order = SGLANG_SINGLE_TEST_ORDER if mod.endswith("sglang_single") else SGLANG_TEST_ORDER
+        return order.get(item.originalname or item.name.split("[")[0], 99)
+
+    items.sort(key=rank_for)
 
 
 @pytest.hookimpl(hookwrapper=True)

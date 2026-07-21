@@ -2,7 +2,10 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Shared helpers and ordering for the SGLang disaggregated inference suite.
+Shared helpers and ordering for the SGLang inference suites (single-node and disaggregated).
+
+Used by both ``sglang_single.py`` and ``sglang_disagg_distributed.py``. Each suite
+has its own stage order (unified server vs PD disaggregation).
 '''
 
 from __future__ import annotations
@@ -14,12 +17,12 @@ from typing import Any, Mapping
 
 from cvs.lib import globals
 
-
 log = globals.log
 
 __all__ = [
     "resolve_benchmark_variant_key",
-    "SGLANG_DISAGG_TEST_ORDER",
+    "SGLANG_TEST_ORDER",
+    "SGLANG_SINGLE_TEST_ORDER",
     "test_print_results_table",
 ]
 
@@ -70,8 +73,8 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
     )
 
 
-# Stable test order (definition order already matches; this guards against drift / imports).
-SGLANG_DISAGG_TEST_ORDER = {
+# Stable test order for sglang_disagg_distributed (PD prefill/decode/router).
+SGLANG_TEST_ORDER = {
     "test_cleanup_stale_containers": 0,
     "test_launch_inference_containers": 1,
     "test_setup_ibv_devices": 2,
@@ -89,6 +92,25 @@ SGLANG_DISAGG_TEST_ORDER = {
     "test_disagg_gpu_topology": 14,
     "test_print_results_table": 15,
     "test_teardown": 16,
+}
+
+# Stable test order for sglang_single (one unified server, no PD).
+SGLANG_SINGLE_TEST_ORDER = {
+    "test_cleanup_stale_containers": 0,
+    "test_launch_inference_containers": 1,
+    "test_setup_ibv_devices": 2,
+    "test_rms_norm": 3,
+    "test_launch_server": 4,
+    "test_poll_for_server_ready": 5,
+    "test_openai_compatible_http_endpoints": 6,
+    "test_run_long_context_accuracy": 7,
+    "test_run_lm_eval_hellaswag_benchmark_test": 8,
+    "test_run_lm_eval_gsm8k_benchmark_test": 9,
+    "test_run_lm_eval_mmlu_benchmark_test": 10,
+    "test_run_performance_benchmark_test": 11,
+    "test_server_gpu_topology": 12,
+    "test_print_results_table": 13,
+    "test_teardown": 14,
 }
 
 
@@ -218,7 +240,6 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
         r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$"
     )
     bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
-    pp = bp.get("pipeline_parallelism", "1")
     performance_by_cell = phase_labels.get("performance_by_cell") or {}
     if performance_by_cell:
         summary_rows = []
@@ -239,8 +260,8 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                     result,
                 ])
             else:
-                summary_rows.append(["-", "-", "-", pp, str(cell_id), result])
-       
+                summary_rows.append(["-", "-", tp, pp, str(cell_id), result])
+
         log.info(
             "\n\n\n\n======== Performance summary (by ISL/OSL cell) ========\n%s",
             tabulate(
@@ -267,7 +288,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
         for k, v in inf_res_dict.items()
         if isinstance(k, tuple) and len(k) == 6 and isinstance(v, dict)
     ]
-    
+
     perf_rows = []
     for key, host_dict in sorted(
         perf_items,
