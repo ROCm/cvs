@@ -277,15 +277,19 @@ class SglangSingle:
                 parsed = json.loads(last_line)
             except json.JSONDecodeError as e:
                 probe_err = f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
-            elif isinstance(parsed, dict):
-                for step, val in parsed.items():
-                    if isinstance(val, (list, tuple)) and len(val) == 2:
-                        results[step] = (int(val[0]), val[1])
-                    else:
-                        probe_err = f"OpenAI-compatible probe bad shape at {step!r}: {val!r}"
-                        break
             else:
-                probe_err = f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}"
+                if not isinstance(parsed, dict):
+                    probe_err = (
+                        f"OpenAI-compatible probe expected JSON object, got "
+                        f"{type(parsed).__name__!r}"
+                    )
+                else:
+                    for step, val in parsed.items():
+                        if isinstance(val, (list, tuple)) and len(val) == 2:
+                            results[step] = (int(val[0]), val[1])
+                        else:
+                            probe_err = f"OpenAI-compatible probe bad shape at {step!r}: {val!r}"
+                            break
 
         if probe_err is not None:
             fail_test(probe_err)
