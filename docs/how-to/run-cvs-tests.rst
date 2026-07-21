@@ -652,7 +652,7 @@ Copy-paste lab commands: ``cvs/input/config_file/inference/inferencex_atom/READM
   TS=$(date +%Y%m%d_%H%M%S)
   cvs run inferencex_atom \
     --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
-    --config_file ~/input/config_file/inference/inferencex_atom/smoke/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_config.json \
+    --config_file ~/input/config_file/inference/inferencex_atom/smoke/mi300x_inferencex-atom_deepseek-r1_fp8_smoke_config.json \
     --html=~/cvs_results/${TS}_ix-atom-smoke_mi300x.html \
     --self-contained-html \
     --log-file=~/cvs_results/${TS}_ix-atom-smoke_mi300x.log \

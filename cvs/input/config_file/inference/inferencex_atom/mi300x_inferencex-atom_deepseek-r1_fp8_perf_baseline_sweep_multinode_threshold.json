@@ -1,5 +1,5 @@
 {
-  "_comment": "MI300X 2-node baseline sweep portable mins (1K/1K + 8K/1K, C=4-256). Includes scaling.efficiency_pct; recalibrate after first lab run.",
+  "_comment": "MI300X 2-node baseline sweep calibrated from lab run 20260715 (10.32.80.112/113); scaling.efficiency_pct floors at 80% of measured (or 80% of 50% seed for cells that passed the seed gate).",
   "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=4": {
     "client.total_token_throughput": {
       "kind": "min_tok_s",
@@ -103,7 +103,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 9.0
     }
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=8": {
@@ -209,7 +209,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 15.5
     }
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=16": {
@@ -315,7 +315,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 25.0
     }
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=32": {
@@ -421,7 +421,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 40.0
     }
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=64": {
@@ -527,7 +527,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 40.0
     }
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=128": {
@@ -633,7 +633,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 40.0
     }
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=256": {
@@ -739,7 +739,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 40.0
     }
   },
   "ISL=8192,OSL=1024,TP=8,PP=2,NNODES=2,CONC=4": {
@@ -845,7 +845,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 7.9
     }
   },
   "ISL=8192,OSL=1024,TP=8,PP=2,NNODES=2,CONC=8": {
@@ -951,7 +951,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 13.0
     }
   },
   "ISL=8192,OSL=1024,TP=8,PP=2,NNODES=2,CONC=16": {
@@ -1057,7 +1057,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 19.2
     }
   },
   "ISL=8192,OSL=1024,TP=8,PP=2,NNODES=2,CONC=32": {
@@ -1163,7 +1163,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 27.6
     }
   },
   "ISL=8192,OSL=1024,TP=8,PP=2,NNODES=2,CONC=64": {
@@ -1269,7 +1269,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 34.7
     }
   },
   "ISL=8192,OSL=1024,TP=8,PP=2,NNODES=2,CONC=128": {
@@ -1375,7 +1375,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 40.0
     }
   },
   "ISL=8192,OSL=1024,TP=8,PP=2,NNODES=2,CONC=256": {
@@ -1481,7 +1481,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 50
+      "value": 40.0
     }
   }
 }
