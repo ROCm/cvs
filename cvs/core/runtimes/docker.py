@@ -245,7 +245,7 @@ class DockerRuntime:
         redirects) run inside the container -- docker exec uses execve with
         no implicit shell.
         """
-        exec_cmd = f"docker exec {container_name} bash -c {shlex.quote(cmd)}"
+        exec_cmd = with_sudo_fallback(f"docker exec {container_name} bash -c {shlex.quote(cmd)}")
         if hosts:
             # Build a fresh Pssh for the host subset, mirroring
             # BaremetalOrchestrator.exec's subset branch.
@@ -287,7 +287,7 @@ class DockerRuntime:
     def exec_on_head(self, container_name, cmd, timeout=None):
         """Execute command directly on head node (container). See exec() for
         the bash -c wrap rationale."""
-        exec_cmd = f"docker exec {container_name} bash -c {shlex.quote(cmd)}"
+        exec_cmd = with_sudo_fallback(f"docker exec {container_name} bash -c {shlex.quote(cmd)}")
         return self.orchestrator.head.exec(exec_cmd, timeout=timeout)
 
     @staticmethod

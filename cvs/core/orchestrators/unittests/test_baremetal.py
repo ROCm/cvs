@@ -71,6 +71,30 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         self.assertTrue(orch.cleanup(orch.hosts))
 
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_build_mpi_cmd_hostfile_cleanup_uses_sudo_fallback(self, _mock_pssh):
+        # The stale-hostfile `rm -f` on the head node must use the same
+        # `cmd || sudo -n cmd` fallback as every other privileged command,
+        # not an unconditional sudo or a plain command that fails outright
+        # when sudo is actually required.
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.head.exec.return_value = {"10.0.0.1": {"output": "", "exit_code": 0}}
+
+        orch.build_mpi_cmd(
+            rank_cmd="echo hi",
+            mpi_hosts=["10.0.0.1", "10.0.0.2"],
+            ranks_per_host=1,
+            env_vars={},
+            mpi_install_dir="/opt/mpi",
+        )
+
+        first_call_cmd = orch.head.exec.call_args_list[0][0][0]
+        self.assertNotRegex(
+            first_call_cmd, r"^sudo rm", f"hostfile cleanup must not hardcode unconditional sudo:\n{first_call_cmd}"
+        )
+        self.assertIn(" || sudo -n ", first_call_cmd)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 #     AMD-only docker without the AMD container toolkit.
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from cvs.core.runtimes.docker import DockerRuntime
 
@@ -286,6 +286,58 @@ class TestDockerRuntimeExecCmdList(unittest.TestCase):
             )
             self.assertIn(" || sudo -n ", cmd)
             self.assertTrue(cmd.startswith("docker exec cvs_iter_test bash -c "))
+
+
+class TestDockerRuntimeExec(unittest.TestCase):
+    def test_exec_uses_sudo_fallback(self):
+        # exec() must render the same `cmd || sudo -n cmd` fallback as every
+        # other docker invocation in this file -- a plain, un-sudo'd `docker
+        # exec` would fail outright on hosts where the SSH user isn't in the
+        # docker group.
+        orchestrator = MagicMock()
+        orchestrator.all.exec.return_value = {"host1": {"output": "", "exit_code": 0}}
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.exec("cvs_iter_test", "echo hi")
+
+        rendered = orchestrator.all.exec.call_args[0][0]
+        self.assertNotRegex(rendered, r"^sudo docker exec", f"must not hardcode unconditional sudo:\n{rendered}")
+        self.assertIn(" || sudo -n ", rendered)
+        self.assertTrue(rendered.startswith("docker exec cvs_iter_test bash -c "))
+
+    def test_exec_with_hosts_subset_uses_sudo_fallback(self):
+        # The hosts-subset branch builds its own Pssh and must render the
+        # same fallback form as the default (all-hosts) branch.
+        orchestrator = MagicMock()
+        orchestrator.log = MagicMock()
+        orchestrator.user = "u"
+        orchestrator.password = None
+        orchestrator.pkey = None
+        orchestrator.stop_on_errors = False
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        with patch("cvs.lib.parallel_ssh_lib.Pssh") as mock_pssh_cls:
+            mock_pssh = MagicMock()
+            mock_pssh.exec.return_value = {"host1": {"output": "", "exit_code": 0}}
+            mock_pssh_cls.return_value = mock_pssh
+
+            rt.exec("cvs_iter_test", "echo hi", hosts=["host1"])
+
+            rendered = mock_pssh.exec.call_args[0][0]
+            self.assertNotRegex(rendered, r"^sudo docker exec", f"must not hardcode unconditional sudo:\n{rendered}")
+            self.assertIn(" || sudo -n ", rendered)
+
+    def test_exec_on_head_uses_sudo_fallback(self):
+        orchestrator = MagicMock()
+        orchestrator.head.exec.return_value = {"output": "", "exit_code": 0}
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.exec_on_head("cvs_iter_test", "echo hi")
+
+        rendered = orchestrator.head.exec.call_args[0][0]
+        self.assertNotRegex(rendered, r"^sudo docker exec", f"must not hardcode unconditional sudo:\n{rendered}")
+        self.assertIn(" || sudo -n ", rendered)
+        self.assertTrue(rendered.startswith("docker exec cvs_iter_test bash -c "))
 
 
 if __name__ == "__main__":
