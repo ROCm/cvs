@@ -21,11 +21,15 @@ from typing import Any, Optional
 from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_disagg_lib import (
     LM_EVAL_SPECS,
+    _DEFAULT_ADD_CLI_FLAGS,
+    _DEFAULT_ADD_EXPORT_ENV,
     _as_node_list,
     _coerce_sglang_actual,
     _first_float,
     _normalize_sglang_threshold_spec,
     _resolve_client_host,
+    add_cli_flags_block,
+    add_export_env_block,
     textwrap_for_yml,
 )
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
@@ -134,6 +138,8 @@ class SglangSingle:
         self.bp_dict.setdefault('tensor_parallelism', '8')
         self.bp_dict.setdefault('memory_fraction', '0.85')
         self.bp_dict.setdefault('inference_poll_iterations', '16')
+        self.bp_dict.setdefault('add_export_env', list(_DEFAULT_ADD_EXPORT_ENV))
+        self.bp_dict.setdefault('add_flags', list(_DEFAULT_ADD_CLI_FLAGS))
 
     def setup_server_container_env(self) -> None:
         """Write and source ``/tmp/server_env_script.sh`` on the benchmark node."""
@@ -149,6 +155,7 @@ class SglangSingle:
                     export MODEL={self.bp_dict['model']}
                     export TP={self.bp_dict['tensor_parallelism']}
                     export HF_TOKEN={self.hf_token}
+{add_export_env_block(self.bp_dict)}
                     '  > /tmp/server_env_script.sh"
                     '''
         time.sleep(3)
@@ -162,10 +169,6 @@ class SglangSingle:
         """Launch one unified SGLang server (no PD disaggregation)."""
         log.info('Launch unified SGLang server on 0.0.0.0:%s', self.router_serv_port)
         launch_body = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
-                      export SGLANG_USE_AITER=1
-                      export AMDGCN_USE_BUFFER_OPS=1
-                      export ROCM_QUICK_REDUCE_QUANTIZATION=INT8
-                      export GPU_ARCHS=gfx942
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --host 0.0.0.0 \
                               --port {self.router_serv_port} \
@@ -175,7 +178,7 @@ class SglangSingle:
                               --tp-size {self.bp_dict['tensor_parallelism']} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
-                              --attention-backend aiter \
+{add_cli_flags_block(self.bp_dict)}
                               --log-level {self.inf_dict['log_level']}' > /tmp/server_launch_script.sh" '''
         self.b_phdl.exec(textwrap_for_yml(launch_body))
         start_cmd = f'''docker exec {self.container_name} /bin/bash -c " \
@@ -303,6 +306,7 @@ class SglangSingle:
 
     def benchserv_test_random(self, d_type='auto') -> None:
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
+        self._bench_num_prompts = int(i_dict['num_prompts'])
         cmd = f'''docker exec {self.container_name} /bin/bash -c  "
                       mkdir -p {self.log_dir}/benchmark_node; \
                       source /tmp/server_env_script.sh && \
@@ -366,6 +370,21 @@ class SglangSingle:
                 val = _first_float(pattern, text)
                 if val:
                     self.inference_results_dict[node][key] = val
+
+            # Goodput: successful_requests / total_requests
+            total_req = _first_float(r'Total requests:\s+([0-9]+)', text)
+            failed_req = _first_float(r'Failed requests:\s+([0-9]+)', text)
+            succ = self.inference_results_dict[node].get('successful_requests')
+            if total_req:
+                self.inference_results_dict[node]['total_requests'] = total_req
+            elif succ is not None and failed_req is not None:
+                self.inference_results_dict[node]['total_requests'] = str(int(succ) + int(failed_req))
+            elif succ is not None and getattr(self, '_bench_num_prompts', None) is not None:
+                self.inference_results_dict[node]['total_requests'] = str(int(self._bench_num_prompts))
+            if succ and self.inference_results_dict[node].get('total_requests'):
+                s, t = int(succ), int(self.inference_results_dict[node]['total_requests'])
+                self.inference_results_dict[node]['goodput'] = f'{(s / t):.6f}' if t else None
+
         return self.inference_results_dict
 
     def poll_for_inference_completion(
