@@ -5,7 +5,7 @@ All rights reserved.
 Single-node SGLang inference controller (no PD disaggregation).
 
 One container on ``benchmark_serv_node`` runs a unified ``sglang.launch_server``
-on ``prefill_serv_port``. Benchmark/smoke/lm-eval traffic hits that port directly.
+on ``router_serv_port``. Benchmark/smoke/lm-eval traffic hits that port directly.
 '''
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ class SglangSingle:
         )
         self.benchmark_serv_node = _as_node_list(self.inf_dict['benchmark_serv_node'])
         self.serv_host = self.benchmark_serv_node[0]
-        self.serv_port = str(self.inf_dict['prefill_serv_port'])
+        self.serv_port = str(self.inf_dict['proxy_router_serv_port'])
 
         self.b_phdl = b_phdl
         if self.b_phdl is None:
@@ -110,7 +110,7 @@ class SglangSingle:
         self.inf_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.inf_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
         self.inf_dict.setdefault('log_level', 'info')
-        self.inf_dict.setdefault('prefill_serv_port', '30001')
+        self.inf_dict.setdefault('prefill_serv_port', '8000')
 
     def _apply_bp_defaults(self) -> None:
         self.bp_dict.setdefault('backend', 'sglang')
@@ -134,7 +134,6 @@ class SglangSingle:
                     export HSA_FORCE_FINE_GRAIN_PCIE=1
                     export MODEL={self.bp_dict['model']}
                     export TP={self.bp_dict['tensor_parallelism']}
-                    export PP={self.bp_dict['pipeline_parallelism']}
                     export HF_TOKEN={self.hf_token}
                     '  > /tmp/server_env_script.sh"
                     '''
@@ -152,7 +151,6 @@ class SglangSingle:
                       export SGLANG_USE_AITER=1
                       export AMDGCN_USE_BUFFER_OPS=1
                       export ROCM_QUICK_REDUCE_QUANTIZATION=INT8
-                      export GPU_ARCHS=gfx942
                       python3 -m sglang.launch_server --model {self.bp_dict['model']} \
                               --host {self.serv_host} \
                               --port {self.serv_port} \
@@ -160,7 +158,6 @@ class SglangSingle:
                               --kv-cache-dtype {kv_cache_dtype} \
                               --trust-remote-code \
                               --tp-size {self.bp_dict['tensor_parallelism']} \
-                              --pp-size {self.bp_dict['pipeline_parallelism']} \
                               --disable-radix-cache --disable-cuda-graph \
                               --mem-fraction-static {self.bp_dict['memory_fraction']} \
                               --attention-backend aiter \
@@ -197,27 +194,7 @@ class SglangSingle:
         time.sleep(120)
         self.poll_for_server_ready()
 
-    # ------------------------------------------------------------------
-    # Names shared with sglang_disagg_distributed tests (no-op where N/A).
-    # ------------------------------------------------------------------
-    def setup_prefill_container_env(self) -> None:
-        self.setup_server_container_env()
-
-    def launch_prefill_servers(self, dtype='auto', kv_cache_dtype='auto') -> None:
-        self.launch_server(dtype=dtype, kv_cache_dtype=kv_cache_dtype)
-
-    def setup_decode_container_env(self) -> None:
-        log.info('Single-node run: no separate decode env')
-
-    def launch_decode_servers(self, dtype='auto', kv_cache_dtype='auto') -> None:
-        log.info('Single-node run: no separate decode server')
-
-    def setup_proxy_router_container_env(self) -> None:
-        log.info('Single-node run: no router')
-
-    def launch_proxy_router(self) -> None:
-        log.info('Single-node run: no router')
-
+    
     def setup_benchmark_serv_container_env(self) -> None:
         self.setup_server_container_env()
 
