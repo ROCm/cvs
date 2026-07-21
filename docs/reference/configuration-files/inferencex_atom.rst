@@ -20,7 +20,7 @@ The suite checks:
 
 Configs use flat ``*_config.json`` + sibling ``*_threshold.json`` pairs under
 ``cvs/input/config_file/inference/inferencex_atom/``. Filename pattern:
-``{gpu}_inferencex-atom-single_{model}_{precision}[_{mode}]_config.json``.
+``{gpu}_inferencex-atom_{model}_{precision}[_{mode}]_config.json``.
 Pass ``--config_file`` to the ``*_config.json``; :func:`cvs.lib.utils.config_loader.substitute_config`
 discovers the sole sibling ``*threshold.json`` in the **config file's parent directory** when
 ``threshold_json`` is omitted. If that directory contains more than one ``*threshold.json``,
@@ -85,10 +85,10 @@ Example variant layout
 Each stem has ``<stem>_config.json`` (``schema_version: 1``, ``framework: inferencex_atom``)
 and sibling ``<stem>_threshold.json``. In the CVS source tree many stems share one directory;
 on a lab machine, copy only the pair you need into a per-variant subdirectory (or set
-``threshold_json``). See ``mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json``
+``threshold_json``). See ``mi300x_inferencex-atom_deepseek-r1_fp8_perf_config.json``
 for the W1 MI300X reference.
 
-.. dropdown:: Example ``mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json`` (excerpt)
+.. dropdown:: Example ``mi300x_inferencex-atom_deepseek-r1_fp8_perf_threshold.json`` (excerpt)
 
   .. code:: json
 

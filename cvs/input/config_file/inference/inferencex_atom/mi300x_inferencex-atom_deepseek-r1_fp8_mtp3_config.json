@@ -4,7 +4,7 @@
   "framework": "inferencex_atom",
   "gpu_arch": "mi300x",
   "enforce_thresholds": false,
-  "threshold_json": "mi300x_inferencex-atom-single_deepseek-r1_fp8_mtp3_threshold.json",
+  "threshold_json": "mi300x_inferencex-atom_deepseek-r1_fp8_mtp3_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
     "notes": "MI300X MTP3 lab reference Section 4.2"

@@ -4,10 +4,10 @@
   "framework": "inferencex_atom",
   "gpu_arch": "mi300x",
   "enforce_thresholds": true,
-  "threshold_json": "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_baseline_sweep_multinode_threshold.json",
+  "threshold_json": "mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_multinode_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "MI300X 2-node DTNI baseline matrix; portable threshold floors until lab calibration"
+    "notes": "MI300X 2-node DTNI baseline matrix; scaling gates calibrated from lab run 20260715"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",

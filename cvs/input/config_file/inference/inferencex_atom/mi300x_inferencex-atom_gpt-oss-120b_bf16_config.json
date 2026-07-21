@@ -4,7 +4,7 @@
   "framework": "inferencex_atom",
   "gpu_arch": "mi300x",
   "enforce_thresholds": false,
-  "threshold_json": "mi300x_inferencex-atom-single_gpt-oss-120b_bf16_threshold.json",
+  "threshold_json": "mi300x_inferencex-atom_gpt-oss-120b_bf16_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/home/models",
