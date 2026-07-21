@@ -126,20 +126,8 @@
                           "num_concurrent": "4",
                           "exec_timeout_sec": "7200",
                           "extra_model_args": "tokenizer_backend=huggingface"
-                      },
-                      "lm_eval_mmlu":
-                      {
-                          "backend": "sglang",
-                          "lm_eval_model": "local-completions",
-                          "tasks": "mmlu",
-                          "num_fewshot": "5",
-                          "batch_size": "auto",
-                          "limit": "1",
-                          "num_concurrent": "1",
-                          "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface"
-		      }
-
+                      }
+                      
                   }
              },
         "kimi-k2.6":
@@ -157,6 +145,8 @@
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
 		 "context_length": "205000",
+		 "add_export_env": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8", "GPU_ARCHS=gfx942"],
+		 "add_flags": ["--attention-backend aiter"],
 		 "inference_tests":
 		  {
 		      "bench_serv_random":
@@ -207,20 +197,7 @@
                           "num_concurrent": "4",
                           "exec_timeout_sec": "7200",
                           "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
-                      },
-                      "lm_eval_mmlu":
-                      {
-                          "backend": "sglang",
-                          "lm_eval_model": "local-completions",
-                          "tasks": "mmlu",
-                          "num_fewshot": "5",
-                          "batch_size": "auto",
-                          "limit": "1",
-                          "num_concurrent": "1",
-                          "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
                       }
-
 
 		  }
              },
@@ -239,6 +216,8 @@
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
 		 "context_length": "205000",
+		 "add_export_env": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8", "GPU_ARCHS=gfx942"],
+		 "add_flags": ["--attention-backend aiter"],
 		 "inference_tests":
 		  {
 		      "bench_serv_random":
@@ -289,21 +268,8 @@
                           "num_concurrent": "4",
                           "exec_timeout_sec": "7200",
                           "extra_model_args": "tokenizer_backend=huggingface"
-                      },
-                      "lm_eval_mmlu":
-                      {
-                          "backend": "sglang",
-                          "lm_eval_model": "local-completions",
-                          "tasks": "mmlu",
-                          "num_fewshot": "5",
-                          "batch_size": "auto",
-                          "limit": "1",
-                          "num_concurrent": "1",
-                          "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface"
                       }
-
-
+                     
 		  }
              },
 			 "glm-52-fp8":
@@ -321,6 +287,8 @@
 				 "tokenizer_mode": "auto",
 				 "inference_poll_iterations": "16",
 				 "context_length": "205000",
+				 "add_export_env": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8", "GPU_ARCHS=gfx942"],
+		 		 "add_flags": ["--attention-backend aiter"],
 				 "inference_tests":
 				 {
 					 "bench_serv_random":
@@ -371,18 +339,6 @@
 						 "num_concurrent": "4",
 						 "exec_timeout_sec": "7200",
 						 "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
-					 },
-					 "lm_eval_mmlu":
-					 {
-						 "backend": "sglang",
-						 "lm_eval_model": "local-completions",
-						 "tasks": "mmlu",
-						 "num_fewshot": "5",
-						 "batch_size": "auto",
-						 "limit": "1",
-						 "num_concurrent": "1",
-						 "exec_timeout_sec": "7200",
-						 "extra_model_args": "tokenizer_backend=huggingface,trust_remote_code=True"
 					 }
 				 }
 			 },
@@ -400,6 +356,8 @@
 		 "tokenizer_mode": "auto",
 		 "inference_poll_iterations": "16",
 		 "context_length": "205000",
+		 "add_export_env": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8", "GPU_ARCHS=gfx942"],
+		 "add_flags": ["--attention-backend aiter"],
 		 "inference_tests":
 		 {
 		      "bench_serv_random":
@@ -448,18 +406,6 @@
                           "batch_size": "auto",
                           "limit": "100",
                           "num_concurrent": "4",
-                          "exec_timeout_sec": "7200",
-                          "extra_model_args": "tokenizer_backend=huggingface"
-                      },
-		    "lm_eval_mmlu":
-                      {
-                          "backend": "sglang",
-                          "lm_eval_model": "local-completions",
-                          "tasks": "mmlu",
-                          "num_fewshot": "5",
-                          "batch_size": "auto",
-                          "limit": "1",
-                          "num_concurrent": "1",
                           "exec_timeout_sec": "7200",
                           "extra_model_args": "tokenizer_backend=huggingface"
                       }

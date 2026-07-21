@@ -1457,11 +1457,6 @@ class SglangDisaggPD:
     def run_lm_eval_gsm8k_benchmark_test(self, _d_type="auto"):
         return self.run_lm_eval_benchmark_test("lm_eval_gsm8k", _d_type=_d_type)
 
-    # Helper functions for running MMLU benchmarks
-    def run_lm_eval_mmlu_benchmark_test(self, _d_type="auto"):
-        return self.run_lm_eval_benchmark_test("lm_eval_mmlu", _d_type=_d_type)
-
-
     # Helper function for running LM-Eval benchmarks    
     def run_lm_eval_benchmark_test(self, bench_key: str, _d_type="auto"):
         spec = LM_EVAL_SPECS[bench_key]
