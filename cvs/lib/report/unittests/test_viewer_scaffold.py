@@ -61,6 +61,9 @@ def test_write_interactive_viewer(tmp_path):
     assert "interactivity-block" in text
     assert "interactivity-chart-wrap" in text
     assert "buildInteractivityChart" in text
+    assert "tradeoff-block" not in text
+    assert "per-shape-block" not in text
+    assert "percentile-block" not in text
     assert 'id="overview"' in text
 
 
