@@ -5,18 +5,19 @@ All rights reserved.
 InferenceX ATOM job driven by a ContainerOrchestrator (single- or multi-node).
 
 ``params.driver=atom`` (target): ``atom.entrypoints.openai_server`` +
-``atom.benchmarks.benchmark_serving`` with ATOM JSON artifacts.
+``atom.benchmarks.benchmark_serving`` with ATOM JSON artifacts. Standalone ATOM
+has no native pipeline parallel; multinode ``atom`` uses SPMD data parallel
+(``-dp`` + ``ATOM_DP_*``) when scale-out is needed.
 
-``params.driver=vllm`` (interim uplift): ``vllm serve`` + ``vllm bench serve``.
+``params.driver=vllm_atom``: ``vllm serve`` + ``vllm bench serve`` with vLLM as
+the multinode coordinator (``--pipeline-parallel-size``, ``--node-rank``, …)
+while ATOM accelerates local kernels via ROCm vLLM env flags.
 
-When ``params.nnodes`` > 1 the job launches one ATOM server per cluster host.
-For ``driver=atom``, multinode uses ATOM SPMD data-parallel env vars
-(``ATOM_DP_*``) plus ``-dp N`` when each node has enough GPUs for local DP
-replicas (``tensor_parallelism * nnodes <= 8``). With TP8 across two 8-GPU
-nodes, each host runs an independent ``-tp 8`` replica (no ``-dp``) because
-ATOM cannot place two local DP ranks when TP already consumes all eight GPUs;
-the benchmark client still runs on the head node only. For ``driver=vllm``,
-multinode keeps vLLM's ``--node-rank`` / ``--master-addr`` flags.
+``params.driver=sglang``: ``sglang.launch_server`` + ``sglang.bench_serving`` with
+SGLang PP flags (``--pp-size``, ``--nnodes``, ``--dist-init-addr``).
+
+``params.driver=vllm`` (interim uplift): same coordinator path as ``vllm_atom``
+without the ATOM-specific ROCm env block.
 
 Does NOT subclass :class:`cvs.lib.inference.base.InferenceBaseJob`.
 '''
@@ -130,7 +131,9 @@ class InferenceXAtomJob:
         self.models_dir = variant.paths.models_dir
         self.serve_args = self._merged_serve_args(variant)
         self.atom_server_args = list(variant.roles.server.atom_args)
+        self.sglang_server_args = list(variant.roles.server.sglang_args)
         self.server_env = dict(variant.roles.server.env)
+        self.ib_netdev = (getattr(variant.roles.server, "ib_netdev", None) or "").strip()
 
         self.out_dir = self._node_out_dir(0)
         self.server_log = self._rank_server_log(0)
@@ -185,10 +188,29 @@ class InferenceXAtomJob:
     def _node_out_dir(self, rank):
         return f"{self.log_dir}/{self.log_subdir}/out-node{rank}/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
 
+    def _uses_vllm_serve(self):
+        return self.driver in ("vllm", "vllm_atom")
+
+    def _uses_sglang_serve(self):
+        return self.driver == "sglang"
+
+    def _framework_coordinator_label(self):
+        if self.driver == "atom":
+            return "atom"
+        if self._uses_sglang_serve():
+            return "sglang"
+        return "vllm"
+
+    def _rank_server_log_name(self):
+        if self.driver == "atom":
+            return "atom_server.log"
+        if self._uses_sglang_serve():
+            return "sglang_server.log"
+        return "vllm_serve_server.log"
+
     def _rank_server_log(self, rank):
         base = self._node_out_dir(rank)
-        name = "atom_server.log" if self.driver == "atom" else "vllm_serve_server.log"
-        return f"{base}/{name}"
+        return f"{base}/{self._rank_server_log_name()}"
 
     def _exec_all(self, cmd, **kwargs):
         return self.orch.exec(cmd, **kwargs)
@@ -253,16 +275,25 @@ class InferenceXAtomJob:
             out.append(tok)
         return out
 
-    def _atom_spmd_dp_cli(self):
-        """Return ``-dp N`` argv when local GPUs can host *N* TP shards on one node."""
+    def _atom_spmd_dp_enabled(self):
+        """True when CVS should wire multinode ATOM SPMD data parallel (``-dp`` + ``ATOM_DP_*``)."""
         if self.driver != "atom" or not self.distributed:
-            return []
-        tp = int(self.tp)
-        if tp * self.nnodes > 8:
-            return []
+            return False
         atom_argv = self._without_vllm_distributed_flags(self.atom_server_args)
         if self._argv_has_flag(atom_argv, "-dp", "--data-parallel-size"):
+            return False
+        return True
+
+    def _atom_spmd_dp_cli(self):
+        """Return ``-dp nnodes`` for coupled multinode ATOM replicas (one DP rank per host)."""
+        if not self._atom_spmd_dp_enabled():
             return []
+        tp = int(self.tp)
+        if tp > 8:
+            raise RuntimeError(
+                f"params.tensor_parallelism={tp} exceeds ATOM local TP limit (8); "
+                "multinode SPMD runs one TP group per node"
+            )
         return ["-dp", str(self.nnodes)]
 
     def _atom_multinode_argv(self):
@@ -270,7 +301,7 @@ class InferenceXAtomJob:
         return self._atom_spmd_dp_cli()
 
     def _atom_spmd_env_exports(self, rank):
-        if self.driver != "atom" or not self.distributed or not self._atom_spmd_dp_cli():
+        if not self._atom_spmd_dp_enabled():
             return []
         return [
             f"export ATOM_DP_RANK={rank}",
@@ -283,7 +314,7 @@ class InferenceXAtomJob:
     def _vllm_distributed_argv(self, rank):
         if not self.distributed:
             return []
-        return [
+        argv = [
             "--node-rank",
             str(rank),
             "--master-addr",
@@ -297,13 +328,16 @@ class InferenceXAtomJob:
             "--distributed-executor-backend",
             "mp",
         ]
+        if rank > 0:
+            argv.append("--headless")
+        return argv
 
     def build_server_cmd(self, *, clear_atom_cache=True):
         env_lines = [
             f"export HF_TOKEN={shlex.quote(self.hf_token)}",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
         ]
-        if self.driver == "vllm":
+        if self._uses_vllm_serve():
             env_lines.extend(
                 [
                     "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
@@ -311,6 +345,10 @@ class InferenceXAtomJob:
                     "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
                 ]
             )
+        elif self._uses_sglang_serve():
+            env_lines.append("export SGLANG_USE_AITER=1")
+        if self.distributed and self.ib_netdev:
+            env_lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
         for k, v in self.server_env.items():
             if k in ("CVS_GPU_MEMORY_UTIL", "VLLM_GPU_MEMORY_UTIL", "VLLM_ENFORCE_EAGER"):
                 continue
@@ -343,6 +381,49 @@ class InferenceXAtomJob:
         argv.extend(self._flatten_serve_args(self.serve_args))
         return argv
 
+    def _sglang_server_argv(self, rank=0):
+        argv = [
+            "python3",
+            "-m",
+            "sglang.launch_server",
+            "--model-path",
+            self.model_id,
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(self.port_no),
+            "--tp",
+            str(self.tp),
+        ]
+        if self.distributed:
+            dist_init = f"{self.master_addr}:{self.master_port}"
+            argv.extend(
+                [
+                    "--pp-size",
+                    str(self.pp),
+                    "--nnodes",
+                    str(self.nnodes),
+                    "--node-rank",
+                    str(rank),
+                    "--dist-init-addr",
+                    dist_init,
+                ]
+            )
+        argv.extend(self.sglang_server_args)
+        return argv
+
+    def _server_argv_for_driver(self, rank=0):
+        if self.driver == "atom":
+            return self._atom_server_argv(rank)
+        if self._uses_vllm_serve():
+            return self._server_argv(rank)
+        if self._uses_sglang_serve():
+            return self._sglang_server_argv(rank)
+        raise RuntimeError(
+            f"unsupported params.driver={self.driver!r}; "
+            "expected 'atom', 'vllm', 'vllm_atom', or 'sglang'"
+        )
+
     def _atom_server_argv(self, rank=0):
         argv = [
             "python",
@@ -364,15 +445,10 @@ class InferenceXAtomJob:
                 f"params.nnodes={self.nnodes} but cluster has {len(hosts)} host(s); "
                 "align cluster node_dict with params.nnodes"
             )
-        label = "atom" if self.driver == "atom" else "vllm"
+        label = self._framework_coordinator_label()
         launch_hosts = enumerate(hosts) if self.distributed else [(0, hosts[0])]
         for rank, host in launch_hosts:
-            if self.driver == "atom":
-                argv = self._atom_server_argv(rank)
-            elif self.driver == "vllm":
-                argv = self._server_argv(rank)
-            else:
-                raise RuntimeError(f"unsupported params.driver={self.driver!r}; expected 'atom' or 'vllm'")
+            argv = self._server_argv_for_driver(rank)
             serve_cmd = " ".join(shlex.quote(str(a)) for a in argv)
             rank_log = self._rank_server_log(rank)
             rank_env = " && ".join(self._atom_spmd_env_exports(rank))
@@ -449,7 +525,7 @@ class InferenceXAtomJob:
         out = self._tail_server_logs(30)
         for host, output in out.items():
             if self.EARLY_FAILURE_RE.search(output or ""):
-                label = "atom" if self.driver == "atom" else "vllm"
+                label = self._framework_coordinator_label()
                 raise RuntimeError(f"{label} server early failure on {host}: {output[-500:]}")
 
         log.info("warmup wait %ds", self._warmup_wait)
@@ -531,6 +607,40 @@ class InferenceXAtomJob:
             argv.extend(shlex.split(self.bench_extra_args))
         return argv
 
+    def _sglang_client_argv(self):
+        return [
+            "python3",
+            "-m",
+            "sglang.bench_serving",
+            "--backend",
+            "sglang",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(self.port_no),
+            "--dataset-name",
+            self.dataset_name,
+            "--num-prompts",
+            self.num_prompts,
+            "--random-input",
+            self.isl,
+            "--random-output",
+            self.osl,
+            "--random-range-ratio",
+            self.random_range_ratio,
+            "--max-concurrency",
+            self.concurrency,
+            "--request-rate",
+            self.request_rate,
+        ]
+
+    def _client_argv(self):
+        if self.driver == "atom":
+            return self._atom_client_argv()
+        if self._uses_sglang_serve():
+            return self._sglang_client_argv()
+        return self._vllm_client_argv()
+
     def _vllm_client_argv(self):
         return [
             "vllm",
@@ -583,7 +693,7 @@ class InferenceXAtomJob:
 
     def run_client(self):
         self._clear_stale_result_artifact()
-        args = self._atom_client_argv() if self.driver == "atom" else self._vllm_client_argv()
+        args = self._client_argv()
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
         client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
         self._exec_head("bash -c " + shlex.quote(client_cmd))
