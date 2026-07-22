@@ -68,6 +68,7 @@ RDMA-ready container; the keys below are only needed to extend or override.
 | `security_opt` | list | `["seccomp=unconfined","apparmor=unconfined"]` (appended) | Security profile relaxations needed for RDMA + ptrace. |
 | `group_add` | list | `["video"]` (appended) | Supplementary groups inside the container. |
 | `ulimit` | list | `["memlock=-1"]` (appended) | Per-process resource limits. `memlock=-1` is required for RDMA. |
+| `registry` | dict | none | Optional registry login before pulling a private image (e.g. `rocm/ufb-private`). Keys: `username` (str), `password_file` (str, path *on each remote host* to a file containing the password/token), `server` (str, optional; omit for Docker Hub). Runs `docker login` via `--password-stdin` so the credential never appears in a command line or log. Only applied when `image_tar` is not set (a tar load never needs a pull). |
 
 ## `lifetime` truth table (setup + teardown semantics)
 

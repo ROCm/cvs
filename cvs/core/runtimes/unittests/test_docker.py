@@ -131,5 +131,121 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
                 )
 
 
+class TestDockerRuntimeRegistryLogin(unittest.TestCase):
+    def test_registry_login_requires_username_and_password_file(self):
+        captured = []
+        rt = _make_runtime(captured)
+        self.assertFalse(rt.registry_login({}))
+        self.assertFalse(rt.registry_login({"username": "u"}))
+        self.assertFalse(rt.registry_login({"password_file": "/tmp/pw"}))
+
+    def test_registry_login_sudo_covers_entire_pipeline(self):
+        # Regression test: `docker login` is the SECOND stage of the
+        # `cat pwfile | docker login ...` pipe. The whole pipeline is wrapped
+        # in `sh -c '...'` so `sudo` governs all of it, never just the first
+        # token of the pipe.
+        login_cmds = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            login_cmds.append(cmd)
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.registry_login({"username": "u", "password_file": "/tmp/pw"})
+
+        self.assertEqual(len(login_cmds), 1)
+        cmd = login_cmds[0]
+        # The pipeline must be wrapped as a single command (`sh -c '...'`)
+        # immediately after `sudo`, so sudo governs the whole pipeline -- not
+        # `sudo cat ... | docker login ...` with docker login left as a
+        # trailing, unprivileged pipe stage outside sudo's reach.
+        self.assertRegex(cmd, r"^sudo (sh|bash) -c ")
+
+    def test_registry_login_pipes_password_file_via_stdin_not_command_line(self):
+        # The password/token must never appear as a --password flag: only the
+        # *path* to the credential file appears in the rendered command, piped
+        # into `docker login --password-stdin`.
+        login_cmds = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            login_cmds.append(cmd)
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        result = rt.registry_login({"username": "myuser", "password_file": "/home/myuser/.docker_token"})
+
+        self.assertTrue(result)
+        self.assertEqual(len(login_cmds), 1)
+        cmd = login_cmds[0]
+        self.assertIn("cat /home/myuser/.docker_token", cmd)
+        self.assertIn("--password-stdin", cmd)
+        self.assertIn("--username myuser", cmd)
+        self.assertNotIn("--password ", cmd)
+
+    def test_registry_login_reports_failure_on_bad_exit_code(self):
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.return_value = {"host1": {"output": "", "exit_code": 1}}
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        self.assertFalse(rt.registry_login({"username": "u", "password_file": "/tmp/pw"}))
+
+    def test_setup_containers_logs_in_before_pull_when_registry_configured(self):
+        calls = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            calls.append(cmd)
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        cfg = _container_config(
+            image="rocm/ufb-private:latest",
+            extra_runtime_args={"registry": {"username": "myuser", "password_file": "/tmp/token"}},
+        )
+        result = rt.setup_containers(container_config=cfg, container_name="cvs_iter_test", volumes=[])
+
+        self.assertTrue(result)
+        login_calls = [c for c in calls if "docker login" in c]
+        run_calls = [c for c in calls if "docker run" in c]
+        self.assertEqual(len(login_calls), 1)
+        self.assertEqual(len(run_calls), 1)
+        # Login must happen before the run that needs the pull.
+        self.assertLess(calls.index(login_calls[0]), calls.index(run_calls[0]))
+
+    def test_setup_containers_skips_login_when_image_tar_present(self):
+        # A tar load never needs a registry pull, so no login should be attempted
+        # even if 'registry' is configured (e.g. left over from another profile).
+        calls = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            calls.append(cmd)
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        cfg = _container_config(
+            extra_runtime_args={"registry": {"username": "myuser", "password_file": "/tmp/token"}},
+            image_tar="/tmp/image.tar",
+        )
+        rt.setup_containers(container_config=cfg, container_name="cvs_iter_test", volumes=[])
+
+        self.assertFalse(any("docker login" in c for c in calls))
+
+
 if __name__ == "__main__":
     unittest.main()
