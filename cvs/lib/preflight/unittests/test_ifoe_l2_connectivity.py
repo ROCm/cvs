@@ -8,8 +8,11 @@ from unittest.mock import MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
 from cvs.lib.preflight.ifoe_l2_connectivity import (
+    AfmctlPortParser,
     AfmctlPingParser,
     IfoeL2ConnectivityCheck,
+    expand_accelerator_ranges,
+    parse_accelerator_ranges,
     parse_afmctl_show_device,
 )
 
@@ -66,6 +69,80 @@ Spec:
 """
 
 
+SHOW_DEVICE_VPOD_OUTPUT = """\
+BDF                              : 0004:01:00.1
+Spec:
+  Accelerator id                 : 24
+  Local accelerators             : 24-27, 31
+  vPOD accelerators              : 24-31
+  Capability:
+    No. of network ports         : 72
+"""
+
+
+SHOW_PORT_JSON_OUTPUT = """\
+{
+  "devices": [
+    {
+      "bdf": "0004:01:00.1",
+      "ports": [
+        {"port": 0, "state": "UP"},
+        {"port_id": "1", "status": "DOWN"},
+        {"port_number": 2, "link_state": "UP"}
+      ]
+    }
+  ]
+}
+"""
+
+
+SHOW_PORT_TEXT_OUTPUT = """\
+BDF : 0004:01:00.1
+Port#    State
+0        UP
+1        DOWN
+2        UP
+"""
+
+
+FULL_MESH_SHOW_DEVICE_OUTPUT = """\
+BDF                              : 0001:01:00.1
+Spec:
+  Accelerator id                 : 0
+  Local accelerators             : 0-2
+  vPOD accelerators              : 0-2
+  Capability:
+    No. of network ports         : 72
+"""
+
+
+SHOW_PORT_ALL_DOWN_OUTPUT = """\
+BDF : 0001:01:00.1
+Port#    State
+0        DOWN
+1        DOWN
+"""
+
+
+def passing_output_for(destination_accelerator, ports=(0,), bdf='0001:01:00.1'):
+    """Build internally consistent one-ping AFM output for a destination."""
+    rows = '\n'.join(
+        f'{destination_accelerator:<11}{port:<10}1/1 PASS        1/1 PASS        1/1 PASS' for port in ports
+    )
+    total = len(ports)
+    return f"""\
+{bdf}                   : Ping test results (1 pings per port pair)
+Accel ID    Port#     IFoE Req        IFoE Rsp        Non-IFoE
+--------    -----     --------        ---------       --------
+{rows}
+
+Summary:
+  IFoE Request    : {total}/{total} PASS, 0/{total} fail (0.00% loss)
+  IFoE Response   : {total}/{total} PASS, 0/{total} fail (0.00% loss)
+  Non-IFoE        : {total}/{total} PASS, 0/{total} fail (0.00% loss)
+"""
+
+
 class TestAfmctlPingParser(unittest.TestCase):
     """Tests for the afmctl ping output parser."""
 
@@ -110,6 +187,11 @@ class TestAfmctlPingParser(unittest.TestCase):
         self.assertEqual(parsed['summary'], {})
         self.assertTrue(parsed['parse_errors'])
 
+    def test_duplicate_port_rows_fail_closed(self):
+        duplicate_row = '0           0         1/1 PASS        1/1 PASS        1/1 PASS\n'
+        parsed = AfmctlPingParser.parse(PASSING_OUTPUT.replace('\n\nSummary:', f'\n{duplicate_row}\nSummary:'))
+        self.assertTrue(any('Duplicate afmctl ping result row' in error for error in parsed['parse_errors']))
+
     def test_partial_loss_output(self):
         parsed = AfmctlPingParser.parse(PARTIAL_LOSS_OUTPUT)
         self.assertAlmostEqual(parsed['summary']['ifoe_req']['loss_pct'], 10.0)
@@ -141,6 +223,67 @@ class TestParseAfmctlShowDevice(unittest.TestCase):
 
     def test_garbage(self):
         self.assertEqual(parse_afmctl_show_device('bash: afmctl: command not found\n'), [])
+
+    def test_range_and_vpod_accelerators_are_expanded(self):
+        devices = parse_afmctl_show_device(SHOW_DEVICE_VPOD_OUTPUT)
+        self.assertEqual(len(devices), 1)
+        device = devices[0]
+        self.assertEqual(device['accelerator_id'], 24)
+        self.assertEqual(device['local_accelerators'], [24, 25, 26, 27, 31])
+        self.assertEqual(device['vpod_accelerators'], list(range(24, 32)))
+        self.assertFalse(device['parse_errors'])
+
+
+class TestAcceleratorRangeParsing(unittest.TestCase):
+    """Tests for safe accelerator-list/range parsing."""
+
+    def test_expands_ranges_preserving_first_seen_order(self):
+        values, errors = parse_accelerator_ranges(['24-27, 31', 24, '33 34-35'])
+        self.assertEqual(values, [24, 25, 26, 27, 31, 33, 34, 35])
+        self.assertEqual(errors, [])
+        self.assertEqual(expand_accelerator_ranges('0-2, 4'), [0, 1, 2, 4])
+
+    def test_malformed_ranges_are_reported_not_interpreted(self):
+        values, errors = parse_accelerator_ranges('24-22, 3x, -1, 7')
+        self.assertEqual(values, [7])
+        self.assertEqual(len(errors), 3)
+        self.assertTrue(any('Descending accelerator range' in error for error in errors))
+        self.assertTrue(any('Malformed accelerator ID/range' in error for error in errors))
+
+
+class TestAfmctlPortParser(unittest.TestCase):
+    """Tests for JSON and versioned-text ``show port --brief`` parsing."""
+
+    def test_json_port_inventory_is_scoped_to_bdf_and_selects_only_up(self):
+        parsed = AfmctlPortParser.parse(SHOW_PORT_JSON_OUTPUT)
+        self.assertEqual(parsed['format'], 'json')
+        inventory = parsed['ports_by_bdf']['0004:01:00.1']
+        self.assertEqual(set(inventory), {'0', '1', '2'})
+        self.assertEqual([port for port, entry in inventory.items() if entry['is_up']], ['0', '2'])
+        self.assertEqual(inventory['1']['state'], 'DOWN')
+        self.assertFalse(parsed['parse_errors'])
+
+    def test_text_v1_port_inventory_is_scoped_to_current_bdf(self):
+        parsed = AfmctlPortParser.parse(SHOW_PORT_TEXT_OUTPUT)
+        self.assertEqual(parsed['format'], 'text-v1')
+        inventory = parsed['ports_by_bdf']['0004:01:00.1']
+        self.assertEqual(inventory['0']['state'], 'UP')
+        self.assertFalse(inventory['1']['is_up'])
+        self.assertTrue(inventory['2']['is_up'])
+        self.assertFalse(parsed['parse_errors'])
+
+    def test_unknown_or_malformed_port_formats_fail_closed(self):
+        malformed_json = AfmctlPortParser.parse('{"ports": [{"port": 0, "state": "FLAPPING"}]}')
+        self.assertEqual(malformed_json['format'], 'json')
+        self.assertFalse(malformed_json['ports_by_bdf'])
+        self.assertFalse(malformed_json['unscoped_ports'])
+        self.assertTrue(any('Unknown port state' in error for error in malformed_json['parse_errors']))
+
+        unknown_text = AfmctlPortParser.parse('afmctl version 99\nthere are some ports\n')
+        self.assertEqual(unknown_text['format'], 'text-v1')
+        self.assertFalse(unknown_text['ports_by_bdf'])
+        self.assertFalse(unknown_text['unscoped_ports'])
+        self.assertTrue(any('Could not locate' in error for error in unknown_text['parse_errors']))
 
 
 class TestIfoeL2ConnectivityCheck(unittest.TestCase):
@@ -180,7 +323,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             traffic_types=['ifoe_req'],
         )
         cmd = check.build_ping_command('0001:01:00.1', 3)
-        self.assertTrue(cmd.startswith('sudo /usr/local/bin/afmctl test ping'))
+        self.assertTrue(cmd.startswith('sudo -n /usr/local/bin/afmctl test ping'))
         self.assertIn('-b 0001:01:00.1', cmd)
         self.assertIn('-c 5', cmd)
         self.assertIn('-p 0,1,2', cmd)
@@ -202,11 +345,40 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         check = IfoeL2ConnectivityCheck(MagicMock(), traffic_types=['REQUEST', 'response', 'non-ifoe'])
         self.assertEqual(set(check.traffic_types), {'ifoe_req', 'ifoe_resp', 'non_ifoe'})
 
+    def test_invalid_bdf_or_bdf_discovery_mode_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'Invalid IFoE source BDF'):
+            IfoeL2ConnectivityCheck(MagicMock(), bdfs=['not-a-bdf'])
+        with self.assertRaisesRegex(ValueError, "bdf_discovery must be 'auto' or 'config'"):
+            IfoeL2ConnectivityCheck(MagicMock(), bdf_discovery='best-effort')
+
+    def test_targeted_executor_runs_only_on_requested_node_and_extracts_exit_status(self):
+        class TargetedPssh:
+            reachable_hosts = ['nodeA', 'nodeB']
+
+            def __init__(self):
+                self.command_list = None
+
+            def exec_cmd_list(self, commands, timeout=None, print_console=True):
+                self.command_list = commands
+                return {
+                    'nodeA': '',
+                    'nodeB': 'ping output\n__CVS_AFMCTL_EXIT_STATUS__=7\n',
+                }
+
+        phdl = TargetedPssh()
+        check = IfoeL2ConnectivityCheck(phdl)
+        execution = check._exec_on_node('nodeB', 'afmctl test ping --example')
+
+        self.assertEqual(phdl.command_list[0], 'true')
+        self.assertIn('afmctl test ping --example', phdl.command_list[1])
+        self.assertIn('__CVS_AFMCTL_EXIT_STATUS__', phdl.command_list[1])
+        self.assertEqual(execution, {'output': 'ping output', 'exit_status': 7})
+
     def test_run_passes_with_explicit_bdfs(self):
         phdl = self._make_phdl(
             reachable_hosts=['nodeA', 'nodeB'],
             exec_responses=[
-                {'nodeA': PASSING_OUTPUT, 'nodeB': PASSING_OUTPUT},
+                {'nodeA': passing_output_for(0), 'nodeB': passing_output_for(0)},
             ],
         )
         check = IfoeL2ConnectivityCheck(
@@ -285,19 +457,19 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             reachable_hosts=['nodeA', 'nodeB'],
             exec_responses=[
                 {'nodeA': SHOW_DEVICE_OUTPUT, 'nodeB': 'bash: afmctl: command not found\n'},
-                {'nodeA': PASSING_OUTPUT, 'nodeB': 'bash: afmctl: command not found\n'},
+                {'nodeA': passing_output_for(1)},
             ],
         )
         check = IfoeL2ConnectivityCheck(
             phdl,
-            dst_accelerators=[0],
+            dst_accelerators=[1],
             bdf_discovery='auto',
         )
         results = check.run()
         self.assertEqual(results['nodeA']['status'], 'PASS')
         self.assertEqual(results['nodeB']['status'], 'FAIL')
         self.assertTrue(
-            any('No IFoE BDFs configured' in e for e in results['nodeB']['errors']),
+            any('No IFoE source BDFs available' in e for e in results['nodeB']['errors']),
             f"expected discovery failure message, got: {results['nodeB']['errors']}",
         )
 
@@ -305,8 +477,8 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         phdl = self._make_phdl(
             reachable_hosts=['nodeA'],
             exec_responses=[
-                {'nodeA': PASSING_OUTPUT},
-                {'nodeA': PASSING_OUTPUT},
+                {'nodeA': passing_output_for(0)},
+                {'nodeA': passing_output_for(1)},
             ],
         )
         check = IfoeL2ConnectivityCheck(
@@ -320,6 +492,171 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         accel_block = results['nodeA']['accelerators']['0001:01:00.1']
         self.assertEqual(set(accel_block.keys()), {'0', '1'})
         self.assertEqual(phdl.exec.call_count, 2)
+
+    def test_full_mesh_plans_ordered_nonself_destinations(self):
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA'],
+            exec_responses=[
+                {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
+                {'nodeA': passing_output_for(1)},
+                {'nodeA': passing_output_for(2)},
+            ],
+        )
+        check = IfoeL2ConnectivityCheck(
+            phdl,
+            mesh_mode='full_mesh',
+            ports=[0],
+            bdf_discovery='auto',
+        )
+
+        results = check.run()
+
+        node = results['nodeA']
+        self.assertEqual(node['status'], 'PASS')
+        self.assertEqual([cell['dst_accelerator'] for cell in node['plan']], [1, 2])
+        self.assertTrue(all(cell['dst_accelerator'] != cell['source_accelerator'] for cell in node['plan']))
+        self.assertEqual(
+            node['coverage'],
+            {
+                'expected_pairs': 2,
+                'planned_pairs': 2,
+                'expected_invocations': 2,
+                'completed_invocations': 2,
+                'complete': True,
+            },
+        )
+        executed_commands = [call.args[0] for call in phdl.exec.call_args_list]
+        self.assertIn('--dst-accelerator 1', executed_commands[1])
+        self.assertIn('--dst-accelerator 2', executed_commands[2])
+        self.assertNotIn('--dst-accelerator 0', '\n'.join(executed_commands[1:]))
+
+    def test_up_port_discovery_filters_down_ports_from_ping(self):
+        port_inventory = """\
+BDF : 0001:01:00.1
+Port#    State
+0        UP
+1        DOWN
+2        UP
+"""
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA'],
+            exec_responses=[
+                {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
+                {'nodeA': port_inventory},
+                {'nodeA': passing_output_for(1, ports=(0, 2))},
+            ],
+        )
+        check = IfoeL2ConnectivityCheck(
+            phdl,
+            bdfs=['0001:01:00.1'],
+            dst_accelerators=[1],
+            ports='up',
+            port_discovery='auto',
+            bdf_discovery='config',
+        )
+
+        results = check.run()
+
+        node = results['nodeA']
+        self.assertEqual(node['status'], 'PASS')
+        self.assertEqual(node['port_inventory']['0001:01:00.1']['up_ports'], [0, 2])
+        invocation = node['accelerators']['0001:01:00.1']['1']
+        self.assertEqual(invocation['selected_ports'], [0, 2])
+        self.assertIn('-p 0,2', invocation['command'])
+        self.assertEqual(set(invocation['parsed']['ports']), {'0', '2'})
+        self.assertTrue(node['coverage']['complete'])
+
+    def test_no_up_ports_fails_closed_without_issuing_ping(self):
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA'],
+            exec_responses=[
+                {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
+                {'nodeA': SHOW_PORT_ALL_DOWN_OUTPUT},
+            ],
+        )
+        check = IfoeL2ConnectivityCheck(
+            phdl,
+            bdfs=['0001:01:00.1'],
+            dst_accelerators=[1],
+            ports='up',
+            port_discovery='auto',
+            bdf_discovery='config',
+        )
+
+        results = check.run()
+
+        node = results['nodeA']
+        self.assertEqual(node['status'], 'FAIL')
+        self.assertEqual(node['port_inventory']['0001:01:00.1']['up_ports'], [])
+        self.assertEqual(node['plan'], [])
+        self.assertFalse(node['coverage']['complete'])
+        self.assertTrue(any(issue['category'] == 'PORT_DISCOVERY_ERROR' for issue in node['error_details']))
+        self.assertTrue(any(issue['category'] == 'COVERAGE_ERROR' for issue in node['error_details']))
+        self.assertEqual(phdl.exec.call_count, 2)
+
+    def test_nonzero_ping_exit_status_fails_even_when_output_is_passing(self):
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA'],
+            exec_responses=[
+                {'nodeA': {'output': passing_output_for(1), 'exit_code': 3}},
+            ],
+        )
+        check = IfoeL2ConnectivityCheck(
+            phdl,
+            bdfs=['0001:01:00.1'],
+            dst_accelerators=[1],
+            bdf_discovery='config',
+        )
+
+        results = check.run()
+
+        invocation = results['nodeA']['accelerators']['0001:01:00.1']['1']
+        self.assertEqual(results['nodeA']['status'], 'FAIL')
+        self.assertEqual(invocation['failure_category'], 'COMMAND_ERROR')
+        self.assertTrue(any('exited with status 3' in error for error in invocation['errors']))
+
+    def test_missing_result_bdf_fails_closed(self):
+        output_without_banner = '\n'.join(passing_output_for(1).splitlines()[1:])
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA'],
+            exec_responses=[{'nodeA': output_without_banner}],
+        )
+        check = IfoeL2ConnectivityCheck(
+            phdl,
+            bdfs=['0001:01:00.1'],
+            dst_accelerators=[1],
+            bdf_discovery='config',
+        )
+
+        results = check.run()
+
+        invocation = results['nodeA']['accelerators']['0001:01:00.1']['1']
+        self.assertEqual(results['nodeA']['status'], 'FAIL')
+        self.assertEqual(invocation['failure_category'], 'PARSE_ERROR')
+        self.assertTrue(any('did not identify the requested source BDF' in error for error in invocation['errors']))
+
+    def test_strict_full_mesh_requires_vpod_membership(self):
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA'],
+            exec_responses=[{'nodeA': SHOW_DEVICE_OUTPUT}],
+        )
+        check = IfoeL2ConnectivityCheck(
+            phdl,
+            mesh_mode='full_mesh',
+            ports=[0],
+            bdf_discovery='auto',
+            strict_discovery=True,
+        )
+
+        results = check.run()
+
+        node = results['nodeA']
+        self.assertEqual(node['status'], 'FAIL')
+        self.assertEqual(node['plan'], [])
+        self.assertFalse(node['coverage']['complete'])
+        self.assertTrue(
+            any('vPOD accelerator membership is unavailable' in error for error in node['errors'])
+        )
 
 
 if __name__ == '__main__':

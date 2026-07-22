@@ -324,15 +324,23 @@ class PreflightReportGenerator(PreflightCheck):
         failed_nodes = list(
             ifoe_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
         )
+        coverage = ifoe_results.get('coverage') or {}
+        missing_nodes = list(coverage.get('missing_nodes') or [])
+        incomplete_nodes = list(coverage.get('incomplete_nodes') or [])
+        coverage_complete = coverage.get('complete', not missing_nodes and not incomplete_nodes)
         passing_nodes = total_nodes - len(failed_nodes)
         total_invocations = int(ifoe_results.get('total_invocations', 0))
         failed_invocations = int(ifoe_results.get('failed_invocations', 0))
-        status = 'PASS' if not failed_nodes else 'FAIL'
+        status = 'PASS' if not failed_nodes and coverage_complete else 'FAIL'
         summary_text = f"{passing_nodes}/{total_nodes} nodes passed IFoE L2 ping"
         if total_invocations:
             summary_text += (
                 f"; {total_invocations - failed_invocations}/{total_invocations} afmctl invocations succeeded"
             )
+        if missing_nodes:
+            summary_text += f"; {len(missing_nodes)} required node(s) not tested"
+        if incomplete_nodes:
+            summary_text += f"; {len(incomplete_nodes)} node(s) had incomplete coverage"
         return {
             'status': status,
             'total_nodes': total_nodes,
@@ -340,6 +348,9 @@ class PreflightReportGenerator(PreflightCheck):
             'failed_nodes': failed_nodes,
             'total_invocations': total_invocations,
             'failed_invocations': failed_invocations,
+            'missing_nodes': missing_nodes,
+            'incomplete_nodes': incomplete_nodes,
+            'coverage_complete': coverage_complete,
             'summary': summary_text,
         }
 
@@ -930,21 +941,85 @@ class PreflightReportGenerator(PreflightCheck):
         failed_invocations = int(ifoe_results.get('failed_invocations', 0))
         loss_threshold = ifoe_results.get('loss_threshold_pct', 0.0)
         traffic_types = ifoe_results.get('traffic_types') or []
+        mesh_mode = ifoe_results.get('mesh_mode', 'config')
+        ports = ifoe_results.get('ports', 'all')
+        failure_mode = ifoe_results.get('failure_mode', 'report')
+        coverage = ifoe_results.get('coverage') or {}
+        missing_nodes = coverage.get('missing_nodes') or []
+        incomplete_nodes = coverage.get('incomplete_nodes') or []
+        coverage_complete = coverage.get('complete', not missing_nodes and not incomplete_nodes)
 
         header = f"""
         <section>
             <h2>IFoE L2 Connectivity (afmctl)</h2>
             <p>Tested via <code>afmctl test ping</code>.
+            Mesh mode: <code>{html.escape(str(mesh_mode))}</code>;
+            port selection: <code>{html.escape(str(ports))}</code>;
+            result mode: <code>{html.escape(str(failure_mode))}</code>;
             Traffic types enforced: <code>{html.escape(", ".join(str(t) for t in traffic_types))}</code>;
             loss threshold: <code>{html.escape(str(loss_threshold))}%</code>;
             invocations: <code>{total_invocations - failed_invocations}/{total_invocations}</code> succeeded.</p>
         """
 
+        coverage_rows = []
+        for node in sorted(node_results):
+            node_block = node_results[node]
+            node_coverage = node_block.get('coverage') or {}
+            port_inventory = node_block.get('port_inventory') or {}
+            up_port_parts = []
+            for bdf, port_info in sorted(port_inventory.items()):
+                up_ports = port_info.get('up_ports') or []
+                up_port_parts.append(f"{bdf}: {len(up_ports)} UP")
+            up_ports_text = "; ".join(up_port_parts) or "not discovered"
+            coverage_rows.append(
+                "<tr>"
+                f"<td><code>{html.escape(str(node))}</code></td>"
+                f"<td>{html.escape(str(node_block.get('status', 'UNKNOWN')))}</td>"
+                f"<td>{html.escape(str(node_coverage.get('expected_pairs', '—')))}</td>"
+                f"<td>{html.escape(str(node_coverage.get('planned_pairs', '—')))}</td>"
+                f"<td>{html.escape(str(node_coverage.get('expected_invocations', '—')))}</td>"
+                f"<td>{html.escape(str(node_coverage.get('completed_invocations', '—')))}</td>"
+                f"<td>{html.escape(up_ports_text)}</td>"
+                f"<td>{'complete' if node_coverage.get('complete', True) else 'incomplete'}</td>"
+                "</tr>"
+            )
+        coverage_note = "complete" if coverage_complete else "incomplete"
+        coverage_detail = []
+        if missing_nodes:
+            coverage_detail.append("missing required nodes: " + ", ".join(str(n) for n in missing_nodes))
+        if incomplete_nodes:
+            coverage_detail.append("incomplete node coverage: " + ", ".join(str(n) for n in incomplete_nodes))
+        coverage_table = f"""
+            <h3>Mesh and Port Coverage</h3>
+            <p><strong>Overall coverage:</strong> <span class="status-{'pass' if coverage_complete else 'fail'}">{coverage_note}</span>
+            {html.escape('; '.join(coverage_detail))}</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node</th><th>Result</th><th>Expected pairs</th><th>Planned pairs</th>
+                        <th>Expected invocations</th><th>Completed invocations</th><th>Selected source ports</th><th>Coverage</th>
+                    </tr>
+                </thead>
+                <tbody>{''.join(coverage_rows)}</tbody>
+            </table>
+        """
+
+        if not failed_nodes and coverage_complete:
+            return (
+                header
+                + coverage_table
+                + """
+            <p class="status-pass">All reachable nodes passed IFoE L2 ping.</p>
+        </section>
+        """
+            )
+
         if not failed_nodes:
             return (
                 header
+                + coverage_table
                 + """
-            <p class="status-pass">All reachable nodes passed IFoE L2 ping.</p>
+            <p class="error-summary">IFoE L2 execution completed, but the required mesh coverage was incomplete.</p>
         </section>
         """
             )
@@ -953,10 +1028,12 @@ class PreflightReportGenerator(PreflightCheck):
         for node in failed_nodes:
             node_block = node_results[node]
             node_errors = node_block.get('errors') or []
+            node_has_failed_invocation = False
             for bdf, invocations in (node_block.get('accelerators') or {}).items():
                 for dst, invocation in invocations.items():
                     if invocation.get('status') != 'FAIL':
                         continue
+                    node_has_failed_invocation = True
                     parsed = invocation.get('parsed') or {}
                     summary_lines = []
                     for ttype, label in (
@@ -1019,7 +1096,7 @@ class PreflightReportGenerator(PreflightCheck):
                     <td>{detail_html}</td>
                 </tr>
                 """)
-            if not (node_block.get('accelerators') or {}) and node_errors:
+            if not node_has_failed_invocation and node_errors:
                 node_err_html = (
                     "<ul style='margin:6px 0;color:#721c24;'>"
                     + "".join(f"<li>{html.escape(str(e))}</li>" for e in node_errors)
@@ -1028,7 +1105,7 @@ class PreflightReportGenerator(PreflightCheck):
                 rows.append(f"""
                 <tr>
                     <td><code>{html.escape(str(node))}</code></td>
-                    <td colspan='3'><em>No afmctl invocations completed</em></td>
+                    <td colspan='3'><em>No failed afmctl invocation was recorded</em></td>
                     <td>{node_err_html}</td>
                 </tr>
                 """)
@@ -1056,7 +1133,7 @@ class PreflightReportGenerator(PreflightCheck):
         """
         )
 
-        return header + table
+        return header + coverage_table + table
 
     def _generate_transferbench_smoke_html(self, tb_results):
         """Generate TransferBench smoketest section (AIMVT-181)."""

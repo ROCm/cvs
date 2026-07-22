@@ -189,10 +189,21 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - Optional explicit list of accelerator BDFs to test on every node
   - Example: `["0001:01:00.1"]`
 - **`dst_accelerators`** (default: `[0]`)
-  - One afmctl invocation is issued per `(bdf, dst_accelerator)` combination
-- **`ports`** (default: `"all"`)
-  - `"all"` (omit `-p`), a string like `"0-7"` or `"0,1,2"`, or a list `[0, 1, 2]`
-- **`pings_per_port`** (default: `1`)
+  - Compatibility-only destination list for `mesh_mode: "config"`
+  - Do not use a shared static list for a rack with node-specific global accelerator IDs
+- **`mesh_mode`** (default: `"config"`; benchmark recommendation: `"full_mesh"`)
+  - `"config"` — preserve the legacy `(source BDF, dst_accelerator)` combinations
+  - `"full_mesh"` — discover source accelerator IDs and vPOD membership, then test every ordered non-self source-to-peer pair
+  - A full mesh excludes `source == destination`; a self-ping is an invalid coverage cell, not a fabric result
+  - With `strict_discovery: true`, a missing vPOD membership list fails the gate rather than silently substituting a local-only mesh. Set strict discovery to `false` only for a diagnostic run while collecting the missing hardware fixture.
+- **`ports`** (default: `"all"`; benchmark recommendation: `"up"`)
+  - `"up"` discovers the UP ports for every source BDF with `afmctl show port --brief` and supplies them explicitly through `-p`
+  - `"all"` omits `-p`, a string such as `"0-7"` or `"0,1,2"`, or a list `[0, 1, 2]`
+  - `"all"` can include intentionally down or unwired ports and therefore must not be used for a strict benchmark gate
+- **`port_discovery`** (default: `"auto"`)
+  - Used with `ports: "up"`; CVS prefers a structured afmctl response when available and otherwise uses a defensive text parser
+  - If the hardware's output is unknown or malformed, strict discovery fails closed rather than falling back to all ports
+- **`pings_per_port`** (default: `1`; benchmark recommendation: `3`)
   - Passed to afmctl as `-c <count>`
 - **`per_ping_timeout`** (default: `null`)
   - Optional afmctl `-t <seconds>` value; omitted when `null`
@@ -203,6 +214,16 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - Maximum tolerated loss percentage per traffic type (Summary line)
 - **`ssh_timeout`** (default: `180`)
   - Per-invocation SSH timeout (seconds); raise for high `pings_per_port`
+- **`require_complete_coverage`** (default: `true`)
+  - Require every planned source, non-self destination, selected UP port, and invocation result to be present
+  - Required nodes lost to an earlier preflight prune are reported as missing coverage, rather than silently reducing the mesh
+- **`strict_discovery`** (default: `true`)
+  - Treat missing/malformed topology, vPOD membership, or port state as a failure
+- **`failure_mode`** (default: `"report"`; benchmark recommendation: `"gate"`)
+  - `"report"` preserves diagnostic-only preflight behavior
+  - `"gate"` records the detailed report and then fails pytest/CLI if L2 results or coverage fail
+
+> **MI4XX rack validation required.** `afmctl show port --brief` JSON/text formats and the exact UP-state field names must be captured from the target image before `ports: "up"` is used as an admission gate. Until then, use this implementation for parser and coverage validation against saved fixtures, not as proof of on-rack behavior.
 
 #### TransferBench Settings (`connectivity_check.transferbench`) — opt-in (AIMVT-181)
 

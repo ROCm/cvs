@@ -456,7 +456,26 @@ def test_gid_consistency(phdl, config_dict):
     preflight_update_test_result()
 
 
-def test_ifoe_l2_connectivity(phdl, config_dict):
+def _ifoe_failure_mode(config_dict):
+    """Return the normalized IFoE outcome policy.
+
+    ``report`` preserves the historical diagnostic-only behavior.  ``gate``
+    turns a completed IFoE L2 preflight failure into a pytest failure after
+    the structured result has been recorded for HTML reporting.
+    """
+    value = get_nested_config(config_dict, 'connectivity_check.ifoe', 'failure_mode', 'report')
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+    else:
+        normalized = 'gate' if value else 'report'
+    if normalized in ('gate', 'strict', 'fail', 'required'):
+        return 'gate'
+    if normalized in ('report', 'report_only', 'warn', 'warning'):
+        return 'report'
+    raise ValueError("connectivity_check.ifoe.failure_mode must be 'gate' or 'report'")
+
+
+def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     """
     Test IFoE L2 connectivity using ``afmctl test ping`` (AIMVT-180).
 
@@ -467,13 +486,16 @@ def test_ifoe_l2_connectivity(phdl, config_dict):
     Configuration lives under ``connectivity_check.ifoe`` in the preflight
     config file. The check is opt-in: when ``connectivity_mode`` is
     ``"skip"`` (or omitted) the test records a SKIPPED result and returns
-    without contacting nodes. Nodes that fail L2 ping are reported but are
+    without contacting nodes.  When ``failure_mode`` is ``"gate"``, any
+    IFoE failure or missing required cluster node fails pytest after the
+    structured report payload has been saved. Nodes that fail L2 ping are
     **not** pruned from ``phdl`` — operators can decide whether to proceed
-    with downstream RDMA / RCCL testing.
+    with downstream RDMA / RCCL testing in report-only mode.
     """
     global preflight_results
 
     mode = get_nested_config(config_dict, 'connectivity_check.ifoe', 'connectivity_mode', 'skip')
+    failure_mode = _ifoe_failure_mode(config_dict)
     if isinstance(mode, str):
         mode_normalized = mode.strip().lower()
     else:
@@ -490,22 +512,36 @@ def test_ifoe_l2_connectivity(phdl, config_dict):
         preflight_update_test_result()
         return
 
+    declared_nodes = sorted(cluster_dict.get('node_dict', {}).keys())
     if not phdl.reachable_hosts:
+        message = "No reachable nodes available for IFoE L2 connectivity testing"
         log.warning("IFoE L2 connectivity skipped: no reachable hosts remain after earlier preflight pruning")
         preflight_results['ifoe_l2_connectivity'] = {
             'mode': mode_normalized,
-            'skipped': True,
-            'message': 'No reachable nodes available for IFoE L2 connectivity testing',
+            'skipped': failure_mode != 'gate',
+            'status': 'FAIL' if failure_mode == 'gate' else 'SKIPPED',
+            'message': message,
             'node_results': {},
+            'failure_mode': failure_mode,
+            'coverage': {
+                'expected_nodes': declared_nodes,
+                'tested_nodes': [],
+                'missing_nodes': declared_nodes,
+                'complete': False,
+            },
         }
         preflight_update_test_result()
+        if failure_mode == 'gate':
+            pytest.fail(message)
         return
 
     afmctl_path = get_nested_config(config_dict, 'connectivity_check.ifoe', 'afmctl_path', 'afmctl')
     bdfs = get_nested_config(config_dict, 'connectivity_check.ifoe', 'bdfs', [])
     bdf_discovery = get_nested_config(config_dict, 'connectivity_check.ifoe', 'bdf_discovery', 'auto')
     dst_accelerators = get_nested_config(config_dict, 'connectivity_check.ifoe', 'dst_accelerators', [0])
+    mesh_mode = get_nested_config(config_dict, 'connectivity_check.ifoe', 'mesh_mode', 'config')
     ports = get_nested_config(config_dict, 'connectivity_check.ifoe', 'ports', 'all')
+    port_discovery = get_nested_config(config_dict, 'connectivity_check.ifoe', 'port_discovery', 'auto')
     pings_per_port = get_nested_config(config_dict, 'connectivity_check.ifoe', 'pings_per_port', 1)
     per_ping_timeout = get_nested_config(config_dict, 'connectivity_check.ifoe', 'per_ping_timeout', None)
     traffic_types = get_nested_config(
@@ -513,20 +549,30 @@ def test_ifoe_l2_connectivity(phdl, config_dict):
     )
     loss_threshold_pct = get_nested_config(config_dict, 'connectivity_check.ifoe', 'loss_threshold_pct', 0.0)
     ssh_timeout = get_nested_config(config_dict, 'connectivity_check.ifoe', 'ssh_timeout', 180)
+    require_complete_coverage = _config_flag_enabled(
+        get_nested_config(config_dict, 'connectivity_check.ifoe', 'require_complete_coverage', True), default=True
+    )
+    strict_discovery = _config_flag_enabled(
+        get_nested_config(config_dict, 'connectivity_check.ifoe', 'strict_discovery', True), default=True
+    )
     use_sudo = _config_flag_enabled(
         get_nested_config(config_dict, 'connectivity_check.ifoe', 'use_sudo', False), default=False
     )
 
     log.info(
-        "Running IFoE L2 connectivity (afmctl=%s, bdf_discovery=%s, dst_accelerators=%s, "
-        "ports=%s, pings_per_port=%s, traffic_types=%s, loss_threshold_pct=%s) on %d host(s)",
+        "Running IFoE L2 connectivity (afmctl=%s, bdf_discovery=%s, mesh_mode=%s, "
+        "dst_accelerators=%s, ports=%s, port_discovery=%s, pings_per_port=%s, "
+        "traffic_types=%s, loss_threshold_pct=%s, failure_mode=%s) on %d host(s)",
         afmctl_path,
         bdf_discovery,
+        mesh_mode,
         dst_accelerators,
         ports,
+        port_discovery,
         pings_per_port,
         traffic_types,
         loss_threshold_pct,
+        failure_mode,
         len(phdl.reachable_hosts),
     )
 
@@ -535,7 +581,9 @@ def test_ifoe_l2_connectivity(phdl, config_dict):
         afmctl_path=afmctl_path,
         bdfs=bdfs if isinstance(bdfs, (list, tuple)) else [],
         dst_accelerators=dst_accelerators,
+        mesh_mode=mesh_mode,
         ports=ports,
+        port_discovery=port_discovery,
         pings_per_port=pings_per_port,
         per_ping_timeout=per_ping_timeout,
         traffic_types=traffic_types,
@@ -543,12 +591,19 @@ def test_ifoe_l2_connectivity(phdl, config_dict):
         ssh_timeout=ssh_timeout,
         use_sudo=use_sudo,
         bdf_discovery=bdf_discovery,
+        require_complete_coverage=require_complete_coverage,
+        strict_discovery=strict_discovery,
         config_dict=config_dict,
     )
 
     node_results = checker.run()
 
     failed_nodes = [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+    tested_nodes = sorted(node_results.keys())
+    missing_nodes = sorted(set(declared_nodes) - set(tested_nodes))
+    incomplete_nodes = sorted(
+        n for n, r in node_results.items() if not (r.get('coverage') or {}).get('complete', True)
+    )
     total_invocations = 0
     failed_invocations = 0
     for r in node_results.values():
@@ -560,7 +615,7 @@ def test_ifoe_l2_connectivity(phdl, config_dict):
                 if invocation.get('status') == 'FAIL':
                     failed_invocations += 1
 
-    summary_status = 'FAIL' if failed_nodes else 'PASS'
+    summary_status = 'FAIL' if failed_nodes or missing_nodes or (require_complete_coverage and incomplete_nodes) else 'PASS'
     preflight_results['ifoe_l2_connectivity'] = {
         'mode': mode_normalized,
         'skipped': False,
@@ -572,18 +627,38 @@ def test_ifoe_l2_connectivity(phdl, config_dict):
         'failed_invocations': failed_invocations,
         'loss_threshold_pct': loss_threshold_pct,
         'traffic_types': list(traffic_types) if isinstance(traffic_types, (list, tuple)) else [traffic_types],
+        'mesh_mode': mesh_mode,
+        'ports': ports,
+        'port_discovery': port_discovery,
+        'failure_mode': failure_mode,
+        'require_complete_coverage': require_complete_coverage,
+        'strict_discovery': strict_discovery,
+        'coverage': {
+            'expected_nodes': declared_nodes,
+            'tested_nodes': tested_nodes,
+            'missing_nodes': missing_nodes,
+            'incomplete_nodes': incomplete_nodes,
+            'complete': not missing_nodes and (not require_complete_coverage or not incomplete_nodes),
+        },
     }
 
-    if failed_nodes:
+    if summary_status == 'FAIL':
         log.warning(
-            "IFoE L2 connectivity FAIL on %d/%d node(s): %s",
+            "IFoE L2 connectivity FAIL on %d/%d tested node(s): %s",
             len(failed_nodes),
             len(node_results),
-            ", ".join(failed_nodes),
+            ", ".join(failed_nodes) or 'coverage failure only',
         )
+        if missing_nodes:
+            log.error("IFoE L2 required nodes not tested: %s", ", ".join(missing_nodes))
+        if require_complete_coverage and incomplete_nodes:
+            log.error("IFoE L2 incomplete coverage on node(s): %s", ", ".join(incomplete_nodes))
         for node in failed_nodes:
-            for err in node_results[node].get('errors', []):
+            errors = node_results[node].get('errors', [])
+            for err in errors[:20]:
                 log.error("Node %s IFoE L2: %s", node, err)
+            if len(errors) > 20:
+                log.error("Node %s IFoE L2: %d additional errors suppressed; see report artifacts", node, len(errors) - 20)
     else:
         log.info(
             "IFoE L2 connectivity PASS on %d/%d nodes (%d/%d invocations succeeded)",
@@ -594,6 +669,12 @@ def test_ifoe_l2_connectivity(phdl, config_dict):
         )
 
     preflight_update_test_result()
+    if summary_status == 'FAIL' and failure_mode == 'gate':
+        pytest.fail(
+            "IFoE L2 preflight gate failed "
+            f"({len(failed_nodes)} failed node(s), {len(missing_nodes)} missing node(s), "
+            f"{len(incomplete_nodes)} incomplete node(s)); see preflight report"
+        )
 
 
 def test_ifoe_transferbench_smoke(phdl, config_dict):

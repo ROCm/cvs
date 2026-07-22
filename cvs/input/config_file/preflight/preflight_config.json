@@ -70,13 +70,19 @@
         "_comment_bdfs": "Optional explicit list of accelerator BDFs (e.g. ['0001:01:00.1']) shared across the cluster. Leave empty to defer to bdf_discovery='auto'.",
 
         "dst_accelerators": [0],
-        "_comment_dst_accelerators": "Destination accelerator IDs passed to --dst-accelerator. One afmctl ping is issued per (bdf, dst_accelerator). Use [0] for a single-accelerator destination; use a list like [0, 1] to ping multiple peers.",
+        "_comment_dst_accelerators": "Compatibility-only destination accelerator IDs used when mesh_mode='config'. For benchmark preflight, use mesh_mode='full_mesh' so CVS discovers all non-self peers rather than relying on a shared static global ID list.",
 
-        "ports": "all",
-        "_comment_ports": "Ports passed to -p. Use 'all' (default; omits -p so afmctl tests every port), a string like '0,1,2' or '0-7', or a list [0,1,2].",
+        "mesh_mode": "full_mesh",
+        "_comment_mesh_mode": "'full_mesh' builds every ordered non-self accelerator pair inside each discovered vPOD. 'config' preserves the legacy bdf x dst_accelerators behavior. Full mesh is the benchmark-preflight setting.",
 
-        "pings_per_port": 1,
-        "_comment_pings_per_port": "Value for -c (pings per port pair). Larger values smooth over transient losses.",
+        "ports": "up",
+        "_comment_ports": "'up' discovers each source BDF's operational ports with 'afmctl show port --brief' and passes only those IDs through -p. 'all' omits -p and is retained only for compatibility; it can report intentional down/unwired ports as packet loss.",
+
+        "port_discovery": "auto",
+        "_comment_port_discovery": "For ports='up', auto probes afmctl's supported brief/JSON output and fails closed if the port state cannot be parsed. 'config' requires an explicit port selection instead.",
+
+        "pings_per_port": 3,
+        "_comment_pings_per_port": "Value for -c (pings per selected UP port pair). Three samples reduce one-shot transient noise; lower only for short diagnostic runs.",
 
         "per_ping_timeout": null,
         "_comment_per_ping_timeout": "Optional value for afmctl's -t flag (per-ping timeout). Leave null to use afmctl's default.",
@@ -86,6 +92,15 @@
 
         "loss_threshold_pct": 0.0,
         "_comment_loss_threshold_pct": "Maximum tolerated packet loss percentage per traffic type. Defaults to 0.0 (any failure marks the node as FAIL).",
+
+        "require_complete_coverage": true,
+        "_comment_require_complete_coverage": "Fail when any planned source accelerator, non-self destination, selected UP port, or invocation result is missing. A benchmark gate must not silently shrink the mesh.",
+
+        "strict_discovery": true,
+        "_comment_strict_discovery": "Fail if afmctl topology/vPOD membership or UP-port discovery is unavailable, malformed, or ambiguous; do not fall back to testing all ports or a local-only mesh.",
+
+        "failure_mode": "gate",
+        "_comment_failure_mode": "'gate' makes an IFoE L2 failure fail pytest/CLI after recording diagnostics. 'report' is diagnostic-only and must not be used as the benchmark admission decision.",
 
         "ssh_timeout": 180,
         "_comment_ssh_timeout": "Overall SSH timeout (seconds) for each afmctl invocation. Increase for large port counts or high pings_per_port values."

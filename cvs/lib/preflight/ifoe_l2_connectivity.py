@@ -31,6 +31,7 @@ Example output parsed by :class:`AfmctlPingParser`::
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -73,6 +74,69 @@ _LABEL_TO_KEY: Dict[str, str] = {
     "ifoe response": "ifoe_resp",
     "non-ifoe": "non_ifoe",
 }
+
+_BDF_VALUE_PATTERN = re.compile(r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$")
+
+
+def _normalize_bdf(value) -> Optional[str]:
+    """Return a canonical BDF, or ``None`` when *value* is not a BDF."""
+    candidate = str(value).strip()
+    return candidate.lower() if _BDF_VALUE_PATTERN.match(candidate) else None
+
+
+def parse_accelerator_ranges(value) -> Tuple[List[int], List[str]]:
+    """Parse accelerator IDs and inclusive ranges without silently guessing.
+
+    AFM device output uses both ``24, 25`` and ``24-27`` forms.  This helper
+    accepts strings, integers, and nested lists/tuples, preserves first-seen
+    order, and returns malformed tokens separately so discovery can fail
+    closed when an AFM CLI format changes.
+    """
+    values: List[int] = []
+    errors: List[str] = []
+
+    def add(number: int) -> None:
+        if number not in values:
+            values.append(number)
+
+    def parse_item(item) -> None:
+        if item is None or isinstance(item, bool):
+            return
+        if isinstance(item, int):
+            if item < 0:
+                errors.append(f"Negative accelerator ID {item}")
+            else:
+                add(item)
+            return
+        if isinstance(item, (list, tuple)):
+            for child in item:
+                parse_item(child)
+            return
+        if not isinstance(item, str):
+            errors.append(f"Unsupported accelerator ID value {item!r}")
+            return
+        for token in re.split(r"[,\s]+", item.strip()):
+            if not token:
+                continue
+            match = re.match(r"^(\d+)(?:-(\d+))?$", token)
+            if not match:
+                errors.append(f"Malformed accelerator ID/range {token!r}")
+                continue
+            start = int(match.group(1))
+            end = int(match.group(2)) if match.group(2) is not None else start
+            if end < start:
+                errors.append(f"Descending accelerator range {token!r}")
+                continue
+            for number in range(start, end + 1):
+                add(number)
+
+    parse_item(value)
+    return values, errors
+
+
+def expand_accelerator_ranges(value) -> List[int]:
+    """Best-effort public shorthand for :func:`parse_accelerator_ranges`."""
+    return parse_accelerator_ranges(value)[0]
 
 
 def _normalize_label(label: str) -> str:
@@ -150,6 +214,9 @@ class AfmctlPingParser:
                 pm = _PER_PORT_PATTERN.match(stripped)
                 if pm:
                     port = pm.group("port")
+                    if port in result["ports"]:
+                        result["parse_errors"].append(f"Duplicate afmctl ping result row for port {port}")
+                        continue
                     result["ports"][port] = {
                         "accelerator_id": int(pm.group("accel")),
                         "ifoe_req": {
@@ -181,6 +248,7 @@ class AfmctlPingParser:
                         "pass": p,
                         "total": t,
                         "fail": f,
+                        "fail_total": int(sm.group("total2")),
                         "loss_pct": loss,
                         "status": "PASS" if f == 0 and p == t and t > 0 else "FAIL",
                     }
@@ -208,34 +276,57 @@ def parse_afmctl_show_device(output: str) -> List[Dict]:
 
     Returns:
         List of dicts with keys ``bdf``, ``accelerator_id``,
-        ``local_accelerators`` (list[int]), ``num_network_ports`` (int|None).
+        ``local_accelerators`` (list[int]), ``vpod_accelerators`` (list[int]),
+        ``num_network_ports`` (int|None), and ``parse_errors``.  Range-valued
+        accelerator fields are expanded, e.g. ``24-27`` becomes
+        ``[24, 25, 26, 27]``.
     """
     devices: List[Dict] = []
     cur: Optional[Dict] = None
     for raw in output.splitlines():
         line = raw.strip()
-        m = re.match(r"^BDF\s*:\s*([0-9a-fA-F:.\-]+)\s*$", line)
+        m = re.match(r"^BDF\s*:\s*([^\s]+)\s*$", line, re.IGNORECASE)
         if m:
             if cur:
                 devices.append(cur)
+            bdf = _normalize_bdf(m.group(1))
             cur = {
-                "bdf": m.group(1),
+                "bdf": bdf or m.group(1),
                 "accelerator_id": None,
                 "local_accelerators": [],
+                "vpod_accelerators": [],
                 "num_network_ports": None,
+                "parse_errors": ([] if bdf else [f"Malformed BDF {m.group(1)!r}"]),
             }
             continue
         if cur is None:
             continue
-        am = re.match(r"^Accelerator\s+id\s*:\s*(\d+)\s*$", line)
+        am = re.match(r"^Accelerator\s+id\s*:\s*(.+)$", line, re.IGNORECASE)
         if am:
-            cur["accelerator_id"] = int(am.group(1))
+            ids, errors = parse_accelerator_ranges(am.group(1).strip())
+            if len(ids) == 1:
+                cur["accelerator_id"] = ids[0]
+            elif not ids:
+                errors.append(f"Missing accelerator ID in {am.group(0)!r}")
+            else:
+                errors.append(f"Expected one accelerator ID, found {ids!r}")
+            cur["parse_errors"].extend(errors)
             continue
-        lm = re.match(r"^Local\s+accelerators\s*:\s*(.+)$", line)
+        lm = re.match(r"^Local\s+accelerators\s*:\s*(.+)$", line, re.IGNORECASE)
         if lm:
             raw_list = lm.group(1).strip()
             if raw_list and raw_list != "-":
-                cur["local_accelerators"] = [int(tok) for tok in re.split(r"[,\s]+", raw_list) if tok.isdigit()]
+                values, errors = parse_accelerator_ranges(raw_list)
+                cur["local_accelerators"] = values
+                cur["parse_errors"].extend(errors)
+            continue
+        vm = re.match(r"^v\s*pod\s+accelerators\s*:\s*(.+)$", line, re.IGNORECASE)
+        if vm:
+            raw_list = vm.group(1).strip()
+            if raw_list and raw_list != "-":
+                values, errors = parse_accelerator_ranges(raw_list)
+                cur["vpod_accelerators"] = values
+                cur["parse_errors"].extend(errors)
             continue
         nm = re.match(r"^No\.\s*of\s*network\s*ports\s*:\s*(\d+)\s*$", line, re.IGNORECASE)
         if nm:
@@ -246,25 +337,180 @@ def parse_afmctl_show_device(output: str) -> List[Dict]:
     return devices
 
 
+class AfmctlPortParser:
+    """Parse ``afmctl show port --brief`` without assuming a MI4XX schema.
+
+    The AFM JSON schema has not yet been captured from MI4XX hardware.  JSON
+    is therefore parsed by field semantics (``port`` + ``state`` and optional
+    ``bdf``) rather than by a guessed fixed tree.  The text parser is a
+    deliberately narrow ``text-v1`` fallback: it only accepts an explicit
+    ``Port``/``State`` table or labelled records.  Unknown formats return
+    parse errors rather than classifying all ports as DOWN.
+    """
+
+    _PORT_KEYS = ("port", "port_id", "port_number", "port_num", "port#")
+    _STATE_KEYS = ("state", "status", "port_state", "link_state")
+    _BDF_KEYS = ("bdf", "device_bdf", "pci_bdf")
+    _KNOWN_STATES = {
+        "UP",
+        "DOWN",
+        "UNKNOWN",
+        "DISABLED",
+        "ERROR",
+        "FAILED",
+        "INACTIVE",
+        "ACTIVE",
+    }
+
+    @classmethod
+    def parse(cls, output: str) -> Dict:
+        """Return structured port inventory from JSON or supported text.
+
+        The result has ``ports_by_bdf`` and ``unscoped_ports`` maps whose
+        values are ``{port_id: {port, state, is_up}}``.  A port is considered
+        UP only for the literal AFM state ``UP``; ``ACTIVE`` deliberately does
+        not become an optimistic synonym until a hardware fixture confirms it.
+        """
+        result: Dict = {
+            "format": None,
+            "ports_by_bdf": {},
+            "unscoped_ports": {},
+            "parse_errors": [],
+        }
+        if not output or not output.strip():
+            result["parse_errors"].append("Empty afmctl show port --brief output")
+            return result
+
+        stripped = output.lstrip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            try:
+                document = json.loads(output)
+            except json.JSONDecodeError as exc:
+                result["format"] = "json"
+                result["parse_errors"].append(f"Invalid afmctl port JSON: {exc.msg}")
+                return result
+            result["format"] = "json"
+            cls._parse_json(document, result)
+        else:
+            result["format"] = "text-v1"
+            cls._parse_text(output, result)
+
+        if not result["ports_by_bdf"] and not result["unscoped_ports"]:
+            result["parse_errors"].append("Could not locate port/state records in afmctl show port --brief output")
+        return result
+
+    @staticmethod
+    def _norm_key(key) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", str(key).strip().lower()).strip("_")
+
+    @classmethod
+    def _value_for(cls, item: Dict, keys: Tuple[str, ...]):
+        normalised = {cls._norm_key(key): value for key, value in item.items()}
+        for key in keys:
+            value = normalised.get(cls._norm_key(key))
+            if value is not None:
+                return value
+        return None
+
+    @classmethod
+    def _record(cls, result: Dict, port, state, bdf=None) -> None:
+        try:
+            if isinstance(port, bool):
+                raise ValueError
+            port_number = int(str(port).strip())
+            if port_number < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            result["parse_errors"].append(f"Malformed port ID {port!r}")
+            return
+        state_string = str(state).strip().upper().replace("-", "_").replace(" ", "_")
+        if state_string not in cls._KNOWN_STATES:
+            result["parse_errors"].append(f"Unknown port state {state!r} for port {port_number}")
+            return
+        entry = {"port": port_number, "state": state_string, "is_up": state_string == "UP"}
+        normalized_bdf = _normalize_bdf(bdf) if bdf is not None else None
+        if bdf is not None and not normalized_bdf:
+            result["parse_errors"].append(f"Malformed BDF {bdf!r} for port {port_number}")
+            return
+        target = result["ports_by_bdf"].setdefault(normalized_bdf, {}) if normalized_bdf else result["unscoped_ports"]
+        existing = target.get(str(port_number))
+        if existing and existing != entry:
+            result["parse_errors"].append(f"Conflicting states for port {port_number}")
+            return
+        target[str(port_number)] = entry
+
+    @classmethod
+    def _parse_json(cls, document, result: Dict) -> None:
+        def walk(value, inherited_bdf=None, candidate_port=None) -> None:
+            if isinstance(value, dict):
+                bdf = cls._value_for(value, cls._BDF_KEYS)
+                current_bdf = bdf if bdf is not None else inherited_bdf
+                port = cls._value_for(value, cls._PORT_KEYS)
+                if port is None:
+                    port = candidate_port
+                state = cls._value_for(value, cls._STATE_KEYS)
+                if port is not None and state is not None:
+                    cls._record(result, port, state, current_bdf)
+                for key, child in value.items():
+                    key_bdf = _normalize_bdf(key)
+                    child_bdf = key_bdf or current_bdf
+                    child_port = int(key) if str(key).isdigit() else None
+                    walk(child, child_bdf, child_port)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child, inherited_bdf, candidate_port)
+
+        walk(document)
+
+    @classmethod
+    def _parse_text(cls, output: str, result: Dict) -> None:
+        current_bdf: Optional[str] = None
+        table_mode = False
+        for raw in output.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            bdf_match = re.search(r"\bBDF\s*[:=]\s*([^\s,]+)", line, re.IGNORECASE)
+            if bdf_match:
+                current_bdf = _normalize_bdf(bdf_match.group(1))
+                if current_bdf is None:
+                    result["parse_errors"].append(f"Malformed BDF {bdf_match.group(1)!r} in port output")
+                # A BDF line may also contain a port record, so do not continue.
+
+            if re.search(r"\bport(?:\s*#|\s+id|\s+number)?\b", line, re.IGNORECASE) and re.search(
+                r"\b(?:state|status)\b", line, re.IGNORECASE
+            ):
+                table_mode = True
+
+            labelled = re.search(
+                r"\bport(?:\s*#|\s+id|\s+number)?\s*[:=]\s*(\d+).*?\b(?:state|status)\s*[:=]\s*([A-Za-z_-]+)",
+                line,
+                re.IGNORECASE,
+            )
+            if labelled:
+                cls._record(result, labelled.group(1), labelled.group(2), current_bdf)
+                continue
+
+            inline = re.search(
+                r"\b([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])\s+(\d+)\s+(UP|DOWN|UNKNOWN|DISABLED|ERROR|FAILED|INACTIVE|ACTIVE)\b",
+                line,
+                re.IGNORECASE,
+            )
+            if inline:
+                cls._record(result, inline.group(2), inline.group(3), inline.group(1))
+                continue
+
+            if table_mode:
+                row = re.match(
+                    r"^(\d+)\s+(UP|DOWN|UNKNOWN|DISABLED|ERROR|FAILED|INACTIVE|ACTIVE)\b", line, re.IGNORECASE
+                )
+                if row:
+                    cls._record(result, row.group(1), row.group(2), current_bdf)
+
+
 def _coerce_int_list(value) -> List[int]:
     """Best-effort conversion of config values to a list of ints."""
-    if value is None:
-        return []
-    if isinstance(value, int):
-        return [value]
-    if isinstance(value, str):
-        return [int(t) for t in re.split(r"[,\s]+", value.strip()) if t.strip().isdigit()]
-    if isinstance(value, (list, tuple)):
-        out: List[int] = []
-        for item in value:
-            if isinstance(item, bool):
-                continue
-            if isinstance(item, int):
-                out.append(item)
-            elif isinstance(item, str) and item.strip().isdigit():
-                out.append(int(item.strip()))
-        return out
-    return []
+    return expand_accelerator_ranges(value)
 
 
 def _coerce_str_list(value) -> List[str]:
@@ -320,7 +566,9 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         afmctl_path: Optional[str] = None,
         bdfs: Optional[Iterable[str]] = None,
         dst_accelerators: Optional[Iterable[int]] = None,
+        mesh_mode: str = "config",
         ports=None,
+        port_discovery: str = "auto",
         pings_per_port: Optional[int] = None,
         per_ping_timeout: Optional[int] = None,
         traffic_types: Optional[Iterable[str]] = None,
@@ -328,6 +576,8 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         ssh_timeout: Optional[int] = None,
         use_sudo: bool = False,
         bdf_discovery: str = "auto",
+        require_complete_coverage: bool = True,
+        strict_discovery: bool = True,
         config_dict: Optional[Dict] = None,
     ):
         """Initialize the IFoE L2 connectivity check.
@@ -340,9 +590,16 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 test on each node. If empty and ``bdf_discovery == "auto"``,
                 BDFs are auto-discovered per-node via ``afmctl show device``.
             dst_accelerators: Iterable of destination accelerator IDs passed
-                to ``--dst-accelerator``. Defaults to ``[0]``.
+                to ``--dst-accelerator`` in ``mesh_mode="config"``. Defaults
+                to ``[0]``.
+            mesh_mode: ``"config"`` for legacy static destinations or
+                ``"full_mesh"`` to build ordered non-self pairs from the
+                discovered vPOD topology.
             ports: Port spec for ``-p``: ``"all"``/``None`` for all ports,
-                a list ``[0,1,2]``, or a string ``"0,1,2"`` / ``"0-7"``.
+                ``"up"`` for discovered operational ports, a list
+                ``[0,1,2]``, or a string ``"0,1,2"`` / ``"0-7"``.
+            port_discovery: ``"auto"`` uses ``afmctl show port --brief`` for
+                ``ports="up"``; ``"config"`` rejects automatic discovery.
             pings_per_port: Value for ``-c`` (per-port-pair ping count).
             per_ping_timeout: Value for ``-t`` (per-ping timeout). Omitted
                 from the command line if ``None``.
@@ -355,14 +612,31 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             use_sudo: Prepend ``sudo`` when calling ``afmctl``.
             bdf_discovery: ``"auto"`` (run ``afmctl show device`` if ``bdfs``
                 is empty) or ``"config"`` (require ``bdfs`` to be supplied).
+            require_complete_coverage: Fail a node when planned pairs were not
+                all invoked and parsed.
+            strict_discovery: Treat malformed topology/port discovery output as
+                a failure instead of a warning.
             config_dict: Optional full preflight config block (passed through
                 to the base class for reporting purposes).
         """
         super().__init__(phdl, config_dict)
         self.afmctl_path = afmctl_path or self.DEFAULT_AFMCTL_PATH
-        self.bdfs: List[str] = _coerce_str_list(bdfs)
+        self.bdfs = []
+        for raw_bdf in _coerce_str_list(bdfs):
+            bdf = _normalize_bdf(raw_bdf)
+            if not bdf:
+                raise ValueError(f"Invalid IFoE source BDF {raw_bdf!r}")
+            if bdf not in self.bdfs:
+                self.bdfs.append(bdf)
         self.dst_accelerators: List[int] = _coerce_int_list(dst_accelerators) or [0]
+        raw_mesh_mode = str(mesh_mode or "config").strip().lower()
+        self.mesh_mode: str = "full_mesh" if raw_mesh_mode in ("full_mesh", "full", "auto") else "config"
+        if raw_mesh_mode not in ("config", "full_mesh", "full", "auto"):
+            raise ValueError("mesh_mode must be 'config' or 'full_mesh'")
         self.ports = ports if ports not in ("", None) else "all"
+        self.port_discovery: str = str(port_discovery or "auto").strip().lower()
+        if self.port_discovery not in ("auto", "config"):
+            raise ValueError("port_discovery must be 'auto' or 'config'")
         self.pings_per_port: int = int(pings_per_port) if pings_per_port else self.DEFAULT_PINGS_PER_PORT
         self.per_ping_timeout: Optional[int] = int(per_ping_timeout) if per_ping_timeout not in (None, "", 0) else None
 
@@ -386,6 +660,16 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         self.ssh_timeout: int = int(ssh_timeout) if ssh_timeout else self.DEFAULT_SSH_TIMEOUT_SEC
         self.use_sudo: bool = bool(use_sudo)
         self.bdf_discovery: str = (bdf_discovery or "auto").strip().lower()
+        if self.bdf_discovery not in ("auto", "config"):
+            raise ValueError("bdf_discovery must be 'auto' or 'config'")
+        self.require_complete_coverage: bool = bool(require_complete_coverage)
+        self.strict_discovery: bool = bool(strict_discovery)
+        # Backends without ``exec_cmd_list`` can only broadcast a command to
+        # every host.  Cache each broadcast so consuming its result for node A
+        # does not repeat the same source command on node B (and, importantly,
+        # preserves the one-broadcast-per-command behaviour of the historical
+        # implementation).
+        self._broadcast_result_cache: Dict[str, Dict[str, Dict]] = {}
 
     def _traffic_type_cli(self) -> Optional[str]:
         """Render ``--traffic-type`` argument or ``None`` if all are enabled."""
@@ -398,15 +682,16 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         }
         return ",".join(afmctl_names[t] for t in self.traffic_types)
 
-    def build_ping_command(self, bdf: str, dst_accelerator: int) -> str:
+    def _afmctl_parts(self) -> List[str]:
+        """Return the privilege-safe executable prefix for an afmctl command."""
+        return (["sudo", "-n"] if self.use_sudo else []) + [self.afmctl_path]
+
+    def build_ping_command(self, bdf: str, dst_accelerator: int, ports=None) -> str:
         """Render the ``afmctl test ping`` command line for one invocation."""
-        parts: List[str] = []
-        if self.use_sudo:
-            parts.append("sudo")
-        parts.extend([self.afmctl_path, "test", "ping"])
+        parts = self._afmctl_parts() + ["test", "ping"]
         parts.extend(["-b", bdf])
         parts.extend(["-c", str(self.pings_per_port)])
-        port_spec = _format_ports_arg(self.ports)
+        port_spec = _format_ports_arg(self.ports if ports is None else ports)
         if port_spec:
             parts.extend(["-p", port_spec])
         parts.extend(["--dst-accelerator", str(dst_accelerator)])
@@ -417,18 +702,151 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             parts.extend(["--traffic-type", ttype])
         return " ".join(shlex.quote(p) for p in parts)
 
-    def _discover_bdfs_per_node(self) -> Dict[str, List[str]]:
-        """Run ``afmctl show device`` on each reachable host and parse BDFs."""
-        cmd = self.afmctl_path + " show device"
-        if self.use_sudo:
-            cmd = "sudo " + cmd
-        cmd = f"{cmd} 2>&1 || true"
-        out_dict = self.phdl.exec(cmd, timeout=self.ssh_timeout, print_console=False)
-        per_node: Dict[str, List[str]] = {}
-        for node, output in out_dict.items():
-            devices = parse_afmctl_show_device(output or "")
-            per_node[node] = [d["bdf"] for d in devices if d.get("bdf")]
-        return per_node
+    def build_show_port_command(self, bdf: str) -> str:
+        """Render the source-BDF-scoped port discovery command.
+
+        The exact MI4XX brief/JSON schema is intentionally not assumed.  The
+        command is explicit about the source BDF, while the parser accepts a
+        BDF-scoped or an unscoped brief response.  Hardware validation must
+        confirm the CLI grammar before this becomes the admission gate.
+        """
+        parts = self._afmctl_parts() + ["show", "port", "--brief", "-b", bdf]
+        return " ".join(shlex.quote(p) for p in parts)
+
+    @staticmethod
+    def _normalise_exec_results(raw_results) -> Dict[str, Dict]:
+        """Normalize Pssh's string and detailed result shapes."""
+        normalized: Dict[str, Dict] = {}
+        if not isinstance(raw_results, dict):
+            return normalized
+        for node, value in raw_results.items():
+            if isinstance(value, dict):
+                normalized[node] = {
+                    "output": value.get("output", "") or "",
+                    "exit_status": value.get("exit_code", value.get("exit_status")),
+                }
+            else:
+                normalized[node] = {"output": value or "", "exit_status": None}
+        return normalized
+
+    def _exec_all(self, command: str) -> Dict[str, Dict]:
+        """Run one discovery command across all reachable nodes with exit data."""
+        try:
+            raw_results = self.phdl.exec(command, timeout=self.ssh_timeout, print_console=False, detailed=True)
+        except TypeError:
+            raw_results = self.phdl.exec(command, timeout=self.ssh_timeout, print_console=False)
+        return self._normalise_exec_results(raw_results)
+
+    @staticmethod
+    def _extract_exit_sentinel(output: str) -> Tuple[str, Optional[int]]:
+        """Remove the exit sentinel used by ``exec_cmd_list`` target calls."""
+        match = re.search(r"(?:^|\n)__CVS_AFMCTL_EXIT_STATUS__=(-?\d+)\s*$", output or "")
+        if not match:
+            return output or "", None
+        return (output or "")[: match.start()].rstrip("\n"), int(match.group(1))
+
+    def _exec_on_node(self, node: str, command: str) -> Dict:
+        """Run a command only on ``node`` when the Pssh backend supports it.
+
+        ``MultiProcessPssh.exec_cmd_list`` schedules one command per host.  A
+        no-op is sent to non-target hosts so a BDF is never accidentally
+        exercised on a host where it is absent.  Lightweight/mock backends
+        without that API retain the older broadcast fallback for compatibility.
+        """
+        command_list_fn = getattr(self.phdl, "exec_cmd_list", None)
+        is_mock = type(command_list_fn).__module__.startswith("unittest.mock")
+        if callable(command_list_fn) and not is_mock:
+            target_command = (
+                f"{command}; _cvs_afmctl_rc=$?; "
+                "printf '\\n__CVS_AFMCTL_EXIT_STATUS__=%s\\n' \"$_cvs_afmctl_rc\"; "
+                "exit \"$_cvs_afmctl_rc\""
+            )
+            commands = [target_command if host == node else "true" for host in self.phdl.reachable_hosts]
+            raw_results = command_list_fn(commands, timeout=self.ssh_timeout, print_console=False)
+            result = self._normalise_exec_results(raw_results).get(node)
+            if result is not None:
+                output, exit_status = self._extract_exit_sentinel(result["output"])
+                result["output"] = output
+                result["exit_status"] = exit_status if exit_status is not None else result.get("exit_status")
+                return result
+
+        # Compatibility fallback for tests and third-party Pssh wrappers that
+        # do not expose exec_cmd_list.  The output is still evaluated only for
+        # the intended source node.
+        if command not in self._broadcast_result_cache:
+            self._broadcast_result_cache[command] = self._exec_all(command)
+        result = self._broadcast_result_cache[command].get(node)
+        return result or {"output": "", "exit_status": -1}
+
+    def _add_node_issue(self, node: str, category: str, message: str, fatal: bool = True) -> None:
+        """Append a classified issue and, when appropriate, fail the node."""
+        block = self.results[node]
+        block["error_details"].append({"category": category, "message": message})
+        block["errors"].append(message)
+        if fatal:
+            block["status"] = "FAIL"
+
+    def _discover_topology(self) -> None:
+        """Populate ``topology`` for every reachable node via ``show device``."""
+        command = " ".join(shlex.quote(p) for p in self._afmctl_parts() + ["show", "device"])
+        for node, result in self._exec_all(command).items():
+            if node not in self.results:
+                continue
+            exit_status = result.get("exit_status")
+            if exit_status not in (None, 0):
+                self._add_node_issue(node, "DISCOVERY_ERROR", f"afmctl show device exited with status {exit_status}")
+            devices = parse_afmctl_show_device(result.get("output", ""))
+            self.results[node]["topology"] = devices
+            if not devices:
+                self._add_node_issue(node, "DISCOVERY_ERROR", "afmctl show device returned no accelerator descriptors")
+            for device in devices:
+                for error in device.get("parse_errors") or []:
+                    self._add_node_issue(
+                        node, "DISCOVERY_ERROR", f"{device.get('bdf', '<unknown BDF>')}: {error}", self.strict_discovery
+                    )
+
+    def _discover_up_ports(self, node: str, bdf: str) -> Optional[List[int]]:
+        """Discover and record operational ports for one source BDF."""
+        command = self.build_show_port_command(bdf)
+        result = self._exec_on_node(node, command)
+        output = result.get("output", "")
+        exit_status = result.get("exit_status")
+        parsed = AfmctlPortParser.parse(output)
+        bdf_key = _normalize_bdf(bdf) or bdf
+        scoped = (parsed.get("ports_by_bdf") or {}).get(bdf_key)
+        ports = scoped if scoped is not None else parsed.get("unscoped_ports") or {}
+        inventory = {
+            "command": command,
+            "raw_output": output,
+            "exit_status": exit_status,
+            "format": parsed.get("format"),
+            "ports": list(ports.values()),
+            "up_ports": sorted(entry["port"] for entry in ports.values() if entry.get("is_up")),
+            "parse_errors": list(parsed.get("parse_errors") or []),
+        }
+        self.results[node]["port_inventory"][bdf] = inventory
+        if exit_status not in (None, 0):
+            self._add_node_issue(node, "PORT_DISCOVERY_ERROR", f"{bdf}: show port exited with status {exit_status}")
+            return None
+        if inventory["parse_errors"]:
+            for error in inventory["parse_errors"]:
+                self._add_node_issue(node, "PORT_DISCOVERY_ERROR", f"{bdf}: {error}", self.strict_discovery)
+            if self.strict_discovery:
+                return None
+        if not inventory["up_ports"]:
+            self._add_node_issue(node, "PORT_DISCOVERY_ERROR", f"{bdf}: no UP ports discovered")
+            return None
+        return inventory["up_ports"]
+
+    @staticmethod
+    def _explicit_port_list(ports) -> Optional[List[int]]:
+        """Expand an explicit numeric port selection; ``None`` means all ports."""
+        if ports is None or (isinstance(ports, str) and ports.strip().lower() == "all"):
+            return None
+        if isinstance(ports, str) and ports.strip().lower() == "up":
+            return []
+        values, errors = parse_accelerator_ranges(ports)
+        return values if not errors else []
 
     def _evaluate_summary(self, parsed: Dict) -> Tuple[str, List[str]]:
         """Decide PASS/FAIL for one parsed afmctl ping output.
@@ -450,6 +868,18 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 status = "FAIL"
                 continue
             loss = float(entry.get("loss_pct", 0.0))
+            if entry.get("fail_total", entry.get("total")) != entry.get("total"):
+                errors.append(
+                    f"{TRAFFIC_LABELS[ttype]}: inconsistent summary denominators "
+                    f"{entry.get('total')} pass-total vs {entry.get('fail_total')} fail-total"
+                )
+                status = "FAIL"
+            if entry.get("pass", 0) + entry.get("fail", 0) != entry.get("total", 0):
+                errors.append(
+                    f"{TRAFFIC_LABELS[ttype]}: inconsistent summary counts "
+                    f"{entry.get('pass')} pass + {entry.get('fail')} fail != {entry.get('total')} total"
+                )
+                status = "FAIL"
             if loss > self.loss_threshold_pct + 1e-9:
                 errors.append(
                     f"{TRAFFIC_LABELS[ttype]}: {entry['fail']}/{entry['total']} failed "
@@ -463,6 +893,63 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                     errors.append(f"Port {port} {TRAFFIC_LABELS[ttype]}: {rr['pass']}/{rr['total']} (FAIL)")
                     status = "FAIL"
         return status, errors
+
+    def _evaluate_invocation(
+        self, parsed: Dict, bdf: str, dst_accelerator: int, selected_ports: Optional[List[int]], exit_status
+    ) -> Tuple[str, List[str], Optional[str]]:
+        """Apply command, parser, and exact-coverage invariants to one ping."""
+        status, errors = self._evaluate_summary(parsed)
+        failure_category: Optional[str] = None
+        if exit_status not in (None, 0):
+            errors.append(f"afmctl test ping exited with status {exit_status}")
+            status, failure_category = "FAIL", "COMMAND_ERROR"
+        if parsed.get("parse_errors"):
+            errors.extend(parsed["parse_errors"])
+            status, failure_category = "FAIL", "PARSE_ERROR"
+        actual_bdf = parsed.get("bdf")
+        if not actual_bdf:
+            errors.append(f"Result output did not identify the requested source BDF {bdf}")
+            status, failure_category = "FAIL", "PARSE_ERROR"
+        elif _normalize_bdf(actual_bdf) != _normalize_bdf(bdf):
+            errors.append(f"Result BDF {actual_bdf} does not match requested source BDF {bdf}")
+            status, failure_category = "FAIL", "PARSE_ERROR"
+        reported_pings_per_port = parsed.get("pings_per_port")
+        if reported_pings_per_port is not None and reported_pings_per_port != self.pings_per_port:
+            errors.append(
+                f"afmctl reported {reported_pings_per_port} pings per port pair; "
+                f"requested {self.pings_per_port}"
+            )
+            status, failure_category = "FAIL", "COVERAGE_ERROR"
+        actual_ports = {int(port) for port in (parsed.get("ports") or {}) if str(port).isdigit()}
+        if selected_ports is not None:
+            expected_ports = set(selected_ports)
+            missing_ports = sorted(expected_ports - actual_ports)
+            unexpected_ports = sorted(actual_ports - expected_ports)
+            if missing_ports or unexpected_ports:
+                errors.append(
+                    f"Port coverage mismatch: missing={missing_ports or 'none'}, unexpected={unexpected_ports or 'none'}"
+                )
+                status, failure_category = "FAIL", "COVERAGE_ERROR"
+            expected_total = len(expected_ports) * self.pings_per_port
+            for ttype in self.traffic_types:
+                entry = (parsed.get("summary") or {}).get(ttype)
+                if entry and entry.get("total") != expected_total:
+                    errors.append(
+                        f"{TRAFFIC_LABELS[ttype]} summary total {entry.get('total')} does not match "
+                        f"{len(expected_ports)} selected ports x {self.pings_per_port} pings"
+                    )
+                    status, failure_category = "FAIL", "COVERAGE_ERROR"
+        returned_destinations = {
+            value.get("accelerator_id")
+            for value in (parsed.get("ports") or {}).values()
+            if isinstance(value, dict) and value.get("accelerator_id") is not None
+        }
+        if returned_destinations and returned_destinations != {dst_accelerator}:
+            errors.append(
+                f"Result destination accelerator(s) {sorted(returned_destinations)} do not match requested {dst_accelerator}"
+            )
+            status, failure_category = "FAIL", "PARSE_ERROR"
+        return status, errors, failure_category
 
     def _resolve_bdfs_for_node(self, node: str, discovered: Dict[str, List[str]]) -> List[str]:
         """Return the BDFs that should be exercised on a single node."""
@@ -480,72 +967,160 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             {command, raw_output, parsed, status, errors}}}, ...}}``.
         """
         self.log_info(
-            f"Running IFoE L2 connectivity check (afmctl={self.afmctl_path}, "
-            f"dst_accelerators={self.dst_accelerators}, ports={self.ports}, "
-            f"pings_per_port={self.pings_per_port}, "
-            f"traffic_types={list(self.traffic_types)}, "
-            f"loss_threshold_pct={self.loss_threshold_pct})"
+            f"Running IFoE L2 connectivity check (afmctl={self.afmctl_path}, mesh_mode={self.mesh_mode}, "
+            f"ports={self.ports}, pings_per_port={self.pings_per_port}, "
+            f"traffic_types={list(self.traffic_types)}, loss_threshold_pct={self.loss_threshold_pct})"
         )
 
-        discovered: Dict[str, List[str]] = {}
-        if not self.bdfs and self.bdf_discovery == "auto":
-            self.log_info("Auto-discovering accelerator BDFs via 'afmctl show device'")
-            discovered = self._discover_bdfs_per_node()
-
-        self.results = {}
-        for node in self.phdl.reachable_hosts:
-            self.results[node] = {
+        self.results = {
+            node: {
                 "status": "PASS",
                 "errors": [],
+                "error_details": [],
                 "accelerators": {},
+                "topology": [],
+                "port_inventory": {},
+                "plan": [],
+                "coverage": {
+                    "expected_pairs": 0,
+                    "planned_pairs": 0,
+                    "expected_invocations": 0,
+                    "completed_invocations": 0,
+                    "complete": False,
+                },
             }
-            node_bdfs = self._resolve_bdfs_for_node(node, discovered)
-            if not node_bdfs:
-                msg = (
-                    "No IFoE BDFs configured and auto-discovery returned no devices"
-                    if self.bdf_discovery == "auto"
-                    else "No IFoE BDFs configured (bdf_discovery=config)"
-                )
-                self.results[node]["status"] = "FAIL"
-                self.results[node]["errors"].append(msg)
-                continue
-            self.results[node]["bdfs_under_test"] = node_bdfs
+            for node in self.phdl.reachable_hosts
+        }
 
-        for bdf in self._all_unique_bdfs(discovered):
-            for dst in self.dst_accelerators:
-                cmd = self.build_ping_command(bdf, dst)
-                self.log_info(f"Executing on cluster: {cmd}")
-                out_dict = self.phdl.exec(cmd, timeout=self.ssh_timeout, print_console=False)
-                for node, output in out_dict.items():
-                    if node not in self.results:
+        needs_topology = self.bdf_discovery == "auto" or self.mesh_mode == "full_mesh" or self.ports == "up"
+        if needs_topology:
+            self.log_info("Discovering IFoE accelerator topology via 'afmctl show device'")
+            self._discover_topology()
+
+        for node, node_result in self.results.items():
+            discovered_devices = node_result.get("topology") or []
+            if self.bdfs:
+                source_devices = [device for device in discovered_devices if device.get("bdf") in self.bdfs]
+                if not source_devices and self.mesh_mode == "config":
+                    source_devices = [{"bdf": bdf, "accelerator_id": None} for bdf in self.bdfs]
+            else:
+                source_devices = list(discovered_devices)
+            if not source_devices:
+                self._add_node_issue(node, "DISCOVERY_ERROR", "No IFoE source BDFs available for testing")
+                continue
+            node_result["bdfs_under_test"] = [device.get("bdf") for device in source_devices if device.get("bdf")]
+
+            local_ids = [
+                device.get("accelerator_id") for device in discovered_devices if device.get("accelerator_id") is not None
+            ]
+            for source in source_devices:
+                bdf = source.get("bdf")
+                source_accelerator = source.get("accelerator_id")
+                if not bdf:
+                    self._add_node_issue(node, "DISCOVERY_ERROR", "Topology descriptor has no BDF")
+                    continue
+
+                if self.mesh_mode == "full_mesh":
+                    if source_accelerator is None:
+                        self._add_node_issue(node, "DISCOVERY_ERROR", f"{bdf}: missing source accelerator ID")
                         continue
-                    accel_block = self.results[node]["accelerators"].setdefault(bdf, {})
-                    if bdf not in self.results[node].get("bdfs_under_test", []):
-                        accel_block[str(dst)] = {
-                            "command": cmd,
-                            "status": "SKIPPED",
-                            "errors": [f"BDF {bdf} not present on this node"],
-                            "raw_output": "",
-                            "parsed": {},
-                        }
+                    vpod_accelerators = list(source.get("vpod_accelerators") or [])
+                    if vpod_accelerators:
+                        peers = vpod_accelerators
+                    else:
+                        fallback_peers = list(source.get("local_accelerators") or local_ids)
+                        self._add_node_issue(
+                            node,
+                            "DISCOVERY_ERROR",
+                            f"{bdf}: vPOD accelerator membership is unavailable; cannot prove full-mesh coverage",
+                            self.strict_discovery,
+                        )
+                        if self.strict_discovery:
+                            continue
+                        peers = fallback_peers
+                else:
+                    peers = list(self.dst_accelerators)
+                peers = [peer for peer in peers if peer != source_accelerator]
+                if not peers:
+                    self._add_node_issue(
+                        node,
+                        "COVERAGE_ERROR",
+                        f"{bdf}: no non-self destination accelerators available",
+                    )
+                    continue
+
+                coverage = node_result["coverage"]
+                coverage["expected_pairs"] += len(peers)
+                if self.ports == "up":
+                    if self.port_discovery != "auto":
+                        self._add_node_issue(node, "PORT_DISCOVERY_ERROR", f"{bdf}: ports='up' requires port_discovery='auto'")
                         continue
-                    parsed = AfmctlPingParser.parse(output or "")
-                    status, errs = self._evaluate_summary(parsed)
-                    if parsed.get("parse_errors"):
-                        status = "FAIL"
-                        errs.extend(parsed["parse_errors"])
-                    accel_block[str(dst)] = {
-                        "command": cmd,
+                    selected_ports = self._discover_up_ports(node, bdf)
+                    if selected_ports is None:
+                        continue
+                else:
+                    selected_ports = self._explicit_port_list(self.ports)
+                    if selected_ports == [] and self.ports not in (None, "", "all"):
+                        self._add_node_issue(node, "PORT_DISCOVERY_ERROR", f"{bdf}: invalid explicit port selection {self.ports!r}")
+                        continue
+
+                for dst in peers:
+                    cell = {
+                        "source_bdf": bdf,
+                        "source_accelerator": source_accelerator,
                         "dst_accelerator": dst,
-                        "status": status,
-                        "errors": errs,
-                        "raw_output": output or "",
-                        "parsed": parsed,
+                        "selected_ports": selected_ports,
                     }
-                    if status == "FAIL":
-                        self.results[node]["status"] = "FAIL"
-                        for err in errs:
-                            self.results[node]["errors"].append(f"{bdf} -> accel {dst}: {err}")
+                    node_result["plan"].append(cell)
+                    coverage["planned_pairs"] += 1
+                    coverage["expected_invocations"] += 1
+
+        for node, node_result in self.results.items():
+            for cell in node_result["plan"]:
+                bdf = cell["source_bdf"]
+                dst = cell["dst_accelerator"]
+                selected_ports = cell["selected_ports"]
+                command = self.build_ping_command(bdf, dst, ports=selected_ports)
+                self.log_info(f"Executing on {node}: {command}")
+                execution = self._exec_on_node(node, command)
+                parsed = AfmctlPingParser.parse(execution.get("output", ""))
+                status, errors, failure_category = self._evaluate_invocation(
+                    parsed, bdf, dst, selected_ports, execution.get("exit_status")
+                )
+                node_result["coverage"]["completed_invocations"] += 1
+                node_result["accelerators"].setdefault(bdf, {})[str(dst)] = {
+                    "command": command,
+                    "dst_accelerator": dst,
+                    "source_accelerator": cell.get("source_accelerator"),
+                    "selected_ports": selected_ports,
+                    "exit_status": execution.get("exit_status"),
+                    "status": status,
+                    "failure_category": failure_category,
+                    "errors": errors,
+                    "raw_output": execution.get("output", ""),
+                    "parsed": parsed,
+                }
+                if status == "FAIL":
+                    node_result["status"] = "FAIL"
+                    category = failure_category or "PING_FAILURE"
+                    for error in errors:
+                        self._add_node_issue(node, category, f"{bdf} -> accel {dst}: {error}", fatal=False)
+
+            coverage = node_result["coverage"]
+            coverage["complete"] = (
+                coverage["expected_pairs"] > 0
+                and coverage["expected_pairs"] == coverage["planned_pairs"]
+                and coverage["expected_invocations"] == coverage["completed_invocations"]
+            )
+            if self.require_complete_coverage and not coverage["complete"]:
+                self._add_node_issue(
+                    node,
+                    "COVERAGE_ERROR",
+                    "Incomplete IFoE mesh coverage: "
+                    f"expected_pairs={coverage['expected_pairs']}, planned_pairs={coverage['planned_pairs']}, "
+                    f"expected_invocations={coverage['expected_invocations']}, "
+                    f"completed_invocations={coverage['completed_invocations']}",
+                )
 
         return self.results
 
