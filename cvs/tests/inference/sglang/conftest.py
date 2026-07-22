@@ -2,7 +2,10 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Fixtures and hooks for ``sglang_disagg_distributed`` (multi-node PSSH + Docker).
+Fixtures and hooks for SGLang inference suites (``sglang_single`` and ``sglang_disagg_distributed``).
+
+``sglang_single.py`` uses ``SglangSingle`` (one unified server on
+``benchmark_serv_node``). ``sglang_disagg_distributed.py`` uses ``SglangDisaggPD``.
 
 ``--config_file`` must be JSON with top-level ``"config"`` and ``"benchmark_params"``.
 Use ``active_benchmark`` (or ``SGLANG_BENCHMARK_KEY``) when multiple models are defined.
@@ -12,7 +15,13 @@ JSON file beside the config; that file supplies pass/fail thresholds for perform
 and lm-eval benchmarks.
 '''
 
+from __future__ import annotations
+
 import json
+import os
+import re
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -20,20 +29,82 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.parallel_ssh_lib import Pssh
-from cvs.lib.inference import sglang_disagg_lib
+from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
+from cvs.lib.inference.sglang.sglang_orchestrator import SglangDisaggOrchestrator, SglangSingleOrchestrator
+from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
 from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
     resolve_test_config_placeholders,
+    update_test_result,
 )
 
-from cvs.tests.inference.sglang._shared import SGLANG_DISAGG_TEST_ORDER, resolve_benchmark_variant_key
+from cvs.tests.inference.sglang._shared import (
+    SGLANG_SINGLE_TEST_ORDER,
+    SGLANG_TEST_ORDER,
+    resolve_benchmark_variant_key,
+)
+
 
 log = globals.log
 
 
+def _use_sglang_single(request) -> bool:
+    """``sglang_single.py`` uses unified single-node ``SglangSingle``."""
+    return getattr(request.module, "__name__", "").endswith("sglang_single")
+
+
+# ---------- threshold helpers ----------
+
+_PERF_CELL_RE = re.compile(
+    r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$"
+)
+
+_ACC_CELL_RE = re.compile(
+    r"^ACC_ISL=(?P<isl>\d+),OSL=(?P<osl>\d+)$"
+)
+
+
+def perf_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """All ISL/OSL performance cells from a threshold file (excludes BENCH= keys)."""
+    cells = []
+    for cell_key, specs in thresholds.items():
+        if str(cell_key).startswith("_") or str(cell_key).startswith("BENCH="):
+            continue
+        m = _PERF_CELL_RE.match(str(cell_key))
+        if not m:
+            continue
+        cells.append({
+            "cell_key": cell_key,
+            "isl": m.group("isl"),
+            "osl": m.group("osl"),
+            "tp": m.group("tp"),
+            "conc": m.group("conc"),
+            "specs": specs,
+        })
+    cells.sort(key=lambda c: (int(c["isl"]), int(c["osl"])))
+    return cells
+
+
+def acc_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, Any]]:
+    cells = []
+    for cell_key, specs in thresholds.items():
+        if str(cell_key).startswith("_"):
+            continue
+        m = _ACC_CELL_RE.match(str(cell_key))
+        if not m:
+            continue
+        cells.append({
+            "cell_key": cell_key,
+            "isl": m.group("isl"),
+            "osl": m.group("osl"),
+            "specs": specs,
+        })
+    cells.sort(key=lambda c: int(c["isl"]))
+    return cells
+
+
 def _threshold_file_path(bp_dict: Mapping[str, Any]) -> str | None:
-    """Return the threshold file path from a benchmark_params variant."""
     path = bp_dict.get("threshold_file")
     if path:
         return str(path).strip()
@@ -41,7 +112,6 @@ def _threshold_file_path(bp_dict: Mapping[str, Any]) -> str | None:
 
 
 def _resolve_threshold_path(threshold_path: str) -> Path:
-    """Resolve an absolute or repo-relative threshold path from config."""
     path = Path(threshold_path)
     if path.is_absolute():
         return path
@@ -49,7 +119,6 @@ def _resolve_threshold_path(threshold_path: str) -> Path:
 
 
 def _load_thresholds_file(path: Path) -> dict[str, Any]:
-    """Load threshold JSON and drop comment keys (e.g. ``_comment``)."""
     try:
         with open(path, encoding="utf-8") as fp:
             raw = json.load(fp)
@@ -67,23 +136,21 @@ def _load_thresholds_file(path: Path) -> dict[str, Any]:
 
 
 def perf_cell_key(bp_dict: Mapping[str, Any]) -> str:
-    """Build the performance threshold cell key, e.g. ``ISL=1024,OSL=1024,TP=8,CONC=25``."""
     bench = (bp_dict.get("inference_tests") or {}).get("bench_serv_random") or {}
     return (
         f"ISL={bench.get('input_length', '-')},"
         f"OSL={bench.get('output_length', '-')},"
-        f"TP={bp_dict.get('tensor_parallelism', '-')},"
+        f"TP={bp_dict.get('tensor_parallelism', '8')},"
+        f"PP={bp_dict.get('pipeline_parallelism', '1')},"
         f"CONC={bp_dict.get('max_concurrency', '-')}"
     )
 
 
 def bench_cell_key(bench_name: str) -> str:
-    """Build an lm-eval threshold cell key, e.g. ``BENCH=lm_eval_hellaswag``."""
     return f"BENCH={bench_name}"
 
 
 def flat_expected_from_specs(specs: Mapping[str, Any]) -> dict[str, float]:
-    """Convert ``{metric: {kind, value}}`` threshold specs to flat floats for legacy checks."""
     out: dict[str, float] = {}
     for metric, spec in specs.items():
         if isinstance(spec, dict) and "value" in spec:
@@ -93,8 +160,50 @@ def flat_expected_from_specs(specs: Mapping[str, Any]) -> dict[str, float]:
     return out
 
 
+def load_perf_cells_for_collection(config_file: str) -> list[dict[str, Any]]:
+    """Collection-time loader (no fixtures yet — mirrors vLLM sweep)."""
+    with open(config_file, encoding="utf-8") as fp:
+        root = json.load(fp)
+    variant_key = resolve_benchmark_variant_key(root, config_file)
+    bp = root["benchmark_params"][variant_key]
+    threshold_path = _resolve_threshold_path(_threshold_file_path(bp))
+    thresholds = _load_thresholds_file(threshold_path)
+    cells = perf_cells_from_thresholds(thresholds)
+    if not cells:
+        pytest.fail(f"No ISL=... performance cells in {threshold_path}")
+    return cells
+
+
+def load_acc_cells_for_collection(config_file: str) -> list[dict[str, Any]]:
+    with open(config_file, encoding="utf-8") as fp:
+        root = json.load(fp)
+    variant_key = resolve_benchmark_variant_key(root, config_file)
+    bp = root["benchmark_params"][variant_key]
+    threshold_path = _resolve_threshold_path(_threshold_file_path(bp))
+    thresholds = _load_thresholds_file(threshold_path)
+    cells = acc_cells_from_thresholds(thresholds)
+    if not cells:
+        pytest.fail(f"No ACC_ISL=... accuracy cells in {threshold_path}")
+    return cells
+
+
+def pytest_generate_tests(metafunc):
+    config_file = metafunc.config.getoption("config_file")
+    if not config_file or not os.path.isfile(config_file):
+        return
+
+    if "perf_cell" in metafunc.fixturenames:
+        cells = load_perf_cells_for_collection(config_file)
+        ids = [f"isl{c['isl']}-osl{c['osl']}-c{c['conc']}" for c in cells]
+        metafunc.parametrize("perf_cell", cells, ids=ids)
+
+    if "acc_cell" in metafunc.fixturenames:
+        cells = load_acc_cells_for_collection(config_file)
+        ids = [f"acc-isl{c['isl']}-osl{c['osl']}" for c in cells]
+        metafunc.parametrize("acc_cell", cells, ids=ids)
+
+
 def _inject_thresholds_into_bp_dict(bp_dict: dict[str, Any], thresholds: Mapping[str, Any]) -> None:
-    """Merge external thresholds into ``inference_tests.*.expected_results`` in-place."""
     inference_tests = bp_dict.setdefault("inference_tests", {})
 
     perf_key = perf_cell_key(bp_dict)
@@ -119,6 +228,136 @@ def _inject_thresholds_into_bp_dict(bp_dict: dict[str, Any], thresholds: Mapping
         log.info("Loaded accuracy thresholds from cell %r", cell)
 
 
+# ---------- variant config (SGLang analogue of vLLM's load_variant) ----------
+
+
+@dataclass(frozen=True)
+class SglangVariantConfig:
+    """Typed bundle for one SGLang disagg benchmark variant.
+
+    Mirrors the role of vLLM's ``VariantConfig``: single entry point for tests
+    and fixtures. SGLang keeps its legacy JSON shape (``config`` + ``benchmark_params``)
+    rather than ``BaseVariantConfig`` schema.
+    """
+
+    config_path: str
+    variant_key: str
+    inference: dict[str, Any]
+    benchmark_params: dict[str, Any]
+    thresholds: dict[str, Any]
+    enforce_thresholds: bool = True
+
+    @property
+    def hf_token_file(self) -> str:
+        return self.inference["hf_token_file"]
+
+    @property
+    def model(self) -> str:
+        return self.benchmark_params["model"]
+
+    def perf_cell_key(self) -> str:
+        return perf_cell_key(self.benchmark_params)
+
+    def cell_key(self, isl, osl, concurrency) -> str:
+        tp = self.benchmark_params.get("tensor_parallelism", "-")
+        pp = self.benchmark_params.get("pipeline_parallelism", "-")
+        return f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={concurrency}"
+
+
+def load_sglang_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangVariantConfig:
+    """Load, resolve placeholders, pick variant, load thresholds, inject expected_results."""
+    with open(config_path, encoding="utf-8") as fp:
+        root = json.load(fp)
+
+    variant_key = resolve_benchmark_variant_key(root, config_path)
+
+    if isinstance(root, dict) and "config" in root:
+        cfg = root["config"]
+    else:
+        cfg = root
+
+    inference = resolve_test_config_placeholders(cfg, cluster_dict)
+    bp_all = resolve_test_config_placeholders(root["benchmark_params"], cluster_dict)
+    bp = dict(bp_all[variant_key])
+
+    threshold_path_str = _threshold_file_path(bp)
+    if not threshold_path_str:
+        pytest.fail(
+            f"benchmark_params[{variant_key!r}] missing "
+            "'threshold_file' in --config_file"
+        )
+
+    threshold_path = _resolve_threshold_path(threshold_path_str)
+    thresholds = _load_thresholds_file(threshold_path)
+    log.info("Loaded thresholds from %s (%d cells)", threshold_path, len(thresholds))
+    _inject_thresholds_into_bp_dict(bp, thresholds)
+
+    return SglangVariantConfig(
+        config_path=config_path,
+        variant_key=variant_key,
+        inference=inference,
+        benchmark_params=bp,
+        thresholds=thresholds,
+        enforce_thresholds=bool(root.get("enforce_thresholds", True)),
+    )
+
+
+# ---------- lifecycle (same model as vLLM conftest) ----------
+
+
+class _Lifecycle:
+    """Cross-test state for the lifecycle-as-tests model."""
+
+    def __init__(self):
+        self.failed = False
+        self.torn_down = False
+        self.report: dict[str, list[tuple[str, float, str]]] = {}
+        self.phase_labels: dict[str, Any] = {}
+        self.smoke_results: list | None = None
+
+    def record(self, nodeid: str, label: str, value: float, unit: str = "s") -> None:
+        self.report.setdefault(nodeid, []).append((label, value, unit))
+
+    def skip_if_prior_failure(self) -> None:
+        if self.failed:
+            pytest.skip("a prior lifecycle stage failed")
+    def complete_stage(self, request, label: str, t0: float) -> None:
+        self.record(request.node.nodeid, label, time.monotonic() - t0)
+        if globals.error_list:
+            self.failed = True
+        update_test_result()
+
+
+# ---------- fixtures ----------
+
+@pytest.fixture(scope="module")
+def cluster_dict(pytestconfig):
+    cluster_file = pytestconfig.getoption("cluster_file")
+    if not cluster_file:
+        pytest.fail("--cluster_file is required")
+    with open(cluster_file, encoding="utf-8") as fp:
+        d = json.load(fp)
+    return resolve_cluster_config_placeholders(d)
+
+
+@pytest.fixture(scope="module")
+def variant_config(pytestconfig, cluster_dict) -> SglangVariantConfig:
+    config_file = pytestconfig.getoption("config_file")
+    if not config_file:
+        pytest.fail("--config_file is required")
+    return load_sglang_variant(config_file, cluster_dict)
+
+
+@pytest.fixture(scope="module")
+def lifecycle():
+    return _Lifecycle()
+
+
+@pytest.fixture(scope="module")
+def inference_config_file(variant_config):
+    return variant_config.config_path
+
+
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
     path = pytestconfig.getoption("cluster_file")
@@ -128,33 +367,14 @@ def cluster_file(pytestconfig):
 
 
 @pytest.fixture(scope="module")
-def inference_config_file(pytestconfig):
-    path = pytestconfig.getoption("config_file")
-    if not path:
-        pytest.fail("--config_file is required")
-    return path
-
-
-@pytest.fixture(scope="module")
-def cluster_dict(cluster_file):
-    with open(cluster_file, encoding="utf-8") as fp:
-        d = json.load(fp)
-    return resolve_cluster_config_placeholders(d)
-
-
-@pytest.fixture(scope="module")
 def inference_config_root(inference_config_file):
     with open(inference_config_file, encoding="utf-8") as fp:
         return json.load(fp)
 
 
 @pytest.fixture(scope="module")
-def inference_dict(inference_config_root, cluster_dict):
-    if isinstance(inference_config_root, dict) and "config" in inference_config_root:
-        cfg = inference_config_root["config"]
-    else:
-        cfg = inference_config_root
-    return resolve_test_config_placeholders(cfg, cluster_dict)
+def inference_dict(variant_config):
+    return variant_config.inference
 
 
 @pytest.fixture(scope="module")
@@ -164,38 +384,27 @@ def benchmark_params_dict(inference_config_root, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def benchmark_variant(inference_config_root, inference_config_file):
-    return resolve_benchmark_variant_key(inference_config_root, inference_config_file)
+def benchmark_variant(variant_config):
+    return variant_config.variant_key
 
 
 @pytest.fixture(scope="module")
-def benchmark_params(benchmark_params_dict, benchmark_variant):
-    return benchmark_params_dict[benchmark_variant]
+def benchmark_params(variant_config):
+    return variant_config.benchmark_params
 
 
 @pytest.fixture(scope="module")
-def thresholds_dict(benchmark_params, benchmark_variant):
-    """Load thresholds from the path in ``threshold_file``."""
-    threshold_path_str = _threshold_file_path(benchmark_params)
-    if not threshold_path_str:
-        pytest.fail(f"benchmark_params[{benchmark_variant!r}] missing 'threshold_file' in --config_file")
-
-    threshold_path = _resolve_threshold_path(threshold_path_str)
-    thresholds = _load_thresholds_file(threshold_path)
-    log.info("Loaded thresholds from %s (%d cells)", threshold_path, len(thresholds))
-    return thresholds
+def thresholds_dict(variant_config):
+    return variant_config.thresholds
 
 
 @pytest.fixture(scope="module")
-def hf_token(inference_dict):
-    hf_token_file = inference_dict["hf_token_file"]
-    try:
-        with open(hf_token_file, encoding="utf-8") as fp:
-            return fp.read().rstrip("\n")
-    except FileNotFoundError:
-        pytest.fail(f"hf_token file not found: {hf_token_file}")
-    except OSError as e:
-        pytest.fail(f"cannot read hf_token file {hf_token_file}: {e}")
+def hf_token(variant_config):
+    path = variant_config.hf_token_file
+    if not os.path.isfile(path):
+        pytest.skip(f"hf_token file missing: {path}")
+    with open(path, encoding="utf-8") as fp:
+        return fp.read().strip()
 
 
 @pytest.fixture(scope="module")
@@ -247,9 +456,10 @@ def b_phdl(cluster_dict, inference_dict):
 
 
 @pytest.fixture(scope="module")
-def gpu_type(p_phdl, cluster_dict):
-    head_node = p_phdl.host_list[0]
-    smi_out_dict = p_phdl.exec("rocm-smi -a | head -30")
+def gpu_type(request, variant_config, p_phdl, b_phdl):
+    phdl = b_phdl if _use_sglang_single(request) else p_phdl
+    head_node = phdl.host_list[0]
+    smi_out_dict = phdl.exec("rocm-smi -a | head -30")
     smi_out = smi_out_dict[head_node]
     return get_model_from_rocm_smi_output(smi_out)
 
@@ -261,23 +471,28 @@ def inf_res_dict():
 
 @pytest.fixture(scope="module")
 def im_obj(
+    request,
     p_phdl,
     d_phdl,
     r_phdl,
     b_phdl,
     gpu_type,
-    inference_dict,
-    benchmark_params,
-    thresholds_dict,
+    variant_config,
     hf_token,
 ):
-    bp_dict = dict(benchmark_params)
-    _inject_thresholds_into_bp_dict(bp_dict, thresholds_dict)
-
-    return sglang_disagg_lib.SglangDisaggPD(
-        bp_dict["model"],
-        inference_dict,
-        bp_dict,
+    if _use_sglang_single(request):
+        return SglangSingle(
+            variant_config.model,
+            variant_config.inference,
+            variant_config.benchmark_params,
+            hf_token,
+            b_phdl,
+            gpu_type,
+        )
+    return SglangDisaggPD(
+        variant_config.model,
+        variant_config.inference,
+        variant_config.benchmark_params,
         hf_token,
         p_phdl,
         d_phdl,
@@ -286,7 +501,71 @@ def im_obj(
         gpu_type,
     )
 
+@pytest.fixture(scope="module")
+def orch(request, p_phdl, d_phdl, r_phdl, b_phdl, variant_config, lifecycle):
+    if _use_sglang_single(request):
+        o = SglangSingleOrchestrator(variant_config.inference, b_phdl)
+    else:
+        o = SglangDisaggOrchestrator(variant_config.inference, p_phdl, d_phdl, r_phdl, b_phdl)
+    yield o
+    if not lifecycle.torn_down:
+        log.info("orch leak-guard: tearing down containers")
+        o.teardown_containers()
+        o.cleanup_log_dir()
+
+
+# ---------- pytest hooks ----------
 
 def pytest_collection_modifyitems(items):
-    rank = SGLANG_DISAGG_TEST_ORDER
-    items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
+    def rank_for(item):
+        mod = getattr(item.module, "__name__", "")
+        order = SGLANG_SINGLE_TEST_ORDER if mod.endswith("sglang_single") else SGLANG_TEST_ORDER
+        return order.get(item.originalname or item.name.split("[")[0], 99)
+
+    items.sort(key=rank_for)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call":
+        return
+    lc = item.funcargs.get("lifecycle")
+    rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
+    if not rows:
+        return
+    try:
+        import pytest_html
+    except ImportError:
+        return
+    body = "".join(
+        f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>"
+        for label, value, unit in rows
+    )
+    html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
+    extras = getattr(report, "extras", [])
+    extras.append(pytest_html.extras.html(html))
+    report.extras = extras
+
+
+def pytest_html_results_table_header(cells):
+    cells.insert(-1, "<th>Value</th>")
+    cells.insert(-1, "<th>Unit</th>")
+
+
+def pytest_html_results_table_row(report, cells):
+    props = dict(report.user_properties)
+    has = "metric_value" in props
+    val = props.get("metric_value")
+    unit = props.get("metric_unit", "") if has else ""
+    if not has:
+        shown = ""
+    elif val is None:
+        shown = "-"
+    elif isinstance(val, float):
+        shown = f"{val:.3f}"
+    else:
+        shown = str(val)
+    cells.insert(-1, f"<td>{shown}</td>")
+    cells.insert(-1, f"<td>{unit}</td>")
