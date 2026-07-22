@@ -219,12 +219,14 @@ Standard lifecycle order (pinned in `pytest_collection_modifyitems`):
 | Rank | Test | Action |
 |---|---|---|
 | 0 | `test_launch_container` | `setup_containers()`; asserts container is running |
-| 1 | `test_setup_sshd` | `setup_sshd()`; probes `:2224` for multinode only |
-| 2 | `test_model_fetch` | ensures model bytes present; polls or downloads if remote |
-| 3 | `test_vllm_inference` | benchmark loop per cell; stores results in `inf_res_dict` |
-| 4 | `test_metric` | one test per metric per cell; reads `inf_res_dict`; asserts verdict |
-| 5 | `test_print_results_table` | summary log; must run after all cells |
-| 6 | `test_teardown` | `teardown_containers()`; sets `lifecycle.torn_down`; **never skips** |
+| 1 | `test_setup_sshd` | no-op skip for vllm; distributed runs use NCCL/gloo, not sshd |
+| 2 | `test_discover_topology` | discovers IB HCA devices (distributed only; no-op on single-node) |
+| 3 | `test_model_fetch` | ensures model bytes present; polls or downloads if remote |
+| 4 | `test_openai_compatible_smoke` | brings up a short-lived server at a small fixed cell; probes GET/POST `/v1/*` via `VllmJob.probe_openai_endpoints()`; always stops its server |
+| 5 | `test_vllm_inference` | benchmark loop per cell; stores results in `inf_res_dict` |
+| 6 | `test_metric` | one test per metric per cell; reads `inf_res_dict`; asserts verdict |
+| 7 | `test_print_results_table` | summary log; must run after all cells |
+| 8 | `test_teardown` | `teardown_containers()`; sets `lifecycle.torn_down`; **never skips** |
 
 Rules:
 - Every test except `test_launch_container`, `test_teardown`, and `test_print_results_table`
@@ -232,6 +234,9 @@ Rules:
   and is itself responsible for setting `lifecycle.failed`; it has no prior stage to guard
   against. `test_teardown` must run even on failure. `test_print_results_table` guards only
   on whether `inf_res_dict` is empty and logs whatever results were recorded.
+- `test_openai_compatible_smoke` catches exceptions, sets `lifecycle.failed = True`, re-raises;
+  a `finally` always calls `job.stop_server()` so a smoke-server failure never leaves a stray
+  process for `test_vllm_inference`'s first cell to inherit
 - `test_vllm_inference` catches exceptions, sets `lifecycle.failed = True`, re-raises
 - `test_teardown` never skips — must run even on failure; sets `lifecycle.torn_down = True`
   to suppress the `orch` fixture's leak-guard finalizer (prevents double teardown)

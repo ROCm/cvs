@@ -140,11 +140,12 @@ def pytest_collection_modifyitems(items):
         "test_setup_sshd": 1,
         "test_discover_topology": 2,
         "test_model_fetch": 3,
-        "test_vllm_inference": 4,
-        "test_metric": 5,
-        "test_gpu_metric": 5,
-        "test_print_results_table": 6,
-        "test_teardown": 7,
+        "test_openai_compatible_smoke": 4,
+        "test_vllm_inference": 5,
+        "test_metric": 6,
+        "test_gpu_metric": 6,
+        "test_print_results_table": 7,
+        "test_teardown": 8,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 

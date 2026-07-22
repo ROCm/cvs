@@ -8,8 +8,10 @@ Unit tests for cvs.lib.inference.vllm_job.VllmJob server-command construction:
   - _flatten_serve_args boolean handling and log-level pass-through
   - _check_early_failure tail emission and CLI parse error detection
   - RoleServer.serve_args log-level validator
+  - probe_openai_endpoints(), the OpenAI-compatible HTTP smoke probe
 '''
 
+import json
 import unittest
 import unittest.mock as mock
 from types import SimpleNamespace
@@ -270,6 +272,109 @@ class TestRoleServerLogLevelValidator(unittest.TestCase):
     def test_valid_log_level_accepted(self):
         rs = RoleServer(serve_args={"log-level": "debug"})
         self.assertEqual(rs.serve_args["log-level"], "debug")
+
+
+class FakeOrchWithHeadOutput:
+    """Single-rank fake orch whose exec_on_head returns a controllable string,
+    mirroring what `orch.exec_on_head` would ship back from the container."""
+
+    hosts = ["10.0.0.1"]
+
+    def __init__(self, head_output=""):
+        self.head_cmds = []
+        self._head_output = head_output
+
+    def exec(self, *a, **k):
+        return {}
+
+    def exec_on_head(self, cmd, *a, **k):
+        self.head_cmds.append(cmd)
+        return {"10.0.0.1": self._head_output}
+
+
+class TestProbeOpenAIEndpoints(unittest.TestCase):
+    """Unit tests for VllmJob.probe_openai_endpoints. No hardware: FakeOrchWithHeadOutput
+    returns a canned base64-decoded-script's stdout line (the JSON dict the
+    stdlib probe script prints), mirroring what `orch.exec_on_head` would ship back
+    from the container."""
+
+    _GOOD_BODY = {
+        "model": "amd/Llama-3.1-70B-Instruct-FP8-KV",
+        "choices": [{"message": {"content": "OK"}, "text": "Paris"}],
+    }
+    _BOOK_CONTENT = json.dumps({"title": "T", "author": "A", "year": 2000, "genre": "G"})
+
+    def _raw(self, results):
+        return json.dumps(results)
+
+    def _all_pass_results(self):
+        return {
+            "model_endpoint": [200, {"data": [{"id": "amd/Llama-3.1-70B-Instruct-FP8-KV"}]}],
+            "chat_completion_endpoint": [200, {**self._GOOD_BODY, "choices": [{"message": {"content": "OK"}}]}],
+            "completion_endpoint": [200, {**self._GOOD_BODY, "choices": [{"text": "Paris"}]}],
+            "structured_output_book": [
+                200,
+                {**self._GOOD_BODY, "choices": [{"message": {"content": self._BOOK_CONTENT}}]},
+            ],
+        }
+
+    def test_issues_single_head_exec_with_port_and_model(self):
+        orch = FakeOrchWithHeadOutput(head_output=self._raw(self._all_pass_results()))
+        job = _job("1024", "1024", 1, serve_args={"max-model-len": "16384"})
+        job.orch = orch
+        job.probe_openai_endpoints()
+        self.assertEqual(len(orch.head_cmds), 1)
+        cmd = orch.head_cmds[0]
+        self.assertIn("base64 -d", cmd)
+        self.assertIn("python3", cmd)
+
+    def test_all_pass_returns_summary_lines(self):
+        orch = FakeOrchWithHeadOutput(head_output=self._raw(self._all_pass_results()))
+        job = _job("1024", "1024", 1, serve_args={"max-model-len": "16384"})
+        job.orch = orch
+        summary = job.probe_openai_endpoints()
+        self.assertEqual(len(summary), 4)
+        for line in summary:
+            self.assertIn("-> Pass (200)", line)
+
+    def test_http_failure_raises(self):
+        results = self._all_pass_results()
+        results["model_endpoint"] = [500, {"error": "boom"}]
+        orch = FakeOrchWithHeadOutput(head_output=self._raw(results))
+        job = _job("1024", "1024", 1, serve_args={"max-model-len": "16384"})
+        job.orch = orch
+        with self.assertRaises(RuntimeError):
+            job.probe_openai_endpoints()
+
+    def test_empty_content_raises(self):
+        results = self._all_pass_results()
+        results["chat_completion_endpoint"][1]["choices"] = [{"message": {"content": ""}}]
+        orch = FakeOrchWithHeadOutput(head_output=self._raw(results))
+        job = _job("1024", "1024", 1, serve_args={"max-model-len": "16384"})
+        job.orch = orch
+        with self.assertRaises(RuntimeError):
+            job.probe_openai_endpoints()
+
+    def test_no_output_raises(self):
+        orch = FakeOrchWithHeadOutput(head_output="")
+        job = _job("1024", "1024", 1, serve_args={"max-model-len": "16384"})
+        job.orch = orch
+        with self.assertRaises(RuntimeError):
+            job.probe_openai_endpoints()
+
+    def test_unparseable_output_raises(self):
+        orch = FakeOrchWithHeadOutput(head_output="not json {{{")
+        job = _job("1024", "1024", 1, serve_args={"max-model-len": "16384"})
+        job.orch = orch
+        with self.assertRaises(RuntimeError):
+            job.probe_openai_endpoints()
+
+    def test_bad_shape_raises(self):
+        orch = FakeOrchWithHeadOutput(head_output=json.dumps({"model_endpoint": "not-a-pair"}))
+        job = _job("1024", "1024", 1, serve_args={"max-model-len": "16384"})
+        job.orch = orch
+        with self.assertRaises(RuntimeError):
+            job.probe_openai_endpoints()
 
 
 if __name__ == "__main__":
