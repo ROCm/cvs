@@ -115,8 +115,10 @@ class BaremetalOrchestrator(Orchestrator):
 
         CVS's sudo model is passwordless-or-none, so a single boolean answer
         (rather than per-command retry) is sufficient. The fleet-wide answer
-        is taken from the first host's result; if hosts disagree, a warning
-        is logged but the first-host answer is still used for every command.
+        is taken from the head node's result specifically (not an arbitrary
+        dict-iteration-order pick) since exec_on_head is the dominant caller
+        of privileged commands; if hosts disagree, a warning is logged but the
+        head-node answer is still used for every command on every host.
 
         Returns:
             str: 'sudo -n ' if passwordless sudo is available, else ''.
@@ -125,7 +127,7 @@ class BaremetalOrchestrator(Orchestrator):
             sudo_status = get_passwordless_sudo_status(self.all)
             if len(set(sudo_status.values())) > 1:
                 self.log.warning(f"Hosts disagree on passwordless sudo availability: {sudo_status}")
-            self._needs_sudo = next(iter(sudo_status.values()), False)
+            self._needs_sudo = sudo_status.get(self.head_node, False)
         return 'sudo -n ' if self._needs_sudo else ''
 
     def exec_on_head(self, cmd, timeout=None, detailed=False):
@@ -212,12 +214,25 @@ class BaremetalOrchestrator(Orchestrator):
         for host in mpi_hosts:
             host_file_params += f'{host} slots={ranks_per_host}\n'
 
-        # Create hostfile on head node.
-        cmd = f'{self.sudo_prefix()}rm -f /tmp/mpi_hosts.txt'
-        self.exec_on_head(cmd)
+        # Create hostfile on head node. Both the removal and the write use the
+        # same sudo_prefix() so a hostfile left root-owned by a prior run (when
+        # sudo was needed) can't cause an unprivileged write here to fail
+        # silently against a stale file -- the exit codes are also checked so a
+        # write failure surfaces immediately instead of launching MPI against a
+        # leftover hostfile.
+        sudo_prefix = self.sudo_prefix()
 
-        cmd = f'bash -c \'echo "{host_file_params}" > /tmp/mpi_hosts.txt\''
-        self.exec_on_head(cmd)
+        cmd = f'{sudo_prefix}rm -f /tmp/mpi_hosts.txt'
+        result = self.exec_on_head(cmd, detailed=True)
+        failed = [host for host, res in result.items() if res.get('exit_code') != 0]
+        if failed:
+            raise RuntimeError(f"Failed to remove stale MPI hostfile on hosts: {failed}")
+
+        cmd = f'{sudo_prefix}bash -c \'echo "{host_file_params}" > /tmp/mpi_hosts.txt\''
+        result = self.exec_on_head(cmd, detailed=True)
+        failed = [host for host, res in result.items() if res.get('exit_code') != 0]
+        if failed:
+            raise RuntimeError(f"Failed to write MPI hostfile on hosts: {failed}")
 
         # Build MPI runner arguments
         if no_of_global_ranks is None:

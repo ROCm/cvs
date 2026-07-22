@@ -84,8 +84,7 @@ class OrchestratorConfig:
                 "network": "host",
                 "ipc": "host",
                 "ulimit": ["memlock=-1"],
-                "privileged": true,
-                "registry": {"username": "myuser", "password_file": "/home/myuser/.docker_token"}
+                "privileged": true
               }
             },
             "image": "rocm/cvs:latest",

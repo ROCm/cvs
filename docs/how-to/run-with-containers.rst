@@ -15,7 +15,7 @@ Prerequisites
 
 On every cluster node:
 
-- **Docker** installed. The SSH user needs either passwordless ``sudo docker`` or direct Docker access (for example membership in the ``docker`` group) -- CVS auto-detects which applies and falls back to ``sudo -n`` only if the plain command fails. See :doc:`/reference/configuration-files/cluster-file`.
+- **Docker** installed. The SSH user needs either passwordless ``sudo docker`` or direct Docker access (for example membership in the ``docker`` group) -- CVS probes once per run (``sudo -n true``) and caches which applies, prefixing every subsequent Docker command accordingly. See :doc:`/reference/configuration-files/cluster-file`.
 - **Host driver** loaded so ``/dev/kfd``, ``/dev/dri/*``, and ``/dev/infiniband/*`` (when RDMA is in scope) are present for passthrough.
 - **SSH user home directory** reachable. The orchestrator mounts ``~/.ssh`` as ``/host_ssh`` inside the container so that the in-container ``sshd`` on port ``2224`` can authenticate.
 - **Container image** either pre-loaded on every node (``docker load``) or pullable from a reachable registry. The image must contain ``openssh-server`` and the workload binaries the suite invokes (for example ``/opt/rocm/bin/rvs``).

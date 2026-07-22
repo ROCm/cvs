@@ -99,6 +99,69 @@ class TestBaremetalOrchestrator(unittest.TestCase):
                 )
                 self.assertEqual(first_call_cmd, f"{sudo_prefix}rm -f /tmp/mpi_hosts.txt")
 
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_build_mpi_cmd_hostfile_write_uses_same_sudo_prefix_as_removal(self, _mock_pssh):
+        # Regression test: the hostfile write must use the SAME sudo_prefix() as
+        # the removal. If a prior run left /tmp/mpi_hosts.txt root-owned (sudo
+        # was needed then) and this run's probe resolves no-sudo, an unprefixed
+        # write would silently fail against the sticky-bit-protected /tmp entry
+        # left by a DIFFERENT owner, launching MPI against a stale hostfile.
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.head.exec.return_value = {"10.0.0.1": {"output": "", "exit_code": 0}}
+
+        with patch.object(orch, "sudo_prefix", return_value="sudo -n "):
+            orch.build_mpi_cmd(
+                rank_cmd="echo hi",
+                mpi_hosts=["10.0.0.1"],
+                ranks_per_host=1,
+                env_vars={},
+                mpi_install_dir="/opt/mpi",
+            )
+
+        remove_cmd, write_cmd = (call[0][0] for call in orch.head.exec.call_args_list[:2])
+        self.assertTrue(remove_cmd.startswith("sudo -n "))
+        self.assertTrue(write_cmd.startswith("sudo -n "))
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_build_mpi_cmd_raises_on_hostfile_removal_failure(self, _mock_pssh):
+        # A failed removal (e.g. permission denied against a stale, differently
+        # -owned file) must abort loudly instead of silently proceeding to launch
+        # MPI against whatever hostfile is left on disk.
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.head.exec.return_value = {"10.0.0.1": {"output": "", "exit_code": 1}}
+
+        with patch.object(orch, "sudo_prefix", return_value=""):
+            with self.assertRaises(RuntimeError):
+                orch.build_mpi_cmd(
+                    rank_cmd="echo hi",
+                    mpi_hosts=["10.0.0.1"],
+                    ranks_per_host=1,
+                    env_vars={},
+                    mpi_install_dir="/opt/mpi",
+                )
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_build_mpi_cmd_raises_on_hostfile_write_failure(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        # First call (rm) succeeds, second call (write) fails.
+        orch.head.exec.side_effect = [
+            {"10.0.0.1": {"output": "", "exit_code": 0}},
+            {"10.0.0.1": {"output": "", "exit_code": 1}},
+        ]
+
+        with patch.object(orch, "sudo_prefix", return_value=""):
+            with self.assertRaises(RuntimeError):
+                orch.build_mpi_cmd(
+                    rank_cmd="echo hi",
+                    mpi_hosts=["10.0.0.1"],
+                    ranks_per_host=1,
+                    env_vars={},
+                    mpi_install_dir="/opt/mpi",
+                )
+
 
 class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
     """Covers BaremetalOrchestrator.sudo_prefix(): the probe-once mechanism that
@@ -127,8 +190,8 @@ class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
     @patch("cvs.core.orchestrators.baremetal.Pssh")
     def test_sudo_prefix_warns_on_host_disagreement_but_still_returns_a_value(self, mock_pssh):
         # AC: hosts disagreeing on sudo need must log a warning but must NOT
-        # raise or branch per-host -- the fleet-wide answer is the first
-        # value in the probe dict's insertion order.
+        # raise or branch per-host -- the fleet-wide answer is the head node's
+        # (10.0.0.1 per _make_orch_config), not an arbitrary dict-order pick.
         pssh_instance = MagicMock()
         pssh_instance.exec.return_value = {"10.0.0.1": "0", "10.0.0.2": "1"}
         mock_pssh.return_value = pssh_instance
@@ -137,6 +200,26 @@ class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
         orch = BaremetalOrchestrator(log, _make_orch_config())
 
         self.assertEqual(orch.sudo_prefix(), "sudo -n ")
+        log.warning.assert_called_once()
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_sudo_prefix_disagreement_uses_head_node_not_dict_order(self, mock_pssh):
+        # Regression test: the fleet-wide answer must come specifically from
+        # the head node, not from whichever host the probe dict happens to
+        # iterate first. Here the head node (10.0.0.1) says sudo is NOT
+        # needed while a non-head worker says it IS -- if this incorrectly
+        # picked "first in dict order" or "any True wins", the result would
+        # flip to 'sudo -n ' and privileged commands on the head node (e.g.
+        # exec_on_head, used by build_mpi_cmd) would run under an
+        # unnecessary and potentially unavailable sudo.
+        pssh_instance = MagicMock()
+        pssh_instance.exec.return_value = {"10.0.0.1": "1", "10.0.0.2": "0"}
+        mock_pssh.return_value = pssh_instance
+
+        log = MagicMock()
+        orch = BaremetalOrchestrator(log, _make_orch_config())
+
+        self.assertEqual(orch.sudo_prefix(), "")
         log.warning.assert_called_once()
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")

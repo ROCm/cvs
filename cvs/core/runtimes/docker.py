@@ -22,41 +22,6 @@ class DockerRuntime:
         # If grep succeeds (exit 0), image exists; if not, not found
         return all(res.get('exit_code') == 0 for res in result.values())
 
-    def registry_login(self, registry_config):
-        """Log in to a Docker registry on all nodes ahead of a pull.
-
-        Args:
-            registry_config: dict with ``username`` and ``password_file`` (path
-                to a file on each remote host containing the password/token) and
-                optional ``server`` (registry hostname; omit for Docker Hub).
-                The password is piped via stdin (``--password-stdin``) so it
-                never appears in a command line, process list, or log line.
-
-        Returns:
-            bool: True if login succeeded on every host.
-        """
-        username = registry_config.get('username')
-        password_file = registry_config.get('password_file')
-        if not username or not password_file:
-            self.log.error("registry_login requires 'username' and 'password_file'")
-            return False
-
-        server = registry_config.get('server', '')
-        # `docker login` (the stage that needs sudo for daemon-socket access) is
-        # the SECOND stage of this pipe, so wrap the whole pipeline in `sh -c`
-        # and prefix that so sudo applies to all of it, not just the first token.
-        inner = (
-            f"cat {shlex.quote(password_file)} | docker login {shlex.quote(server)} "
-            f"--username {shlex.quote(username)} --password-stdin"
-        )
-        cmd = f"{self.orchestrator.sudo_prefix()}sh -c {shlex.quote(inner)}"
-        result = self.orchestrator.all.exec(cmd, timeout=30, print_console=False, detailed=True)
-        success = all(res.get('exit_code') == 0 for res in result.values())
-        if not success:
-            failed = [host for host, res in result.items() if res.get('exit_code') != 0]
-            self.log.error(f"docker login failed on hosts: {failed}")
-        return success
-
     def setup_containers(
         self,
         container_config,
@@ -155,12 +120,6 @@ class DockerRuntime:
                     return False
             else:
                 self.log.info(f"Image {container_config['image']} already exists, skipping tar load")
-        elif runtime_args_config.get('registry'):
-            # No local tar to load: this run needs a registry pull, so log in
-            # first for private images (e.g. rocm/ufb-private).
-            self.log.info("Logging in to Docker registry before pulling image")
-            if not self.registry_login(runtime_args_config['registry']):
-                return False
 
         cmd = f"{self.orchestrator.sudo_prefix()}docker run -d --name {container_name} {all_args_str} {image} sleep infinity"
 

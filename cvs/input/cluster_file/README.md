@@ -49,7 +49,7 @@ Consumed by `ContainerOrchestrator` in [`cvs/core/orchestrators/container.py`](.
 | `runtime.name` | str | `"docker"` | Container runtime. Supported: `docker` (concrete), `enroot` (stub). |
 | `runtime.args` | dict | `{}` | Backend-specific runtime arguments (see below). Defaults from `DEFAULT_CONTAINER_ARGS` in [`cvs/core/orchestrators/container.py`](../../core/orchestrators/container.py) apply for any key omitted here. |
 
-CVS's own internal commands -- the Docker CLI calls made by `DockerRuntime` (`docker run`/`exec`/`rm`/`ps`/`load`) and the MPI hostfile cleanup in `BaremetalOrchestrator` -- automatically detect whether `sudo` is needed. Each command tries without `sudo` first and falls back to non-interactive `sudo -n` only if that fails, so no cluster-file configuration is required whether the SSH user has passwordless sudo, is already in the `docker` group, or has direct access to the resources it needs.
+CVS's own internal commands -- the Docker CLI calls made by `DockerRuntime` (`docker run`/`exec`/`rm`/`ps`/`load`) and the MPI hostfile cleanup in `BaremetalOrchestrator` -- automatically detect whether `sudo` is needed. Once per run, CVS probes each host with `sudo -n true` and caches whether passwordless sudo is available; every subsequent privileged command is then prefixed with `sudo -n ` or left unprefixed accordingly, for the lifetime of that run. No cluster-file configuration is required whether the SSH user has passwordless sudo, is already in the `docker` group, or has direct access to the resources it needs.
 
 ### `runtime.args` (docker) reference
 
@@ -70,7 +70,6 @@ RDMA-ready container; the keys below are only needed to extend or override.
 | `security_opt` | list | `["seccomp=unconfined","apparmor=unconfined"]` (appended) | Security profile relaxations needed for RDMA + ptrace. |
 | `group_add` | list | `["video"]` (appended) | Supplementary groups inside the container. |
 | `ulimit` | list | `["memlock=-1"]` (appended) | Per-process resource limits. `memlock=-1` is required for RDMA. |
-| `registry` | dict | none | Optional registry login before pulling a private image (e.g. `rocm/ufb-private`). Keys: `username` (str), `password_file` (str, path *on each remote host* to a file containing the password/token), `server` (str, optional; omit for Docker Hub). Runs `docker login` via `--password-stdin` so the credential never appears in a command line or log. Only applied when `image_tar` is not set (a tar load never needs a pull). |
 
 ## `lifetime` truth table (setup + teardown semantics)
 
