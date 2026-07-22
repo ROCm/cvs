@@ -48,7 +48,9 @@ def _fake_variant(
         bench_extra_args="",
         result_filename="results",
     )
-    roles = SimpleNamespace(server=SimpleNamespace(serve_args={}, atom_args=[], env={}))
+    roles = SimpleNamespace(
+        server=SimpleNamespace(serve_args={}, atom_args=[], sglang_args=[], env={}, ib_netdev="eth0")
+    )
     paths = SimpleNamespace(log_dir="/LOGS", models_dir="/models")
     model = SimpleNamespace(id="openai/gpt-oss-120b")
     return SimpleNamespace(params=params, roles=roles, paths=paths, model=model)
@@ -296,6 +298,29 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         self.assertIn("ATOM_DP_RANK=1", launch_cmds[1])
         self.assertIn("ATOM_DP_MASTER_IP=10.0.0.1", launch_cmds[0])
 
+    def test_distributed_atom_tp8_multinode_couples_spmd_dp(self):
+        orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
+        variant = _fake_variant(driver="atom", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1")
+        variant.params.tensor_parallelism = "8"
+        variant.roles.server.atom_args = ["-tp", "8"]
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.start_server()
+        launch_cmds = [c for c, hosts in orch.commands if hosts]
+        self.assertEqual(len(launch_cmds), 2)
+        self.assertIn("-dp 2", launch_cmds[0])
+        self.assertIn("-dp 2", launch_cmds[1])
+        self.assertIn("ATOM_DP_RANK=0", launch_cmds[0])
+        self.assertIn("ATOM_DP_RANK=1", launch_cmds[1])
+        self.assertIn("ATOM_DP_SIZE=2", launch_cmds[0])
+
     def test_distributed_atom_tp8_multinode_never_passes_vllm_flags(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
         variant = _fake_variant(driver="atom", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1")
@@ -341,6 +366,58 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         job.run_client()
         self.assertEqual(len(orch.exec_on_head_commands), 2)
         self.assertTrue(any("benchmark_serving" in c for c in orch.exec_on_head_commands))
+
+    def test_distributed_vllm_atom_pp2_passes_vllm_executor_flags(self):
+        orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
+        variant = _fake_variant(
+            driver="vllm_atom", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1"
+        )
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        argv0 = job._server_argv(rank=0)
+        argv1 = job._server_argv(rank=1)
+        joined0 = " ".join(argv0)
+        joined1 = " ".join(argv1)
+        self.assertIn("--pipeline-parallel-size 2", joined0)
+        self.assertIn("--node-rank 0", joined0)
+        self.assertIn("--node-rank 1", joined1)
+        self.assertIn("--headless", joined1)
+        self.assertNotIn("--headless", joined0)
+        job.start_server()
+        launch_cmds = [c for c, hosts in orch.commands if hosts]
+        self.assertIn("vllm serve", launch_cmds[0])
+        self.assertIn("--pipeline-parallel-size 2", launch_cmds[1])
+
+    def test_distributed_sglang_pp2_passes_sglang_dist_flags(self):
+        orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
+        variant = _fake_variant(
+            driver="sglang", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1"
+        )
+        variant.roles.server.sglang_args = ["--trust-remote-code"]
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        argv = job._sglang_server_argv(rank=1)
+        joined = " ".join(argv)
+        self.assertIn("sglang.launch_server", joined)
+        self.assertIn("--pp-size 2", joined)
+        self.assertIn("--node-rank 1", joined)
+        self.assertIn("--dist-init-addr 10.0.0.1:29501", joined)
+        client = " ".join(job._sglang_client_argv())
+        self.assertIn("sglang.bench_serving", client)
 
     def test_parse_results_scaling_efficiency(self):
         raw = json.loads((_FIXTURES / "vllm_results_sample.json").read_text())

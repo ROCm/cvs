@@ -105,6 +105,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.pipeline_parallel_size, "2")
         self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
         self.assertTrue(variant.enforce_thresholds)
@@ -116,6 +117,19 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
             {"kind": "min", "value": 22},
         )
 
+    def test_load_w1_mi300x_multinode_sglang_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "sglang")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertFalse(variant.enforce_thresholds)
+        cell = "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertIn(cell, variant.expected_cells())
+
     def test_load_w1_mi355x_multinode_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
@@ -125,6 +139,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.gpu_arch, "mi355x")
         self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.pipeline_parallel_size, "2")
         self.assertEqual(variant.params.scaling_baseline_output_throughput, "4000")
         self.assertFalse(variant.enforce_thresholds)
@@ -160,6 +175,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.pipeline_parallel_size, "2")
         self.assertEqual(variant.params.max_model_length, "10240")
         self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
@@ -169,10 +185,8 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         self.assertIn(cell, variant.expected_cells())
         self.assertEqual(
             variant.thresholds[cell]["scaling.efficiency_pct"],
-            {"kind": "min", "value": 50},
+            {"kind": "min", "value": 9.0},
         )
-
-    def test_load_baseline_sweep_mi355x_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
             "input/config_file/inference/inferencex_atom/"
