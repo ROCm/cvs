@@ -223,10 +223,12 @@ class TestPerGpuThroughput(unittest.TestCase):
         raw_none = _raw(total_token_throughput=None)
         self.assertIsNone(_metrics(raw_none, tp="8", pp="2")[self.KEY])
 
-    def test_pp_is_required_keyword_arg(self):
-        # AC1: pp has no default; omitting it is a TypeError from arg binding.
-        with self.assertRaises(TypeError):
-            vllm_parsing.to_client_metrics(_raw(), tp="8", isl=_ISL)
+    def test_pp_defaults_to_one(self):
+        # Callers with no pipeline-parallel concept (e.g. InferenceX ATOM) omit
+        # `pp` entirely; it must silently behave as pp="1", not raise.
+        omitted = vllm_parsing.to_client_metrics(_raw(), tp="8", isl=_ISL)
+        explicit = _metrics(_raw(), tp="8", pp="1")
+        self.assertEqual(omitted[self.KEY], explicit[self.KEY])
 
 
 # ===========================================================================

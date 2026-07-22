@@ -54,7 +54,7 @@ def _gpu_count(tp, pp):
         return None
 
 
-def to_client_metrics(raw, *, tp, isl, pp):
+def to_client_metrics(raw, *, tp, isl, pp="1"):
     """Map a stock `vllm bench serve` results dict to the `client.*` namespace.
 
     `raw` is the already-parsed JSON the load generator writes to its
@@ -65,8 +65,8 @@ def to_client_metrics(raw, *, tp, isl, pp):
 
     `tp` (tensor parallelism), `isl` (input sequence length), and `pp`
     (pipeline parallelism) are the only out-of-band scalars the derivations
-    need. `pp` is required (no default) so every call site is forced to state
-    its GPU topology explicitly; single-node callers pass `pp="1"`.
+    need. `pp` defaults to `"1"` for callers with no pipeline-parallel concept
+    (e.g. InferenceX ATOM); vLLM call sites should still pass it explicitly.
     """
     m = {f"client.{k}": v for k, v in raw.items()}
     # Friendly alias: stock's request_goodput -> client.goodput
