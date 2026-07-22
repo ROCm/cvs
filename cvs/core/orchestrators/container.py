@@ -450,8 +450,8 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         2224``) can reach peer ranks on other nodes. A single-node run never
         distributes over MPI -- it execs directly via ``docker exec`` -- so sshd
         is dead weight there. On a single-host cluster this is a no-op, which
-        also lets minimal images that ship no ``/usr/sbin/sshd`` run single-node
-        without tripping the start/validate steps below.
+        Multinode runs require the container image to ship ``openssh-server``
+        (``/usr/sbin/sshd``). There is no runtime ``apt-get`` fallback.
 
         Returns:
             bool: True if SSH setup succeeded on all nodes (or was skipped as
@@ -477,16 +477,17 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             "chown -R root:root /root/.ssh",
             "bash -c 'chmod 700 /root/.ssh && chmod 600 /root/.ssh/*'",
             "mkdir -p /run/sshd",  # Create privilege separation directory for sshd
-            "bash -c 'which sshd > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -q openssh-server iproute2)'",
+            (
+                "bash -c 'command -v /usr/sbin/sshd >/dev/null 2>&1 || "
+                "{ echo \"Container image must include openssh-server (/usr/sbin/sshd) "
+                "for multinode runs; rebuild the image or use one with sshd preinstalled\" >&2; "
+                "exit 1; }'"
+            ),
             "/usr/sbin/sshd -p2224",
         ]
 
-        timeouts = {
-            "bash -c 'which sshd > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -q openssh-server iproute2)'": 120,
-        }
-
         for cmd in ssh_setup_commands:
-            result = self.exec(cmd, timeout=timeouts.get(cmd, 10), detailed=True)
+            result = self.exec(cmd, timeout=10, detailed=True)
             # Check if command succeeded on all hosts
             for hostname, output in result.items():
                 if output['exit_code'] != 0:
