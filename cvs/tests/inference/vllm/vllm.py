@@ -52,6 +52,12 @@ _FETCH_POLL_COUNT = 80
 _FETCH_POLL_WAIT_S = 30
 _FETCH_PRESENCE_RETRIES = 5
 
+# Smoke-probe cell: smallest isl/osl that gets a server up to answer
+# GET/POST /v1/* without spending sweep-scale time/GPU-minutes. concurrency/
+# num_prompts are irrelevant here -- the probe never calls run_client.
+_SMOKE_ISL = 128
+_SMOKE_OSL = 32
+
 
 def pytest_generate_tests(metafunc):
     """Parametrize test_vllm_inference from the sweep's named-combo + runs selector.
@@ -240,6 +246,47 @@ def _gpu_snap(orch):
         return capture_gpu_metrics(orch)
     except Exception:
         return {}
+
+
+def test_openai_compatible_smoke(orch, variant_config, hf_token, lifecycle, request):
+    """Stage: smoke-test the OpenAI-compatible HTTP API, once per module.
+
+    Independent of the sweep -- brings up its own short-lived server at a
+    small fixed cell (isl/osl above; concurrency/num_prompts are irrelevant,
+    the probe never runs the benchmark client) purely to answer GET/POST
+    /v1/models, /v1/chat/completions, /v1/completions, and a structured-JSON
+    chat completion. Runs before the sweep so a broken server/endpoint fails
+    fast instead of burning a full benchmark cell first. Always stops its
+    server afterward (success or failure) so test_vllm_inference's first
+    `job.stop_server()` isn't papering over a smoke server left running.
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    job = VllmJob(
+        orch=orch,
+        variant=variant_config,
+        hf_token=hf_token,
+        isl=_SMOKE_ISL,
+        osl=_SMOKE_OSL,
+        concurrency=1,
+        num_prompts=1,
+        ib_hcas=getattr(lifecycle, "ib_hcas", []),
+        client_poll_count=int(variant_config.params.client_poll_count),
+    )
+    t = time.monotonic()
+    try:
+        job.stop_server()
+        job.build_server_cmd()
+        job.start_server()
+        job.wait_ready()
+        summary = job.probe_openai_endpoints()
+    except Exception:
+        lifecycle.failed = True
+        raise
+    finally:
+        job.stop_server()
+    lifecycle.record(request.node.nodeid, "openai_smoke", time.monotonic() - t)
+    log.info("OpenAI-compatible smoke results:\n%s", "\n".join(summary))
 
 
 def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, inf_res_dict, lifecycle, request):

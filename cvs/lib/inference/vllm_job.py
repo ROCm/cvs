@@ -32,6 +32,7 @@ IB device config (distributed only):
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import re
@@ -41,6 +42,7 @@ from typing import Optional
 
 from cvs.lib import globals
 from cvs.lib.inference.utils.vllm_parsing import to_client_metrics
+from cvs.lib.utils.model_query_lib import OpenAIProbe
 
 log = globals.log
 
@@ -428,6 +430,61 @@ class VllmJob:
         time.sleep(5)
         if self._is_ray_backend and int(self.nnodes) > 1:
             self.orch.exec("ray stop")
+
+    # ---------- smoke ----------
+
+    def probe_openai_endpoints(self):
+        """Smoke-test the server's OpenAI-compatible HTTP API via `orch.exec_on_head`.
+
+        Reuses the framework-agnostic `OpenAIProbe` (shared with the sglang
+        suite's `docker exec`-based probe): GET /v1/models, POST
+        /v1/chat/completions, POST /v1/completions, and a structured-JSON
+        chat completion. The probe script is stdlib-only Python, base64'd
+        into a heredoc-free `exec` so no file needs staging/cleanup outside
+        the one temp path. Runs on the HEAD node only (like run_client /
+        parse_results): the client always talks to http://head:port, so
+        broadcasting the probe to every node would needlessly recheck the
+        same endpoint N times on multinode.
+
+        Returns the per-step "<title> -> Pass|Fail (<code>)" summary lines.
+        Raises RuntimeError on a malformed/missing probe response or a
+        failed check (mirrors parse_results: hard-fail rather than a
+        silently-green empty result).
+        """
+        probe_src = OpenAIProbe.probe_script(int(self.port_no), self.model_id)
+        b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
+        probe_path = f"{self.out_dir}/openai_probe.py"
+        cmd = (
+            f"mkdir -p {shlex.quote(self.out_dir)} && "
+            f"echo {shlex.quote(b64)} | base64 -d > {shlex.quote(probe_path)} && "
+            f"python3 {shlex.quote(probe_path)}"
+        )
+        out = self.orch.exec_on_head("bash -c " + shlex.quote(cmd))
+
+        raw = next(iter(out.values()), None) if out else None
+        if not raw or not str(raw).strip():
+            raise RuntimeError(f"OpenAI-compatible probe produced no output: {out!r}")
+
+        last_line = str(raw).strip().splitlines()[-1]
+        try:
+            parsed = json.loads(last_line)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw!r}") from e
+        if not isinstance(parsed, dict):
+            raise RuntimeError(f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}")
+
+        results = {}
+        for step, val in parsed.items():
+            if not (isinstance(val, (list, tuple)) and len(val) == 2):
+                raise RuntimeError(f"OpenAI-compatible probe bad shape at {step!r}: {val!r}")
+            results[step] = (int(val[0]), val[1])
+
+        OpenAIProbe.log_results(results, log)
+        ok, err = OpenAIProbe.check_results(results, port=self.port_no, logger=log)
+        summary = OpenAIProbe.summarize_results(results, ok, err)
+        if not ok:
+            raise RuntimeError(err)
+        return summary
 
     # ---------- client side (head-only) ----------
 
