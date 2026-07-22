@@ -7,8 +7,9 @@ InferenceX ATOM inference configuration file
 
 InferenceX ATOM tests validate LLM serving on AMD GPU clusters using the **ATOM** stack
 (``atom.entrypoints.openai_server`` + ``atom.benchmarks.benchmark_serving``). W1 workloads
-use ``params.driver: atom``. A legacy ``params.driver: vllm`` path (``vllm serve`` +
-``vllm bench serve``) remains for GPT-OSS uplift only.
+use ``params.driver: atom``. Multinode **pipeline parallel** (``PP=2``) uses a framework
+coordinator: ``params.driver: vllm_atom`` (vLLM + ATOM ROCm kernels) or ``params.driver: sglang``.
+A legacy ``params.driver: vllm`` path remains for GPT-OSS uplift only.
 
 The suite checks:
 
@@ -150,8 +151,8 @@ Top-level blocks follow the DTNI variant schema. InferenceX ATOM-specific keys:
      - ``ATOM_DISABLE_MMAP``
      - Merged into ``/tmp/server_env_script.sh`` before server launch.
    * - ``params.driver``
-     - ``atom`` / ``vllm``
-     - ``atom`` = ATOM server + ``benchmark_serving``; ``vllm`` = interim uplift path.
+     - ``atom`` / ``vllm`` / ``vllm_atom`` / ``sglang``
+     - ``atom`` = standalone ATOM server + ``benchmark_serving`` (no native PP). ``vllm_atom`` = vLLM multinode PP coordinator + ATOM kernels. ``sglang`` = SGLang PP coordinator. ``vllm`` = interim uplift.
    * - ``params.tensor_parallelism``
      - ``8``
      - TP size; appears in threshold cell keys as ``TP``.
@@ -159,8 +160,8 @@ Top-level blocks follow the DTNI variant schema. InferenceX ATOM-specific keys:
      - ``true``
      - Skip server restart when only concurrency changes between sweep cells.
    * - ``params.nnodes`` / ``params.pipeline_parallel_size``
-     - ``2`` / ``2``
-     - Multinode distributed serve (M5). Omit or set ``nnodes: "1"`` for single-node.
+     - ``2`` / ``2`` (multinode PP)
+     - True multinode pipeline parallel: set ``driver=vllm_atom`` or ``sglang`` with ``nnodes=2`` and ``pipeline_parallel_size=2`` (cell keys use ``PP=2``). Requires ``roles.server.ib_netdev``. Standalone ``driver=atom`` multinode uses SPMD data parallel (``DP`` in cell keys), not PP.
    * - ``params.master_addr`` / ``params.master_port``
      - head VPC IP / ``29501``
      - Rendezvous for distributed ATOM/vLLM executor; defaults to cluster head when empty.

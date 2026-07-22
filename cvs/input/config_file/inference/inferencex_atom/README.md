@@ -29,12 +29,13 @@ Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc
 | `mi300x_inferencex-atom_deepseek-r1_fp8_smoke` | MI300X | Quick path check (C=128, 128 prompts) |
 | `mi300x_inferencex-atom_deepseek-r1_fp8_perf` | MI300X | W1 perf, portable min-SLO thresholds, server reuse across sweep |
 | `mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep` | MI300X | **DTNI baseline matrix:** 1K/1K + 8K/1K × C=4–256 (14 cells); `max_model_length=10240` |
-| `mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_multinode` | MI300X | **2-node** DTNI baseline matrix (same 14 cells); `PP=2`, `nnodes=2`, scaling gates |
-| `mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi` | MI300X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); `enforce_thresholds: false` until lab confirm |
+| `mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_multinode` | MI300X | **2-node** DTNI baseline (14 cells); `PP=2`, `driver=vllm_atom`, scaling gates |
+| `mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi` | MI300X | W1 **2-node** PP=2 (`driver=vllm_atom`); `enforce_thresholds: true` |
+| `mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang` | MI300X | W1 **2-node** PP=2 (`driver=sglang`); `enforce_thresholds: false` until lab confirm |
 | `mi300x_inferencex-atom_deepseek-r1_fp8_mtp3` | MI300X | W1 FP8+MTP3 |
 | `mi355x_inferencex-atom_deepseek-r1_fp8_perf` | MI355X | W1 perf (CI seeds, `enforce_thresholds: false`) |
 | `mi355x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep` | MI355X | **DTNI baseline matrix:** 1K/1K + 8K/1K × C=4–256 (14 cells); threshold seeds, `enforce_thresholds: false` |
-| `mi355x_inferencex-atom_deepseek-r1_fp8_perf_multi` | MI355X | W1 **2-node** scaling (`nnodes=2`, `PP=2`); `enforce_thresholds: false` until lab confirm |
+| `mi355x_inferencex-atom_deepseek-r1_fp8_perf_multi` | MI355X | W1 **2-node** PP=2 (`driver=vllm_atom`); `enforce_thresholds: false` until lab confirm |
 | `mi355x_inferencex-atom_deepseek-r1_fp8_mtp3` | MI355X | W1 FP8+MTP3 |
 | `mi300x_inferencex-atom_gpt-oss-120b_bf16` | MI300X | GPT-OSS uplift placeholder (`driver: vllm`, inline `serve_args`) |
 | `mi355x_inferencex-atom_gpt-oss-120b_bf16` | MI355X | GPT-OSS uplift placeholder |
@@ -208,7 +209,7 @@ echo "LOG:  $LOG"
 
 ## W1 perf baseline sweep multinode (MI300X, 2-node)
 
-Same **14-cell** DTNI matrix as single-node baseline sweep (1K/1K + 8K/1K × C=4–256), with `nnodes=2`, `PP=2`, and `scaling.efficiency_pct` gates. Scaling floors are calibrated from the MI300X 2-node lab run on `20260715` (80% of measured per cell). Expect a long run (~4–8 hours). Use a **2-host** `inferencex_atom_cluster.json` and set `params.master_addr` to the head VPC IP after `copy-config` (replace `{head-node-ip}` placeholder).
+Same **14-cell** DTNI matrix as single-node baseline sweep (1K/1K + 8K/1K × C=4–256), with `nnodes=2`, **`driver=vllm_atom`**, **`pipeline_parallel_size=2`** (true pipeline parallel via vLLM coordinator + ATOM kernels; cell keys use `PP=2`), and `scaling.efficiency_pct` gates. Set `roles.server.ib_netdev` and a vLLM+ATOM container image before lab run. Expect a long run (~4–8 hours). Use a **2-host** `inferencex_atom_cluster.json` and set `params.master_addr` to the head VPC IP after `copy-config` (replace `{head-node-ip}` placeholder).
 
 ```bash
 cd ~/cvs
