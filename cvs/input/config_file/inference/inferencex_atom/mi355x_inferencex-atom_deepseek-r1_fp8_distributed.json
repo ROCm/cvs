@@ -53,6 +53,7 @@
         "block-size": 64,
         "no-enable-prefix-caching": true
       },
+      "ib_hca_devices": "auto",
       "ib_netdev": "<changeme>",
       "env": {
         "VLLM_ROCM_USE_AITER": "1",

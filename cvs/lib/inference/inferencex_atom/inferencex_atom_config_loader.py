@@ -11,7 +11,7 @@ Generic paths/model/container/threshold plumbing lives in
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import field_validator, model_validator
 from typing_extensions import Literal
@@ -35,7 +35,11 @@ class InferenceXAtomRoleServer(RoleServer):
     atom_args: List[str] = []
     # Extra CLI tokens appended to ``python3 -m sglang.launch_server`` (driver=sglang).
     sglang_args: List[str] = []
-    # Linux netdev for NCCL_SOCKET_IFNAME on multinode PP runs (vllm/vllm_atom/sglang).
+    # IB HCA devices for NCCL_IB_HCA (multinode only).
+    # absent or "auto" -> use whatever ibv_devinfo -l reports (test_discover_topology).
+    # explicit list -> validated at preflight against ibv_devinfo output.
+    ib_hca_devices: Union[Literal["auto"], List[str], None] = None
+    # Linux netdev for NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME on multinode PP runs.
     ib_netdev: Optional[str] = None
 
 

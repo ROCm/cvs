@@ -440,6 +440,79 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         self.assertAlmostEqual(metrics["scaling.efficiency_pct"], expected)
 
 
+class TestInferenceXAtomBuildServerCmd(unittest.TestCase):
+    @staticmethod
+    def _env_script(orch):
+        return orch.commands[0][0]
+
+    def test_nccl_ib_hca_line_present_only_when_ib_hcas_supplied(self):
+        cases = [
+            (["mlx5_0", "mlx5_1"], True),
+            ([], False),
+            (None, False),
+        ]
+        for ib_hcas, present in cases:
+            with self.subTest(ib_hcas=ib_hcas):
+                orch = FakeOrch()
+                job = InferenceXAtomJob(
+                    orch=orch,
+                    variant=_fake_variant(
+                        driver="vllm_atom",
+                        nnodes="2",
+                        pipeline_parallel_size="2",
+                        master_addr="10.0.0.1",
+                    ),
+                    hf_token="tok",
+                    isl="1024",
+                    osl="1024",
+                    concurrency=128,
+                    num_prompts=100,
+                    ib_hcas=ib_hcas,
+                )
+                job.build_server_cmd()
+                script = self._env_script(orch)
+                if present:
+                    self.assertIn("NCCL_IB_HCA", script)
+                    self.assertIn("mlx5_0", script)
+                else:
+                    self.assertNotIn("NCCL_IB_HCA", script)
+
+    def test_socket_ifname_exports_present_only_when_distributed_ib_netdev_set(self):
+        orch = FakeOrch()
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=_fake_variant(
+                driver="vllm_atom",
+                nnodes="2",
+                pipeline_parallel_size="2",
+                master_addr="10.0.0.1",
+            ),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        script = self._env_script(orch)
+        self.assertEqual(script.count("SOCKET_IFNAME"), 3)
+        self.assertIn("eth0", script)
+
+        orch_single = FakeOrch()
+        job_single = InferenceXAtomJob(
+            orch=orch_single,
+            variant=_fake_variant(driver="vllm"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job_single.build_server_cmd()
+        script_single = self._env_script(orch_single)
+        self.assertNotIn("SOCKET_IFNAME", script_single)
+
+
 class _RecordingOrch:
     hosts = ["10.0.0.1", "10.0.0.2"]
 
