@@ -1,12 +1,13 @@
 {
-  "_comment": "InferenceX ATOM cluster template. Edit node_dict to match variant params.nnodes (1 host for single-node sweeps; 2+ for multinode). Set head_node_dict.mgmt_ip to the rank-0 VPC IP (params.master_addr for nnodes>1). Model weights under /home/models on each GPU node. Variant config overrides container image/name.",
+  "_comment": "InferenceX ATOM cluster template (container backend). Copy to ~/input/cluster_file/inferencex_atom_cluster.json and edit placeholders. head_node_dict.mgmt_ip MUST be the rank-0 GPU node VPC IP (same as variant params.master_addr for nnodes>1) — not the pytest jumphost. Trim node_dict to one host for single-node variants. Variant config overrides container.image/name/volumes; cluster container block is the fallback default.",
   "orchestrator": "container",
   "username": "{user-id}",
-  "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+  "priv_key_file": "/home/{user-id}/.ssh/cluster_id_ed25519",
   "head_node_dict": {
     "mgmt_ip": "{head-node-ip}"
   },
   "env_vars": {},
+  "_env_vars_comment": "Optional host env exported on each GPU node before container setup (e.g. ROCm install on host). Usually empty when the workload image carries ROCm/vLLM.",
   "node_dict": {
     "{head-node-ip}": {
       "bmc_ip": "NA",
