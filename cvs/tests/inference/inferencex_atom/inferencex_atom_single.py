@@ -12,6 +12,7 @@ import pytest
 from cvs.lib import globals
 from cvs.lib.inference.utils.inference_suite_lifecycle import (
     sweep_cell_result_key,
+    test_accuracy_eval,  # noqa: F401
     test_launch_container,  # noqa: F401
     test_model_fetch,  # noqa: F401
     test_setup_sshd,  # noqa: F401

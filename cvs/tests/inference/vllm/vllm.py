@@ -27,6 +27,7 @@ from cvs.lib import globals
 from cvs.lib.inference.utils.vllm_config_loader import GoodputSlo, validate_sweep_selector
 from cvs.lib.utils.verdict import evaluate_all
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
+from cvs.lib.inference.utils.inference_suite_lifecycle import test_accuracy_eval  # noqa: F401
 from cvs.lib.inference.vllm_job import VllmJob
 
 import importlib.util as _ilu
