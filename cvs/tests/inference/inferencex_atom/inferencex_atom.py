@@ -43,6 +43,43 @@ def _tier_display_metric(tier):
     return names[0] if names else tier
 
 
+def test_discover_topology(orch, variant_config, lifecycle, request):
+    """Discover IB HCA devices on all nodes before the benchmark sweep (multinode only)."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    nn = int(variant_config.params.nnodes)
+    if nn == 1:
+        lifecycle.ib_hcas = []
+        return
+
+    from cvs.lib.utils.ib_discovery import discover_ib_hca_names, validate_ib_hca_preflight
+
+    t = time.monotonic()
+    try:
+        discovered = discover_ib_hca_names(orch)
+    except RuntimeError as e:
+        lifecycle.failed = True
+        lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - t)
+        pytest.fail(str(e))
+
+    requested = variant_config.roles.server.ib_hca_devices
+    if requested and requested != "auto":
+        try:
+            validate_ib_hca_preflight(discovered, requested)
+        except RuntimeError as e:
+            lifecycle.failed = True
+            lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - t)
+            pytest.fail(str(e))
+        resolved = requested
+    else:
+        resolved = next(iter(discovered.values()))
+
+    lifecycle.ib_hcas = resolved
+    lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - t)
+    log.info("test_discover_topology: resolved HCAs=%s", resolved)
+
+
 def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
@@ -79,6 +116,7 @@ def test_inferencex_atom_inference(
         isl=isl,
         osl=osl,
         concurrency=concurrency,
+        ib_hcas=getattr(lifecycle, "ib_hcas", []),
     )
 
     session_key = server_session_key(variant_config, isl, osl)

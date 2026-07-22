@@ -96,6 +96,7 @@ class InferenceXAtomJob:
         client_poll_count=50,
         client_poll_wait_s=60,
         bench_max_failed_requests=0,
+        ib_hcas=None,
     ):
         self.orch = orch
         self.variant = variant
@@ -141,6 +142,9 @@ class InferenceXAtomJob:
         self.sglang_server_args = list(variant.roles.server.sglang_args)
         self.server_env = dict(variant.roles.server.env)
         self.ib_netdev = (getattr(variant.roles.server, "ib_netdev", None) or "").strip()
+        # Discovered HCA names for NCCL_IB_HCA (multinode only). Passed in from
+        # test_discover_topology via lifecycle.ib_hcas.
+        self.ib_hcas = ib_hcas or []
 
         self.out_dir = self._node_out_dir(0)
         self.server_log = self._rank_server_log(0)
@@ -354,8 +358,12 @@ class InferenceXAtomJob:
             )
         elif self._uses_sglang_serve():
             env_lines.append("export SGLANG_USE_AITER=1")
+        if self.ib_hcas:
+            env_lines.append(f"export NCCL_IB_HCA={shlex.quote(','.join(self.ib_hcas))}")
         if self.distributed and self.ib_netdev:
             env_lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
+            env_lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
+            env_lines.append(f"export TP_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
         for k, v in self.server_env.items():
             if k in ("CVS_GPU_MEMORY_UTIL", "VLLM_GPU_MEMORY_UTIL", "VLLM_ENFORCE_EAGER"):
                 continue
