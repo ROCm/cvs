@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing_extensions import Literal
 
+from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import substitute_config
 from cvs.lib.utils.gpu import GPU_METRICS
@@ -189,6 +190,7 @@ class VariantConfig(_Forbid):
     params: Params = Field(default_factory=Params)
     sweep: Sweep
     thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
 
     @model_validator(mode="after")
     def _check_distributed_consistency(self):

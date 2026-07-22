@@ -239,6 +239,40 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         _, _, ids = expand_sweep_parametrize(sweep, ("metric_tier",))
         self.assertIn("w1-conc128-throughput", ids)
 
+    def test_accuracy_field_defaults_empty_for_sample_config(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom_single/"
+            "mi300x_inferencex-atom-single_gpt-oss-120b_bf16_config.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.accuracy.tasks, [])
+
+    def test_accuracy_field_accepts_explicit_tasks(self):
+        variant = InferenceXAtomVariantConfig(
+            schema_version=1,
+            framework="inferencex_atom_single",
+            gpu_arch="mi300x",
+            enforce_thresholds=False,
+            threshold_json="<changeme>",
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "amd/test-model", "remote": 0},
+            container={"name": "c", "image": "rocm/atom:nightly", "runtime": {"name": "docker"}},
+            params={},
+            sweep={
+                "sequence_combinations": [{"name": "a", "isl": "1024", "osl": "1024"}],
+                "runs": [{"combo": "a", "concurrency": 16}],
+            },
+            thresholds={},
+            accuracy={"tasks": [{"id": "mmlu", "task": "mmlu"}]},
+        )
+        self.assertEqual(variant.accuracy.tasks[0].id, "mmlu")
+
 
 if __name__ == "__main__":
     unittest.main()
