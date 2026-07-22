@@ -48,9 +48,16 @@ class InferenceXAtomJob:
     )
     EARLY_FAILURE_RE = re.compile(
         r"no such file or directory|command not found|cannot access|failed to start"
+        r"|unrecognized arguments|invalid choice|error: argument "
         r"|Free memory on device.*less than desired"
         r"|Engine core initialization failed"
         r"|WorkerProc failed to start",
+        re.I,
+    )
+    FATAL_LOG_RE = re.compile(
+        r"Free memory on device.{0,80}less than desired"
+        r"|Engine core initialization failed"
+        r"|RuntimeError:.*[Ee]ngine",
         re.I,
     )
 
@@ -489,25 +496,46 @@ class InferenceXAtomJob:
     def is_ready(self):
         if self.driver == "atom":
             return self._atom_health_ok()
-        if self.distributed:
-            pattern = self.READINESS_RE.pattern
-            ready = True
-            for rank in range(self.nnodes):
-                log_path = self._rank_server_log(rank)
-                out = self._exec_all(
-                    f"grep -qiE {shlex.quote(pattern)} {shlex.quote(log_path)}",
-                    detailed=True,
-                )
-                if not out or not all(r["exit_code"] == 0 for r in out.values()):
-                    ready = False
-                    break
-            return ready
         pattern = self.READINESS_RE.pattern
-        out = self._exec_all(
-            f"grep -qiE {shlex.quote(pattern)} {shlex.quote(self.server_log)}",
-            detailed=True,
-        )
-        return bool(out) and all(r["exit_code"] == 0 for r in out.values())
+        for rank, host in enumerate(self.orch.hosts):
+            # Headless workers (rank > 0) never log Uvicorn startup; only the head
+            # API server does. Match vllm_job.is_ready() multinode behaviour.
+            if rank > 0 and self.nnodes > 1:
+                continue
+            rank_log = self._rank_server_log(rank) if self.distributed else self.server_log
+            out = self.orch.exec(
+                f"grep -qiE {shlex.quote(pattern)} {shlex.quote(rank_log)}",
+                detailed=True,
+                hosts=[host],
+            )
+            if not out or not all(r["exit_code"] == 0 for r in out.values()):
+                return False
+        return True
+
+    def _check_coordinator_early_failure(self, emit_tail: bool = False):
+        """Tail/grep per-rank server logs on each host for fatal startup errors."""
+        label = self._framework_coordinator_label()
+        for rank, host in enumerate(self.orch.hosts):
+            rank_log = self._rank_server_log(rank) if self.distributed else self.server_log
+            out = self.orch.exec(f"tail -30 {shlex.quote(rank_log)}", hosts=[host])
+            for h, output in (out or {}).items():
+                if emit_tail:
+                    for line in (output or "").splitlines():
+                        log.info("[%s rank%d server.log] %s", h, rank, line)
+                if self.EARLY_FAILURE_RE.search(output or ""):
+                    raise RuntimeError(
+                        f"{label} server early failure on {h} (rank {rank}): {(output or '')[-500:]}"
+                    )
+            out = self.orch.exec(
+                f"grep -m1 -iE {shlex.quote(self.FATAL_LOG_RE.pattern)} {shlex.quote(rank_log)}",
+                detailed=True,
+                hosts=[host],
+            )
+            for h, r in (out or {}).items():
+                if r.get("exit_code") == 0 and r.get("output", "").strip():
+                    raise RuntimeError(
+                        f"{label} server fatal error on {h} (rank {rank}): {r['output'].strip()[-500:]}"
+                    )
 
     def _tail_server_logs(self, lines=30):
         if self.distributed:
@@ -522,26 +550,38 @@ class InferenceXAtomJob:
         log.info("waiting %ds for server log to materialise", self._precheck_wait)
         time.sleep(self._precheck_wait)
 
-        out = self._tail_server_logs(30)
-        for host, output in out.items():
-            if self.EARLY_FAILURE_RE.search(output or ""):
-                label = self._framework_coordinator_label()
-                raise RuntimeError(f"{label} server early failure on {host}: {output[-500:]}")
+        if self.driver == "atom":
+            out = self._tail_server_logs(30)
+            for host, output in out.items():
+                if self.EARLY_FAILURE_RE.search(output or ""):
+                    raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
+        else:
+            self._check_coordinator_early_failure(emit_tail=True)
 
         log.info("warmup wait %ds", self._warmup_wait)
         time.sleep(self._warmup_wait)
 
+        if self.driver == "atom":
+            out = self._tail_server_logs(30)
+            for host, output in out.items():
+                if self.EARLY_FAILURE_RE.search(output or ""):
+                    raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
+        else:
+            self._check_coordinator_early_failure(emit_tail=True)
+
         for it in range(self._server_poll_count):
-            if not self.is_ready():
-                if self.driver == "atom":
-                    poll_out = self._tail_server_logs(30)
-                    for host, output in poll_out.items():
-                        if self.EARLY_FAILURE_RE.search(output or ""):
-                            raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
-                time.sleep(self._server_poll_wait)
-                continue
-            log.info("server health ready (iter=%d)", it)
-            break
+            log.info("readiness poll iter=%d/%d", it, self._server_poll_count - 1)
+            if self.is_ready():
+                log.info("server health ready (iter=%d)", it)
+                break
+            if self.driver == "atom":
+                poll_out = self._tail_server_logs(30)
+                for host, output in poll_out.items():
+                    if self.EARLY_FAILURE_RE.search(output or ""):
+                        raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
+            else:
+                self._check_coordinator_early_failure()
+            time.sleep(self._server_poll_wait)
         else:
             raise RuntimeError("server did not become ready before timeout")
 

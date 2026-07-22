@@ -29,7 +29,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
     def test_load_mi300x_sample_config(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_gpt-oss-120b_bf16_config.json"
+            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_gpt-oss-120b_bf16.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.framework, "inferencex_atom")
@@ -72,10 +72,10 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
     def test_load_w1_mi300x_atom_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_config.json"
+            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_single.json"
         )
         variant = load_variant(config, _cluster_dict())
-        self.assertEqual(variant.threshold_json, "mi300x_inferencex-atom_deepseek-r1_fp8_perf_threshold.json")
+        self.assertEqual(variant.threshold_json, "mi300x_inferencex-atom_deepseek-r1_fp8_single_threshold.json")
         self.assertEqual(variant.gpu_arch, "mi300x")
         self.assertEqual(variant.params.driver, "atom")
         self.assertEqual(variant.params.metric_percentiles, "95,99")
@@ -101,7 +101,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         config = root / (
             "input/config_file/inference/inferencex_atom/"
-            "mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_config.json"
+            "mi300x_inferencex-atom_deepseek-r1_fp8_distributed.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.params.nnodes, "2")
@@ -121,7 +121,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         config = root / (
             "input/config_file/inference/inferencex_atom/"
-            "mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_config.json"
+            "mi300x_inferencex-atom_deepseek-r1_fp8_sglang_distributed.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.params.driver, "sglang")
@@ -134,7 +134,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         config = root / (
             "input/config_file/inference/inferencex_atom/"
-            "mi355x_inferencex-atom_deepseek-r1_fp8_perf_multi_config.json"
+            "mi355x_inferencex-atom_deepseek-r1_fp8_distributed.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.gpu_arch, "mi355x")
@@ -155,7 +155,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         config = root / (
             "input/config_file/inference/inferencex_atom/"
-            "mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_config.json"
+            "mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.params.max_model_length, "10240")
@@ -171,7 +171,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         config = root / (
             "input/config_file/inference/inferencex_atom/"
-            "mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_multinode_config.json"
+            "mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_distributed.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.params.nnodes, "2")
@@ -190,29 +190,17 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         config = root / (
             "input/config_file/inference/inferencex_atom/"
-            "mi355x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_config.json"
+            "mi355x_inferencex-atom_deepseek-r1_fp8_baseline_sweep.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.gpu_arch, "mi355x")
         self.assertFalse(variant.enforce_thresholds)
         self.assertEqual(len(variant.expected_cells()), 14)
 
-    def test_load_w1_mi300x_smoke_variant(self):
+    def test_load_w1_mi355x_atom_single_variant_and_thresholds(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom/"
-            "mi300x_inferencex-atom_deepseek-r1_fp8_smoke_config.json"
-        )
-        variant = load_variant(config, _cluster_dict())
-        self.assertEqual(variant.params.num_prompts, "128")
-        self.assertEqual(variant.paths.models_dir, "/home/models")
-        self.assertIn("/home/models:/home/models", variant.container.runtime.args["volumes"])
-        self.assertEqual(variant.expected_cells(), ["ISL=1024,OSL=1024,TP=8,CONC=128"])
-
-    def test_load_w1_mi355x_atom_perf_variant_and_thresholds(self):
-        root = Path(__file__).resolve().parents[3]
-        config = root / (
-            "input/config_file/inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_perf_config.json"
+            "input/config_file/inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_single.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.gpu_arch, "mi355x")
@@ -234,7 +222,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
     def test_load_w1_mi355x_atom_mtp3_inline_bench_args(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_mtp3_config.json"
+            "input/config_file/inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_mtp3.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertIn("--method", variant.roles.server.atom_args)
@@ -243,7 +231,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
     def test_load_w1_mi355x_atom_mtp3_thresholds(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_mtp3_config.json"
+            "input/config_file/inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_mtp3.json"
         )
         variant = load_variant(config, _cluster_dict())
         cell = "ISL=1024,OSL=1024,TP=8,CONC=256"
@@ -285,10 +273,10 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         block = orchestrator_container_from_variant(variant)
         self.assertEqual(block["env"]["VLLM_ROCM_USE_AITER"], "1")
 
-    def test_expand_sweep_matches_w1_perf(self):
+    def test_expand_sweep_matches_w1_single(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_config.json"
+            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_single.json"
         )
         import json
 
@@ -299,10 +287,10 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         self.assertEqual(ids[1], "w1_1k_1k-conc256")
         self.assertEqual(cases[0][1], 128)
 
-    def test_w1_perf_threshold_health_gates_tight_when_enforcing(self):
+    def test_w1_single_threshold_health_gates_tight_when_enforcing(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_config.json"
+            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_single.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertTrue(variant.enforce_thresholds)

@@ -4,7 +4,7 @@
   "framework": "inferencex_atom",
   "gpu_arch": "mi300x",
   "enforce_thresholds": false,
-  "threshold_json": "mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_threshold.json",
+  "threshold_json": "mi300x_inferencex-atom_deepseek-r1_fp8_sglang_distributed_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
     "notes": "MI300X 2-node PP=2 via SGLang; enforce_thresholds false until lab confirm"

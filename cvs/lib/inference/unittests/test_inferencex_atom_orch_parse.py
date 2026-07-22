@@ -440,5 +440,79 @@ class TestInferenceXAtomOrchParse(unittest.TestCase):
         self.assertAlmostEqual(metrics["scaling.efficiency_pct"], expected)
 
 
+class _RecordingOrch:
+    hosts = ["10.0.0.1", "10.0.0.2"]
+
+    def __init__(self, responder=None, hosts=None):
+        self.calls = []
+        self._responder = responder
+        if hosts is not None:
+            self.hosts = list(hosts)
+
+    def exec(self, cmd, hosts=None, detailed=False, **kwargs):
+        self.calls.append((cmd, hosts))
+        if self._responder is not None:
+            return self._responder(cmd, hosts, detailed)
+        return {}
+
+    def exec_on_head(self, cmd, **kwargs):
+        return {}
+
+
+def _readiness_responder(exit_code=0, empty=False):
+    def responder(cmd, hosts, detailed):
+        if empty:
+            return {}
+        host = hosts[0] if hosts else _RecordingOrch.hosts[0]
+        if detailed:
+            return {host: {"exit_code": exit_code, "output": "", "stdout": ""}}
+        return {host: ""}
+
+    return responder
+
+
+class TestInferenceXAtomIsReady(unittest.TestCase):
+    def test_multinode_vllm_atom_skips_worker_readiness_grep(self):
+        head, worker = _RecordingOrch.hosts
+        orch = _RecordingOrch(responder=_readiness_responder(exit_code=0))
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=_fake_variant(
+                driver="vllm_atom",
+                nnodes="2",
+                pipeline_parallel_size="2",
+                master_addr=head,
+            ),
+            hf_token="tok",
+            isl="512",
+            osl="512",
+            concurrency=16,
+            num_prompts=128,
+        )
+        self.assertTrue(job.is_ready())
+        worker_calls = [hosts for _cmd, hosts in orch.calls if hosts == [worker]]
+        self.assertEqual(worker_calls, [], "headless worker must not be grepped for Uvicorn startup")
+        self.assertTrue(any(hosts == [head] for _cmd, hosts in orch.calls))
+
+    def test_multinode_vllm_atom_false_when_head_not_ready(self):
+        head = _RecordingOrch.hosts[0]
+        orch = _RecordingOrch(responder=_readiness_responder(exit_code=1))
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=_fake_variant(
+                driver="vllm_atom",
+                nnodes="2",
+                pipeline_parallel_size="2",
+                master_addr=head,
+            ),
+            hf_token="tok",
+            isl="512",
+            osl="512",
+            concurrency=16,
+            num_prompts=128,
+        )
+        self.assertFalse(job.is_ready())
+
+
 if __name__ == "__main__":
     unittest.main()
