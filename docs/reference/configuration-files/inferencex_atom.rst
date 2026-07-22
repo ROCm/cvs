@@ -130,8 +130,14 @@ Top-level blocks follow the DTNI variant schema. InferenceX ATOM-specific keys:
      - ``["-tp", "8", "--kv_cache_dtype", "fp8"]``
      - Inline ATOM ``openai_server`` CLI tokens after ``--model`` / ``--server-port``.
    * - ``roles.server.serve_args``
-     - ``{"enforce-eager": true}``
-     - vLLM uplift path only (``params.driver: vllm``).
+     - ``{"kv-cache-dtype": "fp8", "enforce-eager": true}``
+     - vLLM / vLLM-ATOM path (``params.driver: vllm`` or ``vllm_atom``); merged into ``vllm serve`` argv.
+   * - ``roles.server.sglang_args``
+     - ``["--trust-remote-code", "--disable-cuda-graph"]``
+     - Extra tokens appended to ``sglang.launch_server`` when ``params.driver: sglang``.
+   * - ``roles.server.ib_netdev``
+     - ``ens51f1np1``
+     - **Required** when ``nnodes > 1`` and ``driver`` is ``vllm_atom`` or ``sglang``; sets ``NCCL_SOCKET_IFNAME``.
    * - ``enforce_thresholds``
      - ``true`` / ``false``
      - When true, ``test_cell_metrics`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all`.
@@ -164,7 +170,7 @@ Top-level blocks follow the DTNI variant schema. InferenceX ATOM-specific keys:
      - True multinode pipeline parallel: set ``driver=vllm_atom`` or ``sglang`` with ``nnodes=2`` and ``pipeline_parallel_size=2`` (cell keys use ``PP=2``). Requires ``roles.server.ib_netdev``. Standalone ``driver=atom`` multinode uses SPMD data parallel (``DP`` in cell keys), not PP.
    * - ``params.master_addr`` / ``params.master_port``
      - head VPC IP / ``29501``
-     - Rendezvous for distributed ATOM/vLLM executor; defaults to cluster head when empty.
+     - Rendezvous for vLLM/SGLang distributed executor (``dist-init-addr`` for SGLang).
    * - ``params.scaling_baseline_output_throughput``
      - ``1500``
      - Single-node reference ``output_throughput`` for ``scaling.efficiency_pct`` (record-only).

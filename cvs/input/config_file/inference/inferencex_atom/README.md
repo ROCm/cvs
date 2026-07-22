@@ -40,7 +40,26 @@ Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc
 | `mi300x_inferencex-atom_gpt-oss-120b_bf16` | MI300X | GPT-OSS uplift placeholder (`driver: vllm`, inline `serve_args`) |
 | `mi355x_inferencex-atom_gpt-oss-120b_bf16` | MI355X | GPT-OSS uplift placeholder |
 
-ATOM server CLI is inline in each config under `roles.server.atom_args` (vLLM-style, same as `roles.server.serve_args` on `vllm_single`). MTP3 variants also set `params.bench_extra_args`.
+ATOM server CLI for **`driver=atom`** lives in `roles.server.atom_args`. Multinode **PP=2** variants use **`driver=vllm_atom`** (`roles.server.serve_args`) or **`driver=sglang`** (`roles.server.sglang_args`). MTP3 variants also set `params.bench_extra_args`.
+
+## Execution drivers (`params.driver`)
+
+Standalone ATOM has **no native pipeline parallel**. Multinode PP validation requires a framework coordinator:
+
+| Driver | When to use | Server | Multinode PP |
+|--------|-------------|--------|--------------|
+| `atom` | W1 single-node perf, smoke, MTP3 | `atom.entrypoints.openai_server` | No — optional SPMD data parallel only (`DP=` cell keys) |
+| `vllm_atom` | **2-node PP=2** (shipped multinode stems) | `vllm serve` + ATOM ROCm env | Yes — vLLM `--pipeline-parallel-size`, `--node-rank` |
+| `sglang` | **2-node PP=2** SGLang path | `sglang.launch_server` | Yes — `--pp-size`, `--dist-init-addr` |
+| `vllm` | GPT-OSS uplift placeholder only | `vllm serve` | Same PP flags as `vllm_atom` when configured |
+
+**Before a multinode PP lab run**, set in the copied config:
+
+- `container.image` — vLLM+ATOM or SGLang-capable image (shipped configs use `<changeme>`)
+- `roles.server.ib_netdev` — Linux NIC name for `NCCL_SOCKET_IFNAME` (e.g. `ens51f1np1`)
+- `params.master_addr` — head node VPC IP (replace `{head-node-ip}`)
+
+Threshold cell keys for multinode PP: `ISL=…,OSL=…,TP=8,PP=2,NNODES=2,CONC=…`.
 
 **Model cache path:** shipped configs set `paths.models_dir` to `/home/models` and mount `/home/models:/home/models` into the container. Logs and HF token paths still use `{shared_fs}` under the SSH user home.
 
@@ -55,7 +74,7 @@ Ship one template: `cvs/input/cluster_file/inferencex_atom_cluster.json`. Copy i
 | Smoke, baseline sweep (single-node) | `1` (default) | **Head node only** — remove the worker entry |
 | Baseline sweep multinode, multinode perf | `2` | Head + worker |
 
-For multinode variants, set `params.master_addr` to the head VPC IP (same as `head_node_dict.mgmt_ip`). `test_setup_sshd` runs when `len(node_dict) > 1`. Variant config overrides cluster `container.image` and `container.name`.
+For multinode PP variants, set `params.master_addr` to the head VPC IP, `roles.server.ib_netdev`, and a coordinator-capable `container.image`. `test_setup_sshd` runs when `len(node_dict) > 1`. The container image must include `sshd` (CVS fails fast if missing — no runtime `apt-get`).
 
 ## Shared suite helpers (reusable by other inference suites)
 
@@ -243,9 +262,9 @@ echo "HTML: $HTML"
 echo "LOG:  $LOG"
 ```
 
-## W1 perf multinode (MI300X, 2-node)
+## W1 perf multinode (MI300X, 2-node, `driver=vllm_atom`)
 
-Requires a 2-node cluster file, ATOM image with distributed serve support, and fabric env in `roles.server.env` (NCCL socket ifnames, etc.). One cell matches the single-node W1 reference (ISL=OSL=1024, C=128).
+15-cell W1 scaling matrix with **`pipeline_parallel_size=2`**, **`driver=vllm_atom`**, and `scaling.efficiency_pct` gates. Requires vLLM+ATOM container, `ib_netdev`, and 2-node cluster. Recalibrate thresholds after the first true PP=2 lab run.
 
 ```bash
 cd ~/cvs
@@ -261,9 +280,8 @@ cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8
   --output "$MULTI_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_threshold.json"
 cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
 
-# Ensure node_dict lists head + worker (params.nnodes=2 in multinode variant).
-
-# Edit cluster + config: replace {head-node-ip} / {worker-node-ip} and set params.master_addr.
+# Ensure node_dict lists head + worker. Edit cluster IPs, ib_netdev, container.image,
+# and set params.master_addr in the copied config.
 
 TS=$(date +%Y%m%d_%H%M%S)
 HTML=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi300x.html
@@ -281,9 +299,45 @@ echo "HTML: $HTML"
 echo "LOG:  $LOG"
 ```
 
-## W1 perf multinode (MI355X, 2-node)
+## W1 perf multinode SGLang (MI300X, 2-node, `driver=sglang`)
 
-Same sweep matrix as MI300X multinode. Thresholds are seeded from the MI355X single-node CI reference; `enforce_thresholds` stays `false` until a 2-node MI355X lab run confirms.
+Same 15-cell sweep as vLLM-ATOM multinode, using SGLang pipeline parallel. `enforce_thresholds: false` until lab confirms — seed thresholds only.
+
+```bash
+cd ~/cvs
+make install
+source .cvs_venv/bin/activate
+
+SGLANG_DIR=~/input/config_file/inference/inferencex_atom/multi_sglang
+mkdir -p "$SGLANG_DIR"
+
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_config.json \
+  --output "$SGLANG_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_config.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_threshold.json \
+  --output "$SGLANG_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_threshold.json"
+cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
+
+# Edit cluster IPs, ib_netdev, SGLang container.image, params.master_addr.
+
+TS=$(date +%Y%m%d_%H%M%S)
+HTML=~/cvs_results/${TS}_ix-atom-w1-perf-multi-sglang_mi300x.html
+LOG=~/cvs_results/${TS}_ix-atom-w1-perf-multi-sglang_mi300x.log
+
+cvs run inferencex_atom \
+  --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
+  --config_file "$SGLANG_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_config.json" \
+  --html="$HTML" \
+  --self-contained-html \
+  --log-file="$LOG" \
+  -vvv -s
+
+echo "HTML: $HTML"
+echo "LOG:  $LOG"
+```
+
+## W1 perf multinode (MI355X, 2-node, `driver=vllm_atom`)
+
+Same sweep matrix as MI300X multinode (`vllm_atom`, PP=2). Thresholds are seeded from the MI355X single-node CI reference; `enforce_thresholds` stays `false` until a 2-node MI355X lab run confirms.
 
 ```bash
 cd ~/cvs
