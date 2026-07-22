@@ -123,6 +123,8 @@ Top-level parameters
      - ``{}``
      - Container backend configuration. Required when ``orchestrator`` is ``container``. See the next section.
 
+CVS's own internal commands -- the Docker CLI calls made by ``DockerRuntime`` (``docker run``/``exec``/``rm``/``ps``/``load``) and the MPI hostfile cleanup in ``BaremetalOrchestrator`` -- automatically detect whether ``sudo`` is needed. Once per run, CVS probes each host with ``sudo -n true`` and caches whether passwordless sudo is available; every subsequent privileged command is then prefixed with ``sudo -n `` or left unprefixed accordingly, for the lifetime of that run. No cluster-file configuration is required.
+
 Container block
 ===============
 
@@ -226,7 +228,7 @@ Prerequisites on each cluster node
 
 To use the container backend, every cluster node must have:
 
-- **Docker installed** with passwordless ``sudo docker`` for the SSH user.
+- **Docker installed**. The SSH user needs either passwordless ``sudo docker`` or direct Docker access (for example membership in the ``docker`` group) -- CVS probes once per run (``sudo -n true``) and caches which applies, prefixing every subsequent Docker command accordingly.
 - **Host driver loaded** so ``/dev/kfd``, ``/dev/dri/*``, and ``/dev/infiniband/*`` (when RDMA is in scope) are present for passthrough.
 - **SSH user home directory accessible**. The orchestrator mounts ``~/.ssh`` as ``/host_ssh`` and copies keys into ``/root/.ssh`` inside the container so that the in-container ``sshd`` on port ``2224`` can authenticate.
 - **Container image** either pre-loaded on every node (``docker load``) or pullable from a reachable registry. The image must contain ``openssh-server`` (for the in-container ``sshd``) and the workload binaries the suite invokes (for example ``/opt/rocm/bin/rvs``).

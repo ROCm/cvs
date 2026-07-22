@@ -15,14 +15,20 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 #     comes from the auto-injected --device /dev/kfd /dev/dri /dev/infiniband
 #     in DEFAULT_CONTAINER_ARGS. The flag is NVIDIA/CDI-specific and breaks
 #     AMD-only docker without the AMD container toolkit.
+#   - Every privileged command is built from a single deterministic
+#     orchestrator.sudo_prefix() prefix -- never the old `cmd || sudo -n cmd`
+#     retry, which double-runs the caller's payload whenever it fails for any
+#     reason (not just permission-denied).
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
+from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.runtimes.docker import DockerRuntime
 
 
-def _make_runtime(captured):
+def _make_runtime(captured, sudo_prefix=""):
     """DockerRuntime wired to a MagicMock orchestrator that captures the
     `docker run` cmd string into the supplied list."""
 
@@ -30,7 +36,7 @@ def _make_runtime(captured):
         # The first call DockerRuntime.setup_containers makes is `docker rm -f`
         # for a stale container; the second is the actual `docker run`. We only
         # care about the run cmd.
-        if cmd.startswith("sudo docker run"):
+        if "docker run" in cmd:
             captured.append(cmd)
         # Mock a successful detailed result so setup_containers returns True.
         return {"host1": {"output": "", "exit_code": 0}}
@@ -38,6 +44,7 @@ def _make_runtime(captured):
     orchestrator = MagicMock()
     orchestrator.hosts = ["host1"]
     orchestrator.all.exec.side_effect = _fake_exec
+    orchestrator.sudo_prefix.return_value = sudo_prefix
 
     log = MagicMock()
     return DockerRuntime(log, orchestrator)
@@ -129,6 +136,262 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
                     captured[0],
                     f"[{label}] '--gpus all' must never appear in docker cmd:\n{captured[0]}",
                 )
+
+
+class TestDockerRuntimeRegistryLogin(unittest.TestCase):
+    def test_registry_login_requires_username_and_password_file(self):
+        captured = []
+        rt = _make_runtime(captured)
+        self.assertFalse(rt.registry_login({}))
+        self.assertFalse(rt.registry_login({"username": "u"}))
+        self.assertFalse(rt.registry_login({"password_file": "/tmp/pw"}))
+
+    def test_registry_login_sudo_prefix_covers_entire_pipeline(self):
+        # Regression test: `docker login` is the SECOND stage of the
+        # `cat pwfile | docker login ...` pipe. The whole pipeline is wrapped
+        # in `sh -c '...'` so a single sudo_prefix() prefix governs all of it,
+        # never just the first token of the pipe.
+        login_cmds = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            login_cmds.append(cmd)
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        orchestrator.sudo_prefix.return_value = "sudo -n "
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.registry_login({"username": "u", "password_file": "/tmp/pw"})
+
+        self.assertEqual(len(login_cmds), 1)
+        cmd = login_cmds[0]
+        self.assertNotIn("||", cmd, f"must not use the old fallback form: {cmd!r}")
+        # The pipeline must be wrapped as a single command (`sh -c '...'`)
+        # immediately after `sudo -n`, so sudo governs the whole pipeline --
+        # not `sudo -n cat ... | docker login ...` with docker login left as a
+        # trailing, unprivileged pipe stage outside sudo's reach.
+        self.assertRegex(cmd, r"^sudo -n (sh|bash) -c ")
+
+    def test_registry_login_pipes_password_file_via_stdin_not_command_line(self):
+        # The password/token must never appear as a --password flag: only the
+        # *path* to the credential file appears in the rendered command, piped
+        # into `docker login --password-stdin`.
+        login_cmds = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            login_cmds.append(cmd)
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        result = rt.registry_login({"username": "myuser", "password_file": "/home/myuser/.docker_token"})
+
+        self.assertTrue(result)
+        self.assertEqual(len(login_cmds), 1)
+        cmd = login_cmds[0]
+        self.assertIn("cat /home/myuser/.docker_token", cmd)
+        self.assertIn("--password-stdin", cmd)
+        self.assertIn("--username myuser", cmd)
+        self.assertNotIn("--password ", cmd)
+
+    def test_registry_login_reports_failure_on_bad_exit_code(self):
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.return_value = {"host1": {"output": "", "exit_code": 1}}
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        self.assertFalse(rt.registry_login({"username": "u", "password_file": "/tmp/pw"}))
+
+    def test_setup_containers_logs_in_before_pull_when_registry_configured(self):
+        calls = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            calls.append(cmd)
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        cfg = _container_config(
+            image="rocm/ufb-private:latest",
+            extra_runtime_args={"registry": {"username": "myuser", "password_file": "/tmp/token"}},
+        )
+        result = rt.setup_containers(container_config=cfg, container_name="cvs_iter_test", volumes=[])
+
+        self.assertTrue(result)
+        login_calls = [c for c in calls if "docker login" in c]
+        run_calls = [c for c in calls if "docker run" in c]
+        self.assertEqual(len(login_calls), 1)
+        self.assertEqual(len(run_calls), 1)
+        # Login must happen before the run that needs the pull.
+        self.assertLess(calls.index(login_calls[0]), calls.index(run_calls[0]))
+
+    def test_setup_containers_skips_login_when_image_tar_present(self):
+        # A tar load never needs a registry pull, so no login should be attempted
+        # even if 'registry' is configured (e.g. left over from another profile).
+        calls = []
+
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            calls.append(cmd)
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        cfg = _container_config(
+            extra_runtime_args={"registry": {"username": "myuser", "password_file": "/tmp/token"}},
+            image_tar="/tmp/image.tar",
+        )
+        rt.setup_containers(container_config=cfg, container_name="cvs_iter_test", volumes=[])
+
+        self.assertFalse(any("docker login" in c for c in calls))
+
+
+class TestDockerRuntimeExecCmdList(unittest.TestCase):
+    def test_exec_cmd_list_uses_sudo_prefix_not_unconditional_sudo(self):
+        # exec_cmd_list must build every rendered command from a single
+        # sudo_prefix() read (not one probe per list item -- sudo_prefix() is a
+        # cached property read, not a per-call probe), never an unconditional
+        # `sudo docker exec ...` and never the old `cmd || sudo -n cmd` retry.
+        for label, sudo_prefix in [("no_sudo", ""), ("passwordless_sudo", "sudo -n ")]:
+            with self.subTest(scenario=label):
+                orchestrator = MagicMock()
+                orchestrator.hosts = ["host1", "host2"]
+                orchestrator.all.exec_cmd_list.return_value = {
+                    "host1": {"output": "", "exit_code": 0},
+                    "host2": {"output": "", "exit_code": 0},
+                }
+                orchestrator.sudo_prefix.return_value = sudo_prefix
+                rt = DockerRuntime(MagicMock(), orchestrator)
+
+                rt.exec_cmd_list("cvs_iter_test", ["echo one", "echo two"], timeout=None)
+
+                rendered = orchestrator.all.exec_cmd_list.call_args[0][0]
+                self.assertEqual(len(rendered), 2)
+                for cmd in rendered:
+                    self.assertNotIn("||", cmd, f"[{label}] must not use the old fallback form: {cmd!r}")
+                    self.assertEqual(
+                        cmd, f"{sudo_prefix}docker exec cvs_iter_test bash -c {cmd.split('bash -c ', 1)[1]}"
+                    )
+                    self.assertTrue(cmd.startswith(f"{sudo_prefix}docker exec cvs_iter_test bash -c "))
+
+    def test_exec_cmd_list_reads_sudo_prefix_once_not_per_item(self):
+        # sudo_prefix() is now a cached probe-once read, not a per-command
+        # retry -- rendering a list of N commands must call it once, not N
+        # times, to prove the migration didn't reintroduce a per-item probe.
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1", "host2"]
+        orchestrator.all.exec_cmd_list.return_value = {
+            "host1": {"output": "", "exit_code": 0},
+            "host2": {"output": "", "exit_code": 0},
+        }
+        orchestrator.sudo_prefix.return_value = "sudo -n "
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.exec_cmd_list("cvs_iter_test", ["echo one", "echo two", "echo three"], timeout=None)
+
+        orchestrator.sudo_prefix.assert_called_once()
+
+
+class TestDockerRuntimeExec(unittest.TestCase):
+    def test_exec_uses_sudo_prefix(self):
+        # exec() must render its command from a single sudo_prefix() prefix,
+        # never the old `cmd || sudo -n cmd` retry -- a plain, un-sudo'd
+        # `docker exec` would fail outright on hosts where the SSH user isn't
+        # in the docker group.
+        for label, sudo_prefix in [("no_sudo", ""), ("passwordless_sudo", "sudo -n ")]:
+            with self.subTest(scenario=label):
+                orchestrator = MagicMock()
+                orchestrator.all.exec.return_value = {"host1": {"output": "", "exit_code": 0}}
+                orchestrator.sudo_prefix.return_value = sudo_prefix
+                rt = DockerRuntime(MagicMock(), orchestrator)
+
+                rt.exec("cvs_iter_test", "echo hi")
+
+                rendered = orchestrator.all.exec.call_args[0][0]
+                self.assertNotIn("||", rendered, f"[{label}] must not use the old fallback form: {rendered!r}")
+                self.assertEqual(rendered, f"{sudo_prefix}docker exec cvs_iter_test bash -c 'echo hi'")
+
+    def test_exec_with_hosts_subset_uses_sudo_prefix(self):
+        # The hosts-subset branch builds its own Pssh and must render the
+        # same sudo_prefix()-derived command as the default (all-hosts) branch.
+        orchestrator = MagicMock()
+        orchestrator.log = MagicMock()
+        orchestrator.user = "u"
+        orchestrator.password = None
+        orchestrator.pkey = None
+        orchestrator.stop_on_errors = False
+        orchestrator.sudo_prefix.return_value = "sudo -n "
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        with patch("cvs.lib.parallel_ssh_lib.Pssh") as mock_pssh_cls:
+            mock_pssh = MagicMock()
+            mock_pssh.exec.return_value = {"host1": {"output": "", "exit_code": 0}}
+            mock_pssh_cls.return_value = mock_pssh
+
+            rt.exec("cvs_iter_test", "echo hi", hosts=["host1"])
+
+            rendered = mock_pssh.exec.call_args[0][0]
+            self.assertNotIn("||", rendered, f"must not use the old fallback form: {rendered!r}")
+            self.assertTrue(rendered.startswith("sudo -n docker exec cvs_iter_test bash -c "))
+
+    def test_exec_on_head_uses_sudo_prefix(self):
+        orchestrator = MagicMock()
+        orchestrator.head.exec.return_value = {"output": "", "exit_code": 0}
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.exec_on_head("cvs_iter_test", "echo hi")
+
+        rendered = orchestrator.head.exec.call_args[0][0]
+        self.assertNotIn("||", rendered, f"must not use the old fallback form: {rendered!r}")
+        self.assertTrue(rendered.startswith("docker exec cvs_iter_test bash -c "))
+
+
+class TestDockerRuntimeSudoProbeCachedAcrossCalls(unittest.TestCase):
+    """Regression test for the bug being fixed: with a REAL BaremetalOrchestrator
+    (not a bare MagicMock) as DockerRuntime's orchestrator, the underlying
+    passwordless-sudo probe must fire once total across multiple exec-family
+    calls, not once per call."""
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_sudo_probe_fires_once_across_exec_and_exec_on_head(self, mock_pssh):
+        pssh_instance = MagicMock()
+        pssh_instance.exec.return_value = {"10.0.0.1": "0", "10.0.0.2": "0"}
+        mock_pssh.return_value = pssh_instance
+
+        config = OrchestratorConfig(
+            orchestrator="baremetal",
+            node_dict={"10.0.0.1": {}, "10.0.0.2": {}},
+            username="testuser",
+            priv_key_file="/dev/null",
+            password=None,
+            head_node_dict={"mgmt_ip": "10.0.0.1"},
+            container={},
+        )
+        orchestrator = BaremetalOrchestrator(MagicMock(), config)
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.exec("cvs_iter_test", "echo hi")
+        rt.exec_on_head("cvs_iter_test", "echo hi")
+
+        probe_calls = [
+            c for c in pssh_instance.exec.call_args_list if c[0] and c[0][0] == "sudo -n true >/dev/null 2>&1; echo $?"
+        ]
+        self.assertEqual(len(probe_calls), 1, f"probe must fire once total, calls: {pssh_instance.exec.call_args_list}")
 
 
 if __name__ == "__main__":
