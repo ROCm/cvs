@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from typing_extensions import Literal
 
+from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.inferencing_config_loader import (
     RoleServer,
     Sweep,
@@ -81,6 +82,7 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
     roles: InferenceXAtomRoles = InferenceXAtomRoles()
     params: InferenceXAtomParams
     sweep: Sweep
+    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
 
     def cell_key(self, isl, osl, concurrency):
         return f"ISL={isl},OSL={osl},TP={self.params.tensor_parallelism},CONC={concurrency}"
