@@ -113,7 +113,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         self.assertIn(cell, variant.expected_cells())
         self.assertEqual(
             variant.thresholds[cell]["scaling.efficiency_pct"],
-            {"kind": "min", "value": 50},
+            {"kind": "min", "value": 22},
         )
 
     def test_load_w1_mi355x_multinode_variant(self):
