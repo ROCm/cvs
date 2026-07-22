@@ -1015,7 +1015,17 @@ class TestStopAndCollectGpuPollerSingleNode(unittest.TestCase):
     def test_trailing_phantom_not_counted_as_failure_but_mid_malformed_is(self):
         """Trailing separator's phantom empty chunk must not count as failed;
         a genuinely empty/malformed chunk mixed in the middle must."""
-        text = _gpu_chunk_text(1000) + _RECORD_SEP + "\n" + "" + _RECORD_SEP + "\n" + _gpu_chunk_text(3000) + _RECORD_SEP + "\n"
+        text = (
+            _gpu_chunk_text(1000)
+            + _RECORD_SEP
+            + "\n"
+            + ""
+            + _RECORD_SEP
+            + "\n"
+            + _gpu_chunk_text(3000)
+            + _RECORD_SEP
+            + "\n"
+        )
         orch = MagicMock()
         orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}]
         log_path = str(pathlib.Path(__file__).parent / "_tmp_test_gpu_poller_log.txt")
