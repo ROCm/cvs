@@ -1,5 +1,5 @@
 {
-  "_comment": "W1 DeepSeek R1 FP8 multinode (2\u00d78 GPU). Conc 16/64/128 per ISL/OSL shape (15 cells); runs grouped by shape for server reuse. max_model_length=4096.",
+  "_comment": "W1 DeepSeek R1 FP8 multinode (2×8 GPU, PP=2). vLLM coordinates pipeline parallel; ATOM accelerates local kernels via vllm_atom driver. Set roles.server.ib_netdev and container.image before lab run.",
   "schema_version": 1,
   "framework": "inferencex_atom",
   "gpu_arch": "mi300x",
@@ -7,7 +7,7 @@
   "threshold_json": "mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "MI300X 2-node scaling reference (M5); align master_addr with cluster head VPC IP"
+    "notes": "MI300X 2-node PP=2 via vLLM-ATOM (M5); align master_addr and ib_netdev with cluster"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -23,7 +23,7 @@
   "container": {
     "lifetime": "per_run",
     "name": "inferencex_atom_mi300x_multi",
-    "image": "rocm/atom-dev:latest",
+    "image": "<changeme>",
     "runtime": {
       "name": "docker",
       "args": {
@@ -44,20 +44,23 @@
   },
   "roles": {
     "server": {
-      "atom_args": [
-        "-tp",
-        "8",
-        "--kv_cache_dtype",
-        "fp8",
-        "--trust-remote-code"
-      ],
+      "serve_args": {
+        "kv-cache-dtype": "fp8",
+        "trust-remote-code": true,
+        "enforce-eager": true,
+        "gpu-memory-utilization": "0.95",
+        "block-size": 64,
+        "no-enable-prefix-caching": true
+      },
+      "ib_netdev": "<changeme>",
       "env": {
-        "ATOM_DISABLE_MMAP": "true"
+        "VLLM_ROCM_USE_AITER": "1",
+        "AMDGCN_USE_BUFFER_OPS": "0"
       }
     }
   },
   "params": {
-    "driver": "atom",
+    "driver": "vllm_atom",
     "port_no": "8000",
     "tensor_parallelism": "8",
     "pipeline_parallel_size": "2",
