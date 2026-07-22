@@ -1,0 +1,171 @@
+{
+  "_comment": "W1 DeepSeek R1 FP8 multinode (2x8 GPU, PP=2) via SGLang pipeline parallel. Set ib_netdev and SGLang-capable container.image before lab run.",
+  "schema_version": 1,
+  "framework": "inferencex_atom",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_threshold.json",
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:latest",
+    "notes": "MI300X 2-node PP=2 via SGLang; enforce_thresholds false until lab confirm"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "deepseek-ai/DeepSeek-R1-0528",
+    "remote": 0,
+    "precision": "fp8"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "inferencex_atom_mi300x_multi_sglang",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "sglang_args": [
+        "--kv-cache-dtype",
+        "fp8",
+        "--trust-remote-code",
+        "--disable-cuda-graph",
+        "--mem-fraction-static",
+        "0.9",
+        "--attention-backend",
+        "aiter"
+      ],
+      "ib_netdev": "<changeme>",
+      "env": {
+        "SGLANG_USE_AITER": "1"
+      }
+    }
+  },
+  "params": {
+    "driver": "sglang",
+    "port_no": "8000",
+    "tensor_parallelism": "8",
+    "pipeline_parallel_size": "2",
+    "nnodes": "2",
+    "master_addr": "{head-node-ip}",
+    "master_port": "29501",
+    "scaling_baseline_output_throughput": "1500",
+    "random_range_ratio": "0.8",
+    "num_prompts": "1000",
+    "max_model_length": "4096",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60"
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "name": "w1_512_512",
+        "isl": "512",
+        "osl": "512"
+      },
+      {
+        "name": "w1_1k_1k",
+        "isl": "1024",
+        "osl": "1024"
+      },
+      {
+        "name": "w1_2k_1k",
+        "isl": "2048",
+        "osl": "1024"
+      },
+      {
+        "name": "w1_1k_2k",
+        "isl": "1024",
+        "osl": "2048"
+      },
+      {
+        "name": "w1_2k_2k",
+        "isl": "2048",
+        "osl": "2048"
+      }
+    ],
+    "runs": [
+      {
+        "combo": "w1_512_512",
+        "concurrency": 16
+      },
+      {
+        "combo": "w1_512_512",
+        "concurrency": 64
+      },
+      {
+        "combo": "w1_512_512",
+        "concurrency": 128
+      },
+      {
+        "combo": "w1_1k_1k",
+        "concurrency": 16
+      },
+      {
+        "combo": "w1_1k_1k",
+        "concurrency": 64
+      },
+      {
+        "combo": "w1_1k_1k",
+        "concurrency": 128
+      },
+      {
+        "combo": "w1_2k_1k",
+        "concurrency": 16
+      },
+      {
+        "combo": "w1_2k_1k",
+        "concurrency": 64
+      },
+      {
+        "combo": "w1_2k_1k",
+        "concurrency": 128
+      },
+      {
+        "combo": "w1_1k_2k",
+        "concurrency": 16
+      },
+      {
+        "combo": "w1_1k_2k",
+        "concurrency": 64
+      },
+      {
+        "combo": "w1_1k_2k",
+        "concurrency": 128
+      },
+      {
+        "combo": "w1_2k_2k",
+        "concurrency": 16
+      },
+      {
+        "combo": "w1_2k_2k",
+        "concurrency": 64
+      },
+      {
+        "combo": "w1_2k_2k",
+        "concurrency": 128
+      }
+    ]
+  }
+}
