@@ -11,10 +11,13 @@ Generic paths/model/container/threshold plumbing lives in
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import field_validator, model_validator
 from typing_extensions import Literal
+
+INFERENCEX_ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
+INFERENCEX_ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
 
 from cvs.lib.inference.utils.inferencing_config_loader import (
     RoleServer,
@@ -30,6 +33,10 @@ class InferenceXAtomRoleServer(RoleServer):
     # Extra CLI tokens for ``python -m atom.entrypoints.openai_server`` after
     # ``--model`` / ``--server-port`` (e.g. ``-tp``, ``--kv_cache_dtype``).
     atom_args: List[str] = []
+    # Extra CLI tokens appended to ``python3 -m sglang.launch_server`` (driver=sglang).
+    sglang_args: List[str] = []
+    # Linux netdev for NCCL_SOCKET_IFNAME on multinode PP runs (vllm/vllm_atom/sglang).
+    ib_netdev: Optional[str] = None
 
 
 class InferenceXAtomRoles(_Forbid):
@@ -37,9 +44,11 @@ class InferenceXAtomRoles(_Forbid):
 
 
 class InferenceXAtomParams(_Forbid):
-    # ``atom`` uses ATOM openai_server + benchmark_serving; ``vllm`` keeps the
-    # interim uplift path (vllm serve + vllm bench serve).
-    driver: Literal["atom", "vllm"] = "vllm"
+    # ``atom`` = standalone ATOM openai_server + benchmark_serving.
+    # ``vllm_atom`` = vLLM coordinator + ATOM local kernels (true multinode PP).
+    # ``vllm`` = interim ROCm vLLM uplift (vllm serve + vllm bench serve).
+    # ``sglang`` = SGLang coordinator (launch_server + bench_serving) for PP runs.
+    driver: Literal["atom", "vllm", "vllm_atom", "sglang"] = "vllm"
     backend: str = "vllm"
     base_url: str = "http://0.0.0.0"
     port_no: str = "8000"
@@ -104,10 +113,16 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
     def cell_key(self, isl, osl, concurrency):
         p = self.params
         key = f"ISL={isl},OSL={osl},TP={p.tensor_parallelism}"
-        if int(p.pipeline_parallel_size) > 1 or int(p.nnodes) > 1:
-            key += f",PP={p.pipeline_parallel_size}"
-        if int(p.nnodes) > 1:
-            key += f",NNODES={p.nnodes}"
+        nnodes = int(p.nnodes)
+        pp = int(p.pipeline_parallel_size)
+        if p.driver == "atom":
+            if nnodes > 1:
+                key += f",DP={nnodes},NNODES={nnodes}"
+        elif p.driver in INFERENCEX_ATOM_PP_DRIVERS:
+            if pp > 1 or nnodes > 1:
+                key += f",PP={p.pipeline_parallel_size}"
+            if nnodes > 1:
+                key += f",NNODES={p.nnodes}"
         return f"{key},CONC={concurrency}"
 
     def expected_cells(self) -> List[str]:
@@ -138,6 +153,43 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
                 import warnings
 
                 warnings.warn(f"{msg} (enforce_thresholds=false -> record-only)", stacklevel=2)
+        return self
+
+    @model_validator(mode="after")
+    def _atom_multinode_uses_dp_not_pp(self):
+        if self.params.driver == "atom" and int(self.params.nnodes) > 1:
+            if int(self.params.pipeline_parallel_size) > 1:
+                raise ValueError(
+                    "params.driver='atom' with nnodes>1 uses ATOM SPMD data parallel (-dp); "
+                    "standalone ATOM cannot execute pipeline parallel. For true PP>1 use "
+                    "params.driver='vllm_atom' or 'sglang'."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _pp_driver_distributed_consistency(self):
+        driver = self.params.driver
+        if driver not in INFERENCEX_ATOM_PP_DRIVERS:
+            return self
+        nn = int(self.params.nnodes)
+        pp = int(self.params.pipeline_parallel_size)
+        is_ray = self.roles.server.serve_args.get("distributed-executor-backend") == "ray"
+        if nn > 1 and pp == 1 and not is_ray:
+            raise ValueError(
+                f"params.driver={driver!r} with nnodes={nn} requires pipeline_parallel_size>1 "
+                f"(got pp={pp}) for multinode pipeline parallel"
+            )
+        if pp > 1 and nn == 1:
+            raise ValueError(
+                f"pipeline_parallel_size={pp} > 1 requires nnodes > 1 (got nnodes={nn}) "
+                f"for params.driver={driver!r}"
+            )
+        if nn > 1 and not self.roles.server.ib_netdev:
+            raise ValueError(
+                f"roles.server.ib_netdev is required when params.driver={driver!r} and nnodes>1. "
+                "Set it to the Linux network interface name for NCCL_SOCKET_IFNAME "
+                '(e.g. "ens51f1np1").'
+            )
         return self
 
     @model_validator(mode="after")
@@ -179,12 +231,19 @@ def reuse_server_flag(params) -> bool:
 def server_session_key(variant_config, isl, osl):
     """Stable key for server reuse across sweep cells with identical model/shape."""
     p = variant_config.params
+    roles = variant_config.roles.server
+    if p.driver == "atom":
+        server_tokens = tuple(roles.atom_args)
+    elif p.driver == "sglang":
+        server_tokens = tuple(roles.sglang_args)
+    else:
+        server_tokens = tuple(sorted(roles.serve_args.items()))
     return (
         variant_config.model.id,
         p.driver,
         str(isl),
         str(osl),
-        tuple(variant_config.roles.server.atom_args),
+        server_tokens,
         p.tensor_parallelism,
         p.nnodes,
         p.pipeline_parallel_size,
