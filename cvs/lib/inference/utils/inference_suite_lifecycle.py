@@ -11,6 +11,7 @@ of copying launch / sshd / model-fetch / teardown blocks.
 **Suite module** — import stage tests so pytest collects them::
 
     from cvs.lib.inference.utils.inference_suite_lifecycle import (
+        test_accuracy_eval,
         test_launch_container,
         test_model_fetch,
         test_setup_sshd,
@@ -47,6 +48,8 @@ except ImportError:
 
 from cvs.lib import globals
 from cvs.lib.inference.utils.cache_probe import du_bytes
+from cvs.lib.inference.utils.lm_eval_job import run_accuracy_tasks
+from cvs.lib.utils.verdict import evaluate_all
 
 log = globals.log
 
@@ -167,6 +170,54 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
     if final <= 0:
         lifecycle.failed = True
         pytest.fail(f"no model bytes under {models_dir} after fetch")
+
+
+def test_accuracy_eval(orch, variant_config, lifecycle, request):
+    """Opt-in stage: run lm-eval-harness accuracy tasks against the already-live server.
+
+    Selection lives in config.json's `accuracy.tasks` (an AccuracyConfig); an
+    absent block or empty `tasks: []` means this suite run has no accuracy
+    tasks configured, so the stage is skipped, not failed -- same convention
+    as a perf metric with no threshold entry. Gating values live in the
+    sibling threshold.json's `accuracy` block, keyed by task id, and are
+    joined against only the tasks that actually ran (see
+    cvs/lib/inference/utils/AGENTS.md for the full design).
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    accuracy_config = getattr(variant_config, "accuracy", None)
+    tasks = accuracy_config.tasks if accuracy_config else []
+    if not tasks:
+        pytest.skip("no accuracy tasks configured (accuracy.tasks empty or absent)")
+
+    params = variant_config.params
+    output_dir = f"{variant_config.paths.log_dir}/accuracy"
+
+    t = time.monotonic()
+    try:
+        actuals_by_id = run_accuracy_tasks(
+            orch=orch,
+            tasks=tasks,
+            base_url=f"{params.base_url}:{params.port_no}",
+            model_id=variant_config.model.id,
+            model_path=variant_config.model.id,
+            output_dir=output_dir,
+        )
+    except RuntimeError as e:
+        lifecycle.failed = True
+        lifecycle.record(request.node.nodeid, "accuracy_eval", time.monotonic() - t)
+        pytest.fail(str(e))
+    lifecycle.record(request.node.nodeid, "accuracy_eval", time.monotonic() - t)
+
+    active_ids = {task.id for task in tasks}
+    accuracy_thresholds = (variant_config.thresholds or {}).get("accuracy", {})
+    for task_id, actual in actuals_by_id.items():
+        if task_id not in active_ids:
+            continue
+        for metric_key, value in actual.items():
+            lifecycle.record(request.node.nodeid, f"{task_id}.{metric_key}", value, "")
+        evaluate_all(actual, accuracy_thresholds.get(task_id, {}))
 
 
 def test_teardown(orch, lifecycle, request):
