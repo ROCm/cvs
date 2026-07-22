@@ -15,7 +15,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # patched once in setUp (not per method); _make() returns a fresh orch + runtime mock.
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, _resolve_container_lifetime
 from cvs.core.orchestrators.container import ContainerOrchestrator
@@ -258,6 +258,21 @@ class TestContainerOrchestrator(unittest.TestCase):
         }
         self.assertTrue(orch.setup_sshd())
         self.assertTrue(runtime.exec.called)
+        cmds = [call.args[0] for call in runtime.exec.call_args_list]
+        self.assertFalse(any("apt-get" in cmd for cmd in cmds))
+
+    @patch("time.sleep", lambda *_a, **_k: None)
+    def test_setup_sshd_multinode_fails_when_sshd_missing(self):
+        orch, runtime = self._make(lifetime="per_run")
+        orch.container_id = "cvs_iter_test"
+
+        def _exec_side_effect(cmd, **kwargs):
+            if "command -v /usr/sbin/sshd" in cmd:
+                return {"10.0.0.1": {"exit_code": 127, "output": "missing sshd"}}
+            return {"10.0.0.1": {"exit_code": 0}}
+
+        runtime.exec.side_effect = _exec_side_effect
+        self.assertFalse(orch.setup_sshd())
 
     # ------------------------------------------------------------------
     # teardown_containers lifetime branching
