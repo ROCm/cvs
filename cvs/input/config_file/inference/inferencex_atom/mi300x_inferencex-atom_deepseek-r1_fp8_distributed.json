@@ -1,10 +1,10 @@
 {
-  "_comment": "W1 DeepSeek R1 FP8 multinode (2×8 GPU, PP=2). vLLM coordinates pipeline parallel; ATOM accelerates local kernels via vllm_atom driver. Set roles.server.ib_netdev and container.image before lab run.",
+  "_comment": "W1 DeepSeek R1 FP8 multinode (2\u00c3\u20148 GPU, PP=2). vLLM coordinates pipeline parallel; ATOM accelerates local kernels via vllm_atom driver. Set roles.server.ib_netdev and container.image before lab run.",
   "schema_version": 1,
   "framework": "inferencex_atom",
   "gpu_arch": "mi300x",
   "enforce_thresholds": true,
-  "threshold_json": "mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_threshold.json",
+  "threshold_json": "mi300x_inferencex-atom_deepseek-r1_fp8_distributed_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
     "notes": "MI300X 2-node PP=2 via vLLM-ATOM (M5); align master_addr and ib_netdev with cluster"
@@ -73,6 +73,10 @@
     "max_model_length": "4096",
     "metric_percentiles": "95,99",
     "reuse_server_across_sweep": "true",
+    "server_precheck_wait_s": "30",
+    "server_warmup_wait_s": "330",
+    "server_poll_count": "120",
+    "server_poll_wait_time": "60",
     "client_poll_count": "80",
     "client_poll_wait_time": "60"
   },

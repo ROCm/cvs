@@ -7,38 +7,42 @@ W1 **DeepSeek R1 FP8** on 8× GPU, ISL=OSL=1024, TP8.
 **In the CVS repo**, all variants live as flat sibling pairs in **this directory**:
 
 ```text
-{gpu}_inferencex-atom_{model}_{precision}[_{mode}]_config.json
+{gpu}_inferencex-atom_{model}_{precision}[_{mode}].json
 {gpu}_inferencex-atom_{model}_{precision}[_{mode}]_threshold.json
 ```
+
+Same convention as ``inference/vllm/`` (for example ``mi300x_vllm_llama31-70b_fp8_single.json`` / ``…_distributed.json``): flat sibling pairs, no ``_config`` suffix on the main JSON.
 
 **On your lab machine** (`~/input/config_file/inference/inferencex_atom/`), copy each variant into its **own subdirectory** so only one `*threshold.json` sits next to the config you pass to `--config_file`. `substitute_config` globs the config's parent directory; multiple `*threshold.json` files there raises `ValueError: multiple *threshold.json files … (ambiguous)`.
 
 ```text
-~/input/.../inferencex_atom/smoke/   # smoke config + smoke threshold only
-~/input/.../inferencex_atom/perf/    # perf config + perf threshold only
+~/input/.../inferencex_atom/single/   # single-node config + threshold only
+~/input/.../inferencex_atom/distributed/  # vllm_atom PP=2 config + threshold only
+~/input/.../inferencex_atom/sglang_distributed/  # sglang PP=2 config + threshold only
 ```
 
 Each shipped config sets `"threshold_json"` to the sibling threshold filename (resolved relative to the config directory). You may also use an absolute path (vLLM-style).
 
 Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc.) are **removed** from the repo tree. Use only the flat stems below.
 
-**Config filename example:** `mi300x_inferencex-atom_deepseek-r1_fp8_perf_config.json`
+**Config filename example:** `mi300x_inferencex-atom_deepseek-r1_fp8_single.json`
 
-| Variant | GPU | Notes |
-|---------|-----|-------|
-| `mi300x_inferencex-atom_deepseek-r1_fp8_smoke` | MI300X | Quick path check (C=128, 128 prompts) |
-| `mi300x_inferencex-atom_deepseek-r1_fp8_perf` | MI300X | W1 perf, portable min-SLO thresholds, server reuse across sweep |
-| `mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep` | MI300X | **DTNI baseline matrix:** 1K/1K + 8K/1K × C=4–256 (14 cells); `max_model_length=10240` |
-| `mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_multinode` | MI300X | **2-node** DTNI baseline (14 cells); `PP=2`, `driver=vllm_atom`, scaling gates |
-| `mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi` | MI300X | W1 **2-node** PP=2 (`driver=vllm_atom`); `enforce_thresholds: true` |
-| `mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang` | MI300X | W1 **2-node** PP=2 (`driver=sglang`); `enforce_thresholds: false` until lab confirm |
-| `mi300x_inferencex-atom_deepseek-r1_fp8_mtp3` | MI300X | W1 FP8+MTP3 |
-| `mi355x_inferencex-atom_deepseek-r1_fp8_perf` | MI355X | W1 perf (CI seeds, `enforce_thresholds: false`) |
-| `mi355x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep` | MI355X | **DTNI baseline matrix:** 1K/1K + 8K/1K × C=4–256 (14 cells); threshold seeds, `enforce_thresholds: false` |
-| `mi355x_inferencex-atom_deepseek-r1_fp8_perf_multi` | MI355X | W1 **2-node** PP=2 (`driver=vllm_atom`); `enforce_thresholds: false` until lab confirm |
-| `mi355x_inferencex-atom_deepseek-r1_fp8_mtp3` | MI355X | W1 FP8+MTP3 |
-| `mi300x_inferencex-atom_gpt-oss-120b_bf16` | MI300X | GPT-OSS uplift placeholder (`driver: vllm`, inline `serve_args`) |
-| `mi355x_inferencex-atom_gpt-oss-120b_bf16` | MI355X | GPT-OSS uplift placeholder |
+| Variant | GPU | Driver | Notes |
+|---------|-----|--------|-------|
+| `mi300x_inferencex-atom_deepseek-r1_fp8_single` | MI300X | `atom` | W1 single-node, portable min-SLO thresholds, server reuse across sweep |
+| `mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep` | MI300X | `atom` | **DTNI baseline matrix:** 1K/1K + 8K/1K × C=4–256 (14 cells); `max_model_length=10240` |
+| `mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_distributed` | MI300X | `vllm_atom` | **2-node** DTNI baseline (14 cells); `PP=2`, scaling gates |
+| `mi300x_inferencex-atom_deepseek-r1_fp8_distributed` | MI300X | `vllm_atom` | W1 **2-node** PP=2; `enforce_thresholds: true` after lab recalibration |
+| `mi300x_inferencex-atom_deepseek-r1_fp8_sglang_distributed` | MI300X | `sglang` | W1 **2-node** PP=2; `enforce_thresholds: false` until lab confirm |
+| `mi300x_inferencex-atom_deepseek-r1_fp8_mtp3` | MI300X | `atom` | W1 FP8+MTP3 |
+| `mi355x_inferencex-atom_deepseek-r1_fp8_single` | MI355X | `atom` | W1 single-node (CI seeds, `enforce_thresholds: false`) |
+| `mi355x_inferencex-atom_deepseek-r1_fp8_baseline_sweep` | MI355X | `atom` | **DTNI baseline matrix:** 1K/1K + 8K/1K × C=4–256 (14 cells); threshold seeds, `enforce_thresholds: false` |
+| `mi355x_inferencex-atom_deepseek-r1_fp8_distributed` | MI355X | `vllm_atom` | W1 **2-node** PP=2; `enforce_thresholds: false` until lab confirm |
+| `mi355x_inferencex-atom_deepseek-r1_fp8_mtp3` | MI355X | `atom` | W1 FP8+MTP3 |
+| `mi300x_inferencex-atom_gpt-oss-120b_bf16` | MI300X | `vllm` | GPT-OSS uplift placeholder |
+| `mi355x_inferencex-atom_gpt-oss-120b_bf16` | MI355X | `vllm` | GPT-OSS uplift placeholder |
+
+**Removed:** `*_smoke` variant (use `-k` on `single`, `distributed`, or `sglang_distributed` for a one-cell smoke). **Removed:** bare `driver=atom` multinode PP — use `vllm_atom` or `sglang` distributed stems above.
 
 ATOM server CLI for **`driver=atom`** lives in `roles.server.atom_args`. Multinode **PP=2** variants use **`driver=vllm_atom`** (`roles.server.serve_args`) or **`driver=sglang`** (`roles.server.sglang_args`). MTP3 variants also set `params.bench_extra_args`.
 
@@ -48,7 +52,7 @@ Standalone ATOM has **no native pipeline parallel**. Multinode PP validation req
 
 | Driver | When to use | Server | Multinode PP |
 |--------|-------------|--------|--------------|
-| `atom` | W1 single-node perf, smoke, MTP3 | `atom.entrypoints.openai_server` | No — optional SPMD data parallel only (`DP=` cell keys) |
+| `atom` | W1 single-node (`*_single`, baseline sweep, MTP3) | `atom.entrypoints.openai_server` | No — single host only |
 | `vllm_atom` | **2-node PP=2** (shipped multinode stems) | `vllm serve` + ATOM ROCm env | Yes — vLLM `--pipeline-parallel-size`, `--node-rank` |
 | `sglang` | **2-node PP=2** SGLang path | `sglang.launch_server` | Yes — `--pp-size`, `--dist-init-addr` |
 | `vllm` | GPT-OSS uplift placeholder only | `vllm serve` | Same PP flags as `vllm_atom` when configured |
@@ -71,8 +75,8 @@ Ship one template: `cvs/input/cluster_file/inferencex_atom_cluster.json`. Copy i
 
 | Variant type | `params.nnodes` | `node_dict` |
 |--------------|-----------------|-------------|
-| Smoke, baseline sweep (single-node) | `1` (default) | **Head node only** — remove the worker entry |
-| Baseline sweep multinode, multinode perf | `2` | Head + worker |
+| Single-node (`*_single`, baseline sweep, MTP3) | `1` (default) | **Head node only** — remove the worker entry |
+| Multinode PP (`*_distributed`, `*_baseline_sweep_distributed`, `*_sglang_distributed`) | `2` | Head + worker; use lab subdirs `distributed/` or `sglang_distributed/` |
 
 For multinode PP variants, set `params.master_addr` to the head VPC IP, `roles.server.ib_netdev`, and a coordinator-capable `container.image`. `test_setup_sshd` runs when `len(node_dict) > 1`. The container image must include `sshd` (CVS fails fast if missing — no runtime `apt-get`).
 
@@ -93,7 +97,7 @@ For multinode PP variants, set `params.master_addr` to the head VPC IP, `roles.s
 3. `test_cell_metrics` (one HTML row per **metric tier** per cell: throughput, ttft, tpot, health, record)
 4. `test_print_results_table` → `test_teardown`
 
-W1 MI300X perf with two concurrency cells expects **~17** pytest rows (not one row per scalar metric).
+W1 MI300X single with two concurrency cells expects **~17** pytest rows (not one row per scalar metric).
 
 ## Before the first lab run
 
@@ -120,32 +124,30 @@ source .cvs_venv/bin/activate
 
 - Preflight from the launcher: `ssh -i ~/.ssh/<key> <user>@<mgmt_ip> 'sudo docker images | grep atom-dev; du -sh /home/models'`
 
-## Smoke (MI300X)
+## W1 single-node (MI300X, `driver=atom`)
 
-One cell, 128 prompts — run this before the full perf matrix.
+Two concurrency cells (C=128, C=256), 1000 prompts. Second cell reuses the ATOM server when `reuse_server_across_sweep: true`. For a quick smoke, add `-k "w1_1k_1k-conc128"`.
 
 ```bash
 cd ~/cvs
 make install   # after git pull only; run before activating venv
 source .cvs_venv/bin/activate
-mkdir -p ~/cvs_results ~/input/cluster_file
 
-SMOKE_DIR=~/input/config_file/inference/inferencex_atom/smoke
-mkdir -p "$SMOKE_DIR"
+SINGLE_DIR=~/input/config_file/inference/inferencex_atom/single
+mkdir -p "$SINGLE_DIR"
 
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_smoke_config.json \
-  --output "$SMOKE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_smoke_config.json"
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_smoke_threshold.json \
-  --output "$SMOKE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_smoke_threshold.json"
-cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_single.json \
+  --output "$SINGLE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_single.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_single_threshold.json \
+  --output "$SINGLE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_single_threshold.json"
 
 TS=$(date +%Y%m%d_%H%M%S)
-HTML=~/cvs_results/${TS}_ix-atom-smoke_mi300x.html
-LOG=~/cvs_results/${TS}_ix-atom-smoke_mi300x.log
+HTML=~/cvs_results/${TS}_ix-atom-w1-single_mi300x.html
+LOG=~/cvs_results/${TS}_ix-atom-w1-single_mi300x.log
 
 cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
-  --config_file "$SMOKE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_smoke_config.json" \
+  --config_file "$SINGLE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_single.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \
@@ -160,39 +162,6 @@ When `--html` is set, the **IX Run Deck** (`inferencex_atom_run_deck.html`, `.js
 See `cvs/lib/report/README.md` for wiring other suites. Open the pytest HTML **Reports**
 section for links. Render-only; does not affect gates.
 
-## W1 perf (MI300X)
-
-Two concurrency cells (C=128, C=256), 1000 prompts. Second cell reuses the ATOM server when `reuse_server_across_sweep: true`.
-
-```bash
-cd ~/cvs
-make install   # after git pull only; run before activating venv
-source .cvs_venv/bin/activate
-
-PERF_DIR=~/input/config_file/inference/inferencex_atom/perf
-mkdir -p "$PERF_DIR"
-
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_config.json \
-  --output "$PERF_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_config.json"
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_threshold.json \
-  --output "$PERF_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_threshold.json"
-
-TS=$(date +%Y%m%d_%H%M%S)
-HTML=~/cvs_results/${TS}_ix-atom-w1-perf_mi300x.html
-LOG=~/cvs_results/${TS}_ix-atom-w1-perf_mi300x.log
-
-cvs run inferencex_atom \
-  --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
-  --config_file "$PERF_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_config.json" \
-  --html="$HTML" \
-  --self-contained-html \
-  --log-file="$LOG" \
-  -vvv -s
-
-echo "HTML: $HTML"
-echo "LOG:  $LOG"
-```
-
 ## W1 perf baseline sweep (MI300X) — DTNI matrix
 
 DTNI baseline matrix: **1K/1K** and **8K/1K** at **C=4, 8, 16, 32, 64, 128, 256** (14 cells). `max_model_length=10240`. Expect a long run (~several hours); server is reused within each shape.
@@ -205,10 +174,10 @@ source .cvs_venv/bin/activate
 BASELINE_DIR=~/input/config_file/inference/inferencex_atom/baseline_sweep
 mkdir -p "$BASELINE_DIR"
 
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_config.json \
-  --output "$BASELINE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_config.json"
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_threshold.json \
-  --output "$BASELINE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_threshold.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep.json \
+  --output "$BASELINE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_threshold.json \
+  --output "$BASELINE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_threshold.json"
 
 TS=$(date +%Y%m%d_%H%M%S)
 HTML=~/cvs_results/${TS}_ix-atom-baseline-sweep_mi300x.html
@@ -216,7 +185,7 @@ LOG=~/cvs_results/${TS}_ix-atom-baseline-sweep_mi300x.log
 
 cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
-  --config_file "$BASELINE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_config.json" \
+  --config_file "$BASELINE_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \
@@ -235,13 +204,13 @@ cd ~/cvs
 make install
 source .cvs_venv/bin/activate
 
-BASELINE_MULTI_DIR=~/input/config_file/inference/inferencex_atom/baseline_sweep_multinode
+BASELINE_MULTI_DIR=~/input/config_file/inference/inferencex_atom/baseline_sweep_distributed
 mkdir -p "$BASELINE_MULTI_DIR"
 
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_multinode_config.json \
-  --output "$BASELINE_MULTI_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_multinode_config.json"
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_multinode_threshold.json \
-  --output "$BASELINE_MULTI_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_multinode_threshold.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_distributed.json \
+  --output "$BASELINE_MULTI_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_distributed.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_distributed_threshold.json \
+  --output "$BASELINE_MULTI_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_distributed_threshold.json"
 cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
 
 # Ensure node_dict lists head + worker. Edit cluster IPs and set master_addr in the copied config.
@@ -252,7 +221,7 @@ LOG=~/cvs_results/${TS}_ix-atom-baseline-sweep-multinode_mi300x.log
 
 cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
-  --config_file "$BASELINE_MULTI_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_baseline_sweep_multinode_config.json" \
+  --config_file "$BASELINE_MULTI_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_distributed.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \
@@ -271,13 +240,13 @@ cd ~/cvs
 make install   # after git pull only; run before activating venv
 source .cvs_venv/bin/activate
 
-MULTI_DIR=~/input/config_file/inference/inferencex_atom/multi
-mkdir -p "$MULTI_DIR"
+DISTRIBUTED_DIR=~/input/config_file/inference/inferencex_atom/distributed
+mkdir -p "$DISTRIBUTED_DIR"
 
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_config.json \
-  --output "$MULTI_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_config.json"
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_threshold.json \
-  --output "$MULTI_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_threshold.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_distributed.json \
+  --output "$DISTRIBUTED_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_distributed.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_distributed_threshold.json \
+  --output "$DISTRIBUTED_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_distributed_threshold.json"
 cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
 
 # Ensure node_dict lists head + worker. Edit cluster IPs, ib_netdev, container.image,
@@ -289,7 +258,7 @@ LOG=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi300x.log
 
 cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
-  --config_file "$MULTI_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_config.json" \
+  --config_file "$DISTRIBUTED_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_distributed.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \
@@ -308,13 +277,13 @@ cd ~/cvs
 make install
 source .cvs_venv/bin/activate
 
-SGLANG_DIR=~/input/config_file/inference/inferencex_atom/multi_sglang
+SGLANG_DIR=~/input/config_file/inference/inferencex_atom/sglang_distributed
 mkdir -p "$SGLANG_DIR"
 
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_config.json \
-  --output "$SGLANG_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_config.json"
-cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_threshold.json \
-  --output "$SGLANG_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_threshold.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_sglang_distributed.json \
+  --output "$SGLANG_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_sglang_distributed.json"
+cvs copy-config inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_sglang_distributed_threshold.json \
+  --output "$SGLANG_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_sglang_distributed_threshold.json"
 cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
 
 # Edit cluster IPs, ib_netdev, SGLang container.image, params.master_addr.
@@ -325,7 +294,7 @@ LOG=~/cvs_results/${TS}_ix-atom-w1-perf-multi-sglang_mi300x.log
 
 cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
-  --config_file "$SGLANG_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_perf_multi_sglang_config.json" \
+  --config_file "$SGLANG_DIR/mi300x_inferencex-atom_deepseek-r1_fp8_sglang_distributed.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \
@@ -344,13 +313,13 @@ cd ~/cvs
 make install   # after git pull only; run before activating venv
 source .cvs_venv/bin/activate
 
-MULTI_DIR=~/input/config_file/inference/inferencex_atom/mi355x_multi
-mkdir -p "$MULTI_DIR"
+DISTRIBUTED_DIR=~/input/config_file/inference/inferencex_atom/mi355x_distributed
+mkdir -p "$DISTRIBUTED_DIR"
 
-cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_perf_multi_config.json \
-  --output "$MULTI_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_perf_multi_config.json"
-cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_perf_multi_threshold.json \
-  --output "$MULTI_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_perf_multi_threshold.json"
+cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_distributed.json \
+  --output "$DISTRIBUTED_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_distributed.json"
+cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_distributed_threshold.json \
+  --output "$DISTRIBUTED_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_distributed_threshold.json"
 cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
 
 # Ensure node_dict lists head + worker (params.nnodes=2 in multinode variant).
@@ -363,7 +332,7 @@ LOG=~/cvs_results/${TS}_ix-atom-w1-perf-multi_mi355x.log
 
 cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
-  --config_file "$MULTI_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_perf_multi_config.json" \
+  --config_file "$DISTRIBUTED_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_distributed.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \
@@ -373,7 +342,7 @@ echo "HTML: $HTML"
 echo "LOG:  $LOG"
 ```
 
-## W1 perf (MI355X)
+## W1 single-node (MI355X, `driver=atom`)
 
 Thresholds are seeded from [ROCm/ATOM run 27912164002](https://github.com/ROCm/ATOM/actions/runs/27912164002). `enforce_thresholds` stays `false` until an MI355X lab run confirms.
 
@@ -382,22 +351,22 @@ cd ~/cvs
 make install   # after git pull only; run before activating venv
 source .cvs_venv/bin/activate
 
-PERF_DIR=~/input/config_file/inference/inferencex_atom/mi355x_perf
-mkdir -p "$PERF_DIR"
+SINGLE_DIR=~/input/config_file/inference/inferencex_atom/mi355x_single
+mkdir -p "$SINGLE_DIR"
 
-cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_perf_config.json \
-  --output "$PERF_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_perf_config.json"
-cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_perf_threshold.json \
-  --output "$PERF_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_perf_threshold.json"
+cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_single.json \
+  --output "$SINGLE_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_single.json"
+cvs copy-config inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_single_threshold.json \
+  --output "$SINGLE_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_single_threshold.json"
 cvs copy-config inferencex_atom_cluster.json --output ~/input/cluster_file/inferencex_atom_cluster.json
 
 TS=$(date +%Y%m%d_%H%M%S)
-HTML=~/cvs_results/${TS}_ix-atom-w1-perf_mi355x.html
-LOG=~/cvs_results/${TS}_ix-atom-w1-perf_mi355x.log
+HTML=~/cvs_results/${TS}_ix-atom-w1-single_mi355x.html
+LOG=~/cvs_results/${TS}_ix-atom-w1-single_mi355x.log
 
 cvs run inferencex_atom \
   --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
-  --config_file "$PERF_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_perf_config.json" \
+  --config_file "$SINGLE_DIR/mi355x_inferencex-atom_deepseek-r1_fp8_single.json" \
   --html="$HTML" \
   --self-contained-html \
   --log-file="$LOG" \

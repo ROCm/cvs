@@ -19,17 +19,17 @@ The suite checks:
 - **Benchmarking**: Named ISL/OSL combos with explicit concurrency sweep cells
 - **Result verification**: Tiered ``client.*`` thresholds when ``enforce_thresholds`` is true
 
-Configs use flat ``*_config.json`` + sibling ``*_threshold.json`` pairs under
-``cvs/input/config_file/inference/inferencex_atom/``. Filename pattern:
-``{gpu}_inferencex-atom_{model}_{precision}[_{mode}]_config.json``.
-Pass ``--config_file`` to the ``*_config.json``; :func:`cvs.lib.utils.config_loader.substitute_config`
-discovers the sole sibling ``*threshold.json`` in the **config file's parent directory** when
+Configs use flat sibling pairs under
+``cvs/input/config_file/inference/inferencex_atom/``, matching ``inference/vllm/`` naming:
+``{gpu}_inferencex-atom_{model}_{precision}[_{mode}].json`` plus optional
+``…_threshold.json``. Pass ``--config_file`` to the main JSON;
+:func:`cvs.lib.utils.config_loader.substitute_config` discovers the sole sibling ``*threshold.json`` in the **config file's parent directory** when
 ``threshold_json`` is omitted. If that directory contains more than one ``*threshold.json``,
 loading fails with an ambiguous-threshold ``ValueError``.
 
 **Lab ``~/input`` layout:** the repo keeps every variant flat in one tree, but after
 ``cvs copy-config`` you should place each run's config + threshold pair in a dedicated
-subdirectory (for example ``~/input/.../inferencex_atom/smoke/``) so only one
+subdirectory (for example ``~/input/.../inferencex_atom/single/``) so only one
 threshold file sits beside the config you pass to ``--config_file``. Alternatively set
 ``"threshold_json"`` in the config to an explicit path. See the in-tree README at
 ``cvs/input/config_file/inference/inferencex_atom/README.md`` for copy-paste commands.
@@ -83,13 +83,13 @@ Pytest and HTML layout (inferencex_atom)
 Example variant layout
 ======================
 
-Each stem has ``<stem>_config.json`` (``schema_version: 1``, ``framework: inferencex_atom``)
+Each stem has ``<stem>.json`` (``schema_version: 1``, ``framework: inferencex_atom``)
 and sibling ``<stem>_threshold.json``. In the CVS source tree many stems share one directory;
 on a lab machine, copy only the pair you need into a per-variant subdirectory (or set
-``threshold_json``). See ``mi300x_inferencex-atom_deepseek-r1_fp8_perf_config.json``
+``threshold_json``). See ``mi300x_inferencex-atom_deepseek-r1_fp8_single.json``
 for the W1 MI300X reference.
 
-.. dropdown:: Example ``mi300x_inferencex-atom_deepseek-r1_fp8_perf_threshold.json`` (excerpt)
+.. dropdown:: Example ``mi300x_inferencex-atom_deepseek-r1_fp8_single_threshold.json`` (excerpt)
 
   .. code:: json
 
@@ -176,7 +176,7 @@ Top-level blocks follow the DTNI variant schema. InferenceX ATOM-specific keys:
      - Single-node reference ``output_throughput`` for ``scaling.efficiency_pct`` (record-only).
    * - ``params.server_warmup_wait_s`` / ``client_initial_wait_s``
      - ``330`` / ``120``
-     - Config-driven server warmup and client poll floor (shorter on smoke configs).
+     - Config-driven server warmup and client poll floor (use `-k` for a one-cell smoke).
    * - ``params.metric_percentiles``
      - ``95,99``
      - Tail percentiles for W1 gates (p95 TPOT, p99 TTFT).

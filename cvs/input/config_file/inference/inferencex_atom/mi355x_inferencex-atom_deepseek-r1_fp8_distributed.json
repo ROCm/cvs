@@ -1,10 +1,10 @@
 {
-  "_comment": "W1 DeepSeek R1 FP8 multinode (2×8 GPU MI355X, PP=2). vLLM-ATOM pipeline parallel; set ib_netdev and container.image before lab run.",
+  "_comment": "W1 DeepSeek R1 FP8 multinode (2\u00c3\u20148 GPU MI355X, PP=2). vLLM-ATOM pipeline parallel; set ib_netdev and container.image before lab run.",
   "schema_version": 1,
   "framework": "inferencex_atom",
   "gpu_arch": "mi355x",
   "enforce_thresholds": false,
-  "threshold_json": "mi355x_inferencex-atom_deepseek-r1_fp8_perf_multi_threshold.json",
+  "threshold_json": "mi355x_inferencex-atom_deepseek-r1_fp8_distributed_threshold.json",
   "run_card": {
     "upstream_run_url": "https://github.com/ROCm/ATOM/actions/runs/27912164002",
     "atom_image_pin": "rocm/atom-dev:nightly_202606211542",
