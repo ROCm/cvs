@@ -20,14 +20,20 @@ import json
 import os
 import pathlib
 import shlex
-import threading
 import time
 
 import pytest
 
 from cvs.lib import globals
 from cvs.lib.inference.utils.vllm_config_loader import GoodputSlo, validate_sweep_selector
-from cvs.lib.utils.gpu import GPU_METRICS, GPU_METRIC_UNITS, agg_readings, capture_gpu_metrics, poll_gpu_metrics
+from cvs.lib.utils.gpu import (
+    GPU_METRICS,
+    GPU_METRIC_UNITS,
+    agg_readings,
+    capture_gpu_metrics,
+    start_gpu_poller,
+    stop_and_collect_gpu_poller,
+)
 from cvs.lib.utils.verdict import evaluate_all
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
 from cvs.lib.inference.vllm_job import VllmJob
@@ -288,30 +294,26 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
             else None
         )
 
-        # Client is launched backgrounded (run_client returns immediately); poll
-        # GPU metrics from a thread while wait_client_complete blocks the main
-        # thread on the client log, then stop the poll once the client is done.
-        done_flag = threading.Event()
-
-        def _poll():
-            poll_readings.extend(
-                poll_gpu_metrics(
-                    orch,
-                    done_flag.is_set,
-                    log_path=str(_gpu_log) if _gpu_log else None,
-                    model_load_s=load_s,
-                    model_load_memory_mb=load_mb,
-                )
-            )
-
-        poll_thread = threading.Thread(target=_poll, daemon=True)
-        poll_thread.start()
+        # Client is launched backgrounded (run_client returns immediately); a
+        # detached remote script snapshots amd-smi to a file on each node
+        # while wait_client_complete blocks the main thread on the client
+        # log -- no second OS thread sharing the orchestrator's SSH transport.
+        handle = start_gpu_poller(
+            orch,
+            run_id=f"{request.node.nodeid}_{isl}_{osl}_{concurrency}",
+            nodes=None if int(variant_config.params.nnodes) == 1 else list(job.orch.hosts),
+        )
         try:
             job.run_client()
             job.wait_client_complete()
         finally:
-            done_flag.set()
-            poll_thread.join()
+            poll_readings = stop_and_collect_gpu_poller(
+                orch,
+                handle,
+                log_path=str(_gpu_log) if _gpu_log else None,
+                model_load_s=load_s,
+                model_load_memory_mb=load_mb,
+            )
         results = job.parse_results()
     except Exception:
         lifecycle.failed = True
