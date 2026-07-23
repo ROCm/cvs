@@ -8,7 +8,8 @@ Both suites use ``ContainerOrchestrator`` (vLLM-style) via ``cluster_container.j
 ``load_variant()`` from ``sglang_config_loader``.
 
 ``sglang_single.py`` — ``SglangSingle`` (unified server on ``benchmark_serv_node`` only).
-``sglang_disagg_distributed.py`` — ``SglangDisaggPD`` (PD prefill/decode/router/bench).
+``sglang_disagg_distributed.py`` — ``SglangDisaggPD`` (PD roles from inference config;
+containers only on the union of prefill/decode/router/bench hosts).
 
 Each ``benchmark_params`` variant may set ``threshold_file`` to a JSON file beside the config;
 that file supplies pass/fail thresholds for performance and lm-eval benchmarks.
@@ -99,6 +100,60 @@ def _cluster_dict_for_single_benchmark(
     scoped = dict(cluster_dict)
     scoped["node_dict"] = {bench_host: node_dict[bench_host]}
     scoped["head_node_dict"] = {"mgmt_ip": bench_host}
+    return scoped
+
+
+def _disagg_role_hosts(inference: Mapping[str, Any]) -> list[str]:
+    """Unique hosts referenced by PD role fields in the inference config."""
+    seen: list[str] = []
+    for key in (
+        "prefill_node_list",
+        "decode_node_list",
+        "proxy_router_node",
+        "benchmark_serv_node",
+    ):
+        raw = inference.get(key)
+        if raw is None:
+            continue
+        for host in as_node_list(raw):
+            if host not in seen:
+                seen.append(host)
+    if not seen:
+        raise ValueError(
+            "sglang_disagg requires at least one of prefill_node_list, decode_node_list, "
+            "proxy_router_node, or benchmark_serv_node in the inference config"
+        )
+    return seen
+
+
+def _disagg_head_host(inference: Mapping[str, Any], role_hosts: list[str]) -> str:
+    """Orchestrator head: proxy, then benchmark, then first prefill node."""
+    for key in ("proxy_router_node", "benchmark_serv_node", "prefill_node_list"):
+        raw = inference.get(key)
+        if raw is None:
+            continue
+        hosts = as_node_list(raw)
+        if hosts:
+            return hosts[0]
+    return role_hosts[0]
+
+
+def _cluster_dict_for_disagg_roles(
+    cluster_dict: Mapping[str, Any],
+    role_hosts: list[str],
+    head_host: str,
+) -> dict[str, Any]:
+    """Restrict orchestrator scope to PD role hosts (not every cluster.json node)."""
+    node_dict = cluster_dict.get("node_dict") or {}
+    missing = [h for h in role_hosts if h not in node_dict]
+    if missing:
+        raise ValueError(
+            f"disagg role hosts not in cluster node_dict: {missing!r} "
+            f"(cluster keys: {sorted(node_dict)!r})"
+        )
+    scoped = dict(cluster_dict)
+    scoped["node_dict"] = {h: node_dict[h] for h in role_hosts}
+    scoped["head_node_dict"] = {"mgmt_ip": head_host}
     return scoped
 
 
@@ -298,6 +353,15 @@ def orch(request, cluster_dict, variant_config, lifecycle):
         bench_host = _benchmark_serv_host(variant_config.inference)
         cluster = _cluster_dict_for_single_benchmark(cluster_dict, bench_host)
         log.info("sglang_single: orchestrator scoped to benchmark_serv_node=%s", bench_host)
+    else:
+        role_hosts = _disagg_role_hosts(variant_config.inference)
+        head_host = _disagg_head_host(variant_config.inference, role_hosts)
+        cluster = _cluster_dict_for_disagg_roles(cluster_dict, role_hosts, head_host)
+        log.info(
+            "sglang_disagg: orchestrator scoped to role hosts=%s head=%s",
+            role_hosts,
+            head_host,
+        )
     o = _create_container_orchestrator(cluster, variant_config)
 
     yield o
