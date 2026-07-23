@@ -9,10 +9,14 @@ of role hosts (not every host in cluster.json unless all are assigned roles).
 Run:
   pytest cvs/tests/inference/sglang/sglang_disagg_distributed.py \\
     --cluster_file cvs/input/cluster_file/cluster_container.json \\
-    --config_file cvs/input/config_file/inference/sglang/mi30x_sglang_distributed.json
+    --config_file cvs/input/config_file/inference/sglang/mi30x_sglang_distributed.json \\
+    --html=~/cvs_results/sglang_disagg.html
 
 ``cluster_container.json`` ``node_dict`` must include all prefill/decode/router/bench hosts.
 Model variant is selected from ``benchmark_params`` via ``active_benchmark`` / env / single-key auto.
+
+With ``--html``, session end also writes ``sglang_disagg_run_deck.html`` (plus JSON
+and interactive viewer) via ``cvs.lib.report.presets.sglang_disagg_distributed``.
 '''
 
 import pytest
