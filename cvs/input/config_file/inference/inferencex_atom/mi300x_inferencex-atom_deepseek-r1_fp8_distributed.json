@@ -53,7 +53,7 @@
         "no-enable-prefix-caching": true
       },
       "ib_hca_devices": "auto",
-      "ib_netdev": "<changeme>",
+      "ib_netdev": "auto",
       "env": {
         "VLLM_ROCM_USE_AITER": "1",
         "AMDGCN_USE_BUFFER_OPS": "0"

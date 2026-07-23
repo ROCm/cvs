@@ -11,12 +11,14 @@ a benchmark step: topology is stable within a run and should be probed once.
 from __future__ import annotations
 
 import re
+import shlex
 
 from cvs.lib import globals
 
 log = globals.log
 
 _HCA_RE = re.compile(r"hca_id:\s*(\S+)")
+_IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.I)
 
 _SYSFS_CMD = "ls /sys/class/infiniband/ 2>/dev/null | tr '\\n' ' '"
 _IBVDEVINFO_CMD = "ibv_devinfo -l 2>/dev/null"
@@ -99,3 +101,66 @@ def validate_ib_hca_preflight(discovered: dict[str, list[str]], requested: list[
             raise RuntimeError(
                 f"ib_discovery preflight: requested HCA devices {missing} not found on {host}. Available: {devs}"
             )
+
+
+def _netdev_for_ip_cmd(ip: str) -> str:
+    inner = (
+        f"ip -4 -o addr show | awk -v ip={shlex.quote(ip)} "
+        "'{split($4,a,\"/\"); if(a[1]==ip) {print $2; exit}}'"
+    )
+    return f"bash -c {shlex.quote(inner)}"
+
+
+def _netdev_via_route_cmd(dest_ip: str) -> str:
+    inner = (
+        f"ip route get {shlex.quote(dest_ip)} 2>/dev/null | awk "
+        "'{for(i=1;i<=NF;i++) if($i==\"dev\") {print $(i+1); exit}}'"
+    )
+    return f"bash -c {shlex.quote(inner)}"
+
+
+def discover_socket_netdev_name(orch, master_addr: str | None = None) -> str:
+    """Return the Linux netdev for NCCL/GLOO socket traffic on a homogeneous cluster.
+
+    On each host, prefers the interface that owns that host's cluster IP (the key
+    in ``orch.hosts``). Falls back to the egress interface toward ``master_addr``.
+    Requires the same netdev **name** on every node because the suite broadcasts
+    one env script to all ranks.
+
+    These are IP netdevs (``ens51f1np1``), not IB HCA names (``mlx5_0``).
+    """
+    hosts = list(getattr(orch, "hosts", []) or [])
+    if not hosts:
+        raise RuntimeError("socket_netdev discovery: orchestrator has no hosts")
+
+    master = (master_addr or "").strip() or hosts[0]
+    per_host: dict[str, str] = {}
+    for host in hosts:
+        host_ip = str(host).strip()
+        out = orch.exec(_netdev_for_ip_cmd(host_ip), hosts=[host])
+        netdev = (out or {}).get(host, "").strip()
+        if not netdev:
+            out = orch.exec(_netdev_via_route_cmd(master), hosts=[host])
+            netdev = (out or {}).get(host, "").strip()
+        if not netdev:
+            raise RuntimeError(
+                f"socket_netdev discovery: no IPv4 netdev on {host} "
+                f"(host_ip={host_ip!r}, master_addr={master!r})"
+            )
+        if _IB_HCA_NETDEV_RE.match(netdev):
+            raise RuntimeError(
+                f"socket_netdev discovery: {host} resolved {netdev!r}, which looks like an "
+                "IB HCA name — set roles.server.ib_netdev to the IP-bearing Linux netdev "
+                "(e.g. ens51f1np1), not mlx5_*"
+            )
+        per_host[host] = netdev
+        log.info("socket_netdev discovery: %s -> %s", host, netdev)
+
+    unique = set(per_host.values())
+    if len(unique) > 1:
+        detail = "; ".join(f"{h}={d}" for h, d in per_host.items())
+        raise RuntimeError(
+            f"socket_netdev discovery: asymmetric netdev names across nodes ({detail}). "
+            "Set roles.server.ib_netdev explicitly when node interface names differ."
+        )
+    return next(iter(unique))

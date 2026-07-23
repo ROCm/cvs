@@ -11,6 +11,7 @@ Generic paths/model/container/threshold plumbing lives in
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import field_validator, model_validator
@@ -40,7 +41,19 @@ class InferenceXAtomRoleServer(RoleServer):
     # explicit list -> validated at preflight against ibv_devinfo output.
     ib_hca_devices: Union[Literal["auto"], List[str], None] = None
     # Linux netdev for NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME on multinode PP runs.
-    ib_netdev: Optional[str] = None
+    # absent or "auto" -> resolved at runtime by test_discover_topology from cluster IPs.
+    ib_netdev: Union[Literal["auto"], str, None] = None
+
+    @field_validator("ib_netdev", mode="after")
+    @classmethod
+    def _ib_netdev_not_ib_hca_name(cls, v):
+        raw = (v or "").strip()
+        if raw and raw.lower() != "auto" and re.match(r"^mlx5_\d+$", raw, re.I):
+            raise ValueError(
+                f"roles.server.ib_netdev={raw!r} looks like an IB HCA name; "
+                "use the Linux IP netdev (e.g. ens51f1np1) or 'auto'"
+            )
+        return v
 
 
 class InferenceXAtomRoles(_Forbid):
@@ -187,12 +200,6 @@ class InferenceXAtomVariantConfig(BaseVariantConfig):
             raise ValueError(
                 f"pipeline_parallel_size={pp} > 1 requires nnodes > 1 (got nnodes={nn}) "
                 f"for params.driver={driver!r}"
-            )
-        if nn > 1 and not self.roles.server.ib_netdev:
-            raise ValueError(
-                f"roles.server.ib_netdev is required when params.driver={driver!r} and nnodes>1. "
-                "Set it to the Linux network interface name for NCCL_SOCKET_IFNAME "
-                '(e.g. "ens51f1np1").'
             )
         return self
 

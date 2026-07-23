@@ -107,6 +107,8 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.nnodes, "2")
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.roles.server.ib_netdev, "auto")
+        self.assertEqual(variant.roles.server.ib_hca_devices, "auto")
         self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
         self.assertTrue(variant.enforce_thresholds)
         self.assertEqual(len(variant.expected_cells()), 15)
@@ -353,6 +355,41 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         }
         _, _, ids = expand_sweep_parametrize(sweep, ("metric_tier",))
         self.assertIn("w1-conc128-throughput", ids)
+
+    def test_ib_netdev_rejects_mlx5_hca_name(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="w1", isl="512", osl="512")],
+            runs=[Run(combo="w1", concurrency=16)],
+        )
+        with self.assertRaises(ValueError):
+            InferenceXAtomVariantConfig(
+                schema_version=1,
+                framework="inferencex_atom",
+                gpu_arch="mi300x",
+                enforce_thresholds=False,
+                paths={
+                    "shared_fs": "/home/x",
+                    "models_dir": "/home/x/models",
+                    "log_dir": "/home/x/LOGS",
+                    "hf_token_file": "/home/x/.hf",
+                },
+                model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
+                container={
+                    "name": "c",
+                    "image": "img",
+                    "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
+                },
+                roles={"server": {"ib_netdev": "mlx5_0"}},
+                params={
+                    "driver": "vllm_atom",
+                    "tensor_parallelism": "8",
+                    "pipeline_parallel_size": "2",
+                    "nnodes": "2",
+                    "master_addr": "10.0.0.1",
+                },
+                sweep=sweep,
+                thresholds={},
+            )
 
 
 if __name__ == "__main__":
