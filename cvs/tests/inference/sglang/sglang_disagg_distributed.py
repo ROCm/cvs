@@ -2,34 +2,46 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Single SGLang disaggregated (PD) benchmark module: model is selected from
-``benchmark_params`` via ``active_benchmark`` / env / single-key auto (see ``_shared``).
+Disaggregated (PD) SGLang benchmark: prefill, decode, proxy router, and benchmark
+client roles across cluster nodes via ``ContainerOrchestrator``.
+
+Run:
+  pytest cvs/tests/inference/sglang/sglang_disagg_distributed.py \\
+    --cluster_file cvs/input/cluster_file/cluster_container.json \\
+    --config_file cvs/input/config_file/inference/sglang/mi30x_sglang_distributed.json
+
+``cluster_container.json`` ``node_dict`` must include all prefill/decode/router/bench hosts.
+Model variant is selected from ``benchmark_params`` via ``active_benchmark`` / env / single-key auto.
 '''
 
+import pytest
 import time
 
 from cvs.lib import globals
-from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
+# from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
 
 log = globals.log
 
-def test_cleanup_stale_containers(orch, lifecycle, request):
-    """Stage 0: remove stale containers and logs from a prior run."""
+
+def test_launch_container(orch, variant_config, lifecycle, request):
+    """Stage 1: launch SGLang containers and reset log directory."""
+    log.info("Testcase launch SGLang containers (disagg PD)")
     globals.error_list = []
     t0 = time.monotonic()
-    orch.teardown_containers()
-    orch.cleanup_log_dir()
-    time.sleep(5)
-    lifecycle.complete_stage(request, "stale_cleanup", t0)
 
-
-def test_launch_inference_containers(orch, lifecycle, request):
-    """Stage 1: launch SGLang containers on prefill/decode/router/bench nodes."""
-    log.info("Testcase launch SGLang containers")
-    globals.error_list = []
-    t0 = time.monotonic()
     if not orch.setup_containers():
         lifecycle.failed = True
+        lifecycle.complete_stage(request, "container_launch", t0)
+        pytest.fail("setup_containers() returned False")
+
+    orch.cleanup_log_dir(variant_config.paths.log_dir)
+
+    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+    if not orch.verify_containers_running(name):
+        lifecycle.failed = True
+        lifecycle.complete_stage(request, "container_launch", t0)
+        pytest.fail(f"container {name} not running after setup_containers()")
+
     lifecycle.complete_stage(request, "container_launch", t0)
 
 
@@ -173,10 +185,10 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config):
     _print(inf_res_dict, lifecycle, variant_config)
 
 
-def test_teardown(orch, lifecycle, request):
+def test_teardown(orch, variant_config, lifecycle, request):
     """Final stage: tear down containers and logs. Runs even if a prior stage failed."""
     t0 = time.monotonic()
     orch.teardown_containers()
-    orch.cleanup_log_dir()
+    orch.cleanup_log_dir(variant_config.paths.log_dir)
     lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t0)
     lifecycle.torn_down = True

@@ -4,15 +4,14 @@ All rights reserved.
 
 Fixtures and hooks for SGLang inference suites (``sglang_single`` and ``sglang_disagg_distributed``).
 
-``sglang_single.py`` — ``SglangSingle`` + ``ContainerOrchestrator`` (vLLM-style).
-``sglang_disagg_distributed.py`` — ``SglangDisaggPD`` + ``SglangDisaggOrchestrator``.
+Both suites use ``ContainerOrchestrator`` (vLLM-style) via ``cluster_container.json`` and
+``load_variant()`` from ``sglang_config_loader``.
 
-Single-node runs use ``cluster_container.json`` + ``load_variant()`` from
-``sglang_config_loader``.
+``sglang_single.py`` — ``SglangSingle`` (unified server on cluster head).
+``sglang_disagg_distributed.py`` — ``SglangDisaggPD`` (PD prefill/decode/router/bench).
 
-Each ``benchmark_params`` variant may set ``threshold_file`` to a
-JSON file beside the config; that file supplies pass/fail thresholds for performance
-and lm-eval benchmarks.
+Each ``benchmark_params`` variant may set ``threshold_file`` to a JSON file beside the config;
+that file supplies pass/fail thresholds for performance and lm-eval benchmarks.
 '''
 
 from __future__ import annotations
@@ -33,10 +32,8 @@ from cvs.lib.inference.sglang.sglang_config_loader import (
     load_variant,
     orchestrator_container_from_variant,
     perf_cells_from_thresholds,
-    resolve_benchmark_variant_key,
 )
 from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
-from cvs.lib.inference.sglang.sglang_orchestrator import SglangDisaggOrchestrator
 from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
@@ -69,6 +66,20 @@ def _deep_merge(base, override):
     for k, v in override.items():
         out[k] = _deep_merge(base[k], v) if k in base else v
     return out
+
+
+def _create_container_orchestrator(cluster_dict: Mapping[str, Any], variant_config: SglangSingleVariantConfig):
+    """Build a ``ContainerOrchestrator`` for single-node or disagg SGLang suites."""
+    container_block = _deep_merge(
+        cluster_dict.get("container", {}),
+        orchestrator_container_from_variant(variant_config),
+    )
+    testsuite_config = {
+        "orchestrator": "container",
+        "container": container_block,
+    }
+    cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
+    return OrchestratorFactory.create_orchestrator(log, cfg)
 
 
 # ---------- accuracy-cell helpers (disagg long-context parametrization) ----------
@@ -246,74 +257,9 @@ def hf_token(variant_config):
 
 
 @pytest.fixture(scope="module")
-def p_phdl(cluster_dict, inference_dict):
-    env_vars = cluster_dict.get("env_vars")
-    return Pssh(
-        log,
-        inference_dict["prefill_node_list"],
-        user=cluster_dict["username"],
-        pkey=cluster_dict["priv_key_file"],
-        env_vars=env_vars,
-    )
-
-
-@pytest.fixture(scope="module")
-def d_phdl(cluster_dict, inference_dict):
-    env_vars = cluster_dict.get("env_vars")
-    return Pssh(
-        log,
-        inference_dict["decode_node_list"],
-        user=cluster_dict["username"],
-        pkey=cluster_dict["priv_key_file"],
-        env_vars=env_vars,
-    )
-
-
-@pytest.fixture(scope="module")
-def r_phdl(cluster_dict, inference_dict):
-    env_vars = cluster_dict.get("env_vars")
-    return Pssh(
-        log,
-        [inference_dict["proxy_router_node"]],
-        user=cluster_dict["username"],
-        pkey=cluster_dict["priv_key_file"],
-        env_vars=env_vars,
-    )
-
-
-@pytest.fixture(scope="module")
-def b_phdl(cluster_dict, inference_dict):
-    env_vars = cluster_dict.get("env_vars")
-    return Pssh(
-        log,
-        [inference_dict["benchmark_serv_node"]],
-        user=cluster_dict["username"],
-        pkey=cluster_dict["priv_key_file"],
-        env_vars=env_vars,
-    )
-
-
-@pytest.fixture(scope="module")
-def orch(request, cluster_dict, variant_config, lifecycle):
-    if _use_sglang_single(request):
-        container_block = _deep_merge(
-            cluster_dict.get("container", {}),
-            orchestrator_container_from_variant(variant_config),
-        )
-        testsuite_config = {
-            "orchestrator": "container",
-            "container": container_block,
-        }
-        cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
-        o = OrchestratorFactory.create_orchestrator(log, cfg)
-    else:
-        o = SglangDisaggOrchestrator(
-            variant_config.inference,
-            request.getfixturevalue("p_phdl"),
-            request.getfixturevalue("d_phdl"),
-            request.getfixturevalue("r_phdl"),
-            request.getfixturevalue("b_phdl"),
-        )
+def orch(cluster_dict, variant_config, lifecycle):
+    """``ContainerOrchestrator`` for both single-node and disagg SGLang suites."""
+    o = _create_container_orchestrator(cluster_dict, variant_config)
 
     yield o
 
@@ -321,22 +267,21 @@ def orch(request, cluster_dict, variant_config, lifecycle):
         log.info("orch leak-guard: tearing down containers")
         o.teardown_containers()
         if hasattr(o, "cleanup_log_dir"):
-            if _use_sglang_single(request):
-                o.cleanup_log_dir(variant_config.paths.log_dir)
-            else:
-                o.cleanup_log_dir()
+            o.cleanup_log_dir(variant_config.paths.log_dir)
 
 
 @pytest.fixture(scope="module")
-def gpu_type(request, orch):
+def gpu_type(request, orch, variant_config):
     if _use_sglang_single(request):
         smi_out_dict = orch.exec_on_head("rocm-smi -a | head -30")
         head_node = next(iter(smi_out_dict))
         smi_out = smi_out_dict[head_node]
     else:
-        p_phdl = request.getfixturevalue("p_phdl")
-        head_node = p_phdl.host_list[0]
-        smi_out = p_phdl.exec("rocm-smi -a | head -30")[head_node]
+        # Disagg: probe first prefill node (may differ from cluster head).
+        prefill_nodes = variant_config.inference["prefill_node_list"]
+        probe_node = prefill_nodes[0] if isinstance(prefill_nodes, list) else prefill_nodes
+        smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
+        smi_out = smi_out_dict.get(probe_node) or next(iter(smi_out_dict.values()))
     return get_model_from_rocm_smi_output(smi_out)
 
 
@@ -369,11 +314,8 @@ def im_obj(
         variant_config.inference,
         variant_config.benchmark_params,
         hf_token,
-        request.getfixturevalue("p_phdl"),
-        request.getfixturevalue("d_phdl"),
-        request.getfixturevalue("r_phdl"),
-        request.getfixturevalue("b_phdl"),
-        gpu_type,
+        orch=orch,
+        gpu_type=gpu_type,
     )
 
 
