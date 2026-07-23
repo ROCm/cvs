@@ -643,6 +643,10 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         return self.runtime.exec_cmd_list(self.container_id, cmd_list, timeout)
 
+    def exec_on_host(self, cmd, hosts=None, timeout=None, detailed=False):
+        """Execute command on the cluster host OS (SSH), not inside the container."""
+        return super().exec(cmd, hosts=hosts, timeout=timeout, detailed=detailed)
+
     def exec_on_head(self, cmd, timeout=None, detailed=False, print_console=True):
         """
         Execute command directly on head node (baremetal).
