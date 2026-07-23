@@ -25,6 +25,7 @@ Contract under test (from spec):
 Framework: unittest.TestCase + self.subTest + unittest.mock (no pytest).
 '''
 
+import pathlib
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -33,10 +34,13 @@ from cvs.lib.utils.gpu import (
     GPU_METRIC_UNITS,
     _RAW_GPU_FIELDS,
     _RAW_GPU_FIELD_UNITS,
+    _RECORD_SEP,
+    GpuPollerHandle,
     _mean,
     agg_readings,
-    poll_gpu_metrics,
     capture_gpu_metrics,
+    start_gpu_poller,
+    stop_and_collect_gpu_poller,
     parse_usage,
     parse_mem_usage,
     parse_energy,
@@ -553,8 +557,6 @@ class TestCaptureGpuMetrics(unittest.TestCase):
     def _make_orch(self, raw_gpu_list):
         """Return a mock orchestrator whose exec_on_head result decodes to raw_gpu_list.
 
-        amd-smi is a host-side tool; capture_gpu_metrics uses exec_on_head so
-        the command runs on the bare-metal node, not inside the container.
         The real ContainerOrchestrator.exec_on_head(cmd) returns {host: str};
         we mock the same shape so tests are grounded in the actual interface contract.
         """
@@ -753,126 +755,6 @@ class TestAggReadings(unittest.TestCase):
         self.assertAlmostEqual(result["gpu_bandwidth_util_pct"], 65.0)
 
 
-class TestPollGpuMetrics(unittest.TestCase):
-    def _make_orch(self):
-        return unittest.mock.MagicMock()
-
-    def test_happy_path_stops_when_done(self):
-        orch = self._make_orch()
-        snap = {
-            "gpu.used_vram": 1000,
-            "gpu.gfx_activity": 80.0,
-            "gpu.umc_activity": 60.0,
-            "gpu.mm_activity": 1.0,
-            "gpu.free_vram": 5000,
-            "gpu.total_vram": 6000,
-            "gpu.energy_j": 100.0,
-        }
-        call_count = [0]
-
-        def is_done():
-            call_count[0] += 1
-            return call_count[0] >= 2  # done after 2nd poll
-
-        with (
-            unittest.mock.patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
-            unittest.mock.patch("time.sleep"),
-        ):
-            readings = poll_gpu_metrics(orch, is_done_fn=is_done, poll_interval_s=0)
-
-        self.assertEqual(len(readings), 2)
-
-    def test_node_death_stops_after_max_consecutive_failures(self):
-        orch = self._make_orch()
-
-        def is_done():
-            return False
-
-        with (
-            unittest.mock.patch("cvs.lib.utils.gpu.capture_gpu_metrics", side_effect=RuntimeError("SSH timeout")),
-            unittest.mock.patch("time.sleep"),
-        ):
-            readings = poll_gpu_metrics(
-                orch,
-                is_done_fn=is_done,
-                poll_interval_s=0,
-                max_consecutive_failures=3,
-            )
-
-        self.assertEqual(readings, [])
-
-    def test_writes_log_file(self):
-        import tempfile
-        import os
-
-        orch = self._make_orch()
-        snap = {
-            "gpu.used_vram": 1000,
-            "gpu.gfx_activity": 80.0,
-            "gpu.umc_activity": 60.0,
-            "gpu.mm_activity": 1.0,
-            "gpu.free_vram": 5000,
-            "gpu.total_vram": 6000,
-            "gpu.energy_j": 100.0,
-        }
-        done_calls = [0]
-
-        def is_done():
-            done_calls[0] += 1
-            return done_calls[0] >= 1
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
-            log_path = f.name
-        try:
-            with (
-                unittest.mock.patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
-                unittest.mock.patch("time.sleep"),
-            ):
-                poll_gpu_metrics(orch, is_done_fn=is_done, poll_interval_s=0, log_path=log_path)
-            content = open(log_path).read()
-            self.assertIn("summary", content)
-        finally:
-            os.unlink(log_path)
-
-    def test_failure_then_recovery_resets_counter(self):
-        orch = self._make_orch()
-        snap = {
-            "gpu.used_vram": 1000,
-            "gpu.gfx_activity": 80.0,
-            "gpu.umc_activity": 60.0,
-            "gpu.mm_activity": 1.0,
-            "gpu.free_vram": 5000,
-            "gpu.total_vram": 6000,
-            "gpu.energy_j": 100.0,
-        }
-        call_seq = [RuntimeError("fail"), RuntimeError("fail"), snap, snap]
-        call_iter = iter(call_seq)
-        done_calls = [0]
-
-        def capture(*a, **kw):
-            v = next(call_iter)
-            if isinstance(v, Exception):
-                raise v
-            return v
-
-        def is_done():
-            done_calls[0] += 1
-            return done_calls[0] >= 2
-
-        with (
-            unittest.mock.patch("cvs.lib.utils.gpu.capture_gpu_metrics", side_effect=capture),
-            unittest.mock.patch("time.sleep"),
-        ):
-            readings = poll_gpu_metrics(
-                orch,
-                is_done_fn=is_done,
-                poll_interval_s=0,
-                max_consecutive_failures=3,
-            )
-
-        self.assertEqual(len(readings), 2)
-
-
 class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
     """Tests for capture_gpu_metrics with the nodes= parameter (orch.exec(hosts=...))."""
 
@@ -998,521 +880,384 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
         self.assertEqual(result["gpu.used_vram"], 3000)
 
 
-class TestPollGpuMetricsMultiNode(unittest.TestCase):
-    """Tests for poll_gpu_metrics with the nodes= parameter (orch.exec(hosts=...))."""
-
-    def _make_snap(self, used_vram: int = 1000):
-        return {
-            "gpu.used_vram": used_vram,
-            "gpu.gfx_activity": 90.0,
-            "gpu.umc_activity": 20.0,
-            "gpu.mm_activity": None,
-            "gpu.free_vram": 500,
-            "gpu.total_vram": 1500,
-            "gpu.energy_j": 50.0,
-        }
-
-    def test_log_line_tagged_with_node_labels(self):
-        """When nodes provided, log lines include '[label1+label2] ' tag."""
-        import tempfile
-        import os
-
-        snap = self._make_snap()
-        per_node = {"prefill-0": 2000, "decode-0": 3000}
-        nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
-            log_path = f.name
-        try:
-            with (
-                patch(
-                    "cvs.lib.utils.gpu._capture_multi_node",
-                    return_value=(snap, per_node),
-                ),
-                patch("time.sleep"),
-            ):
-                from cvs.lib.utils.gpu import poll_gpu_metrics
-
-                poll_gpu_metrics(
-                    MagicMock(),
-                    is_done_fn=lambda: True,
-                    poll_interval_s=0,
-                    log_path=log_path,
-                    nodes=nodes,
-                )
-            with open(log_path) as _f:
-                content = _f.read()
-            self.assertIn("[prefill-0+decode-0]", content)
-        finally:
-            os.unlink(log_path)
-
-    def test_summary_contains_per_node_vram(self):
-        """Summary block includes node_vram_mb lines for each label."""
-        import tempfile
-        import os
-
-        snap = self._make_snap(1000)
-        per_node = {"prefill-0": 2000, "decode-0": 3000}
-        nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
-            log_path = f.name
-        try:
-            with (
-                patch(
-                    "cvs.lib.utils.gpu._capture_multi_node",
-                    return_value=(snap, per_node),
-                ),
-                patch("time.sleep"),
-            ):
-                from cvs.lib.utils.gpu import poll_gpu_metrics
-
-                poll_gpu_metrics(
-                    MagicMock(),
-                    is_done_fn=lambda: True,
-                    poll_interval_s=0,
-                    log_path=log_path,
-                    nodes=nodes,
-                )
-            content = open(log_path).read()
-            self.assertIn("node_vram_mb [prefill-0]", content)
-            self.assertIn("node_vram_mb [decode-0]", content)
-            self.assertIn("per-node vram", content)
-        finally:
-            os.unlink(log_path)
-
-    def test_no_node_tag_when_nodes_none(self):
-        """Without nodes, log lines have no '[...]' node tag."""
-        import tempfile
-        import os
-
-        snap = self._make_snap()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
-            log_path = f.name
-        try:
-            with (
-                patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
-                patch("time.sleep"),
-            ):
-                from cvs.lib.utils.gpu import poll_gpu_metrics
-
-                poll_gpu_metrics(
-                    MagicMock(),
-                    is_done_fn=lambda: True,
-                    poll_interval_s=0,
-                    log_path=log_path,
-                    nodes=None,
-                )
-            content = open(log_path).read()
-            self.assertNotIn("per-node vram", content)
-        finally:
-            os.unlink(log_path)
-
-    def test_inline_vram_failure_degrades_gracefully(self):
-        """If per-label orch.exec raises for one node, that label gets None; aggregate unaffected."""
-        import tempfile
-        import os
-
-        snap = self._make_snap(5000)
-        per_node = {"prefill-0": None, "decode-0": 3000}
-        nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
-            log_path = f.name
-        try:
-            with (
-                patch(
-                    "cvs.lib.utils.gpu._capture_multi_node",
-                    return_value=(snap, per_node),
-                ),
-                patch("time.sleep"),
-            ):
-                from cvs.lib.utils.gpu import poll_gpu_metrics
-
-                readings = poll_gpu_metrics(
-                    MagicMock(),
-                    is_done_fn=lambda: True,
-                    poll_interval_s=0,
-                    log_path=log_path,
-                    nodes=nodes,
-                )
-            # Aggregate reading was not aborted
-            self.assertEqual(len(readings), 1)
-            self.assertEqual(readings[0]["gpu.used_vram"], 5000)
-            content = open(log_path).read()
-            # decode-0 has vram, prefill-0 is "-" (None)
-            self.assertIn("node_vram_mb [decode-0]: 3000 MB", content)
-            self.assertIn("node_vram_mb [prefill-0]: - MB", content)
-        finally:
-            os.unlink(log_path)
-
-    def test_is_done_fn_exception_not_misattributed_as_poll_failure(self):
-        """is_done_fn raising must NOT be counted as an amd-smi/exec failure."""
-        import tempfile
-        import os
-
-        snap = self._make_snap()
-        calls = {"n": 0}
-
-        def _is_done():
-            calls["n"] += 1
-            if calls["n"] == 1:
-                raise RuntimeError("client status check failed")
-            return True
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".log") as f:
-            log_path = f.name
-        try:
-            with (
-                patch("cvs.lib.utils.gpu.capture_gpu_metrics", return_value=snap),
-                patch("time.sleep"),
-            ):
-                from cvs.lib.utils.gpu import poll_gpu_metrics
-
-                with self.assertRaises(RuntimeError):
-                    poll_gpu_metrics(
-                        MagicMock(),
-                        is_done_fn=_is_done,
-                        poll_interval_s=0,
-                        log_path=log_path,
-                        nodes=None,
-                    )
-            content = open(log_path).read()
-            self.assertNotIn("FAILED", content)
-        finally:
-            os.unlink(log_path)
-
-
-# ===========================================================================
-# Hardening spec (plans/gpu-py-polling-reliability.md) — NEW behaviors.
+# ---------------------------------------------------------------------------
+# start_gpu_poller / stop_and_collect_gpu_poller / GpuPollerHandle
 #
-# These tests are authored GREENFIELD against the three reliability fixes that
-# are NOT yet implemented. They are expected to be RED until the fixes land,
-# and must not disturb the 73 characterization tests above.
-#
-# Classification of the units they exercise:
-#   poll_gpu_metrics    -> subsystem / stateful loop. State carried across
-#                          rounds is `consecutive_failures`; the failure cap is
-#                          a liveness guard (Fan-out Deadline, taxonomy #11).
-#   capture_gpu_metrics -> I/O subsystem at the orch.exec / orch.exec_on_head
-#                          seam; timeout is threaded to that boundary.
-#
-# poll_gpu_metrics failure-accounting transition table (multi-node):
-#   | round outcome                    | consecutive_failures | round result |
-#   |----------------------------------|----------------------|--------------|
-#   | all nodes produced entries       | reset to 0           | reading kept |
-#   | SOME nodes up, some down (mixed) | reset to 0 (success) | reading kept |  <- Issue 1: must NOT count
-#   | ZERO nodes produced entries      | += 1                 | no reading   |  <- Issue 1: must count
-#   | consecutive_failures == cap      | -> loop terminates   | stop polling |
-# ===========================================================================
+# poll_gpu_metrics (thread + shared-SSH polling) was replaced by a detached
+# remote background script per node, read back via ordinary sequential
+# exec/exec_on_head calls -- avoids a second OS thread sharing the
+# orchestrator's SSH transport with the main log-tail polling thread (real
+# HW-observed SessionError(OutOfBoundaryError()) race).
+# ---------------------------------------------------------------------------
 
 
-def _gpu_json(used_vram=1000, gfx=80.0):
-    """Serialize one amd-smi GPU entry as the JSON string orch.exec returns."""
+def _gpu_chunk_text(used_vram: int = 1000, gfx: float = 80.0, umc: float = 60.0) -> str:
+    """One well-formed amd-smi --json chunk (single GPU entry)."""
     import json
 
-    return json.dumps([_full_gpu_entry(gfx=gfx, total=used_vram + 1000, used=used_vram, free=1000)])
+    return json.dumps([_full_gpu_entry(gfx=gfx, umc=umc, used=used_vram)])
 
 
-class TestPollGpuMetricsFailureAccounting(unittest.TestCase):
-    """Issue 1 — multi-node total failure must count toward the failure cap,
-    while partial (per-label) degradation must NOT.
+def _poller_file_text(*chunks: str) -> str:
+    """Join chunks with _RECORD_SEP, well-terminated (trailing separator)."""
+    return "".join(c + _RECORD_SEP + "\n" for c in chunks)
 
-    These are lifecycle tests over the `consecutive_failures` state carried
-    across poll rounds: a legal transition (partial failure stays a success and
-    the loop keeps running to is_done), the previously-missing illegal one
-    (every node down -> the round is a failure and the cap eventually fires),
-    and the liveness guarantee that the loop terminates instead of spinning
-    forever on a wholly-dead fan-out.
-    """
 
-    def _make_snap(self, used_vram=1000):
-        return {
-            "gpu.used_vram": used_vram,
-            "gpu.gfx_activity": 90.0,
-            "gpu.umc_activity": 20.0,
-            "gpu.mm_activity": None,
-            "gpu.free_vram": 500,
-            "gpu.total_vram": 1500,
-            "gpu.energy_j": 50.0,
-        }
+class TestGpuPollerHandle(unittest.TestCase):
+    def test_fields(self):
+        handle = GpuPollerHandle(run_id="r1", marker="cvs_gpu_poll_r1", nodes=None, paths="/tmp/cvs_gpu_poll_r1.log")
+        self.assertEqual(handle.run_id, "r1")
+        self.assertEqual(handle.marker, "cvs_gpu_poll_r1")
+        self.assertIsNone(handle.nodes)
+        self.assertEqual(handle.paths, "/tmp/cvs_gpu_poll_r1.log")
 
-    def test_all_nodes_fail_round_trips_failure_cap(self):
-        """Illegal transition (was silently a success): every node fails every
-        round. Driven through the REAL _capture_multi_node via an orch.exec that
-        raises for all hosts, so this holds regardless of where the fix places
-        the raise. With is_done_fn never truly done, the loop MUST stop on the
-        cap and return zero readings — not accumulate all-None 'successes'.
 
-        is_done_fn returns True only after 20 calls purely as a safety valve so
-        a broken (pre-fix) implementation cannot hang the test; the real signal
-        is `readings == []`.
+class TestStartGpuPollerSingleNode(unittest.TestCase):
+    """nodes=None: one write+launch pair via orch.exec_on_head."""
+
+    def test_run_id_sanitized_in_marker_and_paths(self):
+        """A raw pytest node id (::, [, ], /) must not leak into marker/paths.
+
+        handle.paths is a legitimate filesystem path (e.g. /tmp/<marker>.log),
+        so it's the basename -- not the whole path string -- that must be
+        free of the sanitized-away characters.
         """
         orch = MagicMock()
-        orch.exec.side_effect = RuntimeError("ssh failed for every host")
-        nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
-        done_calls = {"n": 0}
+        orch.exec_on_head.return_value = {"head": ""}
+        handle = start_gpu_poller(orch, run_id="test_foo.py::test_bar[isl-osl-4]")
+        basename = pathlib.Path(handle.paths).name
+        for bad_char in ("::", "[", "]", "/"):
+            with self.subTest(bad_char=bad_char):
+                self.assertNotIn(bad_char, handle.marker)
+                self.assertNotIn(bad_char, basename)
+        self.assertTrue(handle.marker.startswith("cvs_gpu_poll_"))
 
-        def _is_done():
-            done_calls["n"] += 1
-            return done_calls["n"] >= 20  # safety valve, not the assertion
-
-        with patch("time.sleep"):
-            readings = poll_gpu_metrics(
-                orch,
-                is_done_fn=_is_done,
-                poll_interval_s=0,
-                max_consecutive_failures=2,
-                nodes=nodes,
-            )
-
-        self.assertEqual(readings, [])
-
-    def test_all_nodes_fail_via_capture_multi_node_seam(self):
-        """Same illegal transition, asserted at the seam the spec names: when
-        _capture_multi_node reports every label as None (per_node all-None),
-        poll_gpu_metrics must treat the round as a failure and stop on the cap.
-        """
-        snap = self._make_snap()
-        all_none = {"prefill-0": None, "decode-0": None}
-        nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
-        done_calls = {"n": 0}
-
-        def _is_done():
-            done_calls["n"] += 1
-            return done_calls["n"] >= 20  # safety valve
-
-        with (
-            patch(
-                "cvs.lib.utils.gpu._capture_multi_node",
-                return_value=(snap, all_none),
-            ),
-            patch("time.sleep"),
-        ):
-            readings = poll_gpu_metrics(
-                MagicMock(),
-                is_done_fn=_is_done,
-                poll_interval_s=0,
-                max_consecutive_failures=2,
-                nodes=nodes,
-            )
-
-        self.assertEqual(readings, [])
-
-    def test_partial_node_failure_does_not_trip_failure_cap(self):
-        """Legal transition preserved: one node up, one node down every round is
-        a SUCCESS (per-label degradation). Over 5 rounds with
-        max_consecutive_failures=2 the loop must NOT stop early — it runs until
-        is_done_fn, producing one reading per round. Regression guard that the
-        Issue 1 fix does not start counting partial failures.
-        """
+    def test_launch_uses_exec_on_head_not_exec(self):
         orch = MagicMock()
+        orch.exec_on_head.return_value = {"head": ""}
+        start_gpu_poller(orch, run_id="r1")
+        orch.exec.assert_not_called()
+        self.assertTrue(orch.exec_on_head.called)
 
-        def _exec(cmd, hosts=None, **kw):
-            if hosts == ["good"]:
-                return {"good": _gpu_json(used_vram=1000)}
-            raise RuntimeError("bad node down")
-
-        orch.exec.side_effect = _exec
-        nodes = [("good-0", ["good"]), ("bad-0", ["bad"])]
-        done_calls = {"n": 0}
-
-        def _is_done():
-            done_calls["n"] += 1
-            return done_calls["n"] >= 5
-
-        with patch("time.sleep"):
-            readings = poll_gpu_metrics(
-                orch,
-                is_done_fn=_is_done,
-                poll_interval_s=0,
-                max_consecutive_failures=2,
-                nodes=nodes,
-            )
-
-        self.assertEqual(len(readings), 5)
-
-    def test_partial_failure_seam_keeps_reading(self):
-        """Same legal transition at the _capture_multi_node seam: a mixed
-        per_node (one None, one live) is a success — the aggregate reading is
-        kept and the loop is not aborted.
-        """
-        snap = self._make_snap(5000)
-        mixed = {"prefill-0": None, "decode-0": 3000}
-        nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
-
-        with (
-            patch(
-                "cvs.lib.utils.gpu._capture_multi_node",
-                return_value=(snap, mixed),
-            ),
-            patch("time.sleep"),
-        ):
-            readings = poll_gpu_metrics(
-                MagicMock(),
-                is_done_fn=lambda: True,
-                poll_interval_s=0,
-                max_consecutive_failures=2,
-                nodes=nodes,
-            )
-
-        self.assertEqual(len(readings), 1)
-        self.assertEqual(readings[0]["gpu.used_vram"], 5000)
-
-
-class TestGpuMetricsTimeout(unittest.TestCase):
-    """Issue 3 — a caller-supplied timeout must be threaded down to the orch
-    transport (orch.exec / orch.exec_on_head), and a timeout firing must be
-    counted like any other failure.
-
-    Assertions pin the *explicit* timeout the caller passes rather than the
-    default value: the spec leaves the default timeout deliberately unresolved
-    (open question / possibly a required parameter), so pinning a specific
-    default here would encode a decision the spec has not made.
-    """
-
-    def test_capture_single_node_passes_timeout_to_exec_on_head(self):
+    def test_marker_scoped_by_local_user(self):
+        """Two users polling with the same run_id on a shared node must not
+        collide on the same /tmp path (Fremont-conda incident: shared /tmp,
+        second user's write hits a permission error on the first user's
+        leftover file)."""
         orch = MagicMock()
-        orch.exec_on_head.return_value = {"node0": _gpu_json()}
-        capture_gpu_metrics(orch, timeout_s=7)
-        _args, kwargs = orch.exec_on_head.call_args
-        self.assertEqual(kwargs.get("timeout"), 7)
+        orch.exec_on_head.return_value = {"head": ""}
+        with patch("cvs.lib.utils.gpu.getpass.getuser", return_value="alice"):
+            handle_alice = start_gpu_poller(orch, run_id="r1")
+        with patch("cvs.lib.utils.gpu.getpass.getuser", return_value="bob"):
+            handle_bob = start_gpu_poller(orch, run_id="r1")
+        self.assertIn("alice", handle_alice.marker)
+        self.assertIn("bob", handle_bob.marker)
+        self.assertNotEqual(handle_alice.marker, handle_bob.marker)
+        self.assertNotEqual(handle_alice.paths, handle_bob.paths)
 
-    def test_capture_multi_node_passes_timeout_to_exec(self):
+    def test_write_cmd_truncates_stale_log(self):
+        """A leftover log from a prior crashed run under the same marker
+        must not leak old readings into this run's file (poller appends
+        via >>, so launch must truncate first)."""
         orch = MagicMock()
+        orch.exec_on_head.return_value = {"head": ""}
+        start_gpu_poller(orch, run_id="r1")
+        write_cmd = orch.exec_on_head.call_args_list[0].args[0]
+        self.assertIn(": >", write_cmd)
 
-        def _exec(cmd, hosts=None, **kw):
-            return {hosts[0]: _gpu_json()}
+    def test_launch_command_contains_nohup_and_record_sep(self):
+        orch = MagicMock()
+        orch.exec_on_head.return_value = {"head": ""}
+        start_gpu_poller(orch, run_id="r1")
+        all_cmds = " ".join(c.args[0] for c in orch.exec_on_head.call_args_list)
+        self.assertIn("nohup", all_cmds)
+        self.assertIn(_RECORD_SEP, all_cmds)
 
-        orch.exec.side_effect = _exec
-        capture_gpu_metrics(
-            orch,
-            nodes=[("prefill-0", ["p"]), ("decode-0", ["d"])],
-            timeout_s=5,
+    def test_default_hard_cap_yields_960_iterations(self):
+        """hard_cap_s=14400, poll_interval_s=15 -> 14400 // 15 == 960."""
+        orch = MagicMock()
+        orch.exec_on_head.return_value = {"head": ""}
+        start_gpu_poller(orch, run_id="r1", poll_interval_s=15, hard_cap_s=14400)
+        all_cmds = " ".join(c.args[0] for c in orch.exec_on_head.call_args_list)
+        self.assertIn("960", all_cmds)
+
+    def test_returns_handle_with_nodes_none_and_str_path(self):
+        orch = MagicMock()
+        orch.exec_on_head.return_value = {"head": ""}
+        handle = start_gpu_poller(orch, run_id="r1")
+        self.assertIsNone(handle.nodes)
+        self.assertIsInstance(handle.paths, str)
+
+    def test_launch_failure_propagates(self):
+        orch = MagicMock()
+        orch.exec_on_head.side_effect = RuntimeError("ssh failed")
+        with self.assertRaises(RuntimeError):
+            start_gpu_poller(orch, run_id="r1")
+
+
+class TestStartGpuPollerMultiNode(unittest.TestCase):
+    """nodes=[hosts]: one write+launch pair per host via orch.exec(hosts=[host])."""
+
+    def test_one_launch_call_per_host(self):
+        orch = MagicMock()
+        orch.exec.return_value = {"h1": ""}
+        start_gpu_poller(orch, run_id="r1", nodes=["h1", "h2"])
+        orch.exec_on_head.assert_not_called()
+        hosts_seen = [c.kwargs.get("hosts") for c in orch.exec.call_args_list]
+        self.assertIn(["h1"], hosts_seen)
+        self.assertIn(["h2"], hosts_seen)
+
+    def test_returns_handle_with_per_host_paths(self):
+        orch = MagicMock()
+        orch.exec.return_value = {"h1": ""}
+        handle = start_gpu_poller(orch, run_id="r1", nodes=["h1", "h2"])
+        self.assertEqual(handle.nodes, ["h1", "h2"])
+        self.assertIsInstance(handle.paths, dict)
+        self.assertEqual(set(handle.paths), {"h1", "h2"})
+
+
+class TestStopAndCollectGpuPollerSingleNode(unittest.TestCase):
+    """nodes=None: pkill via exec_on_head, read-back via exec_on_head cat."""
+
+    def _handle(self):
+        return GpuPollerHandle(run_id="r1", marker="cvs_gpu_poll_r1", nodes=None, paths="/tmp/cvs_gpu_poll_r1.log")
+
+    def test_pkill_contains_marker(self):
+        orch = MagicMock()
+        orch.exec_on_head.return_value = {"head": ""}
+        stop_and_collect_gpu_poller(orch, self._handle())
+        all_cmds = " ".join(c.args[0] for c in orch.exec_on_head.call_args_list)
+        self.assertIn("cvs_gpu_poll_r1", all_cmds)
+
+    def test_well_terminated_chunks_all_parse(self):
+        """3 well-formed chunks + correct trailing separator -> 3 readings, 0 failed."""
+        text = _poller_file_text(_gpu_chunk_text(1000), _gpu_chunk_text(2000), _gpu_chunk_text(3000))
+        orch = MagicMock()
+        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}, {"head": ""}]
+        readings = stop_and_collect_gpu_poller(orch, self._handle())
+        self.assertEqual(len(readings), 3)
+        self.assertEqual(readings[-1]["gpu.used_vram"], 3000)
+
+    def test_trailing_phantom_not_counted_as_failure_but_mid_malformed_is(self):
+        """Trailing separator's phantom empty chunk must not count as failed;
+        a genuinely empty/malformed chunk mixed in the middle must."""
+        text = (
+            _gpu_chunk_text(1000)
+            + _RECORD_SEP
+            + "\n"
+            + ""
+            + _RECORD_SEP
+            + "\n"
+            + _gpu_chunk_text(3000)
+            + _RECORD_SEP
+            + "\n"
         )
-        self.assertTrue(orch.exec.called)
-        for call in orch.exec.call_args_list:
-            _args, kwargs = call
-            with self.subTest(call=call):
-                self.assertEqual(kwargs.get("timeout"), 5)
+        orch = MagicMock()
+        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}, {"head": ""}]
+        log_path = str(pathlib.Path(__file__).parent / "_tmp_test_gpu_poller_log.txt")
+        try:
+            readings = stop_and_collect_gpu_poller(orch, self._handle(), log_path=log_path)
+            self.assertEqual(len(readings), 2)
+            content = pathlib.Path(log_path).read_text()
+            self.assertIn("samples:              3 (1 failed, excluded)", content)
+        finally:
+            pathlib.Path(log_path).unlink(missing_ok=True)
 
-    def test_poll_threads_timeout_to_capture_single_node(self):
-        """poll_gpu_metrics forwards its timeout_s down to capture_gpu_metrics
-        in single-node mode (nodes=None)."""
-        seen = {}
+    def test_read_failure_degrades_not_raises(self):
+        orch = MagicMock()
+        orch.exec_on_head.side_effect = [{"head": ""}, RuntimeError("ssh failed"), {"head": ""}]
+        try:
+            readings = stop_and_collect_gpu_poller(orch, self._handle())
+        except Exception as exc:  # noqa: BLE001
+            self.fail(f"stop_and_collect_gpu_poller raised unexpectedly: {exc!r}")
+        else:
+            self.assertEqual(readings, [])
 
-        def _cap(o, nodes=None, timeout_s=None, **kw):
-            seen["timeout_s"] = timeout_s
-            return {
-                "gpu.used_vram": 1000,
-                "gpu.gfx_activity": 80.0,
-                "gpu.umc_activity": 60.0,
-                "gpu.mm_activity": 1.0,
-                "gpu.free_vram": 5000,
-                "gpu.total_vram": 6000,
-                "gpu.energy_j": 100.0,
-            }
+    def test_pkill_failure_degrades_not_raises_and_readback_still_happens(self):
+        text = _poller_file_text(_gpu_chunk_text(1000))
+        orch = MagicMock()
+        orch.exec_on_head.side_effect = [RuntimeError("pkill failed"), {"head": text}, {"head": ""}]
+        try:
+            readings = stop_and_collect_gpu_poller(orch, self._handle())
+        except Exception as exc:  # noqa: BLE001
+            self.fail(f"stop_and_collect_gpu_poller raised unexpectedly: {exc!r}")
+        else:
+            self.assertEqual(len(readings), 1)
 
-        with (
-            patch("cvs.lib.utils.gpu.capture_gpu_metrics", side_effect=_cap),
-            patch("time.sleep"),
-        ):
-            poll_gpu_metrics(
-                MagicMock(),
-                is_done_fn=lambda: True,
-                poll_interval_s=0,
-                timeout_s=8,
+    def test_cleanup_failure_degrades_not_raises(self):
+        text = _poller_file_text(_gpu_chunk_text(1000))
+        orch = MagicMock()
+        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}, RuntimeError("rm failed")]
+        try:
+            readings = stop_and_collect_gpu_poller(orch, self._handle())
+        except Exception as exc:  # noqa: BLE001
+            self.fail(f"stop_and_collect_gpu_poller raised unexpectedly: {exc!r}")
+        else:
+            self.assertEqual(len(readings), 1)
+
+    def test_remote_files_removed_after_readback_single_node(self):
+        """Fremont-conda incident: shared-node /tmp files must not be left
+        behind after a run, or the next user hits a permission error on the
+        stale file. Confirms both script and log paths are rm'd on the node
+        the poller ran on."""
+        text = _poller_file_text(_gpu_chunk_text(1000))
+        orch = MagicMock()
+        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}, {"head": ""}]
+        stop_and_collect_gpu_poller(orch, self._handle())
+        rm_calls = [c.args[0] for c in orch.exec_on_head.call_args_list if "rm -f" in c.args[0]]
+        self.assertEqual(len(rm_calls), 1)
+        self.assertIn("cvs_gpu_poll_r1.sh", rm_calls[0])
+        self.assertIn("cvs_gpu_poll_r1.log", rm_calls[0])
+
+    def test_summary_log_matches_agg_readings(self):
+        text = _poller_file_text(_gpu_chunk_text(1000, gfx=80.0, umc=60.0), _gpu_chunk_text(2000, gfx=90.0, umc=70.0))
+        orch = MagicMock()
+        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}, {"head": ""}]
+        log_path = str(pathlib.Path(__file__).parent / "_tmp_test_gpu_poller_summary.txt")
+        try:
+            readings = stop_and_collect_gpu_poller(
+                orch, self._handle(), log_path=log_path, model_load_s=12.3, model_load_memory_mb=456
             )
-        self.assertEqual(seen.get("timeout_s"), 8)
+            agg = agg_readings(readings)
+            content = pathlib.Path(log_path).read_text()
+            self.assertIn("--- summary ---", content)
+            self.assertIn(f"peak_gpu_memory_mb:   {agg['peak_gpu_memory_mb']:.0f} MB", content)
+            self.assertIn("model_load_memory_mb: 456 MB", content)
+            self.assertIn("model_load_s:         12.3 s", content)
+            self.assertIn(f"gpu_compute_util_pct:  {agg['gpu_compute_util_pct']:.1f} %", content)
+            self.assertIn(f"gpu_bandwidth_util_pct: {agg['gpu_bandwidth_util_pct']:.1f} %", content)
+        finally:
+            pathlib.Path(log_path).unlink(missing_ok=True)
 
-    def test_poll_multinode_threads_timeout_to_orch_exec(self):
-        """In multi-node mode, poll_gpu_metrics' timeout_s must reach the orch
-        transport as timeout= on every per-label exec call (driven through the
-        real _capture_multi_node)."""
+
+class TestStopAndCollectGpuPollerMultiNode(unittest.TestCase):
+    """nodes=[hosts]: pkill via exec(hosts=...), round-aligned merge across hosts."""
+
+    def _handle(self, nodes):
+        return GpuPollerHandle(
+            run_id="r1",
+            marker="cvs_gpu_poll_r1",
+            nodes=nodes,
+            paths={h: f"/tmp/cvs_gpu_poll_r1.log" for h in nodes},
+        )
+
+    def test_round_alignment_longer_host_extends_not_truncates(self):
+        """Host A: 3 chunks, host B: 2 chunks -> 3 rounds, round 3 uses only A."""
+        text_a = _poller_file_text(_gpu_chunk_text(1000), _gpu_chunk_text(2000), _gpu_chunk_text(3000))
+        text_b = _poller_file_text(_gpu_chunk_text(500), _gpu_chunk_text(600))
         orch = MagicMock()
 
-        def _exec(cmd, hosts=None, **kw):
-            return {hosts[0]: _gpu_json()}
+        def _exec(cmd, hosts=None):
+            if "pkill" in cmd:
+                return {h: "" for h in hosts}
+            host = hosts[0]
+            return {host: text_a if host == "A" else text_b}
 
         orch.exec.side_effect = _exec
-        nodes = [("prefill-0", ["p"]), ("decode-0", ["d"])]
-        with patch("time.sleep"):
-            poll_gpu_metrics(
-                orch,
-                is_done_fn=lambda: True,
-                poll_interval_s=0,
-                timeout_s=9,
-                nodes=nodes,
-            )
-        self.assertTrue(orch.exec.called)
-        for call in orch.exec.call_args_list:
-            _args, kwargs = call
-            with self.subTest(call=call):
-                self.assertEqual(kwargs.get("timeout"), 9)
+        readings = stop_and_collect_gpu_poller(orch, self._handle(["A", "B"]))
+        self.assertEqual(len(readings), 3)
+        # round 3 (index 2) merges only host A's 3000 vram entry.
+        self.assertEqual(readings[2]["gpu.used_vram"], 3000)
 
-    def test_timeout_s_is_optional_for_capture(self):
-        """Backward-compat: existing callers pass no timeout_s. Adding the
-        parameter must keep it OPTIONAL (a default), never required — otherwise
-        every existing caller (and the 73 characterization tests) breaks."""
+    def test_round_alignment_not_counted_as_failed_when_one_host_has_data(self):
+        text_a = _poller_file_text(_gpu_chunk_text(1000), _gpu_chunk_text(2000), _gpu_chunk_text(3000))
+        text_b = _poller_file_text(_gpu_chunk_text(500), _gpu_chunk_text(600))
         orch = MagicMock()
-        orch.exec_on_head.return_value = {"node0": _gpu_json()}
+
+        def _exec(cmd, hosts=None):
+            if "pkill" in cmd:
+                return {h: "" for h in hosts}
+            host = hosts[0]
+            return {host: text_a if host == "A" else text_b}
+
+        orch.exec.side_effect = _exec
+        log_path = str(pathlib.Path(__file__).parent / "_tmp_test_gpu_poller_multinode.txt")
         try:
-            out = capture_gpu_metrics(orch)  # no timeout_s
-        except TypeError as exc:  # noqa: BLE001
-            self.fail(f"timeout_s must be optional, not required: {exc!r}")
-        self.assertEqual(set(out.keys()), set(ALL_KEYS))
+            stop_and_collect_gpu_poller(orch, self._handle(["A", "B"]), log_path=log_path)
+            content = pathlib.Path(log_path).read_text()
+            self.assertIn("samples:              3", content)
+            self.assertNotIn("failed", content)
+        finally:
+            pathlib.Path(log_path).unlink(missing_ok=True)
 
-    def test_single_node_timeout_exception_counted_as_failure(self):
-        """A timeout raised by the transport is counted like any other failure:
-        in single-node mode a persistently-timing-out capture must trip the cap
-        and stop the loop (returning no readings), exactly as a RuntimeError
-        does today."""
-
-        class _FakeTimeout(Exception):
-            pass
-
-        with (
-            patch(
-                "cvs.lib.utils.gpu.capture_gpu_metrics",
-                side_effect=_FakeTimeout("amd-smi timed out"),
-            ),
-            patch("time.sleep"),
-        ):
-            readings = poll_gpu_metrics(
-                MagicMock(),
-                is_done_fn=lambda: False,
-                poll_interval_s=0,
-                max_consecutive_failures=3,
-            )
-        self.assertEqual(readings, [])
-
-
-class TestEmptyNodesListConsistency(unittest.TestCase):
-    """nodes=[] (zero labeled nodes, distinct from nodes=None) must behave
-    identically in capture_gpu_metrics and poll_gpu_metrics: no exec call at
-    all, all-None result. Found live: capture_gpu_metrics used `nodes is None`
-    to pick single- vs multi-node mode while poll_gpu_metrics used a truthy
-    check (`if nodes:`), so nodes=[] took the multi-node (no-op) branch in
-    capture_gpu_metrics but silently fell back to the single-node
-    exec_on_head branch in poll_gpu_metrics.
-    """
-
-    def test_capture_gpu_metrics_empty_nodes_calls_neither_transport(self):
+    def test_round_failed_when_every_contributing_host_malformed(self):
+        """Round where every host's chunk at that index is malformed/empty -> counted as failed."""
+        text_a = _poller_file_text(_gpu_chunk_text(1000), "")
+        text_b = _poller_file_text(_gpu_chunk_text(500), "")
         orch = MagicMock()
-        result = capture_gpu_metrics(orch, nodes=[])
-        orch.exec.assert_not_called()
-        orch.exec_on_head.assert_not_called()
-        self.assertEqual(set(result.keys()), set(ALL_KEYS))
-        self.assertTrue(all(v is None for v in result.values()))
 
-    def test_poll_gpu_metrics_empty_nodes_calls_neither_transport(self):
-        orch = MagicMock()
-        with patch("time.sleep"):
-            readings = poll_gpu_metrics(orch, is_done_fn=lambda: True, poll_interval_s=0, nodes=[])
-        orch.exec.assert_not_called()
-        orch.exec_on_head.assert_not_called()
+        def _exec(cmd, hosts=None):
+            if "pkill" in cmd:
+                return {h: "" for h in hosts}
+            host = hosts[0]
+            return {host: text_a if host == "A" else text_b}
+
+        orch.exec.side_effect = _exec
+        readings = stop_and_collect_gpu_poller(orch, self._handle(["A", "B"]))
         self.assertEqual(len(readings), 1)
-        self.assertTrue(all(v is None for v in readings[0].values()))
+
+    def test_per_node_vram_summary_reflects_last_successful_round(self):
+        text_a = _poller_file_text(_gpu_chunk_text(1000), _gpu_chunk_text(2000), _gpu_chunk_text(3000))
+        text_b = _poller_file_text(_gpu_chunk_text(500), _gpu_chunk_text(600))
+        orch = MagicMock()
+
+        def _exec(cmd, hosts=None):
+            if "pkill" in cmd:
+                return {h: "" for h in hosts}
+            host = hosts[0]
+            return {host: text_a if host == "A" else text_b}
+
+        orch.exec.side_effect = _exec
+        log_path = str(pathlib.Path(__file__).parent / "_tmp_test_gpu_poller_pernode.txt")
+        try:
+            stop_and_collect_gpu_poller(orch, self._handle(["A", "B"]), log_path=log_path)
+            content = pathlib.Path(log_path).read_text()
+            self.assertIn("node_vram_mb [A]: 3000 MB", content)
+            self.assertIn("node_vram_mb [B]: 600 MB", content)
+        finally:
+            pathlib.Path(log_path).unlink(missing_ok=True)
+
+    def test_pkill_broadcasts_to_all_nodes(self):
+        orch = MagicMock()
+        orch.exec.return_value = {"A": "", "B": ""}
+        stop_and_collect_gpu_poller(orch, self._handle(["A", "B"]))
+        pkill_calls = [c for c in orch.exec.call_args_list if "pkill" in c.args[0]]
+        self.assertTrue(any(c.kwargs.get("hosts") == ["A", "B"] for c in pkill_calls))
+
+    def test_remote_files_removed_per_host(self):
+        """Each host's script/log files must be individually rm'd -- a
+        shared-node file left behind on any single host is enough to hit
+        the next user's run with a permission error."""
+        orch = MagicMock()
+        orch.exec.return_value = {"A": "", "B": ""}
+        stop_and_collect_gpu_poller(orch, self._handle(["A", "B"]))
+        rm_calls = [c for c in orch.exec.call_args_list if "rm -f" in c.args[0]]
+        rm_hosts = {c.kwargs.get("hosts", [None])[0] for c in rm_calls}
+        self.assertEqual(rm_hosts, {"A", "B"})
+        for c in rm_calls:
+            self.assertIn("cvs_gpu_poll_r1.sh", c.args[0])
+            self.assertIn("cvs_gpu_poll_r1.log", c.args[0])
+
+    def test_read_failure_for_one_host_degrades_not_raises(self):
+        text_a = _poller_file_text(_gpu_chunk_text(1000))
+        orch = MagicMock()
+
+        def _exec(cmd, hosts=None):
+            if "pkill" in cmd:
+                return {h: "" for h in hosts}
+            host = hosts[0]
+            if host == "B":
+                raise RuntimeError("ssh failed")
+            return {host: text_a}
+
+        orch.exec.side_effect = _exec
+        try:
+            readings = stop_and_collect_gpu_poller(orch, self._handle(["A", "B"]))
+        except Exception as exc:  # noqa: BLE001
+            self.fail(f"stop_and_collect_gpu_poller raised unexpectedly: {exc!r}")
+        else:
+            self.assertEqual(len(readings), 1)
+            self.assertEqual(readings[0]["gpu.used_vram"], 1000)
 
 
 if __name__ == "__main__":

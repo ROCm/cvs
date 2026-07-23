@@ -35,6 +35,9 @@ from typing_extensions import Literal
 
 from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import substitute_config
+from cvs.lib.utils.gpu import GPU_METRICS
+
+GATED_GPU_METRICS = {k for k, _unit in GPU_METRICS}
 
 
 class _Forbid(BaseModel):
@@ -242,7 +245,9 @@ class VariantConfig(_Forbid):
             problems.append(f"sweep cells with no threshold entry: {missing}")
         if extra:
             problems.append(f"threshold keys matching no sweep cell (typo?): {extra}")
-        gated_keys = [f"client.{m}" for m in sorted(GATED_METRICS)]
+        gated_keys = [f"client.{m}" for m in sorted(GATED_METRICS)] + [
+            f"gpu.{m}" for m in sorted(GATED_GPU_METRICS)
+        ]
         gated_gaps = {}
         for cell in sorted(expected & present):
             specs = self.thresholds.get(cell) or {}
