@@ -450,8 +450,8 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         2224``) can reach peer ranks on other nodes. A single-node run never
         distributes over MPI -- it execs directly via ``docker exec`` -- so sshd
         is dead weight there. On a single-host cluster this is a no-op, which
-        Multinode runs require the container image to ship ``openssh-server``
-        (``/usr/sbin/sshd``). There is no runtime ``apt-get`` fallback.
+        also lets minimal images that ship no ``/usr/sbin/sshd`` run single-node
+        without tripping the start/validate steps below.
 
         Returns:
             bool: True if SSH setup succeeded on all nodes (or was skipped as
@@ -477,12 +477,6 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             "chown -R root:root /root/.ssh",
             "bash -c 'chmod 700 /root/.ssh && chmod 600 /root/.ssh/*'",
             "mkdir -p /run/sshd",  # Create privilege separation directory for sshd
-            (
-                "bash -c 'command -v /usr/sbin/sshd >/dev/null 2>&1 || "
-                "{ echo \"Container image must include openssh-server (/usr/sbin/sshd) "
-                "for multinode runs; rebuild the image or use one with sshd preinstalled\" >&2; "
-                "exit 1; }'"
-            ),
             "/usr/sbin/sshd -p2224",
         ]
 
