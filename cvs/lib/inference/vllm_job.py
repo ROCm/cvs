@@ -613,6 +613,25 @@ class VllmJob:
             for line in (text or "").splitlines():
                 log.info("[%s client.log] %s", host, line)
 
+    def dump_server_log(self):
+        """Emit each rank's full server log to the captured section once.
+
+        Mirrors dump_client_log(), but per-rank since every node (other than
+        ray-backend headless workers, which never run vllm serve) has its own
+        server log. Call this after the benchmark finishes -- success or
+        failure -- so a mid-run server crash (e.g. EngineDeadError) is
+        preserved in the captured output even though _check_early_failure()
+        stops tailing this log once startup is confirmed.
+        """
+        for rank, host in enumerate(self.orch.hosts):
+            if self._is_ray_backend and int(self.nnodes) > 1 and rank > 0:
+                continue
+            rank_log = self._rank_log(rank)
+            out = self.orch.exec(f"cat {shlex.quote(rank_log)}", hosts=[host])
+            for h, text in (out or {}).items():
+                for line in (text or "").splitlines():
+                    log.info("[%s rank%d server.log] %s", h, rank, line)
+
     def parse_results(self):
         """Fetch and parse the results artifact from the HEAD node via exec_on_head."""
         artifact = f"{self.out_dir}/results"

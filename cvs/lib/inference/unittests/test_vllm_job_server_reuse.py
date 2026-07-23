@@ -60,6 +60,23 @@ class FakeOrchWithOutput:
         return {}
 
 
+class FakeOrchMultiHost:
+    """Two-host fake orch that records which hosts each exec() call targeted."""
+
+    hosts = ["10.0.0.1", "10.0.0.2"]
+
+    def __init__(self):
+        self.exec_calls = []  # list of (cmd, hosts) actually issued
+
+    def exec(self, cmd, hosts=None, detailed=False):
+        self.exec_calls.append((cmd, hosts))
+        host = hosts[0]
+        return {host: f"content for {host}"}
+
+    def exec_on_head(self, cmd, *a, **k):
+        return {}
+
+
 def _make_job_for_check(tail_output="", grep_exit=1):
     """Construct a VllmJob suitable for testing _check_early_failure."""
     variant = mock.MagicMock()
@@ -259,6 +276,52 @@ class TestCheckEarlyFailureEmitTail(unittest.TestCase):
         job = _make_job_for_check(tail_output="vllm: error: unrecognized arguments: False")
         with self.assertRaises(RuntimeError):
             job._check_early_failure()
+
+
+class TestDumpServerLog(unittest.TestCase):
+    def test_logs_full_content_per_rank(self):
+        job = _make_job_for_check(tail_output="line one\nline two")
+        with mock.patch("cvs.lib.inference.vllm_job.log") as mock_log:
+            job.dump_server_log()
+        logged_lines = [call.args[3] for call in mock_log.info.call_args_list if len(call.args) >= 4]
+        self.assertIn("line one", logged_lines)
+        self.assertIn("line two", logged_lines)
+
+    def test_mp_multinode_dumps_every_rank(self):
+        """mp backend: every rank runs its own vllm serve, so every rank is dumped."""
+        orch = FakeOrchMultiHost()
+        job = VllmJob(
+            orch=orch,
+            variant=_variant({"distributed-executor-backend": "mp"}),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=8,
+            num_prompts="640",
+        )
+        with mock.patch("cvs.lib.inference.vllm_job.log") as mock_log:
+            job.dump_server_log()
+        ranks_dumped = {call.args[2] for call in mock_log.info.call_args_list if len(call.args) >= 4}
+        self.assertEqual(ranks_dumped, {0, 1})
+        self.assertEqual(len(orch.exec_calls), 2, "one cat per rank")
+
+    def test_ray_multinode_skips_worker_ranks(self):
+        """Ray multinode: only rank 0 runs vllm serve, so only rank 0 is dumped."""
+        orch = FakeOrchMultiHost()
+        job = VllmJob(
+            orch=orch,
+            variant=_variant({"distributed-executor-backend": "ray"}),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=8,
+            num_prompts="640",
+        )
+        with mock.patch("cvs.lib.inference.vllm_job.log") as mock_log:
+            job.dump_server_log()
+        ranks_dumped = {call.args[2] for call in mock_log.info.call_args_list if len(call.args) >= 4}
+        self.assertEqual(ranks_dumped, {0}, "worker rank 1 has no server log under ray and must be skipped")
+        self.assertEqual(len(orch.exec_calls), 1, "only rank 0's cat should be issued")
 
 
 class TestRoleServerLogLevelValidator(unittest.TestCase):

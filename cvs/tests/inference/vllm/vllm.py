@@ -323,6 +323,10 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         else:
             job.stop_server()
             job.build_server_cmd()
+            # Attribute the server-log dump target to this job as soon as it
+            # owns the (about-to-be-)running server, so a start_server/wait_ready
+            # failure below still dumps the right log via the except handler.
+            lifecycle.live_server_job = job
             pre_snap = _gpu_snap(orch)
             t = time.monotonic()
             job.start_server()
@@ -367,6 +371,15 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         # A failed cell may have left the server in a bad state; force the next
         # cell to do a clean bringup rather than reuse a possibly-dead server.
         lifecycle.live_server_sig = None
+        # Dump from whichever job actually owns the running server -- on the
+        # reuse path (this cell only differs by concurrency) that's an earlier
+        # cell's job, not this one, since only the job that called
+        # build_server_cmd()/start_server() has a server_log path the server
+        # process is actually writing to. Only dumped on failure: the server
+        # log is per-server (not per-cell), so a success-path dump would
+        # re-emit the same growing log after every cell sharing a reused
+        # server.
+        getattr(lifecycle, "live_server_job", job).dump_server_log()
         raise
 
     agg = agg_readings(poll_readings)
