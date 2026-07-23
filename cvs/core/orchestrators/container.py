@@ -684,3 +684,38 @@ class ContainerOrchestrator(BaremetalOrchestrator):
                 self.container_id = None
             return success
         return True
+
+    def cleanup_log_dir(self, log_dir: str, *, all_nodes: bool | None = None) -> None:
+        """Remove a log directory tree on the cluster hosts (host namespace, not in-container).
+
+        Uses baremetal SSH (``self.head`` / ``self.all``), so this works before or
+        after containers are running. It does **not** call ``docker exec``.
+
+        Args:
+            log_dir: Absolute path to the log root (e.g. ``variant.paths.log_dir``).
+            all_nodes: If True, run on every cluster host; if False, head only.
+                Default: ``True`` when ``len(self.hosts) > 1``, else head only.
+
+        Multinode note:
+            When ``log_dir`` lives on shared storage (``paths.shared_fs`` / DTNI),
+            head-only cleanup is sufficient. When each node has its own local copy
+            of the path, use ``all_nodes=True`` (the default for multinode).
+        """
+        if not log_dir or not str(log_dir).strip():
+            raise ValueError("log_dir must be a non-empty path")
+
+        log_dir = str(log_dir).strip()
+        if all_nodes is None:
+            all_nodes = len(self.hosts) > 1
+
+        cmd = (
+            f"sudo rm -rf {shlex.quote(log_dir)} && "
+            f"mkdir -p {shlex.quote(log_dir)}"
+        )
+
+        if all_nodes:
+            self.log.info("Cleaning up log directory on all nodes: %s", log_dir)
+            self.all.exec(cmd, timeout=60)
+        else:
+            self.log.info("Cleaning up log directory on head: %s", log_dir)
+            self.head.exec(cmd, timeout=60)
