@@ -5,7 +5,7 @@ All rights reserved.
 
 import unittest
 
-from cvs.lib.utils.ib_discovery import discover_socket_netdev_name
+from cvs.lib.utils.ib_discovery import discover_socket_netdev_name, resolve_multinode_fabric
 
 
 class _NetdevOrch:
@@ -14,8 +14,8 @@ class _NetdevOrch:
         self._responses = dict(responses)
 
     def exec(self, cmd, hosts=None, **kwargs):
-        host = (hosts or self.hosts)[0]
-        return {host: self._responses.get((host, cmd), "")}
+        target_hosts = list(hosts) if hosts is not None else self.hosts
+        return {h: self._responses.get((h, cmd), "") for h in target_hosts}
 
 
 class TestDiscoverSocketNetdev(unittest.TestCase):
@@ -47,6 +47,32 @@ class TestDiscoverSocketNetdev(unittest.TestCase):
         orch = _NetdevOrch([h0], {(h0, _cmd_for_ip(h0)): "mlx5_0\n"})
         with self.assertRaisesRegex(RuntimeError, "IB HCA name"):
             discover_socket_netdev_name(orch, master_addr=h0)
+
+
+class TestResolveMultinodeFabric(unittest.TestCase):
+    def test_resolves_hcas_and_netdev_from_auto_config(self):
+        from cvs.lib.utils.ib_discovery import _IBVDEVINFO_CMD, _SYSFS_CMD
+
+        h0, h1 = "10.32.80.112", "10.32.80.113"
+        orch = _NetdevOrch(
+            [h0, h1],
+            {
+                (h0, _IBVDEVINFO_CMD): "",
+                (h1, _IBVDEVINFO_CMD): "",
+                (h0, _SYSFS_CMD): "mlx5_0 mlx5_1 ",
+                (h1, _SYSFS_CMD): "mlx5_0 mlx5_1 ",
+                (h0, _cmd_for_ip(h0)): "ens51f1np1\n",
+                (h1, _cmd_for_ip(h1)): "ens51f1np1\n",
+            },
+        )
+        hcas, netdev = resolve_multinode_fabric(
+            orch,
+            ib_hca_devices="auto",
+            ib_netdev="auto",
+            master_addr=h0,
+        )
+        self.assertEqual(hcas, ["mlx5_0", "mlx5_1"])
+        self.assertEqual(netdev, "ens51f1np1")
 
 
 def _cmd_for_ip(ip: str) -> str:

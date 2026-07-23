@@ -149,8 +149,8 @@ class InferenceXAtomJob:
             self.ib_netdev = configured_netdev
         else:
             self.ib_netdev = ""
-        # Discovered HCA names for NCCL_IB_HCA (multinode only). Passed in from
-        # test_discover_topology via lifecycle.ib_hcas.
+        # Discovered HCA names for NCCL_IB_HCA (multinode only). Prefilled by
+        # test_discover_topology; build_server_cmd can resolve lazily if omitted.
         self.ib_hcas = ib_hcas or []
 
         self.out_dir = self._node_out_dir(0)
@@ -350,7 +350,32 @@ class InferenceXAtomJob:
             argv.append("--headless")
         return argv
 
+    def _ensure_multinode_topology(self):
+        if not self.distributed:
+            return
+        if self.ib_hcas and self.ib_netdev:
+            return
+        from cvs.lib.utils.ib_discovery import resolve_multinode_fabric
+
+        roles = self.variant.roles.server
+        hcas, netdev = resolve_multinode_fabric(
+            self.orch,
+            ib_hca_devices=getattr(roles, "ib_hca_devices", None),
+            ib_netdev=self.ib_netdev or getattr(roles, "ib_netdev", None),
+            master_addr=self.master_addr,
+        )
+        if not self.ib_hcas:
+            self.ib_hcas = hcas
+        if not self.ib_netdev:
+            self.ib_netdev = netdev
+        log.info(
+            "multinode fabric resolved: netdev=%s HCAs=%s",
+            self.ib_netdev,
+            self.ib_hcas,
+        )
+
     def build_server_cmd(self, *, clear_atom_cache=True):
+        self._ensure_multinode_topology()
         env_lines = [
             f"export HF_TOKEN={shlex.quote(self.hf_token)}",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
@@ -369,8 +394,8 @@ class InferenceXAtomJob:
             env_lines.append(f"export NCCL_IB_HCA={shlex.quote(','.join(self.ib_hcas))}")
         if self.distributed and not self.ib_netdev:
             raise RuntimeError(
-                "multinode run has no socket netdev (roles.server.ib_netdev is unset/auto "
-                "but test_discover_topology did not resolve lifecycle.ib_netdev)"
+                "multinode run has no socket netdev after topology resolution "
+                "(set roles.server.ib_netdev or fix cluster IP discovery)"
             )
         if self.distributed and self.ib_netdev:
             env_lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")

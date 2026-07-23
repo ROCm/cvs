@@ -54,43 +54,21 @@ def test_discover_topology(orch, variant_config, lifecycle, request):
         lifecycle.ib_netdev = ""
         return
 
-    from cvs.lib.utils.ib_discovery import (
-        discover_ib_hca_names,
-        discover_socket_netdev_name,
-        validate_ib_hca_preflight,
-    )
+    from cvs.lib.utils.ib_discovery import resolve_multinode_fabric
 
     t = time.monotonic()
+    master_addr = (variant_config.params.master_addr or "").strip() or orch.hosts[0]
     try:
-        discovered = discover_ib_hca_names(orch)
+        resolved_hcas, resolved_netdev = resolve_multinode_fabric(
+            orch,
+            ib_hca_devices=variant_config.roles.server.ib_hca_devices,
+            ib_netdev=variant_config.roles.server.ib_netdev,
+            master_addr=master_addr,
+        )
     except RuntimeError as e:
         lifecycle.failed = True
         lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - t)
         pytest.fail(str(e))
-
-    requested = variant_config.roles.server.ib_hca_devices
-    if requested and requested != "auto":
-        try:
-            validate_ib_hca_preflight(discovered, requested)
-        except RuntimeError as e:
-            lifecycle.failed = True
-            lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - t)
-            pytest.fail(str(e))
-        resolved_hcas = requested
-    else:
-        resolved_hcas = next(iter(discovered.values()))
-
-    configured_netdev = (variant_config.roles.server.ib_netdev or "").strip()
-    master_addr = (variant_config.params.master_addr or "").strip() or orch.hosts[0]
-    if configured_netdev and configured_netdev.lower() != "auto":
-        resolved_netdev = configured_netdev
-    else:
-        try:
-            resolved_netdev = discover_socket_netdev_name(orch, master_addr=master_addr)
-        except RuntimeError as e:
-            lifecycle.failed = True
-            lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - t)
-            pytest.fail(str(e))
 
     lifecycle.ib_hcas = resolved_hcas
     lifecycle.ib_netdev = resolved_netdev

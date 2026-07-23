@@ -32,7 +32,7 @@ from cvs.lib import globals
 
 log = globals.log
 
-# Written by test_discover_topology + InferenceXAtomJob.build_server_cmd — not user env.
+# Written by test_discover_topology / resolve_multinode_fabric — not user env.
 _ORCH_MANAGED_NETWORK_ENV = frozenset(
     {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME", "NCCL_IB_HCA"}
 )
