@@ -75,8 +75,6 @@ def parallel_tree_path(runner_results_base: str, artifact_path: str, baseline_ro
             f"artifact_path {artifact_path!r} is not under runner_results_base {runner_results_base!r}"
         ) from e
     if os.path.normpath(common) != os.path.normpath(rb):
-        raise ValueError(
-            f"artifact_path {artifact_path!r} is not under runner_results_base {runner_results_base!r}"
-        )
+        raise ValueError(f"artifact_path {artifact_path!r} is not under runner_results_base {runner_results_base!r}")
     rel = os.path.relpath(ap, rb)
     return os.path.normpath(os.path.join(os.path.abspath(baseline_root), rel))

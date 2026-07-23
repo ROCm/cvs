@@ -59,8 +59,7 @@ def _maybe_autocollect_html(config, suite_name):
         cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
         config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
 
-        if not _as_bool(config_dict["anc"].get(COLLECT_HTML_REPORTS_KEY),
-                        default=True):
+        if not _as_bool(config_dict["anc"].get(COLLECT_HTML_REPORTS_KEY), default=True):
             return
 
         timestamp = new_run_timestamp()
@@ -68,10 +67,8 @@ def _maybe_autocollect_html(config, suite_name):
         # are named anc_test_<group>; drop the leading "anc_".
         report_name = suite_name
         if report_name.startswith("anc_"):
-            report_name = report_name[len("anc_"):]
-        html_path = resolve_anc_html_report_path(
-            config_dict, cluster_dict, report_name, timestamp
-        )
+            report_name = report_name[len("anc_") :]
+        html_path = resolve_anc_html_report_path(config_dict, cluster_dict, report_name, timestamp)
         Path(html_path).parent.mkdir(parents=True, exist_ok=True)
         config.option.htmlpath = html_path
         # Portable single-file report (matches the usual manual invocation).

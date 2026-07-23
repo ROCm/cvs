@@ -5,9 +5,7 @@ All rights reserved. This notice is intended as a precaution against inadvertent
 publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
-'''
 
-'''
 Generate the two ANC group suite files from the single source of truth
 (cvs.lib.anc_lib.CPU_GROUPS / GPU_GROUPS).
 
@@ -50,9 +48,7 @@ All rights reserved. This notice is intended as a precaution against inadvertent
 publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
-\'\'\'
 
-\'\'\'
 {marker}
 Do NOT edit by hand. ANC {kind_upper} group suite: one ``test_<group>``
 function per ANC {kind} group.
@@ -108,7 +104,7 @@ def _prune_stale(subdir, keep_filenames):
             continue
         path = os.path.join(subdir, name)
         try:
-            # Read the whole (tiny) file: the marker sits in the second
+            # Read the whole (tiny) file: the marker sits in the module
             # docstring, past byte 360, so a small fixed read would miss it.
             with open(path) as fh:
                 content = fh.read()

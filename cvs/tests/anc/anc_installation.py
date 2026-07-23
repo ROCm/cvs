@@ -4,9 +4,7 @@ All rights reserved. This notice is intended as a precaution against inadvertent
 publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
-'''
 
-'''
 ANC installation suite: download + install ANC on every node.
 
 Fixtures (cluster_dict / config_dict / phdl) are provided by the dir-local
@@ -48,8 +46,7 @@ class TestAncInstallPreTasks:
 
         update_test_result()
 
-    def test_download_install_anc_in_node_cvs_home(self, phdl, cluster_dict,
-                                                   config_dict):
+    def test_download_install_anc_in_node_cvs_home(self, phdl, cluster_dict, config_dict):
         '''
         Install ANC on all nodes, dispatching by release-archive flavour
         (deb/rpm/tar) with an optional anc_version precheck / post-verify.
@@ -61,9 +58,11 @@ class TestAncInstallPreTasks:
 
 class TestAncInstallCoreTasks:
     '''Core ANC execution tasks (placeholder for ANC workload).'''
+
     pass
 
 
 class TestAncInstallPostTasks:
     '''Post-tasks: cleanup and result collection (placeholder).'''
+
     pass

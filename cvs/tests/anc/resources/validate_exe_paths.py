@@ -39,10 +39,7 @@ def validate(content_dir):
     checked = 0
 
     for exe_dir in sorted(exe_dirs):
-        yml_files = sorted(
-            glob.glob(os.path.join(exe_dir, "*.yml"))
-            + glob.glob(os.path.join(exe_dir, "*.yaml"))
-        )
+        yml_files = sorted(glob.glob(os.path.join(exe_dir, "*.yml")) + glob.glob(os.path.join(exe_dir, "*.yaml")))
         for yml_file in yml_files:
             with open(yml_file) as f:
                 data = yaml.safe_load(f)
