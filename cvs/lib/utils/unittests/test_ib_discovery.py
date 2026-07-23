@@ -42,6 +42,15 @@ class TestParseIbvDevinfoList(unittest.TestCase):
         self.assertEqual(_parse_ibv_devinfo_list("mlx5_0\nmlx5_1\n"), ["mlx5_0", "mlx5_1"])
         self.assertEqual(_parse_ibv_devinfo_list("mlx5_0 mlx5_1"), ["mlx5_0", "mlx5_1"])
 
+    def test_ignores_ibv_banner_lines(self):
+        raw = """8 HCAs found:
+        rdma3
+        rdma0
+        rdma2
+        rdma1
+"""
+        self.assertEqual(_parse_ibv_devinfo_list(raw), ["rdma3", "rdma0", "rdma2", "rdma1"])
+
 
 class TestDiscoverSocketNetdev(unittest.TestCase):
     def test_resolves_common_netdev_from_cluster_ips(self):
@@ -128,11 +137,12 @@ class TestResolveMultinodeFabric(unittest.TestCase):
         from cvs.lib.utils.ib_discovery import _IBVDEVINFO_CMD
 
         h0, h1 = "10.32.80.112", "10.32.80.113"
+        ibv_out = "8 HCAs found:\n        rdma0\n        rdma1\n"
         orch = _NetdevOrch(
             [h0, h1],
             {
-                (h0, _IBVDEVINFO_CMD): "mlx5_0\nmlx5_1\n",
-                (h1, _IBVDEVINFO_CMD): "mlx5_0\nmlx5_1\n",
+                (h0, _IBVDEVINFO_CMD): ibv_out,
+                (h1, _IBVDEVINFO_CMD): ibv_out,
                 (h0, _cmd_for_ip(h0)): "ens51f1np1\n",
                 (h1, _cmd_for_ip(h1)): "ens51f1np1\n",
             },
@@ -143,7 +153,7 @@ class TestResolveMultinodeFabric(unittest.TestCase):
             ib_netdev="auto",
             master_addr=h0,
         )
-        self.assertEqual(hcas, ["mlx5_0", "mlx5_1"])
+        self.assertEqual(hcas, ["rdma0", "rdma1"])
         self.assertEqual(netdev, "ens51f1np1")
 
 
