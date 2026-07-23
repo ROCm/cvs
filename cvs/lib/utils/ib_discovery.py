@@ -18,8 +18,15 @@ from cvs.lib import globals
 log = globals.log
 
 _IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.I)
+_HCA_NAME_RE = re.compile(r"^(mlx5_\d+|rdma\d+|rocep\w+|bnxt_\w+)$", re.I)
 _NETDEV_NAME_RE = re.compile(r"^[a-zA-Z0-9_.:-]{1,64}$")
-_INVALID_NETDEV_MARKERS = ("command not found", "bash:", "no such file", "cannot open")
+_INVALID_NETDEV_MARKERS = (
+    "command not found",
+    "syntax error",
+    "bash:",
+    "no such file",
+    "cannot open",
+)
 
 _SYSFS_CMD = "ls /sys/class/infiniband/ 2>/dev/null | tr '\\n' ' '"
 _IBVDEVINFO_CMD = "ibv_devinfo -l 2>/dev/null"
@@ -34,11 +41,11 @@ def _topology_exec(orch, cmd, hosts=None):
 
 
 def _parse_sysfs(output: str) -> list[str]:
-    return [tok for tok in (output or "").split() if tok]
+    return [tok for tok in _parse_ibv_devinfo_list(output)]
 
 
 def _parse_ibv_devinfo_list(output: str) -> list[str]:
-    """Parse ``ibv_devinfo -l`` output (one device name per line or whitespace)."""
+    """Parse ``ibv_devinfo -l`` output, ignoring banner lines like ``8 HCAs found:``."""
     if not (output or "").strip():
         return []
     tokens: list[str] = []
@@ -46,7 +53,9 @@ def _parse_ibv_devinfo_list(output: str) -> list[str]:
         line = line.strip()
         if not line or line.lower().startswith("warning"):
             continue
-        tokens.extend(line.split())
+        for tok in line.split():
+            if _HCA_NAME_RE.match(tok):
+                tokens.append(tok)
     return tokens
 
 
@@ -135,7 +144,7 @@ def validate_ib_hca_preflight(discovered: dict[str, list[str]], requested: list[
 
 def _netdev_for_ip_cmd(ip: str) -> str:
     inner = (
-        f"IF=$({{ip -4 -o addr show 2>/dev/null || /sbin/ip -4 -o addr show 2>/dev/null;}} | "
+        f"IF=$((ip -4 -o addr show 2>/dev/null || /sbin/ip -4 -o addr show 2>/dev/null) | "
         f"awk -v ip={shlex.quote(ip)} '{{split($4,a,\"/\"); if(a[1]==ip) {{print $2; exit}}}}'); "
         'echo "${IF}"'
     )
@@ -144,8 +153,8 @@ def _netdev_for_ip_cmd(ip: str) -> str:
 
 def _netdev_via_route_cmd(dest_ip: str) -> str:
     inner = (
-        f"IF=$({{ip route get {shlex.quote(dest_ip)} 2>/dev/null || "
-        f"/sbin/ip route get {shlex.quote(dest_ip)} 2>/dev/null;}} | awk "
+        f"IF=$((ip route get {shlex.quote(dest_ip)} 2>/dev/null || "
+        f"/sbin/ip route get {shlex.quote(dest_ip)} 2>/dev/null) | awk "
         "'{{for(i=1;i<=NF;i++) if($i==\"dev\") {{print $(i+1); exit}}}}'); "
         'echo "${IF}"'
     )
