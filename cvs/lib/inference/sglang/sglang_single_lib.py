@@ -526,31 +526,3 @@ class SglangSingle:
         for msg in errors:
             fail_test(msg)
         return summary
-
-    def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
-        tp = int(self.bp_dict['tensor_parallelism'])
-        per_node = {}
-        for node, payload in self._host_exec('sudo amd-smi metric --json').items():
-            count = 0
-            try:
-                entries = json.loads(payload.strip())
-            except (json.JSONDecodeError, AttributeError):
-                per_node[node] = 0
-                continue
-            if isinstance(entries, dict) and 'gpu_data' in entries:
-                entries = entries['gpu_data']
-            if not isinstance(entries, list):
-                per_node[node] = 0
-                continue
-            for g in entries:
-                used_mb = g.get('mem_usage', {}).get('used_vram', {}).get('value', 0)
-                if used_mb > mem_threshold_mb:
-                    count += 1
-            per_node[node] = count
-
-        occupied = sum(per_node.values())
-        return {
-            'configured_tp': tp,
-            'server_per_node': per_node,
-            'server_occupied_gpus': occupied,
-        }
