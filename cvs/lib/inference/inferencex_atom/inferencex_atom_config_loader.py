@@ -28,6 +28,15 @@ from cvs.lib.inference.utils.inferencing_config_loader import (
 )
 from cvs.lib.inference.inferencex_atom.inferencex_atom_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
+from cvs.lib import globals
+
+log = globals.log
+
+# Written by test_discover_topology + InferenceXAtomJob.build_server_cmd — not user env.
+_ORCH_MANAGED_NETWORK_ENV = frozenset(
+    {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME", "NCCL_IB_HCA"}
+)
+_IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.I)
 
 
 class InferenceXAtomRoleServer(RoleServer):
@@ -46,14 +55,31 @@ class InferenceXAtomRoleServer(RoleServer):
 
     @field_validator("ib_netdev", mode="after")
     @classmethod
-    def _ib_netdev_not_ib_hca_name(cls, v):
+    def _normalize_ib_netdev(cls, v):
         raw = (v or "").strip()
-        if raw and raw.lower() != "auto" and re.match(r"^mlx5_\d+$", raw, re.I):
-            raise ValueError(
-                f"roles.server.ib_netdev={raw!r} looks like an IB HCA name; "
-                "use the Linux IP netdev (e.g. ens51f1np1) or 'auto'"
+        if raw and raw.lower() != "auto" and _IB_HCA_NETDEV_RE.match(raw):
+            log.warning(
+                "roles.server.ib_netdev=%r looks like an IB HCA name; coercing to 'auto' "
+                "(socket netdev is discovered from cluster IPs at runtime)",
+                raw,
             )
+            return "auto"
         return v
+
+    @model_validator(mode="after")
+    def _strip_orchestrator_managed_network_env(self):
+        if not self.env:
+            return self
+        dropped = sorted(k for k in self.env if k in _ORCH_MANAGED_NETWORK_ENV)
+        if not dropped:
+            return self
+        log.warning(
+            "roles.server.env drops orchestrator-managed keys %s "
+            "(set by test_discover_topology / build_server_cmd instead)",
+            dropped,
+        )
+        self.env = {k: v for k, v in self.env.items() if k not in _ORCH_MANAGED_NETWORK_ENV}
+        return self
 
 
 class InferenceXAtomRoles(_Forbid):
