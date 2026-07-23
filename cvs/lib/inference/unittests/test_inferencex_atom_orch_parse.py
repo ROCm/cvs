@@ -10,6 +10,7 @@ import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from cvs.lib.inference.inferencex_atom.inferencex_atom_orch import InferenceXAtomJob
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
@@ -22,7 +23,7 @@ _TP = 8
 
 
 def _fake_variant(
-    *, driver="vllm", nnodes="1", pipeline_parallel_size="1", master_addr="", scaling_baseline_output_throughput=""
+    *, driver="vllm", nnodes="1", pipeline_parallel_size="1", master_addr="", scaling_baseline_output_throughput="", ib_netdev="eth0", ib_hca_devices=None
 ):
     params = SimpleNamespace(
         driver=driver,
@@ -49,7 +50,9 @@ def _fake_variant(
         result_filename="results",
     )
     roles = SimpleNamespace(
-        server=SimpleNamespace(serve_args={}, atom_args=[], sglang_args=[], env={}, ib_netdev="eth0")
+        server=SimpleNamespace(
+            serve_args={}, atom_args=[], sglang_args=[], env={}, ib_netdev=ib_netdev, ib_hca_devices=ib_hca_devices
+        )
     )
     paths = SimpleNamespace(log_dir="/LOGS", models_dir="/models")
     model = SimpleNamespace(id="openai/gpt-oss-120b")
@@ -512,6 +515,34 @@ class TestInferenceXAtomBuildServerCmd(unittest.TestCase):
         job_single.build_server_cmd()
         script_single = self._env_script(orch_single)
         self.assertNotIn("SOCKET_IFNAME", script_single)
+
+    @patch("cvs.lib.utils.ib_discovery.resolve_multinode_fabric")
+    def test_build_server_cmd_resolves_topology_when_lifecycle_skipped(self, mock_resolve):
+        mock_resolve.return_value = (["mlx5_0", "mlx5_1"], "ens51f1np1")
+        orch = FakeOrch(hosts=["10.32.80.112", "10.32.80.113"])
+        job = InferenceXAtomJob(
+            orch=orch,
+            variant=_fake_variant(
+                driver="vllm_atom",
+                nnodes="2",
+                pipeline_parallel_size="2",
+                master_addr="10.32.80.112",
+                ib_netdev="auto",
+                ib_hca_devices="auto",
+            ),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        mock_resolve.assert_called_once()
+        script = self._env_script(orch)
+        self.assertIn("NCCL_IB_HCA", script)
+        self.assertIn("mlx5_0", script)
+        self.assertEqual(script.count("SOCKET_IFNAME"), 3)
+        self.assertIn("ens51f1np1", script)
 
 
 class _RecordingOrch:

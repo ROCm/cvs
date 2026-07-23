@@ -62,7 +62,7 @@ Standalone ATOM has **no native pipeline parallel**. Multinode PP validation req
 - `container.image` — vLLM+ATOM or SGLang-capable image (shipped configs use `<changeme>`)
 - `params.master_addr` — head node VPC IP (replace `{head-node-ip}`)
 
-Multinode fabric is probed once per run in `test_discover_topology`:
+Multinode fabric is probed once per run in `test_discover_topology` (or lazily on first `build_server_cmd` if that test is omitted from a smoke `-k` filter):
 
 - `roles.server.ib_hca_devices: "auto"` (default) → `NCCL_IB_HCA` from `ibv_devinfo`
 - `roles.server.ib_netdev: "auto"` (default on distributed stems) → `GLOO_SOCKET_IFNAME` / `NCCL_SOCKET_IFNAME` from the cluster IP on each node

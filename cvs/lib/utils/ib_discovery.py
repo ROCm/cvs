@@ -164,3 +164,32 @@ def discover_socket_netdev_name(orch, master_addr: str | None = None) -> str:
             "Set roles.server.ib_netdev explicitly when node interface names differ."
         )
     return next(iter(unique))
+
+
+def resolve_multinode_fabric(
+    orch,
+    *,
+    ib_hca_devices=None,
+    ib_netdev=None,
+    master_addr=None,
+) -> tuple[list[str], str]:
+    """Resolve ``NCCL_IB_HCA`` devices and the socket netdev for a multinode run.
+
+    Used by ``test_discover_topology`` (once per lifecycle) and lazily by
+    ``InferenceXAtomJob.build_server_cmd`` when a partial ``-k`` filter skips
+    the topology test.
+    """
+    discovered = discover_ib_hca_names(orch)
+    if ib_hca_devices and ib_hca_devices != "auto":
+        validate_ib_hca_preflight(discovered, ib_hca_devices)
+        hcas = list(ib_hca_devices)
+    else:
+        hcas = list(next(iter(discovered.values())))
+
+    configured = (ib_netdev or "").strip()
+    master = (master_addr or "").strip() or orch.hosts[0]
+    if configured and configured.lower() != "auto":
+        netdev = configured
+    else:
+        netdev = discover_socket_netdev_name(orch, master_addr=master)
+    return hcas, netdev
