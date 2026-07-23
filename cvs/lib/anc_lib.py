@@ -154,25 +154,38 @@ HTML_REPORT_PATH_KEY = "html_report_path"
 DEFAULT_HTML_REPORT_PATH = "{runner_log_folder}/html_reports/<node>/<test_name>/<timestamp>"
 
 
+def _node_label_from_file(cluster_dict, host):
+    '''
+    Build the "<ip>_<hostkey>" artifact folder label for a node using ONLY the
+    cluster file (no SSH). ip is the node's vpc_ip (or the host key when vpc_ip is
+    missing/"NA"); hostkey is the cluster-file node_dict key.
+
+    This is the single source of truth for the node label so that every
+    artifact tree (HTML report AND collected ANC logs) uses an identical folder
+    name for the same node. It deliberately does NOT resolve the hostname over
+    SSH: the session HTML report is created before any node connection exists, so
+    a file-only label is the only value both paths can share.
+    '''
+    info = (cluster_dict.get("node_dict", {}) or {}).get(host, {}) or {}
+    ip = info.get("vpc_ip")
+    if not ip or ip == "NA":
+        ip = host
+    return _sanitize_path_component(f"{ip}_{host}")
+
+
 def cluster_node_label_from_file(cluster_dict):
     '''
-    Build the "<ip>_<hostname>" label for the FIRST node using only the cluster
-    file (no SSH). Used for the session-level HTML report path, which must be
-    resolved before any node connection exists. Returns "unknown_node" when the
-    cluster file has no node_dict entries.
+    Build the node label for the FIRST node using only the cluster file (no SSH).
+    Used for the session-level HTML report path, which must be resolved before any
+    node connection exists. Returns "unknown_node" when the cluster file has no
+    node_dict entries. Delegates to _node_label_from_file so the label matches the
+    per-node ANC-log folder exactly.
     '''
     node_dict = cluster_dict.get("node_dict", {}) or {}
     hosts = list(node_dict.keys())
     if not hosts:
         return "unknown_node"
-    host = hosts[0]
-    info = node_dict.get(host, {}) or {}
-    ip = info.get("vpc_ip")
-    if not ip or ip == "NA":
-        ip = host
-    # No SSH here, so hostname == the cluster-file host key (best-effort match to
-    # the per-node log folder label, which appends the SSH-resolved hostname).
-    return _sanitize_path_component(f"{ip}_{host}")
+    return _node_label_from_file(cluster_dict, hosts[0])
 
 
 def resolve_anc_html_report_path(config_dict, cluster_dict, test_name, timestamp):
@@ -245,9 +258,14 @@ def resolve_anc_log_folder(config_dict, test_name, timestamp, node=None):
     return os.path.abspath(path)
 
 
-# Default per-run execution timeout (2 hours); override via
-# config["anc"]["test_timeout"].
-DEFAULT_ANC_TEST_TIMEOUT = 7200
+# ANC group runs use an INACTIVITY timeout, not a total wall-clock cap: the run
+# is aborted only after this many seconds with NO new ANC output. A group that
+# keeps printing progress runs as long as it needs (long groups like cpu_all can
+# legitimately exceed any fixed total budget). The old total-budget key
+# (test_timeout) capped healthy, actively-running groups and is no longer used.
+# Override via config["anc"]["inactivity_timeout"].
+DEFAULT_ANC_INACTIVITY_TIMEOUT = 900
+INACTIVITY_TIMEOUT_KEY = "inactivity_timeout"
 
 # --- Package-install timeout + download progress -------------------------
 # The install exec's timeout is parallel-ssh's read_timeout: an INACTIVITY
@@ -265,7 +283,7 @@ DEFAULT_ANC_TEST_TIMEOUT = 7200
 #   2. This default is generous (30 min) so the silent phases that follow
 #      (dpkg/dnf install, tar extract of the large content payload) also fit.
 # Override via config["anc"]["install_timeout"]. This is SCOPED TO INSTALL ONLY;
-# the ANC group-run timeout (test_timeout) is unaffected.
+# the ANC group-run inactivity timeout (inactivity_timeout) is unaffected.
 DEFAULT_ANC_INSTALL_TIMEOUT = 1800
 INSTALL_TIMEOUT_KEY = "install_timeout"
 
@@ -866,23 +884,15 @@ def _sanitize_path_component(value):
     return re.sub(r"[^\w.\-]", "_", value)
 
 
-def _node_label(single, host, cluster_dict):
-    '''Build the "<ip>_<hostname>" artifact folder label for a node.'''
-    node_info = cluster_dict.get("node_dict", {}).get(host, {}) or {}
-    ip = node_info.get("vpc_ip")
-    if not ip or ip == "NA":
-        ip = host
+def _node_label(host, cluster_dict):
+    '''Build the "<ip>_<hostkey>" artifact folder label for a node.
 
-    hostname = host
-    try:
-        out = single.exec("hostname", timeout=30)
-        resolved = (out.get(host, "") or "").strip()
-        if resolved:
-            hostname = resolved
-    except Exception as exc:  # label is best-effort
-        log.warning("Node %s: could not resolve hostname: %s", host, exc)
-
-    return _sanitize_path_component(f"{ip}_{hostname}")
+    Delegates to _node_label_from_file so the ANC-log folder for a node matches
+    the session HTML-report folder exactly (both are file-derived, no SSH). ANC
+    logs previously used an SSH-resolved short hostname, which diverged from the
+    file-based HTML label; using one file-based label keeps the two trees aligned.
+    '''
+    return _node_label_from_file(cluster_dict, host)
 
 
 def _chown_tree_to_runner(host, root_path):
@@ -1035,7 +1045,7 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name, timestamp
     except Exception as exc:  # infra failure must fail the test
         return f"could not open SSH handle for artifact collection: {exc}", None, None
 
-    label = _node_label(single, host, cluster_dict)
+    label = _node_label(host, cluster_dict)
 
     # ANC prints "FATAL: Group '<x>' not found" (and exits ANC_PROG_NOT_FOUND)
     # when the requested group is not installed on this node. There are no useful
@@ -1199,7 +1209,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
     globals.error_list = []
 
     anc_cfg = config_dict["anc"]
-    timeout = anc_cfg.get("test_timeout", DEFAULT_ANC_TEST_TIMEOUT)
+    inactivity_timeout = anc_cfg.get(INACTIVITY_TIMEOUT_KEY, DEFAULT_ANC_INACTIVITY_TIMEOUT)
     print_all = _as_bool(anc_cfg.get(PRINT_ALL_TO_CONSOLE_KEY), default=True)
     timestamp = new_run_timestamp()
     # Per-node destinations are resolved individually in _evaluate_node (each
@@ -1216,16 +1226,29 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
     log.info("=" * 72)
 
     if print_all:
-        # Run ANC normally so its full output streams back, and print it.
+        # Run ANC normally so its full output streams back, and print it. ANC's
+        # own progress lines keep the SSH channel active, which continually
+        # resets the inactivity timer (only a genuine stall trips it).
         cmd = f"cd '{ANC_DIR}' && sudo ./anc.py -g {groups_arg}"
     else:
         # Suppress the (potentially huge) ANC output: redirect stdout/stderr to
         # a per-run file on the node and echo ONLY the "Log directory:" line.
         # The verdict is sourced from the collected console.log regardless.
+        # Because the channel would otherwise be silent for the whole run (which
+        # a pure inactivity timeout would treat as a stall), emit a periodic
+        # heartbeat while ANC is alive so the inactivity timer only fires on a
+        # real hang. The heartbeat reports the growing output file size, mirroring
+        # the install download-progress snippet.
         remote_stdout = "/tmp/anc_run_$$.out"
         cmd = (
             f"cd '{ANC_DIR}' && "
-            f"sudo ./anc.py -g {groups_arg} > '{remote_stdout}' 2>&1; "
+            f"( sudo ./anc.py -g {groups_arg} > '{remote_stdout}' 2>&1 ) & "
+            f"anc_pid=$! && "
+            f"while kill -0 $anc_pid 2>/dev/null; do "
+            f"sz=$(wc -c < '{remote_stdout}' 2>/dev/null || echo 0); "
+            f"echo \"ANC {test_name} running: ${{sz}} bytes of output\"; "
+            f"sleep {ANC_DOWNLOAD_PROGRESS_INTERVAL}; done; "
+            f"wait $anc_pid; "
             # Echo the "Log directory:" line (used to locate artifacts) and any
             # "FATAL: Group ... not found" line so a missing group is detectable
             # even when full ANC output is suppressed.
@@ -1234,17 +1257,17 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
         )
 
     log.info(
-        "ANC '%s': running %d group(s) (print_all_to_console=%s, timeout=%ss, logs under %s)",
+        "ANC '%s': running %d group(s) (print_all_to_console=%s, inactivity_timeout=%ss, logs under %s)",
         test_name,
         len(groups),
         print_all,
-        timeout,
+        inactivity_timeout,
         log_pattern,
     )
     log.info("ANC '%s': groups=%s", test_name, groups_arg)
 
     try:
-        out_dict = phdl.exec(cmd, timeout=timeout)
+        out_dict = phdl.exec(cmd, inactivity_timeout=inactivity_timeout)
     except Exception as exc:  # infra failure must fail the test
         fail_test(f"ANC {test_name}: execution failed (SSH/exec error): {exc}")
         update_test_result()

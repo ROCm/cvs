@@ -1155,5 +1155,58 @@ class TestPsshScpFile(unittest.TestCase):
         self.assertIs(ctx.exception.__cause__, original_error)
 
 
+class TestPsshInactivityTimeout(unittest.TestCase):
+    """Per-line inactivity timeout: resets on output, fires only on a stall."""
+
+    @patch("cvs.lib.parallel.pssh.ParallelSSHClient")
+    def setUp(self, mock_pssh_client):
+        self.mock_client = MagicMock()
+        mock_pssh_client.return_value = self.mock_client
+        self.host_list = ["host1"]
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
+
+    @staticmethod
+    def _slow_stream(gaps, lines):
+        """Yield each line after sleeping the paired gap (gevent-cooperative)."""
+        from gevent import sleep as gsleep
+
+        for gap, line in zip(gaps, lines):
+            gsleep(gap)
+            yield line
+
+    def test_active_stream_survives_short_gaps(self):
+        # Gaps (0.05s) are well under the inactivity window (0.5s): the timer
+        # resets on every line, so a long-but-active stream is NOT aborted.
+        out = MagicMock()
+        out.host = "host1"
+        out.stdout = self._slow_stream([0.05, 0.05, 0.05], ["a", "b", "c"])
+        out.stderr = []
+        out.exception = None
+        self.mock_client.run_command.return_value = [out]
+
+        result = self.pssh.exec("run", inactivity_timeout=0.5)
+
+        # No total cap should be passed to run_command when inactivity is set.
+        self.mock_client.run_command.assert_called_once_with("run", stop_on_errors=True)
+        self.assertIn("a", result["host1"])
+        self.assertIn("c", result["host1"])
+
+    def test_stall_longer_than_window_aborts(self):
+        # First line is quick, then a gap (0.6s) exceeds the window (0.3s): the
+        # per-line timer fires and (stop_on_errors=True) the Timeout propagates.
+        from pssh.exceptions import Timeout
+
+        out = MagicMock()
+        out.host = "host1"
+        out.stdout = self._slow_stream([0.02, 0.6], ["first", "second"])
+        out.stderr = []
+        out.exception = None
+        self.mock_client.run_command.return_value = [out]
+
+        with self.assertRaises(Timeout):
+            self.pssh.exec("run", inactivity_timeout=0.3)
+
+
 if __name__ == "__main__":
     unittest.main()
