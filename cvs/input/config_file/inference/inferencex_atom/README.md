@@ -62,9 +62,9 @@ Standalone ATOM has **no native pipeline parallel**. Multinode PP validation req
 - `container.image` — vLLM+ATOM or SGLang-capable image (shipped configs use `<changeme>`)
 - `params.master_addr` — head node VPC IP (replace `{head-node-ip}`)
 
-Multinode fabric is probed once per run in `test_discover_topology` (or lazily on first `build_server_cmd` if that test is omitted from a smoke `-k` filter):
+Multinode fabric is probed once per run in `test_discover_topology` (or lazily on first `build_server_cmd` if that test is omitted from a smoke `-k` filter). Probes run on the **cluster host OS** (not inside the container), where `ip` and `ibv_devinfo` are available:
 
-- `roles.server.ib_hca_devices: "auto"` (default) → `NCCL_IB_HCA` from `ibv_devinfo`
+- `roles.server.ib_hca_devices: "auto"` (default) → `NCCL_IB_HCA` from `ibv_devinfo -l`
 - `roles.server.ib_netdev: "auto"` (default on distributed stems) → `GLOO_SOCKET_IFNAME` / `NCCL_SOCKET_IFNAME` from the cluster IP on each node
 
 Override `ib_netdev` only when auto-discovery fails (asymmetric interface names) or you need a non-default NIC. Do **not** set `mlx5_*` — those are IB HCAs, not IP netdevs.

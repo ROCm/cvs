@@ -17,15 +17,49 @@ from cvs.lib import globals
 
 log = globals.log
 
-_HCA_RE = re.compile(r"hca_id:\s*(\S+)")
 _IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.I)
+_NETDEV_NAME_RE = re.compile(r"^[a-zA-Z0-9_.:-]{1,64}$")
+_INVALID_NETDEV_MARKERS = ("command not found", "bash:", "no such file", "cannot open")
 
 _SYSFS_CMD = "ls /sys/class/infiniband/ 2>/dev/null | tr '\\n' ' '"
 _IBVDEVINFO_CMD = "ibv_devinfo -l 2>/dev/null"
 
 
+def _topology_exec(orch, cmd, hosts=None):
+    """Run topology probes on the host OS when the orchestrator is container-backed."""
+    host_exec = getattr(orch, "exec_on_host", None)
+    if callable(host_exec):
+        return host_exec(cmd, hosts=hosts)
+    return orch.exec(cmd, hosts=hosts)
+
+
 def _parse_sysfs(output: str) -> list[str]:
     return [tok for tok in (output or "").split() if tok]
+
+
+def _parse_ibv_devinfo_list(output: str) -> list[str]:
+    """Parse ``ibv_devinfo -l`` output (one device name per line or whitespace)."""
+    if not (output or "").strip():
+        return []
+    tokens: list[str] = []
+    for line in (output or "").splitlines():
+        line = line.strip()
+        if not line or line.lower().startswith("warning"):
+            continue
+        tokens.extend(line.split())
+    return tokens
+
+
+def _valid_netdev_name(name: str) -> bool:
+    name = (name or "").strip()
+    if not name or not _NETDEV_NAME_RE.match(name):
+        return False
+    lower = name.lower()
+    if any(marker in lower for marker in _INVALID_NETDEV_MARKERS):
+        return False
+    if _IB_HCA_NETDEV_RE.match(name):
+        return False
+    return True
 
 
 def discover_ib_hca_names(orch) -> dict[str, list[str]]:
@@ -43,12 +77,11 @@ def discover_ib_hca_names(orch) -> dict[str, list[str]]:
     - the HCA lists are asymmetric across nodes (a hardware/driver mismatch
       must surface loudly, not be silently papered over by intersection).
     """
-    # Try ibv_devinfo first.
-    raw = orch.exec(_IBVDEVINFO_CMD)
+    raw = _topology_exec(orch, _IBVDEVINFO_CMD)
     result: dict[str, list[str]] = {}
     use_sysfs = False
     for host, output in (raw or {}).items():
-        hcas = _HCA_RE.findall(output or "")
+        hcas = _parse_ibv_devinfo_list(output or "")
         if not hcas:
             use_sysfs = True
             break
@@ -56,7 +89,7 @@ def discover_ib_hca_names(orch) -> dict[str, list[str]]:
 
     if use_sysfs:
         log.info("ib_discovery: ibv_devinfo unavailable or empty; falling back to /sys/class/infiniband")
-        raw = orch.exec(_SYSFS_CMD)
+        raw = _topology_exec(orch, _SYSFS_CMD)
         result = {}
         for host, output in (raw or {}).items():
             hcas = _parse_sysfs(output)
@@ -66,7 +99,6 @@ def discover_ib_hca_names(orch) -> dict[str, list[str]]:
         for host, hcas in result.items():
             log.info("ib_discovery: %s -> %s", host, hcas)
 
-    # Fail loudly on any empty node.
     empty = [h for h, devs in result.items() if not devs]
     if empty:
         raise RuntimeError(
@@ -74,8 +106,6 @@ def discover_ib_hca_names(orch) -> dict[str, list[str]]:
             "Check that ibv_devinfo is installed and IB drivers are loaded."
         )
 
-    # Fail loudly on asymmetry — a validation suite must surface hardware
-    # differences, not silently drop devices.
     lists = [tuple(sorted(devs)) for devs in result.values()]
     if len(set(lists)) > 1:
         detail = "; ".join(f"{h}={devs}" for h, devs in result.items())
@@ -105,16 +135,19 @@ def validate_ib_hca_preflight(discovered: dict[str, list[str]], requested: list[
 
 def _netdev_for_ip_cmd(ip: str) -> str:
     inner = (
-        f"ip -4 -o addr show | awk -v ip={shlex.quote(ip)} "
-        "'{split($4,a,\"/\"); if(a[1]==ip) {print $2; exit}}'"
+        f"IF=$({{ip -4 -o addr show 2>/dev/null || /sbin/ip -4 -o addr show 2>/dev/null;}} | "
+        f"awk -v ip={shlex.quote(ip)} '{{split($4,a,\"/\"); if(a[1]==ip) {{print $2; exit}}}}'); "
+        'echo "${IF}"'
     )
     return f"bash -c {shlex.quote(inner)}"
 
 
 def _netdev_via_route_cmd(dest_ip: str) -> str:
     inner = (
-        f"ip route get {shlex.quote(dest_ip)} 2>/dev/null | awk "
-        "'{for(i=1;i<=NF;i++) if($i==\"dev\") {print $(i+1); exit}}'"
+        f"IF=$({{ip route get {shlex.quote(dest_ip)} 2>/dev/null || "
+        f"/sbin/ip route get {shlex.quote(dest_ip)} 2>/dev/null;}} | awk "
+        "'{{for(i=1;i<=NF;i++) if($i==\"dev\") {{print $(i+1); exit}}}}'); "
+        'echo "${IF}"'
     )
     return f"bash -c {shlex.quote(inner)}"
 
@@ -137,21 +170,15 @@ def discover_socket_netdev_name(orch, master_addr: str | None = None) -> str:
     per_host: dict[str, str] = {}
     for host in hosts:
         host_ip = str(host).strip()
-        out = orch.exec(_netdev_for_ip_cmd(host_ip), hosts=[host])
+        out = _topology_exec(orch, _netdev_for_ip_cmd(host_ip), hosts=[host])
         netdev = (out or {}).get(host, "").strip()
-        if not netdev:
-            out = orch.exec(_netdev_via_route_cmd(master), hosts=[host])
+        if not _valid_netdev_name(netdev):
+            out = _topology_exec(orch, _netdev_via_route_cmd(master), hosts=[host])
             netdev = (out or {}).get(host, "").strip()
-        if not netdev:
+        if not _valid_netdev_name(netdev):
             raise RuntimeError(
                 f"socket_netdev discovery: no IPv4 netdev on {host} "
-                f"(host_ip={host_ip!r}, master_addr={master!r})"
-            )
-        if _IB_HCA_NETDEV_RE.match(netdev):
-            raise RuntimeError(
-                f"socket_netdev discovery: {host} resolved {netdev!r}, which looks like an "
-                "IB HCA name — set roles.server.ib_netdev to the IP-bearing Linux netdev "
-                "(e.g. ens51f1np1), not mlx5_*"
+                f"(host_ip={host_ip!r}, master_addr={master!r}, last_output={netdev!r})"
             )
         per_host[host] = netdev
         log.info("socket_netdev discovery: %s -> %s", host, netdev)
