@@ -41,6 +41,9 @@ def _log_variant_run_card(variant_config):
         parts.append(f"upstream_run={rc.upstream_run_url}")
     if rc.notes:
         parts.append(f"notes={rc.notes}")
+    if int(variant_config.params.nnodes) > 1:
+        parts.append(f"nnodes={variant_config.params.nnodes}")
+        parts.append(f"pp={variant_config.params.pipeline_parallel_size}")
     log.info("InferenceX ATOM run card: %s", "; ".join(parts))
 
 
@@ -53,11 +56,12 @@ def _emit_variant_run_card(variant_config):
 LIFECYCLE_RANK = {
     "test_launch_container": 0,
     "test_setup_sshd": 1,
-    "test_model_fetch": 2,
-    "test_inferencex_atom_inference": 3,
-    "test_cell_metrics": 4,
-    "test_print_results_table": 5,
-    "test_teardown": 6,
+    "test_discover_topology": 2,
+    "test_model_fetch": 3,
+    "test_inferencex_atom_inference": 4,
+    "test_cell_metrics": 5,
+    "test_print_results_table": 6,
+    "test_teardown": 7,
 }
 
 

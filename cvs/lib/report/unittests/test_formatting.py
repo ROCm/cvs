@@ -18,8 +18,8 @@ def test_link_or_text_html_local_path_uses_basename():
 
 
 def test_link_or_text_html_preserves_bundle_relative_path():
-    out = link_or_text_html("../inferencex_atom_single.html", "Pytest report")
-    assert 'href="../inferencex_atom_single.html"' in out
+    out = link_or_text_html("../inferencex_atom.html", "Pytest report")
+    assert 'href="../inferencex_atom.html"' in out
 
 
 def test_link_or_text_html_empty():

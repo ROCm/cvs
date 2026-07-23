@@ -4,7 +4,7 @@ All rights reserved.
 
 Reusable **lifecycle-as-tests** helpers for DTNI inference suites.
 
-``inferencex_atom_single`` imports the stage tests from here today; other suites
+``inferencex_atom`` imports the stage tests from here today; other suites
 (``vllm_single``, future IX parity frameworks) can reuse the same module instead
 of copying launch / sshd / model-fetch / teardown blocks.
 
@@ -104,7 +104,11 @@ def test_setup_sshd(orch, lifecycle, request):
         lifecycle.failed = True
         pytest.fail("setup_sshd() returned False")
     if len(orch.hosts) > 1:
-        probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
+        probe = orch.exec(
+            "bash -c '"
+            "(ss -ltn 2>/dev/null || netstat -lnt 2>/dev/null) | grep -q :2224 && echo OK || "
+            "(pgrep -f \"sshd.*2224\" >/dev/null && echo OK) || echo NO'"
+        )
         if not any("OK" in (v or "") for v in (probe or {}).values()):
             lifecycle.failed = True
             pytest.fail("sshd not listening on 2224 after setup_sshd()")
@@ -205,7 +209,7 @@ def html_metric_table_header(cells):
 
 
 def html_metric_table_row(report, cells):
-    props = dict(report.user_properties)
+    props = dict(getattr(report, "user_properties", ()))
     has = "metric_value" in props
     val = props.get("metric_value")
     unit = props.get("metric_unit", "") if has else ""

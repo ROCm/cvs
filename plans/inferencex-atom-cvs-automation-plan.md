@@ -1,27 +1,27 @@
 # InferenceX ATOM — CVS automation implementation plan (DTNI-first)
 
-## 0. Branch state (`hnimrama/IX-atom`) — read this first
+## 0. Branch state (`hnimrama/ix-atom-multinode`) — read this first
 
 This section records **what exists on the branch today** vs **what this plan targets**. Refresh when landing major phases.
 
 
 | Area                          | Current on branch                                                                                                                                                                                            | Target (this plan)                                                                                                                                               |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Suite name**                | `inferencex_atom_single`                                                                                                                                                                                     | Same                                                                                                                                                             |
-| **Driver**                    | `InferenceXAtomJob` (`inferencex_atom_orch.py`): `params.driver=atom` → `atom.entrypoints.openai_server` + `atom.benchmarks.benchmark_serving`; `parse_results` → `to_client_metrics` (`client.*` namespace) | Same ATOM path; optional `driver=vllm` only for interim uplift variants                                                                                          |
-| **Config layout (canonical)** | `cvs/input/config_file/inference/inferencex_atom_single/` — flat `<stem>_config.json` + `<stem>_threshold.json` (same as `vllm_single`); inline `roles.server.atom_args` / `params.bench_extra_args` (vLLM-style, no recipe registry) | **Source of truth** for lab + `cvs copy-config`. |
-| **Cluster files**             | `cvs/input/cluster_file/mi300x_atom_single.json`, `mi355x_atom_single.json`                                                                                                                                  | Per `gpu_arch`; container names pinned in variant config (`inferencex_atom_mi300x` / `inferencex_atom_mi355x`)                                                   |
-| **Shipped W1 variants**       | `mi300x_inferencex-atom-single_deepseek-r1_fp8_{perf,smoke,mtp3}`; `mi355x_inferencex-atom-single_deepseek-r1_fp8_{perf,mtp3}`                                                                                                           | + remaining W1–W18 stems (Section 3.1)                                                                                                                            |
-| **Interim uplift**            | `mi300x_inferencex-atom-single_gpt-oss-120b_bf16`, `mi355x_inferencex-atom-single_gpt-oss-120b_bf16` (record-only)                                                                                                                        | Replaced by W2 ATOM stems in M3                                                                                                                                   |
-| **Thresholds**                | MI300X W1 perf: calibrated (Section 4.1), `enforce_thresholds: true` after lab confirm. MI355X W1: CI seeds (Section 4.3), `enforce_thresholds: false`. Smoke / MTP3 / GPT-OSS: record-only                  | Per-arch lab calibration; never cross-arch copy                                                                                                                  |
+| **Suite name**                | `inferencex_atom`                                                                                                                                                                                            | Same                                                                                                                                                             |
+| **Driver**                    | `InferenceXAtomJob`: `params.driver=atom` → standalone ATOM; `vllm_atom` → vLLM PP coordinator + ATOM ROCm kernels; `sglang` → SGLang PP coordinator; `vllm` → interim uplift only                             | Same; **multinode PP=2 validation uses `vllm_atom` or `sglang`, not `atom`**                                                                                      |
+| **Config layout (canonical)** | `cvs/input/config_file/inference/inferencex_atom/` — flat `<stem>.json` + `<stem>_threshold.json` (vLLM-style); inline `atom_args` / `serve_args` / `sglang_args`                                                  | **Source of truth** for lab + `cvs copy-config`.                                                                                                                 |
+| **Cluster files**             | `cvs/input/cluster_file/inferencex_atom_cluster.json`                                                                                                                                                         | Per run; 2+ hosts for multinode PP; container image pinned in variant config                                                                                     |
+| **Shipped W1 variants**       | Single-node: `mi300x/mi355x_inferencex-atom_deepseek-r1_fp8_{single,mtp3,baseline_sweep}`. Multinode PP=2: `*_distributed`, `*_baseline_sweep_distributed` (`driver=vllm_atom`); `*_sglang_distributed` (`driver=sglang`) | + remaining W1–W18 stems (Section 3.1); single-node parity triple (M4)                                                                                            |
+| **Interim uplift**            | `mi300x/mi355x_inferencex-atom_gpt-oss-120b_bf16` (`driver: vllm`, record-only)                                                                                                                               | Replaced by W2 ATOM stems in M3                                                                                                                                   |
+| **Thresholds**                | MI300X W1 perf + multinode PP keys (`PP=2,NNODES=2`); baseline sweep multinode seeds need **lab recalibration** after true PP runs. MI355X: `enforce_thresholds: false` until lab confirm                         | Per-arch lab calibration; never cross-arch copy                                                                                                                  |
 | **Accuracy (gsm8k)**          | Not implemented                                                                                                                                                                                              | M2 — Section 5 (ACC-1..7) + Phase D                                                                                                                              |
 | **Platform metrics**          | `lifecycle.record` only (server_ready, client_complete)                                                                                                                                                      | `server.*` + sweep summary — Section 6.1, CVS-2/10                                                                                                               |
-| **MTP**                       | W1 `*_mtp3` flat stems + thresholds seeded; MTP3 `atom_args` and `bench_extra_args` inline in config                                                                                                                       | Speculative-token flags preserved on serve restart via inline config |
-| **Shared suite helpers**      | `inference_suite_lifecycle.py`, `inference_suite_results_table.py`, `unittests/fake_orch.py` (IX uses today; other suites may import)                                                                      | Documented in variant `README.md`                                                                                                                                |
-| **Multi-node**                | `test_setup_sshd` + container sshd path exists; cluster JSON is single-node only                                                                                                                             | **M5** — **P1 immediately after M4 parity** when hardware and IX/ATOM recipe support `nnodes>1` (Section 1.7)                                                  |
+| **MTP**                       | W1 `*_mtp3` flat stems + thresholds seeded; MTP3 `atom_args` and `bench_extra_args` inline in config                                                                                                           | Speculative-token flags preserved on serve restart via inline config                                                                                             |
+| **Shared suite helpers**      | `inference_suite_lifecycle.py`, `inference_suite_results_table.py`, `unittests/fake_orch.py`                                                                                                                 | Documented in variant `README.md`                                                                                                                                |
+| **Multi-node (M5)**           | **In repo:** `test_setup_sshd`, container sshd fail-fast, `params.nnodes` + PP orchestration for `vllm_atom`/`sglang`, W1 multinode configs + `scaling.efficiency_pct`. **Lab:** recalibrate thresholds on true PP=2 runs | Extend to N-node + single-node parity triple (M4); ATOM SPMD DP path for scale-out without PP remains optional on `driver=atom`                                  |
 
 
-**Branch implication:** Phase **R** and Phase **0** are **largely done** (ATOM serve + bench + W1 dirs + cluster JSON). Active work is **Phase A** MI300X lab confirmation → **M1 close** → **M2 gsm8k** on MI300X. MI355X lab is **pending** (Section 1.2) and does not block the spine. Multi-node is **pending** until M4 parity closes and a multi-node lab is available (Section 1.7).
+**Branch implication:** Phase **R** and Phase **0** are **largely done** (ATOM serve + bench + W1 dirs + cluster JSON). **M5 multinode PP configs and Job hooks are landed** on `hnimrama/ix-atom-multinode`; lab must set `container.image`, `roles.server.ib_netdev`, and `params.master_addr` before enforcing gates. Active work: **lab recalibration** on true PP=2 → **M4 parity** (single-node vLLM/SGLang triple) → gsm8k (M2).
 
 ---
 
@@ -49,7 +49,7 @@ This document is the **implementation and action-item plan** for **InferenceX AT
 
 The DTNI Validation Tracker names many recipes with **MI355X** in the title (e.g. W1 `dsr1-fp8-mi355x-atom`). **This plan still requires MI300X automation** for the same workload cards wherever the model fits on 8× MI300X. Tracker omission is **not** an out-of-scope signal for MI300X.
 
-- **Variant naming:** Same flat stem as `vllm_single`: `{gpu}_{framework}_{model}_{precision}[_{mode}]` (e.g. `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf`, `mi355x_inferencex-atom-single_deepseek-r1_fp8_perf`; framework `inferencex_atom_single` → `inferencex-atom-single` in the filename).
+- **Variant naming:** Same flat stem as `vllm_single`: `{gpu}_inferencex-atom_{model}_{precision}[_{mode}]` (e.g. `mi300x_inferencex-atom_deepseek-r1_fp8_single`).
 - `**gpu_arch`:** `mi300x` or `mi355x` in config; **separate `threshold.json` per arch** — never share thresholds across GPUs.
 - **Cluster files:** `input/cluster_file/mi300x_*.json` and `mi355x_*.json` (or equivalent) matched to variant `gpu_arch`.
 - **Implementation:** Ship `_mi300x_` and `_mi355x_` variant dirs together in code/config PRs when possible. **Lab validation** follows hardware: MI300X runs gate milestones; MI355X lab runs are **pending when hardware is available** and do not block the MI300X spine (see **Section 1.2**).
@@ -76,14 +76,12 @@ When MI355X nodes are **not** available in the lab:
 
 | Path                                                                     | Role                                                                   |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| `cvs/input/config_file/inference/inferencex_atom_single/`              | **Canonical** flat `*_config.json` + `*_threshold.json` pairs for lab and `cvs copy-config` |
-| `cvs/input/config_file/inference/inferencex_atom_single/README.md`       | Smoke vs perf runbook, MI355X pending note                             |
-| `cvs/input/cluster_file/mi300x_atom_single.json`                         | Example 8× MI300X cluster                                              |
-| `cvs/input/cluster_file/mi355x_atom_single.json`                         | Example 8× MI355X cluster (pending lab)                                |
-| `cvs/input/cluster_file/mi300x_atom_multi.json` (M5)                     | Example 2+ node MI300X cluster for scaling (Section 1.7)               |
+| `cvs/input/config_file/inference/inferencex_atom/`                       | **Canonical** flat `*.json` + `*_threshold.json` pairs for lab and `cvs copy-config` |
+| `cvs/input/config_file/inference/inferencex_atom/README.md`              | Smoke vs perf vs multinode PP runbook, driver matrix, MI355X pending note |
+| `cvs/input/cluster_file/inferencex_atom_cluster.json`                     | Example cluster (edit `node_dict` to 1 or 2+ hosts per variant)      |
 
 
-Legacy InferenceMax configs, nested variant subdirs (`deepseek_r1_fp8_*`, `inferencemax/`), and the deprecated `inferencemax` suite are **removed**; all work uses flat `inferencex_atom_single/` stems.
+Legacy InferenceMax configs, nested variant subdirs, and the deprecated `inferencemax` suite are **removed**; all work uses flat `inferencex_atom/` stems (filename pattern `{gpu}_inferencex-atom_{model}_{precision}[_{mode}]`).
 
 ### 1.4 ATOM benchmark artifact → CVS metrics contract
 
@@ -132,7 +130,7 @@ Work below improves **CVS as a validation platform**, not only W1. Prioritize it
 | **CVS-12** | **Secret redaction**                             | Strip `HF_TOKEN` from captured server env / verbose logs in pytest hooks                                                                                         | 1.5    |
 | **CVS-13** | **Percentile policy switch**                     | Config `metric_percentiles: "90,95,99"` when tracker gates p90/p95; else keep skip-when-absent (Section 1.4)                                                     | B-4    |
 | **CVS-14** | **Multi-node `nnodes` in Job**                   | Extend `InferenceXAtomJob` (then parity Jobs) for M5 scaling without new suite id; `test_setup_sshd` + `scaling.*` gates                                       | **M5** |
-| **CVS-15** | **DTNI mirror sync**                             | Single copy step from `config_file/inferencex_atom_single/` → `dtni/` when packaging converges                                                                   | DOC    |
+| **CVS-15** | **DTNI mirror sync**                             | Single copy step from `config_file/inferencex_atom/` → `dtni/` when packaging converges                                                                   | DOC    |
 
 
 ```mermaid
@@ -163,31 +161,32 @@ flowchart LR
 - Full **Optimus / KVMGR / NIXL / hipFile / MaaS / Gateway** automation — **Appendix B** only.
 - New gates via legacy `InferenceBaseJob.verify_inference_results`.
 
-### 1.7 Multi-node priority — after parity, when available (non-blocking until M4)
+### 1.7 Multi-node priority — PP=2 via framework coordinators (M5)
 
-Multi-node automation is a **high-priority P1 requirement** on the MI300X spine: it lands as **milestone M5**, **immediately after M4** (atom-vllm + atom-sglang parity), and **before** the broad MTP+P2 expansion (M6). It does **not** block M1–M4 on single-node labs.
+Multi-node **pipeline parallel** (PP=2) is a **P1 M5** deliverable. Standalone ATOM has **no native PP engine**; multinode PP validation uses a **framework coordinator** while ATOM (or SGLang) accelerates local kernels.
 
 | Track | Policy |
 | ----- | ------ |
-| **When to start** | After M4 parity frameworks are registered and W1 parity triple is green on MI300X single-node — **or in parallel** with late M3/M4 if multi-node hardware is already available and IX recipes expose `nnodes>1`. |
-| **Hardware gate** | Requires a cluster file with **2+ nodes** in `node_dict`, working inter-node SSH (sshd on :2224 inside containers), and fabric/NIC metadata on the run card. No multi-node lab → ship configs/Job hooks in repo; lab confirm deferred (same pattern as MI355X pending). |
-| **Suite scope (order)** | 1) `inferencex_atom_single` when ATOM + IX recipe supports distributed serve. 2) `inferencex_atom_vllm_single` / `inferencex_atom_sglang_single` **after** M4 parity suites exist and upstream supports multi-node for that engine. 3) Legacy `vllm_single` / SGLang disagg — out of scope; use IX parity frameworks only. |
-| **Does not block** | M1–M4 single-node work, gsm8k (M2), or P1 workload stems (M3). MTP hardening (M6) and disagg (M7) remain behind M5 when scaling hardware is available. |
-| **Deliverables (M5)** | `params.nnodes` + head/worker roles in Job; multi-node cluster JSON examples; `test_setup_sshd` enforced; `scaling.efficiency_pct` + Tier 5 metrics (Section 6.1); per-arch `threshold.json` for 2-node (then N-node) reference cells; CVS-14. |
+| **Architecture** | **True PP=2:** `params.driver=vllm_atom` (`vllm serve` + `--pipeline-parallel-size` + `--node-rank`) or `params.driver=sglang` (`sglang.launch_server` + `--pp-size` + `--dist-init-addr`). **Not PP:** `driver=atom` multinode uses ATOM SPMD **data parallel** (`-dp`, cell keys `DP=`) for scale-out / P-D disagg — do not label as pipeline parallel. |
+| **When to start** | Configs + Job hooks **landed** on `hnimrama/ix-atom-multinode`. Lab confirm + threshold recalibration required before `enforce_thresholds: true` on multinode stems. |
+| **Hardware gate** | Cluster file with **2+ nodes**, inter-node SSH (`test_setup_sshd`, sshd in container image — no runtime `apt-get`), `roles.server.ib_netdev`, vLLM+ATOM or SGLang container image. |
+| **Suite scope (shipped)** | `mi300x_inferencex-atom_deepseek-r1_fp8_distributed` + `*_baseline_sweep_distributed` (`driver=vllm_atom`, `PP=2`); `mi300x_inferencex-atom_deepseek-r1_fp8_sglang_distributed` (`driver=sglang`). MI355X multinode: `enforce_thresholds: false` until lab. |
+| **Does not block** | M1–M4 single-node work, gsm8k (M2), or P1 workload stems (M3). |
+| **Deliverables (M5)** | Done in repo: `params.nnodes`, PP orchestration, multinode configs, `scaling.efficiency_pct`, sshd fail-fast. Pending lab: recalibrated `threshold.json`, run card fabric metadata (F-7). |
 
-**Repo rule:** Single-node cluster JSON and pytest collection must keep working when `nnodes=1` or multi-node fields are omitted — only the variant + cluster file passed to `cvs run` exercises distributed paths.
+**Repo rule:** Single-node cluster JSON and pytest collection must keep working when `nnodes=1` — only the variant + cluster file passed to `cvs run` exercises distributed paths.
 
 ### 1.1 Diagrams — CVS entry and DTNI inputs
 
 ```mermaid
 flowchart LR
   subgraph entry["Entry"]
-    CLI["cvs run inferencex_atom_single"]
+    CLI["cvs run inferencex_atom"]
     CLUSTER["cluster JSON"]
   end
   subgraph variant["Variant (flat)"]
-    DIR["inferencex_atom_single/"]
-    CONFIG["<stem>_config.json"]
+    DIR["inferencex_atom/"]
+    CONFIG["<stem>.json"]
     THRESH["<stem>_threshold.json"]
   end
   subgraph pytest["Pytest"]
@@ -252,25 +251,36 @@ flowchart TB
 | **Job class**           | Standalone job using `**orch` only** — no `InferenceBaseJob` for new ATOM gates.                                           |
 
 
-### 2.1 Execution backend: ATOM (current) vs vLLM fallback
+### 2.1 Execution backends — `atom`, `vllm_atom`, `sglang`, `vllm`
+
+| `params.driver` | Server | Client | Multinode PP |
+| --------------- | ------ | ------ | ------------ |
+| **`atom`** | `atom.entrypoints.openai_server` | `atom.benchmarks.benchmark_serving` | **No native PP.** Optional SPMD DP (`-dp` + `ATOM_DP_*`; cell keys `DP=`). |
+| **`vllm_atom`** | `vllm serve` + ROCm ATOM env | `vllm bench serve` | **Yes** — vLLM injects `--pipeline-parallel-size`, `--node-rank`, `--headless` on workers. |
+| **`sglang`** | `sglang.launch_server` | `sglang.bench_serving` | **Yes** — SGLang injects `--pp-size`, `--nnodes`, `--dist-init-addr`. |
+| **`vllm`** | `vllm serve` (uplift) | `vllm bench serve` | Same coordinator flags as `vllm_atom` without ATOM-specific env block. |
 
 ```mermaid
 flowchart LR
-  subgraph today["Today on hnimrama/IX-atom"]
-    ATOM["atom.entrypoints.openai_server"]
-    BENCH["atom.benchmarks.benchmark_serving"]
+  subgraph today["W1 single-node"]
+    ATOM["driver=atom"]
+    BENCH["benchmark_serving"]
     CM["client.* via to_client_metrics"]
   end
-  subgraph fallback["Interim only"]
-    VJ["params.driver=vllm → vllm serve + bench"]
+  subgraph m5["M5 multinode PP=2"]
+    VA["driver=vllm_atom"]
+    SG["driver=sglang"]
+    PP["PP=2 cell keys"]
   end
-  subgraph future["Phase B+ optional"]
-    AM["IX-native metric keys for baselines"]
+  subgraph uplift["Interim only"]
+    VJ["driver=vllm GPT-OSS uplift"]
   end
   ATOM --> BENCH --> CM
-  VJ -.-> CM
-  CM -.->|"namespace convergence"| AM
+  VA --> PP
+  SG --> PP
 ```
+
+**Default for W1 single-node perf:** `params.driver=atom`. **Default for multinode PP validation:** `params.driver=vllm_atom` or `sglang` — never `atom` with `pipeline_parallel_size>1`.
 
 
 
@@ -303,7 +313,7 @@ Authoritative **model / ISL / OSL / precision** mapping from **DTNI Validation T
 | **W18** | MiMo v2.5 Pro      | `XiaomiMiMo/MiMo-V2.5-Pro`                                                                          | 8   | BF16      | 1K / 1K         | P2       |
 
 
-**P1 workloads for first automation wave:** W1, W2, W3, W13, W17 (five models) plus framework paths (ATOM, ATOM+MTP, ATOM-Disagg, **inferencex_atom_vllm**, **inferencex_atom_sglang**).
+**P1 workloads for first automation wave:** W1, W2, W3, W13, W17 (five models) plus framework paths (ATOM, ATOM+MTP, ATOM-Disagg, **`params.driver=vllm_atom`**, **`params.driver=sglang`**).
 
 **MTP variants:** For workloads that have `*-atom-mtp` recipes in InferenceX, treat **FP8 + MTP3** (and similar) as **sibling variant dirs** or `roles`/recipe flags — not a different suite id. Chat-formatted prompts required per InferenceX AGENTS.md.
 
@@ -325,8 +335,8 @@ The tracker matrix does **not** list MI300X explicitly. **CVS automation does.**
 
 | Workload                  | MI300X variant                                           | MI355X variant                                 | Notes                                                                             |
 | ------------------------- | -------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------- |
-| **W1** DeepSeek R1 FP8    | `mi300x_inferencex-atom-single_deepseek-r1_fp8_{perf,smoke,mtp3}` | `mi355x_inferencex-atom-single_deepseek-r1_fp8_{perf,mtp3}` | Smoke: 128 prompts pre-gate (Section 8 A-0). MTP3: **post-M1** optional on MI300X |
-| **W2** GPT-OSS MXFP4      | `mi300x_inferencex-atom-single_gpt-oss-120b_mxfp4` (target)                               | `mi355x_inferencex-atom-single_gpt-oss-120b_mxfp4` (target)                     | Interim `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` is **not** final W2                          |
+| **W1** DeepSeek R1 FP8    | `mi300x_inferencex-atom_deepseek-r1_fp8_{single,mtp3}` | `mi355x_inferencex-atom_deepseek-r1_fp8_{single,mtp3}` | MTP3: **post-M1** optional on MI300X |
+| **W2** GPT-OSS MXFP4      | `mi300x_inferencex-atom_gpt-oss-120b_mxfp4` (target)                               | `mi355x_inferencex-atom_gpt-oss-120b_mxfp4` (target)                     | Interim `mi300x_inferencex-atom_gpt-oss-120b_bf16` is **not** final W2                          |
 | **W3** GLM 5.1 BF16       | `glm51_mi300x_atom`                                      | `glm51_mi355x_atom`                            | Same ISL/OSL as tracker                                                           |
 | **W13** Kimi K2.7 Code    | `kimi_k27_code_mi300x_atom`                              | `kimi_k27_code_mi355x_atom`                    |                                                                                   |
 | **W17** DeepSeek R1 MXFP4 | `deepseek_r1_mxfp4_mi300x_atom`                          | `deepseek_r1_mxfp4_mi355x_atom`                | gsm8k ≥ 0.93 on MXFP4                                                             |
@@ -334,7 +344,7 @@ The tracker matrix does **not** list MI300X explicitly. **CVS automation does.**
 
 **P2 workloads:** `_mi300x_` and `_mi355x_` dirs together when each workload is automated.
 
-**Baselines (parity engines):** Per workload × `gpu_arch` — `inferencex_atom_vllm_single` and `inferencex_atom_sglang_single` sibling dirs (Section 12.3), not legacy `vllm_single` / SGLang disagg.
+**Baselines (parity engines):** Per workload × `gpu_arch` — same `inferencex_atom` framework with `params.driver` = `atom` / `vllm_atom` / `sglang` (Section 12.3), not legacy `vllm_single` / SGLang disagg.
 
 **Run card fields:** `gpu_arch`, GPU count, IX recipe id, image tag, NIC, IX SHA — comparable dashboards, separate thresholds per arch.
 
@@ -414,7 +424,7 @@ Source: [ROCm/ATOM ATOM Benchmark run 27912164002](https://github.com/ROCm/ATOM/
 
 **Planning notes**
 
-- These four cells are the **MI355X W1 threshold candidates** (`mi355x_inferencex-atom-single_deepseek-r1_fp8_perf` and `_mtp3` sibling).
+- These four cells are the **MI355X W1 threshold candidates** (`mi355x_inferencex-atom_deepseek-r1_fp8_single` and `_mtp3` sibling).
 - Re-pull from a newer ATOM nightly when image or `ea08015`+ moves; pin the run URL + docker tag in variant README / run card.
 - MI300X (Sections 4.1–4.2) and MI355X (Section 4.3) numbers are **close but not identical** — keep separate `threshold.json` per `gpu_arch`.
 - As other P1 workloads appear in ATOM CI, add sibling subsections here before enabling `enforce_thresholds: true` on those variants.
@@ -475,10 +485,10 @@ Accuracy is **not** a perf sweep cell. Each row is a **separate pytest stage** (
 
 | Step | Implementation                                                                                                                                                                                   |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1    | Add `mi300x_inferencex-atom-single_deepseek-r1_fp8_accuracy` variant: single cell, `enforce_thresholds: true`, `num_prompts` N/A (accuracy-only).                                                                 |
+| 1    | Add `mi300x_inferencex-atom_deepseek-r1_fp8_accuracy` variant: single cell, `enforce_thresholds: true`, `num_prompts` N/A (accuracy-only).                                                                 |
 | 2    | Extend `InferenceXAtomJob` (or sibling `InferenceXAtomAccuracyJob`) with `run_gsm8k_eval()` — invoke **lm-eval** or ATOM-shipped eval inside container against `http://localhost:{port}`.        |
 | 3    | Parse eval JSON → flat `accuracy.`* dict; attach to `inf_res_dict` under a fixed accuracy key (not per-conc sweep).                                                                              |
-| 4    | Add `test_gsm8k_accuracy` in `inferencex_atom_single.py` (or `inferencex_atom_accuracy.py` module) — runs **after** perf tests when chained, or standalone via `--config_file` accuracy variant. |
+| 4    | Add `test_gsm8k_accuracy` in `inferencex_atom.py` (or `inferencex_atom_accuracy.py` module) — runs **after** perf tests when chained, or standalone via `--config_file` accuracy variant. |
 | 5    | Threshold file: one global cell or `"accuracy"` key with `accuracy.gsm8k_exact_match: {kind: min, value: 0.94}`.                                                                                 |
 | 6    | HTML row: add `ACCURACY_METRICS` list beside `CLIENT_METRICS` in `vllm_parsing.py` (or new `accuracy_parsing.py`).                                                                               |
 
@@ -511,7 +521,7 @@ Accuracy is **not** a perf sweep cell. Each row is a **separate pytest stage** (
 
 - Accuracy is a **separate pytest stage** (not mixed into perf `test_cell_metrics` rows).
 - Run after **M1** MI300X perf is green; MI355X accuracy pending with hardware (Section 1.2).
-- Use a **dedicated variant stem** (e.g. `mi300x_inferencex-atom-single_deepseek-r1_fp8_accuracy`) with low concurrency / fixed eval split to limit wall time.
+- Use a **dedicated variant stem** (e.g. `mi300x_inferencex-atom_deepseek-r1_fp8_accuracy`) with low concurrency / fixed eval split to limit wall time.
 - Workload-specific ACC rows (W13 code, W2 long-context, etc.) — **Section 12.2**.
 
 ---
@@ -644,13 +654,13 @@ See **Section 12** for perf variant modes (PERF-2..8), supplemental metrics (12.
 
 | Phase | Name                      | Goal                                                                              | Status on branch                        |
 | ----- | ------------------------- | --------------------------------------------------------------------------------- | --------------------------------------- |
-| **R** | **Rename + pytest shell** | `inferencex_atom_single`, `InferenceXAtomJob`, schema_version 1, DTNI conftest    | **Done**                                |
+| **R** | **Rename + pytest shell** | `inferencex_atom`, `InferenceXAtomJob`, schema_version 1, DTNI conftest    | **Done**                                |
 | **0** | **ATOM backend**          | ATOM serve + bench + parse; W1 dirs; cluster JSON; legacy `inferencemax/` removed | **Done** (0-1 image/recipe pin partial) |
-| **A** | **W1 calibration**        | MI300X smoke → perf lab-gated; MI355X seeds pending (Section 1.2)                 | **MI300X in progress**                  |
+| **A** | **W1 calibration**        | MI300X single-node lab-gated; MI355X seeds pending (Section 1.2)                 | **MI300X in progress**                  |
 | **B** | **Metric namespace**      | IX-native keys; `server.`* lifecycle; Section 6.1 tiers                           | Partial (`client.*` ATOM)               |
 | **C** | **P1 workloads**          | W2, W3, W13, W17 on MI300X first; MI355X dirs when hardware available             | Not started                             |
 | **D** | **Accuracy + CI**         | gsm8k M2 on MI300X (Section 5 + Phase D below)                                    | Not started                             |
-| **E** | **Framework parity (M4)** | `inferencex_atom_vllm_single` + `inferencex_atom_sglang_single`; W1 parity triple; `compare.*` HTML | Not started                             |
+| **E** | **Framework parity (M4)** | Single-node W1 triple: `driver=atom` + `vllm_atom` + `sglang`; `compare.*` HTML | Not started (multinode PP shipped via M5 drivers) |
 | **F** | **Multi-node + scaling (M5)** | **P1 after M4** when hardware + recipe support `nnodes>1`; `params.nnodes`, sshd, `scaling.*` (Section 1.7) | Not started — infra hooks only on branch |
 | **G** | **MTP hardening + P2 (M6)** | W1 MTP3 lab optional; W4–W12, W14–W16, W18                                        | MTP configs only                        |
 | **H** | **Disagg + DI stack (M7)**  | Appendix B when infra ready                                                       | Blocked                                 |
@@ -695,8 +705,8 @@ flowchart TB
 | 0-2 | **ATOM serve path**       | `InferenceXAtomJob.build_server_cmd` → `python -m atom.entrypoints.openai_server`                                      | **Done**                                                          |
 | 0-3 | **ATOM bench client**     | `atom.benchmarks.benchmark_serving` → `results.json`; `to_client_metrics`                                              | **Done**                                                          |
 | 0-4 | **DTNI pytest shell**     | `conftest.py` + sweep parametrization + tiered `test_cell_metrics`; shared `inference_suite_lifecycle.py` | **Done**                                                          |
-| 0-5 | **Variant configs W1**  | Flat perf + smoke + mtp3 stems for MI300X and MI355X (Section 3.1)                                        | **Done**                                                          |
-| 0-6 | **Cluster configs**       | `mi300x_atom_single.json`, `mi355x_atom_single.json` (`inferencex_atom_mi300x` / `mi355x` container names) | **Done**                                                          |
+| 0-5 | **Variant configs W1**  | Flat single + mtp3 + baseline_sweep stems for MI300X and MI355X (Section 3.1)                                        | **Done**                                                          |
+| 0-6 | **Cluster configs**       | `inferencex_atom_cluster.json` template; container names in variant config | **Done** |
 | 0-7 | **Remove legacy configs** | Delete `inferencemax/`, nested `deepseek_r1_fp8_*` subdirs, old monolithic JSON layouts                  | **Done**                                                          |
 
 
@@ -705,12 +715,12 @@ flowchart TB
 
 | ID  | Action                        | Details                                                                                                                                                                           | Blocker?                                              |
 | --- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| A-0 | **MI300X smoke**              | `mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke` — one cell, 128 prompts; validates path before full perf matrix                                                                               | **Recommended** before A-1                            |
-| A-1 | **MI300X perf thresholds**    | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` thresholds from Section 4.1 (10% margin). W1 perf run: ~17 pytest rows (tiered gates, server reuse on C=256). | **Yes** — M1 close on MI300X                          |
+| A-0 | **MI300X path check**         | Run `mi300x_inferencex-atom_deepseek-r1_fp8_single` with `-k` one cell before full sweep                                                                                                      | **Recommended** before A-1                            |
+| A-1 | **MI300X single thresholds**  | `mi300x_inferencex-atom_deepseek-r1_fp8_single` thresholds from Section 4.1 (10% margin). W1 run: ~17 pytest rows (tiered gates, server reuse on C=256). | **Yes** — M1 close on MI300X                          |
 | A-2 | **MI355X threshold seeds**    | `*_mi355x_*` dirs from Section 4.3 (ATOM run 27912164002)                                                                                                                         | **No** — in tree; lab confirm when hardware available |
 | A-3 | **Run card / PR evidence**    | HTML report, log file, bundle zip; log image, `gpu_arch`, TP8, KV mode, inline `atom_args`                                                                                            | Per arch                                              |
 | A-4 | **Flip `enforce_thresholds`** | MI300X perf: after confirming CVS run. MI355X: when lab available. Smoke/MTP3: stay record-only until explicitly calibrated                                                       | MI300X perf only for M1                               |
-| A-5 | **W1 MTP3 (optional)**        | `mi300x_inferencex-atom-single_deepseek-r1_fp8_mtp3` lab + Section 4.2 thresholds                                                                                                                   | **No** — post-M1; does not block M2                   |
+| A-5 | **W1 MTP3 (optional)**        | `mi300x_inferencex-atom_deepseek-r1_fp8_mtp3` lab + Section 4.2 thresholds                                                                                                                   | **No** — post-M1; does not block M2                   |
 
 
 ### Phase B — Metrics pipeline
@@ -734,12 +744,12 @@ flowchart TB
 
 | ID  | Action        | Details                                                                                        |
 | --- | ------------- | ---------------------------------------------------------------------------------------------- |
-| C-0 | **W1**        | **Done** on branch (perf/smoke/mtp3); MI300X perf lab closes M1                                |
-| C-2 | **W2**        | MI300X first: GPT-OSS MXFP4 TP4, ISL 8K / OSL 1K; replace interim `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` |
+| C-0 | **W1**        | **Done** on branch (single/mtp3); MI300X single-node lab closes M1                                |
+| C-2 | **W2**        | MI300X first: GPT-OSS MXFP4 TP4, ISL 8K / OSL 1K; replace interim `mi300x_inferencex-atom_gpt-oss-120b_bf16` |
 | C-3 | **W3**        | MI300X: GLM 5.1 BF16; MI355X dir when hardware available                                       |
 | C-4 | **W13**       | Kimi K2.7 Code — MI300X first                                                                  |
 | C-5 | **W17**       | DeepSeek R1 MXFP4 — MI300X first                                                               |
-| C-6 | **Parity frameworks (M4)** | Ship `inferencex_atom_vllm_single` + `inferencex_atom_sglang_single` per P1 workload (Section 12.3); gates M5 multi-node on parity engines |
+| C-6 | **Parity drivers (M4)** | Single-node W1 stems with `driver=vllm_atom` and `driver=sglang` alongside `driver=atom` (Section 12.3) |
 
 
 ### Phase D — Accuracy + CI (M2)
@@ -747,7 +757,7 @@ flowchart TB
 
 | ID  | Action                  | Details                                                                                                         |
 | --- | ----------------------- | --------------------------------------------------------------------------------------------------------------- |
-| D-1 | **Variant stem**         | Add `mi300x_inferencex-atom-single_deepseek-r1_fp8_accuracy` — separate from perf sweep; `enforce_thresholds: true` (Section 5.2) |
+| D-1 | **Variant stem**         | Add `mi300x_inferencex-atom_deepseek-r1_fp8_accuracy` — separate from perf sweep; `enforce_thresholds: true` (Section 5.2) |
 | D-2 | **Harness**             | `run_gsm8k_eval()` — lm-eval or ATOM eval in container; ACC-1 + ACC-2 filters (Section 5.1)                     |
 | D-3 | **Metric namespace**    | `accuracy.gsm8k_exact_match` with `min` ≥ 0.94 FP8; add `ACCURACY_METRICS` display list (Section 5.3)           |
 | D-4 | **Pytest integration**  | `test_gsm8k_accuracy` — not parametrized per conc cell; optional chain after perf job                           |
@@ -764,23 +774,23 @@ flowchart TB
 
 | ID   | Action                | Details                                                                               |
 | ---- | --------------------- | ------------------------------------------------------------------------------------- |
-| M4-1 | **Parity frameworks** | Register `inferencex_atom_vllm_single` + `inferencex_atom_sglang_single` (Section 12.3) |
-| M4-2 | **W1 parity triple**  | ATOM + atom-vllm + atom-sglang dirs on MI300X single-node                             |
+| M4-1 | **Parity drivers** | Document and ship single-node W1 variants per `params.driver` (`atom`, `vllm_atom`, `sglang`) |
+| M4-2 | **W1 parity triple**  | ATOM + vLLM-ATOM + SGLang on MI300X single-node (multinode PP already on M5 drivers) |
 | M4-3 | **Compare report**    | `compare.vllm.*` / `compare.sglang.*` in HTML (Section 12.6)                        |
 
 
-### Phase F — Multi-node + scaling (M5 — P1 after parity)
+### Phase F — Multi-node + scaling (M5 — P1)
 
 
-| ID   | Action                      | Details                                                                                                           | Blocker?                                      |
-| ---- | --------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| F-1  | **Multi-node cluster JSON** | Example `mi300x_atom_multi.json` (2+ nodes, `node_dict`, volumes, sshd-ready); document launcher vs worker IPs      | Hardware available                            |
-| F-2  | **`params.nnodes` in Job**  | CVS-14: extend `InferenceXAtomJob` serve + bench for head/worker; reuse `test_setup_sshd` gate                      | IX/ATOM recipe supports distributed serve    |
-| F-3  | **W1 multi-node variant**   | `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_multi` (or `nnodes` in sweep) — same ISL/OSL/conc as single-node reference cell | M4 not required for ATOM-only path; parity suites follow M4-1 |
-| F-4  | **Scaling metrics**         | Emit `scaling.efficiency_pct`, per-rank throughput; Tier 5 + tracker row #32                                      | F-2                                           |
-| F-5  | **Thresholds**              | Per-arch multi-node `threshold.json` (2-node reference); never copy single-node → multi-node blindly               | Lab confirm                                   |
-| F-6  | **Parity multi-node**       | After M4-1: atom-vllm + atom-sglang multi-node stems when upstream engines support `nnodes>1`                      | M4-1 + engine multi-node support              |
-| F-7  | **Run card / fabric**       | `nnodes`, NIC model, IB/RDMA modules on run card (Thor2 first)                                                      | Lab metadata                                  |
+| ID   | Action                      | Details                                                                                                           | Status |
+| ---- | --------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------ |
+| F-1  | **Multi-node cluster JSON** | `inferencex_atom_cluster.json` with 2+ `node_dict` entries; document head IP → `params.master_addr`               | **Shipped** — edit per lab |
+| F-2  | **`params.nnodes` in Job**  | `InferenceXAtomJob`: vLLM PP flags for `vllm_atom`; SGLang PP for `sglang`; SPMD DP for `atom`; `test_setup_sshd` | **Shipped** |
+| F-3  | **W1 multi-node variants**  | `*_distributed`, `*_baseline_sweep_distributed` (`vllm_atom`, PP=2); `*_sglang_distributed`                         | **Shipped** — lab recalibrate thresholds |
+| F-4  | **Scaling metrics**         | `scaling.efficiency_pct` in multinode thresholds + parser                                                         | **Shipped** |
+| F-5  | **Thresholds**              | Cell keys `PP=2,NNODES=2`; recalibrate after true PP lab runs — do not trust pre-PP-orch numbers                  | **Pending lab** |
+| F-6  | **Single-node parity**      | M4: same sweep on `driver=atom` vs uplift `vllm` / future dedicated parity stems                                  | Not started |
+| F-7  | **Run card / fabric**       | `ib_netdev`, NIC model, container image pin on multinode run card                                                 | Partial — `ib_netdev` in config schema |
 
 
 ### Phases G–H (M6–M7)
@@ -800,11 +810,11 @@ flowchart TB
 | ID    | Action                            | Details                                                                                                           |
 | ----- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | DOC-1 | **Link tracker → plan**           | Point readers to W1–W18 table (Section 3) from `docs/reference/configuration-files/inferencex_atom.rst`           |
-| DOC-2 | **Clarify interim vLLM variants** | Mark `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` as uplift placeholder until W2 ATOM lands                                       |
-| DOC-3 | **MI300X in user docs**           | State explicitly that `inferencex_atom_single` supports **MI300X and MI355X**; MI355X lab pending per Section 1.2 |
-| DOC-4 | **Variant README**                | Keep `inferencex_atom_single/README.md` in sync with smoke/perf commands and Section 1.5                          |
+| DOC-2 | **Clarify interim vLLM variants** | Mark `mi300x_inferencex-atom_gpt-oss-120b_bf16` as uplift placeholder until W2 ATOM lands                                       |
+| DOC-3 | **MI300X in user docs**           | State explicitly that `inferencex_atom` supports **MI300X and MI355X**; MI355X lab pending per Section 1.2 |
+| DOC-4 | **Variant README**                | Keep `inferencex_atom/README.md` in sync with drivers, multinode PP runbook, and Section 1.5 |
 | DOC-5 | **PR checklist**                  | M1 PR: MI300X HTML + logs; note MI355X pending; `pip install -e` called out                                       |
-| DOC-6 | **Multi-node milestone**          | Document M5 ordering (after M4 parity, before M6 MTP); cluster multi JSON when F-1 lands                            |
+| DOC-6 | **Multi-node milestone**          | Document M5 PP=2 via `vllm_atom`/`sglang`; lab recalibration before enforcing multinode gates                      |
 
 
 ---
@@ -837,11 +847,11 @@ Supplements Sections 5–6 with perf variant modes, workload-specific quality te
 
 ### 12.1 Functional and perf variant modes
 
-Beyond `_perf`, `_smoke`, `_mtp3`, and `_accuracy`, CVS should support **variant suffixes** (separate dirs or `params.mode`) so the same workload recipe can run different bench shapes without forking the suite id.
+Beyond `_single`, `_mtp3`, and `_accuracy`, CVS should support **variant suffixes** (separate dirs or `params.mode`) so the same workload recipe can run different bench shapes without forking the suite id.
 
 | Mode suffix | Test id | Config knobs | Gate? | Purpose |
 | ----------- | ------- | ------------ | ----- | ------- |
-| `_smoke` | **PERF-0** | Low `num_prompts`, one conc cell | Pre-M1 only | Path validation (shipped W1) |
+| `_single` | **PERF-0** | W1 single-node reference (2 conc cells) | M1 | Primary single-node ATOM stem |
 | `_perf` | **PERF-1** | `dataset_name: random`, `request_rate: inf` | **M1** | Primary throughput/latency sweep |
 | `_goodput` | **PERF-2** | Finite `request_rate` + optional `goodput_slo` per sweep combo | P2 | Tracker #31; enables non-null `client.goodput` |
 | `_trace` | **PERF-3** | `dataset_name: sharegpt` (or IX trace id) | P2 | Realistic arrival / length mix (W2 8K ISL) |
@@ -853,7 +863,7 @@ Beyond `_perf`, `_smoke`, `_mtp3`, and `_accuracy`, CVS should support **variant
 | `_api_smoke` | **FUNC-1** | Single chat + completion curl after `wait_ready` | P2 | API contract / chat template sanity |
 | `_health` | **FUNC-2** | `/health`, model list, max_tokens=1 | Record | Liveness distinct from bench throughput |
 
-**Infrastructure tests (already in `inferencex_atom_single.py`)**
+**Infrastructure tests (already in `inferencex_atom.py`)**
 
 | Test id | Pytest | Metrics / outcome |
 | ------- | ------ | ----------------- |
@@ -901,40 +911,42 @@ Section 5 covers **gsm8k** for general reasoning/quant paths. P1/P2 workloads ne
 
 Variant naming: `<workload>_mi300x_atom_accuracy` for gsm8k; add `_code_accuracy`, `_longctx_accuracy` when a workload needs multiple ACC stages.
 
-### 12.3 Framework parity suites — `inferencex_atom_vllm` and `inferencex_atom_sglang`
+### 12.3 Framework parity — drivers within `inferencex_atom`
 
-**Policy:** Do **not** extend legacy `vllm_single` or SGLang disagg wrappers for IX parity. Add **two new CVS frameworks** that share the InferenceX variant layout but swap the serving engine.
+**Policy:** Do **not** extend legacy `vllm_single` or SGLang disagg wrappers for IX parity. Use **`params.driver`** on the same `inferencex_atom` framework and variant layout.
 
-| Framework id | Engine | Job / orch | Bench client |
-| ------------ | ------ | ---------- | ------------ |
-| **`inferencex_atom_vllm_single`** | ROCm vLLM | `InferenceXAtomJob` `params.driver=vllm` or `InferenceXAtomVllmJob` | `vllm bench serve` |
-| **`inferencex_atom_sglang_single`** | ROCm SGLang | `InferenceXAtomSglangJob` | SGLang-compatible serving bench |
-| **`inferencex_atom_single`** | ATOM | `InferenceXAtomJob` `params.driver=atom` | `atom.benchmarks.benchmark_serving` |
+| Driver | Engine role | Server args | Multinode PP |
+| ------ | ----------- | ----------- | ------------ |
+| **`atom`** | Standalone ATOM | `roles.server.atom_args` | SPMD DP only (not PP) |
+| **`vllm_atom`** | vLLM coordinator + ATOM kernels | `roles.server.serve_args` + `ib_netdev` | **PP=2 shipped** (M5) |
+| **`sglang`** | SGLang coordinator | `roles.server.sglang_args` + `ib_netdev` | **PP=2 shipped** (M5) |
+| **`vllm`** | Interim ROCm vLLM uplift | `roles.server.serve_args` | Same PP flags as `vllm_atom` when `nnodes>1` |
 
-**Variant directory pairing (per workload × arch)**
+**Variant pairing (W1 DeepSeek R1 FP8, MI300X)**
 
-| ATOM reference | vLLM parity sibling | SGLang parity sibling |
-| -------------- | ------------------- | --------------------- |
-| `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf` | `mi300x_inferencex-atom-single_deepseek-r1_fp8_vllm_perf` | `mi300x_inferencex-atom-single_deepseek-r1_fp8_sglang_perf` |
-| `gpt_oss_120b_mi300x_atom` (W2) | `gpt_oss_120b_mi300x_atom_vllm` | `gpt_oss_120b_mi300x_atom_sglang` |
+| Use case | Config stem |
+| -------- | ----------- |
+| Single-node ATOM reference | `mi300x_inferencex-atom_deepseek-r1_fp8_single` |
+| Multinode PP=2 vLLM-ATOM | `mi300x_inferencex-atom_deepseek-r1_fp8_distributed` |
+| Multinode PP=2 SGLang | `mi300x_inferencex-atom_deepseek-r1_fp8_sglang_distributed` |
+| DTNI baseline sweep multinode PP=2 | `mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_distributed` |
 
 Rules:
 
-- **Same** sweep cells, `gpu_arch`, and `model.id` as the ATOM reference.
-- **Separate** `threshold.json` per framework — calibrate each engine independently.
-- **Shared** sweep/model/threshold layout across parity triples; engine-specific args in `roles.server.atom_args` (ATOM), `roles.server.serve_args` (vLLM), or future `sglang_args`.
-- Interim `mi300x_inferencex-atom-single_gpt-oss-120b_bf16` remains an uplift placeholder until W2 ATOM + parity triple lands.
+- **Same** sweep cells and `model.id` within a comparison family; **separate** `threshold.json` per driver/arch.
+- Threshold cell keys: single-node `ISL=…,TP=8,CONC=…`; multinode PP `…,PP=2,NNODES=2,CONC=…`.
+- Interim `mi300x_inferencex-atom_gpt-oss-120b_bf16` remains `driver=vllm` until W2 ATOM lands.
 
-**M4 deliverables:** M4-1 registry + loaders; M4-2 W1 parity triple on MI300X; M4-3 `compare.*` HTML rows (Section 12.6).
+**M4 deliverables (still open):** single-node parity triple on MI300X; `compare.vllm.*` / `compare.sglang.*` HTML (Section 12.6).
 
-**M5 follow-on (P1):** Multi-node stems for each parity framework when hardware and upstream `nnodes>1` support exist (Section 1.7, Phase F).
+**M5 (landed in repo):** multinode PP stems for `vllm_atom` and `sglang`; lab recalibration pending.
 
 ```mermaid
 flowchart LR
   REF["Same sweep ISL/OSL/conc"]
-  A["inferencex_atom_single"]
-  V["inferencex_atom_vllm_single"]
-  S["inferencex_atom_sglang_single"]
+  A["driver=atom"]
+  V["driver=vllm_atom"]
+  S["driver=sglang"]
   REF --> A
   REF --> V
   REF --> S
@@ -1000,16 +1012,18 @@ Regression and **M4 parity** metrics. Use `min_ratio` / `max_ratio` / `within` p
 | Risk                                            | Mitigation                                                                     |
 | ----------------------------------------------- | ------------------------------------------------------------------------------ |
 | **Stale installed package on lab runner**       | Section 1.5 — `pip install -e .` before every validation run                   |
-| **vLLM driver mistaken for ATOM done**          | Section 0 + Phase 0 status; `params.driver` must be `atom` for W1              |
+| **PP mislabeled on `driver=atom`**              | Standalone ATOM has no PP; multinode PP validation must use `vllm_atom` or `sglang` (Section 1.7, 2.1) |
+| **Uncoupled multinode replicas**                | Never run PP=2 configs with `driver=atom`; orchestrator must inject vLLM/SGLang coordinator flags |
+| **vLLM driver mistaken for W1 ATOM done**       | W1 single-node gates use `params.driver=atom`; GPT-OSS uplift uses `vllm` only |
 | **Wrong workload on branch (GPT-OSS TP8 BF16)** | W2 spec is MXFP4 TP4; track as interim in DOC-2                                |
 | **Upstream ATOM CI drift**                      | Pin docker tag + run URL in variant README; re-pull Section 4.3 on image bumps |
 | **MI300X vs MI355X threshold bleed**            | Separate variant dirs + `threshold.json` per `gpu_arch`                        |
+| **Multinode thresholds from broken runs**       | Recalibrate `PP=2` stems after true PP lab; pre-orch numbers measured uncoupled replicas |
 | **p90/p95 threshold false failures**            | Section 1.4 — record-only when artifact omits percentiles                      |
 | **MTP flakes**                                  | Separate variant dir; post-M1; chat-template checklist                         |
 | **Metric key drift**                            | B-1 / Section 1.4; forbid thresholds in config                                 |
 | **192 matrix scope creep**                      | MI300X spine first; MI355X parallel track pending Section 1.2                  |
-| **Multi-node blocked on single-node lab**       | M5 deferred per Section 1.7; ship Job/config hooks without blocking M1–M4      |
-| **Parity before multi-node on vLLM/SGLang**     | M4-1 before F-6; ATOM-only multi-node (F-3) may proceed when recipe allows     |
+| **Missing `ib_netdev` / container image**       | Config loader rejects `nnodes>1` without `ib_netdev`; set vLLM+ATOM or SGLang image before lab |
 | **Secrets in verbose logs**                     | Rotate HF token; avoid logging env exports in CI capture when possible         |
 
 

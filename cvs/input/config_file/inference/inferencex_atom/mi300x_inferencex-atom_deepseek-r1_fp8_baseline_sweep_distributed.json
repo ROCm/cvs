@@ -1,0 +1,152 @@
+{
+  "_comment": "DTNI baseline sweep multinode (2x8 GPU, PP=2): 1K/1K + 8K/1K x C=4-256 (14 cells). vLLM-ATOM pipeline parallel; align master_addr and ib_netdev with cluster head.",
+  "schema_version": 1,
+  "framework": "inferencex_atom",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": true,
+  "threshold_json": "mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_distributed_threshold.json",
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:latest",
+    "notes": "MI300X 2-node DTNI baseline matrix (PP=2 vLLM-ATOM); recalibrate thresholds after true PP lab run"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "deepseek-ai/DeepSeek-R1-0528",
+    "remote": 0,
+    "precision": "fp8"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "inferencex_atom_mi300x_multi",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "serve_args": {
+        "kv-cache-dtype": "fp8",
+        "trust-remote-code": true,
+        "enforce-eager": true,
+        "gpu-memory-utilization": "0.95",
+        "block-size": 64,
+        "no-enable-prefix-caching": true
+      },
+      "ib_hca_devices": "auto",
+      "ib_netdev": "auto",
+      "env": {
+        "VLLM_ROCM_USE_AITER": "1",
+        "AMDGCN_USE_BUFFER_OPS": "0"
+      }
+    }
+  },
+  "params": {
+    "driver": "vllm_atom",
+    "port_no": "8000",
+    "tensor_parallelism": "8",
+    "random_range_ratio": "0.8",
+    "num_prompts": "1000",
+    "max_model_length": "10240",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60",
+    "pipeline_parallel_size": "2",
+    "nnodes": "2",
+    "master_addr": "{head-node-ip}",
+    "master_port": "29501",
+    "scaling_baseline_output_throughput": "1500"
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "name": "baseline_1k_1k",
+        "isl": "1024",
+        "osl": "1024"
+      },
+      {
+        "name": "baseline_8k_1k",
+        "isl": "8192",
+        "osl": "1024"
+      }
+    ],
+    "runs": [
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 4
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 8
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 16
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 32
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 64
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 128
+      },
+      {
+        "combo": "baseline_1k_1k",
+        "concurrency": 256
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 4
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 8
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 16
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 32
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 64
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 128
+      },
+      {
+        "combo": "baseline_8k_1k",
+        "concurrency": 256
+      }
+    ]
+  }
+}

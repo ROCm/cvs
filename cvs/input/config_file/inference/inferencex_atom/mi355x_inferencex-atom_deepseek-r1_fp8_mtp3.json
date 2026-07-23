@@ -1,17 +1,18 @@
 {
-  "_comment": "MI300X W1 smoke: one cell (C=128), num_prompts=128. Record-only; do not use for threshold calibration.",
+  "_comment": "W1 DeepSeek R1 FP8+MTP3 on 8x MI355X. Recipe: dsr1-fp8-mi355x-atom-mtp3. Thresholds: plan Section 4.3.2.",
   "schema_version": 1,
-  "framework": "inferencex_atom_single",
-  "gpu_arch": "mi300x",
+  "framework": "inferencex_atom",
+  "gpu_arch": "mi355x",
   "enforce_thresholds": false,
-  "threshold_json": "mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_threshold.json",
+  "threshold_json": "mi355x_inferencex-atom_deepseek-r1_fp8_mtp3_threshold.json",
   "run_card": {
-    "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "Smoke test only — validates ATOM server+bench path; run mi300x_inferencex-atom-single_deepseek-r1_fp8_perf for calibration"
+    "upstream_run_url": "https://github.com/ROCm/ATOM/actions/runs/27912164002",
+    "atom_image_pin": "rocm/atom-dev:nightly_202606211542",
+    "notes": "MTP3 cells from ATOM CI run 27912164002"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
-    "models_dir": "{shared_fs}/models",
+    "models_dir": "/home/models",
     "log_dir": "{shared_fs}/LOGS",
     "hf_token_file": "{shared_fs}/.hf_token"
   },
@@ -22,8 +23,8 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "inferencex_atom_mi300x",
-    "image": "rocm/atom-dev:latest",
+    "name": "inferencex_atom_mi355x",
+    "image": "rocm/atom-dev:nightly_202606211542",
     "runtime": {
       "name": "docker",
       "args": {
@@ -32,7 +33,8 @@
         "privileged": true,
         "shm_size": "128G",
         "volumes": [
-          "/home/{user-id}:/home/{user-id}"
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
         ],
         "devices": [
           "/dev/dri",
@@ -48,7 +50,11 @@
         "8",
         "--kv_cache_dtype",
         "fp8",
-        "--trust-remote-code"
+        "--trust-remote-code",
+        "--method",
+        "mtp",
+        "--num-speculative-tokens",
+        "3"
       ],
       "env": {
         "ATOM_DISABLE_MMAP": "true"
@@ -60,27 +66,29 @@
     "port_no": "8000",
     "tensor_parallelism": "8",
     "random_range_ratio": "0.8",
-    "num_prompts": "128",
+    "num_prompts": "1000",
     "max_model_length": "4096",
     "metric_percentiles": "95,99",
-    "reuse_server_across_sweep": "false",
-    "server_warmup_wait_s": "120",
-    "client_initial_wait_s": "60",
-    "client_poll_count": "60",
+    "bench_extra_args": "--use-chat-template",
+    "client_poll_count": "80",
     "client_poll_wait_time": "60"
   },
   "sweep": {
     "sequence_combinations": [
       {
-        "name": "w1_smoke_1k_1k",
+        "name": "w1_1k_1k",
         "isl": "1024",
         "osl": "1024"
       }
     ],
     "runs": [
       {
-        "combo": "w1_smoke_1k_1k",
+        "combo": "w1_1k_1k",
         "concurrency": 128
+      },
+      {
+        "combo": "w1_1k_1k",
+        "concurrency": 256
       }
     ]
   }

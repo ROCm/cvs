@@ -593,7 +593,7 @@ auto-loads it when the stem matches `cvs run …` and writes HTML/JSON/viewer at
 end when `--html` is set. Reports are render-only and do not change pass/fail.
 
 Do **not** wire reports in suite `conftest.py`. **IX-atom reference:**
-`presets/inferencex_atom_single.py` + `presets/inferencex_atom.py`.
+`presets/inferencex_atom.py` + `presets/inferencex_atom.py`.
 
 ---
 

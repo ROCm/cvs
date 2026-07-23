@@ -57,7 +57,11 @@ METRIC_TIERS: dict[str, tuple[str, ...]] = {
         "success_rate",
         "failed",
     ),
+    "scaling": ("efficiency_pct",),
 }
+
+SCALING_METRICS: tuple[str, ...] = METRIC_TIERS["scaling"]
+SCALING_METRIC_UNITS: dict[str, str] = {"efficiency_pct": "%"}
 
 METRIC_TIER_ORDER: tuple[str, ...] = tuple(METRIC_TIERS.keys()) + ("record",)
 
@@ -67,22 +71,46 @@ RECORD_METRICS: tuple[str, ...] = tuple(short for short, _unit in CLIENT_METRICS
 ENFORCED_METRICS = frozenset(_tiered)
 
 
-def to_client_metrics(raw, *, tp, isl):
+def scaling_efficiency_pct(actual_output_throughput, *, baseline_single_node, nnodes):
+    """Linear scaling efficiency: actual / (single-node baseline × nnodes)."""
+    denom = _safe_div(baseline_single_node, 1)
+    if denom is None or int(nnodes) < 1:
+        return None
+    ideal = denom * int(nnodes)
+    if ideal <= 0:
+        return None
+    return _safe_div(actual_output_throughput, ideal)
+
+
+def to_client_metrics(raw, *, tp, isl, scaling_baseline_output_throughput=None, nnodes=1):
     """Map an ATOM ``results.json`` dict to the ``client.*`` namespace for IX."""
     m = _vllm_to_client_metrics(raw, tp=tp, isl=isl)
     m["client.output_tput_per_gpu"] = _safe_div(raw.get("output_throughput"), tp)
+    if scaling_baseline_output_throughput is not None:
+        eff = scaling_efficiency_pct(
+            raw.get("output_throughput"),
+            baseline_single_node=scaling_baseline_output_throughput,
+            nnodes=nnodes,
+        )
+        if eff is not None:
+            m["scaling.efficiency_pct"] = eff * 100.0
     return m
 
 
 def tier_metric_specs(thresholds_cell: dict, tier: str) -> dict[str, dict]:
-    """Return ``client.*`` threshold specs for one tier in a sweep cell."""
+    """Return threshold specs for one tier in a sweep cell."""
     if tier == "record":
         names = RECORD_METRICS
+        prefix = "client."
+    elif tier == "scaling":
+        names = SCALING_METRICS
+        prefix = "scaling."
     else:
         names = METRIC_TIERS.get(tier, ())
+        prefix = "client."
     specs = {}
     for short in names:
-        full = f"client.{short}"
+        full = f"{prefix}{short}"
         spec = thresholds_cell.get(full)
         if spec is not None:
             specs[full] = spec

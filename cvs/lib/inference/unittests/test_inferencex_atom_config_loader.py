@@ -29,23 +29,53 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
     def test_load_mi300x_sample_config(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom_single/"
-            "mi300x_inferencex-atom-single_gpt-oss-120b_bf16_config.json"
+            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_gpt-oss-120b_bf16.json"
         )
         variant = load_variant(config, _cluster_dict())
-        self.assertEqual(variant.framework, "inferencex_atom_single")
+        self.assertEqual(variant.framework, "inferencex_atom")
         self.assertEqual(variant.params.driver, "vllm")
         self.assertEqual(variant.expected_cells(), ["ISL=7168,OSL=1024,TP=8,CONC=64"])
         self.assertIn("enforce-eager", variant.roles.server.serve_args)
 
+    def test_deprecated_framework_alias_normalizes(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="w1", isl="1024", osl="1024")],
+            runs=[Run(combo="w1", concurrency=128)],
+        )
+        variant = InferenceXAtomVariantConfig(
+            schema_version=1,
+            framework="inferencex_atom_single",
+            gpu_arch="mi300x",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
+            container={
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
+            },
+            params={
+                "driver": "atom",
+                "tensor_parallelism": "8",
+                "num_prompts": "100",
+            },
+            sweep=sweep,
+            thresholds={},
+        )
+        self.assertEqual(variant.framework, "inferencex_atom")
+
     def test_load_w1_mi300x_atom_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom_single/"
-            "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json"
+            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_single.json"
         )
         variant = load_variant(config, _cluster_dict())
-        self.assertEqual(variant.threshold_json, "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_threshold.json")
+        self.assertEqual(variant.threshold_json, "mi300x_inferencex-atom_deepseek-r1_fp8_single_threshold.json")
         self.assertEqual(variant.gpu_arch, "mi300x")
         self.assertEqual(variant.params.driver, "atom")
         self.assertEqual(variant.params.metric_percentiles, "95,99")
@@ -67,21 +97,112 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         ):
             self.assertIn(key, variant.thresholds[cell])
 
-    def test_load_w1_mi300x_smoke_variant(self):
+    def test_load_w1_mi300x_multinode_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom_single/"
-            "mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_config.json"
+            "input/config_file/inference/inferencex_atom/"
+            "mi300x_inferencex-atom_deepseek-r1_fp8_distributed.json"
         )
         variant = load_variant(config, _cluster_dict())
-        self.assertEqual(variant.params.num_prompts, "128")
-        self.assertEqual(variant.expected_cells(), ["ISL=1024,OSL=1024,TP=8,CONC=128"])
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.roles.server.ib_netdev, "auto")
+        self.assertEqual(variant.roles.server.ib_hca_devices, "auto")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
+        self.assertTrue(variant.enforce_thresholds)
+        self.assertEqual(len(variant.expected_cells()), 15)
+        cell = "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertIn(cell, variant.expected_cells())
+        self.assertEqual(
+            variant.thresholds[cell]["scaling.efficiency_pct"],
+            {"kind": "min", "value": 22},
+        )
 
-    def test_load_w1_mi355x_atom_perf_variant_and_thresholds(self):
+    def test_load_w1_mi300x_multinode_sglang_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom_single/"
-            "mi355x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json"
+            "input/config_file/inference/inferencex_atom/"
+            "mi300x_inferencex-atom_deepseek-r1_fp8_sglang_distributed.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "sglang")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertFalse(variant.enforce_thresholds)
+        cell = "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertIn(cell, variant.expected_cells())
+
+    def test_load_w1_mi355x_multinode_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi355x_inferencex-atom_deepseek-r1_fp8_distributed.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "4000")
+        self.assertFalse(variant.enforce_thresholds)
+        self.assertEqual(len(variant.expected_cells()), 15)
+        cell = "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertIn(cell, variant.expected_cells())
+        self.assertEqual(
+            variant.thresholds[cell]["scaling.efficiency_pct"],
+            {"kind": "min", "value": 50},
+        )
+
+    def test_load_baseline_sweep_mi300x_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.max_model_length, "10240")
+        self.assertTrue(variant.enforce_thresholds)
+        self.assertEqual(len(variant.expected_cells()), 14)
+        self.assertIn("ISL=1024,OSL=1024,TP=8,CONC=4", variant.expected_cells())
+        self.assertIn("ISL=8192,OSL=1024,TP=8,CONC=256", variant.expected_cells())
+        cell = "ISL=8192,OSL=1024,TP=8,CONC=128"
+        self.assertIn("client.output_throughput", variant.thresholds[cell])
+        self.assertEqual(variant.thresholds[cell]["client.success_rate"]["value"], 1)
+
+    def test_load_baseline_sweep_multinode_mi300x_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi300x_inferencex-atom_deepseek-r1_fp8_baseline_sweep_distributed.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.params.max_model_length, "10240")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
+        self.assertTrue(variant.enforce_thresholds)
+        self.assertEqual(len(variant.expected_cells()), 14)
+        cell = "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=4"
+        self.assertIn(cell, variant.expected_cells())
+        self.assertEqual(
+            variant.thresholds[cell]["scaling.efficiency_pct"],
+            {"kind": "min", "value": 9.0},
+        )
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi355x_inferencex-atom_deepseek-r1_fp8_baseline_sweep.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertFalse(variant.enforce_thresholds)
+        self.assertEqual(len(variant.expected_cells()), 14)
+
+    def test_load_w1_mi355x_atom_single_variant_and_thresholds(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_single.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.gpu_arch, "mi355x")
@@ -103,8 +224,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
     def test_load_w1_mi355x_atom_mtp3_inline_bench_args(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom_single/"
-            "mi355x_inferencex-atom-single_deepseek-r1_fp8_mtp3_config.json"
+            "input/config_file/inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_mtp3.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertIn("--method", variant.roles.server.atom_args)
@@ -113,8 +233,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
     def test_load_w1_mi355x_atom_mtp3_thresholds(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom_single/"
-            "mi355x_inferencex-atom-single_deepseek-r1_fp8_mtp3_config.json"
+            "input/config_file/inference/inferencex_atom/mi355x_inferencex-atom_deepseek-r1_fp8_mtp3.json"
         )
         variant = load_variant(config, _cluster_dict())
         cell = "ISL=1024,OSL=1024,TP=8,CONC=256"
@@ -133,7 +252,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         }
         variant = InferenceXAtomVariantConfig(
             schema_version=1,
-            framework="inferencex_atom_single",
+            framework="inferencex_atom",
             gpu_arch="mi300x",
             enforce_thresholds=False,
             paths={
@@ -156,11 +275,10 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         block = orchestrator_container_from_variant(variant)
         self.assertEqual(block["env"]["VLLM_ROCM_USE_AITER"], "1")
 
-    def test_expand_sweep_matches_w1_perf(self):
+    def test_expand_sweep_matches_w1_single(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom_single/"
-            "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json"
+            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_single.json"
         )
         import json
 
@@ -171,11 +289,10 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         self.assertEqual(ids[1], "w1_1k_1k-conc256")
         self.assertEqual(cases[0][1], 128)
 
-    def test_w1_perf_threshold_health_gates_tight_when_enforcing(self):
+    def test_w1_single_threshold_health_gates_tight_when_enforcing(self):
         root = Path(__file__).resolve().parents[3]
         config = root / (
-            "input/config_file/inference/inferencex_atom_single/"
-            "mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json"
+            "input/config_file/inference/inferencex_atom/mi300x_inferencex-atom_deepseek-r1_fp8_single.json"
         )
         variant = load_variant(config, _cluster_dict())
         self.assertTrue(variant.enforce_thresholds)
@@ -199,7 +316,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         with self.assertRaises(ValueError):
             InferenceXAtomVariantConfig(
                 schema_version=1,
-                framework="inferencex_atom_single",
+                framework="inferencex_atom",
                 gpu_arch="mi300x",
                 enforce_thresholds=False,
                 paths={
@@ -238,6 +355,84 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         }
         _, _, ids = expand_sweep_parametrize(sweep, ("metric_tier",))
         self.assertIn("w1-conc128-throughput", ids)
+
+    def test_ib_netdev_coerces_mlx5_hca_name_to_auto(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="w1", isl="512", osl="512")],
+            runs=[Run(combo="w1", concurrency=16)],
+        )
+        variant = InferenceXAtomVariantConfig(
+            schema_version=1,
+            framework="inferencex_atom",
+            gpu_arch="mi300x",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
+            container={
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
+            },
+            roles={"server": {"ib_netdev": "mlx5_0"}},
+            params={
+                "driver": "vllm_atom",
+                "tensor_parallelism": "8",
+                "pipeline_parallel_size": "2",
+                "nnodes": "2",
+                "master_addr": "10.0.0.1",
+            },
+            sweep=sweep,
+            thresholds={},
+        )
+        self.assertEqual(variant.roles.server.ib_netdev, "auto")
+
+    def test_server_env_strips_orchestrator_network_keys(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="w1", isl="512", osl="512")],
+            runs=[Run(combo="w1", concurrency=16)],
+        )
+        variant = InferenceXAtomVariantConfig(
+            schema_version=1,
+            framework="inferencex_atom",
+            gpu_arch="mi300x",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
+            container={
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
+            },
+            roles={
+                "server": {
+                    "env": {
+                        "GLOO_SOCKET_IFNAME": "mlx5_0",
+                        "NCCL_IB_HCA": "mlx5_0",
+                        "NCCL_IB_GID_INDEX": "1",
+                    }
+                }
+            },
+            params={
+                "driver": "vllm_atom",
+                "tensor_parallelism": "8",
+                "pipeline_parallel_size": "2",
+                "nnodes": "2",
+                "master_addr": "10.0.0.1",
+            },
+            sweep=sweep,
+            thresholds={},
+        )
+        self.assertEqual(variant.roles.server.env, {"NCCL_IB_GID_INDEX": "1"})
 
 
 if __name__ == "__main__":

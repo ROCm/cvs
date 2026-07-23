@@ -42,7 +42,7 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
       • install_ibperf_tools
   
     cvs.tests.inference.inferencex_atom (1 test suite)
-      • inferencex_atom_single
+      • inferencex_atom
   
     cvs.tests.inference.pytorch_xdit (2 test suites)
       • pytorch_xdit_flux1_dev_single
@@ -631,11 +631,11 @@ You can list all available InferenceX ATOM test cases using the CLI:
 
 .. code:: bash
 
-  cvs list inferencex_atom_single
+  cvs list inferencex_atom
 
 .. code:: text
 
-  Available tests in inferencex_atom_single:
+  Available tests in inferencex_atom:
     - test_launch_container
     - test_inferencex_atom_inference
     - test_print_results_table
@@ -644,18 +644,18 @@ You can list all available InferenceX ATOM test cases using the CLI:
 Use these scripts to run the InferenceX ATOM tests. Supply your own suite JSON
 (``schema_version: 1`` variant config); see :doc:`../reference/configuration-files/inferencex_atom`.
 After ``cvs copy-config``, keep **one** ``*threshold.json`` in the same directory as the
-``--config_file`` you pass (per-variant subdirs under ``~/input/.../inferencex_atom_single/``).
-Copy-paste lab commands: ``cvs/input/config_file/inference/inferencex_atom_single/README.md``.
+``--config_file`` you pass (per-variant subdirs under ``~/input/.../inferencex_atom/``).
+Copy-paste lab commands: ``cvs/input/config_file/inference/inferencex_atom/README.md``.
 
 .. code:: bash
 
   TS=$(date +%Y%m%d_%H%M%S)
-  cvs run inferencex_atom_single \
-    --cluster_file ~/input/cluster_file/mi300x_atom_single.json \
-    --config_file ~/input/config_file/inference/inferencex_atom_single/smoke/mi300x_inferencex-atom-single_deepseek-r1_fp8_smoke_config.json \
-    --html=~/cvs_results/${TS}_ix-atom-smoke_mi300x.html \
+  cvs run inferencex_atom \
+    --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
+    --config_file ~/input/config_file/inference/inferencex_atom/single/mi300x_inferencex-atom_deepseek-r1_fp8_single.json \
+    --html=~/cvs_results/${TS}_ix-atom-single_mi300x.html \
     --self-contained-html \
-    --log-file=~/cvs_results/${TS}_ix-atom-smoke_mi300x.log \
+    --log-file=~/cvs_results/${TS}_ix-atom-single_mi300x.log \
     -vvv -s
 
 

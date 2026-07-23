@@ -28,7 +28,7 @@ class _LegacyInferenceXAtomInferenceJobPlaceholder:
         raise NotImplementedError(
             "InferenceMax is deprecated. Use ``cvs.lib.inference.inferencex_atom.inferencex_atom_orch.InferenceXAtomJob`` "
             "with ``ContainerOrchestrator`` from the tests under ``cvs.tests.inference.inferencex_atom`` "
-            "(``inferencex_atom_single`` suite and schema_version 1 configs)."
+            "(``inferencex_atom`` suite and schema_version 1 configs)."
         )
 
 
@@ -60,7 +60,7 @@ class InferenceJobFactory:
         """
         if 'inferencemax_repo' in inference_config_dict:
             log.warning(
-                "inferencemax_repo detected; InferenceMax is deprecated — use the inferencex_atom_single suite instead"
+                "inferencemax_repo detected; InferenceMax is deprecated — use the inferencex_atom suite instead"
             )
             return 'inferencex_atom'
         elif 'vllm_script_path' in inference_config_dict:
@@ -109,7 +109,7 @@ class InferenceJobFactory:
 
         framework_lower = framework.lower()
         if framework_lower == 'inferencemax':
-            log.warning("framework='inferencemax' is deprecated; use inferencex_atom_single")
+            log.warning("framework='inferencemax' is deprecated; use inferencex_atom")
             framework_lower = 'inferencex_atom'
 
         if framework_lower not in cls._FRAMEWORK_CLASSES:
