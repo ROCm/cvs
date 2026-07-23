@@ -1032,11 +1032,12 @@ class TestVllmJobIsReady(unittest.TestCase):
 class TestVllmJobParseResults(unittest.TestCase):
     """parse_results() fetches the client results artifact via orch.exec_on_head
     (which returns {host: content}), json-loads it, and returns
-    to_client_metrics(raw, tp=self.tp, isl=self.isl) per host. Two documented
-    exception modes: empty/missing artifact -> RuntimeError; unparseable JSON ->
-    RuntimeError. Exception assertions pin the TYPE only (message text is an
-    implementation detail per the authoring anti-patterns). The happy path pins the
-    delegation to to_client_metrics with the correct keyword-only tp/isl."""
+    to_client_metrics(raw, tp=self.tp, isl=self.isl, pp=self.pp) per host. Two
+    documented exception modes: empty/missing artifact -> RuntimeError;
+    unparseable JSON -> RuntimeError. Exception assertions pin the TYPE only
+    (message text is an implementation detail per the authoring anti-patterns).
+    The happy path pins the delegation to to_client_metrics with the correct
+    keyword-only tp/isl/pp."""
 
     def test_empty_artifact_raises_runtimeerror(self):
         orch = RecordingOrch(head_responder=lambda cmd: {HEAD: ""}, hosts=[HEAD])
@@ -1050,10 +1051,11 @@ class TestVllmJobParseResults(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             job.parse_results()
 
-    def test_valid_artifact_delegates_to_to_client_metrics_with_tp_isl(self):
-        # tp and isl are keyword-only in to_client_metrics, so they MUST arrive as
-        # kwargs; raw (the json-loaded artifact) arrives positionally. Patching the
-        # symbol as imported into vllm_job keeps this impl-blind on the metric math.
+    def test_valid_artifact_delegates_to_to_client_metrics_with_tp_isl_pp(self):
+        # tp, isl, and pp are keyword-only in to_client_metrics, so they MUST
+        # arrive as kwargs; raw (the json-loaded artifact) arrives positionally.
+        # Patching the symbol as imported into vllm_job keeps this impl-blind on
+        # the metric math.
         #
         # Round-3 finding 1: capture and assert the RETURN VALUE, not just that the
         # mock was called with the right args. Production threads the metric result
@@ -1062,23 +1064,32 @@ class TestVllmJobParseResults(unittest.TestCase):
         # host key, or returns early) would satisfy a call-args-only check while
         # breaking the actual output. The mock's return_value is the independent
         # oracle for what must appear under the head host key.
+        #
+        # Post-mortem finding (Spec A1, loop 1): the prior version of this test
+        # asserted tp/isl only, so a broken pp passthrough at this call site
+        # (e.g. AC6's pp=self.pp regressing to a hardcoded value) would slip
+        # through silently. Assert pp explicitly, and vary it across a subTest
+        # so a mutant that ignores job.pp entirely is also caught.
         import json as _json
 
         raw = {"output_throughput": 1234.0, "request_goodput": 10.0}
         sentinel = {"client.sentinel": 1}
-        orch = RecordingOrch(head_responder=lambda cmd: {HEAD: _json.dumps(raw)}, hosts=[HEAD])
-        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", ib_netdev=None, isl="1024")
-        with mock.patch("cvs.lib.inference.vllm_job.to_client_metrics") as m_tcm:
-            m_tcm.return_value = sentinel
-            result = job.parse_results()
-        self.assertTrue(m_tcm.called, "parse_results must delegate to to_client_metrics")
-        args, kwargs = m_tcm.call_args
-        self.assertEqual(kwargs.get("tp"), job.tp)
-        self.assertEqual(kwargs.get("isl"), job.isl)
-        self.assertEqual(args[0], raw, "raw must be the json-loaded artifact passed positionally")
-        # The metric result must be threaded back out under the head host key --
-        # NOT the raw artifact, and NOT dropped/re-keyed.
-        self.assertEqual(result, {HEAD: sentinel})
+        for pp in ("1", "2"):
+            with self.subTest(pp=pp):
+                orch = RecordingOrch(head_responder=lambda cmd: {HEAD: _json.dumps(raw)}, hosts=[HEAD])
+                job = _job(orch=orch, serve_args={}, nnodes="1", pp=pp, ib_netdev=None, isl="1024")
+                with mock.patch("cvs.lib.inference.vllm_job.to_client_metrics") as m_tcm:
+                    m_tcm.return_value = sentinel
+                    result = job.parse_results()
+                self.assertTrue(m_tcm.called, "parse_results must delegate to to_client_metrics")
+                args, kwargs = m_tcm.call_args
+                self.assertEqual(kwargs.get("tp"), job.tp)
+                self.assertEqual(kwargs.get("isl"), job.isl)
+                self.assertEqual(kwargs.get("pp"), job.pp)
+                self.assertEqual(args[0], raw, "raw must be the json-loaded artifact passed positionally")
+                # The metric result must be threaded back out under the head host key --
+                # NOT the raw artifact, and NOT dropped/re-keyed.
+                self.assertEqual(result, {HEAD: sentinel})
 
 
 # --------------------------------------------------------------------------- #
