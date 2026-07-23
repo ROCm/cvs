@@ -18,9 +18,14 @@ stays thin:
   - Group execution (``run_anc_groups``): run one or more ANC groups in a
     single ``anc.py -g <groups...>`` invocation on all nodes, collect the
     per-run artifacts, and judge pass/fail from the final ANC return code.
+  - Setup guard (``ensure_anc_ready``): session-cached install + ldconfig that
+    each group test calls first, so a single-group run self-installs and a
+    full-suite run pays the setup cost once.
 
 The CPU/GPU group sets consumed by the ``anc_test_cpu`` / ``anc_test_gpu``
-suites live here (``CPU_GROUPS`` / ``GPU_GROUPS``).
+suites live here (``CPU_GROUPS`` / ``GPU_GROUPS``). The per-group test
+functions in those two suite files are GENERATED from these lists by
+build_tools/gen_anc_suites.py (``make gen-anc-suites``); do not hand-edit them.
 '''
 
 import os
@@ -48,7 +53,9 @@ ANC_BIN = f"{ANC_DIR}/anc.py"
 # validate_exe_paths.py ships beside the anc test suites.
 RESOURCES_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "tests", "anc", "resources",
+    "tests",
+    "anc",
+    "resources",
 )
 
 # --- Group sets ----------------------------------------------------------
@@ -99,6 +106,15 @@ ANC_ITEMS_SUMMARY_RE = re.compile(r"^\s*Items:\s*\d+\s*Total\b.*$", re.MULTILINE
 #   "FAILED      i305 mithac      VENICE ES  ANC_ITEM_TIMEOUT".
 ANC_FAILED_ITEM_RE = re.compile(r"^\s*FAILED\s+\S+.*$", re.MULTILINE)
 
+# ANC reports an unknown group both as a FATAL line and a dedicated return code:
+#   "FATAL: Group 'foo' not found"
+#   "Program exiting with return code ANC_PROG_NOT_FOUND [13]"
+# Either is sufficient to conclude the requested group is not installed on that
+# node; matching both covers print_all_to_console on (raw FATAL line streams
+# back) and off (only console.log is collected, which carries the return code).
+ANC_GROUP_NOT_FOUND_RE = re.compile(r"FATAL:\s*Group\s+'([^']*)'\s+not found", re.IGNORECASE)
+ANC_PROG_NOT_FOUND_NAME = "ANC_PROG_NOT_FOUND"
+
 # console.log is the only artifact we must have (holds the verdict). Everything
 # else is pulled best-effort as part of the whole-directory copy.
 CONSOLE_LOG = "console.log"
@@ -135,9 +151,7 @@ ADD_ANC_LOGS_TO_HTML_KEY = "ADD_ANC_LOGS_TO_HTML_REPORTS"
 # explicit --html on the command line always wins over this.
 COLLECT_HTML_REPORTS_KEY = "COLLECT_HTML_REPORTS"
 HTML_REPORT_PATH_KEY = "html_report_path"
-DEFAULT_HTML_REPORT_PATH = (
-    "{runner_log_folder}/html_reports/<node>/<test_name>/<timestamp>"
-)
+DEFAULT_HTML_REPORT_PATH = "{runner_log_folder}/html_reports/<node>/<test_name>/<timestamp>"
 
 
 def cluster_node_label_from_file(cluster_dict):
@@ -161,8 +175,7 @@ def cluster_node_label_from_file(cluster_dict):
     return _sanitize_path_component(f"{ip}_{host}")
 
 
-def resolve_anc_html_report_path(config_dict, cluster_dict, test_name,
-                                 timestamp):
+def resolve_anc_html_report_path(config_dict, cluster_dict, test_name, timestamp):
     '''
     Resolve config anc.html_report_path into an absolute *.html file path for the
     auto-collected pytest-html report. Substitutes "{runner_log_folder}",
@@ -170,9 +183,7 @@ def resolve_anc_html_report_path(config_dict, cluster_dict, test_name,
     "<timestamp>". The resolved template is treated as a directory; the report
     file "<test_name>.html" is placed inside it.
     '''
-    template = config_dict.get("anc", {}).get(
-        HTML_REPORT_PATH_KEY, DEFAULT_HTML_REPORT_PATH
-    )
+    template = config_dict.get("anc", {}).get(HTML_REPORT_PATH_KEY, DEFAULT_HTML_REPORT_PATH)
     runner_base = resolve_runner_results_base(config_dict.get("run_config", {}))
     node = cluster_node_label_from_file(cluster_dict)
     path = template.replace("{runner_log_folder}", runner_base)
@@ -215,9 +226,7 @@ def resolve_anc_log_folder(config_dict, test_name, timestamp, node=None):
     node label is given but the template lacks a "<node>" token, the label is
     appended so per-node artifacts never collide.
     '''
-    template = config_dict.get("anc", {}).get(
-        LOG_FOLDER_PATH_KEY, DEFAULT_LOG_FOLDER_PATH
-    )
+    template = config_dict.get("anc", {}).get(LOG_FOLDER_PATH_KEY, DEFAULT_LOG_FOLDER_PATH)
     runner_base = resolve_runner_results_base(config_dict.get("run_config", {}))
     path = template.replace("{runner_log_folder}", runner_base)
     path = path.replace("<test_name>", test_name)
@@ -234,6 +243,7 @@ def resolve_anc_log_folder(config_dict, test_name, timestamp, node=None):
     # not a home reference, and must not expand); it is a no-op otherwise.
     path = os.path.expanduser(path)
     return os.path.abspath(path)
+
 
 # Default per-run execution timeout (2 hours); override via
 # config["anc"]["test_timeout"].
@@ -304,6 +314,7 @@ def _download_with_progress_snippet(url, dest, interval=ANC_DOWNLOAD_PROGRESS_IN
         f"wait $wpid )"
     )
 
+
 # --- ROCm shared-library resolution --------------------------------------
 # ANC tools (e.g. computerocker) link against ROCm libs. On some nodes the .so
 # files are present under these dirs but not in the dynamic-linker cache, so
@@ -360,10 +371,7 @@ def _fail_unreachable_nodes(cluster_dict, out_dict, action):
     expected = _expected_nodes(cluster_dict)
     missing = [host for host in expected if host not in (out_dict or {})]
     for host in missing:
-        fail_test(
-            f"ANC {action} failed on {host}: node produced no output "
-            f"(unreachable / did not run)"
-        )
+        fail_test(f"ANC {action} failed on {host}: node produced no output (unreachable / did not run)")
     return missing
 
 
@@ -385,8 +393,7 @@ def detect_package_type(anc_release_url):
         if f"-{pkg_type}-" in name or f"-{pkg_type}." in name:
             return pkg_type
     raise ValueError(
-        f"Cannot determine ANC package type from archive name '{name}'; "
-        f"expected a '-deb-', '-rpm-', or '-tar-' token"
+        f"Cannot determine ANC package type from archive name '{name}'; expected a '-deb-', '-rpm-', or '-tar-' token"
     )
 
 
@@ -406,13 +413,8 @@ def node_version_matches(phdl, expected_version):
     print_test_output(log, out_dict)
     # Boundaries are any char that isn't part of a version token (digits, dots,
     # hyphens, alphanumerics) so "1.4.7" won't match inside "1.4.70"/"1.4.7-rc".
-    version_re = re.compile(
-        r"(?<![\w.\-])" + re.escape(expected_version) + r"(?![\w.\-])"
-    )
-    return {
-        host: bool(version_re.search(output or ""))
-        for host, output in out_dict.items()
-    }
+    version_re = re.compile(r"(?<![\w.\-])" + re.escape(expected_version) + r"(?![\w.\-])")
+    return {host: bool(version_re.search(output or "")) for host, output in out_dict.items()}
 
 
 def install_anc(phdl, cluster_dict, config_dict):
@@ -484,15 +486,13 @@ def install_anc(phdl, cluster_dict, config_dict):
         for host in expected:
             if host not in matches:
                 fail_test(
-                    f"ANC version verification failed on {host}: node produced "
-                    f"no output (unreachable / did not run)"
+                    f"ANC version verification failed on {host}: node produced no output (unreachable / did not run)"
                 )
             elif matches[host]:
                 log.info("Node %s: ANC version %s confirmed", host, anc_version)
             else:
                 fail_test(
-                    f"ANC version verification failed on {host}: "
-                    f"expected {anc_version} from '{ANC_BIN} --version'"
+                    f"ANC version verification failed on {host}: expected {anc_version} from '{ANC_BIN} --version'"
                 )
 
     update_test_result()
@@ -514,8 +514,7 @@ def _install_anc_rpm(phdl, cluster_dict, config_dict):
     anc_release_url = anc_cfg["anc_release_url"]
     tarball = anc_release_url.rsplit("/", 1)[-1]
 
-    log.info("ANC: install .rpm package(s) on remote nodes (cvs_home=%s)",
-             cvs_home)
+    log.info("ANC: install .rpm package(s) on remote nodes (cvs_home=%s)", cvs_home)
 
     install_cmd = (
         f"set -e && "
@@ -542,15 +541,9 @@ def _install_anc_rpm(phdl, cluster_dict, config_dict):
 
     for host, output in out_dict.items():
         if "NO_RPM_FOUND" in output:
-            fail_test(
-                f"ANC .rpm installation failed on {host}: "
-                f"no anc*.rpm found after extracting '{tarball}'"
-            )
+            fail_test(f"ANC .rpm installation failed on {host}: no anc*.rpm found after extracting '{tarball}'")
         elif "ANC_INSTALL_SUCCESS" not in output:
-            fail_test(
-                f"ANC .rpm installation failed on {host}: "
-                f"'{ANC_BIN} --help' did not succeed"
-            )
+            fail_test(f"ANC .rpm installation failed on {host}: '{ANC_BIN} --help' did not succeed")
         else:
             log.info("Node %s: ANC .rpm installed and verified", host)
 
@@ -573,8 +566,7 @@ def _install_anc_deb(phdl, cluster_dict, config_dict):
     anc_release_url = anc_cfg["anc_release_url"]
     tarball = anc_release_url.rsplit("/", 1)[-1]
 
-    log.info("ANC: install .deb package(s) on remote nodes (cvs_home=%s)",
-             cvs_home)
+    log.info("ANC: install .deb package(s) on remote nodes (cvs_home=%s)", cvs_home)
 
     install_cmd = (
         f"set -e && "
@@ -597,8 +589,18 @@ def _install_anc_deb(phdl, cluster_dict, config_dict):
         # Configure ONLY the ANC packages (by name), not `-a` (which would
         # configure every pending package on the node). Names come from the
         # .deb control field so we never touch unrelated half-installed pkgs.
+        # `dpkg -i --force-depends` above already configures the packages in the
+        # same step (force-depends lets its configure pass), so this is only a
+        # fallback for the (rare) case where that configure was skipped and a
+        # package is left half-configured. Guard on each package's dpkg status so
+        # we DON'T re-configure already-configured packages: doing so prints
+        # "already installed and configured" to stderr and exits non-zero (noisy
+        # even when swallowed). Only packages not in "install ok installed" get a
+        # configure pass; the `anc.py --help` check below is the real gate.
         f"pkgs=$(for d in $debs; do dpkg-deb -f \"$d\" Package; done) && "
-        f"sudo dpkg --configure --force-depends $pkgs && "
+        f"for p in $pkgs; do "
+        f"if ! dpkg-query -W -f='${{Status}}' \"$p\" 2>/dev/null | grep -q 'install ok installed'; then "
+        f"sudo dpkg --configure --force-depends \"$p\"; fi; done && "
         f"rm -f $debs && "
         f"echo '--- Verification ---' && "
         f"{ANC_BIN} --help && echo 'ANC_INSTALL_SUCCESS'"
@@ -609,15 +611,9 @@ def _install_anc_deb(phdl, cluster_dict, config_dict):
 
     for host, output in out_dict.items():
         if "NO_DEB_FOUND" in output:
-            fail_test(
-                f"ANC .deb installation failed on {host}: "
-                f"no anc*.deb found after extracting '{tarball}'"
-            )
+            fail_test(f"ANC .deb installation failed on {host}: no anc*.deb found after extracting '{tarball}'")
         elif "ANC_INSTALL_SUCCESS" not in output:
-            fail_test(
-                f"ANC .deb installation failed on {host}: "
-                f"'{ANC_BIN} --help' did not succeed"
-            )
+            fail_test(f"ANC .deb installation failed on {host}: '{ANC_BIN} --help' did not succeed")
         else:
             log.info("Node %s: ANC .deb installed and verified", host)
 
@@ -649,8 +645,7 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
     anc_release_url = anc_cfg["anc_release_url"]
     tarball = anc_release_url.rsplit("/", 1)[-1]
 
-    log.info("ANC: install tar release on remote nodes "
-             "(cvs_home=%s, install prefix=%s)", cvs_home, ANC_TOOLS_PREFIX)
+    log.info("ANC: install tar release on remote nodes (cvs_home=%s, install prefix=%s)", cvs_home, ANC_TOOLS_PREFIX)
 
     install_cmd = (
         f"set -e && "
@@ -683,8 +678,7 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
     for host, output in out_dict.items():
         if "ANC_INSTALL_SUCCESS" not in output:
             fail_test(
-                f"ANC installation failed on {host}: "
-                f"'{ANC_BIN}' not found after extracting into {ANC_TOOLS_PREFIX}"
+                f"ANC installation failed on {host}: '{ANC_BIN}' not found after extracting into {ANC_TOOLS_PREFIX}"
             )
         else:
             log.info("Node %s: ANC directory installed successfully", host)
@@ -705,9 +699,7 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
     phdl.upload_file(local_script, remote_script)
 
     log.info("Validating exe_path entries from %s", content_dir)
-    validate_dict = phdl.exec(
-        f"python3 {remote_script} '{content_dir}'", timeout=60
-    )
+    validate_dict = phdl.exec(f"python3 {remote_script} '{content_dir}'", timeout=60)
     print_test_output(log, validate_dict)
 
     log.info("Removing validation script from remote nodes...")
@@ -715,10 +707,7 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
 
     for host, output in validate_dict.items():
         if "VALIDATION_FAILED" in output:
-            fail_test(
-                f"exe_path validation failed on {host}: "
-                f"one or more tool paths are missing"
-            )
+            fail_test(f"exe_path validation failed on {host}: one or more tool paths are missing")
         elif "VALIDATION_SUCCESS" in output:
             log.info("Node %s: All exe_path entries validated", host)
         elif "ERROR:" in output:
@@ -756,8 +745,7 @@ def ensure_rocm_ldconfig(phdl, cluster_dict):
     Reports pass/fail via fail_test / update_test_result (call from a test).
     '''
     globals.error_list = []
-    log.info("ANC Pre-Task: ensure ROCm libs resolvable (%s)",
-             LDCONFIG_TARGET_LIB)
+    log.info("ANC Pre-Task: ensure ROCm libs resolvable (%s)", LDCONFIG_TARGET_LIB)
 
     # Build the conf file from whichever ROCM_LIB_DIRS exist. Truncate ONCE up
     # front, then append every existing dir; this keeps the decision independent
@@ -768,11 +756,7 @@ def ensure_rocm_ldconfig(phdl, cluster_dict):
     conf_file = "/etc/ld.so.conf.d/rocm.conf"
     conf_lines = " && ".join(
         [f"echo -n '' | sudo tee {conf_file} >/dev/null"]
-        + [
-            f"if [ -d '{d}' ]; then echo '{d}' | "
-            f"sudo tee -a {conf_file} >/dev/null; fi"
-            for d in ROCM_LIB_DIRS
-        ]
+        + [f"if [ -d '{d}' ]; then echo '{d}' | sudo tee -a {conf_file} >/dev/null; fi" for d in ROCM_LIB_DIRS]
     )
 
     check = (
@@ -800,8 +784,7 @@ def ensure_rocm_ldconfig(phdl, cluster_dict):
         if "LDCONFIG_OK_ALREADY" in text:
             log.info("Node %s: %s already resolvable", host, LDCONFIG_TARGET_LIB)
         elif "LDCONFIG_FIXED" in text:
-            log.info("Node %s: registered ROCm lib dirs and ran ldconfig; "
-                     "%s now resolvable", host, LDCONFIG_TARGET_LIB)
+            log.info("Node %s: registered ROCm lib dirs and ran ldconfig; %s now resolvable", host, LDCONFIG_TARGET_LIB)
         elif "LDCONFIG_LIB_MISSING" in text:
             fail_test(
                 f"ROCm library {LDCONFIG_TARGET_LIB} not found under "
@@ -809,18 +792,70 @@ def ensure_rocm_ldconfig(phdl, cluster_dict):
                 f"(not an ldconfig cache issue)"
             )
         elif "LDCONFIG_STILL_MISSING" in text:
-            fail_test(
-                f"ROCm library {LDCONFIG_TARGET_LIB} still unresolved on "
-                f"{host} after ldconfig"
-            )
+            fail_test(f"ROCm library {LDCONFIG_TARGET_LIB} still unresolved on {host} after ldconfig")
         else:
-            fail_test(
-                f"Unexpected ldconfig check output on {host}: {text.strip()}"
-            )
+            fail_test(f"Unexpected ldconfig check output on {host}: {text.strip()}")
 
     _fail_unreachable_nodes(cluster_dict, out_dict, "ldconfig")
 
     update_test_result()
+
+
+# Session-scoped guard so a whole-suite run (many group functions) installs and
+# fixes ldconfig ONCE, while a single-group run still gets ANC installed. The
+# flag lives for the pytest process lifetime; it is only set after install +
+# ldconfig succeed (both raise via update_test_result on failure), so a failed
+# attempt is retried by the next group rather than silently skipped.
+_ANC_READY = False
+
+
+def _anc_installed(phdl, cluster_dict, config_dict):
+    '''
+    Report whether ANC is already installed on every expected node.
+
+    When ``anc.anc_version`` is set, "installed" means every node reports that
+    version (reuses ``node_version_matches``). Otherwise "installed" means
+    ``ANC_BIN`` is present on every node.
+    '''
+    expected = _expected_nodes(cluster_dict)
+    if not expected:
+        return False
+
+    anc_version = config_dict.get("anc", {}).get("anc_version")
+    if anc_version:
+        matches = node_version_matches(phdl, anc_version)
+        return all(matches.get(host) for host in expected)
+
+    out_dict = phdl.exec(f"test -f '{ANC_BIN}' && echo ANC_PRESENT || true", timeout=60)
+    return all("ANC_PRESENT" in (out_dict.get(host) or "") for host in expected)
+
+
+def ensure_anc_ready(phdl, cluster_dict, config_dict):
+    '''
+    Ensure ANC is installed and ROCm libs are resolvable before a group runs.
+
+    Idempotent and session-cached: the first call installs ANC (unless already
+    present, per ``_anc_installed``) and runs ``ensure_rocm_ldconfig``; later
+    calls in the same pytest session return immediately. Each ANC group test
+    calls this first so a single-group run self-installs while a full-suite run
+    pays the setup cost once.
+
+    Install / ldconfig failures propagate as pytest failures (via their own
+    ``update_test_result``), which aborts the calling group test.
+    '''
+    global _ANC_READY
+    if _ANC_READY:
+        log.info("ANC already ensured this session; skipping install/ldconfig")
+        return
+
+    if _anc_installed(phdl, cluster_dict, config_dict):
+        log.info("ANC already installed on all nodes; skipping install")
+    else:
+        log.info("ANC not present on all nodes; installing")
+        install_anc(phdl, cluster_dict, config_dict)
+
+    ensure_rocm_ldconfig(phdl, cluster_dict)
+    _ANC_READY = True
 
 
 # =========================================================================
@@ -866,11 +901,9 @@ def _chown_tree_to_runner(host, root_path):
                 try:
                     os.chown(os.path.join(dirpath, name), uid, gid)
                 except OSError as exc:
-                    log.warning("Node %s: could not chown %s: %s", host,
-                                os.path.join(dirpath, name), exc)
+                    log.warning("Node %s: could not chown %s: %s", host, os.path.join(dirpath, name), exc)
     except OSError as exc:
-        log.warning("Node %s: could not chown log tree %s: %s", host,
-                    root_path, exc)
+        log.warning("Node %s: could not chown log tree %s: %s", host, root_path, exc)
 
 
 def _pull_log_dir(single, host, user, log_dir, dest_dir):
@@ -896,10 +929,7 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
     # root-owned and unreadable by the plain SSH user. Build the archive under
     # sudo, then chown it back so SFTP can pull it. `&&` so a tar failure aborts
     # before the (silent-on-nonzero) exec proceeds to download a missing file.
-    archive_cmd = (
-        f"sudo tar -czf '{remote_tar}' -C '{parent}' '{base}' "
-        f"&& sudo chown {user} '{remote_tar}'"
-    )
+    archive_cmd = f"sudo tar -czf '{remote_tar}' -C '{parent}' '{base}' && sudo chown {user} '{remote_tar}'"
     try:
         single.exec(archive_cmd, timeout=600)
     except Exception as exc:
@@ -916,16 +946,16 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
         try:
             single.exec(f"rm -f '{remote_tar}'", timeout=30)
         except Exception as exc:  # best-effort cleanup
-            log.warning("Node %s: could not remove remote tar %s: %s", host,
-                        remote_tar, exc)
+            log.warning("Node %s: could not remove remote tar %s: %s", host, remote_tar, exc)
 
     local_tar = None
     if isinstance(downloaded, dict) and downloaded:
         # single-node handle: prefer the host key, else the only entry.
         local_tar = downloaded.get(host) or next(iter(downloaded.values()))
     if not local_tar or not os.path.isfile(local_tar):
-        return None, (f"could not archive log dir {log_dir}: remote archive "
-                      f"was not created (check sudo/tar permissions on node)")
+        return None, (
+            f"could not archive log dir {log_dir}: remote archive was not created (check sudo/tar permissions on node)"
+        )
 
     try:
         with tarfile.open(local_tar) as tf:
@@ -976,8 +1006,7 @@ def _summarize_failure(console_text):
     return "; ".join(parts)
 
 
-def _evaluate_node(cluster_dict, config_dict, host, output, test_name,
-                   timestamp):
+def _evaluate_node(cluster_dict, config_dict, host, output, test_name, timestamp):
     '''
     Collect the ANC log directory for one node and decide whether it passed.
 
@@ -996,13 +1025,6 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name,
       node passed, the per-node destination directory or None if it was never
       created, the "<ip>_<hostname>" node label or None if SSH never opened).
     '''
-    ld_match = LOG_DIRECTORY_RE.search(output or "")
-    if not ld_match:
-        log.error("Node %s: could not determine Log directory from output", host)
-        return "could not determine Log directory from ANC output", None, None
-    log_dir = ld_match.group(1)
-    log.info("Node %s: ANC %s log directory: %s", host, test_name, log_dir)
-
     try:
         single = Pssh(
             log,
@@ -1014,13 +1036,25 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name,
         return f"could not open SSH handle for artifact collection: {exc}", None, None
 
     label = _node_label(single, host, cluster_dict)
-    dest_dir = resolve_anc_log_folder(config_dict, test_name, timestamp,
-                                      node=label)
+
+    # ANC prints "FATAL: Group '<x>' not found" (and exits ANC_PROG_NOT_FOUND)
+    # when the requested group is not installed on this node. There are no useful
+    # logs to collect in that case, so report it plainly and skip collection.
+    if ANC_GROUP_NOT_FOUND_RE.search(output or ""):
+        log.error("Node %s: ANC group '%s' not found on remote system", host, test_name)
+        return f"This test is not available on the remote system [{label}]", None, label
+
+    ld_match = LOG_DIRECTORY_RE.search(output or "")
+    if not ld_match:
+        log.error("Node %s: could not determine Log directory from output", host)
+        return "could not determine Log directory from ANC output", None, label
+    log_dir = ld_match.group(1)
+    log.info("Node %s: ANC %s log directory: %s", host, test_name, log_dir)
+
+    dest_dir = resolve_anc_log_folder(config_dict, test_name, timestamp, node=label)
     os.makedirs(dest_dir, exist_ok=True)
 
-    console_path, infra_reason = _pull_log_dir(
-        single, host, cluster_dict["username"], log_dir, dest_dir
-    )
+    console_path, infra_reason = _pull_log_dir(single, host, cluster_dict["username"], log_dir, dest_dir)
     if infra_reason:
         return infra_reason, dest_dir, label
 
@@ -1036,9 +1070,14 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name,
         return "ANC return code not found in console.log", dest_dir, label
 
     rc_name, rc_value = rc_matches[-1][0], int(rc_matches[-1][1])
-    log.info("Node %s: ANC %s program return code is %s [%s]", host, test_name,
-             rc_name, rc_value)
+    log.info("Node %s: ANC %s program return code is %s [%s]", host, test_name, rc_name, rc_value)
     if rc_value != 0:
+        # Fallback path: ANC still writes a Log directory on a missing group, so
+        # if the FATAL line was not surfaced in the streamed output it is caught
+        # here via the dedicated return code, with the same friendly message.
+        if rc_name == ANC_PROG_NOT_FOUND_NAME or ANC_GROUP_NOT_FOUND_RE.search(console_text):
+            log.error("Node %s: ANC group '%s' not found on remote system", host, test_name)
+            return f"This test is not available on the remote system [{label}]", dest_dir, label
         detail = _summarize_failure(console_text)
         reason = f"ANC returned {rc_name} [{rc_value}]"
         if detail:
@@ -1048,8 +1087,7 @@ def _evaluate_node(cluster_dict, config_dict, host, output, test_name,
     return None, dest_dir, label
 
 
-def _attach_anc_logs_to_html(request, config_dict, test_name, node_entries,
-                             timestamp, failed):
+def _attach_anc_logs_to_html(request, config_dict, test_name, node_entries, timestamp, failed):
     '''
     Bundle this run's collected ANC log trees into the pytest-html report zip.
 
@@ -1077,20 +1115,16 @@ def _attach_anc_logs_to_html(request, config_dict, test_name, node_entries,
     if mgr is None or not getattr(mgr, "is_enabled", False):
         return
 
-    always = _as_bool(config_dict.get("anc", {}).get(ADD_ANC_LOGS_TO_HTML_KEY),
-                      default=False)
+    always = _as_bool(config_dict.get("anc", {}).get(ADD_ANC_LOGS_TO_HTML_KEY), default=False)
     if not always and not failed:
-        log.info("ANC '%s': skipping HTML log attach (test passed and "
-                 "%s is False)", test_name, ADD_ANC_LOGS_TO_HTML_KEY)
+        log.info(
+            "ANC '%s': skipping HTML log attach (test passed and %s is False)", test_name, ADD_ANC_LOGS_TO_HTML_KEY
+        )
         return
 
-    present = [
-        (d, label) for d, label in node_entries
-        if d and os.path.isdir(d) and os.listdir(d)
-    ]
+    present = [(d, label) for d, label in node_entries if d and os.path.isdir(d) and os.listdir(d)]
     if not present:
-        log.warning("ANC '%s': no collected logs to attach to HTML report",
-                    test_name)
+        log.warning("ANC '%s': no collected logs to attach to HTML report", test_name)
         return
 
     # Write the archive under the runner base, named by test + timestamp; each
@@ -1115,8 +1149,7 @@ def _attach_anc_logs_to_html(request, config_dict, test_name, node_entries,
                     seen[arcname] = 0
                 tf.add(node_dir, arcname=arcname)
     except Exception as exc:  # best-effort; do not fail the test
-        log.warning("ANC '%s': could not archive logs for HTML report: %s",
-                    test_name, exc)
+        log.warning("ANC '%s': could not archive logs for HTML report: %s", test_name, exc)
         return
 
     link_name = f"ANC logs: {test_name}" + (" (FAILED)" if failed else "")
@@ -1130,22 +1163,19 @@ def _attach_anc_logs_to_html(request, config_dict, test_name, node_entries,
             # pytest_runtest_makereport hook can merge it in for this test.
             try:
                 import pytest_html
+
                 extra = pytest_html.extras.url(rel_path, name=link_name)
                 pending = getattr(request.node, "_anc_html_extras", [])
                 pending.append(extra)
                 request.node._anc_html_extras = pending
             except Exception as exc:  # link is best-effort; file is already in zip
-                log.warning("ANC '%s': archived logs added to zip but could not "
-                            "add report link: %s", test_name, exc)
-        log.info("ANC '%s': attached logs to HTML report as '%s'",
-                 test_name, link_name)
+                log.warning("ANC '%s': archived logs added to zip but could not add report link: %s", test_name, exc)
+        log.info("ANC '%s': attached logs to HTML report as '%s'", test_name, link_name)
     except Exception as exc:  # best-effort
-        log.warning("ANC '%s': could not attach logs to HTML report: %s",
-                    test_name, exc)
+        log.warning("ANC '%s': could not attach logs to HTML report: %s", test_name, exc)
 
 
-def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
-                   request=None):
+def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=None):
     '''
     Run one or more ANC groups in a single invocation on all nodes.
 
@@ -1196,13 +1226,21 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
         cmd = (
             f"cd '{ANC_DIR}' && "
             f"sudo ./anc.py -g {groups_arg} > '{remote_stdout}' 2>&1; "
-            f"grep -i 'Log directory:' '{remote_stdout}' | tail -1; "
+            # Echo the "Log directory:" line (used to locate artifacts) and any
+            # "FATAL: Group ... not found" line so a missing group is detectable
+            # even when full ANC output is suppressed.
+            f"grep -iE 'Log directory:|FATAL: Group' '{remote_stdout}'; "
             f"rm -f '{remote_stdout}'"
         )
 
-    log.info("ANC '%s': running %d group(s) (print_all_to_console=%s, "
-             "timeout=%ss, logs under %s)", test_name, len(groups), print_all,
-             timeout, log_pattern)
+    log.info(
+        "ANC '%s': running %d group(s) (print_all_to_console=%s, timeout=%ss, logs under %s)",
+        test_name,
+        len(groups),
+        print_all,
+        timeout,
+        log_pattern,
+    )
     log.info("ANC '%s': groups=%s", test_name, groups_arg)
 
     try:
@@ -1230,7 +1268,11 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
             failed_nodes[host] = reason
             continue
         reason, dest_dir, label = _evaluate_node(
-            cluster_dict, config_dict, host, out_dict[host] or "", test_name,
+            cluster_dict,
+            config_dict,
+            host,
+            out_dict[host] or "",
+            test_name,
             timestamp,
         )
         if dest_dir:
@@ -1243,63 +1285,10 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name,
 
     if failed_nodes:
         details = "; ".join(f"{h}: {r}" for h, r in failed_nodes.items())
-        fail_test(
-            f"ANC {test_name} failed on {len(failed_nodes)}/"
-            f"{len(expected_nodes)} node(s): {details}"
-        )
+        fail_test(f"ANC {test_name} failed on {len(failed_nodes)}/{len(expected_nodes)} node(s): {details}")
 
     # Attach collected logs to the HTML report before update_test_result() may
     # raise: always when the flag is set, otherwise only on failure.
-    _attach_anc_logs_to_html(
-        request, config_dict, test_name, node_entries, timestamp,
-        bool(failed_nodes)
-    )
+    _attach_anc_logs_to_html(request, config_dict, test_name, node_entries, timestamp, bool(failed_nodes))
 
     update_test_result()
-
-
-# =========================================================================
-# Per-group test scaffolding
-# =========================================================================
-class AncGroupTest:
-    '''
-    Base class for a single-ANC-group suite.
-
-    A per-group suite subclasses this and sets ``GROUP`` to the ANC group name.
-    Running the suite installs/verifies ANC and fixes ROCm ldconfig as
-    pre-tasks, then runs just that one group. The test name (and therefore the
-    log subpath ``.../anc_logs/<node>/test_<GROUP>/<timestamp>``) is
-    ``test_<GROUP>``.
-
-    The per-group suite files under cpu/ and gpu/ are GENERATED from the group
-    lists in this module by build_tools/gen_anc_suites.py (``make
-    gen-anc-suites``); do not hand-edit them. To add/remove a group, edit
-    CPU_GROUPS / GPU_GROUPS here and regenerate.
-
-    Fixtures cluster_dict / config_dict / phdl come from the ANC conftest.py.
-    '''
-
-    GROUP = None  # set by subclass, e.g. "cpu_all"
-
-    def test_install_anc(self, phdl, cluster_dict, config_dict):
-        '''Pre-task: install/verify ANC before running the group.'''
-        log.info("ANC group '%s' Pre-Task: install/verify ANC", self.GROUP)
-        install_anc(phdl, cluster_dict, config_dict)
-
-    def test_rocm_ldconfig(self, phdl, cluster_dict):
-        '''Pre-task: ensure ROCm libs are resolvable before running the group.'''
-        log.info("ANC group '%s' Pre-Task: ensure ROCm ldconfig", self.GROUP)
-        ensure_rocm_ldconfig(phdl, cluster_dict)
-
-    def test_group(self, phdl, cluster_dict, config_dict, request):
-        '''Run this suite's single ANC group and collect/judge its logs.'''
-        assert self.GROUP, "AncGroupTest subclass must set GROUP"
-        run_anc_groups(
-            phdl, cluster_dict, config_dict, [self.GROUP], f"test_{self.GROUP}",
-            request=request,
-        )
-
-
-def anc_group_class_name(group):
-    '''Return the CamelCase test-class name for a group (e.g. cpu_all->CpuAll).'''
-    return "".join(part.capitalize() for part in group.split("_"))

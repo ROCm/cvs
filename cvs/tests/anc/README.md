@@ -14,42 +14,42 @@ This directory packages the ANC validation suite as CVS tests.
 | --- | --- | --- |
 | `anc_installation.py` | `cvs run anc_installation` | Download and install the ANC tool on every node. |
 
-**Per-group suites** — one standalone suite per ANC group, so every group shows
-in `cvs list` and runs by name. They live in the `cpu/` and `gpu/` subfolders
-and are **generated** from the single source `anc_lib.CPU_GROUPS` /
-`GPU_GROUPS`. Each is a thin `AncGroupTest` subclass that installs + verifies
-ANC and fixes ROCm ldconfig as pre-tasks, then runs just its group.
+**Group suites** — there are exactly two group suites, `anc_test_cpu` and
+`anc_test_gpu` (in the `cpu/` and `gpu/` subfolders). Each holds one
+`test_<group>` **function** per ANC group. Running the whole suite runs every
+group in that set; naming a function runs just that group. Each function ensures
+ANC is installed and ROCm ldconfig is fixed first (session-cached via
+`anc_lib.ensure_anc_ready`, so a full-suite run pays the setup cost once). The
+two files are **generated** from the single source `anc_lib.CPU_GROUPS` /
+`GPU_GROUPS`.
 
 > Generated files — do NOT hand-edit. To add/remove a group, edit the lists in
 > `cvs/lib/anc_lib.py` and run `make gen-anc-suites` (wraps
-> `build_tools/gen_anc_suites.py`), which rewrites the per-group files and
+> `build_tools/gen_anc_suites.py`), which rewrites the two suite files and
 > prunes stale ones. Then reinstall (`make install` / `pip install .`).
 
 ```bash
-cvs run anc_test_cpu_all   --cluster_file <c.json> --config_file <cfg.json>
-cvs run anc_test_hbm_lvl1  --cluster_file <c.json> --config_file <cfg.json>
+# run every CPU group (each group its own test + log dir)
+cvs run anc_test_cpu                  --cluster_file <c.json> --config_file <cfg.json>
+# run a single group by its function name
+cvs run anc_test_cpu test_cpu_all     --cluster_file <c.json> --config_file <cfg.json>
+cvs run anc_test_gpu test_hbm_lvl1    --cluster_file <c.json> --config_file <cfg.json>
+# list the per-group functions in a suite
+cvs list anc_test_cpu
 ```
 
-- CPU (`cpu/`): `anc_test_ampttk_full`, `anc_test_cachewalker_full`,
-  `anc_test_cpu_all`, `anc_test_cpu_content_check`, `anc_test_cpu_mfg_l10`,
-  `anc_test_cpu_sanity`, `anc_test_difect_full`, `anc_test_fpdeluge_full`,
-  `anc_test_hdrt_full`, `anc_test_maxcorestim_full`, `anc_test_memtest_full`,
-  `anc_test_miidct_full`, `anc_test_mithac_full`, `anc_test_weighted_sanity`
-- GPU (`gpu/`): `anc_test_gpu_content_check`, `anc_test_gpu_mfg_l10`,
-  `anc_test_hbm_lvl1` … `anc_test_hbm_lvl5`
-
-**Run-all suites** — install ANC + ldconfig ONCE, then run every group in the
-set sequentially (each group is its own parametrized test with its own log dir):
-
-```bash
-cvs run anc_test_exec_all_cpu_test --cluster_file <c.json> --config_file <cfg.json>
-cvs run anc_test_exec_all_gpu_test --cluster_file <c.json> --config_file <cfg.json>
-```
+- CPU (`anc_test_cpu`): `test_ampttk_full`, `test_cachewalker_full`,
+  `test_cpu_all`, `test_cpu_content_check`, `test_cpu_mfg_l10`,
+  `test_cpu_sanity`, `test_difect_full`, `test_fpdeluge_full`,
+  `test_hdrt_full`, `test_maxcorestim_full`, `test_memtest_full`,
+  `test_miidct_full`, `test_mithac_full`, `test_weighted_sanity`
+- GPU (`anc_test_gpu`): `test_gpu_content_check`, `test_gpu_mfg_l10`,
+  `test_hbm_lvl1` … `test_hbm_lvl5`
 
 Shared logic — package install by archive flavour (deb/rpm/tar), version check,
-ldconfig fix, group execution, artifact collection, and the per-group base class
-`AncGroupTest` — lives in `cvs/lib/anc_lib.py` (group sets are
-`CPU_GROUPS` / `GPU_GROUPS`). Shared pytest fixtures live in this directory's
+the session-cached setup guard `ensure_anc_ready`, ldconfig fix, group
+execution, and artifact collection — lives in `cvs/lib/anc_lib.py` (group sets
+are `CPU_GROUPS` / `GPU_GROUPS`). Shared pytest fixtures live in this directory's
 `conftest.py` and apply to the `cpu/` and `gpu/` subfolders too. ANC is invoked
 from its installed location `/opt/amdtools/anc/anc.py`.
 
@@ -71,10 +71,9 @@ or fail is read from each run's `console.log` final `ANC_SUCCESS [0]`.
 
   ```bash
   make install
-  source fremont_venv/bin/activate
+  source .cvs_venv/bin/activate
   cvs --version          # sanity check
-  cvs list               # anc_installation, the per-group anc_test_* suites, and
-                         # anc_test_exec_all_cpu_test / anc_test_exec_all_gpu_test
+  cvs list               # anc_installation, anc_test_cpu, anc_test_gpu
   ```
 
   See the repository root `README.md` for full build/setup details.
@@ -223,43 +222,42 @@ packages instead (`sudo dpkg -i` / `sudo dnf install`); they lay ANC down under
 
 ## 4. Run the ANC validation tests
 
-Each suite first installs/verifies ANC and fixes ROCm ldconfig (pre-tasks), then
-runs its group(s) on **all** nodes in parallel with a single
-`anc.py -g <groups...>` invocation.
+Each group function first ensures ANC is installed and ROCm ldconfig is fixed
+(session-cached, so it happens once per run), then runs its group on **all**
+nodes in parallel with a single `anc.py -g <group>` invocation.
 
-**Single group** — run one ANC group by its own suite name:
+**Single group** — name the group's `test_<group>` function on its suite:
 
 ```bash
-cvs run anc_test_cpu_all \
+cvs run anc_test_cpu test_cpu_all \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
 
-cvs run anc_test_hbm_lvl1 \
+cvs run anc_test_gpu test_hbm_lvl1 \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
-**All groups in a set** — the run-all suites install ANC + ldconfig ONCE, then
-run every group in the CPU (or GPU) set sequentially, each as its own
-parametrized test with its own log dir:
+**All groups in a set** — run the whole suite. ANC install + ldconfig happen
+once (session-cached), then every group in the CPU (or GPU) set runs as its own
+test with its own log dir:
 
 ```bash
-cvs run anc_test_exec_all_cpu_test \
+cvs run anc_test_cpu \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
 
-cvs run anc_test_exec_all_gpu_test \
+cvs run anc_test_gpu \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
 The exact group lists are defined by `CPU_GROUPS` / `GPU_GROUPS` in
-`cvs/lib/anc_lib.py` (see the full list in the "Per-group suites"
-section above). To skip the install/ldconfig pre-tasks and run only the group
-test, add pytest's `-k` filter (forwarded by `cvs run`):
+`cvs/lib/anc_lib.py` (see the full list in the "Group suites" section above). To
+run a subset, name several functions:
 
 ```bash
-cvs run anc_test_cpu_all -k test_group \
+cvs run anc_test_cpu test_cpu_sanity test_memtest_full \
   --cluster_file cvs/input/cluster_file/cluster.json \
   --config_file cvs/input/config_file/anc/anc_config.json
 ```
