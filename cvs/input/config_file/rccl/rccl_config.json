@@ -41,7 +41,9 @@
             "cvs_exec_timeout": "2400",
             "rccl_result_file": "/home/{user-id}/rccl_result_file.json",
             "pairwise_min_bw": "300",
-            "_comment_pairwise_min_bw": "Minimum bus BW in GB/s for Phase 1 pairwise and Phase 2 incremental checks. Set to 0 to skip BW check."
+            "_comment_pairwise_min_bw": "Minimum bus BW in GB/s required for Phase 2 incremental admission (Phase 1 pairwise never gates on bandwidth, matching the original bash tool). Set to 0 to skip the BW check.",
+            "pairwise_results_file": "/tmp/rccl_pairwise_results.json",
+            "_comment_pairwise_results_file": "Local JSON file where rccl_pairwise.py persists the Phase 1 pass/fail lists and the Phase 2 final valid/excluded host lists."
         },
 
         "_comment_regression": "New regression object format using NCCL_* environment variable names. Creates Cartesian product of all combinations. Channel config uses 'min-max' format (e.g., '16-16') or 'default'. Tree algorithm is automatically filtered to only run with all_reduce_perf collective.",

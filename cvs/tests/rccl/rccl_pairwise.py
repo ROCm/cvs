@@ -77,30 +77,47 @@ def vpc_node_list(cluster_dict):
 
 def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, phase_label):
     """
-    Run all_reduce_perf between exactly two nodes and return the raw result dict.
+    Run all_reduce_perf across exactly len(node_pair_mgmt) nodes and report
+    whether the run was clean (no new entries in globals.error_list).
+
+    Used for Phase 0 (1 node), Phase 1 (2 nodes: reference + candidate), and
+    Phase 2 (N nodes: current valid group + candidate) — no_of_nodes always
+    matches the number of nodes actually passed in, so callers do not need to
+    special-case the node count.
+
+    Cluster-specific NCCL/UCX tuning that the original bash tool hardcoded
+    inline (NCCL_IB_HCA, NCCL_IB_GID_INDEX, NCCL_SOCKET_IFNAME, NCCL_DMABUF_ENABLE,
+    forced UCX PML) is expected to come from config_dict['env_source_script']
+    here — it is not reproduced inline, so that script must be kept in sync
+    with the target cluster's fabric for results to be comparable to the bash
+    tool's.
 
     Args:
         phdl:             Parallel SSH handle (all cluster nodes).
         shdl:             SSH handle to head node.
-        node_pair_vpc:    List of two VPC IPs to pass to mpirun.
-        node_pair_mgmt:   List of two mgmt hostnames (used as cluster_node_list).
+        node_pair_vpc:    List of VPC IPs to pass to mpirun.
+        node_pair_mgmt:   List of mgmt hostnames (used as cluster_node_list).
         config_dict:      RCCL config dict (mpi_params, rccl_test_params, cvs_params).
         phase_label:      Human-readable label for logging (e.g. 'Phase1 nodeA<->nodeB').
 
     Returns:
-        result_dict from rccl_lib.rccl_perf, or None on exception.
+        (result_dict, clean_run) tuple.
+        result_dict is the raw list returned by rccl_lib.rccl_perf, or None on exception.
+        clean_run is True only if the call completed without exception AND no
+        new failures were recorded in globals.error_list during the call.
     """
     log.info('─' * 60)
     log.info('Running pairwise RCCL: %s', phase_label)
     log.info('Nodes (VPC): %s', node_pair_vpc)
 
-    # Override no_of_nodes to 2 for the pairwise run without mutating the
-    # original dict — create a shallow copy of mpi_params only.
+    # Override no_of_nodes to match this call's node count without mutating
+    # the original dict — create a shallow copy of mpi_params only.
     mpi_params_pair = dict(config_dict['mpi_params'])
-    mpi_params_pair['no_of_nodes'] = '2'
+    mpi_params_pair['no_of_nodes'] = str(len(node_pair_mgmt))
 
     env_script = config_dict.get('env_source_script', '/dev/null')
 
+    error_count_before = len(globals.error_list)
     try:
         result_dict = rccl_lib.rccl_perf(
             phdl,
@@ -114,10 +131,14 @@ def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, ph
             node_pair_vpc,  # vpc_node_list       (passed to mpirun -H)
         )
         log.info('Pairwise result for %s: %s', phase_label, result_dict)
-        return result_dict
     except Exception as exc:
         log.error('Pairwise RCCL failed for %s: %s', phase_label, exc)
-        return None
+        return None, False
+
+    clean_run = len(globals.error_list) == error_count_before
+    if not clean_run:
+        log.error('Pairwise RCCL for %s reported errors: %s', phase_label, globals.error_list[error_count_before:])
+    return result_dict, clean_run
 
 
 # ─────────────────────────────────────────────
@@ -125,37 +146,90 @@ def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, ph
 # ─────────────────────────────────────────────
 
 
-def _is_pairwise_pass(result_dict, min_bw_gbps):
+def _extract_best_bw(result_dict):
     """
-    Return True when result_dict contains at least one result entry and the
-    reported bus bandwidth meets or exceeds min_bw_gbps.
+    Return the measured busBw (GB/s) for the in-place all_reduce measurement
+    at the largest message size tested, or None if unavailable.
 
-    A result_dict of None or an empty list is treated as a failure.
-    min_bw_gbps <= 0 skips the bandwidth check (pass if test ran at all).
+    rccl_lib.rccl_perf returns a flat list of raw rccl-tests JSON entries
+    (schema cvs/schema/rccl.py:RcclTests), each keyed 'busBw' (float),
+    'size' (int, bytes), and 'inPlace' (0 or 1) — NOT a 'bus_bw' dict.
+    Selecting the largest-size, in-place row mirrors rccl_lib.check_bus_bw's
+    in-place branch and matches bash's get_final_bw_only (last/largest
+    message-size row of a two-size 8G/16G sweep).
     """
     if not result_dict:
+        return None
+
+    inplace_entries = [
+        entry for entry in result_dict if isinstance(entry, dict) and entry.get('inPlace') == 1 and 'busBw' in entry
+    ]
+    if not inplace_entries:
+        return None
+
+    largest = max(inplace_entries, key=lambda entry: entry.get('size', 0))
+    try:
+        return float(largest['busBw'])
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_pairwise_pass(result_dict, clean_run, min_bw_gbps, require_bw_check):
+    """
+    Pass criterion for a pairwise/incremental RCCL run:
+      - the rccl_perf call completed without raising, AND
+      - clean_run is True (no new entries were added to globals.error_list
+        during the call — i.e. no ORTE/NCCL error, no missing-bandwidth-marker
+        failure, no schema validation failure), AND
+      - result_dict is non-empty, AND
+      - (only when require_bw_check and min_bw_gbps > 0) the measured busBw at
+        the largest message size meets or exceeds min_bw_gbps.
+
+    require_bw_check=False reproduces bash's Phase 1 semantics (clean exit
+    only, no bandwidth gate). require_bw_check=True reproduces bash's Phase 2
+    semantics (clean exit AND BusBW >= MIN_BW). min_bw_gbps <= 0 always skips
+    the bandwidth comparison regardless of require_bw_check.
+    """
+    if not (clean_run and result_dict):
         return False
 
-    # rccl_lib.rccl_perf returns a list of per-dtype dicts.
-    # Each dict is expected to contain 'bus_bw' (float, GB/s) at the largest
-    # message size tested.  We take the maximum across all dtype results.
-    if not isinstance(result_dict, list) or len(result_dict) == 0:
-        return False
-
-    if min_bw_gbps <= 0:
+    if not require_bw_check or min_bw_gbps <= 0:
         return True
 
-    best_bw = 0.0
-    for entry in result_dict:
-        try:
-            bw_values = list(entry.get('bus_bw', {}).values())
-            if bw_values:
-                best_bw = max(best_bw, max(float(v) for v in bw_values))
-        except (TypeError, ValueError):
-            pass
+    best_bw = _extract_best_bw(result_dict)
+    if best_bw is None:
+        log.error('No in-place busBw measurement found in result — treating as failure.')
+        return False
 
     log.info('Best bus BW observed: %.2f GB/s  (threshold: %.2f GB/s)', best_bw, min_bw_gbps)
     return best_bw >= min_bw_gbps
+
+
+def _persist_pairwise_artifact(config_dict, phase_key, data):
+    """
+    Persist minimal pass/fail bookkeeping for a phase to a local JSON file so
+    the outcome of a run survives beyond the log. Merges into any existing
+    file under the same path so Phase 1 and Phase 2 results end up together.
+    """
+    results_file = config_dict.get('cvs_params', {}).get('pairwise_results_file', '/tmp/rccl_pairwise_results.json')
+    try:
+        try:
+            with open(results_file) as f:
+                existing = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            existing = {}
+        existing[phase_key] = data
+        with open(results_file, 'w') as f:
+            json.dump(existing, f, indent=2)
+        log.info('Persisted %s results to %s', phase_key, results_file)
+    except OSError as exc:
+        log.error('Failed to persist %s results to %s: %s', phase_key, results_file, exc)
+
+
+# Phase 1 survivors (mgmt hostnames, reference node excluded), populated by
+# test_rccl_pairwise for test_rccl_incremental to consume. None until Phase 1
+# has run in this process.
+_phase1_survivors = None
 
 
 # ─────────────────────────────────────────────
@@ -216,7 +290,7 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     log.info('PHASE 0 — Single-node sanity check on reference node: %s', ref_mgmt)
     log.info('=' * 60)
 
-    sanity_result = run_pairwise_rccl(
+    sanity_result, sanity_clean = run_pairwise_rccl(
         phdl,
         shdl,
         node_pair_vpc=[ref_vpc],
@@ -225,7 +299,7 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
         phase_label=f'Phase0 sanity {ref_mgmt}',
     )
 
-    if not sanity_result:
+    if not (sanity_clean and sanity_result):
         fail_test(
             f'PHASE 0 FAILED: Reference node {ref_mgmt} did not pass the '
             f'single-node sanity check.  Aborting pairwise phase.'
@@ -248,7 +322,7 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
         cand_vpc = vpc_node_list[idx]
         label = f'Phase1 {ref_mgmt} <-> {cand_mgmt}'
 
-        result = run_pairwise_rccl(
+        result, clean_run = run_pairwise_rccl(
             phdl,
             shdl,
             node_pair_vpc=[ref_vpc, cand_vpc],
@@ -257,7 +331,8 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
             phase_label=label,
         )
 
-        if _is_pairwise_pass(result, min_bw):
+        # Phase 1 pass criterion matches bash: clean exit only, no bandwidth gate.
+        if _is_pairwise_pass(result, clean_run, min_bw, require_bw_check=False):
             log.info('PHASE 1 PASS: %s', label)
             phase1_pass.append(cand_mgmt)
         else:
@@ -273,6 +348,14 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     log.info('Failed (%d)     : %s', len(phase1_fail), phase1_fail)
     log.info('=' * 60)
 
+    global _phase1_survivors
+    _phase1_survivors = list(phase1_pass)
+    _persist_pairwise_artifact(
+        config_dict,
+        'phase1',
+        {'reference_node': ref_mgmt, 'passed': phase1_pass, 'failed': phase1_fail},
+    )
+
     update_test_result()
 
 
@@ -282,7 +365,10 @@ def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
 
     Starting from the reference node, add one candidate at a time.
     A candidate is accepted into the valid cluster only when all_reduce_perf
-    across [current valid nodes + candidate] meets the bandwidth threshold.
+    across [current valid nodes + candidate] runs cleanly AND meets the
+    bandwidth threshold. Candidates are Phase 1 survivors only (matching
+    bash, which reads phase1_successful_hosts.txt) — a node that failed
+    Phase 1 is not retried here.
 
     Config knobs consumed from config_dict['cvs_params']:
       - pairwise_min_bw   (float, GB/s, default 0 → no BW check for Phase 2)
@@ -301,16 +387,31 @@ def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     log.info('PHASE 2 — Incremental cluster build')
     log.info('=' * 60)
 
+    ref_mgmt = node_list[0]
+    ref_vpc = vpc_node_list[0]
+    mgmt_to_vpc = dict(zip(node_list, vpc_node_list))
+
+    global _phase1_survivors
+    if _phase1_survivors is not None:
+        candidate_mgmt_list = _phase1_survivors
+        log.info('Phase 2 consuming %d Phase 1 survivor(s): %s', len(candidate_mgmt_list), candidate_mgmt_list)
+    else:
+        candidate_mgmt_list = node_list[1:]
+        log.warning(
+            'Phase 1 survivor list unavailable (test_rccl_pairwise did not run first in this '
+            'session) — falling back to testing all %d candidate node(s).',
+            len(candidate_mgmt_list),
+        )
+
     # Seed the valid set with the reference node
-    valid_mgmt = [node_list[0]]
-    valid_vpc = [vpc_node_list[0]]
+    valid_mgmt = [ref_mgmt]
+    valid_vpc = [ref_vpc]
 
     phase2_pass = []
     phase2_fail = []
 
-    for idx in range(1, len(node_list)):
-        cand_mgmt = node_list[idx]
-        cand_vpc = vpc_node_list[idx]
+    for cand_mgmt in candidate_mgmt_list:
+        cand_vpc = mgmt_to_vpc[cand_mgmt]
 
         trial_mgmt = valid_mgmt + [cand_mgmt]
         trial_vpc = valid_vpc + [cand_vpc]
@@ -318,31 +419,17 @@ def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
 
         log.info('Attempting to add node: %s  (cluster size would be %d)', cand_mgmt, len(trial_mgmt))
 
-        # Override no_of_nodes to match the trial cluster size
-        mpi_params_trial = dict(config_dict['mpi_params'])
-        mpi_params_trial['no_of_nodes'] = str(len(trial_mgmt))
-        trial_config = dict(config_dict)
-        trial_config['mpi_params'] = mpi_params_trial
+        result, clean_run = run_pairwise_rccl(
+            phdl,
+            shdl,
+            node_pair_vpc=trial_vpc,
+            node_pair_mgmt=trial_mgmt,
+            config_dict=config_dict,
+            phase_label=label,
+        )
 
-        env_script = config_dict.get('env_source_script', '/dev/null')
-
-        try:
-            result = rccl_lib.rccl_perf(
-                phdl,
-                shdl,
-                'all_reduce_perf',
-                env_script,
-                mpi_params_trial,
-                config_dict['rccl_test_params'],
-                config_dict['cvs_params'],
-                trial_mgmt,
-                trial_vpc,
-            )
-        except Exception as exc:
-            log.error('Phase 2 RCCL call raised exception for %s: %s', label, exc)
-            result = None
-
-        if _is_pairwise_pass(result, min_bw):
+        # Phase 2 pass criterion matches bash: clean exit AND BusBW >= pairwise_min_bw.
+        if _is_pairwise_pass(result, clean_run, min_bw, require_bw_check=True):
             log.info('PHASE 2 PASS: %s', label)
             valid_mgmt.append(cand_mgmt)
             valid_vpc.append(cand_vpc)
@@ -358,5 +445,11 @@ def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     log.info('Final valid cluster (%d nodes) : %s', len(valid_mgmt), valid_mgmt)
     log.info('Excluded nodes      (%d)       : %s', len(phase2_fail), phase2_fail)
     log.info('=' * 60)
+
+    _persist_pairwise_artifact(
+        config_dict,
+        'phase2',
+        {'final_valid_cluster': valid_mgmt, 'excluded_nodes': phase2_fail},
+    )
 
     update_test_result()
