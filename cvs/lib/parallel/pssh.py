@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from __future__ import print_function
 
 import warnings
+from gevent import Timeout as GTimeout
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError, SessionError
 
@@ -170,10 +171,49 @@ class Pssh:
             else:
                 cmd_output[host] = cmd_output.get(host, "") + "\nABORT: Host Unreachable Error"
 
-    def _process_output(self, output, cmd=None, cmd_list=None, print_console=True, include_exit_codes=False):
+    def _iter_lines(self, stream, inactivity_timeout):
+        """
+        Yield lines from an stdout/stderr stream.
+
+        When inactivity_timeout is set, each individual line fetch is wrapped in a
+        fresh gevent.Timeout that is re-armed on every line, so the timer measures
+        the gap BETWEEN lines (inactivity) rather than the total command runtime.
+        A stream that keeps producing output never trips it; only a genuine stall
+        (no output for inactivity_timeout seconds) raises pssh Timeout. When
+        inactivity_timeout is None the stream is iterated normally (any total
+        read_timeout is enforced by parallel-ssh itself).
+        """
+        if not stream:
+            return
+        if inactivity_timeout is None:
+            for line in stream:
+                yield line
+            return
+        it = iter(stream)
+        while True:
+            try:
+                with GTimeout(seconds=inactivity_timeout, exception=Timeout):
+                    line = next(it)
+            except StopIteration:
+                return
+            yield line
+
+    def _process_output(
+        self,
+        output,
+        cmd=None,
+        cmd_list=None,
+        print_console=True,
+        include_exit_codes=False,
+        inactivity_timeout=None,
+    ):
         """
         Helper method to process output from run_command, collect results, and handle pruning.
         Returns cmd_output dictionary. If include_exit_codes=True, returns structured format.
+
+        When inactivity_timeout is set, output reads use a per-line (inactivity)
+        timeout instead of a total-runtime cap: the timer resets on every line and
+        fires only after inactivity_timeout seconds with no new output.
         """
         cmd_output = {}
         i = 0
@@ -187,11 +227,11 @@ class Pssh:
             else:
                 self.log.debug("%s", cmd)
             try:
-                for line in item.stdout or []:
+                for line in self._iter_lines(item.stdout, inactivity_timeout):
                     if print_console:
                         self.log.info("%s", line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
-                for line in item.stderr or []:
+                for line in self._iter_lines(item.stderr, inactivity_timeout):
                     if print_console:
                         self.log.info("%s", line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
@@ -242,11 +282,19 @@ class Pssh:
                 if item.exception is None:
                     item.exception = e
 
-    def exec(self, cmd, timeout=None, print_console=True, detailed=False):
+    def exec(self, cmd, timeout=None, print_console=True, detailed=False, inactivity_timeout=None):
         """
         Returns a dictionary of host as key and command output as values.
         If detailed=True, returns structured dict with 'output' and 'exit_code' keys.
         If detailed=False (default), returns output strings.
+
+        timeout is parallel-ssh's read_timeout: a TOTAL wall-clock cap on reading
+        the command's output (it is NOT reset by activity). inactivity_timeout is
+        an alternative that measures the gap between output lines instead: the
+        command may run arbitrarily long as long as it keeps producing output, and
+        is aborted only after inactivity_timeout seconds of silence. When
+        inactivity_timeout is set, the underlying read_timeout is disabled so there
+        is no total cap. Pass at most one of the two.
         """
         if self.env_prefix:
             full_cmd = f"{self.env_prefix} ; {cmd}"
@@ -257,19 +305,32 @@ class Pssh:
 
         # Log command execution
         if self.log:
-            if timeout is not None:
+            if inactivity_timeout is not None:
+                self.log.debug(
+                    f"Executing command on {len(self.reachable_hosts)} host(s) "
+                    f"[inactivity_timeout={inactivity_timeout}s]: {full_cmd}"
+                )
+            elif timeout is not None:
                 self.log.debug(
                     f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
                 )
             else:
                 self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
 
-        if timeout is None:
+        # With an inactivity timeout the total read_timeout must be disabled, so
+        # the per-line gevent timer in _process_output is the only limiter.
+        if inactivity_timeout is not None:
+            output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
+        elif timeout is None:
             output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
         else:
             output = self.client.run_command(full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
         cmd_output = self._process_output(
-            output, cmd=full_cmd, print_console=print_console, include_exit_codes=detailed
+            output,
+            cmd=full_cmd,
+            print_console=print_console,
+            include_exit_codes=detailed,
+            inactivity_timeout=inactivity_timeout,
         )
 
         # Log per-host execution completion
