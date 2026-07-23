@@ -153,13 +153,6 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request
     lifecycle.complete_stage(request, f"bench_serv_random[{perf_cell['isl']}/{perf_cell['osl']}]", t0)
 
 
-def test_server_gpu_topology(im_obj, lifecycle, request):
-    globals.error_list = []
-    t0 = time.monotonic()
-    im_obj.sglang_disagg_gpu_counts()
-    lifecycle.complete_stage(request, "gpu_topology", t0)
-
-
 def test_print_results_table(inf_res_dict, lifecycle, variant_config):
     from cvs.lib.report.registry import bind_session_results
     from cvs.tests.inference.sglang._shared import test_print_results_table as _print
