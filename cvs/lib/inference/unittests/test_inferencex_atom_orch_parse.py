@@ -468,6 +468,7 @@ class TestInferenceXAtomBuildServerCmd(unittest.TestCase):
                     concurrency=128,
                     num_prompts=100,
                     ib_hcas=ib_hcas,
+                    ib_netdev="eth0",
                 )
                 job.build_server_cmd()
                 script = self._env_script(orch)

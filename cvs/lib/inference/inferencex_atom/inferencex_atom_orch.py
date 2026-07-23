@@ -97,6 +97,7 @@ class InferenceXAtomJob:
         client_poll_wait_s=60,
         bench_max_failed_requests=0,
         ib_hcas=None,
+        ib_netdev=None,
     ):
         self.orch = orch
         self.variant = variant
@@ -141,7 +142,13 @@ class InferenceXAtomJob:
         self.atom_server_args = list(variant.roles.server.atom_args)
         self.sglang_server_args = list(variant.roles.server.sglang_args)
         self.server_env = dict(variant.roles.server.env)
-        self.ib_netdev = (getattr(variant.roles.server, "ib_netdev", None) or "").strip()
+        configured_netdev = (getattr(variant.roles.server, "ib_netdev", None) or "").strip()
+        if ib_netdev:
+            self.ib_netdev = str(ib_netdev).strip()
+        elif configured_netdev and configured_netdev.lower() != "auto":
+            self.ib_netdev = configured_netdev
+        else:
+            self.ib_netdev = ""
         # Discovered HCA names for NCCL_IB_HCA (multinode only). Passed in from
         # test_discover_topology via lifecycle.ib_hcas.
         self.ib_hcas = ib_hcas or []
@@ -360,6 +367,11 @@ class InferenceXAtomJob:
             env_lines.append("export SGLANG_USE_AITER=1")
         if self.ib_hcas:
             env_lines.append(f"export NCCL_IB_HCA={shlex.quote(','.join(self.ib_hcas))}")
+        if self.distributed and not self.ib_netdev:
+            raise RuntimeError(
+                "multinode run has no socket netdev (roles.server.ib_netdev is unset/auto "
+                "but test_discover_topology did not resolve lifecycle.ib_netdev)"
+            )
         if self.distributed and self.ib_netdev:
             env_lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
             env_lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")

@@ -44,16 +44,21 @@ def _tier_display_metric(tier):
 
 
 def test_discover_topology(orch, variant_config, lifecycle, request):
-    """Discover IB HCA devices on all nodes before the benchmark sweep (multinode only)."""
+    """Discover IB HCAs and socket netdev on all nodes before the benchmark sweep."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
     nn = int(variant_config.params.nnodes)
     if nn == 1:
         lifecycle.ib_hcas = []
+        lifecycle.ib_netdev = ""
         return
 
-    from cvs.lib.utils.ib_discovery import discover_ib_hca_names, validate_ib_hca_preflight
+    from cvs.lib.utils.ib_discovery import (
+        discover_ib_hca_names,
+        discover_socket_netdev_name,
+        validate_ib_hca_preflight,
+    )
 
     t = time.monotonic()
     try:
@@ -71,13 +76,30 @@ def test_discover_topology(orch, variant_config, lifecycle, request):
             lifecycle.failed = True
             lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - t)
             pytest.fail(str(e))
-        resolved = requested
+        resolved_hcas = requested
     else:
-        resolved = next(iter(discovered.values()))
+        resolved_hcas = next(iter(discovered.values()))
 
-    lifecycle.ib_hcas = resolved
+    configured_netdev = (variant_config.roles.server.ib_netdev or "").strip()
+    master_addr = (variant_config.params.master_addr or "").strip() or orch.hosts[0]
+    if configured_netdev and configured_netdev.lower() != "auto":
+        resolved_netdev = configured_netdev
+    else:
+        try:
+            resolved_netdev = discover_socket_netdev_name(orch, master_addr=master_addr)
+        except RuntimeError as e:
+            lifecycle.failed = True
+            lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - t)
+            pytest.fail(str(e))
+
+    lifecycle.ib_hcas = resolved_hcas
+    lifecycle.ib_netdev = resolved_netdev
     lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - t)
-    log.info("test_discover_topology: resolved HCAs=%s", resolved)
+    log.info(
+        "test_discover_topology: resolved netdev=%s HCAs=%s",
+        resolved_netdev,
+        resolved_hcas,
+    )
 
 
 def pytest_generate_tests(metafunc):
@@ -117,6 +139,7 @@ def test_inferencex_atom_inference(
         osl=osl,
         concurrency=concurrency,
         ib_hcas=getattr(lifecycle, "ib_hcas", []),
+        ib_netdev=getattr(lifecycle, "ib_netdev", None),
     )
 
     session_key = server_session_key(variant_config, isl, osl)

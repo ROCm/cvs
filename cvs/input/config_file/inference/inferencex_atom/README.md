@@ -60,8 +60,14 @@ Standalone ATOM has **no native pipeline parallel**. Multinode PP validation req
 **Before a multinode PP lab run**, set in the copied config:
 
 - `container.image` — vLLM+ATOM or SGLang-capable image (shipped configs use `<changeme>`)
-- `roles.server.ib_netdev` — Linux NIC name for `NCCL_SOCKET_IFNAME` (e.g. `ens51f1np1`)
 - `params.master_addr` — head node VPC IP (replace `{head-node-ip}`)
+
+Multinode fabric is probed once per run in `test_discover_topology`:
+
+- `roles.server.ib_hca_devices: "auto"` (default) → `NCCL_IB_HCA` from `ibv_devinfo`
+- `roles.server.ib_netdev: "auto"` (default on distributed stems) → `GLOO_SOCKET_IFNAME` / `NCCL_SOCKET_IFNAME` from the cluster IP on each node
+
+Override `ib_netdev` only when auto-discovery fails (asymmetric interface names) or you need a non-default NIC. Do **not** set `mlx5_*` — those are IB HCAs, not IP netdevs.
 
 Threshold cell keys for multinode PP: `ISL=…,OSL=…,TP=8,PP=2,NNODES=2,CONC=…`.
 
@@ -78,7 +84,7 @@ Ship one template: `cvs/input/cluster_file/inferencex_atom_cluster.json`. Copy i
 | Single-node (`*_single`, baseline sweep, MTP3) | `1` (default) | **Head node only** — remove the worker entry |
 | Multinode PP (`*_distributed`, `*_baseline_sweep_distributed`, `*_sglang_distributed`) | `2` | Head + worker; use lab subdirs `distributed/` or `sglang_distributed/` |
 
-For multinode PP variants, set `params.master_addr` to the head VPC IP, `roles.server.ib_netdev`, and a coordinator-capable `container.image`. `test_setup_sshd` runs when `len(node_dict) > 1`. The container image must include `sshd` (CVS fails fast if missing — no runtime `apt-get`).
+For multinode PP variants, set `params.master_addr` to the head VPC IP and a coordinator-capable `container.image`. Fabric netdev/HCAs are discovered in `test_discover_topology` unless overridden. `test_setup_sshd` runs when `len(node_dict) > 1`.
 
 ## Shared suite helpers (reusable by other inference suites)
 

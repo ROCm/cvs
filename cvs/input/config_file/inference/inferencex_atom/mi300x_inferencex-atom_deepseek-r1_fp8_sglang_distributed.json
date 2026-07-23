@@ -55,7 +55,7 @@
         "aiter"
       ],
       "ib_hca_devices": "auto",
-      "ib_netdev": "<changeme>",
+      "ib_netdev": "auto",
       "env": {
         "SGLANG_USE_AITER": "1"
       }
