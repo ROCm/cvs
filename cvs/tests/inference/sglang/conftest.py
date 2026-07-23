@@ -7,7 +7,7 @@ Fixtures and hooks for SGLang inference suites (``sglang_single`` and ``sglang_d
 Both suites use ``ContainerOrchestrator`` (vLLM-style) via ``cluster_container.json`` and
 ``load_variant()`` from ``sglang_config_loader``.
 
-``sglang_single.py`` — ``SglangSingle`` (unified server on cluster head).
+``sglang_single.py`` — ``SglangSingle`` (unified server on ``benchmark_serv_node`` only).
 ``sglang_disagg_distributed.py`` — ``SglangDisaggPD`` (PD prefill/decode/router/bench).
 
 Each ``benchmark_params`` variant may set ``threshold_file`` to a JSON file beside the config;
@@ -26,6 +26,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
+from cvs.lib.inference.sglang.sglang_common import as_node_list
 from cvs.lib.inference.sglang.sglang_config_loader import (
     SglangSingleVariantConfig,
     flat_expected_from_specs,
@@ -66,6 +67,39 @@ def _deep_merge(base, override):
     for k, v in override.items():
         out[k] = _deep_merge(base[k], v) if k in base else v
     return out
+
+
+def _benchmark_serv_host(inference: Mapping[str, Any]) -> str:
+    """Single-node suite target host from inference ``benchmark_serv_node``."""
+    raw = inference.get("benchmark_serv_node")
+    if not raw:
+        raise ValueError(
+            "sglang_single requires 'benchmark_serv_node' in the inference config "
+            "(config.json / variant inference dict)"
+        )
+    hosts = as_node_list(raw)
+    if len(hosts) != 1:
+        raise ValueError(
+            f"sglang_single requires exactly one benchmark_serv_node, got {hosts!r}"
+        )
+    return hosts[0]
+
+
+def _cluster_dict_for_single_benchmark(
+    cluster_dict: Mapping[str, Any],
+    bench_host: str,
+) -> dict[str, Any]:
+    """Restrict orchestrator SSH/container scope to ``benchmark_serv_node`` only."""
+    node_dict = cluster_dict.get("node_dict") or {}
+    if bench_host not in node_dict:
+        raise ValueError(
+            f"benchmark_serv_node {bench_host!r} is not listed in cluster node_dict "
+            f"(keys: {sorted(node_dict)!r})"
+        )
+    scoped = dict(cluster_dict)
+    scoped["node_dict"] = {bench_host: node_dict[bench_host]}
+    scoped["head_node_dict"] = {"mgmt_ip": bench_host}
+    return scoped
 
 
 def _create_container_orchestrator(cluster_dict: Mapping[str, Any], variant_config: SglangSingleVariantConfig):
@@ -257,9 +291,14 @@ def hf_token(variant_config):
 
 
 @pytest.fixture(scope="module")
-def orch(cluster_dict, variant_config, lifecycle):
+def orch(request, cluster_dict, variant_config, lifecycle):
     """``ContainerOrchestrator`` for both single-node and disagg SGLang suites."""
-    o = _create_container_orchestrator(cluster_dict, variant_config)
+    cluster = cluster_dict
+    if _use_sglang_single(request):
+        bench_host = _benchmark_serv_host(variant_config.inference)
+        cluster = _cluster_dict_for_single_benchmark(cluster_dict, bench_host)
+        log.info("sglang_single: orchestrator scoped to benchmark_serv_node=%s", bench_host)
+    o = _create_container_orchestrator(cluster, variant_config)
 
     yield o
 
@@ -273,9 +312,9 @@ def orch(cluster_dict, variant_config, lifecycle):
 @pytest.fixture(scope="module")
 def gpu_type(request, orch, variant_config):
     if _use_sglang_single(request):
-        smi_out_dict = orch.exec_on_head("rocm-smi -a | head -30")
-        head_node = next(iter(smi_out_dict))
-        smi_out = smi_out_dict[head_node]
+        bench_host = _benchmark_serv_host(variant_config.inference)
+        smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
+        smi_out = smi_out_dict.get(bench_host) or next(iter(smi_out_dict.values()))
     else:
         # Disagg: probe first prefill node (may differ from cluster head).
         prefill_nodes = variant_config.inference["prefill_node_list"]
