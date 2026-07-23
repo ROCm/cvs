@@ -68,9 +68,17 @@ class TestBuildLmEvalCmd(unittest.TestCase):
         self.assertIn("base_url=http://127.0.0.1:8000/v1/chat/completions", cmd)
         self.assertNotIn("base_url=http://127.0.0.1:8000/v1/completions,", cmd)
 
+    def test_apply_chat_template_passes_lm_eval_flag(self):
+        # local-chat-completions requires lm-eval's own --apply_chat_template
+        # flag to format prompts as messages=list[dict]; without it lm-eval
+        # sends a plain string and the chat-completions client asserts.
+        cmd = build_lm_eval_cmd(_task(apply_chat_template=True), _ctx())
+        self.assertIn("--apply_chat_template", cmd)
+
     def test_default_task_uses_completions_endpoint(self):
         cmd = build_lm_eval_cmd(_task(apply_chat_template=False), _ctx())
         self.assertIn("base_url=http://127.0.0.1:8000/v1/completions", cmd)
+        self.assertNotIn("--apply_chat_template", cmd)
 
     def test_num_fewshot_and_num_concurrent_reflected(self):
         cmd = build_lm_eval_cmd(_task(num_fewshot=5, num_concurrent=32), _ctx())
