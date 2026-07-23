@@ -1,25 +1,25 @@
 {
-  "_comment": "MI300X W1 multinode thresholds calibrated from lab run 20260722 (10.32.80.112/113); C=16 scaling/throughput floors at 80% of measured. C=64/128 retain 50% scaling seed until recalibrated.",
+  "_comment": "MI300X W1 multinode thresholds calibrated from lab run 20260723 (10.32.80.112/113, vLLM-ATOM PP=2). ISL=512/OSL=512 CONC=16: throughput/scaling mins at 80% of measured; ttft/tpot gated maxes at 110%. Other cells retain prior seeds until recalibrated.",
   "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16": {
     "client.total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 1500
+      "value": 671
     },
     "client.output_throughput": {
       "kind": "min_tok_s",
-      "value": 750
+      "value": 334
     },
     "client.per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 188
+      "value": 84
     },
     "client.output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 94
+      "value": 42
     },
     "client.mean_ttft_ms": {
       "kind": "max_ms",
-      "value": 1000000
+      "value": 223
     },
     "client.median_ttft_ms": {
       "kind": "max_ms",
@@ -35,11 +35,11 @@
     },
     "client.p99_ttft_ms": {
       "kind": "max_ms",
-      "value": 1000000
+      "value": 4271
     },
     "client.mean_tpot_ms": {
       "kind": "max_ms",
-      "value": 1000000
+      "value": 42
     },
     "client.median_tpot_ms": {
       "kind": "max_ms",
@@ -55,7 +55,7 @@
     },
     "client.p99_tpot_ms": {
       "kind": "max_ms",
-      "value": 1000000
+      "value": 43
     },
     "client.mean_itl_ms": {
       "kind": "max_ms",
@@ -103,7 +103,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 22
+      "value": 11
     }
   },
   "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=64": {
