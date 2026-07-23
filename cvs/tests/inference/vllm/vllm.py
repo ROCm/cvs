@@ -18,6 +18,7 @@ lifecycle object and passed into VllmJob per cell.
 
 import json
 import os
+import pathlib
 import shlex
 import time
 
@@ -25,6 +26,14 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.inference.utils.vllm_config_loader import GoodputSlo, validate_sweep_selector
+from cvs.lib.utils.gpu import (
+    GPU_METRICS,
+    GPU_METRIC_UNITS,
+    agg_readings,
+    capture_gpu_metrics,
+    start_gpu_poller,
+    stop_and_collect_gpu_poller,
+)
 from cvs.lib.utils.verdict import evaluate_all
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS as _METRICS, CLIENT_METRIC_UNITS as _METRIC_UNITS
 from cvs.lib.inference.vllm_job import VllmJob
@@ -81,6 +90,15 @@ def pytest_generate_tests(metafunc):
                     metric_cases.append((combo, c, short))
                     metric_ids.append(cid + "-" + short)
             metafunc.parametrize("seq_combo,concurrency,metric", metric_cases, ids=metric_ids)
+    elif "gpu_metric" in metafunc.fixturenames:
+        if cases:
+            gpu_metric_cases = []
+            gpu_metric_ids = []
+            for (combo, c), cid in zip(cases, ids):
+                for short, _unit in GPU_METRICS:
+                    gpu_metric_cases.append((combo, c, short))
+                    gpu_metric_ids.append(cid + "-" + short)
+            metafunc.parametrize("seq_combo,concurrency,gpu_metric", gpu_metric_cases, ids=gpu_metric_ids)
     elif "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames and cases:
         metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
 
@@ -216,6 +234,14 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
         pytest.fail(f"no model bytes under {models_dir} after fetch")
 
 
+def _gpu_snap(orch):
+    """One-shot GPU snapshot that degrades to {} on any amd-smi/parsing failure."""
+    try:
+        return capture_gpu_metrics(orch)
+    except Exception:
+        return {}
+
+
 def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, inf_res_dict, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -234,6 +260,9 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         client_poll_count=int(variant_config.params.client_poll_count),
     )
 
+    load_s = None
+    load_mb = None
+    poll_readings = []
     try:
         # Reuse the already-running server when this cell needs an identical one
         # (cells that differ only in concurrency share a server signature, since
@@ -247,13 +276,44 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         else:
             job.stop_server()
             job.build_server_cmd()
+            pre_snap = _gpu_snap(orch)
             t = time.monotonic()
             job.start_server()
             job.wait_ready()
-            lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
+            load_s = time.monotonic() - t
+            lifecycle.record(request.node.nodeid, "server_ready", load_s)
             lifecycle.live_server_sig = sig
-        job.run_client()
-        job.wait_client_complete()
+            post_snap = _gpu_snap(orch)
+            load_mb = ((post_snap.get("gpu.used_vram") or 0) - (pre_snap.get("gpu.used_vram") or 0)) or None
+
+        _htmlpath = getattr(request.config.option, "htmlpath", None)
+        _html_dir = getattr(request.config, "_test_html_dir", "test_html")
+        _gpu_log = (
+            pathlib.Path(_htmlpath).parent / _html_dir / f"gpu_poll_isl{isl}_osl{osl}_conc{concurrency}.log"
+            if _htmlpath
+            else None
+        )
+
+        # Client is launched backgrounded (run_client returns immediately); a
+        # detached remote script snapshots amd-smi to a file on each node
+        # while wait_client_complete blocks the main thread on the client
+        # log -- no second OS thread sharing the orchestrator's SSH transport.
+        handle = start_gpu_poller(
+            orch,
+            run_id=f"{request.node.nodeid}_{isl}_{osl}_{concurrency}",
+            nodes=None if int(variant_config.params.nnodes) == 1 else list(job.orch.hosts),
+        )
+        try:
+            job.run_client()
+            job.wait_client_complete()
+        finally:
+            poll_readings = stop_and_collect_gpu_poller(
+                orch,
+                handle,
+                log_path=str(_gpu_log) if _gpu_log else None,
+                model_load_s=load_s,
+                model_load_memory_mb=load_mb,
+            )
         results = job.parse_results()
     except Exception:
         lifecycle.failed = True
@@ -261,6 +321,17 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         # cell to do a clean bringup rather than reuse a possibly-dead server.
         lifecycle.live_server_sig = None
         raise
+
+    agg = agg_readings(poll_readings)
+    gpu_results = {
+        "gpu.peak_gpu_memory_mb": agg.get("peak_gpu_memory_mb"),
+        "gpu.model_load_memory_mb": load_mb,
+        "gpu.model_load_s": load_s,
+        "gpu.gpu_bandwidth_util_pct": agg.get("gpu_bandwidth_util_pct"),
+        "gpu.gpu_compute_util_pct": agg.get("gpu_compute_util_pct"),
+    }
+    for host_actuals in results.values():
+        host_actuals.update(gpu_results)
 
     key = (
         variant_config.model.id,
@@ -296,6 +367,42 @@ def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, li
     unit = _METRIC_UNITS.get(metric, "-")
     request.node.user_properties.append(("metric_value", value))
     request.node.user_properties.append(("metric_unit", unit))
+
+    if not variant_config.enforce_thresholds:
+        return
+    cell = variant_config.cell_key(isl, osl, concurrency)
+    spec = (variant_config.thresholds.get(cell) or {}).get(full)
+    if spec is None:
+        return
+    evaluate_all(actuals, {full: spec})
+
+
+def test_gpu_metric(seq_combo, concurrency, gpu_metric, inf_res_dict, variant_config, lifecycle, request):
+    """One pytest test (= one HTML row) per GPU metric per cell."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    isl = seq_combo["isl"]
+    osl = seq_combo["osl"]
+    key = (
+        variant_config.model.id,
+        variant_config.gpu_arch,
+        isl,
+        osl,
+        seq_combo.get("name", "default"),
+        concurrency,
+    )
+    if key not in inf_res_dict:
+        pytest.skip(f"no recorded results for cell {key!r} (inference did not run)")
+    host_dict = inf_res_dict[key]
+    _host, actuals = next(iter(host_dict.items()))
+    full = "gpu." + gpu_metric
+    value = actuals.get(full)
+    unit = GPU_METRIC_UNITS.get(gpu_metric, "-")
+    request.node.user_properties.append(("metric_value", value))
+    request.node.user_properties.append(("metric_unit", unit))
+
+    if value is None:
+        pytest.skip(f"{full}: no value recorded (amd-smi unavailable or polling failed)")
 
     if not variant_config.enforce_thresholds:
         return
