@@ -129,11 +129,11 @@ def _read_json_from_head_node(shdl, head_node, remote_path, log_label):
       log_label: Short label used in log lines (e.g. 'all_reduce_perf_float').
 
     Returns:
-      The parsed JSON object.
+      The parsed JSON object, or [] if the downloaded file is not valid JSON
+      (a clear diagnostic is logged and the test is failed in that case).
 
     Raises:
       IOError: If the SFTP transfer fails.
-      json.JSONDecodeError: If the downloaded file is not valid JSON.
     """
     with tempfile.TemporaryDirectory(prefix='cvs_rccl_dl_') as tmpdir:
         local_prefix = os.path.join(tmpdir, os.path.basename(remote_path))
@@ -141,7 +141,17 @@ def _read_json_from_head_node(shdl, head_node, remote_path, log_label):
         local_path = paths[head_node]
         log.info('SFTP download succeeded for %s <- %s:%s', log_label, head_node, remote_path)
         with open(local_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            raw_output = f.read()
+        try:
+            return json.loads(raw_output)
+        except json.JSONDecodeError:
+            msg = (
+                f'Unable to parse RCCL JSON result file {remote_path} on {head_node}. '
+                f'Raw content: {raw_output.strip() or "<empty>"}'
+            )
+            log.error(msg)
+            fail_test(msg)
+            return []
 
 
 def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
