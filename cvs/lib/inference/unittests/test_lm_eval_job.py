@@ -64,7 +64,12 @@ class TestBuildLmEvalCmd(unittest.TestCase):
         cmd = build_lm_eval_cmd(_task(apply_chat_template=True), _ctx())
         self.assertIn("--model local-chat-completions", cmd)
         self.assertNotIn("--model local-completions", cmd)
-        # base_url / model_args shape is unchanged, only --model flag value differs.
+        # chat-template tasks must hit the chat endpoint, not /v1/completions.
+        self.assertIn("base_url=http://127.0.0.1:8000/v1/chat/completions", cmd)
+        self.assertNotIn("base_url=http://127.0.0.1:8000/v1/completions,", cmd)
+
+    def test_default_task_uses_completions_endpoint(self):
+        cmd = build_lm_eval_cmd(_task(apply_chat_template=False), _ctx())
         self.assertIn("base_url=http://127.0.0.1:8000/v1/completions", cmd)
 
     def test_num_fewshot_and_num_concurrent_reflected(self):
@@ -163,7 +168,7 @@ class TestRunAccuracyTasks(unittest.TestCase):
         orch = FakeOrch(
             responses=[
                 "",  # lm_eval run output
-                "/tmp/accuracy-out/mmlu/model/results_2025.json",  # find
+                "1700000000.123456 /tmp/accuracy-out/mmlu/model/results_2025.json",  # find
                 json.dumps(payload),  # cat
             ]
         )
@@ -174,10 +179,10 @@ class TestRunAccuracyTasks(unittest.TestCase):
         orch = FakeOrch(
             responses=[
                 "",
-                "/out/mmlu/model/results.json",
+                "1700000000.0 /out/mmlu/model/results.json",
                 json.dumps({"results": {"mmlu": {"acc,none": 0.5}}}),
                 "",
-                "/out/gsm8k/model/results.json",
+                "1700000001.0 /out/gsm8k/model/results.json",
                 json.dumps({"results": {"gsm8k": {"acc,none": 0.7}}}),
             ]
         )
@@ -195,9 +200,7 @@ class TestRunAccuracyTasks(unittest.TestCase):
 
     def test_exec_on_head_called_head_only_not_broadcast(self):
         payload = {"results": {"mmlu": {"acc,none": 0.5}}}
-        orch = FakeOrch(
-            responses=["", "/out/mmlu/model/results.json", json.dumps(payload)]
-        )
+        orch = FakeOrch(responses=["", "1700000000.0 /out/mmlu/model/results.json", json.dumps(payload)])
         run_accuracy_tasks(**self._run_kwargs(orch, [_task()]))
         # exactly 3 exec_on_head calls for a single task: run, find, cat.
         self.assertEqual(len(orch.head_cmds), 3)
@@ -205,11 +208,45 @@ class TestRunAccuracyTasks(unittest.TestCase):
 
     def test_install_guard_present_in_executed_command(self):
         payload = {"results": {"mmlu": {"acc,none": 0.5}}}
-        orch = FakeOrch(
-            responses=["", "/out/mmlu/model/results.json", json.dumps(payload)]
-        )
+        orch = FakeOrch(responses=["", "1700000000.0 /out/mmlu/model/results.json", json.dumps(payload)])
         run_accuracy_tasks(**self._run_kwargs(orch, [_task()]))
         self.assertIn(LM_EVAL_INSTALL_CHECK_CMD, orch.head_cmds[0])
+
+    def test_picks_newest_result_when_multiple_present(self):
+        payload = {"results": {"mmlu": {"acc,none": 0.5}}}
+        orch = FakeOrch(
+            responses=[
+                "",
+                # `find ... -printf '%T@ %p\n' | sort -rn` sorts newest-first on
+                # the real host -- FakeOrch can't execute the shell pipeline
+                # itself, so this fixture simulates the already-sorted output a
+                # real run would produce.
+                "1700000999.0 /out/mmlu/model/results_new.json\n1700000000.0 /out/mmlu/model/results_old.json",
+                json.dumps(payload),
+            ]
+        )
+        run_accuracy_tasks(**self._run_kwargs(orch, [_task()]))
+        # find step's own command text must actually sort by mtime descending --
+        # FakeOrch ignores command text when producing its response, so this
+        # assertion is the only thing that would catch a shell-logic regression
+        # (e.g. `sort -n` instead of `sort -rn`); the fixture above only proves
+        # the Python-side parsing of already-sorted output picks line 0.
+        find_cmd = orch.head_cmds[1]
+        self.assertIn("-printf", find_cmd)
+        self.assertIn("sort -rn", find_cmd)
+        # cat must be issued against the first (newest) line's path.
+        self.assertIn("results_new.json", orch.head_cmds[2])
+        self.assertNotIn("results_old.json", orch.head_cmds[2])
+
+    def test_malformed_json_result_raises_runtime_error(self):
+        orch = FakeOrch(responses=["", "1700000000.0 /out/mmlu/model/results.json", "{not valid json"])
+        with self.assertRaises(RuntimeError):
+            run_accuracy_tasks(**self._run_kwargs(orch, [_task()]))
+
+    def test_none_run_output_does_not_crash_on_missing_result(self):
+        orch = FakeOrch(responses=[None, ""])  # run output is None, find is empty
+        with self.assertRaises(RuntimeError):
+            run_accuracy_tasks(**self._run_kwargs(orch, [_task()]))
 
 
 if __name__ == "__main__":

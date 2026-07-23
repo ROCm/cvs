@@ -20,13 +20,14 @@ from cvs.lib.inference.utils import inference_suite_lifecycle as lifecycle_mod
 from cvs.lib.utils.verdict import ThresholdViolation
 
 
-def _variant_config(tasks=(), thresholds=None):
+def _variant_config(tasks=(), thresholds=None, enforce_thresholds=True):
     return SimpleNamespace(
         accuracy=SimpleNamespace(tasks=list(tasks)) if tasks is not None else None,
         params=SimpleNamespace(base_url="http://0.0.0.0", port_no="8000"),
         paths=SimpleNamespace(log_dir="/logs"),
         model=SimpleNamespace(id="meta-llama/Llama-3-8b"),
         thresholds=thresholds or {},
+        enforce_thresholds=enforce_thresholds,
     )
 
 
@@ -60,19 +61,25 @@ class TestAccuracyEvalSkip(unittest.TestCase):
     def test_skips_when_accuracy_block_absent(self):
         vc = _variant_config(tasks=None)
         with self.assertRaises(pytest.skip.Exception):
-            lifecycle_mod.test_accuracy_eval(orch=object(), variant_config=vc, lifecycle=_Lifecycle(), request=_Request())
+            lifecycle_mod.test_accuracy_eval(
+                orch=object(), variant_config=vc, lifecycle=_Lifecycle(), request=_Request()
+            )
 
     def test_skips_when_tasks_empty(self):
         vc = _variant_config(tasks=[])
         with self.assertRaises(pytest.skip.Exception):
-            lifecycle_mod.test_accuracy_eval(orch=object(), variant_config=vc, lifecycle=_Lifecycle(), request=_Request())
+            lifecycle_mod.test_accuracy_eval(
+                orch=object(), variant_config=vc, lifecycle=_Lifecycle(), request=_Request()
+            )
 
 
 class TestAccuracyEvalRun(unittest.TestCase):
     def test_calls_run_accuracy_tasks_with_expected_args(self):
         vc = _variant_config(tasks=[_task("mmlu")])
         lc = _Lifecycle()
-        with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}) as m:
+        with mock.patch.object(
+            lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}
+        ) as m:
             lifecycle_mod.test_accuracy_eval(orch="ORCH", variant_config=vc, lifecycle=lc, request=_Request())
         m.assert_called_once()
         kwargs = m.call_args.kwargs
@@ -136,6 +143,19 @@ class TestAccuracyEvalRun(unittest.TestCase):
             with self.assertRaises(pytest.fail.Exception):
                 lifecycle_mod.test_accuracy_eval(orch="ORCH", variant_config=vc, lifecycle=lc, request=_Request())
         self.assertTrue(lc.failed)
+
+    def test_threshold_miss_recorded_but_not_raised_when_enforce_thresholds_false(self):
+        vc = _variant_config(
+            tasks=[_task("mmlu")],
+            thresholds={"accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.9}}}},
+            enforce_thresholds=False,
+        )
+        lc = _Lifecycle()
+        with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}):
+            lifecycle_mod.test_accuracy_eval(orch="ORCH", variant_config=vc, lifecycle=lc, request=_Request())
+        self.assertFalse(lc.failed)
+        recorded = dict((label, (value, unit)) for label, value, unit in lc.report["test_accuracy_eval"])
+        self.assertEqual(recorded["mmlu.mmlu.acc__none"], (0.7, ""))
 
     def test_multiple_tasks_each_gated_independently(self):
         vc = _variant_config(

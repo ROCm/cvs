@@ -33,10 +33,11 @@ class LmEvalCtx:
 
 def build_lm_eval_cmd(task: AccuracyTask, ctx: LmEvalCtx) -> str:
     model_flag = "local-chat-completions" if task.apply_chat_template else "local-completions"
+    endpoint_path = "/v1/chat/completions" if task.apply_chat_template else "/v1/completions"
 
     model_args = ",".join(
         [
-            f"base_url={ctx.base_url}/v1/completions",
+            f"base_url={ctx.base_url}{endpoint_path}",
             f"model={ctx.model_id}",
             f"tokenizer={ctx.model_path}",
             "tokenizer_backend=huggingface",
@@ -89,12 +90,25 @@ def run_accuracy_tasks(
     for task in tasks:
         cmd = build_lm_eval_cmd(task, ctx)
         out = orch.exec_on_head(cmd, timeout=PER_TASK_TIMEOUT_S)
-        (run_output,) = out.values()
+        try:
+            (run_output,) = out.values()
+        except ValueError as e:
+            raise RuntimeError(
+                f"lm_eval task {task.id!r}: expected exactly one exec_on_head result, got {len(out)}: {e}"
+            ) from e
+        run_output = run_output or ""
 
         task_out_dir = f"{output_dir}/{task.id}"
-        find_out = orch.exec_on_head(f"find {shlex.quote(task_out_dir)} -name 'results*.json'")
-        (find_output,) = find_out.values()
-        result_path = (find_output or "").strip().splitlines()[0] if (find_output or "").strip() else ""
+        find_cmd = f"find {shlex.quote(task_out_dir)} -name 'results*.json' -printf '%T@ %p\\n' | sort -rn"
+        find_out = orch.exec_on_head(find_cmd)
+        try:
+            (find_output,) = find_out.values()
+        except ValueError as e:
+            raise RuntimeError(
+                f"lm_eval task {task.id!r}: expected exactly one exec_on_head result for find, got {len(find_out)}: {e}"
+            ) from e
+        lines = (find_output or "").strip().splitlines()
+        result_path = lines[0].split(" ", 1)[1] if lines else ""
 
         if not result_path:
             raise RuntimeError(
@@ -104,8 +118,16 @@ def run_accuracy_tasks(
             )
 
         cat_out = orch.exec_on_head(f"cat {shlex.quote(result_path)}")
-        (payload_text,) = cat_out.values()
-        payload = json.loads(payload_text)
+        try:
+            (payload_text,) = cat_out.values()
+        except ValueError as e:
+            raise RuntimeError(
+                f"lm_eval task {task.id!r}: expected exactly one exec_on_head result for cat, got {len(cat_out)}: {e}"
+            ) from e
+        try:
+            payload = json.loads(payload_text)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"lm_eval task {task.id!r} produced unparseable results at {result_path}: {e}") from e
         results[task.id] = project(payload)
 
     return results

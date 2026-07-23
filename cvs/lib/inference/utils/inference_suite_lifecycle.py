@@ -217,6 +217,8 @@ def test_accuracy_eval(orch, variant_config, lifecycle, request):
             continue
         for metric_key, value in actual.items():
             lifecycle.record(request.node.nodeid, f"{task_id}.{metric_key}", value, "")
+        if not variant_config.enforce_thresholds:
+            continue
         evaluate_all(actual, accuracy_thresholds.get(task_id, {}))
 
 

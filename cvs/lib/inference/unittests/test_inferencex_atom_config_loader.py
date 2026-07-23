@@ -273,6 +273,40 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         )
         self.assertEqual(variant.accuracy.tasks[0].id, "mmlu")
 
+    def test_accuracy_threshold_key_does_not_trip_sweep_coverage(self):
+        # "accuracy" is a top-level threshold key for lm-eval gating, not a
+        # sweep cell -- it must not be flagged as an unrecognized extra key
+        # now that _check_thresholds_cover_sweep delegates to the shared
+        # validate_thresholds_cover_sweep.
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="w1", isl="1024", osl="1024")],
+            runs=[Run(combo="w1", concurrency=128)],
+        )
+        cell = "ISL=1024,OSL=1024,TP=8,CONC=128"
+        thresholds = {
+            cell: placeholder_gated_threshold_cell(),
+            "accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}}},
+        }
+        variant = InferenceXAtomVariantConfig(
+            schema_version=1,
+            framework="inferencex_atom_single",
+            gpu_arch="mi300x",
+            enforce_thresholds=True,
+            threshold_json="<changeme>",
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "amd/test-model", "remote": 0},
+            container={"name": "c", "image": "rocm/atom:nightly", "runtime": {"name": "docker"}},
+            params={"tensor_parallelism": "8"},
+            sweep=sweep,
+            thresholds=thresholds,
+        )
+        self.assertIn("accuracy", variant.thresholds)
+
 
 if __name__ == "__main__":
     unittest.main()
