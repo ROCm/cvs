@@ -4,7 +4,7 @@ All rights reserved.
 
 Single-node SGLang inference controller (no PD disaggregation).
 
-One container on the cluster head (via ``ContainerOrchestrator``) runs a unified
+One container on ``benchmark_serv_node`` (via ``ContainerOrchestrator``) runs a unified
 ``sglang.launch_server`` on ``proxy_router_serv_port``. Benchmark/smoke/lm-eval
 traffic hits that port via ``client_host`` (default ``127.0.0.1`` inside the
 container).
@@ -21,10 +21,12 @@ import time
 from typing import Any, Optional
 
 from cvs.lib import globals
+from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.inference.sglang.sglang_common import (
     LM_EVAL_SPECS,
     add_cli_flags_block,
     add_export_env_block,
+    as_node_list,
     coerce_sglang_actual,
     first_float,
     normalize_sglang_threshold_spec,
@@ -87,6 +89,7 @@ class SglangSingle:
         self.hca_id_prefix = str(self.inf_dict['hca_id_prefix']).strip()
         self.log_dir = self.inf_dict['log_dir']
         self.inference_poll_iterations = self.bp_dict['inference_poll_iterations']
+        self.benchmark_serv_node = self._resolve_benchmark_serv_node()
 
         self.inference_start_time = self._host_exec('date +"%a %b %e %H:%M"')
         self.inference_end_time = None
@@ -94,15 +97,28 @@ class SglangSingle:
         log.info('single-node inference_dict = %s', self.inf_dict)
         log.info('single-node benchmark_params_dict = %s', self.bp_dict)
         log.info(
-            'single-node client_host=%s router_serv_port=%s head=%s',
+            'single-node client_host=%s router_serv_port=%s benchmark_serv_node=%s',
             self.client_host,
             self.router_serv_port,
-            self._head_host,
+            self.benchmark_serv_node,
         )
+
+    def _resolve_benchmark_serv_node(self) -> str:
+        raw = self.inf_dict.get('benchmark_serv_node')
+        if not raw:
+            raise ValueError(
+                "SglangSingle requires benchmark_serv_node in the inference config"
+            )
+        hosts = as_node_list(raw)
+        if len(hosts) != 1:
+            raise ValueError(
+                f"SglangSingle requires exactly one benchmark_serv_node, got {hosts!r}"
+            )
+        return hosts[0]
 
     @property
     def _head_host(self) -> str:
-        return self.orch.head_node
+        return self.benchmark_serv_node
 
     @property
     def server_log_path(self) -> str:
@@ -132,8 +148,11 @@ class SglangSingle:
         return self._first_output(self._container_exec(cmd, timeout=timeout))
 
     def _host_exec(self, cmd: str, *, timeout: int | None = None) -> dict:
-        """Run ``cmd`` on the head host (baremetal SSH), e.g. amd-smi / dmesg."""
-        return self.orch.head.exec(cmd, timeout=timeout)
+        """Run ``cmd`` on ``benchmark_serv_node`` (baremetal), e.g. amd-smi / dmesg."""
+        host = self.benchmark_serv_node
+        if host == self.orch.head_node and len(self.orch.hosts) == 1:
+            return self.orch.head.exec(cmd, timeout=timeout)
+        return BaremetalOrchestrator.exec(self.orch, cmd, hosts=[host], timeout=timeout)
 
     def _host_exec_text(self, cmd: str, *, timeout: int | None = None) -> str:
         return self._first_output(self._host_exec(cmd, timeout=timeout))
@@ -452,7 +471,7 @@ class SglangSingle:
 
         self.inference_end_time = self._host_exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
-        verify_dmesg_for_errors(self.orch.head, self.inference_start_time, self.inference_end_time)
+        verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
 
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
         return self.run_lm_eval_benchmark_test('lm_eval_hellaswag', _d_type=_d_type)

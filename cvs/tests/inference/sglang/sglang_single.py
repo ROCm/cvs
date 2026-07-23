@@ -10,7 +10,9 @@ Run:
     --cluster_file <cluster.json> \\
     --config_file <sglang_config.json>
 
-Set ``benchmark_serv_node`` to the target host.
+Set ``benchmark_serv_node`` in the inference config to the target host (must also
+appear in the cluster file ``node_dict``). Only that node gets a container and
+loads the model; other cluster nodes are ignored for this suite.
 '''
 
 import pytest

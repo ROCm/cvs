@@ -3,7 +3,8 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
 Disaggregated (PD) SGLang benchmark: prefill, decode, proxy router, and benchmark
-client roles across cluster nodes via ``ContainerOrchestrator``.
+client roles from the inference config. Containers are launched only on the union
+of role hosts (not every host in cluster.json unless all are assigned roles).
 
 Run:
   pytest cvs/tests/inference/sglang/sglang_disagg_distributed.py \\
