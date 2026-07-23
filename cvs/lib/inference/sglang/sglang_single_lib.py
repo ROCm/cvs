@@ -4,9 +4,10 @@ All rights reserved.
 
 Single-node SGLang inference controller (no PD disaggregation).
 
-One container on ``benchmark_serv_node`` runs a unified ``sglang.launch_server``
-on ``proxy_router_serv_port``. Benchmark/smoke/lm-eval traffic hits that port
-via ``client_host`` (default ``127.0.0.1`` inside the container).
+One container on the cluster head (via ``ContainerOrchestrator``) runs a unified
+``sglang.launch_server`` on ``proxy_router_serv_port``. Benchmark/smoke/lm-eval
+traffic hits that port via ``client_host`` (default ``127.0.0.1`` inside the
+container).
 '''
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import time
 from typing import Any, Optional
 
@@ -23,17 +25,15 @@ from cvs.lib.inference.sglang.sglang_common import (
     LM_EVAL_SPECS,
     add_cli_flags_block,
     add_export_env_block,
-    as_node_list,
     coerce_sglang_actual,
     first_float,
     normalize_sglang_threshold_spec,
     resolve_client_host,
-    textwrap_for_yml,
 )
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
-from cvs.lib.utils_lib import *
+from cvs.lib.utils_lib import fail_test
 from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
-from cvs.lib.verify_lib import *
+from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 log = globals.log
 
@@ -44,7 +44,7 @@ _SERVER_READY_RE = re.compile(
 
 
 class SglangSingle:
-    """Unified single-node SGLang serve + benchmark on ``benchmark_serv_node``."""
+    """Unified single-node SGLang serve + benchmark via ``ContainerOrchestrator``."""
 
     def __init__(
         self,
@@ -52,11 +52,15 @@ class SglangSingle:
         inference_config_dict,
         benchmark_params_dict,
         hf_token,
-        b_phdl=None,
+        orch=None,
         gpu_type='mi300',
         user_name=None,
         priv_key_file=None,
     ):
+        if orch is None:
+            raise ValueError("SglangSingle requires orch= (ContainerOrchestrator)")
+
+        self.orch = orch
         self.user_name = user_name
         self.priv_key_file = priv_key_file
         self.model_name = model_name
@@ -70,17 +74,9 @@ class SglangSingle:
             'mount_vol',
             '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
         )
-        self.benchmark_serv_node = as_node_list(self.inf_dict['benchmark_serv_node'])
-
-        self.b_phdl = b_phdl
-        if self.b_phdl is None:
-            self.b_phdl = Pssh(log, self.benchmark_serv_node, user=self.user_name, pkey=self.priv_key_file)
 
         self.inference_results_dict = {}
         log.info("%s", self.gpu_type)
-
-        self.inference_start_time = self.b_phdl.exec('date +"%a %b %e %H:%M"')
-        self.inference_end_time = None
 
         self.home_dir = os.path.expanduser("~")
         self._apply_inf_defaults()
@@ -92,13 +88,21 @@ class SglangSingle:
         self.log_dir = self.inf_dict['log_dir']
         self.inference_poll_iterations = self.bp_dict['inference_poll_iterations']
 
+        self.inference_start_time = self._host_exec('date +"%a %b %e %H:%M"')
+        self.inference_end_time = None
+
         log.info('single-node inference_dict = %s', self.inf_dict)
         log.info('single-node benchmark_params_dict = %s', self.bp_dict)
         log.info(
-            'single-node client_host=%s router_serv_port=%s',
+            'single-node client_host=%s router_serv_port=%s head=%s',
             self.client_host,
             self.router_serv_port,
+            self._head_host,
         )
+
+    @property
+    def _head_host(self) -> str:
+        return self.orch.head_node
 
     @property
     def server_log_path(self) -> str:
@@ -113,6 +117,26 @@ class SglangSingle:
     def client_host(self) -> str:
         """HTTP client target when smoke/bench/lm-eval run inside the same container."""
         return resolve_client_host(self.inf_dict, unified_server=True)
+
+    @staticmethod
+    def _first_output(out_dict: dict) -> str:
+        if not out_dict:
+            return ""
+        return next(iter(out_dict.values())) or ""
+
+    def _container_exec(self, cmd: str, *, timeout: int | None = None) -> dict:
+        """Run ``cmd`` inside the container."""
+        return self.orch.exec(cmd, timeout=timeout)
+
+    def _container_exec_text(self, cmd: str, *, timeout: int | None = None) -> str:
+        return self._first_output(self._container_exec(cmd, timeout=timeout))
+
+    def _host_exec(self, cmd: str, *, timeout: int | None = None) -> dict:
+        """Run ``cmd`` on the head host (baremetal SSH), e.g. amd-smi / dmesg."""
+        return self.orch.head.exec(cmd, timeout=timeout)
+
+    def _host_exec_text(self, cmd: str, *, timeout: int | None = None) -> str:
+        return self._first_output(self._host_exec(cmd, timeout=timeout))
 
     def _apply_inf_defaults(self) -> None:
         self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
@@ -138,69 +162,73 @@ class SglangSingle:
         self.bp_dict.setdefault('inference_poll_iterations', '16')
 
     def setup_server_container_env(self) -> None:
-        """Write and source ``/tmp/server_env_script.sh`` on the benchmark node."""
-        env_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export NCCL_DEBUG={self.inf_dict['nccl_debug']}
-                    export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
-                    export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
-                    export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}
-                    export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
-                    export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
-                    export HSA_FORCE_FINE_GRAIN_PCIE=1
-                    export MODEL={self.bp_dict['model']}
-                    export TP={self.bp_dict['tensor_parallelism']}
-                    export HF_TOKEN={self.hf_token}
-{add_export_env_block(self.bp_dict)}
-                    '  > /tmp/server_env_script.sh"
-                    '''
+        """Write and source ``/tmp/server_env_script.sh`` inside the container."""
+        env_body = (
+            "export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH\n"
+            f"export NCCL_DEBUG={self.inf_dict['nccl_debug']}\n"
+            f"export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}\n"
+            f"export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}\n"
+            f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
+            f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export MODEL={self.bp_dict['model']}\n"
+            f"export TP={self.bp_dict['tensor_parallelism']}\n"
+            f"export HF_TOKEN={self.hf_token}\n"
+            f"{add_export_env_block(self.bp_dict, indent='')}\n"
+        )
+        write_cmd = "bash -c " + shlex.quote(
+            f"cat > /tmp/server_env_script.sh <<'EOF'\n{env_body}EOF\n"
+            "chmod 755 /tmp/server_env_script.sh && /tmp/server_env_script.sh"
+        )
         time.sleep(3)
-        self.b_phdl.exec(textwrap_for_yml(env_cmd))
-        cmd = f'''docker exec {self.container_name} /bin/bash -c " \
-                   chmod 755 /tmp/server_env_script.sh; /tmp/server_env_script.sh" '''
-        self.b_phdl.exec(cmd)
+        self._container_exec(write_cmd)
         time.sleep(5)
 
     def launch_server(self, dtype='auto', kv_cache_dtype='auto') -> None:
         """Launch one unified SGLang server (no PD disaggregation)."""
         log.info('Launch unified SGLang server on 0.0.0.0:%s', self.router_serv_port)
-        launch_body = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
-                      python3 -m sglang.launch_server --model {self.bp_dict['model']} \
-                              --host 0.0.0.0 \
-                              --port {self.router_serv_port} \
-                              --dtype {dtype} \
-                              --kv-cache-dtype {kv_cache_dtype} \
-                              --trust-remote-code \
-                              --tp-size {self.bp_dict['tensor_parallelism']} \
-                              --disable-radix-cache --disable-cuda-graph \
-                              --mem-fraction-static {self.bp_dict['memory_fraction']} \
-{add_cli_flags_block(self.bp_dict)}
-                              --log-level {self.inf_dict['log_level']}' > /tmp/server_launch_script.sh" '''
-        self.b_phdl.exec(textwrap_for_yml(launch_body))
-        start_cmd = f'''docker exec {self.container_name} /bin/bash -c " \
-                   chmod 755 /tmp/server_launch_script.sh; \
-                   mkdir -p {self.log_dir}/server_node; \
-                   source /tmp/server_env_script.sh && \
-                   nohup /tmp/server_launch_script.sh > \
-                   {self.server_log_path} 2>&1 &" '''
-        self.b_phdl.exec(textwrap_for_yml(start_cmd))
+        flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
+        launch_body = (
+            f"python3 -m sglang.launch_server --model {self.bp_dict['model']} \\\n"
+            f"    --host 0.0.0.0 \\\n"
+            f"    --port {self.router_serv_port} \\\n"
+            f"    --dtype {dtype} \\\n"
+            f"    --kv-cache-dtype {kv_cache_dtype} \\\n"
+            f"    --trust-remote-code \\\n"
+            f"    --tp-size {self.bp_dict['tensor_parallelism']} \\\n"
+            f"    --disable-radix-cache --disable-cuda-graph \\\n"
+            f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
+            f"{flags_block}\n"
+            f"    --log-level {self.inf_dict['log_level']}\n"
+        )
+        start_cmd = "bash -c " + shlex.quote(
+            f"cat > /tmp/server_launch_script.sh <<'EOF'\n{launch_body}EOF\n"
+            f"chmod 755 /tmp/server_launch_script.sh\n"
+            f"mkdir -p {self.log_dir}/server_node\n"
+            f"source /tmp/server_env_script.sh\n"
+            f"nohup /tmp/server_launch_script.sh > {self.server_log_path} 2>&1 &"
+        )
+        self._container_exec(start_cmd)
         time.sleep(5)
 
     def poll_for_server_ready(self, no_of_iterations=16) -> None:
-        target_node = self.benchmark_serv_node[0]
         for iteration in range(1, no_of_iterations):
             log.info('Starting server readiness poll iteration %d', iteration)
-            out_dict = self.b_phdl.exec(
-                f'grep -B 20 -A 20 -E "{_SERVER_READY_RE.pattern}" {self.server_log_path}'
+            grep_cmd = (
+                f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} "
+                f"{shlex.quote(self.server_log_path)} || true"
             )
-            if _SERVER_READY_RE.search(out_dict.get(target_node, '')):
+            text = self._container_exec_text(grep_cmd)
+            if _SERVER_READY_RE.search(text):
                 log.info('Wait 60 secs before serving traffic')
                 time.sleep(60)
                 return
             log.info('Wait 120 secs and continue polling')
             time.sleep(120)
         fail_test(
-            f'Single-node server on {target_node} did not reach ready state in {no_of_iterations} iterations'
+            f'Single-node server on {self._head_host} did not reach ready state '
+            f'in {no_of_iterations} iterations'
         )
 
     def poll_and_check_server_ready(self) -> None:
@@ -208,42 +236,45 @@ class SglangSingle:
         time.sleep(120)
         self.poll_for_server_ready()
 
-    
     def setup_benchmark_serv_container_env(self) -> None:
         self.setup_server_container_env()
 
     def install_container_packages(self) -> None:
-        cmd = f'docker exec {self.container_name} /bin/bash -c " \
-            sudo apt -y update; sudo apt install -y iputils-ping iproute2 net-tools" '
-        self.b_phdl.exec(cmd)
+        self._container_exec(
+            "bash -c " + shlex.quote(
+                "sudo apt -y update && sudo apt install -y iputils-ping iproute2 net-tools"
+            )
+        )
 
     def exec_nic_setup_scripts(self) -> None:
         if re.search('broadcom|thor', self.nic_type, re.I):
             self.inf_dict['nccl_ib_gid_index'] = 3
-            cmd = (
-                f'docker exec {self.container_name} /bin/bash -c "'
-                f'cp {self.mount_vol}.host {self.mount_vol}; sleep 2; ibv_devinfo; sleep 2;" '
+            cmd = "bash -c " + shlex.quote(
+                f"cp {self.mount_vol}.host {self.mount_vol}; sleep 2; ibv_devinfo; sleep 2;"
             )
-            out_dict = self.b_phdl.exec(cmd)
+            out_dict = self._container_exec(cmd)
             hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
             for node, out in out_dict.items():
-                if not re.search(hca_id_regex, out, re.I):
+                if not re.search(hca_id_regex, out or '', re.I):
                     fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
     def check_ibv_devices(self) -> None:
-        out_dict = self.b_phdl.exec(f'docker exec {self.container_name} /bin/bash -c "ibv_devinfo"')
+        out_dict = self._container_exec("ibv_devinfo")
         for node, out in out_dict.items():
-            if re.search('No IB devices found', out, re.I):
+            if re.search('No IB devices found', out or '', re.I):
                 fail_test(f'IB devices not seen inside the container for node {node}')
 
     def run_test_rmsnorm(self, max_jobs=192) -> None:
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "MAX_JOBS={max_jobs} \
-                python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py > /tmp/rsmnorm_test.log 2>&1 &" '''
-        self.b_phdl.exec(cmd)
+        self._container_exec(
+            "bash -c " + shlex.quote(
+                f"MAX_JOBS={max_jobs} python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py "
+                f"> /tmp/rsmnorm_test.log 2>&1 &"
+            )
+        )
         time.sleep(180)
-        out_dict = self.b_phdl.exec('docker exec {0} /bin/bash -c "cat /tmp/rsmnorm_test.log"'.format(self.container_name))
+        out_dict = self._container_exec("bash -c " + shlex.quote("cat /tmp/rsmnorm_test.log"))
         for node, out in out_dict.items():
-            if re.search('fail', out, re.I):
+            if re.search('fail', out or '', re.I):
                 fail_test(f'Some failures observed in test rmsnorm on node {node}')
 
     def verify_openai_compatible_endpoints(self) -> list[str]:
@@ -252,23 +283,23 @@ class SglangSingle:
             port, self.bp_dict['model'], host=self.client_host
         )
         b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                  mkdir -p {self.log_dir}/benchmark_node; \
-                  echo '{b64}' | base64 -d > /tmp/openai_mq_probe.py && \
-                  python3 /tmp/openai_mq_probe.py && rm -f /tmp/openai_mq_probe.py" '''
+        inner = (
+            f"mkdir -p {self.log_dir}/benchmark_node && "
+            f"echo {shlex.quote(b64)} | base64 -d > /tmp/openai_mq_probe.py && "
+            f"python3 /tmp/openai_mq_probe.py && rm -f /tmp/openai_mq_probe.py"
+        )
         log.info(
-            'OpenAI endpoint probe inside benchmark container (%s:%r)',
+            'OpenAI endpoint probe inside container (%s:%r)',
             self.client_host,
             port,
         )
-        out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=min(900, 480 + 180))
-        bench_host = self.benchmark_serv_node[0]
-        raw_out = out_dict.get(bench_host) or next(iter(out_dict.values()), None)
+        out_dict = self._container_exec("bash -c " + shlex.quote(inner), timeout=min(900, 480 + 180))
+        raw_out = out_dict.get(self._head_host) or self._first_output(out_dict)
 
         probe_err: Optional[str] = None
         results: dict[str, tuple[int, Any]] = {}
         if not raw_out or not str(raw_out).strip():
-            probe_err = f"OpenAI-compatible probe produced no output on {bench_host!r}: {out_dict!r}"
+            probe_err = f"OpenAI-compatible probe produced no output on {self._head_host!r}: {out_dict!r}"
         else:
             last_line = str(raw_out).strip().splitlines()[-1]
             try:
@@ -303,21 +334,22 @@ class SglangSingle:
     def benchserv_test_random(self, d_type='auto') -> None:
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         self._bench_num_prompts = int(i_dict['num_prompts'])
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                      mkdir -p {self.log_dir}/benchmark_node; \
-                      source /tmp/server_env_script.sh && \
-                      export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}} && \
-                      python3 -m sglang.bench_serving \
-                      --backend {i_dict['backend']} \
-                      --dataset-name random \
-                      --num-prompts {i_dict['num_prompts']} \
-                      --max-concurrency {self.bp_dict['max_concurrency']} \
-                      --random-input {i_dict['input_length']} \
-                      --random-output {i_dict['output_length']} \
-                      --random-range-ratio {i_dict['random_range_ratio']} \
-                      --host {self.client_host} --port {self.router_serv_port} \
-                      > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1" '''
-        self.b_phdl.exec(textwrap_for_yml(cmd), timeout=1000)
+        inner = (
+            f"mkdir -p {self.log_dir}/benchmark_node\n"
+            f"source /tmp/server_env_script.sh\n"
+            f"export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}\n"
+            f"python3 -m sglang.bench_serving \\\n"
+            f"  --backend {i_dict['backend']} \\\n"
+            f"  --dataset-name random \\\n"
+            f"  --num-prompts {i_dict['num_prompts']} \\\n"
+            f"  --max-concurrency {self.bp_dict['max_concurrency']} \\\n"
+            f"  --random-input {i_dict['input_length']} \\\n"
+            f"  --random-output {i_dict['output_length']} \\\n"
+            f"  --random-range-ratio {i_dict['random_range_ratio']} \\\n"
+            f"  --host {self.client_host} --port {self.router_serv_port} \\\n"
+            f"  > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1"
+        )
+        self._container_exec("bash -c " + shlex.quote(inner), timeout=1000)
         time.sleep(5)
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
 
@@ -367,7 +399,6 @@ class SglangSingle:
                 if val:
                     self.inference_results_dict[node][key] = val
 
-            # Goodput: successful_requests / total_requests
             total_req = first_float(r'Total requests:\s+([0-9]+)', text)
             failed_req = first_float(r'Failed requests:\s+([0-9]+)', text)
             succ = self.inference_results_dict[node].get('successful_requests')
@@ -389,9 +420,10 @@ class SglangSingle:
         time.sleep(60)
         start_time = time.time()
         completed_pattern = re.compile('Serving Benchmark Result', re.I)
+        log_path = f"{self.log_dir}/benchmark_node/benchmark_results.log"
 
         for _itr in range(1, iterations + 1):
-            out_dict = self.b_phdl.exec(f"sudo tail -1000 {self.log_dir}/benchmark_node/benchmark_results.log")
+            out_dict = self._container_exec(f"tail -1000 {shlex.quote(log_path)}")
             done = all(completed_pattern.search(o or '') for o in out_dict.values()) if out_dict else False
             if done:
                 self.get_inference_results_dict(out_dict)
@@ -418,9 +450,9 @@ class SglangSingle:
                 for msg in exc.violations:
                     fail_test(f"FAIL - {msg}")
 
-        self.inference_end_time = self.b_phdl.exec('date +"%a %b %e %H:%M"')
+        self.inference_end_time = self._host_exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
-        verify_dmesg_for_errors(self.b_phdl, self.inference_start_time, self.inference_end_time)
+        verify_dmesg_for_errors(self.orch.head, self.inference_start_time, self.inference_end_time)
 
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
         return self.run_lm_eval_benchmark_test('lm_eval_hellaswag', _d_type=_d_type)
@@ -445,10 +477,14 @@ class SglangSingle:
             log_basename=f'{bench_key}.log',
             default_num_concurrent=spec['default_num_concurrent'],
         )
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                mkdir -p {self.log_dir}/benchmark_node; \\
-                source /tmp/server_env_script.sh && {inner_cmd}" '''
-        out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring['exec_timeout_sec'])
+        inner = (
+            f"mkdir -p {self.log_dir}/benchmark_node && "
+            f"source /tmp/server_env_script.sh && {inner_cmd}"
+        )
+        out_dict = self._container_exec(
+            "bash -c " + shlex.quote(inner),
+            timeout=scoring['exec_timeout_sec'],
+        )
         time.sleep(5)
 
         check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
@@ -475,7 +511,7 @@ class SglangSingle:
     def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
         tp = int(self.bp_dict['tensor_parallelism'])
         per_node = {}
-        for node, payload in self.b_phdl.exec('sudo amd-smi metric --json').items():
+        for node, payload in self._host_exec('sudo amd-smi metric --json').items():
             count = 0
             try:
                 entries = json.loads(payload.strip())

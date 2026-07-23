@@ -13,31 +13,34 @@ Run:
 Set ``benchmark_serv_node`` to the target host.
 '''
 
+import pytest
 import time
 
 from cvs.lib import globals
-from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
+#from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
 
 log = globals.log
 
 
-def test_cleanup_stale_containers(orch, lifecycle, request):
-    """Stage 0: remove stale containers and logs from a prior run."""
-    globals.error_list = []
-    t0 = time.monotonic()
-    orch.teardown_containers()
-    orch.cleanup_log_dir()
-    time.sleep(5)
-    lifecycle.complete_stage(request, "stale_cleanup", t0)
-
-
-def test_launch_inference_containers(orch, lifecycle, request):
-    """Stage 1: launch one SGLang container on ``benchmark_serv_node``."""
+def test_launch_container(orch, variant_config, lifecycle, request):
+    """Stage 1: launch container and reset log directory."""
     log.info("Testcase launch SGLang container (single-node)")
     globals.error_list = []
     t0 = time.monotonic()
+
     if not orch.setup_containers():
         lifecycle.failed = True
+        lifecycle.complete_stage(request, "container_launch", t0)
+        pytest.fail("setup_containers() returned False")
+
+    orch.cleanup_log_dir(variant_config.paths.log_dir)
+
+    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+    if not orch.verify_containers_running(name):
+        lifecycle.failed = True
+        lifecycle.complete_stage(request, "container_launch", t0)
+        pytest.fail(f"container {name} not running after setup_containers()")
+
     lifecycle.complete_stage(request, "container_launch", t0)
 
 
@@ -167,10 +170,10 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config):
     _print(inf_res_dict, lifecycle, variant_config)
 
 
-def test_teardown(orch, lifecycle, request):
-    """Final stage: tear down containers and logs. Runs even if a prior stage failed."""
+def test_teardown(orch, variant_config, lifecycle, request):
+    """Final stage: tear down container and logs. Runs even if a prior stage failed."""
     t0 = time.monotonic()
     orch.teardown_containers()
-    orch.cleanup_log_dir()
+    orch.cleanup_log_dir(variant_config.paths.log_dir)
     lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t0)
     lifecycle.torn_down = True
