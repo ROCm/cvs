@@ -61,6 +61,9 @@ def build_lm_eval_cmd(task: AccuracyTask, ctx: LmEvalCtx) -> str:
         "--log_samples",
     ]
 
+    if task.apply_chat_template:
+        args.append("--apply_chat_template")
+
     if task.metadata:
         args += ["--metadata", json.dumps(task.metadata)]
 
