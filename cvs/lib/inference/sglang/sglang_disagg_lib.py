@@ -3,7 +3,16 @@ Copyright 2026 Advanced Micro Devices, Inc.
 All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
+
+Disaggregated Prefill/Decode (PD) SGLang inference controller.
+
+Prefill, decode, proxy-router, and benchmark workloads run inside containers
+on their respective cluster nodes via ``ContainerOrchestrator`` (``orch=``).
+Bare-metal SSH (``orch.head`` / ``orch.all``) is used for ``amd-smi`` and
+``dmesg`` verification.
 '''
+
+from __future__ import annotations
 
 import base64
 import json
@@ -14,24 +23,28 @@ import time
 from typing import Any, Mapping, Optional
 
 from cvs.lib import globals
+from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.inference.sglang.sglang_common import (
     LM_EVAL_SPECS,
     add_cli_flags_block,
     add_export_env_block,
-    as_node_list as _as_node_list,
-    coerce_sglang_actual as _coerce_sglang_actual,
-    first_float as _first_float,
-    normalize_sglang_threshold_spec as _normalize_sglang_threshold_spec,
-    resolve_client_host as _resolve_client_host,
-    textwrap_for_yml,
+    as_node_list,
+    coerce_sglang_actual,
+    first_float,
+    normalize_sglang_threshold_spec,
+    resolve_client_host,
 )
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, LongContextNiahBenchmark, OpenAIProbe
-from cvs.lib.utils_lib import *
+from cvs.lib.utils_lib import fail_test
 from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
-from cvs.lib.verify_lib import *
-
+from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 log = globals.log
+
+_SERVER_READY_RE = re.compile(
+    r"fired up and ready to roll|Uvicorn running|Application startup complete|200 OK",
+    re.I,
+)
 
 inference_err_dict = {
     'NCCL ERROR': 'NCCL ERROR|NCCL timeout|local work queue catastrophic error',
@@ -47,16 +60,15 @@ err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_bu
 
 
 class SglangDisaggPD:
+    """Disaggregated Prefill/Decode SGLang controller via ``ContainerOrchestrator``."""
+
     def __init__(
         self,
         model_name,
         inference_config_dict,
         benchmark_params_dict,
         hf_token,
-        p_phdl=None,
-        d_phdl=None,
-        r_phdl=None,
-        b_phdl=None,
+        orch=None,
         gpu_type='mi300',
         user_name=None,
         priv_key_file=None,
@@ -67,7 +79,7 @@ class SglangDisaggPD:
 
         This class encapsulates:
           - Cluster topology (prefill, decode, proxy, benchmark nodes)
-          - SSH-based remote execution (via Pssh handlers)
+          - Container execution via ``ContainerOrchestrator`` (``orch=``)
           - Inference configuration (networking, containers, env vars)
           - Benchmark configuration (load, concurrency, prompt sizes)
 
@@ -76,99 +88,149 @@ class SglangDisaggPD:
             inference_config_dict (dict): Cluster and runtime configuration
             benchmark_params_dict (dict): Benchmark workload parameters
             hf_token (str): HuggingFace access token
-            p_phdl, d_phdl, r_phdl, b_phdl: Optional pre-created SSH handlers
+            orch: Required ``ContainerOrchestrator`` instance
             gpu_type (str): GPU type (e.g., mi300, mi325)
-            user_name (str): SSH username for remote nodes
-            priv_key_file (str): SSH private key file
+            user_name (str): SSH username for remote nodes (optional override)
+            priv_key_file (str): SSH private key file (optional override)
         """
+        if orch is None:
+            raise ValueError("SglangDisaggPD requires orch= (ContainerOrchestrator)")
 
-        # ------------------------------------------------------------------
-        # Basic identity and authentication parameters
-        # ------------------------------------------------------------------
+        self.orch = orch
         self.user_name = user_name
         self.priv_key_file = priv_key_file
         self.model_name = model_name
         self.hf_token = hf_token
         self.gpu_type = gpu_type
 
-        # ------------------------------------------------------------------
-        # Store inference and benchmark configuration dictionaries
-        # These are typically loaded from a JSON/YAML configuration file
-        # ------------------------------------------------------------------
         self.inf_dict = inference_config_dict
         self.bp_dict = benchmark_params_dict
 
-        self.model_name = model_name
-        self.hf_token = hf_token
-        self.gpu_type = gpu_type
-
-        # ------------------------------------------------------------------
-        # Extract cluster topology for disaggregated inference
-        #
-        # Prefill nodes  : Handle prompt ingestion + KV cache creation
-        # Decode nodes   : Handle token generation
-        # Proxy node     : Routes requests between prefill/decode
-        # Benchmark node : Generates inference load
-        # ------------------------------------------------------------------
         self.mount_vol = self.inf_dict.get(
             'mount_vol',
             '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
         )
-        
-        self.prefill_node_list = self.inf_dict['prefill_node_list']
-        self.decode_node_list = self.inf_dict['decode_node_list']
+
+        self.prefill_node_list = self._normalize_hosts(self.inf_dict['prefill_node_list'])
+        self.decode_node_list = self._normalize_hosts(self.inf_dict['decode_node_list'])
         self.prefill_nnodes = len(self.prefill_node_list)
         self.decode_nnodes = len(self.decode_node_list)
 
-        self.proxy_node = _as_node_list(self.inf_dict['proxy_router_node'])
-        self.benchmark_serv_node = _as_node_list(self.inf_dict['benchmark_serv_node'])
-
-        # ------------------------------------------------------------------
-        # SSH handlers for each node group
-        #
-        # p_phdl : Prefill nodes
-        # d_phdl : Decode nodes
-        # r_phdl : Proxy/router node
-        # b_phdl : Benchmark client node
-        # ------------------------------------------------------------------
-        self.p_phdl = p_phdl
-        self.d_phdl = d_phdl
-        self.r_phdl = r_phdl
-        self.b_phdl = b_phdl
-
-        if self.p_phdl is None:
-            self.p_phdl = Pssh(log, self.prefill_node_list, user=self.user_name, pkey=self.priv_key_file)
-
-        if self.d_phdl is None:
-            self.d_phdl = Pssh(log, self.decode_node_list, user=self.user_name, pkey=self.priv_key_file)
-
-        if self.r_phdl is None:
-            self.r_phdl = Pssh(log, self.proxy_node, user=self.user_name, pkey=self.priv_key_file)
-
-        if self.b_phdl is None:
-            self.b_phdl = Pssh(log, self.benchmark_serv_node, user=self.user_name, pkey=self.priv_key_file)
+        self.proxy_node = self._normalize_hosts(self.inf_dict['proxy_router_node'])
+        self.benchmark_serv_node = self._normalize_hosts(self.inf_dict['benchmark_serv_node'])
 
         self.job_cmd = ''
         self.job_cmd_list = []
         self.inference_results_dict = {}
         log.info("%s", self.gpu_type)
 
-        # ------------------------------------------------------------------
-        # Extract commonly used inference parameters for convenience
-        # ------------------------------------------------------------------
-        # Needed only in the case of distributed inference - placeholder for future
-        # Intialize cluster stats dicts ..
         self.rdma_stats_dict_before = {}
         self.ethtool_stats_dict_before = {}
         self.rdma_stats_dict_after = {}
-        self.inference_start_time = p_phdl.exec('date +"%a %b %e %H:%M"')
+        self.home_dir = os.path.expanduser("~")
+        self._apply_inf_defaults()
+        self._apply_bp_defaults()
+
+        self.container_name = self.inf_dict['container_name']
+        self.nic_type = self.inf_dict['nic_type']
+        self.nccl_ib_hca_list = self.inf_dict['nccl_ib_hca_list']
+        self.nccl_ib_hca = self.inf_dict['nccl_ib_hca']
+        self.nccl_socket_ifname = self.inf_dict['nccl_socket_ifname']
+        self.gloo_socket_ifname = self.inf_dict['gloo_socket_ifname']
+        self.nccl_ib_gid_index = self.inf_dict['nccl_ib_gid_index']
+        self.nccl_debug = self.inf_dict['nccl_debug']
+        self.data_cache_dir = self.inf_dict['data_cache_dir']
+        self.log_dir = self.inf_dict['log_dir']
+        self.hca_id_prefix = str(self.inf_dict['hca_id_prefix']).strip()
+        self.inference_poll_iterations = self.bp_dict['inference_poll_iterations']
+
+        self.inference_start_time = self._host_exec('date +"%a %b %e %H:%M"')
         self.inference_end_time = None
 
-        # ------------------------------------------------------------------
-        # Set default benchmark parameters if not provided
-        # These control request generation and performance measurement
-        # ------------------------------------------------------------------
-        self.home_dir = os.path.expanduser("~")
+        log.info('disagg inference_dict = %s', self.inf_dict)
+        log.info('disagg benchmark_params_dict = %s', self.bp_dict)
+        log.info(
+            'disagg client_host=%s router_serv_port=%s head=%s',
+            self.client_host,
+            self.router_serv_port,
+            self._head_host,
+        )
+
+    @property
+    def _head_host(self) -> str:
+        return self.orch.head_node
+
+    @property
+    def router_serv_port(self) -> str:
+        """Client-facing proxy router port (bench/smoke/lm-eval)."""
+        return str(self.inf_dict['proxy_router_serv_port'])
+
+    @property
+    def client_host(self) -> str:
+        return resolve_client_host(self.inf_dict, unified_server=False)
+
+    @staticmethod
+    def _first_output(out_dict: dict) -> str:
+        if not out_dict:
+            return ""
+        return next(iter(out_dict.values())) or ""
+
+    @staticmethod
+    def _normalize_hosts(hosts) -> list[str]:
+        """Normalize cluster JSON node field to a list of host strings."""
+        if hosts is None:
+            return []
+        return as_node_list(hosts)
+
+    def _container_exec(
+        self,
+        cmd: str,
+        *,
+        hosts=None,
+        timeout: int | None = None,
+    ) -> dict:
+        """Run ``cmd`` inside the container on ``hosts`` (default: all orch hosts)."""
+        normalized = self._normalize_hosts(hosts) if hosts is not None else None
+        return self.orch.exec(cmd, hosts=normalized, timeout=timeout)
+
+    def _container_exec_text(
+        self,
+        cmd: str,
+        *,
+        hosts=None,
+        timeout: int | None = None,
+    ) -> str:
+        return self._first_output(self._container_exec(cmd, hosts=hosts, timeout=timeout))
+
+    def _host_exec(
+        self,
+        cmd: str,
+        *,
+        hosts=None,
+        timeout: int | None = None,
+    ) -> dict:
+        """Run ``cmd`` on baremetal (``orch.head`` / ``orch.all``), e.g. amd-smi / dmesg."""
+        if hosts is None:
+            return self.orch.head.exec(cmd, timeout=timeout)
+        normalized = self._normalize_hosts(hosts)
+        if not normalized:
+            return {}
+        if len(normalized) == 1 and normalized[0] == self._head_host:
+            return self.orch.head.exec(cmd, timeout=timeout)
+        if set(normalized) == set(self.orch.hosts):
+            return self.orch.all.exec(cmd, timeout=timeout)
+        return BaremetalOrchestrator.exec(self.orch, cmd, hosts=normalized, timeout=timeout)
+
+    def _host_exec_text(
+        self,
+        cmd: str,
+        *,
+        hosts=None,
+        timeout: int | None = None,
+    ) -> str:
+        return self._first_output(self._host_exec(cmd, hosts=hosts, timeout=timeout))
+
+    def _apply_inf_defaults(self) -> None:
         self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
         self.inf_dict.setdefault('container_name', 'sglang_container')
         self.inf_dict.setdefault('nic_type', 'ainic')
@@ -191,24 +253,7 @@ class SglangDisaggPD:
         self.inf_dict.setdefault('queue_timeout_secs', '60')
         self.inf_dict.setdefault('max_retries', '5')
 
-        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-        log.info(f'inference_dict = {self.inf_dict}')
-        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-        self.container_image = self.inf_dict['container_image']
-        self.container_name = self.inf_dict['container_name']
-
-        self.nic_type = self.inf_dict['nic_type']
-        self.nccl_ib_hca_list = self.inf_dict['nccl_ib_hca_list']
-        self.nccl_ib_hca = self.inf_dict['nccl_ib_hca']
-        self.nccl_socket_ifname = self.inf_dict['nccl_socket_ifname']
-        self.gloo_socket_ifname = self.inf_dict['gloo_socket_ifname']
-        self.nccl_ib_gid_index = self.inf_dict['nccl_ib_gid_index']
-        self.nccl_debug = self.inf_dict['nccl_debug']
-        self.data_cache_dir = self.inf_dict['data_cache_dir']
-        self.log_dir = self.inf_dict['log_dir']
-        self.hca_id_prefix = str(self.inf_dict['hca_id_prefix']).strip()
-
-        # set defaults for benchmark param dict if not passed via JSON file
+    def _apply_bp_defaults(self) -> None:
         self.bp_dict.setdefault('backend', 'sglang')
         self.bp_dict.setdefault('dataset_name', 'sharegpt')
         self.bp_dict.setdefault('max_concurrency', '64')
@@ -228,28 +273,8 @@ class SglangDisaggPD:
         self.bp_dict.setdefault('percentile_metrics', 'ttft,tpot,itl,e2el')
         self.bp_dict.setdefault('metric_percentiles', '99')
         self.bp_dict.setdefault('inference_poll_iterations', '16')
+        self.bp_dict.setdefault('memory_fraction', '0.85')
 
-        self.inference_poll_iterations = self.bp_dict['inference_poll_iterations']
-
-        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-        log.info(f'benchmark_params_dict = {self.bp_dict}')
-        log.info(
-            'disagg client_host=%s router_serv_port=%s',
-            self.client_host,
-            self.router_serv_port,
-        )
-        log.info('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-
-    @property
-    def router_serv_port(self) -> str:
-        """Client-facing proxy router port (bench/smoke/lm-eval)."""
-        return str(self.inf_dict['proxy_router_serv_port'])
-
-    @property
-    def client_host(self) -> str:
-        return _resolve_client_host(self.inf_dict, unified_server=False)
-
-    # Helper function for installing container packages
     def install_container_packages(
         self,
     ):
@@ -271,19 +296,14 @@ class SglangDisaggPD:
         - Decode nodes
         - Proxy/router nodes
         """
-
         log.info('Run pre inference tasks')
-        # Install ip tools
-        cmd = f'docker exec {self.container_name} /bin/bash -c " \
-            sudo apt -y update; \
-            sudo apt install -y iputils-ping; \
-            sudo apt install -y iproute2; \
-            sudo apt install -y net-tools" '
-        self.p_phdl.exec(cmd)
-        self.d_phdl.exec(cmd)
-        self.r_phdl.exec(cmd)
+        cmd = "bash -c " + shlex.quote(
+            "sudo apt -y update && "
+            "sudo apt install -y iputils-ping iproute2 net-tools"
+        )
+        for hosts in (self.prefill_node_list, self.decode_node_list, self.proxy_node):
+            self._container_exec(cmd, hosts=hosts)
 
-    # Helper function for executing NIC setup scripts
     def exec_nic_setup_scripts(
         self,
     ):
@@ -293,38 +313,27 @@ class SglangDisaggPD:
         Behavior:
         - Only runs for distributed inference.
         - If NIC type appears to be Broadcom/Thor, applies a temporary workaround:
-          * Copies the bnxt RDMA library from the host-named file to the container?s expected path.
+          * Copies the bnxt RDMA library from the host-named file to the container's expected path.
           * Verifies that ibv_devinfo shows a bnxt_ HCA (to confirm RDMA is wired correctly).
         - Forces NCCL GID index to 3 for Broadcom/Thor (common requirement).
 
         Assumptions:
-        - self.s_phdl.exec runs a shell command and returns a dict: {node: stdout}.
         - sudo is non-interactive within the container.
         - The bnxt library file paths exist in the container base image.
         """
-
-        # This is a temporary hack needed for broadcom nics to work within containers ..
         if re.search('broadcom|thor', self.nic_type, re.I):
-            # override the gid_index to 3 for broadcom
             self.nccl_ib_gid_index = 3
-            cmd = (
-                    f'docker exec {self.container_name} /bin/bash -c "'
-                    f'cp {self.mount_vol}.host {self.mount_vol}; '
-                    f'sleep 2; ibv_devinfo; sleep 2;" '
-                )
-            pout_dict = self.p_phdl.exec(cmd)
-            dout_dict = self.d_phdl.exec(cmd)
+            cmd = "bash -c " + shlex.quote(
+                f"cp {self.mount_vol}.host {self.mount_vol}; sleep 2; ibv_devinfo; sleep 2;"
+            )
             hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
-            for node in pout_dict.keys():
-                if not re.search(hca_id_regex, pout_dict[node], re.I):
-                    log.info("%s", pout_dict[node])
-                    fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
-            for node in dout_dict.keys():
-                if not re.search(hca_id_regex, dout_dict[node], re.I):
-                    log.info("%s", dout_dict[node])
-                    fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
+            for hosts in (self.prefill_node_list, self.decode_node_list):
+                out_dict = self._container_exec(cmd, hosts=hosts)
+                for node, out in out_dict.items():
+                    if not re.search(hca_id_regex, out or '', re.I):
+                        log.info("%s", out)
+                        fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
 
-    # Helper function for checking IBV devices
     def check_ibv_devices(
         self,
     ):
@@ -347,128 +356,113 @@ class SglangDisaggPD:
 
         Proxy and benchmark nodes typically do not require RDMA access.
         """
-        for hdl in [self.p_phdl, self.d_phdl]:
-            cmd = f'''docker exec {self.container_name} /bin/bash -c "ibv_devinfo" '''
-            out_dict = hdl.exec(cmd)
-            for node in out_dict.keys():
-                if re.search('No IB devices found', out_dict[node], re.I):
+        for hosts in (self.prefill_node_list, self.decode_node_list):
+            out_dict = self._container_exec("ibv_devinfo", hosts=hosts)
+            for node, out in out_dict.items():
+                if re.search('No IB devices found', out or '', re.I):
                     fail_test(f'IB devices not seen inside the container for node {node}')
 
-    # Helper function for setting up prefill container environment
     def setup_prefill_container_env(
         self,
     ):
-        # Env setup for Prefill Nodes ..
-        p_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export NCCL_DEBUG={self.inf_dict['nccl_debug']}
-                    export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
-                    export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
-                    export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}
-                    export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
-                    export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
-                    export HSA_FORCE_FINE_GRAIN_PCIE=1
-
-                    export MASTER_PREFILL_ADDR={self.inf_dict['prefill_coordinator_addr']}
-                    export MASTER_PREFILL_PORT={self.inf_dict['prefill_coordinator_port']}
-
-                    export MODEL={self.bp_dict['model']}
-                    export TP={self.bp_dict['tensor_parallelism']}
-                    export PP={self.bp_dict['pipeline_parallelism']}
-                    export HF_TOKEN={self.hf_token}
-{add_export_env_block(self.bp_dict, indent='                    ')}
-                    '  > /tmp/prefill_env_script.sh"
-                    '''
+        """Write and source ``/tmp/prefill_env_script.sh`` on prefill nodes."""
+        env_body = (
+            "export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH\n"
+            f"export NCCL_DEBUG={self.inf_dict['nccl_debug']}\n"
+            f"export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}\n"
+            f"export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}\n"
+            f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
+            f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export MASTER_PREFILL_ADDR={self.inf_dict['prefill_coordinator_addr']}\n"
+            f"export MASTER_PREFILL_PORT={self.inf_dict['prefill_coordinator_port']}\n"
+            f"export MODEL={self.bp_dict['model']}\n"
+            f"export TP={self.bp_dict['tensor_parallelism']}\n"
+            f"export PP={self.bp_dict['pipeline_parallelism']}\n"
+            f"export HF_TOKEN={self.hf_token}\n"
+            f"{add_export_env_block(self.bp_dict, indent='')}\n"
+        )
+        write_cmd = "bash -c " + shlex.quote(
+            f"cat > /tmp/prefill_env_script.sh <<'EOF'\n{env_body}EOF\n"
+            "chmod 755 /tmp/prefill_env_script.sh && /tmp/prefill_env_script.sh"
+        )
         time.sleep(3)
-        formatted_p_cmd = textwrap_for_yml(p_cmd)
-        self.p_phdl.exec(formatted_p_cmd)
-        cmd = f'''docker exec {self.container_name} /bin/bash -c " \
-                   chmod 755 /tmp/prefill_env_script.sh; /tmp/prefill_env_script.sh" '''
-        self.p_phdl.exec(cmd)
+        self._container_exec(write_cmd, hosts=self.prefill_node_list)
 
-    # Helper function for setting up decode container environment
     def setup_decode_container_env(
         self,
     ):
-        # Env setup for Decode Nodes ..
-        d_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export NCCL_DEBUG={self.inf_dict['nccl_debug']}
-                    export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
-                    export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
-                    export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}
-                    export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
-                    export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
-                    export HSA_FORCE_FINE_GRAIN_PCIE=1
-
-                    export MASTER_DECODE_ADDR={self.inf_dict['decode_coordinator_addr']}
-                    export MASTER_DECODE_PORT={self.inf_dict['decode_coordinator_port']}
-
-                    export MODEL={self.bp_dict['model']}
-                    export TP={self.bp_dict['tensor_parallelism']}
-                    export PP={self.bp_dict['pipeline_parallelism']}
-                    export HF_TOKEN={self.hf_token}
-{add_export_env_block(self.bp_dict, indent='                    ')}
-                    '  > /tmp/decode_env_script.sh"
-                    '''
+        """Write and source ``/tmp/decode_env_script.sh`` on decode nodes."""
+        env_body = (
+            "export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH\n"
+            f"export NCCL_DEBUG={self.inf_dict['nccl_debug']}\n"
+            f"export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}\n"
+            f"export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}\n"
+            f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
+            f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export MASTER_DECODE_ADDR={self.inf_dict['decode_coordinator_addr']}\n"
+            f"export MASTER_DECODE_PORT={self.inf_dict['decode_coordinator_port']}\n"
+            f"export MODEL={self.bp_dict['model']}\n"
+            f"export TP={self.bp_dict['tensor_parallelism']}\n"
+            f"export PP={self.bp_dict['pipeline_parallelism']}\n"
+            f"export HF_TOKEN={self.hf_token}\n"
+            f"{add_export_env_block(self.bp_dict, indent='')}\n"
+        )
+        write_cmd = "bash -c " + shlex.quote(
+            f"cat > /tmp/decode_env_script.sh <<'EOF'\n{env_body}EOF\n"
+            "chmod 755 /tmp/decode_env_script.sh && /tmp/decode_env_script.sh"
+        )
         time.sleep(3)
-        formatted_d_cmd = textwrap_for_yml(d_cmd)
-        self.d_phdl.exec(formatted_d_cmd)
-        cmd = f'''docker exec {self.container_name} /bin/bash -c " \
-                   chmod 755 /tmp/decode_env_script.sh; /tmp/decode_env_script.sh" '''
-        self.d_phdl.exec(cmd)
+        self._container_exec(write_cmd, hosts=self.decode_node_list)
 
-    # Helper function for setting up proxy router container environment
     def setup_proxy_router_container_env(
         self,
     ):
-        # Env setup for Proxy Router Node ..
-        r_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export NCCL_DEBUG={self.inf_dict['nccl_debug']}
-                    export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
-                    export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
-                    export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}
-                    export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
-                    export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
-                    export HSA_FORCE_FINE_GRAIN_PCIE=1
-
-                    export HF_TOKEN={self.hf_token}
-                    '  > /tmp/router_env_script.sh"
-                    '''
+        """Write and source ``/tmp/router_env_script.sh`` on proxy/router nodes."""
+        env_body = (
+            "export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH\n"
+            f"export NCCL_DEBUG={self.inf_dict['nccl_debug']}\n"
+            f"export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}\n"
+            f"export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}\n"
+            f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
+            f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export HF_TOKEN={self.hf_token}\n"
+        )
+        write_cmd = "bash -c " + shlex.quote(
+            f"cat > /tmp/router_env_script.sh <<'EOF'\n{env_body}EOF\n"
+            "chmod 755 /tmp/router_env_script.sh && /tmp/router_env_script.sh"
+        )
         time.sleep(3)
-        formatted_r_cmd = textwrap_for_yml(r_cmd)
-        self.r_phdl.exec(formatted_r_cmd)
-        cmd = f'''docker exec {self.container_name} /bin/bash -c " \
-                   chmod 755 /tmp/router_env_script.sh; /tmp/router_env_script.sh" '''
-        self.r_phdl.exec(cmd)
+        self._container_exec(write_cmd, hosts=self.proxy_node)
 
-    # Helper function for setting up benchmark server container environment
     def setup_benchmark_serv_container_env(
         self,
     ):
-        # Env setup for Benchserv node ..
-        b_cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
-                    export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH
-                    export NCCL_DEBUG={self.inf_dict['nccl_debug']}
-                    export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}
-                    export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}
-                    export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}
-                    export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}
-                    export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}
-                    export HSA_FORCE_FINE_GRAIN_PCIE=1
-                    export HF_TOKEN={self.hf_token}
-                    '  > /tmp/benchmark_env_script.sh"
-                    '''
+        """Write and source ``/tmp/benchmark_env_script.sh`` on benchmark nodes."""
+        env_body = (
+            "export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH\n"
+            f"export NCCL_DEBUG={self.inf_dict['nccl_debug']}\n"
+            f"export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}\n"
+            f"export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}\n"
+            f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
+            f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export HF_TOKEN={self.hf_token}\n"
+        )
+        write_cmd = "bash -c " + shlex.quote(
+            f"cat > /tmp/benchmark_env_script.sh <<'EOF'\n{env_body}EOF\n"
+            "chmod 755 /tmp/benchmark_env_script.sh && /tmp/benchmark_env_script.sh"
+        )
         time.sleep(3)
-        formatted_b_cmd = textwrap_for_yml(b_cmd)
-        self.b_phdl.exec(formatted_b_cmd)
-        cmd = f'''docker exec {self.container_name} /bin/bash -c " \
-                   chmod 755 /tmp/benchmark_env_script.sh; /tmp/benchmark_env_script.sh" '''
-        self.b_phdl.exec(cmd)
+        self._container_exec(write_cmd, hosts=self.benchmark_serv_node)
         time.sleep(5)
 
-    # Helper function for running RMSNorm test
     def run_test_rmsnorm(self, max_jobs=192):
         """
         Run RMSNorm 2D operator tests inside the SGLang container across
@@ -493,30 +487,24 @@ class SglangDisaggPD:
         log.info('#================ * * * =========================#')
         log.info('Run rmsnorm2d')
         log.info('#================ * * * =========================#')
-        # ------------------------------------------------------------------
-        # Construct command to run RMSNorm test inside the container
-        #
-        # Details:
-        #   - MAX_JOBS controls parallelism inside the test
-        #   - Output is redirected to a per-container log file
-        #   - Command is executed in the background to allow parallel execution
-        # ------------------------------------------------------------------
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "MAX_JOBS={max_jobs} \
-                python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py > /tmp/rsmnorm_test.log 2>&1 &" '''
-        for hdl in [self.p_phdl, self.d_phdl, self.r_phdl]:
-            out_dict = hdl.exec(cmd)
+        cmd = "bash -c " + shlex.quote(
+            f"MAX_JOBS={max_jobs} python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py "
+            f"> /tmp/rsmnorm_test.log 2>&1 &"
+        )
+        for hosts in (self.prefill_node_list, self.decode_node_list, self.proxy_node):
+            self._container_exec(cmd, hosts=hosts)
         log.info('Wait 180 secs for tests to complete')
         time.sleep(180)
-        for hdl in [self.p_phdl, self.d_phdl, self.r_phdl]:
-            cmd = f'''docker exec {self.container_name} /bin/bash -c  "cat /tmp/rsmnorm_test.log" '''
-            out_dict = hdl.exec(cmd)
-            for node in out_dict.keys():
-                if re.search('fail', out_dict[node], re.I):
+        for hosts in (self.prefill_node_list, self.decode_node_list, self.proxy_node):
+            out_dict = self._container_exec(
+                "bash -c " + shlex.quote("cat /tmp/rsmnorm_test.log"),
+                hosts=hosts,
+            )
+            for node, out in out_dict.items():
+                if re.search('fail', out or '', re.I):
                     log.warning(f'Some failures observed in test rmsnorm on node {node}')
                     fail_test(f'Some failures observed in test rmsnorm on node {node}')
 
-    # supported --dtype {auto,half,float16,bfloat16,float,float32}
-    # supported --kv-cache-dtype {auto,fp8_e5m2,fp8_e4m3,bf16,bfloat16,fp4_e2m1}
     def launch_prefill_servers(self, dtype='auto', kv_cache_dtype='auto'):
         """
         Generate and stage Prefill server launch scripts on all Prefill nodes
@@ -544,54 +532,54 @@ class SglangDisaggPD:
         log.info('Create Prefill launch script on Prefill nodes')
         log.info('#================ * * * =========================#')
 
-        cmd_list = []
-        prefill_node_list = self.inf_dict['prefill_node_list']
+        prefill_node_list = self.prefill_node_list
         log.info('%%%% self.prefill_nnodes {}'.format(self.prefill_nnodes))
         dist_init_addr = f"{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_coordinator_port']}"
+        flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
+
         for i in range(0, int(self.prefill_nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
-                      export NNODES={self.prefill_nnodes}
-                      export NODE_RANK={i}
-                      python3 -m sglang.launch_server --model {self.bp_dict['model']} \
-                              --disaggregation-mode prefill \
-                              --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
-                              --host {prefill_node_list[i]} \
-                              --port {self.inf_dict['prefill_serv_port']} \
-                              --dtype {dtype} \
-                              --kv-cache-dtype {kv_cache_dtype} \
-                              --trust-remote-code \
-                              --tp-size {self.bp_dict['tensor_parallelism']} \
-                              --pp-size {self.bp_dict['pipeline_parallelism']} \
-                              --nnodes {self.prefill_nnodes} \
-                              --node-rank {i} \
-                              --dist-init-addr {dist_init_addr} \
-                              --disable-radix-cache --disable-cuda-graph \
-                              --mem-fraction-static {self.bp_dict['memory_fraction']} \
-{add_cli_flags_block(self.bp_dict)}
-                              --log-level {self.inf_dict['log_level']}' > /tmp/prefill_launch_script.sh" '''
-            formatted_cmd = textwrap_for_yml(cmd)
-            cmd_list.append(formatted_cmd)
-        log.info('%%%%%%%%%%%%%%%%%%%')
-        log.info("%s", cmd_list)
-        log.info('%%%%%%%%%%%%%%%%%%%')
-        self.p_phdl.exec_cmd_list(cmd_list)
+            node = prefill_node_list[i]
+            launch_body = (
+                f"export NNODES={self.prefill_nnodes}\n"
+                f"export NODE_RANK={i}\n"
+                f"python3 -m sglang.launch_server --model {self.bp_dict['model']} \\\n"
+                f"    --disaggregation-mode prefill \\\n"
+                f"    --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \\\n"
+                f"    --host {node} \\\n"
+                f"    --port {self.inf_dict['prefill_serv_port']} \\\n"
+                f"    --dtype {dtype} \\\n"
+                f"    --kv-cache-dtype {kv_cache_dtype} \\\n"
+                f"    --trust-remote-code \\\n"
+                f"    --tp-size {self.bp_dict['tensor_parallelism']} \\\n"
+                f"    --pp-size {self.bp_dict['pipeline_parallelism']} \\\n"
+                f"    --nnodes {self.prefill_nnodes} \\\n"
+                f"    --node-rank {i} \\\n"
+                f"    --dist-init-addr {dist_init_addr} \\\n"
+                f"    --disable-radix-cache --disable-cuda-graph \\\n"
+                f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
+                f"{flags_block}\n"
+                f"    --log-level {self.inf_dict['log_level']}\n"
+            )
+            write_cmd = "bash -c " + shlex.quote(
+                f"cat > /tmp/prefill_launch_script.sh <<'EOF'\n{launch_body}EOF"
+            )
+            self._container_exec(write_cmd, hosts=[node])
+
         log.info('#================ * * * =========================#')
         log.info('Launching Prefill servers on Prefill nodes')
         log.info('#================ * * * =========================#')
-        cmd_list = []
         for i in range(0, int(self.prefill_nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c " \
-                   chmod 755 /tmp/prefill_launch_script.sh; \
-                   mkdir -p {self.log_dir}/prefill_node{i}; \
-                   source /tmp/prefill_env_script.sh && \
-                   nohup /tmp/prefill_launch_script.sh > \
-                   {self.log_dir}/prefill_node{i}/prefill_server.log 2>&1 &" '''
-            formatted_cmd = textwrap_for_yml(cmd)
-            cmd_list.append(formatted_cmd)
-        self.p_phdl.exec_cmd_list(cmd_list)
+            node = prefill_node_list[i]
+            start_cmd = "bash -c " + shlex.quote(
+                f"chmod 755 /tmp/prefill_launch_script.sh\n"
+                f"mkdir -p {self.log_dir}/prefill_node{i}\n"
+                f"source /tmp/prefill_env_script.sh\n"
+                f"nohup /tmp/prefill_launch_script.sh > "
+                f"{self.log_dir}/prefill_node{i}/prefill_server.log 2>&1 &"
+            )
+            self._container_exec(start_cmd, hosts=[node])
         time.sleep(5)
 
-    # Helper function for launching Decode servers
     def launch_decode_servers(self, dtype='auto', kv_cache_dtype='auto'):
         """
         Generate and deploy Decode server launch scripts on all Decode nodes
@@ -617,53 +605,54 @@ class SglangDisaggPD:
         log.info('#================ * * * =========================#')
         log.info('Create Decode launch script on Decode nodes')
         log.info('#================ * * * =========================#')
-        cmd_list = []
-        decode_node_list = self.inf_dict['decode_node_list']
+
+        decode_node_list = self.decode_node_list
         log.info('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
         dist_init_addr = f"{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_coordinator_port']}"
+        flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
+
         for i in range(0, int(self.decode_nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
-                      export NNODES={self.decode_nnodes}
-                      export NODE_RANK={i}
-                      python3 -m sglang.launch_server --model {self.bp_dict['model']} \
-                              --disaggregation-mode decode \
-                              --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \
-                              --host {decode_node_list[i]} \
-                              --port {self.inf_dict['decode_serv_port']} \
-                              --trust-remote-code \
-                              --dtype {dtype} \
-                              --kv-cache-dtype {kv_cache_dtype} \
-                              --tp-size {self.bp_dict['tensor_parallelism']} \
-                              --pp-size {self.bp_dict['pipeline_parallelism']} \
-                              --nnodes {self.decode_nnodes} \
-                              --node-rank {i} \
-                              --dist-init-addr {dist_init_addr} \
-                              --disable-radix-cache --disable-cuda-graph \
-                              --mem-fraction-static {self.bp_dict['memory_fraction']} \
-{add_cli_flags_block(self.bp_dict)}
-                              --log-level {self.inf_dict['log_level']}' > /tmp/decode_launch_script.sh" '''
-            formatted_cmd = textwrap_for_yml(cmd)
-            cmd_list.append(formatted_cmd)
-        log.info('%%%%%%%%%%%%%%%%%%%')
-        log.info("%s", cmd_list)
-        log.info('%%%%%%%%%%%%%%%%%%%')
-        self.d_phdl.exec_cmd_list(cmd_list)
+            node = decode_node_list[i]
+            launch_body = (
+                f"export NNODES={self.decode_nnodes}\n"
+                f"export NODE_RANK={i}\n"
+                f"python3 -m sglang.launch_server --model {self.bp_dict['model']} \\\n"
+                f"    --disaggregation-mode decode \\\n"
+                f"    --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \\\n"
+                f"    --host {node} \\\n"
+                f"    --port {self.inf_dict['decode_serv_port']} \\\n"
+                f"    --trust-remote-code \\\n"
+                f"    --dtype {dtype} \\\n"
+                f"    --kv-cache-dtype {kv_cache_dtype} \\\n"
+                f"    --tp-size {self.bp_dict['tensor_parallelism']} \\\n"
+                f"    --pp-size {self.bp_dict['pipeline_parallelism']} \\\n"
+                f"    --nnodes {self.decode_nnodes} \\\n"
+                f"    --node-rank {i} \\\n"
+                f"    --dist-init-addr {dist_init_addr} \\\n"
+                f"    --disable-radix-cache --disable-cuda-graph \\\n"
+                f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
+                f"{flags_block}\n"
+                f"    --log-level {self.inf_dict['log_level']}\n"
+            )
+            write_cmd = "bash -c " + shlex.quote(
+                f"cat > /tmp/decode_launch_script.sh <<'EOF'\n{launch_body}EOF"
+            )
+            self._container_exec(write_cmd, hosts=[node])
+
         log.info('#================ * * * =========================#')
         log.info('Launching Decode servers on Decode nodes')
         log.info('#================ * * * =========================#')
-        cmd_list = []
         for i in range(0, int(self.decode_nnodes)):
-            cmd = f'''docker exec {self.container_name} /bin/bash -c " \
-                   chmod 755 /tmp/decode_launch_script.sh; \
-                   mkdir -p {self.log_dir}/decode_node{i}; \
-                   source /tmp/decode_env_script.sh && \
-                   nohup bash /tmp/decode_launch_script.sh > \
-                   {self.log_dir}/decode_node{i}/decode_server.log 2>&1 &" '''
-            formatted_cmd = textwrap_for_yml(cmd)
-            cmd_list.append(formatted_cmd)
-        self.d_phdl.exec_cmd_list(cmd_list)
+            node = decode_node_list[i]
+            start_cmd = "bash -c " + shlex.quote(
+                f"chmod 755 /tmp/decode_launch_script.sh\n"
+                f"mkdir -p {self.log_dir}/decode_node{i}\n"
+                f"source /tmp/decode_env_script.sh\n"
+                f"nohup bash /tmp/decode_launch_script.sh > "
+                f"{self.log_dir}/decode_node{i}/decode_server.log 2>&1 &"
+            )
+            self._container_exec(start_cmd, hosts=[node])
 
-    # Helper function for polling for server readiness
     def poll_and_check_server_ready(
         self,
     ):
@@ -686,15 +675,9 @@ class SglangDisaggPD:
         """
         log.info('Waiting 120 secs after launching decode script')
         time.sleep(120)
-        # for node_no in range(0, self.prefill_nnodes):
-        #     self.poll_for_server_ready(node_no, 'prefill')
-        # for node_no in range(0, self.decode_nnodes):
-        #     self.poll_for_server_ready(node_no, 'decode')
         self.poll_for_server_ready(0, 'prefill')
         self.poll_for_server_ready(0, 'decode')
 
-    
-    # Helper function for launching Proxy Router
     def launch_proxy_router(
         self,
     ):
@@ -711,77 +694,51 @@ class SglangDisaggPD:
         - Accept incoming inference requests
         - Route prefill requests to Prefill servers
         - Route decode requests to Decode servers
-        - Coordinate Prefill ? Decode handoff
+        - Coordinate Prefill -> Decode handoff
 
         This method:
         - Builds routing configuration dynamically based on cluster topology
         - Creates a launch script on the Proxy Router node
         - Launches the router as a background service
         """
-
-        # ------------------------------------------------------------------
-        # Build Prefill endpoint arguments for the router
-        #
-        # Each Prefill server is specified as:
-        #   --prefill http://<host>:<port>
-        # ------------------------------------------------------------------
-
         prefill_str = (
             f"--prefill http://{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_serv_port']} "
         )
-        # ------------------------------------------------------------------
-        # Build Decode endpoint arguments for the router
-        #
-        # Each Decode server is specified as:
-        #   --decode http://<host>:<port>
-        # ------------------------------------------------------------------
-
-        decode_str = f"--decode http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']} "
+        decode_str = (
+            f"--decode http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']} "
+        )
         log.info('#================ * * * =========================#')
         log.info('Create Proxy Router launch script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
 
-        # ------------------------------------------------------------------
-        # Create the Proxy Router launch script
-        #
-        # Key flags:
-        #   --pd-disaggregation : Enable Prefill/Decode disaggregation
-        #   --prefill / --decode: Upstream Prefill and Decode endpoints
-        #   --host 0.0.0.0      : Listen on all interfaces
-        #   --port              : External router port
-        #   --log-dir           : Directory for router logs
-        #
-        # NOTE:
-        #   The script is written to disk but not executed here.
-        # ------------------------------------------------------------------
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "echo  '
-                      python3 -m sglang_router.launch_router \
-                              --pd-disaggregation \
-                              {prefill_str} \
-                              {decode_str} \
-                              --host 0.0.0.0 \
-                              --port {self.router_serv_port} \
-                              --log-dir {self.inf_dict['log_dir']} \
-                      '  > /tmp/proxy_router_launch_script.sh"
-                    '''
-        formatted_cmd = textwrap_for_yml(cmd)
-        self.r_phdl.exec(formatted_cmd)
+        launch_body = (
+            "python3 -m sglang_router.launch_router \\\n"
+            f"    --pd-disaggregation \\\n"
+            f"    {prefill_str.strip()} \\\n"
+            f"    {decode_str.strip()} \\\n"
+            f"    --host 0.0.0.0 \\\n"
+            f"    --port {self.router_serv_port} \\\n"
+            f"    --log-dir {self.inf_dict['log_dir']}\n"
+        )
+        write_cmd = "bash -c " + shlex.quote(
+            f"cat > /tmp/proxy_router_launch_script.sh <<'EOF'\n{launch_body}EOF"
+        )
+        self._container_exec(write_cmd, hosts=self.proxy_node)
+
         log.info('#================ * * * =========================#')
         log.info('Launch Proxy Router script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
-        cmd = f'''docker exec {self.container_name} /bin/bash -c " \
-                   chmod 755 /tmp/proxy_router_launch_script.sh; \
-                   mkdir -p {self.log_dir}/proxy_router_node; \
-                   source /tmp/router_env_script.sh && \
-                   nohup bash /tmp/proxy_router_launch_script.sh > \
-                   {self.log_dir}/proxy_router_node/proxy_router.log 2>&1 &" '''
-        formatted_cmd = textwrap_for_yml(cmd)
-        self.r_phdl.exec(formatted_cmd)
+        start_cmd = "bash -c " + shlex.quote(
+            f"chmod 755 /tmp/proxy_router_launch_script.sh\n"
+            f"mkdir -p {self.log_dir}/proxy_router_node\n"
+            f"source /tmp/router_env_script.sh\n"
+            f"nohup bash /tmp/proxy_router_launch_script.sh > "
+            f"{self.log_dir}/proxy_router_node/proxy_router.log 2>&1 &"
+        )
+        self._container_exec(start_cmd, hosts=self.proxy_node)
         log.info('Waiting 120 secs after launching proxy router script')
         time.sleep(120)
 
-    
-    # Helper function for running SGLang serving benchmark with random dataset
     def benchserv_test_random(self, d_type='auto'):
         """
         Run SGLang serving benchmark using a synthetic random dataset and
@@ -807,39 +764,29 @@ class SglangDisaggPD:
         log.info('#================ * * * =========================#')
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         self._bench_num_prompts = int(i_dict['num_prompts'])
-        # ------------------------------------------------------------------
-        # Construct command to run sglang.bench_serving with random dataset
-        #
-        # Key parameters:
-        #   --dataset-name random     : Use synthetic random prompts
-        #   --num-prompts             : Total number of inference requests
-        #   --random-input            : Input token length per request
-        #   --random-output           : Output token length per request
-        #   --random-range-ratio      : Variability in input/output lengths
-        #   --host / --port           : Proxy Router endpoint
-        #
-        # Output is redirected to a log file for later inspection.
-        # ------------------------------------------------------------------
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                      mkdir -p {self.log_dir}/benchmark_node; \
-                      source /tmp/benchmark_env_script.sh && \
-                      export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}} && \
-                      python3 -m sglang.bench_serving \
-                      --backend {i_dict['backend']} \
-                      --dataset-name random \
-                      --num-prompts {i_dict['num_prompts']} \
-                      --max-concurrency {self.bp_dict['max_concurrency']} \
-                      --random-input {i_dict['input_length']} \
-                      --random-output {i_dict['output_length']} \
-                      --random-range-ratio {i_dict['random_range_ratio']} \
-                      --host {self.client_host} --port {self.router_serv_port} \
-                      > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1" '''
-        formatted_cmd = textwrap_for_yml(cmd)
-        self.b_phdl.exec(formatted_cmd, timeout=1000)
+        inner = (
+            f"mkdir -p {self.log_dir}/benchmark_node\n"
+            f"source /tmp/benchmark_env_script.sh\n"
+            f"export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}\n"
+            f"python3 -m sglang.bench_serving \\\n"
+            f"  --backend {i_dict['backend']} \\\n"
+            f"  --dataset-name random \\\n"
+            f"  --num-prompts {i_dict['num_prompts']} \\\n"
+            f"  --max-concurrency {self.bp_dict['max_concurrency']} \\\n"
+            f"  --random-input {i_dict['input_length']} \\\n"
+            f"  --random-output {i_dict['output_length']} \\\n"
+            f"  --random-range-ratio {i_dict['random_range_ratio']} \\\n"
+            f"  --host {self.client_host} --port {self.router_serv_port} \\\n"
+            f"  > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1"
+        )
+        self._container_exec(
+            "bash -c " + shlex.quote(inner),
+            hosts=self.benchmark_serv_node,
+            timeout=1000,
+        )
         time.sleep(5)
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
-        
-        # MFU (derived from same bench metrics as TTFT/TPOT)
+
         peak_tflops = float(i_dict.get("peak_gpu_tflops", 1300))
         num_params = float(i_dict.get("model_num_params", 70e9))
         tp = int(self.bp_dict.get("tensor_parallelism", 1))
@@ -863,91 +810,63 @@ class SglangDisaggPD:
             tr = m.get("total_requests", "n/a")
             sr = m.get("successful_requests", "n/a")
             mfu = m.get("mfu", "n/a")
-            inner = (
+            append_inner = (
                 f"echo '' >> {log_path} && "
                 f"echo '============ Derived Benchmark Results ============' >> {log_path} && "
                 f"echo 'Goodput (successful / total): {sr} / {tr}  =>  {gp}' >> {log_path} && "
                 f"echo 'Output token throughput per GPU (tok/s/GPU): {tpg}' >> {log_path} && "
-                 f"echo 'MFU (estimated): {mfu}' >> {log_path} && "
+                f"echo 'MFU (estimated): {mfu}' >> {log_path} && "
                 f"echo '=====================================================================' >> {log_path}"
             )
-            cmd = f"docker exec {self.container_name} /bin/bash -c {shlex.quote(inner)}"
-            self.b_phdl.exec(cmd)
+            self._container_exec(
+                "bash -c " + shlex.quote(append_inner),
+                hosts=self.benchmark_serv_node,
+            )
 
         self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
 
-    # Helper function for polling for server readiness
     def poll_for_server_ready(self, node_no, sglang_function, no_of_iterations=16):
-        """
-        Poll SGLang Prefill or Decode server logs to determine when the server
-        is ready to accept inference traffic.
-
-        Readiness definition:
-        ---------------------
-        A server is considered "ready" when its log shows successful HTTP
-        requests (HTTP 200 OK), indicating that:
-        - The server process has started
-        - The model is loaded
-        - Network endpoints are listening
-        - Request handling is functional
-
-        Assumptions:
-        ------------
-        - Log directory is located on a shared filesystem (e.g., NFS)
-        - Logs are accessible from a designated head node
-        - Each server writes logs to a predictable per-node path
-
-        Args:
-        node_no (int): Index of the Prefill or Decode node being checked
-        sglang_function (str): Server role ('prefill' or 'decode')
-        no_of_iterations (int): Maximum number of polling attempts before
-                                declaring failure
-        """
-        # ------------------------------------------------------------------
-        # Prefill server readiness check
-        # ------------------------------------------------------------------
+        """Poll Prefill or Decode server logs inside the container for readiness."""
         if re.search('prefill', sglang_function):
-            for j in range(1, no_of_iterations):
-                log.info(f'Starting poll iteration {j}')
-                out_dict = self.p_phdl.exec(
-                    f'grep -B 20 -A 20 "200 OK" {self.log_dir}/prefill_node{node_no}/prefill_server.log'
-                )
-                target_pnode = self.prefill_node_list[node_no]
-                if re.search('GET|POST', out_dict[target_pnode], re.I):
-                    log.info('Wait 60 secs to start serving traffic')
-                    time.sleep(60)
-                    # if re.search('fired up and ready to roll', out_dict[target_pnode], re.I ):
-                    #    print('Prefill server {node_no} ready to serve')
-                    return
-                else:
-                    log.info('Wait for 120 secs and continue polling')
-                    time.sleep(120)
-
-            log.warning(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
-            fail_test(f'Prefill node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
-        # ------------------------------------------------------------------
-        # Decode server readiness check
-        # ------------------------------------------------------------------
+            self._poll_role_log_ready(
+                f"{self.log_dir}/prefill_node{node_no}/prefill_server.log",
+                [self.prefill_node_list[node_no]],
+                f'Prefill node {node_no}',
+                no_of_iterations,
+            )
         elif re.search('decode', sglang_function):
-            for j in range(1, no_of_iterations):
-                log.info(f'Starting poll iteration {j}')
-                out_dict = self.d_phdl.exec(
-                    f'grep -B 20 -A 20 "200 OK" {self.log_dir}/decode_node{node_no}/decode_server.log'
-                )
-                target_dnode = self.decode_node_list[node_no]
-                if re.search('GET|POST', out_dict[target_dnode]):
-                    log.info('Wait 60 secs to start serving traffic')
-                    time.sleep(60)
-                    # if re.search('fired up and ready to roll', out_dict[target_dnode], re.I ):
-                    #    print('Decode server {node_no} ready to serve')
-                    return
-                else:
-                    log.info('Wait for 120 secs and continue polling')
-                    time.sleep(120)
-            log.warning(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
-            fail_test(f'Decode node {node_no} did not get to ready to serve 200 OK state in {j} iterations')
+            self._poll_role_log_ready(
+                f"{self.log_dir}/decode_node{node_no}/decode_server.log",
+                [self.decode_node_list[node_no]],
+                f'Decode node {node_no}',
+                no_of_iterations,
+            )
 
-    # Helper function for getting inference results dictionary
+    def _poll_role_log_ready(
+        self,
+        log_path: str,
+        hosts: list[str],
+        label: str,
+        no_of_iterations: int = 16,
+    ) -> None:
+        for iteration in range(1, no_of_iterations):
+            log.info('Starting %s readiness poll iteration %d', label, iteration)
+            grep_cmd = (
+                f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} "
+                f"{shlex.quote(log_path)} || true"
+            )
+            text = self._container_exec_text(grep_cmd, hosts=hosts)
+            if _SERVER_READY_RE.search(text):
+                log.info('Wait 60 secs before serving traffic')
+                time.sleep(60)
+                return
+            log.info('Wait 120 secs and continue polling')
+            time.sleep(120)
+        fail_test(
+            f'{label} on {hosts[0]!r} did not reach ready state '
+            f'in {no_of_iterations} iterations'
+        )
+
     def get_inference_results_dict(self, out_dict):
         """
         Parse inference benchmark output logs and extract key performance metrics
@@ -973,7 +892,7 @@ class SglangDisaggPD:
         self.inference_results_dict = {}
         log.info('Inside get_inference_results_dict')
         log.info("%s", out_dict)
-        
+
         for node in out_dict.keys():
             self.inference_results_dict[node] = {}
             if re.search('Successful requests:', out_dict[node], re.I):
@@ -1021,21 +940,19 @@ class SglangDisaggPD:
             if re.search('P99 ITL \(ms\):', out_dict[node], re.I):
                 match = re.search('P99 ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
                 self.inference_results_dict[node]['p99_itl_ms'] = match.group(1)
-            # --- SGLang "E2E Latency" wording -----
-            m = _first_float(r'Mean E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
+            m = first_float(r'Mean E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
             if m:
                 self.inference_results_dict[node]['mean_e2e_latency_ms'] = m
-            m = _first_float(r'Median E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
+            m = first_float(r'Median E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
             if m:
                 self.inference_results_dict[node]['median_e2e_latency_ms'] = m
             for p in (90, 95, 99):
-                m = _first_float(rf'P{p} E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
+                m = first_float(rf'P{p} E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
                 if m:
                     self.inference_results_dict[node][f'p{p}_e2e_latency_ms'] = m
 
-            # Goodput: log totals, or successful+failed, or benchmark num_prompts
-            total_req = _first_float(r"Total requests:\s+([0-9]+)", out_dict[node])
-            failed_req = _first_float(r"Failed requests:\s+([0-9]+)", out_dict[node])
+            total_req = first_float(r"Total requests:\s+([0-9]+)", out_dict[node])
+            failed_req = first_float(r"Failed requests:\s+([0-9]+)", out_dict[node])
             succ = self.inference_results_dict[node].get("successful_requests")
             if total_req:
                 self.inference_results_dict[node]["total_requests"] = total_req
@@ -1047,7 +964,6 @@ class SglangDisaggPD:
                 s, t = int(succ), int(self.inference_results_dict[node]["total_requests"])
                 self.inference_results_dict[node]["goodput"] = f"{(s / t):.6f}" if t else None
 
-            # Per-GPU throughput (derived): total output tok/s / GPUs in PD fleet
             out_tps = self.inference_results_dict[node].get("output_throughput_per_sec")
             if out_tps:
                 tp = int(self.bp_dict.get("tensor_parallelism", "1"))
@@ -1061,7 +977,6 @@ class SglangDisaggPD:
         log.info("%s", self.inference_results_dict)
         return self.inference_results_dict
 
-    # Helper function for scanning for inference errors
     def scan_for_inference_errors(
         self,
     ):
@@ -1085,41 +1000,34 @@ class SglangDisaggPD:
         log.info('Scan for inference errors')
         inference_pass = True
 
-        # Build the list of commands to read each node's inference log file
-        cmd_list = []
-
-        # Scan all prefill nodes
         for j in range(0, int(self.prefill_nnodes)):
-            cmd = f"tail -100 {self.log_dir}/prefill_node{j}/prefill_server.log"
-            cmd_list.append(cmd)
-        out_dict = self.p_phdl.exec_cmd_list(cmd_list)
-
-        # Check the log content against all known inference error patterns
-        for node in out_dict.keys():
+            node = self.prefill_node_list[j]
+            out_dict = self._container_exec(
+                f"tail -100 {shlex.quote(f'{self.log_dir}/prefill_node{j}/prefill_server.log')}",
+                hosts=[node],
+            )
+            out = out_dict.get(node, '')
             for err_key in inference_err_dict:
-                if re.search(f'{inference_err_dict[err_key]}', out_dict[node]):
+                if re.search(f'{inference_err_dict[err_key]}', out):
                     fail_test(f'ERROR {inference_err_dict[err_key]} seen in inference logs ..')
                     log.error('Aborting inference log polling')
                     inference_pass = False
 
-        # Scan all decode nodes
-        cmd_list = []
         for j in range(0, int(self.decode_nnodes)):
-            cmd = f"tail -500 {self.log_dir}/decode_node{j}/decode_server.log"
-            cmd_list.append(cmd)
-        out_dict = self.d_phdl.exec_cmd_list(cmd_list)
-
-        # Check the log content against all known inference error patterns
-        for node in out_dict.keys():
+            node = self.decode_node_list[j]
+            out_dict = self._container_exec(
+                f"tail -500 {shlex.quote(f'{self.log_dir}/decode_node{j}/decode_server.log')}",
+                hosts=[node],
+            )
+            out = out_dict.get(node, '')
             for err_key in inference_err_dict:
-                if re.search(f'{inference_err_dict[err_key]}', out_dict[node]):
+                if re.search(f'{inference_err_dict[err_key]}', out):
                     fail_test(f'ERROR {inference_err_dict[err_key]} seen in inference logs ..')
                     log.error('Aborting inference log polling')
                     inference_pass = False
 
         return inference_pass
 
-    # Helper function for polling for inference completion
     def poll_for_inference_completion(
         self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
     ):
@@ -1153,96 +1061,55 @@ class SglangDisaggPD:
             If True, all nodes must report completion.
             If False, completion by any node is sufficient.
         """
-        # Initial wait to give inference time to start logging
         time.sleep(60)
 
-        # Track wall-clock timeout if specified
         start_time = time.time()
 
         def timed_out() -> bool:
             return total_timeout is not None and (time.time() - start_time) >= float(total_timeout)
 
         completed_pattern = re.compile('Serving Benchmark Result', re.I)
-        # ------------------------------------------------------------------
-        # Poll loop: periodically inspect benchmark logs for completion
-        # ------------------------------------------------------------------
+        log_path = f"{self.log_dir}/benchmark_node/benchmark_results.log"
+
         for itr in range(1, iterations + 1):
             log.info(f'Starting iteration {itr}')
 
-            # --------------------------------------------------------------
-            # Early exit if any inference errors are detected
-            #
-            # This scans Prefill and Decode logs for known failure patterns
-            # (e.g., OOM, RDMA failures, backend crashes).
-            # --------------------------------------------------------------
-            # Early abort on inference errors
-            # if not self.scan_for_inference_errors():
-            #     msg = 'Failures seen in inference logs, Aborting!!!'
-            #     fail_test(msg)
-            #     return {"status": "error", "reason": msg}
+            out_dict = self._container_exec(
+                f"tail -1000 {shlex.quote(log_path)}",
+                hosts=self.benchmark_serv_node,
+            )
 
-            # --------------------------------------------------------------
-            # Read the most recent benchmark output
-            #
-            # Tail only the last 1000 lines to reduce I/O and parsing cost.
-            # --------------------------------------------------------------
-            cmd = f"sudo tail -1000 {self.log_dir}/benchmark_node/benchmark_results.log"
-
-            out_dict = self.b_phdl.exec(cmd)
-
-            # Determine completion across nodes
             node_completion = {}
             for node, output in out_dict.items():
-                node_completion[node] = bool(completed_pattern.search(output))
+                node_completion[node] = bool(completed_pattern.search(output or ''))
 
-            # --------------------------------------------------------------
-            # Determine overall completion based on policy
-            #
-            # - require_all_nodes=True  ? all nodes must complete
-            # - require_all_nodes=False ? any node completing is sufficient
-            # --------------------------------------------------------------
             if require_all_nodes:
                 all_complete = all(node_completion.values()) if node_completion else False
             else:
                 all_complete = any(node_completion.values()) if node_completion else False
 
-            # --------------------------------------------------------------
-            # If inference is still running, wait and retry
-            # --------------------------------------------------------------
             if not all_complete:
                 if timed_out():
                     msg = f"Timeout while waiting for inference completion after ~{int(time.time() - start_time)}s"
                     log.warning("%s", msg)
                     return {"status": "timeout", "reason": msg}
                 log.info('Inference still in progress')
-                # Short progress wait before the longer inter-iteration sleep
                 time.sleep(30)
                 time.sleep(int(waittime_between_iters))
                 continue
 
-            # --------------------------------------------------------------
-            # Inference completed successfully
-            #
-            # Parse benchmark results and return structured output.
-            # --------------------------------------------------------------
             self.get_inference_results_dict(out_dict)
             log.info('Completed Inference, returning !!!')
             return {"status": "success", "results": self.inference_results_dict}
 
-            # If we reached here, it means poll for inference completion failed
-
-        # If we exhaust the iteration cap without completing, treat as timeout (or in_progress if no wall-clock limit)
         if timed_out():
             msg = f"Timeout after maximum iterations ({self.inference_poll_iterations}) and ~{int(time.time() - start_time)}s"
             log.warning("%s", msg)
             return {"status": "timeout", "reason": msg}
-        else:
-            # If no wall-clock timeout was set and we hit the iteration cap, report in-progress
-            msg = f"Reached iteration cap ({self.inference_poll_iterations}) without completion; still in progress"
-            log.warning("%s", msg)
-            return {"status": "stuck_in_progress", "reason": msg}
+        msg = f"Reached iteration cap ({self.inference_poll_iterations}) without completion; still in progress"
+        log.warning("%s", msg)
+        return {"status": "stuck_in_progress", "reason": msg}
 
-    # Helper function for verifying inference results
     def verify_inference_results(self, test_name, expected_result_dict):
         """
         Validate inference benchmark results against expected performance
@@ -1255,47 +1122,27 @@ class SglangDisaggPD:
         Threshold entries may be full specs ``{"kind": ..., "value": ...}`` from
         threshold.json or legacy flat floats from ``flat_expected_from_specs``.
         """
-        log.info("Verify Inference Completion Msg")
-        log.info("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
-        log.info("%s", self.inference_results_dict)
-        log.info("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
-
         thresholds = {
-            metric: _normalize_sglang_threshold_spec(metric, spec)
+            metric: normalize_sglang_threshold_spec(metric, spec)
             for metric, spec in expected_result_dict.items()
         }
 
-        for node in self.inference_results_dict.keys():
-            log.info("%%%% node %s", node)
+        for node in self.inference_results_dict:
             actuals = {
-                metric: _coerce_sglang_actual(value)
+                metric: coerce_sglang_actual(value)
                 for metric, value in self.inference_results_dict[node].items()
                 if metric in thresholds
             }
-            for metric, spec in thresholds.items():
-                log.info("metric_name %s kind=%s", metric, spec.get("kind"))
-                if metric in actuals:
-                    log.info(
-                        "%% %s actual=%s expected=%s",
-                        metric,
-                        actuals[metric],
-                        spec.get("value"),
-                    )
             try:
                 evaluate_all(actuals, thresholds)
             except ThresholdViolation as exc:
                 for msg in exc.violations:
                     fail_test(f"FAIL - {msg}")
 
-        self.inference_end_time = self.p_phdl.exec('date +"%a %b %e %H:%M"')
+        self.inference_end_time = self._host_exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
-        verify_dmesg_for_errors(self.p_phdl, self.inference_start_time, self.inference_end_time)
-        verify_dmesg_for_errors(self.d_phdl, self.inference_start_time, self.inference_end_time)
-        verify_dmesg_for_errors(self.r_phdl, self.inference_start_time, self.inference_end_time)
-        verify_dmesg_for_errors(self.b_phdl, self.inference_start_time, self.inference_end_time)
-        log.info("%s", self.inference_results_dict)
+        verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
 
-    # Helper function for counting occupied GPUs per prefill/decode node
     def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
         """
         After model load, count occupied GPUs per prefill/decode node via amd-smi.
@@ -1303,12 +1150,12 @@ class SglangDisaggPD:
         tp = int(self.bp_dict["tensor_parallelism"])
         pp = int(self.bp_dict.get("pipeline_parallelism", 1))
 
-        def _count_per_node(phdl):
+        def _count_per_node(out_dict):
             per_node = {}
-            for node, payload in phdl.exec("sudo amd-smi metric --json").items():
+            for node, payload in out_dict.items():
                 count = 0
                 try:
-                    entries = json.loads(payload.strip())
+                    entries = json.loads((payload or '').strip())
                 except (json.JSONDecodeError, AttributeError):
                     log.warning("Failed to parse amd-smi JSON on node %s", node)
                     per_node[node] = 0
@@ -1325,8 +1172,12 @@ class SglangDisaggPD:
                 per_node[node] = count
             return per_node
 
-        prefill_per_node = _count_per_node(self.p_phdl)
-        decode_per_node = _count_per_node(self.d_phdl)
+        prefill_per_node = _count_per_node(
+            self._host_exec('sudo amd-smi metric --json', hosts=self.prefill_node_list)
+        )
+        decode_per_node = _count_per_node(
+            self._host_exec('sudo amd-smi metric --json', hosts=self.decode_node_list)
+        )
         occupied_prefill = sum(prefill_per_node.values())
         occupied_decode = sum(decode_per_node.values())
 
@@ -1362,11 +1213,10 @@ class SglangDisaggPD:
         log.info("\n".join(lines))
         return result
 
-    # Helper function for verifying OpenAI-compatible endpoints
     def verify_openai_compatible_endpoints(self) -> list[str]:
         """
         Smoke-test OpenAI-compatible HTTP API on the proxy router (inside the
-        benchmark container via ``docker exec``): GET /v1/models,
+        benchmark container): GET /v1/models,
         POST /v1/chat/completions, POST /v1/completions, and structured JSON
         (book) via chat completions.
         """
@@ -1375,33 +1225,28 @@ class SglangDisaggPD:
 
         probe_src = OpenAIProbe.probe_script(port, model_name, host=self.client_host)
         b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                  mkdir -p {self.log_dir}/benchmark_node; \
-                  echo '{b64}' | base64 -d > /tmp/openai_mq_probe.py && \
-                  python3 /tmp/openai_mq_probe.py && \
-                  rm -f /tmp/openai_mq_probe.py" '''
-        formatted_cmd = textwrap_for_yml(cmd)
+        inner = (
+            f"mkdir -p {self.log_dir}/benchmark_node && "
+            f"echo {shlex.quote(b64)} | base64 -d > /tmp/openai_mq_probe.py && "
+            f"python3 /tmp/openai_mq_probe.py && rm -f /tmp/openai_mq_probe.py"
+        )
         log.info(
             "OpenAI endpoint probe inside benchmark container (%s:%r), same pattern as GSM8K/benchserv",
             self.client_host,
             port,
         )
-        out_dict = self.b_phdl.exec(
-            formatted_cmd,
+        out_dict = self._container_exec(
+            "bash -c " + shlex.quote(inner),
+            hosts=self.benchmark_serv_node,
             timeout=min(900, 480 + 180),
         )
         bench_host = self.benchmark_serv_node[0]
-        raw_out = out_dict.get(bench_host)
-        if raw_out is None and out_dict:
-            raw_out = next(iter(out_dict.values()))
+        raw_out = out_dict.get(bench_host) or self._first_output(out_dict)
 
         probe_err: Optional[str] = None
         results: dict[str, tuple[int, Any]] = {}
         if not raw_out or not str(raw_out).strip():
-            probe_err = (
-                f"OpenAI-compatible probe produced no output node {bench_host!r}: "
-                f"{out_dict!r}"
-            )
+            probe_err = f"OpenAI-compatible probe produced no output on {bench_host!r}: {out_dict!r}"
         else:
             lines_out = str(raw_out).strip().splitlines()
             if not lines_out:
@@ -1449,15 +1294,12 @@ class SglangDisaggPD:
         summary = OpenAIProbe.summarize_results(results, ok, err)
         return summary
 
-    # Helper functions for running LM-Eval benchmarks
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type="auto"):
         return self.run_lm_eval_benchmark_test("lm_eval_hellaswag", _d_type=_d_type)
 
-    # Helper functions for running GSM8K benchmarks
     def run_lm_eval_gsm8k_benchmark_test(self, _d_type="auto"):
         return self.run_lm_eval_benchmark_test("lm_eval_gsm8k", _d_type=_d_type)
 
-    # Helper function for running LM-Eval benchmarks    
     def run_lm_eval_benchmark_test(self, bench_key: str, _d_type="auto"):
         spec = LM_EVAL_SPECS[bench_key]
         log.info("#================ * * * =========================#")
@@ -1479,11 +1321,15 @@ class SglangDisaggPD:
             default_num_concurrent=spec["default_num_concurrent"],
         )
 
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                mkdir -p {self.log_dir}/benchmark_node; \\
-                source /tmp/benchmark_env_script.sh && \\
-                {inner_cmd}" '''
-        out_dict = self.b_phdl.exec(textwrap_for_yml(cmd), timeout=scoring["exec_timeout_sec"])
+        inner = (
+            f"mkdir -p {self.log_dir}/benchmark_node && "
+            f"source /tmp/benchmark_env_script.sh && {inner_cmd}"
+        )
+        out_dict = self._container_exec(
+            "bash -c " + shlex.quote(inner),
+            hosts=self.benchmark_serv_node,
+            timeout=scoring["exec_timeout_sec"],
+        )
         time.sleep(5)
 
         check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
@@ -1529,13 +1375,14 @@ class SglangDisaggPD:
         probe_src = LongContextNiahBenchmark.probe_script(**scoring["probe_kwargs"])
         b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
 
-        cmd = f'''docker exec {self.container_name} /bin/bash -c  "
-                mkdir -p {self.log_dir}/benchmark_node; \\
-                echo '{b64}' | base64 -d > /tmp/long_ctx_niah_probe.py && \\
-                source /tmp/benchmark_env_script.sh && \\
-                {inner_cmd}" '''
-        out_dict = self.b_phdl.exec(
-            textwrap_for_yml(cmd),
+        inner = (
+            f"mkdir -p {self.log_dir}/benchmark_node && "
+            f"echo {shlex.quote(b64)} | base64 -d > /tmp/long_ctx_niah_probe.py && "
+            f"source /tmp/benchmark_env_script.sh && {inner_cmd}"
+        )
+        out_dict = self._container_exec(
+            "bash -c " + shlex.quote(inner),
+            hosts=self.benchmark_serv_node,
             timeout=int(scoring["exec_timeout_sec"]),
         )
         time.sleep(5)
