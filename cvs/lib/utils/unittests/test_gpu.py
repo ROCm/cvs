@@ -939,6 +939,32 @@ class TestStartGpuPollerSingleNode(unittest.TestCase):
         orch.exec.assert_not_called()
         self.assertTrue(orch.exec_on_head.called)
 
+    def test_marker_scoped_by_local_user(self):
+        """Two users polling with the same run_id on a shared node must not
+        collide on the same /tmp path (Fremont-conda incident: shared /tmp,
+        second user's write hits a permission error on the first user's
+        leftover file)."""
+        orch = MagicMock()
+        orch.exec_on_head.return_value = {"head": ""}
+        with patch("cvs.lib.utils.gpu.getpass.getuser", return_value="alice"):
+            handle_alice = start_gpu_poller(orch, run_id="r1")
+        with patch("cvs.lib.utils.gpu.getpass.getuser", return_value="bob"):
+            handle_bob = start_gpu_poller(orch, run_id="r1")
+        self.assertIn("alice", handle_alice.marker)
+        self.assertIn("bob", handle_bob.marker)
+        self.assertNotEqual(handle_alice.marker, handle_bob.marker)
+        self.assertNotEqual(handle_alice.paths, handle_bob.paths)
+
+    def test_write_cmd_truncates_stale_log(self):
+        """A leftover log from a prior crashed run under the same marker
+        must not leak old readings into this run's file (poller appends
+        via >>, so launch must truncate first)."""
+        orch = MagicMock()
+        orch.exec_on_head.return_value = {"head": ""}
+        start_gpu_poller(orch, run_id="r1")
+        write_cmd = orch.exec_on_head.call_args_list[0].args[0]
+        self.assertIn(": >", write_cmd)
+
     def test_launch_command_contains_nohup_and_record_sep(self):
         orch = MagicMock()
         orch.exec_on_head.return_value = {"head": ""}
@@ -1007,7 +1033,7 @@ class TestStopAndCollectGpuPollerSingleNode(unittest.TestCase):
         """3 well-formed chunks + correct trailing separator -> 3 readings, 0 failed."""
         text = _poller_file_text(_gpu_chunk_text(1000), _gpu_chunk_text(2000), _gpu_chunk_text(3000))
         orch = MagicMock()
-        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}]
+        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}, {"head": ""}]
         readings = stop_and_collect_gpu_poller(orch, self._handle())
         self.assertEqual(len(readings), 3)
         self.assertEqual(readings[-1]["gpu.used_vram"], 3000)
@@ -1027,7 +1053,7 @@ class TestStopAndCollectGpuPollerSingleNode(unittest.TestCase):
             + "\n"
         )
         orch = MagicMock()
-        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}]
+        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}, {"head": ""}]
         log_path = str(pathlib.Path(__file__).parent / "_tmp_test_gpu_poller_log.txt")
         try:
             readings = stop_and_collect_gpu_poller(orch, self._handle(), log_path=log_path)
@@ -1039,7 +1065,7 @@ class TestStopAndCollectGpuPollerSingleNode(unittest.TestCase):
 
     def test_read_failure_degrades_not_raises(self):
         orch = MagicMock()
-        orch.exec_on_head.side_effect = [{"head": ""}, RuntimeError("ssh failed")]
+        orch.exec_on_head.side_effect = [{"head": ""}, RuntimeError("ssh failed"), {"head": ""}]
         try:
             readings = stop_and_collect_gpu_poller(orch, self._handle())
         except Exception as exc:  # noqa: BLE001
@@ -1050,7 +1076,7 @@ class TestStopAndCollectGpuPollerSingleNode(unittest.TestCase):
     def test_pkill_failure_degrades_not_raises_and_readback_still_happens(self):
         text = _poller_file_text(_gpu_chunk_text(1000))
         orch = MagicMock()
-        orch.exec_on_head.side_effect = [RuntimeError("pkill failed"), {"head": text}]
+        orch.exec_on_head.side_effect = [RuntimeError("pkill failed"), {"head": text}, {"head": ""}]
         try:
             readings = stop_and_collect_gpu_poller(orch, self._handle())
         except Exception as exc:  # noqa: BLE001
@@ -1058,10 +1084,35 @@ class TestStopAndCollectGpuPollerSingleNode(unittest.TestCase):
         else:
             self.assertEqual(len(readings), 1)
 
+    def test_cleanup_failure_degrades_not_raises(self):
+        text = _poller_file_text(_gpu_chunk_text(1000))
+        orch = MagicMock()
+        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}, RuntimeError("rm failed")]
+        try:
+            readings = stop_and_collect_gpu_poller(orch, self._handle())
+        except Exception as exc:  # noqa: BLE001
+            self.fail(f"stop_and_collect_gpu_poller raised unexpectedly: {exc!r}")
+        else:
+            self.assertEqual(len(readings), 1)
+
+    def test_remote_files_removed_after_readback_single_node(self):
+        """Fremont-conda incident: shared-node /tmp files must not be left
+        behind after a run, or the next user hits a permission error on the
+        stale file. Confirms both script and log paths are rm'd on the node
+        the poller ran on."""
+        text = _poller_file_text(_gpu_chunk_text(1000))
+        orch = MagicMock()
+        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}, {"head": ""}]
+        stop_and_collect_gpu_poller(orch, self._handle())
+        rm_calls = [c.args[0] for c in orch.exec_on_head.call_args_list if "rm -f" in c.args[0]]
+        self.assertEqual(len(rm_calls), 1)
+        self.assertIn("cvs_gpu_poll_r1.sh", rm_calls[0])
+        self.assertIn("cvs_gpu_poll_r1.log", rm_calls[0])
+
     def test_summary_log_matches_agg_readings(self):
         text = _poller_file_text(_gpu_chunk_text(1000, gfx=80.0, umc=60.0), _gpu_chunk_text(2000, gfx=90.0, umc=70.0))
         orch = MagicMock()
-        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}]
+        orch.exec_on_head.side_effect = [{"head": ""}, {"head": text}, {"head": ""}]
         log_path = str(pathlib.Path(__file__).parent / "_tmp_test_gpu_poller_summary.txt")
         try:
             readings = stop_and_collect_gpu_poller(
@@ -1172,6 +1223,20 @@ class TestStopAndCollectGpuPollerMultiNode(unittest.TestCase):
         stop_and_collect_gpu_poller(orch, self._handle(["A", "B"]))
         pkill_calls = [c for c in orch.exec.call_args_list if "pkill" in c.args[0]]
         self.assertTrue(any(c.kwargs.get("hosts") == ["A", "B"] for c in pkill_calls))
+
+    def test_remote_files_removed_per_host(self):
+        """Each host's script/log files must be individually rm'd -- a
+        shared-node file left behind on any single host is enough to hit
+        the next user's run with a permission error."""
+        orch = MagicMock()
+        orch.exec.return_value = {"A": "", "B": ""}
+        stop_and_collect_gpu_poller(orch, self._handle(["A", "B"]))
+        rm_calls = [c for c in orch.exec.call_args_list if "rm -f" in c.args[0]]
+        rm_hosts = {c.kwargs.get("hosts", [None])[0] for c in rm_calls}
+        self.assertEqual(rm_hosts, {"A", "B"})
+        for c in rm_calls:
+            self.assertIn("cvs_gpu_poll_r1.sh", c.args[0])
+            self.assertIn("cvs_gpu_poll_r1.log", c.args[0])
 
     def test_read_failure_for_one_host_degrades_not_raises(self):
         text_a = _poller_file_text(_gpu_chunk_text(1000))

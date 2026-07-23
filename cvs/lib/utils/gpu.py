@@ -4,6 +4,7 @@ All rights reserved.
 
 from __future__ import annotations
 
+import getpass
 import json
 import logging
 import pathlib
@@ -316,14 +317,25 @@ def start_gpu_poller(
     remote script self-terminates after hard_cap_s // poll_interval_s
     iterations even if stop_and_collect_gpu_poller is never called.
 
+    The marker (and therefore the remote /tmp script/log paths) is scoped by
+    the local SSH user in addition to run_id, so two users polling on the
+    same shared node under a similarly-named run_id never collide on the
+    same /tmp path -- see the file-collision note from the Fremont conda
+    incident. The log file is also truncated at launch (not just appended
+    to) so a leftover log from a prior crashed run under the same marker
+    can't leak old readings into this run.
+
     Raises if the launch exec call(s) raise.
     """
     sanitized = _sanitize_run_id(run_id)
-    marker = f"cvs_gpu_poll_{sanitized}"
+    marker = f"cvs_gpu_poll_{getpass.getuser()}_{sanitized}"
     max_iterations = int(hard_cap_s // poll_interval_s)
     script = _poller_script(marker, poll_interval_s, max_iterations)
     script_path = f"/tmp/{marker}.sh"
-    write_cmd = "bash -c " + shlex.quote(f"printf '%s' {shlex.quote(script)} > {script_path}")
+    log_path = f"/tmp/{marker}.log"
+    write_cmd = "bash -c " + shlex.quote(
+        f"printf '%s' {shlex.quote(script)} > {script_path} && : > {shlex.quote(log_path)}"
+    )
     launch_cmd = "bash -c " + shlex.quote(f"nohup bash {script_path} > /dev/null 2>&1 &")
 
     if nodes is None:
@@ -361,13 +373,18 @@ def stop_and_collect_gpu_poller(
     """Stop the remote poller launched by start_gpu_poller and collect its
     readings.
 
-    Never raises for orch-transport failures (the stop broadcast or the
-    file read-back) -- those are caught, logged, and degrade the affected
-    host's contribution rather than propagating, so this is safe to call
-    from a `finally` block during in-flight exception handling. Returns a
-    list of raw snapshot dicts in the same shape capture_gpu_metrics()
-    returns (failed/malformed polls excluded). Writes a summary block
-    (compatible with agg_readings()) to log_path if given.
+    Never raises for orch-transport failures (the stop broadcast, the file
+    read-back, or the remote cleanup) -- those are caught, logged, and
+    degrade the affected host's contribution rather than propagating, so
+    this is safe to call from a `finally` block during in-flight exception
+    handling. Returns a list of raw snapshot dicts in the same shape
+    capture_gpu_metrics() returns (failed/malformed polls excluded). Writes
+    a summary block (compatible with agg_readings()) to log_path if given.
+
+    Removes the remote script/log files (under handle.marker) after
+    reading them back, so no per-run file is left behind in the node's
+    shared /tmp -- see the file-collision note from the Fremont conda
+    incident.
     """
     log = logging.getLogger(__name__)
     pkill_cmd = "bash -c " + shlex.quote(f"pkill -f {handle.marker} || true")
@@ -391,6 +408,13 @@ def stop_and_collect_gpu_poller(
             log.warning("stop_and_collect_gpu_poller: read-back failed: %s", exc)
             text = ""
 
+        script_path = f"/tmp/{handle.marker}.sh"
+        rm_cmd = "bash -c " + shlex.quote(f"rm -f {shlex.quote(script_path)} {shlex.quote(handle.paths)}")
+        try:
+            orch.exec_on_head(rm_cmd)
+        except Exception as exc:
+            log.warning("stop_and_collect_gpu_poller: remote cleanup failed: %s", exc)
+
         chunks = _split_chunks(text)
         poll_n = len(chunks)
         readings: list = []
@@ -410,6 +434,7 @@ def stop_and_collect_gpu_poller(
         node_last_vram: "dict[str, int | None]" = {}
     else:
         host_chunks: "dict[str, list]" = {}
+        script_path = f"/tmp/{handle.marker}.sh"
         for host in handle.nodes:
             path = handle.paths[host] if isinstance(handle.paths, dict) else handle.paths
             text = ""
@@ -420,6 +445,12 @@ def stop_and_collect_gpu_poller(
                 log.warning("stop_and_collect_gpu_poller: read-back failed for %s: %s", host, exc)
                 text = ""
             host_chunks[host] = _split_chunks(text)
+
+            rm_cmd = "bash -c " + shlex.quote(f"rm -f {shlex.quote(script_path)} {shlex.quote(path)}")
+            try:
+                orch.exec(rm_cmd, hosts=[host])
+            except Exception as exc:
+                log.warning("stop_and_collect_gpu_poller: remote cleanup failed for %s: %s", host, exc)
 
         n_rounds = max((len(v) for v in host_chunks.values()), default=0)
         readings = []
