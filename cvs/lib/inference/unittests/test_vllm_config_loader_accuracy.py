@@ -44,9 +44,7 @@ class TestVariantConfigAccuracyField(unittest.TestCase):
         self.assertEqual(vc.accuracy.tasks, [])
 
     def test_accepts_explicit_accuracy_tasks(self):
-        vc = VariantConfig(
-            **_base_kwargs(accuracy={"tasks": [{"id": "mmlu", "task": "mmlu", "num_fewshot": 5}]})
-        )
+        vc = VariantConfig(**_base_kwargs(accuracy={"tasks": [{"id": "mmlu", "task": "mmlu", "num_fewshot": 5}]}))
         self.assertEqual(len(vc.accuracy.tasks), 1)
         self.assertEqual(vc.accuracy.tasks[0].id, "mmlu")
         self.assertEqual(vc.accuracy.tasks[0].num_fewshot, 5)
@@ -63,6 +61,49 @@ class TestVariantConfigAccuracyField(unittest.TestCase):
                     }
                 )
             )
+
+
+class TestAccuracyThresholdKeyDoesNotTripSweepCoverage(unittest.TestCase):
+    """The top-level "accuracy" threshold key must not be flagged as an
+    unrecognized sweep-cell key by _check_thresholds_cover_sweep, now that it
+    delegates to the shared validate_thresholds_cover_sweep."""
+
+    _CELL = "ISL=1024,OSL=1024,TP=8,CONC=16"
+
+    def _full_gated_specs(self):
+        from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
+
+        out = {}
+        for m in GATED_METRICS:
+            kind = "max_ms" if m.endswith("_ms") else "max" if m == "failed" else "min"
+            out[f"client.{m}"] = {"kind": kind, "value": 0 if kind == "min" else 1e12}
+        return out
+
+    def test_accuracy_key_alongside_full_sweep_coverage_constructs(self):
+        vc = VariantConfig(
+            **_base_kwargs(
+                enforce_thresholds=True,
+                thresholds={
+                    self._CELL: self._full_gated_specs(),
+                    "accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}}},
+                },
+            )
+        )
+        self.assertIn("accuracy", vc.thresholds)
+
+    def test_typo_key_alongside_accuracy_still_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            VariantConfig(
+                **_base_kwargs(
+                    enforce_thresholds=True,
+                    thresholds={
+                        self._CELL: self._full_gated_specs(),
+                        "accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}}},
+                        "acuracy": {},
+                    },
+                )
+            )
+        self.assertIn("threshold keys matching no sweep cell", str(ctx.exception))
 
 
 if __name__ == "__main__":

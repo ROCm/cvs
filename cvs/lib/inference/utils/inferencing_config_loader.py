@@ -80,6 +80,9 @@ class Run(_Forbid):
     concurrency: int
 
 
+NON_SWEEP_THRESHOLD_KEYS = {"accuracy"}
+
+
 def validate_thresholds_cover_sweep(
     *,
     expected_cells,
@@ -89,7 +92,7 @@ def validate_thresholds_cover_sweep(
 ) -> None:
     """Shared sweep/threshold coverage check for inference variant configs."""
     expected = set(expected_cells)
-    present = set(thresholds.keys())
+    present = set(thresholds.keys()) - NON_SWEEP_THRESHOLD_KEYS
     missing = sorted(expected - present)
     extra = sorted(present - expected)
     problems = []

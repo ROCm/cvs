@@ -26,7 +26,6 @@ IB device config:
 
 from __future__ import annotations
 
-import warnings
 from collections import Counter
 from typing import Any, Dict, List, Optional, Union
 
@@ -34,6 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from typing_extensions import Literal
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
+from cvs.lib.inference.utils.inferencing_config_loader import validate_thresholds_cover_sweep
 from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import substitute_config
 
@@ -235,29 +235,12 @@ class VariantConfig(_Forbid):
 
     @model_validator(mode="after")
     def _check_thresholds_cover_sweep(self):
-        expected = set(self.expected_cells())
-        present = set(self.thresholds.keys())
-        missing = sorted(expected - present)
-        extra = sorted(present - expected)
-        problems = []
-        if missing:
-            problems.append(f"sweep cells with no threshold entry: {missing}")
-        if extra:
-            problems.append(f"threshold keys matching no sweep cell (typo?): {extra}")
-        gated_keys = [f"client.{m}" for m in sorted(GATED_METRICS)]
-        gated_gaps = {}
-        for cell in sorted(expected & present):
-            specs = self.thresholds.get(cell) or {}
-            absent = [k for k in gated_keys if k not in specs]
-            if absent:
-                gated_gaps[cell] = absent
-        if gated_gaps:
-            problems.append(f"cells missing gated-metric specs: {gated_gaps}")
-        if problems:
-            msg = "threshold.json does not match the sweep matrix; " + "; ".join(problems)
-            if self.enforce_thresholds:
-                raise ValueError(msg)
-            warnings.warn(f"{msg} (enforce_thresholds=false -> record-only)", stacklevel=2)
+        validate_thresholds_cover_sweep(
+            expected_cells=self.expected_cells(),
+            thresholds=self.thresholds,
+            enforce_thresholds=self.enforce_thresholds,
+            gated_metrics=GATED_METRICS,
+        )
         return self
 
 
