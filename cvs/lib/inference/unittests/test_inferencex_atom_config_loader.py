@@ -356,40 +356,83 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         _, _, ids = expand_sweep_parametrize(sweep, ("metric_tier",))
         self.assertIn("w1-conc128-throughput", ids)
 
-    def test_ib_netdev_rejects_mlx5_hca_name(self):
+    def test_ib_netdev_coerces_mlx5_hca_name_to_auto(self):
         sweep = Sweep(
             sequence_combinations=[SeqCombo(name="w1", isl="512", osl="512")],
             runs=[Run(combo="w1", concurrency=16)],
         )
-        with self.assertRaises(ValueError):
-            InferenceXAtomVariantConfig(
-                schema_version=1,
-                framework="inferencex_atom",
-                gpu_arch="mi300x",
-                enforce_thresholds=False,
-                paths={
-                    "shared_fs": "/home/x",
-                    "models_dir": "/home/x/models",
-                    "log_dir": "/home/x/LOGS",
-                    "hf_token_file": "/home/x/.hf",
-                },
-                model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
-                container={
-                    "name": "c",
-                    "image": "img",
-                    "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
-                },
-                roles={"server": {"ib_netdev": "mlx5_0"}},
-                params={
-                    "driver": "vllm_atom",
-                    "tensor_parallelism": "8",
-                    "pipeline_parallel_size": "2",
-                    "nnodes": "2",
-                    "master_addr": "10.0.0.1",
-                },
-                sweep=sweep,
-                thresholds={},
-            )
+        variant = InferenceXAtomVariantConfig(
+            schema_version=1,
+            framework="inferencex_atom",
+            gpu_arch="mi300x",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
+            container={
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
+            },
+            roles={"server": {"ib_netdev": "mlx5_0"}},
+            params={
+                "driver": "vllm_atom",
+                "tensor_parallelism": "8",
+                "pipeline_parallel_size": "2",
+                "nnodes": "2",
+                "master_addr": "10.0.0.1",
+            },
+            sweep=sweep,
+            thresholds={},
+        )
+        self.assertEqual(variant.roles.server.ib_netdev, "auto")
+
+    def test_server_env_strips_orchestrator_network_keys(self):
+        sweep = Sweep(
+            sequence_combinations=[SeqCombo(name="w1", isl="512", osl="512")],
+            runs=[Run(combo="w1", concurrency=16)],
+        )
+        variant = InferenceXAtomVariantConfig(
+            schema_version=1,
+            framework="inferencex_atom",
+            gpu_arch="mi300x",
+            enforce_thresholds=False,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "deepseek-ai/DeepSeek-R1-0528", "remote": 0, "precision": "fp8"},
+            container={
+                "name": "c",
+                "image": "img",
+                "runtime": {"name": "docker", "args": {"volumes": ["/home/x:/home/x"]}},
+            },
+            roles={
+                "server": {
+                    "env": {
+                        "GLOO_SOCKET_IFNAME": "mlx5_0",
+                        "NCCL_IB_HCA": "mlx5_0",
+                        "NCCL_IB_GID_INDEX": "1",
+                    }
+                }
+            },
+            params={
+                "driver": "vllm_atom",
+                "tensor_parallelism": "8",
+                "pipeline_parallel_size": "2",
+                "nnodes": "2",
+                "master_addr": "10.0.0.1",
+            },
+            sweep=sweep,
+            thresholds={},
+        )
+        self.assertEqual(variant.roles.server.env, {"NCCL_IB_GID_INDEX": "1"})
 
 
 if __name__ == "__main__":

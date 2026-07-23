@@ -377,7 +377,15 @@ class InferenceXAtomJob:
             env_lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
             env_lines.append(f"export TP_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
         for k, v in self.server_env.items():
-            if k in ("CVS_GPU_MEMORY_UTIL", "VLLM_GPU_MEMORY_UTIL", "VLLM_ENFORCE_EAGER"):
+            if k in (
+                "CVS_GPU_MEMORY_UTIL",
+                "VLLM_GPU_MEMORY_UTIL",
+                "VLLM_ENFORCE_EAGER",
+                "NCCL_SOCKET_IFNAME",
+                "GLOO_SOCKET_IFNAME",
+                "TP_SOCKET_IFNAME",
+                "NCCL_IB_HCA",
+            ):
                 continue
             env_lines.append(f"export {k}={shlex.quote(str(v))}")
         env_script = "\n".join(env_lines) + "\n"
