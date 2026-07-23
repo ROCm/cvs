@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 import getpass
 import re
+import shlex
 from cvs.core.runtimes import RuntimeFactory
 
 
