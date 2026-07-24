@@ -1,5 +1,5 @@
 {
-  "_comment": "MI300X W1 multinode thresholds calibrated from lab run 20260723 (10.32.80.112/113, vLLM-ATOM PP=2). ISL=512/OSL=512 CONC=16: throughput/scaling mins at 80% of measured; ttft/tpot gated maxes at 110%. Other cells retain prior seeds until recalibrated.",
+  "_comment": "MI300X W1 multinode thresholds calibrated from lab runs 20260723-20260724 (10.32.80.112/113, vLLM-ATOM PP=2). ISL=512/OSL=512 CONC=16: throughput/scaling mins at 80% of measured; ttft/tpot gated maxes at 110%. Other cells retain prior seeds until recalibrated.",
   "ISL=512,OSL=512,TP=8,PP=2,NNODES=2,CONC=16": {
     "client.total_token_throughput": {
       "kind": "min_tok_s",
@@ -19,7 +19,7 @@
     },
     "client.mean_ttft_ms": {
       "kind": "max_ms",
-      "value": 223
+      "value": 402
     },
     "client.median_ttft_ms": {
       "kind": "max_ms",
@@ -35,7 +35,7 @@
     },
     "client.p99_ttft_ms": {
       "kind": "max_ms",
-      "value": 4271
+      "value": 15441
     },
     "client.mean_tpot_ms": {
       "kind": "max_ms",
