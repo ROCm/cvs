@@ -94,30 +94,32 @@ SGLANG_TEST_ORDER = {
 # Stable test order for sglang_single (one unified server, no PD).
 SGLANG_SINGLE_TEST_ORDER = {
     "test_launch_container": 0,
-    "test_rms_norm": 1,
-    "test_launch_server": 2,
-    "test_poll_for_server_ready": 3,
-    "test_openai_compatible_http_endpoints": 4,
-    "test_run_lm_eval_hellaswag_benchmark_test": 5,
-    "test_run_lm_eval_gsm8k_benchmark_test": 6,
-    "test_run_performance_benchmark_test": 7,
-    "test_print_results_table": 8,
-    "test_teardown": 9,
+    "test_setup_ibv_devices": 1,
+    "test_rms_norm": 2,
+    "test_launch_server": 3,
+    "test_poll_for_server_ready": 4,
+    "test_openai_compatible_http_endpoints": 5,
+    "test_run_lm_eval_hellaswag_benchmark_test": 6,
+    "test_run_lm_eval_gsm8k_benchmark_test": 7,
+    "test_run_performance_benchmark_test": 8,
+    "test_print_results_table": 9,
+    "test_teardown": 10,
 }
 
 # Stable test order for sglang_distributed (unified multi-node server, no PD).
 SGLANG_DISTRIBUTED_TEST_ORDER = {
     "test_launch_container": 0,
-    "test_rms_norm": 1,
-    "test_launch_server": 2,
-    "test_poll_for_server_ready": 3,
-    "test_openai_compatible_http_endpoints": 4,
-    "test_run_lm_eval_hellaswag_benchmark_test": 5,
-    "test_run_lm_eval_gsm8k_benchmark_test": 6,
-    "test_run_performance_benchmark_test": 7,
-    "test_distributed_gpu_topology": 8,
-    "test_print_results_table": 9,
-    "test_teardown": 10,
+    "test_setup_ibv_devices": 1,
+    "test_rms_norm": 2,
+    "test_launch_server": 3,
+    "test_poll_for_server_ready": 4,
+    "test_openai_compatible_http_endpoints": 5,
+    "test_run_lm_eval_hellaswag_benchmark_test": 6,
+    "test_run_lm_eval_gsm8k_benchmark_test": 7,
+    "test_run_performance_benchmark_test": 8,
+    "test_distributed_gpu_topology": 9,
+    "test_print_results_table": 10,
+    "test_teardown": 11,
 }
 
 
