@@ -58,6 +58,14 @@ _FETCH_PRESENCE_RETRIES = 5
 _SMOKE_ISL = 128
 _SMOKE_OSL = 32
 
+# max-model-len for the smoke server, used only when the config doesn't set
+# one explicitly. Sized for OpenAIProbe's actual requests (the structured-
+# output-book probe alone needs ~50 prompt + 256 response tokens), not
+# derived from _SMOKE_ISL/_SMOKE_OSL -- those describe an unrelated
+# benchmark-sweep cell size and have no connection to the probe's fixed
+# message content.
+_SMOKE_MAX_MODEL_LEN = 512
+
 
 def pytest_generate_tests(metafunc):
     """Parametrize test_vllm_inference from the sweep's named-combo + runs selector.
@@ -273,6 +281,7 @@ def test_openai_compatible_smoke(orch, variant_config, hf_token, lifecycle, requ
         ib_hcas=getattr(lifecycle, "ib_hcas", []),
         client_poll_count=int(variant_config.params.client_poll_count),
     )
+    job.serve_args.setdefault("max-model-len", str(_SMOKE_MAX_MODEL_LEN))
     t = time.monotonic()
     try:
         job.stop_server()
