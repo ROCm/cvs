@@ -146,8 +146,7 @@ class TestDmesgMigrations(unittest.TestCase):
 
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    @patch.object(verify_lib.node_scraper_adapter, "is_available", return_value=True)
-    def test_verify_dmesg_for_errors_uses_time_range(self, mock_avail, mock_parse, mock_fail):
+    def test_verify_dmesg_for_errors_uses_time_range(self, mock_parse, mock_fail):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {"description": "GPU Reset", "match_content": "GPU reset begin", "category": "RAS"}
@@ -168,8 +167,7 @@ class TestDmesgMigrations(unittest.TestCase):
 
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    @patch.object(verify_lib.node_scraper_adapter, "is_available", return_value=True)
-    def test_verify_dmesg_for_errors_till_end_omits_end(self, mock_avail, mock_parse, mock_fail):
+    def test_verify_dmesg_for_errors_till_end_omits_end(self, mock_parse, mock_fail):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = []
         phdl = MagicMock()
@@ -185,8 +183,7 @@ class TestDmesgMigrations(unittest.TestCase):
 
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    @patch.object(verify_lib.node_scraper_adapter, "is_available", return_value=True)
-    def test_full_journalctl_scan_node_scraper(self, mock_avail, mock_parse, mock_fail):
+    def test_full_journalctl_scan_node_scraper(self, mock_parse, mock_fail):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {"description": "Out of memory error", "match_content": "Out of memory: killed", "category": "OS"}
@@ -202,8 +199,7 @@ class TestDmesgMigrations(unittest.TestCase):
 
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
-    @patch.object(verify_lib.node_scraper_adapter, "is_available", return_value=True)
-    def test_verify_driver_errors_filters_to_driver(self, mock_avail, mock_parse, mock_fail):
+    def test_verify_driver_errors_filters_to_driver(self, mock_parse, mock_fail):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
         mock_parse.return_value = [
             {
