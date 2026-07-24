@@ -17,6 +17,44 @@ def as_node_list(value) -> list:
     return list(value)
 
 
+def resolve_server_node_list(inf_dict: Mapping[str, Any]) -> list[str]:
+    """Hosts for unified multi-node SGLang (not PD disagg).
+
+    Resolution order:
+    1. ``server_node_list`` when set.
+    2. Union of ``prefill_node_list`` and ``decode_node_list`` (stable order).
+    """
+    explicit = inf_dict.get('server_node_list')
+    if explicit:
+        return as_node_list(explicit)
+    seen: list[str] = []
+    for key in ('prefill_node_list', 'decode_node_list'):
+        for host in as_node_list(inf_dict.get(key) or []):
+            if host not in seen:
+                seen.append(host)
+    if not seen:
+        raise ValueError(
+            'sglang_distributed requires server_node_list or at least one of '
+            'prefill_node_list / decode_node_list in the inference config'
+        )
+    return seen
+
+
+def resolve_distributed_client_host(
+    inf_dict: Mapping[str, Any],
+    *,
+    rank0_node: str,
+    benchmark_serv_node: str,
+) -> str:
+    """HTTP target for bench/smoke/lm-eval when the unified server spans multiple nodes."""
+    explicit = inf_dict.get('client_host')
+    if explicit:
+        return str(explicit)
+    if benchmark_serv_node == rank0_node:
+        return '127.0.0.1'
+    return rank0_node
+
+
 def resolve_client_host(inf_dict: Mapping[str, Any], *, unified_server: bool = False) -> str:
     """HTTP target for smoke/bench/lm-eval clients running inside a container."""
     explicit = inf_dict.get('client_host')

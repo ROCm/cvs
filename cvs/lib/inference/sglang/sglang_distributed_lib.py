@@ -1,0 +1,685 @@
+'''
+Copyright 2026 Advanced Micro Devices, Inc.
+All rights reserved.
+
+Multi-node unified SGLang inference controller (TP/PP across server nodes, no PD disagg).
+
+Each host in ``server_node_list`` (or the union of ``prefill_node_list`` +
+``decode_node_list``) runs ``sglang.launch_server`` with ``--nnodes`` /
+``--node-rank`` / ``--dist-init-addr``. Benchmark/smoke/lm-eval run on
+``benchmark_serv_node`` and target rank-0 HTTP (``127.0.0.1`` when bench is rank 0).
+'''
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import re
+import shlex
+import time
+from typing import Any, Optional
+
+from cvs.lib import globals
+from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
+from cvs.lib.inference.sglang.sglang_common import (
+    LM_EVAL_SPECS,
+    add_cli_flags_block,
+    add_export_env_block,
+    as_node_list,
+    coerce_sglang_actual,
+    first_float,
+    normalize_sglang_threshold_spec,
+    resolve_distributed_client_host,
+    resolve_server_node_list,
+)
+from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
+from cvs.lib.utils_lib import fail_test
+from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
+from cvs.lib.verify_lib import verify_dmesg_for_errors
+
+log = globals.log
+
+_SERVER_READY_RE = re.compile(
+    r"fired up and ready to roll|Uvicorn running|Application startup complete|200 OK",
+    re.I,
+)
+
+
+class SglangDistributed:
+    """Unified multi-node SGLang serve + benchmark via ``ContainerOrchestrator``."""
+
+    def __init__(
+        self,
+        model_name,
+        inference_config_dict,
+        benchmark_params_dict,
+        hf_token,
+        orch=None,
+        gpu_type='mi300',
+        user_name=None,
+        priv_key_file=None,
+    ):
+        if orch is None:
+            raise ValueError("SglangDistributed requires orch= (ContainerOrchestrator)")
+
+        self.orch = orch
+        self.user_name = user_name
+        self.priv_key_file = priv_key_file
+        self.model_name = model_name
+        self.hf_token = hf_token
+        self.gpu_type = gpu_type
+
+        self.inf_dict = inference_config_dict
+        self.bp_dict = benchmark_params_dict
+
+        self.mount_vol = self.inf_dict.get(
+            'mount_vol',
+            '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
+        )
+
+        self.inference_results_dict = {}
+        log.info("%s", self.gpu_type)
+
+        self.home_dir = os.path.expanduser("~")
+        self._apply_inf_defaults()
+        self._apply_bp_defaults()
+
+        self.server_node_list = resolve_server_node_list(self.inf_dict)
+        self.nnodes = int(self.inf_dict.get('nnodes') or len(self.server_node_list))
+        if self.nnodes != len(self.server_node_list):
+            raise ValueError(
+                f"sglang_distributed nnodes={self.nnodes} must match "
+                f"server node count {len(self.server_node_list)} ({self.server_node_list!r})"
+            )
+        self.rank0_node = self.server_node_list[0]
+        self.dist_init_addr = self._resolve_dist_init_addr()
+        self.benchmark_serv_node = self._resolve_benchmark_serv_node()
+
+        self.container_name = self.inf_dict['container_name']
+        self.nic_type = self.inf_dict['nic_type']
+        self.hca_id_prefix = str(self.inf_dict['hca_id_prefix']).strip()
+        self.log_dir = self.inf_dict['log_dir']
+        self.inference_poll_iterations = self.bp_dict['inference_poll_iterations']
+
+        self.inference_start_time = self._host_exec('date +"%a %b %e %H:%M"')
+        self.inference_end_time = None
+
+        log.info('distributed inference_dict = %s', self.inf_dict)
+        log.info('distributed benchmark_params_dict = %s', self.bp_dict)
+        log.info(
+            'distributed server_node_list=%s nnodes=%s rank0=%s client_host=%s '
+            'router_serv_port=%s benchmark_serv_node=%s dist_init=%s',
+            self.server_node_list,
+            self.nnodes,
+            self.rank0_node,
+            self.client_host,
+            self.router_serv_port,
+            self.benchmark_serv_node,
+            self.dist_init_addr,
+        )
+
+    def _resolve_dist_init_addr(self) -> str:
+        addr = (
+            self.inf_dict.get('dist_init_addr')
+            or self.inf_dict.get('prefill_coordinator_addr')
+            or self.rank0_node
+        )
+        port = (
+            self.inf_dict.get('dist_init_port')
+            or self.inf_dict.get('prefill_coordinator_port')
+            or '40001'
+        )
+        return f"{addr}:{port}"
+
+    def _resolve_benchmark_serv_node(self) -> str:
+        raw = self.inf_dict.get('benchmark_serv_node')
+        if not raw:
+            return self.rank0_node
+        hosts = as_node_list(raw)
+        if len(hosts) != 1:
+            raise ValueError(
+                f"SglangDistributed requires exactly one benchmark_serv_node, got {hosts!r}"
+            )
+        return hosts[0]
+
+    @property
+    def _head_host(self) -> str:
+        return self.rank0_node
+
+    def server_log_path(self, rank: int = 0) -> str:
+        return f"{self.log_dir}/server_node{rank}/server.log"
+
+    @property
+    def router_serv_port(self) -> str:
+        return str(self.inf_dict['proxy_router_serv_port'])
+
+    @property
+    def client_host(self) -> str:
+        return resolve_distributed_client_host(
+            self.inf_dict,
+            rank0_node=self.rank0_node,
+            benchmark_serv_node=self.benchmark_serv_node,
+        )
+
+    @staticmethod
+    def _first_output(out_dict: dict) -> str:
+        if not out_dict:
+            return ""
+        return next(iter(out_dict.values())) or ""
+
+    def _container_exec(
+        self,
+        cmd: str,
+        *,
+        hosts=None,
+        timeout: int | None = None,
+    ) -> dict:
+        normalized = as_node_list(hosts) if hosts is not None else self.server_node_list
+        return self.orch.exec(cmd, hosts=normalized, timeout=timeout)
+
+    def _bench_exec(self, cmd: str, *, timeout: int | None = None) -> dict:
+        return self.orch.exec(cmd, hosts=[self.benchmark_serv_node], timeout=timeout)
+
+    def _container_exec_text(
+        self,
+        cmd: str,
+        *,
+        hosts=None,
+        timeout: int | None = None,
+    ) -> str:
+        return self._first_output(self._container_exec(cmd, hosts=hosts, timeout=timeout))
+
+    def _host_exec(
+        self,
+        cmd: str,
+        *,
+        hosts=None,
+        timeout: int | None = None,
+    ) -> dict:
+        """Run ``cmd`` on baremetal (``orch.head`` / ``orch.all``), e.g. amd-smi / dmesg."""
+        if hosts is None:
+            host = self.benchmark_serv_node
+            if host == self.orch.head_node and len(self.orch.hosts) == 1:
+                return self.orch.head.exec(cmd, timeout=timeout)
+            return BaremetalOrchestrator.exec(self.orch, cmd, hosts=[host], timeout=timeout)
+        normalized = as_node_list(hosts)
+        if not normalized:
+            return {}
+        if len(normalized) == 1 and normalized[0] == self._head_host:
+            return self.orch.head.exec(cmd, timeout=timeout)
+        if set(normalized) == set(self.orch.hosts):
+            return self.orch.all.exec(cmd, timeout=timeout)
+        return BaremetalOrchestrator.exec(self.orch, cmd, hosts=normalized, timeout=timeout)
+
+    def _host_exec_text(
+        self,
+        cmd: str,
+        *,
+        hosts=None,
+        timeout: int | None = None,
+    ) -> str:
+        return self._first_output(self._host_exec(cmd, hosts=hosts, timeout=timeout))
+
+    def _apply_inf_defaults(self) -> None:
+        self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
+        self.inf_dict.setdefault('container_name', 'sglang_container')
+        self.inf_dict.setdefault('nic_type', 'ainic')
+        self.inf_dict.setdefault('nccl_ib_hca', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
+        self.inf_dict.setdefault('hca_id_prefix', 'bnxt_')
+        self.inf_dict.setdefault('nccl_socket_ifname', 'eno0')
+        self.inf_dict.setdefault('gloo_socket_ifname', 'eno0')
+        self.inf_dict.setdefault('nccl_ib_gid_index', '1')
+        self.inf_dict.setdefault('nccl_debug', 'ERROR')
+        self.inf_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
+        self.inf_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
+        self.inf_dict.setdefault('log_level', 'info')
+        self.inf_dict.setdefault('proxy_router_serv_port', '8000')
+
+    def _apply_bp_defaults(self) -> None:
+        self.bp_dict.setdefault('backend', 'sglang')
+        self.bp_dict.setdefault('max_concurrency', '64')
+        self.bp_dict.setdefault('model', 'openai/gpt-oss-120b')
+        self.bp_dict.setdefault('tensor_parallelism', '8')
+        self.bp_dict.setdefault('pipeline_parallelism', '1')
+        self.bp_dict.setdefault('memory_fraction', '0.85')
+        self.bp_dict.setdefault('inference_poll_iterations', '16')
+
+    def _server_env_body(self) -> str:
+        return (
+            "export LD_LIBRARY_PATH=/usr/local/lib:/sgl-workspace/Mooncake/build/mooncake-common/etcd:/opt/rocm/lib:$LD_LIBRARY_PATH\n"
+            f"export NCCL_DEBUG={self.inf_dict['nccl_debug']}\n"
+            f"export NCCL_IB_HCA={self.inf_dict['nccl_ib_hca']}\n"
+            f"export NCCL_IB_GID_INDEX={self.inf_dict['nccl_ib_gid_index']}\n"
+            f"export NCCL_SOCKET_IFNAME={self.inf_dict['nccl_socket_ifname']}\n"
+            f"export GLOO_SOCKET_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export GLOO_TCP_IFNAME={self.inf_dict['gloo_socket_ifname']}\n"
+            f"export HSA_FORCE_FINE_GRAIN_PCIE=1\n"
+            f"export MODEL={self.bp_dict['model']}\n"
+            f"export TP={self.bp_dict['tensor_parallelism']}\n"
+            f"export PP={self.bp_dict.get('pipeline_parallelism', '1')}\n"
+            f"export HF_TOKEN={self.hf_token}\n"
+            f"{add_export_env_block(self.bp_dict, indent='')}\n"
+        )
+
+    def _write_server_env_on_hosts(self, hosts: list[str]) -> None:
+        env_body = self._server_env_body()
+        write_cmd = "bash -c " + shlex.quote(
+            f"cat > /tmp/server_env_script.sh <<'EOF'\n{env_body}EOF\n"
+            "chmod 755 /tmp/server_env_script.sh && /tmp/server_env_script.sh"
+        )
+        self._container_exec(write_cmd, hosts=hosts)
+
+    def setup_server_container_env(self) -> None:
+        """Write and source ``/tmp/server_env_script.sh`` on all server nodes."""
+        time.sleep(3)
+        self._write_server_env_on_hosts(self.server_node_list)
+        time.sleep(5)
+
+    def setup_benchmark_serv_container_env(self) -> None:
+        self.setup_server_container_env()
+        if self.benchmark_serv_node not in self.server_node_list:
+            self._write_server_env_on_hosts([self.benchmark_serv_node])
+
+    def launch_server(self, dtype='auto', kv_cache_dtype='auto') -> None:
+        """Launch unified multi-node ``sglang.launch_server`` (no PD disagg)."""
+        log.info(
+            'Launch unified multi-node SGLang on %d nodes (rank0=%s:%s)',
+            self.nnodes,
+            self.rank0_node,
+            self.router_serv_port,
+        )
+        flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
+        pp = self.bp_dict.get('pipeline_parallelism', '1')
+
+        for i, node in enumerate(self.server_node_list):
+            host_flag = '0.0.0.0' if i == 0 else node
+            launch_body = (
+                f"export NNODES={self.nnodes}\n"
+                f"export NODE_RANK={i}\n"
+                f"python3 -m sglang.launch_server --model {self.bp_dict['model']} \\\n"
+                f"    --host {host_flag} \\\n"
+                f"    --port {self.router_serv_port} \\\n"
+                f"    --dtype {dtype} \\\n"
+                f"    --kv-cache-dtype {kv_cache_dtype} \\\n"
+                f"    --trust-remote-code \\\n"
+                f"    --tp-size {self.bp_dict['tensor_parallelism']} \\\n"
+                f"    --pp-size {pp} \\\n"
+                f"    --nnodes {self.nnodes} \\\n"
+                f"    --node-rank {i} \\\n"
+                f"    --dist-init-addr {self.dist_init_addr} \\\n"
+                f"    --disable-radix-cache --disable-cuda-graph \\\n"
+                f"    --mem-fraction-static {self.bp_dict['memory_fraction']} \\\n"
+                f"{flags_block}\n"
+                f"    --log-level {self.inf_dict['log_level']}\n"
+            )
+            write_cmd = "bash -c " + shlex.quote(
+                f"cat > /tmp/server_launch_script.sh <<'EOF'\n{launch_body}EOF"
+            )
+            self._container_exec(write_cmd, hosts=[node])
+
+        for i, node in enumerate(self.server_node_list):
+            start_cmd = "bash -c " + shlex.quote(
+                f"chmod 755 /tmp/server_launch_script.sh\n"
+                f"mkdir -p {self.log_dir}/server_node{i}\n"
+                f"source /tmp/server_env_script.sh\n"
+                f"nohup /tmp/server_launch_script.sh > {self.server_log_path(i)} 2>&1 &"
+            )
+            self._container_exec(start_cmd, hosts=[node])
+        time.sleep(5)
+
+    def poll_for_server_ready(self, no_of_iterations=16) -> None:
+        log_path = self.server_log_path(0)
+        for iteration in range(1, no_of_iterations):
+            log.info('Starting rank-0 server readiness poll iteration %d', iteration)
+            grep_cmd = (
+                f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} "
+                f"{shlex.quote(log_path)} || true"
+            )
+            text = self._container_exec_text(grep_cmd, hosts=[self.rank0_node])
+            if _SERVER_READY_RE.search(text):
+                log.info('Wait 60 secs before serving traffic')
+                time.sleep(60)
+                return
+            log.info('Wait 120 secs and continue polling')
+            time.sleep(120)
+        fail_test(
+            f'Distributed rank-0 server on {self.rank0_node} did not reach ready state '
+            f'in {no_of_iterations} iterations'
+        )
+
+    def poll_and_check_server_ready(self) -> None:
+        log.info('Waiting 120 secs after launching distributed server')
+        time.sleep(120)
+        self.poll_for_server_ready()
+
+    def install_container_packages(self) -> None:
+        self._container_exec(
+            "bash -c " + shlex.quote(
+                "sudo apt -y update && sudo apt install -y iputils-ping iproute2 net-tools"
+            )
+        )
+
+    def exec_nic_setup_scripts(self) -> None:
+        if re.search('broadcom|thor', self.nic_type, re.I):
+            self.inf_dict['nccl_ib_gid_index'] = 3
+            cmd = "bash -c " + shlex.quote(
+                f"cp {self.mount_vol}.host {self.mount_vol}; sleep 2; ibv_devinfo; sleep 2;"
+            )
+            out_dict = self._container_exec(cmd)
+            hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
+            for node, out in out_dict.items():
+                if not re.search(hca_id_regex, out or '', re.I):
+                    fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
+
+    def check_ibv_devices(self) -> None:
+        out_dict = self._container_exec("ibv_devinfo")
+        for node, out in out_dict.items():
+            if re.search('No IB devices found', out or '', re.I):
+                fail_test(f'IB devices not seen inside the container for node {node}')
+
+    def run_test_rmsnorm(self, max_jobs=192) -> None:
+        self._container_exec(
+            "bash -c " + shlex.quote(
+                f"MAX_JOBS={max_jobs} python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py "
+                f"> /tmp/rsmnorm_test.log 2>&1 &"
+            )
+        )
+        time.sleep(180)
+        out_dict = self._container_exec("bash -c " + shlex.quote("cat /tmp/rsmnorm_test.log"))
+        for node, out in out_dict.items():
+            if re.search('fail', out or '', re.I):
+                fail_test(f'Some failures observed in test rmsnorm on node {node}')
+
+    def verify_openai_compatible_endpoints(self) -> list[str]:
+        port = int(self.router_serv_port)
+        probe_src = OpenAIProbe.probe_script(
+            port, self.bp_dict['model'], host=self.client_host
+        )
+        b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
+        inner = (
+            f"mkdir -p {self.log_dir}/benchmark_node && "
+            f"echo {shlex.quote(b64)} | base64 -d > /tmp/openai_mq_probe.py && "
+            f"python3 /tmp/openai_mq_probe.py && rm -f /tmp/openai_mq_probe.py"
+        )
+        log.info(
+            'OpenAI endpoint probe inside bench container (%s:%r)',
+            self.client_host,
+            port,
+        )
+        out_dict = self._bench_exec("bash -c " + shlex.quote(inner), timeout=min(900, 480 + 180))
+        raw_out = out_dict.get(self.benchmark_serv_node) or self._first_output(out_dict)
+
+        probe_err: Optional[str] = None
+        results: dict[str, tuple[int, Any]] = {}
+        if not raw_out or not str(raw_out).strip():
+            probe_err = (
+                f"OpenAI-compatible probe produced no output on "
+                f"{self.benchmark_serv_node!r}: {out_dict!r}"
+            )
+        else:
+            last_line = str(raw_out).strip().splitlines()[-1]
+            try:
+                parsed = json.loads(last_line)
+            except json.JSONDecodeError as e:
+                probe_err = f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
+            else:
+                if not isinstance(parsed, dict):
+                    probe_err = (
+                        f"OpenAI-compatible probe expected JSON object, got "
+                        f"{type(parsed).__name__!r}"
+                    )
+                else:
+                    for step, val in parsed.items():
+                        if isinstance(val, (list, tuple)) and len(val) == 2:
+                            results[step] = (int(val[0]), val[1])
+                        else:
+                            probe_err = f"OpenAI-compatible probe bad shape at {step!r}: {val!r}"
+                            break
+
+        if probe_err is not None:
+            fail_test(probe_err)
+            return []
+
+        OpenAIProbe.log_results(results, log)
+        ok, err = OpenAIProbe.check_results(results, port=port, logger=log)
+        if not ok:
+            fail_test(f"{err}")
+            return OpenAIProbe.summarize_results(results, ok, err)
+        return OpenAIProbe.summarize_results(results, ok, err)
+
+    def benchserv_test_random(self, d_type='auto') -> None:
+        i_dict = self.bp_dict['inference_tests']['bench_serv_random']
+        self._bench_num_prompts = int(i_dict['num_prompts'])
+        inner = (
+            f"mkdir -p {self.log_dir}/benchmark_node\n"
+            f"source /tmp/server_env_script.sh\n"
+            f"export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}\n"
+            f"python3 -m sglang.bench_serving \\\n"
+            f"  --backend {i_dict['backend']} \\\n"
+            f"  --dataset-name random \\\n"
+            f"  --num-prompts {i_dict['num_prompts']} \\\n"
+            f"  --max-concurrency {self.bp_dict['max_concurrency']} \\\n"
+            f"  --random-input {i_dict['input_length']} \\\n"
+            f"  --random-output {i_dict['output_length']} \\\n"
+            f"  --random-range-ratio {i_dict['random_range_ratio']} \\\n"
+            f"  --host {self.client_host} --port {self.router_serv_port} \\\n"
+            f"  > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1"
+        )
+        self._bench_exec("bash -c " + shlex.quote(inner), timeout=1000)
+        time.sleep(5)
+        self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
+
+        tp = int(self.bp_dict.get('tensor_parallelism', 1))
+        pp = int(self.bp_dict.get('pipeline_parallelism', 1))
+        num_gpus = self.nnodes * tp * pp
+        peak_tflops = float(i_dict.get('peak_gpu_tflops', 1300))
+        num_params = float(i_dict.get('model_num_params', 70e9))
+        for node, m in (self.inference_results_dict or {}).items():
+            duration = float(m.get('benchmark_duration') or 0)
+            in_tok = float(m.get('total_input_tokens') or 0)
+            out_tok = float(m.get('total_generated_tokens') or 0)
+            if duration > 0 and num_gpus > 0:
+                achieved = 6.0 * num_params * (in_tok + out_tok)
+                peak = peak_tflops * 1e12 * num_gpus * duration
+                m['mfu'] = f'{achieved / peak:.6f}'
+
+        self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
+
+    def get_inference_results_dict(self, out_dict):
+        self.inference_results_dict = {}
+        for node, text in out_dict.items():
+            self.inference_results_dict[node] = {}
+            patterns = [
+                (r'Successful requests:\s+([0-9]+)', 'successful_requests'),
+                (r'Benchmark duration\s+\(s\):\s+([0-9]+)', 'benchmark_duration'),
+                (r'Total input tokens:\s+([0-9\.]+)', 'total_input_tokens'),
+                (r'Total generated tokens:\s+([0-9\.]+)', 'total_generated_tokens'),
+                (r'Request throughput \(req/s\):\s+([0-9\.]+)', 'request_throughput_per_sec'),
+                (r'Output token throughput \(tok/s\):\s+([0-9\.]+)', 'output_throughput_per_sec'),
+                (r'Mean TTFT \(ms\):\s+([0-9\.]+)', 'mean_ttft_ms'),
+                (r'Median TTFT \(ms\):\s+([0-9\.]+)', 'median_ttft_ms'),
+                (r'P99 TTFT \(ms\):\s+([0-9\.]+)', 'p99_ttft_ms'),
+                (r'Mean TPOT \(ms\):\s+([0-9\.]+)', 'mean_tpot_ms'),
+                (r'Median TPOT \(ms\):\s+([0-9]+)', 'median_tpot_ms'),
+                (r'P99 TPOT \(ms\):\s+([0-9\.]+)', 'p99_tpot_ms'),
+            ]
+            for pattern, key in patterns:
+                match = re.search(pattern, text, re.I)
+                if match:
+                    self.inference_results_dict[node][key] = match.group(1)
+            for pattern, key in (
+                (r'Mean E2E Latency \(ms\):\s+([0-9\.]+)', 'mean_e2e_latency_ms'),
+                (r'Median E2E Latency \(ms\):\s+([0-9\.]+)', 'median_e2e_latency_ms'),
+                (r'P99 E2E Latency \(ms\):\s+([0-9\.]+)', 'p99_e2e_latency_ms'),
+            ):
+                val = first_float(pattern, text)
+                if val:
+                    self.inference_results_dict[node][key] = val
+
+            total_req = first_float(r'Total requests:\s+([0-9]+)', text)
+            failed_req = first_float(r'Failed requests:\s+([0-9]+)', text)
+            succ = self.inference_results_dict[node].get('successful_requests')
+            if total_req:
+                self.inference_results_dict[node]['total_requests'] = total_req
+            elif succ is not None and failed_req is not None:
+                self.inference_results_dict[node]['total_requests'] = str(int(succ) + int(failed_req))
+            elif succ is not None and getattr(self, '_bench_num_prompts', None) is not None:
+                self.inference_results_dict[node]['total_requests'] = str(int(self._bench_num_prompts))
+            if succ and self.inference_results_dict[node].get('total_requests'):
+                s, t = int(succ), int(self.inference_results_dict[node]['total_requests'])
+                self.inference_results_dict[node]['goodput'] = f'{(s / t):.6f}' if t else None
+
+        return self.inference_results_dict
+
+    def poll_for_inference_completion(
+        self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
+    ):
+        time.sleep(60)
+        start_time = time.time()
+        completed_pattern = re.compile('Serving Benchmark Result', re.I)
+        log_path = f"{self.log_dir}/benchmark_node/benchmark_results.log"
+
+        for _itr in range(1, iterations + 1):
+            out_dict = self._bench_exec(f"tail -1000 {shlex.quote(log_path)}")
+            done = all(completed_pattern.search(o or '') for o in out_dict.values()) if out_dict else False
+            if done:
+                self.get_inference_results_dict(out_dict)
+                return {"status": "success", "results": self.inference_results_dict}
+            if total_timeout and (time.time() - start_time) >= total_timeout:
+                return {"status": "timeout", "reason": "benchmark timed out"}
+            time.sleep(30 + int(waittime_between_iters))
+        return {"status": "stuck_in_progress", "reason": "benchmark did not complete"}
+
+    def verify_inference_results(self, test_name, expected_result_dict):
+        thresholds = {
+            metric: normalize_sglang_threshold_spec(metric, spec)
+            for metric, spec in expected_result_dict.items()
+        }
+        for node in self.inference_results_dict:
+            actuals = {
+                metric: coerce_sglang_actual(value)
+                for metric, value in self.inference_results_dict[node].items()
+                if metric in thresholds
+            }
+            try:
+                evaluate_all(actuals, thresholds)
+            except ThresholdViolation as exc:
+                for msg in exc.violations:
+                    fail_test(f"FAIL - {msg}")
+
+        self.inference_end_time = self._host_exec('date +"%a %b %e %H:%M"')
+        time.sleep(2)
+        verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
+
+    def sglang_distributed_gpu_counts(self, mem_threshold_mb=5000):
+        """After model load, count occupied GPUs per server node via amd-smi."""
+        tp = int(self.bp_dict["tensor_parallelism"])
+        pp = int(self.bp_dict.get("pipeline_parallelism", 1))
+
+        def _count_per_node(out_dict):
+            per_node = {}
+            for node, payload in out_dict.items():
+                count = 0
+                try:
+                    entries = json.loads((payload or '').strip())
+                except (json.JSONDecodeError, AttributeError):
+                    log.warning("Failed to parse amd-smi JSON on node %s", node)
+                    per_node[node] = 0
+                    continue
+                if isinstance(entries, dict) and "gpu_data" in entries:
+                    entries = entries["gpu_data"]
+                if not isinstance(entries, list):
+                    per_node[node] = 0
+                    continue
+                for g in entries:
+                    used_mb = g.get("mem_usage", {}).get("used_vram", {}).get("value", 0)
+                    if used_mb > mem_threshold_mb:
+                        count += 1
+                per_node[node] = count
+            return per_node
+
+        server_per_node = _count_per_node(
+            self._host_exec('sudo amd-smi metric --json', hosts=self.server_node_list)
+        )
+        occupied_total = sum(server_per_node.values())
+
+        result = {
+            "configured_tp": tp,
+            "configured_pp": pp,
+            "configured_nnodes": self.nnodes,
+            "server_per_node": server_per_node,
+            "total_occupied_gpus": occupied_total,
+        }
+
+        lines = [
+            "",
+            f"Configured TP: {tp}",
+            f"Configured PP: {pp}",
+            f"Configured nnodes: {self.nnodes}",
+            "",
+            "Server nodes:",
+        ]
+        for node, count in server_per_node.items():
+            lines.append(f"  {node}: {count} occupied GPUs")
+        lines.append(f"  Total: {occupied_total} occupied GPUs")
+        lines.append("")
+        lines.append("Total hardware GPUs consumed:")
+        lines.append(f"  {occupied_total}")
+
+        log.info("\n".join(lines))
+        return result
+
+    def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
+        return self.run_lm_eval_benchmark_test('lm_eval_hellaswag', _d_type=_d_type)
+
+    def run_lm_eval_gsm8k_benchmark_test(self, _d_type='auto'):
+        return self.run_lm_eval_benchmark_test('lm_eval_gsm8k', _d_type=_d_type)
+
+    def run_lm_eval_benchmark_test(self, bench_key: str, _d_type='auto'):
+        spec = LM_EVAL_SPECS[bench_key]
+        task_name = bench_key.removeprefix('lm_eval_')
+        i_dict = self.bp_dict['inference_tests'][bench_key]
+        inner_cmd, scoring = LmEvalBenchmark.prepare(
+            i_dict,
+            port=int(self.router_serv_port),
+            host=self.client_host,
+            model_id=self.bp_dict['model'],
+            task_name=task_name,
+            default_tasks=task_name,
+            default_metric=spec['default_metric'],
+            default_metric_key=spec['default_metric_key'],
+            log_dir=self.log_dir,
+            log_basename=f'{bench_key}.log',
+            default_num_concurrent=spec['default_num_concurrent'],
+        )
+        inner = (
+            f"mkdir -p {self.log_dir}/benchmark_node && "
+            f"source /tmp/server_env_script.sh && {inner_cmd}"
+        )
+        out_dict = self._bench_exec(
+            "bash -c " + shlex.quote(inner),
+            timeout=scoring['exec_timeout_sec'],
+        )
+        time.sleep(5)
+
+        check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
+        summary = None
+        errors: list[str] = []
+        for node, text in out_dict.items():
+            ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
+            if node_summary is not None:
+                summary = node_summary
+            if not ok:
+                errors.append(f"lm-eval {spec['display']} on node {node!r}: {err}")
+
+        if summary is None:
+            summary = LmEvalBenchmark.fallback_summary(
+                scoring,
+                error=errors[-1] if errors else 'no benchmark nodes produced output to score',
+            )
+            errors.append(f"lm-eval {spec['display']}: no benchmark nodes produced output to score")
+
+        for msg in errors:
+            fail_test(msg)
+        return summary
