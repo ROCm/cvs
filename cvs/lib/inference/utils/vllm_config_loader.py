@@ -35,10 +35,17 @@ from typing_extensions import Literal
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.inferencing_config_loader import validate_thresholds_cover_sweep
 from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
+from cvs.lib.inference.utils.vllm_server_metrics import PROM_METRICS
 from cvs.lib.utils.config_loader import substitute_config
 from cvs.lib.utils.gpu import GPU_METRICS
 
 GATED_GPU_METRICS = {k for k, _unit in GPU_METRICS}
+# A fully separate, parallel gated family, following GPU_METRICS's precedent
+# rather than joining vllm_parsing.GATED_METRICS/METRIC_TIERS -- see
+# VLLM_PROMETHEUS_METRICS_SPEC.md Sec 6 for why prom.* must not be mixed into
+# the client.* tiering machinery (a locked invariant test partitions that set
+# exactly).
+GATED_PROM_METRICS = {k for k, _unit in PROM_METRICS}
 
 
 class _Forbid(BaseModel):

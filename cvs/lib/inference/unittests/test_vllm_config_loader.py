@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from cvs.lib.inference.utils.vllm_config_loader import (
     GATED_GPU_METRICS,
+    GATED_PROM_METRICS,
     Run,
     SeqCombo,
     Sweep,
@@ -26,9 +27,10 @@ def _combo(name, isl="128", osl="2048"):
 
 
 def _full_gated_specs():
-    """A spec for every gated client.* and gpu.* metric -- the minimum that
-    satisfies coverage. Values are inert so the set passes without asserting
-    anything; these tests pin the coverage gate, not the numbers."""
+    """A spec for every gated client.*, gpu.*, and prom.* metric -- the
+    minimum that satisfies coverage. Values are inert so the set passes
+    without asserting anything; these tests pin the coverage gate, not the
+    numbers."""
     out = {}
     for m in GATED_METRICS:
         kind = "max_ms" if m.endswith("_ms") else "max" if m == "failed" else "min"
@@ -36,6 +38,8 @@ def _full_gated_specs():
     for m in GATED_GPU_METRICS:
         kind = "max" if m in ("peak_gpu_memory_mb", "model_load_memory_mb", "model_load_s") else "min"
         out[f"gpu.{m}"] = {"kind": kind, "value": 0 if kind == "min" else 1e12}
+    for m in GATED_PROM_METRICS:
+        out[f"prom.{m}"] = {"kind": "max_ms", "value": 1e12}
     return out
 
 
@@ -96,6 +100,72 @@ class TestGpuGatedMetricCoverage(unittest.TestCase):
                 "model_load_s",
                 "gpu_bandwidth_util_pct",
                 "gpu_compute_util_pct",
+            },
+        )
+
+
+class TestPromGatedMetricCoverage(unittest.TestCase):
+    """The prom.* axis of vllm_config_loader's _check_thresholds_cover_sweep.
+
+    Mirrors TestGpuGatedMetricCoverage: prom.* is a fully separate, parallel
+    gated family (VLLM_PROMETHEUS_METRICS_SPEC.md Sec 6), not part of
+    client.*'s tiering machinery, so its coverage is proven independently
+    here rather than in test_vllm_report_preset.py.
+    """
+
+    _CELL = "ISL=128,OSL=2048,TP=8,CONC=16"
+
+    def _variant_with(self, thresholds, enforce):
+        sw = Sweep(
+            sequence_combinations=[_combo("a")],
+            runs=[Run(combo="a", concurrency=16)],
+        )
+        return VariantConfig(
+            schema_version=1,
+            framework="vllm",
+            gpu_arch="mi300x",
+            enforce_thresholds=enforce,
+            paths={
+                "shared_fs": "/home/x",
+                "models_dir": "/home/x/models",
+                "log_dir": "/home/x/LOGS",
+                "hf_token_file": "/home/x/.hf",
+            },
+            model={"id": "amd/Llama-3.1-70B-Instruct-FP8-KV", "remote": 0},
+            params={"tensor_parallelism": "8"},
+            sweep=sw,
+            thresholds=thresholds,
+        )
+
+    def test_full_gated_set_constructs(self):
+        vc = self._variant_with({self._CELL: _full_gated_specs()}, enforce=True)
+        self.assertEqual(vc.enforce_thresholds, True)
+
+    def test_missing_prom_metric_raises_when_enforced(self):
+        specs = _full_gated_specs()
+        del specs["prom.queue_time_p50_ms"]
+        with self.assertRaises(ValidationError) as ctx:
+            self._variant_with({self._CELL: specs}, enforce=True)
+        self.assertIn("missing gated-metric specs", str(ctx.exception))
+        self.assertIn("prom.queue_time_p50_ms", str(ctx.exception))
+
+    def test_missing_prom_metric_warns_when_record_only(self):
+        specs = _full_gated_specs()
+        del specs["prom.prefill_time_p95_ms"]
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self._variant_with({self._CELL: specs}, enforce=False)
+        self.assertTrue(any("missing gated-metric specs" in str(x.message) for x in caught))
+
+    def test_all_four_prom_metrics_are_gated(self):
+        self.assertEqual(
+            GATED_PROM_METRICS,
+            {
+                "queue_time_p50_ms",
+                "queue_time_p95_ms",
+                "prefill_time_p50_ms",
+                "prefill_time_p95_ms",
             },
         )
 
