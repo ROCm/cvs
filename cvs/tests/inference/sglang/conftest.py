@@ -2,12 +2,15 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Fixtures and hooks for SGLang inference suites (``sglang_single`` and ``sglang_disagg_distributed``).
+Fixtures and hooks for SGLang inference suites (``sglang_single``, ``sglang_distributed``,
+and ``sglang_disagg_distributed``).
 
 Both suites use ``ContainerOrchestrator`` (vLLM-style) via ``cluster_container.json`` and
 ``load_variant()`` from ``sglang_config_loader``.
 
 ``sglang_single.py`` — ``SglangSingle`` (unified server on ``benchmark_serv_node`` only).
+``sglang_distributed.py`` — ``SglangDistributed`` (unified multi-node TP/PP; all server
+nodes from ``server_node_list`` or prefill+decode union).
 ``sglang_disagg_distributed.py`` — ``SglangDisaggPD`` (PD roles from inference config;
 containers only on the union of prefill/decode/router/bench hosts).
 
@@ -27,7 +30,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.inference.sglang.sglang_common import as_node_list
+from cvs.lib.inference.sglang.sglang_common import as_node_list, resolve_server_node_list
 from cvs.lib.inference.sglang.sglang_config_loader import (
     SglangSingleVariantConfig,
     flat_expected_from_specs,
@@ -36,6 +39,7 @@ from cvs.lib.inference.sglang.sglang_config_loader import (
     perf_cells_from_thresholds,
 )
 from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
+from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
 from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
@@ -45,6 +49,7 @@ from cvs.lib.utils_lib import (
     update_test_result,
 )
 from cvs.tests.inference.sglang._shared import (
+    SGLANG_DISTRIBUTED_TEST_ORDER,
     SGLANG_SINGLE_TEST_ORDER,
     SGLANG_TEST_ORDER,
 )
@@ -58,6 +63,11 @@ __all__ = ["flat_expected_from_specs"]
 def _use_sglang_single(request) -> bool:
     """``sglang_single.py`` uses unified single-node ``SglangSingle``."""
     return getattr(request.module, "__name__", "").endswith("sglang_single")
+
+
+def _use_sglang_distributed(request) -> bool:
+    """``sglang_distributed.py`` uses unified multi-node ``SglangDistributed``."""
+    return getattr(request.module, "__name__", "").endswith("sglang_distributed")
 
 
 def _deep_merge(base, override):
@@ -143,18 +153,37 @@ def _cluster_dict_for_disagg_roles(
     role_hosts: list[str],
     head_host: str,
 ) -> dict[str, Any]:
-    """Restrict orchestrator scope to PD role hosts (not every cluster.json node)."""
+    """Restrict orchestrator scope to role hosts (not every cluster.json node)."""
     node_dict = cluster_dict.get("node_dict") or {}
     missing = [h for h in role_hosts if h not in node_dict]
     if missing:
         raise ValueError(
-            f"disagg role hosts not in cluster node_dict: {missing!r} "
+            f"role hosts not in cluster node_dict: {missing!r} "
             f"(cluster keys: {sorted(node_dict)!r})"
         )
     scoped = dict(cluster_dict)
     scoped["node_dict"] = {h: node_dict[h] for h in role_hosts}
     scoped["head_node_dict"] = {"mgmt_ip": head_host}
     return scoped
+
+
+def _distributed_orch_hosts(inference: Mapping[str, Any]) -> list[str]:
+    """Server ranks plus benchmark node (when bench is not already a server rank)."""
+    hosts = list(resolve_server_node_list(inference))
+    bench_raw = inference.get("benchmark_serv_node")
+    if bench_raw:
+        bench = as_node_list(bench_raw)[0]
+        if bench not in hosts:
+            hosts.append(bench)
+    return hosts
+
+
+def _distributed_head_host(inference: Mapping[str, Any], role_hosts: list[str]) -> str:
+    """Orchestrator head: benchmark node when set, else rank-0 server node."""
+    bench_raw = inference.get("benchmark_serv_node")
+    if bench_raw:
+        return as_node_list(bench_raw)[0]
+    return role_hosts[0]
 
 
 def _create_container_orchestrator(cluster_dict: Mapping[str, Any], variant_config: SglangSingleVariantConfig):
@@ -347,12 +376,21 @@ def hf_token(variant_config):
 
 @pytest.fixture(scope="module")
 def orch(request, cluster_dict, variant_config, lifecycle):
-    """``ContainerOrchestrator`` for both single-node and disagg SGLang suites."""
+    """``ContainerOrchestrator`` for single-node, distributed, and disagg SGLang suites."""
     cluster = cluster_dict
     if _use_sglang_single(request):
         bench_host = _benchmark_serv_host(variant_config.inference)
         cluster = _cluster_dict_for_single_benchmark(cluster_dict, bench_host)
         log.info("sglang_single: orchestrator scoped to benchmark_serv_node=%s", bench_host)
+    elif _use_sglang_distributed(request):
+        role_hosts = _distributed_orch_hosts(variant_config.inference)
+        head_host = _distributed_head_host(variant_config.inference, role_hosts)
+        cluster = _cluster_dict_for_disagg_roles(cluster_dict, role_hosts, head_host)
+        log.info(
+            "sglang_distributed: orchestrator scoped to server+bench hosts=%s head=%s",
+            role_hosts,
+            head_host,
+        )
     else:
         role_hosts = _disagg_role_hosts(variant_config.inference)
         head_host = _disagg_head_host(variant_config.inference, role_hosts)
@@ -379,6 +417,10 @@ def gpu_type(request, orch, variant_config):
         bench_host = _benchmark_serv_host(variant_config.inference)
         smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
         smi_out = smi_out_dict.get(bench_host) or next(iter(smi_out_dict.values()))
+    elif _use_sglang_distributed(request):
+        probe_node = resolve_server_node_list(variant_config.inference)[0]
+        smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
+        smi_out = smi_out_dict.get(probe_node) or next(iter(smi_out_dict.values()))
     else:
         # Disagg: probe first prefill node (may differ from cluster head).
         prefill_nodes = variant_config.inference["prefill_node_list"]
@@ -412,6 +454,15 @@ def im_obj(
             orch=orch,
             gpu_type=gpu_type,
         )
+    if _use_sglang_distributed(request):
+        return SglangDistributed(
+            model_name,
+            variant_config.inference,
+            variant_config.benchmark_params,
+            hf_token,
+            orch=orch,
+            gpu_type=gpu_type,
+        )
     return SglangDisaggPD(
         model_name,
         variant_config.inference,
@@ -428,7 +479,12 @@ def im_obj(
 def pytest_collection_modifyitems(items):
     def rank_for(item):
         mod = getattr(item.module, "__name__", "")
-        order = SGLANG_SINGLE_TEST_ORDER if mod.endswith("sglang_single") else SGLANG_TEST_ORDER
+        if mod.endswith("sglang_single"):
+            order = SGLANG_SINGLE_TEST_ORDER
+        elif mod.endswith("sglang_distributed"):
+            order = SGLANG_DISTRIBUTED_TEST_ORDER
+        else:
+            order = SGLANG_TEST_ORDER
         return order.get(item.originalname or item.name.split("[")[0], 99)
 
     items.sort(key=rank_for)

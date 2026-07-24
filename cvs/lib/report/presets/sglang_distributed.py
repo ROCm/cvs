@@ -34,6 +34,7 @@ SGLANG_DISTRIBUTED_SESSION_LIFECYCLE_LABELS = (
     "smoke_endpoints",
     "lm_eval_hellaswag",
     "lm_eval_gsm8k",
+    "gpu_topology",
     "teardown",
 )
 

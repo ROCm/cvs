@@ -4,8 +4,8 @@ All rights reserved.
 
 Shared helpers and ordering for the SGLang inference suites (single-node and disaggregated).
 
-Used by both ``sglang_single.py`` and ``sglang_disagg_distributed.py``. Each suite
-has its own stage order (unified server vs PD disaggregation).
+Used by ``sglang_single.py``, ``sglang_distributed.py``, and ``sglang_disagg_distributed.py``.
+Each suite has its own stage order (single-node, unified multi-node, or PD disagg).
 '''
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ __all__ = [
     "resolve_benchmark_variant_key",
     "SGLANG_TEST_ORDER",
     "SGLANG_SINGLE_TEST_ORDER",
+    "SGLANG_DISTRIBUTED_TEST_ORDER",
     "test_print_results_table",
 ]
 
@@ -102,6 +103,21 @@ SGLANG_SINGLE_TEST_ORDER = {
     "test_run_performance_benchmark_test": 7,
     "test_print_results_table": 8,
     "test_teardown": 9,
+}
+
+# Stable test order for sglang_distributed (unified multi-node server, no PD).
+SGLANG_DISTRIBUTED_TEST_ORDER = {
+    "test_launch_container": 0,
+    "test_rms_norm": 1,
+    "test_launch_server": 2,
+    "test_poll_for_server_ready": 3,
+    "test_openai_compatible_http_endpoints": 4,
+    "test_run_lm_eval_hellaswag_benchmark_test": 5,
+    "test_run_lm_eval_gsm8k_benchmark_test": 6,
+    "test_run_performance_benchmark_test": 7,
+    "test_distributed_gpu_topology": 8,
+    "test_print_results_table": 9,
+    "test_teardown": 10,
 }
 
 
