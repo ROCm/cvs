@@ -73,7 +73,6 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
         "Set top-level \"active_benchmark\" to one of them, or export SGLANG_BENCHMARK_KEY."
     )
 
-
 # Stable test order for sglang_disagg_distributed (PD prefill/decode/router).
 SGLANG_TEST_ORDER = {
     "test_launch_container": 0, 
