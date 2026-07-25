@@ -731,9 +731,11 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         if all_nodes is None:
             all_nodes = len(self.hosts) > 1
 
+        user = shlex.quote(str(self.user))
         cmd = (
             f"sudo rm -rf {shlex.quote(log_dir)} && "
-            f"mkdir -p {shlex.quote(log_dir)}"
+            f"sudo mkdir -p {shlex.quote(log_dir)} && "
+            f"sudo chown -R {user}:{user} {shlex.quote(log_dir)}"
         )
 
         if all_nodes:
