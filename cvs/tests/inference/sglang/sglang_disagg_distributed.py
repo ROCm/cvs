@@ -138,13 +138,13 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
 #     lifecycle.complete_stage(request, "lm_eval_hellaswag", t0)
 
 
-# def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-#     globals.error_list = []
-#     t0 = time.monotonic()
-#     im_obj.setup_benchmark_serv_container_env()
-#     g = im_obj.run_lm_eval_gsm8k_benchmark_test()
-#     lifecycle.phase_labels["accuracy_gsm8k"] = g
-#     lifecycle.complete_stage(request, "lm_eval_gsm8k", t0)
+def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
+    globals.error_list = []
+    t0 = time.monotonic()
+    im_obj.setup_benchmark_serv_container_env()
+    g = im_obj.run_lm_eval_gsm8k_benchmark_test()
+    lifecycle.phase_labels["accuracy_gsm8k"] = g
+    lifecycle.complete_stage(request, "lm_eval_gsm8k", t0)
 
 
 # def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request, perf_cell):
