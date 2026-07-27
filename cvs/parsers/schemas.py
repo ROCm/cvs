@@ -901,7 +901,7 @@ class PreflightIfoeConfig(BaseModel):
 
     connectivity_mode: str = Field(default="skip", description="IFoE L2 connectivity mode: run or skip")
     afmctl_path: str = Field(default="afmctl", description="afmctl binary path or command name")
-    use_sudo: bool = Field(default=False, description="Run afmctl through sudo")
+    use_sudo: bool = Field(default=True, description="Run afmctl through non-interactive sudo")
     bdf_discovery: str = Field(default="auto", description="BDF discovery mode: auto or config")
     bdfs: List[str] = Field(default_factory=list, description="Optional explicit source accelerator BDFs")
     dst_accelerators: List[int] = Field(
@@ -918,7 +918,9 @@ class PreflightIfoeConfig(BaseModel):
         default="auto", description="Port discovery mode when ports=up: auto or config"
     )
     pings_per_port: int = Field(default=1, ge=1, description="afmctl pings per selected port pair")
-    per_ping_timeout: Optional[int] = Field(default=None, ge=1, description="Optional afmctl per-ping timeout")
+    per_ping_timeout: Optional[int] = Field(
+        default=None, ge=1, description="Optional afmctl test timeout in minutes (-t)"
+    )
     traffic_types: List[str] = Field(
         default_factory=lambda: ["ifoe_req", "ifoe_resp", "non_ifoe"],
         description="Traffic classes that must be evaluated",

@@ -556,7 +556,7 @@ def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
         get_nested_config(config_dict, 'connectivity_check.ifoe', 'strict_discovery', True), default=True
     )
     use_sudo = _config_flag_enabled(
-        get_nested_config(config_dict, 'connectivity_check.ifoe', 'use_sudo', False), default=False
+        get_nested_config(config_dict, 'connectivity_check.ifoe', 'use_sudo', True), default=True
     )
 
     log.info(

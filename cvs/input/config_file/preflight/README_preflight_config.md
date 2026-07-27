@@ -180,8 +180,8 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - `"skip"` — preflight records a SKIPPED result and does not invoke afmctl
 - **`afmctl_path`** (default: `"afmctl"`)
   - Absolute path or PATH-resolved binary name on each node
-- **`use_sudo`** (default: `false`)
-  - Prepend `sudo` to the afmctl invocation when the cluster image requires root
+- **`use_sudo`** (default: `true`)
+  - AFM `0.0.1-83` requires root for device discovery, port inventory, and L2 ping; CVS uses non-interactive `sudo -n` and fails the gate if this privilege is unavailable
 - **`bdf_discovery`** (default: `"auto"`)
   - `"auto"` — run `afmctl show device` on each node and use the reported BDFs
   - `"config"` — use only the `bdfs` list below; nodes with no matching BDFs FAIL
@@ -197,16 +197,18 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - A full mesh excludes `source == destination`; a self-ping is an invalid coverage cell, not a fabric result
   - With `strict_discovery: true`, a missing vPOD membership list fails the gate rather than silently substituting a local-only mesh. Set strict discovery to `false` only for a diagnostic run while collecting the missing hardware fixture.
 - **`ports`** (default: `"all"`; benchmark recommendation: `"up"`)
-  - `"up"` discovers the UP ports for every source BDF with `afmctl show port --brief` and supplies them explicitly through `-p`
+  - `"up"` discovers every source BDF through `afmctl show port --json -b <BDF>` and supplies only physical `status.link_status: "LINK_UP"` port IDs through `-p`
+  - Do not use the AFM `status.ifcp.link_up` field for this decision: it can remain `"yes"` while the physical link is down
   - `"all"` omits `-p`, a string such as `"0-7"` or `"0,1,2"`, or a list `[0, 1, 2]`
   - `"all"` can include intentionally down or unwired ports and therefore must not be used for a strict benchmark gate
 - **`port_discovery`** (default: `"auto"`)
-  - Used with `ports: "up"`; CVS prefers a structured afmctl response when available and otherwise uses a defensive text parser
+  - Used with `ports: "up"`; CVS requests the validated AFM JSON response. AFM `0.0.1-83` rejects combining `--brief` with `--json`
+  - The parser accepts the AFM `device[].port[]` schema and strips SSH/login preambles before decoding the JSON; it retains a defensive fallback for brief text output
   - If the hardware's output is unknown or malformed, strict discovery fails closed rather than falling back to all ports
 - **`pings_per_port`** (default: `1`; benchmark recommendation: `3`)
   - Passed to afmctl as `-c <count>`
 - **`per_ping_timeout`** (default: `null`)
-  - Optional afmctl `-t <seconds>` value; omitted when `null`
+  - Optional afmctl `-t <minutes>` test-timeout value; omitted when `null`. Despite the historical field name, this is not a per-ping seconds value
 - **`traffic_types`** (default: `["ifoe_req", "ifoe_resp", "non_ifoe"]`)
   - Determines which afmctl traffic categories are required to pass
   - When all three are selected, `--traffic-type` is omitted so afmctl runs them all
@@ -223,7 +225,7 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - `"report"` preserves diagnostic-only preflight behavior
   - `"gate"` records the detailed report and then fails pytest/CLI if L2 results or coverage fail
 
-> **MI4XX rack validation required.** `afmctl show port --brief` JSON/text formats and the exact UP-state field names must be captured from the target image before `ports: "up"` is used as an admission gate. Until then, use this implementation for parser and coverage validation against saved fixtures, not as proof of on-rack behavior.
+> **MI4XX validation (AFM 0.0.1-83).** CVS has been validated against `afmctl show device`, `afmctl show port --json -b <BDF>`, and a scoped `afmctl test ping` on MI4XX. Revalidate the JSON schema and physical-link state mapping after an AFM upgrade; strict discovery fails closed if it changes.
 
 #### TransferBench Settings (`connectivity_check.transferbench`) — opt-in (AIMVT-181)
 

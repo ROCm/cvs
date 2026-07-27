@@ -338,19 +338,24 @@ def parse_afmctl_show_device(output: str) -> List[Dict]:
 
 
 class AfmctlPortParser:
-    """Parse ``afmctl show port --brief`` without assuming a MI4XX schema.
+    """Parse AFM port discovery output without optimistic state inference.
 
-    The AFM JSON schema has not yet been captured from MI4XX hardware.  JSON
-    is therefore parsed by field semantics (``port`` + ``state`` and optional
-    ``bdf``) rather than by a guessed fixed tree.  The text parser is a
-    deliberately narrow ``text-v1`` fallback: it only accepts an explicit
-    ``Port``/``State`` table or labelled records.  Unknown formats return
-    parse errors rather than classifying all ports as DOWN.
+    MI4XX AFM ``0.0.1-83`` exposes structured port inventory through
+    ``afmctl show port --json``.  Its schema is ``device[].port[]``, with the
+    port id in ``id``, source BDF in ``spec.device_bdf``, and the authoritative
+    physical state in ``status.link_status``.  ``status.ifcp.link_up`` must
+    not be used: it can be ``yes`` while the physical port has no link.
+
+    The parser retains a narrow fallback for the human-readable ``--brief``
+    table and generic JSON fixtures.  Unknown formats or states return parse
+    errors rather than classifying a port as UP.
     """
 
     _PORT_KEYS = ("port", "port_id", "port_number", "port_num", "port#")
     _STATE_KEYS = ("state", "status", "port_state", "link_state")
     _BDF_KEYS = ("bdf", "device_bdf", "pci_bdf")
+    _AFM_LINK_UP = "LINK_UP"
+    _AFM_DOWN_LINK_STATES = {"LINK_DOWN", "NONE"}
     _KNOWN_STATES = {
         "UP",
         "DOWN",
@@ -378,25 +383,36 @@ class AfmctlPortParser:
             "parse_errors": [],
         }
         if not output or not output.strip():
-            result["parse_errors"].append("Empty afmctl show port --brief output")
+            result["parse_errors"].append("Empty afmctl show port output")
             return result
 
         stripped = output.lstrip()
-        if stripped.startswith("{") or stripped.startswith("["):
+        json_offsets = sorted(
+            offset for offset, char in enumerate(stripped) if char in "{["
+        )
+        decoder = json.JSONDecoder()
+        document = None
+        json_error = None
+        for json_offset in json_offsets:
             try:
-                document = json.loads(output)
+                document, _ = decoder.raw_decode(stripped[json_offset:])
+                break
             except json.JSONDecodeError as exc:
-                result["format"] = "json"
-                result["parse_errors"].append(f"Invalid afmctl port JSON: {exc.msg}")
-                return result
+                json_error = exc
+        if document is not None:
             result["format"] = "json"
-            cls._parse_json(document, result)
+            if not cls._parse_mi4xx_json(document, result):
+                cls._parse_json(document, result)
+        elif json_offsets:
+            result["format"] = "json"
+            result["parse_errors"].append(f"Invalid afmctl port JSON: {json_error.msg}")
+            return result
         else:
             result["format"] = "text-v1"
             cls._parse_text(output, result)
 
         if not result["ports_by_bdf"] and not result["unscoped_ports"]:
-            result["parse_errors"].append("Could not locate port/state records in afmctl show port --brief output")
+            result["parse_errors"].append("Could not locate port/state records in afmctl show port output")
         return result
 
     @staticmethod
@@ -438,6 +454,106 @@ class AfmctlPortParser:
             result["parse_errors"].append(f"Conflicting states for port {port_number}")
             return
         target[str(port_number)] = entry
+
+    @classmethod
+    def _record_mi4xx_json_port(cls, result: Dict, port, bdf, admin_state, link_status) -> None:
+        """Record one AFM 0.0.1-83 JSON port using physical link state."""
+        try:
+            if isinstance(port, bool):
+                raise ValueError
+            port_number = int(str(port).strip())
+            if port_number < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            result["parse_errors"].append(f"Malformed AFM JSON port ID {port!r}")
+            return
+
+        normalized_bdf = _normalize_bdf(bdf)
+        if not normalized_bdf:
+            result["parse_errors"].append(f"Malformed AFM JSON BDF {bdf!r} for port {port_number}")
+            return
+
+        if admin_state is None:
+            result["parse_errors"].append(f"Missing AFM admin state for port {port_number}")
+            return
+        if link_status is None:
+            result["parse_errors"].append(f"Missing AFM physical link state for port {port_number}")
+            return
+        admin = str(admin_state).strip().lower()
+        if admin not in {"enabled", "disabled"}:
+            result["parse_errors"].append(f"Unknown AFM admin state {admin_state!r} for port {port_number}")
+            return
+        link = str(link_status).strip().upper()
+        if link == cls._AFM_LINK_UP:
+            if admin != "enabled":
+                result["parse_errors"].append(
+                    f"Inconsistent AFM states for port {port_number}: admin={admin_state!r}, link={link_status!r}"
+                )
+                return
+            state = "UP"
+        elif link in cls._AFM_DOWN_LINK_STATES or link.startswith("NO_PHY_LINK"):
+            state = "DOWN"
+        else:
+            result["parse_errors"].append(f"Unknown AFM physical link state {link_status!r} for port {port_number}")
+            return
+
+        entry = {
+            "port": port_number,
+            "state": state,
+            "is_up": state == "UP",
+            "admin_state": admin,
+            "link_status": link,
+        }
+        target = result["ports_by_bdf"].setdefault(normalized_bdf, {})
+        existing = target.get(str(port_number))
+        if existing and existing != entry:
+            result["parse_errors"].append(f"Conflicting states for port {port_number}")
+            return
+        target[str(port_number)] = entry
+
+    @classmethod
+    def _parse_mi4xx_json(cls, document, result: Dict) -> bool:
+        """Parse the validated ``afmctl show port --json`` MI4XX schema.
+
+        Returns ``True`` when the document declared the AFM ``device`` shape,
+        including malformed instances of that shape.  That prevents a generic
+        recursive fallback from silently reinterpreting an incomplete AFM
+        record.
+        """
+        if not isinstance(document, dict) or "device" not in document:
+            return False
+        devices = document.get("device")
+        if not isinstance(devices, list):
+            result["parse_errors"].append("AFM JSON field 'device' must be a list")
+            return True
+        for device in devices:
+            if not isinstance(device, dict):
+                result["parse_errors"].append("AFM JSON device entry must be an object")
+                continue
+            device_bdf = device.get("bdf")
+            ports = device.get("port")
+            if not isinstance(ports, list):
+                result["parse_errors"].append(f"AFM JSON device {device_bdf!r} has no port list")
+                continue
+            for port_entry in ports:
+                if not isinstance(port_entry, dict):
+                    result["parse_errors"].append(f"AFM JSON device {device_bdf!r} has a non-object port entry")
+                    continue
+                spec = port_entry.get("spec")
+                status = port_entry.get("status")
+                if not isinstance(spec, dict) or not isinstance(status, dict):
+                    result["parse_errors"].append(
+                        f"AFM JSON port {port_entry.get('id')!r} is missing spec or status objects"
+                    )
+                    continue
+                cls._record_mi4xx_json_port(
+                    result,
+                    port_entry.get("id"),
+                    spec.get("device_bdf") or device_bdf,
+                    spec.get("admin_state"),
+                    status.get("link_status"),
+                )
+        return True
 
     @classmethod
     def _parse_json(cls, document, result: Dict) -> None:
@@ -489,6 +605,32 @@ class AfmctlPortParser:
             )
             if labelled:
                 cls._record(result, labelled.group(1), labelled.group(2), current_bdf)
+                continue
+
+            mi4xx_brief = re.match(
+                r"^(?P<bdf>[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]):\d+/\d+\s+\S+\s+"
+                r"(?P<port>\d+)\s+(?P<admin>[A-Za-z_-]+)/(?P<oper>[A-Za-z_-]+)\b",
+                line,
+            )
+            if mi4xx_brief:
+                admin = mi4xx_brief.group("admin").lower()
+                oper = mi4xx_brief.group("oper").lower()
+                port = mi4xx_brief.group("port")
+                if admin not in {"enabled", "disabled"} or oper not in {"up", "down"}:
+                    result["parse_errors"].append(
+                        f"Unknown AFM brief state {admin}/{oper} for port {port}"
+                    )
+                elif admin == "disabled" and oper == "up":
+                    result["parse_errors"].append(
+                        f"Inconsistent AFM brief states for port {port}: {admin}/{oper}"
+                    )
+                else:
+                    cls._record(
+                        result,
+                        port,
+                        "UP" if admin == "enabled" and oper == "up" else "DOWN",
+                        mi4xx_brief.group("bdf"),
+                    )
                 continue
 
             inline = re.search(
@@ -555,7 +697,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
 
     DEFAULT_AFMCTL_PATH = "afmctl"
     DEFAULT_PINGS_PER_PORT = 1
-    DEFAULT_PER_PING_TIMEOUT_SEC = 10
+    DEFAULT_PING_TIMEOUT_MINUTES = 5
     DEFAULT_SSH_TIMEOUT_SEC = 180
     DEFAULT_LOSS_THRESHOLD_PCT = 0.0
     DEFAULT_TRAFFIC_TYPES: Tuple[str, ...] = TRAFFIC_TYPES
@@ -574,7 +716,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         traffic_types: Optional[Iterable[str]] = None,
         loss_threshold_pct: Optional[float] = None,
         ssh_timeout: Optional[int] = None,
-        use_sudo: bool = False,
+        use_sudo: bool = True,
         bdf_discovery: str = "auto",
         require_complete_coverage: bool = True,
         strict_discovery: bool = True,
@@ -598,10 +740,10 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             ports: Port spec for ``-p``: ``"all"``/``None`` for all ports,
                 ``"up"`` for discovered operational ports, a list
                 ``[0,1,2]``, or a string ``"0,1,2"`` / ``"0-7"``.
-            port_discovery: ``"auto"`` uses ``afmctl show port --brief`` for
+            port_discovery: ``"auto"`` uses ``afmctl show port --json`` for
                 ``ports="up"``; ``"config"`` rejects automatic discovery.
             pings_per_port: Value for ``-c`` (per-port-pair ping count).
-            per_ping_timeout: Value for ``-t`` (per-ping timeout). Omitted
+            per_ping_timeout: Value for afmctl ``-t`` in minutes. Omitted
                 from the command line if ``None``.
             traffic_types: Subset of ``("ifoe_req", "ifoe_resp", "non_ifoe")``
                 used both to filter ``--traffic-type`` and to gate pass/fail
@@ -609,7 +751,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             loss_threshold_pct: Maximum acceptable loss percentage for any
                 enabled traffic type (default ``0.0``).
             ssh_timeout: Overall SSH timeout for each ``afmctl`` invocation.
-            use_sudo: Prepend ``sudo`` when calling ``afmctl``.
+            use_sudo: Prepend non-interactive ``sudo`` when calling ``afmctl``.
             bdf_discovery: ``"auto"`` (run ``afmctl show device`` if ``bdfs``
                 is empty) or ``"config"`` (require ``bdfs`` to be supplied).
             require_complete_coverage: Fail a node when planned pairs were not
@@ -703,14 +845,13 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         return " ".join(shlex.quote(p) for p in parts)
 
     def build_show_port_command(self, bdf: str) -> str:
-        """Render the source-BDF-scoped port discovery command.
+        """Render the validated source-BDF-scoped JSON discovery command.
 
-        The exact MI4XX brief/JSON schema is intentionally not assumed.  The
-        command is explicit about the source BDF, while the parser accepts a
-        BDF-scoped or an unscoped brief response.  Hardware validation must
-        confirm the CLI grammar before this becomes the admission gate.
+        AFM 0.0.1-83 accepts ``--json`` and ``--brief`` separately, but rejects
+        their combination.  JSON exposes the physical ``link_status`` needed
+        to exclude down/unwired ports without relying on presentation text.
         """
-        parts = self._afmctl_parts() + ["show", "port", "--brief", "-b", bdf]
+        parts = self._afmctl_parts() + ["show", "port", "--json", "-b", bdf]
         return " ".join(shlex.quote(p) for p in parts)
 
     @staticmethod
@@ -740,10 +881,13 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
     @staticmethod
     def _extract_exit_sentinel(output: str) -> Tuple[str, Optional[int]]:
         """Remove the exit sentinel used by ``exec_cmd_list`` target calls."""
-        match = re.search(r"(?:^|\n)__CVS_AFMCTL_EXIT_STATUS__=(-?\d+)\s*$", output or "")
+        matches = list(re.finditer(r"(?:^|\n)__CVS_AFMCTL_EXIT_STATUS__=(-?\d+)(?:\r?\n|$)", output or ""))
+        match = matches[-1] if matches else None
         if not match:
             return output or "", None
-        return (output or "")[: match.start()].rstrip("\n"), int(match.group(1))
+        before = (output or "")[: match.start()].rstrip("\n")
+        after = (output or "")[match.end() :].lstrip("\n")
+        return "\n".join(part for part in (before, after) if part), int(match.group(1))
 
     def _exec_on_node(self, node: str, command: str) -> Dict:
         """Run a command only on ``node`` when the Pssh backend supports it.

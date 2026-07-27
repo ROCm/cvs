@@ -105,6 +105,64 @@ Port#    State
 """
 
 
+MI4XX_SHOW_PORT_JSON_OUTPUT = """\
+{
+  "device": [
+    {
+      "bdf": "0001:01:00.1",
+      "port": [
+        {
+          "id": "0",
+          "spec": {
+            "device_bdf": "0001:01:00.1",
+            "admin_state": "enabled"
+          },
+          "status": {
+            "link_status": "LINK_UP",
+            "ifcp": {"link_up": "yes"}
+          }
+        },
+        {
+          "id": "6",
+          "spec": {
+            "device_bdf": "0001:01:00.1",
+            "admin_state": "enabled"
+          },
+          "status": {
+            "link_status": "NO_PHY_LINK, PCS_NO_BLOCK_LOCK",
+            "ifcp": {"link_up": "yes"}
+          }
+        },
+        {
+          "id": "29",
+          "spec": {
+            "device_bdf": "0001:01:00.1",
+            "admin_state": "enabled"
+          },
+          "status": {
+            "link_status": "NONE",
+            "ifcp": {"link_up": "yes"}
+          }
+        }
+      ]
+    }
+  ]
+}
+"""
+
+
+MI4XX_SHOW_PORT_BRIEF_OUTPUT = """\
+----------------------------------------------------------------------------------------
+Port                 Name         Logical    Admin/Oper       N/W MAC              Speed
+                                  index      state
+----------------------------------------------------------------------------------------
+0001:01:00.1:0/0     netport0     0          enabled/up       02:00:00:0e:03:00    400G
+0001:01:00.1:3/6     netport6     6          enabled/down     02:00:00:0e:03:06    400G
+0001:01:00.1:14/29   netport29    29         enabled/down     02:00:00:0e:03:1d    400G
+----------------------------------------------------------------------------------------
+"""
+
+
 FULL_MESH_SHOW_DEVICE_OUTPUT = """\
 BDF                              : 0001:01:00.1
 Spec:
@@ -272,6 +330,32 @@ class TestAfmctlPortParser(unittest.TestCase):
         self.assertTrue(inventory['2']['is_up'])
         self.assertFalse(parsed['parse_errors'])
 
+    def test_mi4xx_json_uses_physical_link_status_and_skips_ssh_preamble(self):
+        parsed = AfmctlPortParser.parse(
+            'Conductor SSH authentication banner\n'
+            + MI4XX_SHOW_PORT_JSON_OUTPUT
+            + '\n__CVS_AFMCTL_EXIT_STATUS__=0\ntransport trailer\n'
+        )
+        self.assertEqual(parsed['format'], 'json')
+        inventory = parsed['ports_by_bdf']['0001:01:00.1']
+        self.assertEqual(set(inventory), {'0', '6', '29'})
+        self.assertTrue(inventory['0']['is_up'])
+        self.assertEqual(inventory['0']['link_status'], 'LINK_UP')
+        # IFCP says yes for these ports, but the physical link is not up.
+        self.assertFalse(inventory['6']['is_up'])
+        self.assertFalse(inventory['29']['is_up'])
+        self.assertEqual(inventory['6']['state'], 'DOWN')
+        self.assertFalse(parsed['parse_errors'])
+
+    def test_mi4xx_brief_table_fallback_uses_logical_port_index(self):
+        parsed = AfmctlPortParser.parse(MI4XX_SHOW_PORT_BRIEF_OUTPUT)
+        self.assertEqual(parsed['format'], 'text-v1')
+        inventory = parsed['ports_by_bdf']['0001:01:00.1']
+        self.assertEqual(set(inventory), {'0', '6', '29'})
+        self.assertTrue(inventory['0']['is_up'])
+        self.assertFalse(inventory['6']['is_up'])
+        self.assertFalse(parsed['parse_errors'])
+
     def test_unknown_or_malformed_port_formats_fail_closed(self):
         malformed_json = AfmctlPortParser.parse('{"ports": [{"port": 0, "state": "FLAPPING"}]}')
         self.assertEqual(malformed_json['format'], 'json')
@@ -284,6 +368,12 @@ class TestAfmctlPortParser(unittest.TestCase):
         self.assertFalse(unknown_text['ports_by_bdf'])
         self.assertFalse(unknown_text['unscoped_ports'])
         self.assertTrue(any('Could not locate' in error for error in unknown_text['parse_errors']))
+
+    def test_mi4xx_unknown_physical_link_state_fails_closed(self):
+        output = MI4XX_SHOW_PORT_JSON_OUTPUT.replace('"LINK_UP"', '"LINK_TRAINING"', 1)
+        parsed = AfmctlPortParser.parse(output)
+        self.assertFalse(parsed['ports_by_bdf']['0001:01:00.1'].get('0'))
+        self.assertTrue(any('Unknown AFM physical link state' in error for error in parsed['parse_errors']))
 
 
 class TestIfoeL2ConnectivityCheck(unittest.TestCase):
@@ -305,12 +395,19 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
     def test_build_ping_command_defaults(self):
         check = IfoeL2ConnectivityCheck(MagicMock())
         cmd = check.build_ping_command('0001:01:00.1', 0)
+        self.assertTrue(cmd.startswith('sudo -n afmctl test ping'))
         self.assertIn('afmctl test ping', cmd)
         self.assertIn('-b 0001:01:00.1', cmd)
         self.assertIn('-c 1', cmd)
         self.assertIn('--dst-accelerator 0', cmd)
         self.assertNotIn('-p ', cmd)
         self.assertNotIn('--traffic-type', cmd)
+
+    def test_build_show_port_command_uses_validated_mi4xx_json_grammar(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        cmd = check.build_show_port_command('0001:01:00.1')
+        self.assertEqual(cmd, 'sudo -n afmctl show port --json -b 0001:01:00.1')
+        self.assertNotIn('--brief', cmd)
 
     def test_build_ping_command_with_ports_and_timeout(self):
         check = IfoeL2ConnectivityCheck(
@@ -373,6 +470,13 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertIn('afmctl test ping --example', phdl.command_list[1])
         self.assertIn('__CVS_AFMCTL_EXIT_STATUS__', phdl.command_list[1])
         self.assertEqual(execution, {'output': 'ping output', 'exit_status': 7})
+
+    def test_exit_sentinel_is_extracted_with_trailing_transport_output(self):
+        output, exit_status = IfoeL2ConnectivityCheck._extract_exit_sentinel(
+            'afmctl json\n__CVS_AFMCTL_EXIT_STATUS__=3\nSSH transport footer\n'
+        )
+        self.assertEqual(output, 'afmctl json\nSSH transport footer\n')
+        self.assertEqual(exit_status, 3)
 
     def test_run_passes_with_explicit_bdfs(self):
         phdl = self._make_phdl(
@@ -565,6 +669,33 @@ Port#    State
         self.assertIn('-p 0,2', invocation['command'])
         self.assertEqual(set(invocation['parsed']['ports']), {'0', '2'})
         self.assertTrue(node['coverage']['complete'])
+
+    def test_mi4xx_json_up_port_discovery_builds_a_scoped_ping(self):
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA'],
+            exec_responses=[
+                {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
+                {'nodeA': 'Conductor SSH authentication banner\n' + MI4XX_SHOW_PORT_JSON_OUTPUT},
+                {'nodeA': passing_output_for(1, ports=(0,))},
+            ],
+        )
+        check = IfoeL2ConnectivityCheck(
+            phdl,
+            bdfs=['0001:01:00.1'],
+            dst_accelerators=[1],
+            ports='up',
+            port_discovery='auto',
+            bdf_discovery='config',
+        )
+
+        results = check.run()
+
+        node = results['nodeA']
+        self.assertEqual(node['status'], 'PASS')
+        self.assertEqual(node['port_inventory']['0001:01:00.1']['up_ports'], [0])
+        invocation = node['accelerators']['0001:01:00.1']['1']
+        self.assertIn('-p 0', invocation['command'])
+        self.assertIn('show port --json -b 0001:01:00.1', phdl.exec.call_args_list[1].args[0])
 
     def test_no_up_ports_fails_closed_without_issuing_ping(self):
         phdl = self._make_phdl(
