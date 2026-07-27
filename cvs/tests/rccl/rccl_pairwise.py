@@ -10,11 +10,6 @@ from cvs.lib import globals
 log = globals.log
 
 
-# ─────────────────────────────────────────────
-# Fixtures  (identical pattern to rccl_perf.py)
-# ─────────────────────────────────────────────
-
-
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
     return pytestconfig.getoption("cluster_file")
