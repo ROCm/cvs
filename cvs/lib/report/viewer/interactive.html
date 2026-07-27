@@ -192,17 +192,10 @@ tr.changed td { background: rgba(255,107,53,0.1); }
       <div class="toolbar-inline" style="flex-wrap:wrap">
         <label><input type="checkbox" id="interactivity-log-scale" checked/> Log Y</label>
         <label><input type="checkbox" id="interactivity-labels" checked/> Point labels</label>
-        <label>TPOT
-          <select id="interactivity-tpot-metric" aria-label="TPOT metric for interactivity chart">
-            <option value="client.mean_tpot_ms" selected>Mean TPOT</option>
-            <option value="client.p99_tpot_ms">P99 TPOT</option>
-            <option value="client.median_tpot_ms">Median TPOT</option>
-          </select>
-        </label>
         <button type="button" id="interactivity-zoom-reset">Reset view</button>
       </div>
     </div>
-    <p class="subsection-hint" id="interactivity-chart-hint">Interactivity = 1/TPOT (tok/s/user) · Y = total token throughput per GPU · scroll to zoom · shift+drag to pan · drag to box-zoom · click a point to pin the detail card</p>
+    <p class="subsection-hint" id="interactivity-chart-hint">Interactivity = 1 / mean TPOT (tok/s/user), matching InferenceX · Y = total token throughput per GPU · scroll to zoom · shift+drag to pan · drag to box-zoom · click a point to pin the detail card</p>
     <article class="chart-card chart-card-wide" style="position:relative">
       <div class="chart-wrap chart-wrap-interactivity" id="interactivity-chart-wrap"></div>
       <div class="interactivity-tooltip" id="interactivity-tooltip" role="tooltip" aria-hidden="true"></div>
@@ -281,7 +274,6 @@ let reportData = null;
 let allCells = [];
 let chartInstances = [];
 let comparisonChartMode = 'bar';
-let interactivityTpotMetric = 'client.mean_tpot_ms';
 let interactivityLogScale = true;
 let interactivityShowLabels = true;
 let interactivityChart = null;
@@ -294,11 +286,8 @@ let marginMetricKey = 'client.output_throughput';
 let prevRunByKey = null;
 let deltaThresholdPct = 5;
 
-const INTERACTIVITY_TPOT_LABELS = {
-  'client.mean_tpot_ms': 'Mean TPOT',
-  'client.p99_tpot_ms': 'P99 TPOT',
-  'client.median_tpot_ms': 'Median TPOT',
-};
+/** InferenceX interactivity axis: 1000 / mean TPOT (ms) → tok/s/user. */
+const INTERACTIVITY_TPOT_METRIC = 'client.mean_tpot_ms';
 
 const HEATMAP_METRICS = {
   'client.output_throughput': { label: 'Output tok/s', unit: 'tok/s', higherBetter: true },
@@ -939,7 +928,7 @@ const interactivityPointLabelPlugin = {
   },
 };
 
-function makeInteractivityChart(canvas, datasets, tpotLabel, logY, showLabels) {
+function makeInteractivityChart(canvas, datasets, logY, showLabels) {
   const yScale = logY
     ? {
         type: 'logarithmic',
@@ -1027,8 +1016,6 @@ function buildInteractivityChart(rows) {
   hideInteractivityTooltip();
   panel.style.display = 'none';
 
-  const tpotKey = interactivityTpotMetric;
-  const tpotLabel = INTERACTIVITY_TPOT_LABELS[tpotKey] || 'TPOT';
   const shapes = [...shapeGroups(rows).entries()];
   const datasets = [];
 
@@ -1037,7 +1024,7 @@ function buildInteractivityChart(rows) {
     const label = shapeLabel(isl, osl);
     const points = shapeRows
       .map(c => {
-        const x = interactivityFromTpotMs(metricNum(c, tpotKey));
+        const x = interactivityFromTpotMs(metricNum(c, INTERACTIVITY_TPOT_METRIC));
         const y = perGpuThroughput(c);
         const conc = Number(c.concurrency);
         if (x == null || y == null || y <= 0 || Number.isNaN(conc)) return null;
@@ -1080,7 +1067,7 @@ function buildInteractivityChart(rows) {
   updateInteractivitySubtitle(rows);
   const canvas = document.createElement('canvas');
   wrap.appendChild(canvas);
-  makeInteractivityChart(canvas, datasets, tpotLabel, interactivityLogScale, interactivityShowLabels);
+  makeInteractivityChart(canvas, datasets, interactivityLogScale, interactivityShowLabels);
   panel.style.display = 'block';
   return true;
 }
@@ -1388,13 +1375,6 @@ if (compareModeLines) {
   compareModeLines.addEventListener('click', () => {
     if (comparisonChartMode === 'line') return;
     comparisonChartMode = 'line';
-    render();
-  });
-}
-const interactivityTpotSel = $('interactivity-tpot-metric');
-if (interactivityTpotSel) {
-  interactivityTpotSel.addEventListener('change', () => {
-    interactivityTpotMetric = interactivityTpotSel.value;
     render();
   });
 }
