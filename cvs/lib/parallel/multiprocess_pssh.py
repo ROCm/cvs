@@ -327,10 +327,35 @@ class MultiProcessPssh(ShardableSshInterface):
         shard_returns = self.sharder.execute_sharded(payloads)
         return self._merge_shard_returns(shard_returns)
 
-    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_'):
-        """Download file with automatic sharding if needed."""
+    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_', hosts=None):
+        """Download a file, optionally from an exact subset of reachable hosts."""
         if self.pssh is not None:
-            return self.pssh.download_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
+            result = self.pssh.download_file(
+                remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator, hosts=hosts
+            )
+            self._sync_pssh_state()
+            return result
+
+        if hosts is not None:
+            requested_hosts = list(hosts)
+            unknown_hosts = [host for host in requested_hosts if host not in self.reachable_hosts]
+            if unknown_hosts:
+                raise ValueError(f"SFTP download requested unreachable host(s): {unknown_hosts}")
+            target_hosts = [host for host in self.reachable_hosts if host in requested_hosts]
+            if not target_hosts:
+                return {}
+            target_pssh = Pssh(
+                None,
+                target_hosts,
+                user=self.user,
+                password=self.password,
+                pkey=self.pkey,
+                host_key_check=self.host_key_check,
+                stop_on_errors=self.stop_on_errors,
+                env_vars=self.env_vars,
+                **self.ssh_client_kwargs,
+            )
+            return target_pssh.download_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
 
         self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts)
 

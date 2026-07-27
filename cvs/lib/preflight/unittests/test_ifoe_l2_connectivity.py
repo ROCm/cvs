@@ -80,31 +80,6 @@ Spec:
 """
 
 
-SHOW_PORT_JSON_OUTPUT = """\
-{
-  "devices": [
-    {
-      "bdf": "0004:01:00.1",
-      "ports": [
-        {"port": 0, "state": "UP"},
-        {"port_id": "1", "status": "DOWN"},
-        {"port_number": 2, "link_state": "UP"}
-      ]
-    }
-  ]
-}
-"""
-
-
-SHOW_PORT_TEXT_OUTPUT = """\
-BDF : 0004:01:00.1
-Port#    State
-0        UP
-1        DOWN
-2        UP
-"""
-
-
 MI4XX_SHOW_PORT_JSON_OUTPUT = """\
 {
   "device": [
@@ -151,15 +126,19 @@ MI4XX_SHOW_PORT_JSON_OUTPUT = """\
 """
 
 
-MI4XX_SHOW_PORT_BRIEF_OUTPUT = """\
-----------------------------------------------------------------------------------------
-Port                 Name         Logical    Admin/Oper       N/W MAC              Speed
-                                  index      state
-----------------------------------------------------------------------------------------
-0001:01:00.1:0/0     netport0     0          enabled/up       02:00:00:0e:03:00    400G
-0001:01:00.1:3/6     netport6     6          enabled/down     02:00:00:0e:03:06    400G
-0001:01:00.1:14/29   netport29    29         enabled/down     02:00:00:0e:03:1d    400G
-----------------------------------------------------------------------------------------
+MI4XX_SHOW_PORT_TWO_UP_OUTPUT = """\
+{
+  "device": [
+    {
+      "bdf": "0001:01:00.1",
+      "port": [
+        {"id": "0", "spec": {"device_bdf": "0001:01:00.1", "admin_state": "enabled"}, "status": {"link_status": "LINK_UP"}},
+        {"id": "1", "spec": {"device_bdf": "0001:01:00.1", "admin_state": "enabled"}, "status": {"link_status": "LINK_DOWN"}},
+        {"id": "2", "spec": {"device_bdf": "0001:01:00.1", "admin_state": "enabled"}, "status": {"link_status": "LINK_UP"}}
+      ]
+    }
+  ]
+}
 """
 
 
@@ -174,11 +153,18 @@ Spec:
 """
 
 
-SHOW_PORT_ALL_DOWN_OUTPUT = """\
-BDF : 0001:01:00.1
-Port#    State
-0        DOWN
-1        DOWN
+MI4XX_SHOW_PORT_ALL_DOWN_OUTPUT = """\
+{
+  "device": [
+    {
+      "bdf": "0001:01:00.1",
+      "port": [
+        {"id": "0", "spec": {"device_bdf": "0001:01:00.1", "admin_state": "enabled"}, "status": {"link_status": "LINK_DOWN"}},
+        {"id": "1", "spec": {"device_bdf": "0001:01:00.1", "admin_state": "enabled"}, "status": {"link_status": "NONE"}}
+      ]
+    }
+  ]
+}
 """
 
 
@@ -310,32 +296,19 @@ class TestAcceleratorRangeParsing(unittest.TestCase):
 
 
 class TestAfmctlPortParser(unittest.TestCase):
-    """Tests for JSON and versioned-text ``show port --brief`` parsing."""
+    """Tests for strict MI4XX ``show port --json`` artifact parsing."""
 
     def test_json_port_inventory_is_scoped_to_bdf_and_selects_only_up(self):
-        parsed = AfmctlPortParser.parse(SHOW_PORT_JSON_OUTPUT)
+        parsed = AfmctlPortParser.parse(MI4XX_SHOW_PORT_TWO_UP_OUTPUT)
         self.assertEqual(parsed['format'], 'json')
-        inventory = parsed['ports_by_bdf']['0004:01:00.1']
+        inventory = parsed['ports_by_bdf']['0001:01:00.1']
         self.assertEqual(set(inventory), {'0', '1', '2'})
         self.assertEqual([port for port, entry in inventory.items() if entry['is_up']], ['0', '2'])
         self.assertEqual(inventory['1']['state'], 'DOWN')
         self.assertFalse(parsed['parse_errors'])
 
-    def test_text_v1_port_inventory_is_scoped_to_current_bdf(self):
-        parsed = AfmctlPortParser.parse(SHOW_PORT_TEXT_OUTPUT)
-        self.assertEqual(parsed['format'], 'text-v1')
-        inventory = parsed['ports_by_bdf']['0004:01:00.1']
-        self.assertEqual(inventory['0']['state'], 'UP')
-        self.assertFalse(inventory['1']['is_up'])
-        self.assertTrue(inventory['2']['is_up'])
-        self.assertFalse(parsed['parse_errors'])
-
-    def test_mi4xx_json_uses_physical_link_status_and_skips_ssh_preamble(self):
-        parsed = AfmctlPortParser.parse(
-            'Conductor SSH authentication banner\n'
-            + MI4XX_SHOW_PORT_JSON_OUTPUT
-            + '\n__CVS_AFMCTL_EXIT_STATUS__=0\ntransport trailer\n'
-        )
+    def test_mi4xx_json_uses_physical_link_status(self):
+        parsed = AfmctlPortParser.parse(MI4XX_SHOW_PORT_JSON_OUTPUT)
         self.assertEqual(parsed['format'], 'json')
         inventory = parsed['ports_by_bdf']['0001:01:00.1']
         self.assertEqual(set(inventory), {'0', '6', '29'})
@@ -347,27 +320,15 @@ class TestAfmctlPortParser(unittest.TestCase):
         self.assertEqual(inventory['6']['state'], 'DOWN')
         self.assertFalse(parsed['parse_errors'])
 
-    def test_mi4xx_brief_table_fallback_uses_logical_port_index(self):
-        parsed = AfmctlPortParser.parse(MI4XX_SHOW_PORT_BRIEF_OUTPUT)
-        self.assertEqual(parsed['format'], 'text-v1')
-        inventory = parsed['ports_by_bdf']['0001:01:00.1']
-        self.assertEqual(set(inventory), {'0', '6', '29'})
-        self.assertTrue(inventory['0']['is_up'])
-        self.assertFalse(inventory['6']['is_up'])
-        self.assertFalse(parsed['parse_errors'])
+    def test_transport_output_and_unknown_schemas_fail_closed(self):
+        transport_output = AfmctlPortParser.parse('authentication message\n' + MI4XX_SHOW_PORT_JSON_OUTPUT)
+        self.assertFalse(transport_output['ports_by_bdf'])
+        self.assertTrue(any('Invalid AFM port JSON' in error for error in transport_output['parse_errors']))
 
-    def test_unknown_or_malformed_port_formats_fail_closed(self):
         malformed_json = AfmctlPortParser.parse('{"ports": [{"port": 0, "state": "FLAPPING"}]}')
         self.assertEqual(malformed_json['format'], 'json')
         self.assertFalse(malformed_json['ports_by_bdf'])
-        self.assertFalse(malformed_json['unscoped_ports'])
-        self.assertTrue(any('Unknown port state' in error for error in malformed_json['parse_errors']))
-
-        unknown_text = AfmctlPortParser.parse('afmctl version 99\nthere are some ports\n')
-        self.assertEqual(unknown_text['format'], 'text-v1')
-        self.assertFalse(unknown_text['ports_by_bdf'])
-        self.assertFalse(unknown_text['unscoped_ports'])
-        self.assertTrue(any('Could not locate' in error for error in unknown_text['parse_errors']))
+        self.assertTrue(any("must contain a 'device' array" in error for error in malformed_json['parse_errors']))
 
     def test_mi4xx_unknown_physical_link_state_fails_closed(self):
         output = MI4XX_SHOW_PORT_JSON_OUTPUT.replace('"LINK_UP"', '"LINK_TRAINING"', 1)
@@ -379,17 +340,32 @@ class TestAfmctlPortParser(unittest.TestCase):
 class TestIfoeL2ConnectivityCheck(unittest.TestCase):
     """Tests for the IfoeL2ConnectivityCheck class."""
 
-    def _make_phdl(self, reachable_hosts, exec_responses):
+    def _make_phdl(self, reachable_hosts, exec_responses, port_artifacts=None):
         """Build a MagicMock phdl that returns scripted exec() responses.
 
         Args:
             reachable_hosts: list of host names.
             exec_responses: list of {host: output} dicts returned by successive
                 ``phdl.exec()`` calls.
+            port_artifacts: Optional JSON string or ``{host: JSON string}`` map
+                returned by a mocked one-node SFTP download.
         """
         phdl = MagicMock()
         phdl.reachable_hosts = list(reachable_hosts)
         phdl.exec = MagicMock(side_effect=exec_responses)
+        if port_artifacts is not None:
+            def download_file(remote_file, local_prefix, recurse=False, suffix_separator='_', hosts=None):
+                requested_hosts = list(hosts or phdl.reachable_hosts)
+                paths = {}
+                for host in requested_hosts:
+                    artifact = port_artifacts.get(host) if isinstance(port_artifacts, dict) else port_artifacts
+                    local_path = f'{local_prefix}{suffix_separator}{host}'
+                    with open(local_path, 'w', encoding='utf-8') as artifact_file:
+                        artifact_file.write(artifact)
+                    paths[host] = local_path
+                return paths
+
+            phdl.download_file = MagicMock(side_effect=download_file)
         return phdl
 
     def test_build_ping_command_defaults(self):
@@ -408,6 +384,13 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         cmd = check.build_show_port_command('0001:01:00.1')
         self.assertEqual(cmd, 'sudo -n afmctl show port --json -b 0001:01:00.1')
         self.assertNotIn('--brief', cmd)
+
+    def test_show_port_artifact_command_writes_private_json_file(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        cmd = check.build_show_port_artifact_command('0001:01:00.1', '/tmp/cvs-ifoe-port-test.json')
+        self.assertIn('umask 077;', cmd)
+        self.assertIn('sudo -n afmctl show port --json -b 0001:01:00.1', cmd)
+        self.assertTrue(cmd.endswith('> /tmp/cvs-ifoe-port-test.json'))
 
     def test_build_ping_command_with_ports_and_timeout(self):
         check = IfoeL2ConnectivityCheck(
@@ -635,20 +618,16 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertNotIn('--dst-accelerator 0', '\n'.join(executed_commands[1:]))
 
     def test_up_port_discovery_filters_down_ports_from_ping(self):
-        port_inventory = """\
-BDF : 0001:01:00.1
-Port#    State
-0        UP
-1        DOWN
-2        UP
-"""
         phdl = self._make_phdl(
             reachable_hosts=['nodeA'],
             exec_responses=[
                 {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
-                {'nodeA': port_inventory},
-                {'nodeA': passing_output_for(1, ports=(0, 2))},
+                {'nodeA': ''},
+                {'nodeA': ''},
+                {'nodeA': passing_output_for(1, ports=(0,))},
+                {'nodeA': passing_output_for(1, ports=(2,))},
             ],
+            port_artifacts=MI4XX_SHOW_PORT_TWO_UP_OUTPUT,
         )
         check = IfoeL2ConnectivityCheck(
             phdl,
@@ -664,20 +643,30 @@ Port#    State
         node = results['nodeA']
         self.assertEqual(node['status'], 'PASS')
         self.assertEqual(node['port_inventory']['0001:01:00.1']['up_ports'], [0, 2])
-        invocation = node['accelerators']['0001:01:00.1']['1']
-        self.assertEqual(invocation['selected_ports'], [0, 2])
-        self.assertIn('-p 0,2', invocation['command'])
-        self.assertEqual(set(invocation['parsed']['ports']), {'0', '2'})
+        invocations = node['accelerators']['0001:01:00.1']
+        self.assertEqual(set(invocations), {'1:port:0', '1:port:2'})
+        self.assertEqual(invocations['1:port:0']['selected_ports'], [0])
+        self.assertEqual(invocations['1:port:2']['selected_ports'], [2])
+        self.assertIn('-p 0', invocations['1:port:0']['command'])
+        self.assertIn('-p 2', invocations['1:port:2']['command'])
+        self.assertEqual(set(invocations['1:port:0']['parsed']['ports']), {'0'})
+        self.assertEqual(set(invocations['1:port:2']['parsed']['ports']), {'2'})
+        self.assertEqual(node['coverage']['expected_invocations'], 2)
+        self.assertEqual(node['coverage']['completed_invocations'], 2)
         self.assertTrue(node['coverage']['complete'])
+        phdl.download_file.assert_called_once()
+        self.assertEqual(phdl.download_file.call_args.kwargs['hosts'], ['nodeA'])
 
     def test_mi4xx_json_up_port_discovery_builds_a_scoped_ping(self):
         phdl = self._make_phdl(
             reachable_hosts=['nodeA'],
             exec_responses=[
                 {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
-                {'nodeA': 'Conductor SSH authentication banner\n' + MI4XX_SHOW_PORT_JSON_OUTPUT},
+                {'nodeA': ''},
+                {'nodeA': ''},
                 {'nodeA': passing_output_for(1, ports=(0,))},
             ],
+            port_artifacts=MI4XX_SHOW_PORT_JSON_OUTPUT,
         )
         check = IfoeL2ConnectivityCheck(
             phdl,
@@ -696,14 +685,17 @@ Port#    State
         invocation = node['accelerators']['0001:01:00.1']['1']
         self.assertIn('-p 0', invocation['command'])
         self.assertIn('show port --json -b 0001:01:00.1', phdl.exec.call_args_list[1].args[0])
+        self.assertIn('rm -f -- /tmp/cvs-ifoe-port-', phdl.exec.call_args_list[2].args[0])
 
     def test_no_up_ports_fails_closed_without_issuing_ping(self):
         phdl = self._make_phdl(
             reachable_hosts=['nodeA'],
             exec_responses=[
                 {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
-                {'nodeA': SHOW_PORT_ALL_DOWN_OUTPUT},
+                {'nodeA': ''},
+                {'nodeA': ''},
             ],
+            port_artifacts=MI4XX_SHOW_PORT_ALL_DOWN_OUTPUT,
         )
         check = IfoeL2ConnectivityCheck(
             phdl,
@@ -723,7 +715,34 @@ Port#    State
         self.assertFalse(node['coverage']['complete'])
         self.assertTrue(any(issue['category'] == 'PORT_DISCOVERY_ERROR' for issue in node['error_details']))
         self.assertTrue(any(issue['category'] == 'COVERAGE_ERROR' for issue in node['error_details']))
-        self.assertEqual(phdl.exec.call_count, 2)
+        self.assertEqual(phdl.exec.call_count, 3)
+
+    def test_sftp_port_artifact_failure_fails_closed_without_issuing_ping(self):
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA'],
+            exec_responses=[
+                {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
+                {'nodeA': ''},
+                {'nodeA': ''},
+            ],
+        )
+        phdl.download_file.side_effect = IOError('SFTP subsystem unavailable')
+        check = IfoeL2ConnectivityCheck(
+            phdl,
+            bdfs=['0001:01:00.1'],
+            dst_accelerators=[1],
+            ports='up',
+            port_discovery='auto',
+            bdf_discovery='config',
+        )
+
+        results = check.run()
+
+        node = results['nodeA']
+        self.assertEqual(node['status'], 'FAIL')
+        self.assertEqual(node['plan'], [])
+        self.assertTrue(any('SFTP port artifact retrieval failed' in error for error in node['errors']))
+        self.assertEqual(phdl.exec.call_count, 3)
 
     def test_nonzero_ping_exit_status_fails_even_when_output_is_passing(self):
         phdl = self._make_phdl(

@@ -6,9 +6,9 @@ from cvs.lib.parallel.pssh import Pssh  # Test basic Pssh class directly
 class TestPsshExec(unittest.TestCase):
     @patch("cvs.lib.parallel.pssh.ParallelSSHClient")
     def setUp(self, mock_pssh_client):
+        self.mock_pssh_client = mock_pssh_client
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
-        self.mock_pssh_client = mock_pssh_client
         self.host_list = ["host1", "host2"]
         self.mock_log = MagicMock()
         self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
@@ -933,6 +933,7 @@ class TestPsshFileTransfer(unittest.TestCase):
 
     @patch("cvs.lib.parallel.pssh.ParallelSSHClient")
     def setUp(self, mock_pssh_client):
+        self.mock_pssh_client = mock_pssh_client
         self.mock_client = MagicMock()
         mock_pssh_client.return_value = self.mock_client
         self.host_list = ["host1", "host2"]
@@ -1045,6 +1046,28 @@ class TestPsshFileTransfer(unittest.TestCase):
         self.mock_client.copy_remote_file.assert_called_once_with(
             "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="."
         )
+
+    def test_download_file_targets_only_requested_host(self):
+        target_client = MagicMock()
+        target_client.copy_remote_file.return_value = [self._ok_greenlet()]
+        self.mock_pssh_client.return_value = target_client
+
+        result = self.pssh.download_file("/remote/file.json", "/tmp/local.json", hosts=["host2"])
+
+        self.assertEqual(result, {"host2": "/tmp/local.json_host2"})
+        self.mock_client.copy_remote_file.assert_not_called()
+        self.mock_pssh_client.assert_called_with(
+            ["host2"], user="user", password="pass", keepalive_seconds=30
+        )
+        target_client.copy_remote_file.assert_called_once_with(
+            "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="_"
+        )
+        target_client.pool.join.assert_called_once()
+
+    def test_download_file_rejects_unknown_target_host(self):
+        with self.assertRaisesRegex(ValueError, "unreachable host"):
+            self.pssh.download_file("/remote/file.json", "/tmp/local.json", hosts=["host3"])
+        self.mock_client.copy_remote_file.assert_not_called()
 
     def test_download_file_partial_failure_raises_ioerror(self):
         # Failed host -> IOError lists it; succeeded host's path is NOT returned

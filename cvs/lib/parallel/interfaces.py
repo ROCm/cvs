@@ -37,8 +37,8 @@ class ShardableSshInterface(ABC):
         pass
 
     @abstractmethod
-    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_'):
-        """Download file via SFTP - must support sharding for performance."""
+    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_', hosts=None):
+        """Download file via SFTP, optionally from an exact host subset."""
         pass
 
     @abstractmethod

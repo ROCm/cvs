@@ -76,10 +76,10 @@
         "_comment_mesh_mode": "'full_mesh' builds every ordered non-self accelerator pair inside each discovered vPOD. 'config' preserves the legacy bdf x dst_accelerators behavior. Full mesh is the benchmark-preflight setting.",
 
         "ports": "up",
-        "_comment_ports": "'up' discovers each source BDF's physical LINK_UP ports with 'afmctl show port --json -b <BDF>' and passes only those IDs through -p. 'all' omits -p and is retained only for compatibility; it can report intentional down/unwired ports as packet loss.",
+        "_comment_ports": "'up' discovers each source BDF's physical LINK_UP ports with 'afmctl show port --json -b <BDF>' and runs one '-p <port>' ping invocation per port. 'all' omits -p and is retained only for compatibility; it can report intentional down/unwired ports as packet loss.",
 
         "port_discovery": "auto",
-        "_comment_port_discovery": "For ports='up', auto uses AFM's JSON inventory and selects only status.link_status=LINK_UP. It deliberately ignores IFCP link_up, which can remain yes for a physically down port. 'config' requires an explicit port selection instead.",
+        "_comment_port_discovery": "For ports='up', auto writes AFM's JSON inventory to a private /tmp artifact and retrieves it from the source node over SFTP. CVS accepts only the device[].port[] JSON schema and selects status.link_status=LINK_UP; it deliberately ignores IFCP link_up, which can remain yes for a physically down port. SFTP or parsing errors fail closed. 'config' requires an explicit port selection instead.",
 
         "pings_per_port": 3,
         "_comment_pings_per_port": "Value for -c (pings per selected UP port pair). Three samples reduce one-shot transient noise; lower only for short diagnostic runs.",

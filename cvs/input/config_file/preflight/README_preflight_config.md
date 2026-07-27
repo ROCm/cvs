@@ -197,14 +197,14 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - A full mesh excludes `source == destination`; a self-ping is an invalid coverage cell, not a fabric result
   - With `strict_discovery: true`, a missing vPOD membership list fails the gate rather than silently substituting a local-only mesh. Set strict discovery to `false` only for a diagnostic run while collecting the missing hardware fixture.
 - **`ports`** (default: `"all"`; benchmark recommendation: `"up"`)
-  - `"up"` discovers every source BDF through `afmctl show port --json -b <BDF>` and supplies only physical `status.link_status: "LINK_UP"` port IDs through `-p`
+  - `"up"` discovers every source BDF through `afmctl show port --json -b <BDF>` and runs one `afmctl test ping -p <port>` invocation per physical `status.link_status: "LINK_UP"` port. This preserves explicit per-port coverage and avoids relying on AFM's multi-port command handling
   - Do not use the AFM `status.ifcp.link_up` field for this decision: it can remain `"yes"` while the physical link is down
   - `"all"` omits `-p`, a string such as `"0-7"` or `"0,1,2"`, or a list `[0, 1, 2]`
   - `"all"` can include intentionally down or unwired ports and therefore must not be used for a strict benchmark gate
 - **`port_discovery`** (default: `"auto"`)
-  - Used with `ports: "up"`; CVS requests the validated AFM JSON response. AFM `0.0.1-83` rejects combining `--brief` with `--json`
-  - The parser accepts the AFM `device[].port[]` schema and strips SSH/login preambles before decoding the JSON; it retains a defensive fallback for brief text output
-  - If the hardware's output is unknown or malformed, strict discovery fails closed rather than falling back to all ports
+  - Used with `ports: "up"`; CVS writes the validated `afmctl show port --json -b <BDF>` response to a private `/tmp` artifact on the source node, retrieves that one artifact over SFTP, and removes it on both ends. AFM `0.0.1-83` rejects combining `--brief` with `--json`
+  - The parser accepts only the AFM `device[].port[]` JSON schema. It does not parse SSH/login output or a human-readable `--brief` table
+  - An unavailable SFTP transfer, unknown schema, malformed JSON, missing source BDF, or absent UP port fails closed; CVS does not fall back to all ports
 - **`pings_per_port`** (default: `1`; benchmark recommendation: `3`)
   - Passed to afmctl as `-c <count>`
 - **`per_ping_timeout`** (default: `null`)
@@ -225,7 +225,7 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - `"report"` preserves diagnostic-only preflight behavior
   - `"gate"` records the detailed report and then fails pytest/CLI if L2 results or coverage fail
 
-> **MI4XX validation (AFM 0.0.1-83).** CVS has been validated against `afmctl show device`, `afmctl show port --json -b <BDF>`, and a scoped `afmctl test ping` on MI4XX. Revalidate the JSON schema and physical-link state mapping after an AFM upgrade; strict discovery fails closed if it changes.
+> **MI4XX validation (AFM 0.0.1-83).** CVS has been validated against `afmctl show device`, an SFTP-retrieved `afmctl show port --json -b <BDF>` artifact, and a scoped `afmctl test ping` on MI4XX. Revalidate the JSON schema and physical-link state mapping after an AFM upgrade; strict discovery fails closed if it changes.
 
 #### TransferBench Settings (`connectivity_check.transferbench`) — opt-in (AIMVT-181)
 
