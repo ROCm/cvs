@@ -149,8 +149,8 @@ tr.changed td { background: rgba(255,107,53,0.1); }
 </header>
 
 <nav class="viewer-nav" id="viewer-nav">
-  <a href="#overview">Overview</a>
   <a href="#filters">Filters</a>
+  <a href="#overview">Overview</a>
   <a href="#interactivity-panel">Interactivity</a>
   <a href="#charts">Charts</a>
   <a href="#heatmap">Heatmap</a>
@@ -158,11 +158,6 @@ tr.changed td { background: rgba(255,107,53,0.1); }
   <a href="#cells">Cells</a>
   <a id="run-deck-link" href="#" style="display:none">Run deck</a>
 </nav>
-
-<section class="panel" id="overview">
-  <h2>Overview</h2>
-  <div class="summary-grid" id="summary-grid"></div>
-</section>
 
 <section class="panel" id="filters">
   <h2>Filters</h2>
@@ -179,6 +174,11 @@ tr.changed td { background: rgba(255,107,53,0.1); }
     <button type="button" id="btn-reset-zoom">Reset zoom</button>
   </div>
   <div class="meta-line" id="meta" style="margin-top:0.85rem">Loading…</div>
+</section>
+
+<section class="panel" id="overview">
+  <h2>Overview</h2>
+  <div class="summary-grid" id="summary-grid"></div>
 </section>
 
 <section class="panel panel-interactivity" id="interactivity-panel" style="display:none">
