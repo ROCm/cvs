@@ -114,6 +114,13 @@ def pytest_generate_tests(metafunc):
                     gpu_metric_cases.append((combo, c, short))
                     gpu_metric_ids.append(cid + "-" + short)
             metafunc.parametrize("seq_combo,concurrency,gpu_metric", gpu_metric_cases, ids=gpu_metric_ids)
+    elif "accuracy_task" in metafunc.fixturenames:
+        task_ids = [t["id"] for t in raw.get("accuracy", {}).get("tasks", [])]
+        # Parametrize even when empty: pytest auto-skips a test whose
+        # parametrize call got an empty list, with the same one-row-skipped
+        # UX as every other opt-in metric branch above -- no manual
+        # pytest.skip needed in the test body for the "no tasks" case.
+        metafunc.parametrize("accuracy_task", task_ids, ids=task_ids)
     elif "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames and cases:
         metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
 

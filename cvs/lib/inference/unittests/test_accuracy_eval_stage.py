@@ -8,6 +8,10 @@ Isolated via unittest.mock.patch on run_accuracy_tasks (imported into
 inference_suite_lifecycle at module load time) so these tests never touch a
 real orch or the network -- only the stage's own selection/gating/skip logic
 is under test.
+
+test_accuracy_eval is parametrized by `accuracy_task` (one pytest node per
+task id, mirroring test_metric/test_gpu_metric), so it is invoked here once
+per task under test rather than once per variant_config as before.
 '''
 
 import unittest
@@ -44,43 +48,56 @@ class _Lifecycle:
         self.report.setdefault(nodeid, []).append((label, value, unit))
 
 
-class _Request:
-    class _Node:
-        nodeid = "test_accuracy_eval"
-
-    node = _Node()
+def _request(nodeid="test_accuracy_eval"):
+    node = SimpleNamespace(nodeid=nodeid)
+    return SimpleNamespace(node=node)
 
 
 class TestAccuracyEvalSkip(unittest.TestCase):
     def test_skips_when_prior_stage_failed(self):
         with self.assertRaises(pytest.skip.Exception):
             lifecycle_mod.test_accuracy_eval(
-                orch=object(), variant_config=_variant_config(), lifecycle=_Lifecycle(failed=True), request=_Request()
+                orch=object(),
+                variant_config=_variant_config(tasks=[_task("mmlu")]),
+                accuracy_task="mmlu",
+                lifecycle=_Lifecycle(failed=True),
+                request=_request(),
             )
 
     def test_skips_when_accuracy_block_absent(self):
         vc = _variant_config(tasks=None)
         with self.assertRaises(pytest.skip.Exception):
             lifecycle_mod.test_accuracy_eval(
-                orch=object(), variant_config=vc, lifecycle=_Lifecycle(), request=_Request()
+                orch=object(), variant_config=vc, accuracy_task="mmlu", lifecycle=_Lifecycle(), request=_request()
             )
 
     def test_skips_when_tasks_empty(self):
         vc = _variant_config(tasks=[])
         with self.assertRaises(pytest.skip.Exception):
             lifecycle_mod.test_accuracy_eval(
-                orch=object(), variant_config=vc, lifecycle=_Lifecycle(), request=_Request()
+                orch=object(), variant_config=vc, accuracy_task="mmlu", lifecycle=_Lifecycle(), request=_request()
+            )
+
+    def test_skips_when_task_id_not_in_configured_tasks(self):
+        # config.json's accuracy.tasks no longer includes this id (e.g. removed
+        # after collection-time parametrization but before this node ran).
+        vc = _variant_config(tasks=[_task("mmlu")])
+        with self.assertRaises(pytest.skip.Exception):
+            lifecycle_mod.test_accuracy_eval(
+                orch=object(), variant_config=vc, accuracy_task="gsm8k", lifecycle=_Lifecycle(), request=_request()
             )
 
 
 class TestAccuracyEvalRun(unittest.TestCase):
-    def test_calls_run_accuracy_tasks_with_expected_args(self):
-        vc = _variant_config(tasks=[_task("mmlu")])
+    def test_calls_run_accuracy_tasks_with_only_this_task(self):
+        vc = _variant_config(tasks=[_task("mmlu"), _task("gsm8k")])
         lc = _Lifecycle()
         with mock.patch.object(
             lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}
         ) as m:
-            lifecycle_mod.test_accuracy_eval(orch="ORCH", variant_config=vc, lifecycle=lc, request=_Request())
+            lifecycle_mod.test_accuracy_eval(
+                orch="ORCH", variant_config=vc, accuracy_task="mmlu", lifecycle=lc, request=_request()
+            )
         m.assert_called_once()
         kwargs = m.call_args.kwargs
         self.assertEqual(kwargs["orch"], "ORCH")
@@ -94,7 +111,9 @@ class TestAccuracyEvalRun(unittest.TestCase):
         vc = _variant_config(tasks=[_task("mmlu")], thresholds={})
         lc = _Lifecycle()
         with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}):
-            lifecycle_mod.test_accuracy_eval(orch="ORCH", variant_config=vc, lifecycle=lc, request=_Request())
+            lifecycle_mod.test_accuracy_eval(
+                orch="ORCH", variant_config=vc, accuracy_task="mmlu", lifecycle=lc, request=_request()
+            )
         self.assertFalse(lc.failed)
         recorded = dict((label, (value, unit)) for label, value, unit in lc.report["test_accuracy_eval"])
         self.assertEqual(recorded["mmlu.mmlu.acc__none"], (0.7, ""))
@@ -106,7 +125,9 @@ class TestAccuracyEvalRun(unittest.TestCase):
         )
         lc = _Lifecycle()
         with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}):
-            lifecycle_mod.test_accuracy_eval(orch="ORCH", variant_config=vc, lifecycle=lc, request=_Request())
+            lifecycle_mod.test_accuracy_eval(
+                orch="ORCH", variant_config=vc, accuracy_task="mmlu", lifecycle=lc, request=_request()
+            )
         self.assertFalse(lc.failed)
 
     def test_threshold_miss_raises_threshold_violation(self):
@@ -117,7 +138,12 @@ class TestAccuracyEvalRun(unittest.TestCase):
         lc = _Lifecycle()
         with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}):
             with self.assertRaises(ThresholdViolation):
-                lifecycle_mod.test_accuracy_eval(orch="ORCH", variant_config=vc, lifecycle=lc, request=_Request())
+                lifecycle_mod.test_accuracy_eval(
+                    orch="ORCH", variant_config=vc, accuracy_task="mmlu", lifecycle=lc, request=_request()
+                )
+        # A threshold violation on this task's own node must NOT flip the
+        # shared lifecycle flag -- sibling task nodes must still run.
+        self.assertFalse(lc.failed)
 
     def test_removed_task_stale_threshold_entry_ignored(self):
         # config.json only selects "mmlu"; threshold.json still has a stale
@@ -133,16 +159,23 @@ class TestAccuracyEvalRun(unittest.TestCase):
         )
         lc = _Lifecycle()
         with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}):
-            lifecycle_mod.test_accuracy_eval(orch="ORCH", variant_config=vc, lifecycle=lc, request=_Request())
+            lifecycle_mod.test_accuracy_eval(
+                orch="ORCH", variant_config=vc, accuracy_task="mmlu", lifecycle=lc, request=_request()
+            )
         self.assertFalse(lc.failed)
 
-    def test_run_failure_marks_lifecycle_failed_and_pytest_fails(self):
+    def test_run_failure_pytest_fails_without_setting_shared_lifecycle_failed(self):
         vc = _variant_config(tasks=[_task("mmlu")])
         lc = _Lifecycle()
         with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", side_effect=RuntimeError("boom")):
             with self.assertRaises(pytest.fail.Exception):
-                lifecycle_mod.test_accuracy_eval(orch="ORCH", variant_config=vc, lifecycle=lc, request=_Request())
-        self.assertTrue(lc.failed)
+                lifecycle_mod.test_accuracy_eval(
+                    orch="ORCH", variant_config=vc, accuracy_task="mmlu", lifecycle=lc, request=_request()
+                )
+        # Independent failure isolation: a run failure in one task's node must
+        # not set the shared lifecycle.failed flag, or every sibling task node
+        # (parametrized on the same fixture) would skip instead of running.
+        self.assertFalse(lc.failed)
 
     def test_threshold_miss_recorded_but_not_raised_when_enforce_thresholds_false(self):
         vc = _variant_config(
@@ -152,27 +185,51 @@ class TestAccuracyEvalRun(unittest.TestCase):
         )
         lc = _Lifecycle()
         with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}):
-            lifecycle_mod.test_accuracy_eval(orch="ORCH", variant_config=vc, lifecycle=lc, request=_Request())
+            lifecycle_mod.test_accuracy_eval(
+                orch="ORCH", variant_config=vc, accuracy_task="mmlu", lifecycle=lc, request=_request()
+            )
         self.assertFalse(lc.failed)
         recorded = dict((label, (value, unit)) for label, value, unit in lc.report["test_accuracy_eval"])
         self.assertEqual(recorded["mmlu.mmlu.acc__none"], (0.7, ""))
 
-    def test_multiple_tasks_each_gated_independently(self):
+    def test_two_tasks_gated_independently_one_fails_other_unaffected(self):
+        # Simulates two parametrized nodes sharing one lifecycle object, in
+        # collection order: mmlu's node raises ThresholdViolation, but gsm8k's
+        # node (called after, as pytest would for the next parametrized item)
+        # must still run and pass on its own merits.
         vc = _variant_config(
             tasks=[_task("mmlu"), _task("gsm8k")],
-            thresholds={"accuracy": {"gsm8k": {"gsm8k.exact_match__strict-match": {"kind": "min", "value": 0.99}}}},
+            thresholds={
+                "accuracy": {
+                    "mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.9}},
+                    "gsm8k": {"gsm8k.exact_match__strict-match": {"kind": "min", "value": 0.5}},
+                }
+            },
         )
         lc = _Lifecycle()
-        with mock.patch.object(
-            lifecycle_mod,
-            "run_accuracy_tasks",
-            return_value={
-                "mmlu": {"mmlu.acc__none": 0.7},
-                "gsm8k": {"gsm8k.exact_match__strict-match": 0.6},
-            },
-        ):
+
+        with mock.patch.object(lifecycle_mod, "run_accuracy_tasks", return_value={"mmlu": {"mmlu.acc__none": 0.7}}):
             with self.assertRaises(ThresholdViolation):
-                lifecycle_mod.test_accuracy_eval(orch="ORCH", variant_config=vc, lifecycle=lc, request=_Request())
+                lifecycle_mod.test_accuracy_eval(
+                    orch="ORCH",
+                    variant_config=vc,
+                    accuracy_task="mmlu",
+                    lifecycle=lc,
+                    request=_request("test_accuracy_eval[mmlu]"),
+                )
+        self.assertFalse(lc.failed)
+
+        with mock.patch.object(
+            lifecycle_mod, "run_accuracy_tasks", return_value={"gsm8k": {"gsm8k.exact_match__strict-match": 0.6}}
+        ):
+            lifecycle_mod.test_accuracy_eval(
+                orch="ORCH",
+                variant_config=vc,
+                accuracy_task="gsm8k",
+                lifecycle=lc,
+                request=_request("test_accuracy_eval[gsm8k]"),
+            )
+        self.assertFalse(lc.failed)
 
 
 if __name__ == "__main__":
