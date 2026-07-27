@@ -83,16 +83,19 @@ def cvs_dmesg_error_regex():
 
 
 def _parse_cvs_time(time_str):
-    """Convert a `date +"%a %b %e %H:%M"` string to a tz-aware datetime.
+    """Convert a `date +"%a %b %e %H:%M"` or `date +"%a %b %e %H:%M:%S"` string
+    to a tz-aware datetime.
 
     Returns None if the string cannot be parsed. The year is assumed to be the
     current year and the timezone the local timezone (CVS already assumes the
-    cluster is NTP-synced with the head node).
+    cluster is NTP-synced with the head node). Seconds default to 0 when the
+    input string is minute-precision only, for backward compatibility with
+    callers that haven't been updated to capture seconds.
     """
     if not time_str:
         return None
     match = re.search(
-        r'([A-Za-z]{3})\s+([A-Za-z]{3})\s+(\d+)\s+(\d{1,2}):(\d{2})',
+        r'([A-Za-z]{3})\s+([A-Za-z]{3})\s+(\d+)\s+(\d{1,2}):(\d{2})(?::(\d{2}))?',
         time_str.strip(),
     )
     if not match:
@@ -108,6 +111,7 @@ def _parse_cvs_time(time_str):
         int(match.group(3)),
         int(match.group(4)),
         int(match.group(5)),
+        int(match.group(6) or 0),
         tzinfo=now_local.tzinfo,
     )
 
@@ -127,9 +131,7 @@ def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
     err_dict = {}
     for node in output_dict.keys():
         err_dict[node] = []
-        events = node_scraper_adapter.parse_dmesg(
-            output_dict[node], node_name=node, analysis_args=analysis_args
-        )
+        events = node_scraper_adapter.parse_dmesg(output_dict[node], node_name=node, analysis_args=analysis_args)
         for line in node_scraper_adapter.event_match_lines(events):
             msg = f'ERROR - Failure pattern *** {line} *** seen in {source_label} on node {node}'
             fail_test(msg)
@@ -323,9 +325,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
             end_dt = _parse_cvs_time(end_time_dict[node0])
             if end_dt:
                 analysis_args['analysis_range_end'] = end_dt
-        output_dict = phdl.exec(
-            "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never"
-        )
+        output_dict = phdl.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
         return _node_scraper_scan(output_dict, analysis_args=analysis_args, source_label='Dmesg')
 
     err_dict = {}
@@ -694,9 +694,7 @@ def verify_driver_errors(phdl):
         # (amdgpu match or SW_DRIVER category) to preserve this check's
         # driver-error focus while reusing node-scraper's pattern table.
         err_dict = {}
-        output_dict = phdl.exec(
-            "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never"
-        )
+        output_dict = phdl.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
         for node in output_dict.keys():
             err_dict[node] = []
             events = node_scraper_adapter.parse_dmesg(

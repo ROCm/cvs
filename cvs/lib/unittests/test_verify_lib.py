@@ -1,3 +1,4 @@
+import datetime
 import os
 import unittest
 from unittest.mock import MagicMock, patch
@@ -130,10 +131,15 @@ class TestDmesgMigrations(unittest.TestCase):
     def test_parse_cvs_time(self):
         dt = verify_lib._parse_cvs_time("Mon Jun  5 08:53")
         self.assertIsNotNone(dt)
-        self.assertEqual((dt.month, dt.day, dt.hour, dt.minute), (6, 5, 8, 53))
+        self.assertEqual((dt.month, dt.day, dt.hour, dt.minute, dt.second), (6, 5, 8, 53, 0))
         self.assertIsNotNone(dt.tzinfo)
         self.assertIsNone(verify_lib._parse_cvs_time(""))
         self.assertIsNone(verify_lib._parse_cvs_time("garbage"))
+
+    def test_parse_cvs_time_with_seconds(self):
+        dt = verify_lib._parse_cvs_time("Mon Jun  5 08:53:27")
+        self.assertIsNotNone(dt)
+        self.assertEqual((dt.month, dt.day, dt.hour, dt.minute, dt.second), (6, 5, 8, 53, 27))
 
     def test_cvs_dmesg_error_regex_shape(self):
         regexes = verify_lib.cvs_dmesg_error_regex()
@@ -148,9 +154,7 @@ class TestDmesgMigrations(unittest.TestCase):
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
     def test_verify_dmesg_for_errors_uses_time_range(self, mock_parse, mock_fail):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
-        mock_parse.return_value = [
-            {"description": "GPU Reset", "match_content": "GPU reset begin", "category": "RAS"}
-        ]
+        mock_parse.return_value = [{"description": "GPU Reset", "match_content": "GPU reset begin", "category": "RAS"}]
         phdl = MagicMock()
         phdl.exec.return_value = {"node1": "raw"}
         start = {"node1": "Mon Jun  5 08:00"}
@@ -221,6 +225,34 @@ class TestDmesgMigrations(unittest.TestCase):
         self.assertEqual(len(result["node1"]), 1)
         self.assertIn("amdgpu", result["node1"][0].lower())
         mock_fail.assert_called_once()
+
+
+class TestNodeScraperTimeRangeFiltering(unittest.TestCase):
+    """Exercises the real node-scraper analyzer (no mocking of parse_dmesg) to
+    guard against analysis_range_end silently dropping events that occurred
+    before a test's true end time but after that time got truncated to whole
+    minutes.
+    """
+
+    def test_analysis_range_end_keeps_events_up_to_the_real_second(self):
+        dmesg = "2026-07-17T10:16:30,000000+00:00 kern  :err   : [1.0] GPU reset begin on card0\n"
+
+        end_with_seconds = datetime.datetime(2026, 7, 17, 10, 16, 45, tzinfo=datetime.timezone.utc)
+        events = verify_lib.node_scraper_adapter.parse_dmesg(
+            dmesg, analysis_args={"analysis_range_end": end_with_seconds}
+        )
+        self.assertEqual(len(events), 1, "event before the real (second-precision) end time must be kept")
+
+        end_truncated_to_minute = datetime.datetime(2026, 7, 17, 10, 16, 0, tzinfo=datetime.timezone.utc)
+        events = verify_lib.node_scraper_adapter.parse_dmesg(
+            dmesg, analysis_args={"analysis_range_end": end_truncated_to_minute}
+        )
+        self.assertEqual(
+            len(events),
+            0,
+            "minute-truncated analysis_range_end reproduces the historical bug "
+            "(demonstrates why _parse_cvs_time must preserve seconds)",
+        )
 
 
 class TestVerifyHostLspci(unittest.TestCase):
