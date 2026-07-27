@@ -309,7 +309,10 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         phdl.exec(f'sudo echo "Starting Test {rccl_collective}" | sudo tee /dev/kmsg')
 
     # start_time = phdl.exec('date')
-    start_time = phdl.exec('date +"%a %b %e %H:%M"')
+    # Seconds precision matters: verify_dmesg_for_errors' node-scraper path
+    # treats analysis_range_end as an exclusive cutoff, so a minute-truncated
+    # end time silently drops the final minute of this test's dmesg window.
+    start_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
 
     # Build list of nodes and their VPC IPs (used by the RCCL test)
     # make sure the VPC IPs are reachable from all nodes for passwordless ssh
@@ -348,7 +351,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     if can_use_sudo:
         phdl.exec(f'sudo echo "End of Test {rccl_collective}" | sudo tee /dev/kmsg')
 
-    end_time = phdl.exec('date +"%a %b %e %H:%M"')
+    end_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
     if can_use_sudo:
         # Bound dmesg scan to this test's own start..end window (per-test).
         # till_end_flag=True scans from start_time to the end of the dmesg
