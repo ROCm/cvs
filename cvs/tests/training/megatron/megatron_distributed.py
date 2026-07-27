@@ -22,7 +22,7 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.training.megatron import megatron_lib
+from cvs.lib.training.factory import create_training_job
 from cvs.lib.utils_lib import update_test_result
 
 log = globals.log
@@ -121,10 +121,10 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
 
         # Stage 3: training.
         globals.error_list = []
-        mt_obj = megatron_lib.MegatronTrainingJob(
+        mt_obj = create_training_job(
             orch,
             variant_config,
-            hf_token,
+            hf_token=hf_token,
             micro_batch_size=micro_batch_size,
             global_batch_size=global_batch_size,
             precision=precision,

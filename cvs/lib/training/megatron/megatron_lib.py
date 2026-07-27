@@ -34,13 +34,10 @@ err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_bu
 # (TFLOP/s/GPU): N`) is preferred but the original format
 # (`throughput per GPU: N`) still parses on older builds.
 TRAINING_RESULT_PATTERNS = {
-    'throughput_per_gpu': [
-        r'throughput per GPU(?:\s*\([^)]*\))?\s*:\s+([0-9\.]+)',
-        r'throughput per GPU:\s+([0-9\.]+)',
-    ],
-    'tokens_per_gpu': [r'tokens\/GPU\/s:\s+([0-9]+)'],
+    'throughput_per_gpu': [r'throughput per GPU:\s+([0-9\.]+)'],
+    'tokens_per_gpu': [r'tokens/GPU/s:\s+([0-9\.]+)'],
     'mem_usage': [r'mem usages:\s+([0-9\.]+)'],
-    'elapsed_time_per_iteration': [r'elapsed time per iteration \(ms\):\s+([0-9\.]+)'],
+    'elapsed_time_per_iteration': [r'elapsed time per iteration:\s+([0-9\.]+)'],
 }
 
 TRAINING_PROGRESS_PATTERNS = [
@@ -383,11 +380,9 @@ class MegatronTrainingJob:
                 # override the gid_index to 3 for broadcom
                 self.nccl_ib_gid_index = 3
                 out_dict = self.orch.exec(
-                    'if [ -f /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host ]; then \
-                    sudo cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host \
-                    /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; \
-                    fi; \
-                    sleep 2;ibv_devinfo;sleep 2;'
+                    'sudo cp /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host '
+                    '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so; '
+                    'sleep 2;ibv_devinfo;sleep 2;'
                 )
                 # Treat `hca_id_pattern` as a `|`-separated list of literal
                 # NIC-name prefixes. Each segment is `re.escape`d so users
@@ -401,11 +396,14 @@ class MegatronTrainingJob:
                         f'hca_id_pattern parsed to zero non-empty segments, got: {self.hca_id_pattern!r}. '
                         f'Expected a `|`-separated list of NIC-name prefixes, e.g. "bnxt_|rocep".'
                     )
+                    return False
                 hca_id_regex = rf'hca_id:\s+({"|".join(segments)})'
                 for node in out_dict.keys():
                     if not re.search(hca_id_regex, out_dict[node], re.I):
                         log.info("%s", out_dict[node])
                         fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
+                        return False
+        return True
 
     def build_training_job_cmd(
         self,
@@ -521,7 +519,8 @@ class MegatronTrainingJob:
 
         if self.distributed_training:
             # Run any required NIC setup steps inside containers (e.g., Broadcom workaround)
-            self.exec_nic_setup_scripts()
+            if not self.exec_nic_setup_scripts():
+                return
 
             self.orch.all.exec_cmd_list(self.job_cmd_list)
             # Write per-node wrapper scripts on bare host in parallel (scripts_dir is a volume mount)
@@ -552,37 +551,29 @@ class MegatronTrainingJob:
             )
         time.sleep(50)
 
-    def get_training_results_dict(
-        self,
-    ):
-        """
-        Parse training log output from the last node and extract key performance metrics.
+    def _read_last_node_log(self, tail_lines=0):
+        """Read the training log from the last node and return its output.
+
+        Args:
+            tail_lines (int): If > 0, only the last N lines of the log are read.
 
         Returns:
-        dict: A dictionary with lists of extracted values (strings) for each metric:
-        - 'throughput_per_gpu': Matches 'throughput per GPU: <float>'
-        - 'tokens_per_gpu': Matches 'tokens/GPU/s: <int>'
-        - 'mem_usage': Matches 'mem usages: <float>'
-        - 'elapsed_time_per_iteration': Matches 'elapsed time per iteration: <float>'
-
-        Behavior:
-        - Reads the consolidated training log file from self.home_dir/training_logs on all hosts.
-        - Selects the output from the last host in self.host_list (assumes that node has the final log).
-        - Applies regex searches to extract metrics and returns them in a dictionary.
-        - Prints the dictionary for quick visibility.
-
-        Assumptions:
-        - self.phdl.exec(cmd) returns a dict mapping host -> command output (string).
-        - self.host_list is a non-empty list of hosts; the last entry contains the desired log.
-        - The training log contains lines that match the expected regex patterns.
-        - re is imported in the module scope.
+            str: Log text from the last node.
         """
-
-        # Head node (node 0) is always the master — read its log via bare-host SSH
-        out_dict = self.orch.head.exec(
-            f'cat {self.combo_log_dir}/out-node0/training.log | tail -15'
+        n = len(self.orch.hosts)
+        tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
+        out_dict = self.orch.exec(
+            f'cat {self.combo_log_dir}/out-node{n-1}/training.log{tail_suffix}'
         )
-        output = list(out_dict.values())[0]
+        return list(out_dict.values())[-1]
+
+    def get_training_results_dict(self):
+        """Parse training log from the last node and extract key performance metrics.
+
+        Returns:
+        dict: A dictionary with lists of extracted values (strings) for each metric.
+        """
+        output = self._read_last_node_log(tail_lines=15)
 
         log.info('Extracting results from logs')
         log.info('#===========================#')
@@ -590,56 +581,21 @@ class MegatronTrainingJob:
         log.info('#===========================#')
 
         training_results_dict = _parse_training_results(output)
-
         log.info("%s", training_results_dict)
         return training_results_dict
 
-    def scan_for_training_errors(
-        self,
-    ):
-        """
-        Scan the consolidated training logs for known error patterns and report status.
+    def scan_for_training_errors(self):
+        """Scan training logs from ALL nodes for known error patterns.
 
         Returns:
-        bool: True if no error patterns are found; False otherwise.
-
-        Behavior:
-        - Reads the training log file from self.home_dir/training_logs via sudo on all hosts.
-        - Selects the output from the last host in self.host_list (assumes it has the final log).
-        - Iterates through regex patterns in training_err_dict and searches the log content.
-        - On first match:
-          * Calls fail_test with a descriptive message.
-          * Logs an error indicating polling should stop.
-          * Marks training_pass as False.
-        - Returns training_pass.
-
-        Assumptions:
-        - self.phdl.exec(cmd) returns a dict mapping host -> command stdout (string).
-        - self.host_list is non-empty and its last element contains the relevant log.
-        - training_err_dict is a dict of name -> regex pattern available in scope.
-        - re, log, and fail_test are imported/available in scope.
-        - sudo can read the training_logs file without interactive prompts.
-
-        Notes:
-        - Regex search is case-sensitive as written; pass re.I to re.search for case-insensitive matching.
-        - If multiple error patterns are present, all matches will trigger fail_test, but the function
-          does not short-circuit; it continues scanning and ultimately returns False.
-        - Consider logging or returning which specific patterns matched for better diagnostics.
+            bool: True if no error patterns found on any node; False otherwise.
         """
-
         log.info('Scan for training errors')
-        training_pass = True  # Default to pass; flip to False if any error pattern is detected
+        training_pass = True
 
-        # Head node (node 0) is always the master — read its log via bare-host SSH
-        out_dict = self.orch.head.exec(
-            f'cat {self.combo_log_dir}/out-node0/training.log'
-        )
-        output = list(out_dict.values())[0]
-
-        # Check the log content against all known training error patterns
+        output = self._read_last_node_log()
         for err_key in training_err_dict:
             if re.search(f'{training_err_dict[err_key]}', output):
-                # Record failure and log an error for visibility
                 fail_test(f'ERROR {training_err_dict[err_key]} seen in training logs ..')
                 log.error('Aborting training log polling')
                 training_pass = False
@@ -687,10 +643,7 @@ class MegatronTrainingJob:
             if not self.scan_for_training_errors():
                 fail_test('Failures seen in training logs, Aborting!!!')
                 return
-            out_dict = self.orch.head.exec(
-                f'cat {self.combo_log_dir}/out-node0/training.log'
-            )
-            output = list(out_dict.values())[0]
+            output = self._read_last_node_log()
 
             if not _is_training_complete(output, self.iterations):
                 log.info('Training still in progress')

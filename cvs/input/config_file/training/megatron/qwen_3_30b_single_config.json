@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "framework": "megatron_single",
-  "gpu_arch": "mi325",
+  "gpu_arch": "MI325X",
   "enforce_thresholds": false,
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
@@ -21,7 +21,7 @@
     "verify_network_errors": "False"
   },
   "model_params": {
-    "model_name": "qwen3_30b",
+    "model_name": "qwen3_30B",
     "tokenizer_model": "Qwen/Qwen3-30B-A3B",
     "model_size": "30",
     "sequence_length": "8192",
