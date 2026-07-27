@@ -68,7 +68,44 @@ h1 { margin: 0 0 0.25rem; font-size: 1.6rem; font-weight: 600; letter-spacing: -
   letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
 .chart-wrap { position: relative; height: 240px; }
 .chart-wrap-tall { height: 300px; }
+.chart-wrap-interactivity { height: min(520px, 70vh); min-height: 380px; }
 .chart-card-wide { max-width: 100%; }
+.panel-interactivity { margin-bottom: 1.25rem; }
+.interactivity-head { margin-bottom: 0.75rem; }
+.interactivity-chart-title {
+  margin: 0 0 0.35rem; font-size: 1.15rem; font-weight: 600; letter-spacing: -0.01em;
+}
+.interactivity-chart-subtitle {
+  margin: 0; font-size: 0.82rem; color: var(--muted); line-height: 1.4;
+}
+.interactivity-tab {
+  display: inline-block; margin-bottom: 0.85rem; padding-bottom: 0.35rem;
+  border-bottom: 2px solid var(--accent); font-size: 0.78rem; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--text);
+}
+.interactivity-tooltip {
+  position: absolute; pointer-events: none; z-index: 30; opacity: 0;
+  transition: opacity 0.12s ease; max-width: 22rem;
+  background: rgba(22, 26, 36, 0.96); border: 1px solid #3a4255; border-radius: 10px;
+  padding: 0.65rem 0.85rem; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  font-size: 0.78rem; line-height: 1.45;
+}
+.interactivity-tooltip.visible { opacity: 1; pointer-events: auto; }
+.interactivity-tooltip.pinned { border-color: var(--accent2); box-shadow: 0 0 0 1px rgba(107,159,255,0.35), 0 12px 40px rgba(0, 0, 0, 0.45); }
+.interactivity-tooltip-hint {
+  margin: 0.35rem 0 0; font-size: 0.68rem; color: var(--muted); font-style: italic;
+}
+.interactivity-tooltip-title {
+  font-weight: 700; font-size: 0.85rem; margin-bottom: 0.45rem; color: var(--text);
+}
+.interactivity-tooltip-row { display: flex; gap: 0.5rem; justify-content: space-between; color: #c8d0e0; }
+.interactivity-tooltip-row span:first-child { color: var(--muted); flex-shrink: 0; }
+.interactivity-tooltip-row span:last-child { text-align: right; word-break: break-word; }
+.interactivity-tooltip-link {
+  display: block; margin-top: 0.5rem; padding-top: 0.45rem; border-top: 1px solid var(--border);
+  color: var(--accent2); text-decoration: none; font-weight: 600;
+}
+.interactivity-tooltip-link:hover { text-decoration: underline; }
 .toolbar-inline { display: flex; align-items: center; gap: 0.5rem; font-size: 0.72rem; color: var(--muted); }
 .toolbar-inline select {
   background: #12151f; color: var(--text); border: 1px solid var(--border);
@@ -114,6 +151,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
 <nav class="viewer-nav" id="viewer-nav">
   <a href="#overview">Overview</a>
   <a href="#filters">Filters</a>
+  <a href="#interactivity-panel">Interactivity</a>
   <a href="#charts">Charts</a>
   <a href="#heatmap">Heatmap</a>
   <a href="#gates">Gates</a>
@@ -143,6 +181,35 @@ tr.changed td { background: rgba(255,107,53,0.1); }
   <div class="meta-line" id="meta" style="margin-top:0.85rem">Loading…</div>
 </section>
 
+<section class="panel panel-interactivity" id="interactivity-panel" style="display:none">
+  <div id="interactivity-block">
+    <div class="interactivity-head">
+      <span class="interactivity-tab">Interactivity</span>
+      <h2 class="interactivity-chart-title">Token Throughput per GPU vs. Interactivity</h2>
+      <p class="interactivity-chart-subtitle" id="interactivity-subtitle"></p>
+    </div>
+    <div class="subsection-head">
+      <div class="toolbar-inline" style="flex-wrap:wrap">
+        <label><input type="checkbox" id="interactivity-log-scale" checked/> Log Y</label>
+        <label><input type="checkbox" id="interactivity-labels" checked/> Point labels</label>
+        <label>TPOT
+          <select id="interactivity-tpot-metric" aria-label="TPOT metric for interactivity chart">
+            <option value="client.mean_tpot_ms" selected>Mean TPOT</option>
+            <option value="client.p99_tpot_ms">P99 TPOT</option>
+            <option value="client.median_tpot_ms">Median TPOT</option>
+          </select>
+        </label>
+        <button type="button" id="interactivity-zoom-reset">Reset view</button>
+      </div>
+    </div>
+    <p class="subsection-hint" id="interactivity-chart-hint">Interactivity = 1/TPOT (tok/s/user) · Y = total token throughput per GPU · scroll to zoom · shift+drag to pan · drag to box-zoom · click a point to pin the detail card</p>
+    <article class="chart-card chart-card-wide" style="position:relative">
+      <div class="chart-wrap chart-wrap-interactivity" id="interactivity-chart-wrap"></div>
+      <div class="interactivity-tooltip" id="interactivity-tooltip" role="tooltip" aria-hidden="true"></div>
+    </article>
+  </div>
+</section>
+
 <section class="panel" id="charts" style="display:none">
   <h2>Sweep charts</h2>
   <div class="subsection" id="comparison-block" style="display:none">
@@ -155,26 +222,6 @@ tr.changed td { background: rgba(255,107,53,0.1); }
     </div>
     <p class="subsection-hint">Compare ISL/OSL shapes at each concurrency · hover for values · dashed lines stay visible when trends overlap</p>
     <div class="chart-grid" id="comparison-grid"></div>
-  </div>
-  <div class="subsection" id="interactivity-block" style="display:none">
-    <div class="subsection-head">
-      <p class="subsection-title">Interactivity</p>
-      <div class="toolbar-inline" style="flex-wrap:wrap">
-        <label><input type="checkbox" id="interactivity-log-scale" checked/> Log Y</label>
-        <label><input type="checkbox" id="interactivity-labels" checked/> Labels</label>
-        <label>TPOT
-          <select id="interactivity-tpot-metric" aria-label="TPOT metric for interactivity chart">
-            <option value="client.mean_tpot_ms" selected>Mean TPOT</option>
-            <option value="client.p99_tpot_ms">P99 TPOT</option>
-            <option value="client.median_tpot_ms">Median TPOT</option>
-          </select>
-        </label>
-      </div>
-    </div>
-    <p class="subsection-hint">Interactivity = 1/TPOT (tok/s/user) vs output throughput per GPU · lines trace increasing concurrency per shape</p>
-    <article class="chart-card chart-card-wide">
-      <div class="chart-wrap chart-wrap-tall" id="interactivity-chart-wrap"></div>
-    </article>
   </div>
   <div class="subsection" id="margin-block" style="display:none">
     <div class="subsection-head">
@@ -237,6 +284,11 @@ let comparisonChartMode = 'bar';
 let interactivityTpotMetric = 'client.mean_tpot_ms';
 let interactivityLogScale = true;
 let interactivityShowLabels = true;
+let interactivityChart = null;
+let interactivityTooltipPinned = false;
+let interactivityTooltipOver = false;
+let interactivityTooltipHideTimer = null;
+let interactivityTooltipLastMeta = null;
 let heatmapMetricKey = 'client.output_throughput';
 let marginMetricKey = 'client.output_throughput';
 let prevRunByKey = null;
@@ -416,10 +468,17 @@ function destroyCharts() {
   clearEl('margin-grid');
   const interactivityWrap = $('interactivity-chart-wrap');
   if (interactivityWrap) interactivityWrap.innerHTML = '';
-  ['comparison-block', 'margin-block', 'interactivity-block'].forEach(id => {
+  ['comparison-block', 'margin-block'].forEach(id => {
     const el = $(id);
     if (el) el.style.display = 'none';
   });
+  const interPanel = $('interactivity-panel');
+  if (interPanel) interPanel.style.display = 'none';
+  interactivityChart = null;
+  interactivityTooltipPinned = false;
+  interactivityTooltipOver = false;
+  clearTimeout(interactivityTooltipHideTimer);
+  hideInteractivityTooltip();
 }
 
 function updateComparisonToggleUI() {
@@ -582,14 +641,269 @@ function tpFromCellId(cellId) {
   return match ? Number(match[1]) : null;
 }
 
-function perGpuThroughput(cell) {
-  const direct = metricNum(cell, 'client.output_tput_per_gpu')
-    ?? metricNum(cell, 'client.per_gpu_throughput');
+function nnodesFromCellId(cellId) {
+  const match = String(cellId || '').match(/NNODES=(\d+)/i);
+  return match ? Number(match[1]) : 1;
+}
+
+function runCardMap() {
+  const map = {};
+  (reportData.run_card_display || []).forEach(row => {
+    if (Array.isArray(row) && row.length >= 2) map[String(row[0])] = row[1];
+  });
+  return map;
+}
+
+function runCardLink(label) {
+  const row = (reportData.run_card_display || []).find(r => r[0] === label);
+  return row && row[2] ? String(row[1]) : '';
+}
+
+function reportDateLabel() {
+  const raw = reportData.generated_at || '';
+  const m = String(raw).match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  return raw.split(' ')[0] || '—';
+}
+
+function precisionLabel(cell) {
+  const model = runCardMap().Model || (cell && cell.model) || '';
+  const m = String(model).match(/\b(fp4|fp8|bf16|fp16|int8|mxfp4|w4a8)\b/i);
+  if (m) return m[1].toUpperCase();
+  if (cell && cell.policy && /^(fp4|fp8|bf16|fp16|int8|mxfp4|w4a8)$/i.test(String(cell.policy))) {
+    return String(cell.policy).toUpperCase();
+  }
+  return '—';
+}
+
+function dpAttentionLabel() {
+  const launch = String((reportData.provenance || {}).launch_summary || '');
+  const server = String((reportData.panels || {}).launch?.server_cmd || '');
+  const blob = (launch + ' ' + server).toLowerCase();
+  if (/(-dp\b|dp_attention|atom_dp_size|--enable-dp)/.test(blob)) return 'True';
+  return 'False';
+}
+
+function ciRunLink() {
+  const upstream = runCardLink('Upstream');
+  if (upstream) return { href: upstream, label: 'GitHub Actions Run' };
+  const prov = reportData.provenance || {};
+  const href = prov.pytest_html_href || prov.pytest_html_path || '';
+  if (href) return { href, label: 'Test report' };
+  return null;
+}
+
+function fmtTooltipNum(v, digits) {
+  if (v == null || Number.isNaN(v)) return '—';
+  return Number(v).toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: 0,
+  });
+}
+
+function totalPerGpuThroughput(cell) {
+  const direct = metricNum(cell, 'client.per_gpu_throughput');
   if (direct != null) return direct;
-  const tput = metricNum(cell, throughputMetricKey());
+  const tput = metricNum(cell, 'client.total_token_throughput');
   const tp = tpFromCellId(cell.cell_id);
   if (tput == null || !tp) return null;
   return tput / tp;
+}
+
+function outputPerGpuThroughput(cell) {
+  const direct = metricNum(cell, 'client.output_tput_per_gpu');
+  if (direct != null) return direct;
+  const tput = metricNum(cell, 'client.output_throughput');
+  const tp = tpFromCellId(cell.cell_id);
+  if (tput == null || !tp) return null;
+  return tput / tp;
+}
+
+function inputPerGpuThroughput(cell, totalPg, outputPg) {
+  const tp = tpFromCellId(cell.cell_id);
+  if (totalPg != null && outputPg != null) return totalPg - outputPg;
+  const total = metricNum(cell, 'client.total_token_throughput');
+  const output = metricNum(cell, 'client.output_throughput');
+  if (total != null && output != null && tp) return (total - output) / tp;
+  return null;
+}
+
+function buildInteractivityTooltipMeta(cell, interactivity, totalPg) {
+  const rc = runCardMap();
+  const prov = reportData.provenance || {};
+  const tp = tpFromCellId(cell.cell_id) || Number(rc.TP) || null;
+  const nnodes = nnodesFromCellId(cell.cell_id);
+  const totalGpus = tp ? tp * nnodes : null;
+  const outputPg = outputPerGpuThroughput(cell);
+  const inputPg = inputPerGpuThroughput(cell, totalPg, outputPg);
+  const driver = rc.Driver || 'inference';
+  const gpu = cell.gpu || rc.GPU || 'Run';
+  return {
+    title: gpu + ' (' + driver + ')',
+    rows: [
+      ['Date', reportDateLabel()],
+      ['Image', prov.image_display || rc.Image || '—'],
+      ['Interactivity (tok/s/user)', fmtTooltipNum(interactivity, 3)],
+      ['Token Throughput per GPU (tok/s/gpu)', fmtTooltipNum(totalPg, 3)],
+      ['Input Token Throughput per GPU', fmtTooltipNum(inputPg, 3)],
+      ['Output Token Throughput per GPU', fmtTooltipNum(outputPg, 3)],
+      ['Total GPUs', totalGpus != null ? String(totalGpus) : '—'],
+      ['Tensor Parallelism', tp != null ? String(tp) : '—'],
+      ['Expert Parallelism', '1'],
+      ['DP Attention', dpAttentionLabel()],
+      ['Concurrency', String(cell.concurrency)],
+      ['Precision', precisionLabel(cell)],
+    ],
+    runLink: ciRunLink(),
+  };
+}
+
+function escHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function renderInteractivityTooltip(meta, left, top, pinned) {
+  const el = $('interactivity-tooltip');
+  const wrap = $('interactivity-chart-wrap');
+  if (!el || !meta) return;
+  interactivityTooltipLastMeta = meta;
+  let html = '<div class="interactivity-tooltip-title">' + escHtml(meta.title) + '</div>';
+  meta.rows.forEach(([label, value]) => {
+    html += '<div class="interactivity-tooltip-row"><span>' + escHtml(label) + '</span><span>'
+      + escHtml(value) + '</span></div>';
+  });
+  if (meta.runLink && meta.runLink.href) {
+    html += '<a class="interactivity-tooltip-link" href="' + escHtml(meta.runLink.href)
+      + '" target="_blank" rel="noopener">' + escHtml(meta.runLink.label) + '</a>';
+  }
+  if (pinned) {
+    html += '<p class="interactivity-tooltip-hint">Pinned — click chart background to dismiss</p>';
+  } else {
+    html += '<p class="interactivity-tooltip-hint">Click point to pin · move onto card to open links</p>';
+  }
+  el.innerHTML = html;
+  el.classList.add('visible');
+  el.classList.toggle('pinned', !!pinned);
+  el.setAttribute('aria-hidden', 'false');
+  const pad = 8;
+  let x = left;
+  let y = top;
+  if (wrap) {
+    el.style.visibility = 'hidden';
+    el.style.left = '0px';
+    el.style.top = '0px';
+    const maxX = Math.max(pad, wrap.clientWidth - el.offsetWidth - pad);
+    const maxY = Math.max(pad, wrap.clientHeight - el.offsetHeight - pad);
+    x = Math.min(Math.max(pad, x), maxX);
+    y = Math.min(Math.max(pad, y), maxY);
+    el.style.visibility = '';
+  }
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+}
+
+function scheduleHideInteractivityTooltip() {
+  clearTimeout(interactivityTooltipHideTimer);
+  interactivityTooltipHideTimer = setTimeout(() => {
+    if (!interactivityTooltipPinned && !interactivityTooltipOver) {
+      hideInteractivityTooltip();
+    }
+  }, 160);
+}
+
+function hideInteractivityTooltip() {
+  const el = $('interactivity-tooltip');
+  if (!el) return;
+  el.classList.remove('visible', 'pinned');
+  el.setAttribute('aria-hidden', 'true');
+  interactivityTooltipPinned = false;
+  interactivityTooltipLastMeta = null;
+}
+
+function showInteractivityTooltipAtChartPoint(chart, caretX, caretY, meta, pinned) {
+  const wrap = $('interactivity-chart-wrap');
+  if (!wrap || !chart) return;
+  const canvasRect = chart.canvas.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const left = canvasRect.left - wrapRect.left + caretX + 14;
+  const top = canvasRect.top - wrapRect.top + caretY - 12;
+  renderInteractivityTooltip(meta, left, top, pinned);
+}
+
+function bindInteractivityTooltipHover() {
+  const el = $('interactivity-tooltip');
+  if (!el || el._hoverBound) return;
+  el._hoverBound = true;
+  el.addEventListener('mouseenter', () => {
+    interactivityTooltipOver = true;
+    clearTimeout(interactivityTooltipHideTimer);
+  });
+  el.addEventListener('mouseleave', () => {
+    interactivityTooltipOver = false;
+    if (!interactivityTooltipPinned) scheduleHideInteractivityTooltip();
+  });
+}
+
+function interactivityExternalTooltip(context) {
+  const tooltip = context.tooltip;
+  if (!tooltip || tooltip.opacity === 0) {
+    if (!interactivityTooltipPinned) scheduleHideInteractivityTooltip();
+    return;
+  }
+  if (interactivityTooltipPinned) return;
+  const item = tooltip.dataPoints && tooltip.dataPoints[0];
+  if (!item || !item.raw || !item.raw.tooltip) {
+    scheduleHideInteractivityTooltip();
+    return;
+  }
+  clearTimeout(interactivityTooltipHideTimer);
+  showInteractivityTooltipAtChartPoint(
+    context.chart,
+    tooltip.caretX,
+    tooltip.caretY,
+    item.raw.tooltip,
+    false,
+  );
+}
+
+function onInteractivityChartClick(evt, elements, chart) {
+  if (elements && elements.length) {
+    const raw = elements[0].element.$context.raw;
+    if (!raw || !raw.tooltip) return;
+    interactivityTooltipPinned = true;
+    clearTimeout(interactivityTooltipHideTimer);
+    const meta = chart.getDatasetMeta(elements[0].datasetIndex);
+    const pt = meta.data[elements[0].index];
+    showInteractivityTooltipAtChartPoint(chart, pt.x, pt.y, raw.tooltip, true);
+    return;
+  }
+  if (interactivityTooltipPinned) hideInteractivityTooltip();
+}
+
+function resetInteractivityChartZoom() {
+  if (interactivityChart && interactivityChart.resetZoom) interactivityChart.resetZoom();
+}
+
+function updateInteractivitySubtitle(rows) {
+  const sub = $('interactivity-subtitle');
+  if (!sub) return;
+  const rc = runCardMap();
+  const sample = rows[0] || {};
+  const model = rc.Model || sample.model || 'Model';
+  const precision = precisionLabel(sample);
+  const isl = sample.isl || '—';
+  const osl = sample.osl || '—';
+  const updated = reportDateLabel();
+  sub.textContent = model + ' · ' + precision + ' · ' + isl + ' / ' + osl
+    + ' · Source: CVS inference report · Updated: ' + updated;
+}
+
+function perGpuThroughput(cell) {
+  return totalPerGpuThroughput(cell) ?? outputPerGpuThroughput(cell);
 }
 
 function interactivityFromTpotMs(tpotMs) {
@@ -629,13 +943,13 @@ function makeInteractivityChart(canvas, datasets, tpotLabel, logY, showLabels) {
   const yScale = logY
     ? {
         type: 'logarithmic',
-        title: { display: true, text: 'Token throughput per GPU (tok/s/gpu)', color: '#9aa3b5', font: { size: 11 } },
+        title: { display: true, text: 'Token Throughput per GPU (tok/s/gpu)', color: '#9aa3b5', font: { size: 11 } },
         ticks: { color: '#9aa3b5' },
         grid: { color: '#2a2f3d' },
       }
     : {
         type: 'linear',
-        title: { display: true, text: 'Token throughput per GPU (tok/s/gpu)', color: '#9aa3b5', font: { size: 11 } },
+        title: { display: true, text: 'Token Throughput per GPU (tok/s/gpu)', color: '#9aa3b5', font: { size: 11 } },
         ticks: { color: '#9aa3b5' },
         grid: { color: '#2a2f3d' },
       };
@@ -646,28 +960,36 @@ function makeInteractivityChart(canvas, datasets, tpotLabel, logY, showLabels) {
       responsive: true,
       maintainAspectRatio: false,
       interaction: { mode: 'nearest', intersect: true },
+      onClick: onInteractivityChartClick,
       plugins: {
         legend: { labels: { color: '#e8eaef', boxWidth: 12, font: { size: 11 } } },
         tooltip: {
-          backgroundColor: '#2a3142',
-          borderColor: '#3a4255',
-          borderWidth: 1,
-          titleColor: '#e8eaef',
-          bodyColor: '#c8d0e0',
-          callbacks: {
-            label(ctx) {
-              const p = ctx.raw;
-              const st = p.status ? ' · ' + p.status.toUpperCase() : '';
-              return ctx.dataset.label + ': '
-                + Number(p.x).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' tok/s/user, '
-                + Number(p.y).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' tok/s/gpu · '
-                + p.pointLabel + st;
-            },
-          },
+          enabled: false,
+          external: interactivityExternalTooltip,
         },
         zoom: {
-          pan: { enabled: true, mode: 'xy' },
-          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' },
+          limits: {
+            x: { min: 'original', max: 'original' },
+            y: { min: 'original', max: 'original' },
+          },
+          pan: {
+            enabled: true,
+            mode: 'xy',
+            modifierKey: 'shift',
+            threshold: 8,
+          },
+          zoom: {
+            wheel: { enabled: true, speed: 0.09, modifierKey: null },
+            pinch: { enabled: true },
+            drag: {
+              enabled: true,
+              modifierKey: null,
+              backgroundColor: 'rgba(107,159,255,0.14)',
+              borderColor: 'rgba(107,159,255,0.55)',
+              borderWidth: 1,
+            },
+            mode: 'xy',
+          },
         },
         interactivityPointLabels: { enabled: showLabels },
       },
@@ -676,7 +998,7 @@ function makeInteractivityChart(canvas, datasets, tpotLabel, logY, showLabels) {
           type: 'linear',
           title: {
             display: true,
-            text: 'Interactivity (tok/s/user) · 1/' + tpotLabel,
+            text: 'Interactivity (tok/s/user)',
             color: '#9aa3b5',
             font: { size: 11 },
           },
@@ -688,17 +1010,22 @@ function makeInteractivityChart(canvas, datasets, tpotLabel, logY, showLabels) {
     },
     plugins: [interactivityPointLabelPlugin],
   });
+  canvas.addEventListener('dblclick', () => resetInteractivityChartZoom());
+  interactivityChart = ch;
+  bindInteractivityTooltipHover();
   chartInstances.push(ch);
   return ch;
 }
 
 function buildInteractivityChart(rows) {
+  const panel = $('interactivity-panel');
   const block = $('interactivity-block');
   const wrap = $('interactivity-chart-wrap');
-  if (!block || !wrap) return false;
+  if (!panel || !block || !wrap) return false;
 
   wrap.innerHTML = '';
-  block.style.display = 'none';
+  hideInteractivityTooltip();
+  panel.style.display = 'none';
 
   const tpotKey = interactivityTpotMetric;
   const tpotLabel = INTERACTIVITY_TPOT_LABELS[tpotKey] || 'TPOT';
@@ -720,6 +1047,7 @@ function buildInteractivityChart(rows) {
           conc,
           status: cellStatus(c),
           pointLabel: interactivityPointLabel(c),
+          tooltip: buildInteractivityTooltipMeta(c, x, y),
         };
       })
       .filter(Boolean)
@@ -749,10 +1077,11 @@ function buildInteractivityChart(rows) {
 
   if (!datasets.length) return false;
 
+  updateInteractivitySubtitle(rows);
   const canvas = document.createElement('canvas');
   wrap.appendChild(canvas);
   makeInteractivityChart(canvas, datasets, tpotLabel, interactivityLogScale, interactivityShowLabels);
-  block.style.display = 'block';
+  panel.style.display = 'block';
   return true;
 }
 
@@ -864,12 +1193,13 @@ function buildCharts(rows) {
   destroyCharts();
   const chartsPanel = $('charts');
 
-  buildComparisonCharts(rows);
   buildInteractivityChart(rows);
+  buildComparisonCharts(rows);
   buildMarginCharts(rows);
 
-  if (chartInstances.length) chartsPanel.style.display = 'block';
-  else chartsPanel.style.display = 'none';
+  const hasSweepCharts = ($('comparison-grid') && $('comparison-grid').children.length)
+    || ($('margin-grid') && $('margin-grid').children.length);
+  chartsPanel.style.display = hasSweepCharts ? 'block' : 'none';
 }
 
 function heatCellStyle(v, minV, maxV, higherBetter) {
@@ -1082,6 +1412,11 @@ if (interactivityLabelsSel) {
     render();
   });
 }
+const interactivityZoomReset = $('interactivity-zoom-reset');
+if (interactivityZoomReset) {
+  interactivityZoomReset.addEventListener('click', () => resetInteractivityChartZoom());
+}
+bindInteractivityTooltipHover();
 const heatmapMetricSel = $('heatmap-metric');
 if (heatmapMetricSel) {
   heatmapMetricSel.addEventListener('change', () => {

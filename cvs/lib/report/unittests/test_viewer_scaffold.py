@@ -59,8 +59,10 @@ def test_write_interactive_viewer(tmp_path):
     assert "chart.js" in text
     assert "comparison-grid" in text
     assert "interactivity-block" in text
+    assert "interactivity-panel" in text
     assert "interactivity-chart-wrap" in text
     assert "buildInteractivityChart" in text
+    assert "interactivityExternalTooltip" in text
     assert "tradeoff-block" not in text
     assert "per-shape-block" not in text
     assert "percentile-block" not in text
