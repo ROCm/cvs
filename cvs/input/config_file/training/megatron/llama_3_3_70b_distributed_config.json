@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "framework": "megatron_distributed",
-  "gpu_arch": "mi325",
+  "gpu_arch": "MI325X",
   "enforce_thresholds": true,
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
@@ -24,15 +24,15 @@
     "verify_network_errors": "True"
   },
   "model_params": {
-    "model_name": "llama3_3_70b",
+    "model_name": "llama3.3_70B",
     "tokenizer_model": "meta-llama/Llama-3.3-70B-Instruct",
     "model_size": "70",
     "sequence_length": "8192",
-    "recompute": "1",
-    "fsdp": "1",
+    "recompute": "0",
+    "fsdp": "0",
     "tensor_parallelism": "8",
     "pipeline_parallelism": "1",
-    "precision": "TE_FP8"
+    "precision": "FP8"
   },
   "container": {
     "lifetime": "per_run",
@@ -46,7 +46,9 @@
         "privileged": true,
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
-          "/dev/infiniband:/dev/infiniband"
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+          "/lib/libibverbs.d:/lib/libibverbs.d"
         ],
         "devices": [
           "/dev/kfd",
@@ -59,10 +61,10 @@
   "sweep": {
     "combinations": {
       "llama3_3_70b-mi325-bs64-mbs1-fp8": {
-        "name": "llama3_3_70b_mbs1_gbs64_TE_FP8",
+        "name": "llama3_3_70b_mbs1_gbs64_FP8",
         "global_batch_size": "64",
         "micro_batch_size": "1",
-        "precision": "TE_FP8",
+        "precision": "FP8",
         "result_dict": {
           "throughput_per_gpu": "100",
           "elapsed_time_per_iteration": "500",
@@ -71,10 +73,10 @@
         }
       },
       "llama3_3_70b-mi325-bs64-mbs1-bf16": {
-        "name": "llama3_3_70b_mbs1_gbs64_TE_BF16",
+        "name": "llama3_3_70b_mbs1_gbs64_BF16",
         "global_batch_size": "64",
         "micro_batch_size": "1",
-        "precision": "TE_BF16",
+        "precision": "BF16",
         "result_dict": {
           "throughput_per_gpu": "100",
           "elapsed_time_per_iteration": "500",

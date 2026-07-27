@@ -26,10 +26,10 @@ TRAINING_SCRIPTS = {
 # Precision env var strings per model family and precision name.
 PRECISION_FLAGS = {
     'llama': {
-        'TE_FP8':  'TE_FP8=1',
-        'TE_BF16': 'TE_FP8=0 TE_FP4=0',
-        'MXFP4':   'TE_FP4=1 TE_FP4_RECIPE=mxfp4',
-        'MXFP8':   'TE_FP8=1 TE_FP8_RECIPE=mxfp8',
+        'FP8':   'TE_FP8=1',
+        'BF16':  'TE_FP8=0 TE_FP4=0',
+        'MXFP4': 'TE_FP4=1 TE_FP4_RECIPE=mxfp4',
+        'MXFP8': 'TE_FP8=1 TE_FP8_RECIPE=mxfp8',
     },
     'deepseek': {
         'FP8':  'PR=fp8',
