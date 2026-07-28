@@ -202,13 +202,13 @@ def capture_gpu_metrics(orch, nodes=None, timeout_s=None) -> dict:
     all_entries = []
     if nodes is None:
         kwargs = {"timeout": timeout_s} if timeout_s is not None else {}
-        out = orch.exec_on_head("amd-smi metric --json", **kwargs)
+        out = orch.exec_on_head("amd-smi metric --json", print_console=False, **kwargs)
         for _host, text in out.items():
             all_entries.extend(_try_parse(text))
     else:
         kwargs = {"timeout": timeout_s} if timeout_s is not None else {}
         for _label, hosts in nodes:
-            out = orch.exec("amd-smi metric --json", hosts=hosts, **kwargs)
+            out = orch.exec("amd-smi metric --json", hosts=hosts, print_console=False, **kwargs)
             for _host, text in out.items():
                 all_entries.extend(_try_parse(text))
     return parse_gpu_metrics(all_entries)
@@ -259,7 +259,7 @@ def _capture_multi_node(orch, nodes, timeout_s=None) -> "tuple[dict, dict[str, i
     kwargs = {"timeout": timeout_s} if timeout_s is not None else {}
     for label, hosts in nodes:
         try:
-            out = orch.exec("amd-smi metric --json", hosts=hosts, **kwargs)
+            out = orch.exec("amd-smi metric --json", hosts=hosts, print_console=False, **kwargs)
             node_entries = []
             for _host, text in out.items():
                 node_entries.extend(_try_parse(text))
@@ -402,7 +402,7 @@ def stop_and_collect_gpu_poller(
     if handle.nodes is None:
         text = None
         try:
-            out = orch.exec_on_head(f"cat {shlex.quote(handle.paths)}")
+            out = orch.exec_on_head(f"cat {shlex.quote(handle.paths)}", print_console=False)
             text = next(iter(out.values()), "")
         except Exception as exc:
             log.warning("stop_and_collect_gpu_poller: read-back failed: %s", exc)
@@ -439,7 +439,7 @@ def stop_and_collect_gpu_poller(
             path = handle.paths[host] if isinstance(handle.paths, dict) else handle.paths
             text = ""
             try:
-                out = orch.exec(f"cat {shlex.quote(path)}", hosts=[host])
+                out = orch.exec(f"cat {shlex.quote(path)}", hosts=[host], print_console=False)
                 text = next(iter(out.values()), "")
             except Exception as exc:
                 log.warning("stop_and_collect_gpu_poller: read-back failed for %s: %s", host, exc)
