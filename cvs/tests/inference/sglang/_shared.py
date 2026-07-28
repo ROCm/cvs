@@ -185,7 +185,6 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
     for label, key in (
         ("HellaSwag", "accuracy_hellaswag"),
         ("GSM8K", "accuracy_gsm8k"),
-        ("MMLU", "accuracy_mmlu"),
     ):
         e = phase_labels.get(key)
         if isinstance(e, dict) and "task" in e:

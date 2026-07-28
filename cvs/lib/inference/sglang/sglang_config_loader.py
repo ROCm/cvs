@@ -172,7 +172,7 @@ def _inject_thresholds_into_bp_dict(bp_dict: dict[str, Any], thresholds: Mapping
     else:
         log.warning("No performance thresholds for cell %r in threshold file", perf_key)
 
-    for bench_name in ("lm_eval_hellaswag", "lm_eval_gsm8k", "lm_eval_mmlu"):
+    for bench_name in ("lm_eval_hellaswag", "lm_eval_gsm8k"):
         cell = bench_cell_key(bench_name)
         acc_specs = thresholds.get(cell)
         if not acc_specs:

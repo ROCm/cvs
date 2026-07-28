@@ -22,7 +22,7 @@ and interactive viewer) via ``cvs.lib.report.presets.sglang_distributed``.
 
 import pytest
 import time
-
+from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
 from cvs.lib import globals
 
 log = globals.log
@@ -39,7 +39,7 @@ def test_launch_container(orch, variant_config, lifecycle, request):
         lifecycle.complete_stage(request, "container_launch", t0)
         pytest.fail("setup_containers() returned False")
 
-    orch.cleanup_log_dir(variant_config.paths.log_dir)
+    cleanup_sglang_log_dir(orch, variant_config.paths.log_dir)
 
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     if not orch.verify_containers_running(name):
@@ -154,6 +154,6 @@ def test_teardown(orch, variant_config, lifecycle, request):
     """Final stage: tear down containers and logs. Runs even if a prior stage failed."""
     t0 = time.monotonic()
     orch.teardown_containers()
-    orch.cleanup_log_dir(variant_config.paths.log_dir)
+    cleanup_sglang_log_dir(orch, variant_config.paths.log_dir)
     lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t0)
     lifecycle.torn_down = True

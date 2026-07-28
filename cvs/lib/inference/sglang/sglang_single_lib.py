@@ -31,6 +31,7 @@ from cvs.lib.inference.sglang.sglang_common import (
     first_float,
     normalize_sglang_threshold_spec,
     resolve_client_host,
+    SERVER_READY_RE,
 )
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import fail_test
@@ -38,11 +39,6 @@ from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 log = globals.log
-
-_SERVER_READY_RE = re.compile(
-    r"fired up and ready to roll|Uvicorn running|Application startup complete|200 OK",
-    re.I,
-)
 
 
 class SglangSingle:

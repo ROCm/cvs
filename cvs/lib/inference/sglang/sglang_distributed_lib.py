@@ -32,6 +32,9 @@ from cvs.lib.inference.sglang.sglang_common import (
     normalize_sglang_threshold_spec,
     resolve_distributed_client_host,
     resolve_server_node_list,
+    collect_sglang_gpu_topology,
+    format_sglang_gpu_topology_lines,
+    SERVER_READY_RE,
 )
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import fail_test
@@ -39,11 +42,6 @@ from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 log = globals.log
-
-_SERVER_READY_RE = re.compile(
-    r"fired up and ready to roll|Uvicorn running|Application startup complete|200 OK",
-    re.I,
-)
 
 
 class SglangDistributed:
@@ -573,61 +571,29 @@ class SglangDistributed:
         verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
 
     def sglang_distributed_gpu_counts(self, mem_threshold_mb=5000):
-        """After model load, count occupied GPUs per server node via amd-smi."""
         tp = int(self.bp_dict["tensor_parallelism"])
         pp = int(self.bp_dict.get("pipeline_parallelism", 1))
 
-        def _count_per_node(out_dict):
-            per_node = {}
-            for node, payload in out_dict.items():
-                count = 0
-                try:
-                    entries = json.loads((payload or '').strip())
-                except (json.JSONDecodeError, AttributeError):
-                    log.warning("Failed to parse amd-smi JSON on node %s", node)
-                    per_node[node] = 0
-                    continue
-                if isinstance(entries, dict) and "gpu_data" in entries:
-                    entries = entries["gpu_data"]
-                if not isinstance(entries, list):
-                    per_node[node] = 0
-                    continue
-                for g in entries:
-                    used_mb = g.get("mem_usage", {}).get("used_vram", {}).get("value", 0)
-                    if used_mb > mem_threshold_mb:
-                        count += 1
-                per_node[node] = count
-            return per_node
-
-        server_per_node = _count_per_node(
-            self._host_exec('sudo amd-smi metric --json', hosts=self.server_node_list)
+        topo = collect_sglang_gpu_topology(
+            self._host_exec,
+            {"server": self.server_node_list},
+            mem_threshold_mb=mem_threshold_mb,
         )
-        occupied_total = sum(server_per_node.values())
+        server = topo["groups"]["server"]
 
         result = {
             "configured_tp": tp,
             "configured_pp": pp,
             "configured_nnodes": self.nnodes,
-            "server_per_node": server_per_node,
-            "total_occupied_gpus": occupied_total,
+            "server_per_node": server["per_node"],
+            "total_occupied_gpus": topo["total_occupied_gpus"],
         }
-
-        lines = [
-            "",
-            f"Configured TP: {tp}",
-            f"Configured PP: {pp}",
-            f"Configured nnodes: {self.nnodes}",
-            "",
-            "Server nodes:",
-        ]
-        for node, count in server_per_node.items():
-            lines.append(f"  {node}: {count} occupied GPUs")
-        lines.append(f"  Total: {occupied_total} occupied GPUs")
-        lines.append("")
-        lines.append("Total hardware GPUs consumed:")
-        lines.append(f"  {occupied_total}")
-
-        log.info("\n".join(lines))
+        log.info("\n".join(format_sglang_gpu_topology_lines(
+            configured_tp=tp,
+            configured_pp=pp,
+            configured_nnodes=self.nnodes,
+            groups={"Server nodes": server},
+        )))
         return result
 
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):

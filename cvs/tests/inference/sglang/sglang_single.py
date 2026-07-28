@@ -21,7 +21,7 @@ and interactive viewer) via ``cvs.lib.report.presets.sglang_single``.
 
 import pytest
 import time
-
+from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
 from cvs.lib import globals
 #from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
 
@@ -39,7 +39,7 @@ def test_launch_container(orch, variant_config, lifecycle, request):
         lifecycle.complete_stage(request, "container_launch", t0)
         pytest.fail("setup_containers() returned False")
 
-    orch.cleanup_log_dir(variant_config.paths.log_dir)
+    cleanup_sglang_log_dir(orch, variant_config.paths.log_dir)
 
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     if not orch.verify_containers_running(name):
@@ -88,7 +88,7 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
     lifecycle.smoke_results = results
     lifecycle.complete_stage(request, "smoke_endpoints", t0)
 
-
+# TODO: not implemented for single-node
 # def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
 #     globals.error_list = []
 #     t0 = time.monotonic()
@@ -173,6 +173,6 @@ def test_teardown(orch, variant_config, lifecycle, request):
     """Final stage: tear down container and logs. Runs even if a prior stage failed."""
     t0 = time.monotonic()
     orch.teardown_containers()
-    orch.cleanup_log_dir(variant_config.paths.log_dir)
+    cleanup_sglang_log_dir(orch, variant_config.paths.log_dir)
     lifecycle.record(request.node.nodeid, "teardown", time.monotonic() - t0)
     lifecycle.torn_down = True

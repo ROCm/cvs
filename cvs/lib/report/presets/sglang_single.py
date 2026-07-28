@@ -82,4 +82,5 @@ SGLANG_SINGLE_REPORT_CONFIG = make_inference_report_config(
     row_card_test_names=("test_run_performance_benchmark_test",),
     session_lifecycle_labels=SGLANG_SINGLE_SESSION_LIFECYCLE_LABELS,
     cell_lifecycle_labels=(),
+    run_card_display_builder=_sglang_single_run_card,
 )

@@ -33,6 +33,9 @@ from cvs.lib.inference.sglang.sglang_common import (
     first_float,
     normalize_sglang_threshold_spec,
     resolve_client_host,
+    collect_sglang_gpu_topology,
+    format_sglang_gpu_topology_lines,
+    SERVER_READY_RE,
 )
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, LongContextNiahBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import fail_test
@@ -40,11 +43,6 @@ from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 log = globals.log
-
-_SERVER_READY_RE = re.compile(
-    r"fired up and ready to roll|Uvicorn running|Application startup complete|200 OK",
-    re.I,
-)
 
 inference_err_dict = {
     'NCCL ERROR': 'NCCL ERROR|NCCL timeout|local work queue catastrophic error',
@@ -1144,73 +1142,34 @@ class SglangDisaggPD:
         verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
 
     def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
-        """
-        After model load, count occupied GPUs per prefill/decode node via amd-smi.
-        """
         tp = int(self.bp_dict["tensor_parallelism"])
         pp = int(self.bp_dict.get("pipeline_parallelism", 1))
 
-        def _count_per_node(out_dict):
-            per_node = {}
-            for node, payload in out_dict.items():
-                count = 0
-                try:
-                    entries = json.loads((payload or '').strip())
-                except (json.JSONDecodeError, AttributeError):
-                    log.warning("Failed to parse amd-smi JSON on node %s", node)
-                    per_node[node] = 0
-                    continue
-                if isinstance(entries, dict) and "gpu_data" in entries:
-                    entries = entries["gpu_data"]
-                if not isinstance(entries, list):
-                    per_node[node] = 0
-                    continue
-                for g in entries:
-                    used_mb = g.get("mem_usage", {}).get("used_vram", {}).get("value", 0)
-                    if used_mb > mem_threshold_mb:
-                        count += 1
-                per_node[node] = count
-            return per_node
-
-        prefill_per_node = _count_per_node(
-            self._host_exec('sudo amd-smi metric --json', hosts=self.prefill_node_list)
+        topo = collect_sglang_gpu_topology(
+            self._host_exec,
+            {
+                "prefill": self.prefill_node_list,
+                "decode": self.decode_node_list,
+            },
+            mem_threshold_mb=mem_threshold_mb,
         )
-        decode_per_node = _count_per_node(
-            self._host_exec('sudo amd-smi metric --json', hosts=self.decode_node_list)
-        )
-        occupied_prefill = sum(prefill_per_node.values())
-        occupied_decode = sum(decode_per_node.values())
+        prefill = topo["groups"]["prefill"]
+        decode = topo["groups"]["decode"]
 
         result = {
             "configured_tp": tp,
             "configured_pp": pp,
-            "prefill_per_node": prefill_per_node,
-            "decode_per_node": decode_per_node,
-            "prefill_occupied_gpus": occupied_prefill,
-            "decode_occupied_gpus": occupied_decode,
-            "total_occupied_gpus": occupied_prefill + occupied_decode,
+            "prefill_per_node": prefill["per_node"],
+            "decode_per_node": decode["per_node"],
+            "prefill_occupied_gpus": prefill["total"],
+            "decode_occupied_gpus": decode["total"],
+            "total_occupied_gpus": topo["total_occupied_gpus"],
         }
-
-        lines = [
-            "",
-            f"Configured TP: {tp}",
-            f"Configured PP: {pp}",
-            "",
-            "Prefill:",
-        ]
-        for node, count in prefill_per_node.items():
-            lines.append(f"  {node}: {count} occupied GPUs")
-        lines.append(f"  Total: {occupied_prefill} occupied GPUs")
-        lines.append("")
-        lines.append("Decode:")
-        for node, count in decode_per_node.items():
-            lines.append(f"  {node}: {count} occupied GPUs")
-        lines.append(f"  Total: {occupied_decode} occupied GPUs")
-        lines.append("")
-        lines.append("Total hardware GPUs consumed:")
-        lines.append(f"  {occupied_prefill + occupied_decode}")
-
-        log.info("\n".join(lines))
+        log.info("\n".join(format_sglang_gpu_topology_lines(
+            configured_tp=tp,
+            configured_pp=pp,
+            groups={"Prefill": prefill, "Decode": decode},
+        )))
         return result
 
     def verify_openai_compatible_endpoints(self) -> list[str]:

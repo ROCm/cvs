@@ -2,8 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import re
-from typing import Any, Mapping
+import shlex
+from typing import Any, Mapping, Callable
+
+from cvs.lib import globals
+
+log = globals.log
+
+DEFAULT_GPU_MEM_THRESHOLD_MB = 5000
+AMD_SMI_METRIC_CMD = "sudo amd-smi metric --json"
+
+SERVER_READY_RE = re.compile(
+    r"fired up and ready to roll|Uvicorn running|Application startup complete|200 OK",
+    re.I,
+)
 
 
 def textwrap_for_yml(msg_string: str) -> str:
@@ -160,6 +174,33 @@ def coerce_sglang_actual(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
 
+def build_log_dir_cleanup_cmd(log_dir: str, user: str) -> str:
+    """Shell command: rm -rf, recreate, chown (host namespace, not in-container)."""
+    if not log_dir or not str(log_dir).strip():
+        raise ValueError("log_dir must be a non-empty path")
+    log_dir = str(log_dir).strip()
+    quser = shlex.quote(str(user))
+    qdir = shlex.quote(log_dir)
+    return (
+        f"sudo rm -rf {qdir} && "
+        f"sudo mkdir -p {qdir} && "
+        f"sudo chown -R {quser}:{quser} {qdir}"
+    )
+def cleanup_sglang_log_dir(
+    orch: Any,
+    log_dir: str,
+    *,
+    all_nodes: bool | None = None,
+    timeout: int = 60,
+) -> None:
+    """Reset log root on cluster hosts via baremetal SSH (``orch.head`` / ``orch.all``)."""
+    if all_nodes is None:
+        all_nodes = len(orch.hosts) > 1
+    cmd = build_log_dir_cleanup_cmd(log_dir, orch.user)
+    if all_nodes:
+        orch.all.exec(cmd, timeout=timeout)
+    else:
+        orch.head.exec(cmd, timeout=timeout)
 
 LM_EVAL_SPECS = {
     'lm_eval_hellaswag': {
@@ -175,3 +216,96 @@ LM_EVAL_SPECS = {
         'default_num_concurrent': '4',
     },
 }
+
+def _parse_amd_smi_gpu_entries(payload: str | None) -> list[dict]:
+    """Unwrap amd-smi --json (list or {"gpu_data": [...]}) -> GPU entry list."""
+    try:
+        entries = json.loads((payload or "").strip())
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return []
+    if isinstance(entries, dict):
+        entries = entries.get("gpu_data", [])
+    return entries if isinstance(entries, list) else []
+
+
+def count_occupied_gpus_on_node(
+    payload: str | None,
+    *,
+    mem_threshold_mb: int = DEFAULT_GPU_MEM_THRESHOLD_MB,
+) -> int:
+    count = 0
+    for g in _parse_amd_smi_gpu_entries(payload):
+        used_mb = g.get("mem_usage", {}).get("used_vram", {}).get("value", 0)
+        if used_mb > mem_threshold_mb:
+            count += 1
+    return count
+
+
+def count_occupied_gpus_per_node(
+    out_dict: Mapping[str, str | None],
+    *,
+    mem_threshold_mb: int = DEFAULT_GPU_MEM_THRESHOLD_MB,
+) -> dict[str, int]:
+    per_node: dict[str, int] = {}
+    for node, payload in out_dict.items():
+        if payload is None:
+            log.warning("No amd-smi output on node %s", node)
+            per_node[node] = 0
+            continue
+        try:
+            per_node[node] = count_occupied_gpus_on_node(
+                payload, mem_threshold_mb=mem_threshold_mb
+            )
+        except (TypeError, ValueError, AttributeError):
+            log.warning("Failed to parse amd-smi JSON on node %s", node)
+            per_node[node] = 0
+    return per_node
+
+
+def collect_sglang_gpu_topology(
+    host_exec: Callable[..., dict[str, str | None]],
+    groups: Mapping[str, list[str]],
+    *,
+    mem_threshold_mb: int = DEFAULT_GPU_MEM_THRESHOLD_MB,
+    amd_smi_cmd: str = AMD_SMI_METRIC_CMD,
+    timeout: int | None = None,
+) -> dict[str, Any]:
+    """
+    groups: e.g. {"server": [...]} or {"prefill": [...], "decode": [...]}
+    host_exec: suite _host_exec(cmd, hosts=..., timeout=...)
+    """
+    group_stats: dict[str, dict[str, Any]] = {}
+    total = 0
+
+    for name, hosts in groups.items():
+        if not hosts:
+            group_stats[name] = {"per_node": {}, "total": 0}
+            continue
+        per_node = count_occupied_gpus_per_node(
+            host_exec(amd_smi_cmd, hosts=hosts, timeout=timeout),
+            mem_threshold_mb=mem_threshold_mb,
+        )
+        group_total = sum(per_node.values())
+        group_stats[name] = {"per_node": per_node, "total": group_total}
+        total += group_total
+
+    return {"groups": group_stats, "total_occupied_gpus": total}
+
+
+def format_sglang_gpu_topology_lines(
+    *,
+    configured_tp: int,
+    configured_pp: int,
+    groups: Mapping[str, dict[str, Any]],
+    configured_nnodes: int | None = None,
+) -> list[str]:
+    lines = ["", f"Configured TP: {configured_tp}", f"Configured PP: {configured_pp}"]
+    if configured_nnodes is not None:
+        lines.append(f"Configured nnodes: {configured_nnodes}")
+    for label, stats in groups.items():
+        lines.extend(["", f"{label.title()}:"])
+        for node, count in stats["per_node"].items():
+            lines.append(f"  {node}: {count} occupied GPUs")
+        lines.append(f"  Total: {stats['total']} occupied GPUs")
+    lines.extend(["", "Total hardware GPUs consumed:", f"  {sum(s['total'] for s in groups.values())}"])
+    return lines
