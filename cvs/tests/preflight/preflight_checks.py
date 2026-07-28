@@ -104,9 +104,7 @@ def _blocked_by_mi4xx_admission(check_name):
         'status': 'BLOCKED',
         'blocked': True,
         'skipped': False,
-        'message': (
-            f"{check_name} was not run because mandatory MI4XX node-health / AFM vPOD admission failed"
-        ),
+        'message': (f"{check_name} was not run because mandatory MI4XX node-health / AFM vPOD admission failed"),
     }
 
 
@@ -396,7 +394,9 @@ def test_mi4xx_node_health(phdl, config_dict, cluster_dict):
 
     failure_mode = _mi4xx_node_health_failure_mode(config_dict)
     health_config = _mi4xx_node_health_config(config_dict)
-    log.info("Running mandatory MI4XX node-health / AFM vPOD admission on %d reachable host(s)", len(phdl.reachable_hosts))
+    log.info(
+        "Running mandatory MI4XX node-health / AFM vPOD admission on %d reachable host(s)", len(phdl.reachable_hosts)
+    )
     checker = Mi4xxNodeHealthCheck(
         phdl,
         expected_gpus_per_node=health_config.get('expected_gpus_per_node', 4),
@@ -509,6 +509,16 @@ def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     absent or separately configured RDMA NIC cannot suppress IFoE validation.
     """
     _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict)
+
+
+def test_ifoe_transferbench_smoke(phdl, config_dict):
+    """Run TransferBench after IFoE L2 and before RDMA eligibility pruning.
+
+    TransferBench validates the IFoE data path and must see the same
+    node-health-admitted host set as L2 ping. Conventional RDMA interface or
+    GID failures must not suppress this independent scale-up validation.
+    """
+    _run_ifoe_transferbench_smoke(phdl, config_dict)
 
 
 def test_interface_name_consistency(phdl, config_dict):
@@ -772,9 +782,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     failed_nodes = [n for n, r in node_results.items() if r.get('status') == 'FAIL']
     tested_nodes = sorted(node_results.keys())
     missing_nodes = sorted(set(declared_nodes) - set(tested_nodes))
-    incomplete_nodes = sorted(
-        n for n, r in node_results.items() if not (r.get('coverage') or {}).get('complete', True)
-    )
+    incomplete_nodes = sorted(n for n, r in node_results.items() if not (r.get('coverage') or {}).get('complete', True))
     total_invocations = 0
     failed_invocations = 0
     for r in node_results.values():
@@ -786,7 +794,9 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
                 if invocation.get('status') == 'FAIL':
                     failed_invocations += 1
 
-    summary_status = 'FAIL' if failed_nodes or missing_nodes or (require_complete_coverage and incomplete_nodes) else 'PASS'
+    summary_status = (
+        'FAIL' if failed_nodes or missing_nodes or (require_complete_coverage and incomplete_nodes) else 'PASS'
+    )
     preflight_results['ifoe_l2_connectivity'] = {
         'mode': mode_normalized,
         'skipped': False,
@@ -829,7 +839,9 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
             for err in errors[:20]:
                 log.error("Node %s IFoE L2: %s", node, err)
             if len(errors) > 20:
-                log.error("Node %s IFoE L2: %d additional errors suppressed; see report artifacts", node, len(errors) - 20)
+                log.error(
+                    "Node %s IFoE L2: %d additional errors suppressed; see report artifacts", node, len(errors) - 20
+                )
     else:
         log.info(
             "IFoE L2 connectivity PASS on %d/%d nodes (%d/%d invocations succeeded)",
@@ -848,7 +860,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
         )
 
 
-def test_ifoe_transferbench_smoke(phdl, config_dict):
+def _run_ifoe_transferbench_smoke(phdl, config_dict):
     """Test IFoE scale-up via TransferBench candidate-branch smoketest (AIMVT-181).
 
     Builds on AIMVT-180 (L2 reachability via ``afmctl test ping``) by exercising
@@ -858,10 +870,10 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
 
     Two precondition gates run before the binary is invoked:
 
-      1. **vPod membership** – ``amd-smi fabric --topology --json`` is queried
-         on every reachable node and the union of reported ``vpod_id`` values
-         must be a single id (the smoketest preset itself exits with
-         ``ERR_FATAL`` when ranks span multiple virtual pods).
+      1. **vPod membership** – MI4XX consumes the mandatory AFM admission;
+         generic profiles query ``amd-smi fabric --json``. The
+         selected nodes must share a single vPOD (the smoketest preset itself
+         exits with ``ERR_FATAL`` when ranks span multiple virtual pods).
       2. **Reachable host count** – ``multi_rank`` mode requires at least
          two reachable nodes; otherwise we degrade to ``per_node`` mode and
          log a warning.
@@ -902,9 +914,7 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
         return
 
     if not phdl.reachable_hosts:
-        log.warning(
-            "IFoE TransferBench smoketest skipped: no reachable hosts remain after earlier preflight pruning"
-        )
+        log.warning("IFoE TransferBench smoketest skipped: no reachable hosts remain after earlier preflight pruning")
         preflight_results['transferbench_smoke'] = {
             'mode': mode_normalized,
             'skipped': True,
@@ -914,29 +924,19 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
         preflight_update_test_result()
         return
 
-    tb_binary = get_nested_config(
-        config_dict, 'connectivity_check.transferbench', 'tb_binary', 'TransferBench'
-    )
+    tb_binary = get_nested_config(config_dict, 'connectivity_check.transferbench', 'tb_binary', 'TransferBench')
+    amd_smi_binary = get_nested_config(config_dict, 'connectivity_check.transferbench', 'amd_smi_binary', 'amd-smi')
+    extra_env = get_nested_config(config_dict, 'connectivity_check.transferbench', 'extra_env', {})
     use_sudo = _config_flag_enabled(
         get_nested_config(config_dict, 'connectivity_check.transferbench', 'use_sudo', True),
         default=True,
     )
-    preset = get_nested_config(
-        config_dict, 'connectivity_check.transferbench', 'preset', 'smoketest'
-    )
-    size_list = get_nested_config(
-        config_dict, 'connectivity_check.transferbench', 'size_list', ['1K', '16M']
-    )
-    num_iterations = int(
-        get_nested_config(config_dict, 'connectivity_check.transferbench', 'num_iterations', 2)
-    )
-    num_warmups = int(
-        get_nested_config(config_dict, 'connectivity_check.transferbench', 'num_warmups', 0)
-    )
+    preset = get_nested_config(config_dict, 'connectivity_check.transferbench', 'preset', 'smoketest')
+    size_list = get_nested_config(config_dict, 'connectivity_check.transferbench', 'size_list', ['1K', '16M'])
+    num_iterations = int(get_nested_config(config_dict, 'connectivity_check.transferbench', 'num_iterations', 2))
+    num_warmups = int(get_nested_config(config_dict, 'connectivity_check.transferbench', 'num_warmups', 0))
     always_validate = _config_flag_enabled(
-        get_nested_config(
-            config_dict, 'connectivity_check.transferbench', 'always_validate', True
-        ),
+        get_nested_config(config_dict, 'connectivity_check.transferbench', 'always_validate', True),
         default=True,
     )
     run_parallel = _config_flag_enabled(
@@ -948,34 +948,18 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
         default=False,
     )
     force_single_pod = _config_flag_enabled(
-        get_nested_config(
-            config_dict, 'connectivity_check.transferbench', 'force_single_pod', True
-        ),
+        get_nested_config(config_dict, 'connectivity_check.transferbench', 'force_single_pod', True),
         default=True,
     )
-    rank_mode = get_nested_config(
-        config_dict, 'connectivity_check.transferbench', 'rank_mode', 'per_node'
-    )
+    rank_mode = get_nested_config(config_dict, 'connectivity_check.transferbench', 'rank_mode', 'per_node')
     socket_master_port = int(
-        get_nested_config(
-            config_dict, 'connectivity_check.transferbench', 'socket_master_port', 31337
-        )
+        get_nested_config(config_dict, 'connectivity_check.transferbench', 'socket_master_port', 31337)
     )
-    master_node = get_nested_config(
-        config_dict, 'connectivity_check.transferbench', 'master_node', None
-    )
-    max_skip_pct = float(
-        get_nested_config(
-            config_dict, 'connectivity_check.transferbench', 'max_skip_pct', 25.0
-        )
-    )
-    ssh_timeout = int(
-        get_nested_config(config_dict, 'connectivity_check.transferbench', 'ssh_timeout', 600)
-    )
+    master_node = get_nested_config(config_dict, 'connectivity_check.transferbench', 'master_node', None)
+    max_skip_pct = float(get_nested_config(config_dict, 'connectivity_check.transferbench', 'max_skip_pct', 25.0))
+    ssh_timeout = int(get_nested_config(config_dict, 'connectivity_check.transferbench', 'ssh_timeout', 600))
     skip_pod_check = _config_flag_enabled(
-        get_nested_config(
-            config_dict, 'connectivity_check.transferbench', 'skip_pod_check', False
-        ),
+        get_nested_config(config_dict, 'connectivity_check.transferbench', 'skip_pod_check', False),
         default=False,
     )
     afm_vpod_admission = None
@@ -988,9 +972,10 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
         skip_pod_check = False
 
     log.info(
-        "Running IFoE TransferBench smoketest (tb_binary=%s, preset=%s, rank_mode=%s, "
+        "Running IFoE TransferBench smoketest (tb_binary=%s, amd_smi_binary=%s, preset=%s, rank_mode=%s, "
         "size_list=%s, num_iterations=%s, max_skip_pct=%s) on %d host(s)",
         tb_binary,
+        amd_smi_binary,
         preset,
         rank_mode,
         size_list,
@@ -1002,6 +987,7 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
     checker = TransferBenchSmokeCheck(
         phdl,
         tb_binary=tb_binary,
+        amd_smi_binary=amd_smi_binary,
         use_sudo=use_sudo,
         preset=preset,
         size_list=size_list if isinstance(size_list, (list, tuple)) else [size_list],
@@ -1016,6 +1002,7 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
         master_node=master_node if master_node else None,
         max_skip_pct=max_skip_pct,
         ssh_timeout=ssh_timeout,
+        extra_env=extra_env,
         skip_pod_check=skip_pod_check,
         afm_vpod_admission=afm_vpod_admission,
         config_dict=config_dict,
@@ -1038,8 +1025,7 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
     totals = results.get('totals') or {}
     if results.get('status') == 'FAIL':
         log.warning(
-            "IFoE TransferBench smoketest FAIL: %d/%d node(s) failed, %d warning(s); "
-            "cluster errors: %s",
+            "IFoE TransferBench smoketest FAIL: %d/%d node(s) failed, %d warning(s); cluster errors: %s",
             totals.get('nodes_fail', 0),
             totals.get('nodes_total', 0),
             totals.get('nodes_warning', 0),

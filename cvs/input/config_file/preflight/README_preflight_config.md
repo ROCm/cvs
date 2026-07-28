@@ -318,31 +318,50 @@ AIMVT-180 L2 ping). With MI4XX node health enabled, it consumes the mandatory
 precondition. The binary's exit code is reconciled with per-cell
 `[PASS]/[FAIL]/[SKIP]` markers.
 
-> **PATH / LD_LIBRARY_PATH.** This check resolves `TransferBench` and `amd-smi`
-> from each node's `PATH`. Cluster-wide tool location (e.g. a non-default ROCm
-> install root) should be set via the cluster file's top-level `env_vars` block
-> (see [`cvs/input/cluster_file/README.md`](../../cluster_file/README.md)), not
-> duplicated here.
+> **sudo execution environment.** The cluster file's top-level `env_vars` block
+> still sets the outer SSH-shell environment, but `sudo` can replace `PATH`
+> with `secure_path` and strips `LD_LIBRARY_PATH`. In sudo mode, CVS resolves
+> bare executable names before elevation; production configurations should use
+> the explicit `tb_binary` / `amd_smi_binary` paths below. Use `extra_env` for
+> TransferBench runtime variables that must be present inside the privileged
+> shell.
 
 - **`connectivity_mode`** (default: `"skip"`)
   - `"run"` — execute the smoketest on every reachable node
   - `"skip"` — preflight records a SKIPPED result and does not invoke TransferBench
 - **`tb_binary`** (default: `"TransferBench"`)
-  - TransferBench binary name; PATH-resolved on each node. Override with an
-    absolute path here only when this single preflight check needs to point at
-    a different binary than the rest of the cluster's tooling. The
-    pod-membership precondition uses `amd-smi` resolved from `PATH` and has no
-    per-check override (use cluster file `env_vars` to point at a non-default
-    install).
+  - TransferBench executable path or name. A bare name is resolved in the
+    outer SSH shell before sudo changes `PATH`; an absolute path is recommended
+    in production, e.g. `/path/to/TransferBench`.
+- **`amd_smi_binary`** (default: `"amd-smi"`)
+  - Executable path or name for the pod-membership precondition. A bare name
+    is resolved before sudo applies `secure_path`; set an absolute path such as
+    `/opt/rocm/bin/amd-smi` to make the command independent of PATH.
 - **`use_sudo`** (default: `true`)
   - Prepend `sudo` to TransferBench and generic-mode amd-smi calls (typically
     required on production cluster images for IFoE access)
+- **`extra_env`** (default: `{}`)
+  - Optional mapping of environment values applied only to the TransferBench
+    process inside the privileged shell. Use it for runtime variables sudo
+    strips, for example:
+
+    ```json
+    "extra_env": {
+      "LD_LIBRARY_PATH": "/path/to/rocm/lib:$LD_LIBRARY_PATH"
+    }
+    ```
+
+  - Values are safely quoted and keys must be shell environment-variable names.
+    The only supported expansion is a variable's own `$KEY` reference, such as
+    `$LD_LIBRARY_PATH`; it is evaluated inside the privileged shell rather
+    than inherited from the outer SSH shell.
 - **`preset`** (default: `"smoketest"`)
   - TransferBench preset name. Change only when a TransferBench build ships
     a renamed preset with the same semantics.
 - **`size_list`** (default: `["1K", "16M"]`)
-  - Transfer sizes passed positionally to TransferBench. Kept short for
-    preflight; default covers both small/latency and large/bandwidth regimes.
+  - Transfer sizes supplied to the `smoketest` preset through its `SIZE_LIST`
+    environment variable. Kept short for preflight; default covers both
+    small/latency and large/bandwidth regimes.
 - **`num_iterations`** (default: `2`)
   - `NUM_ITERATIONS` env var. Two iterations is enough to surface intermittent
     failures without blowing up runtime.

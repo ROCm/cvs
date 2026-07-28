@@ -10,7 +10,7 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
@@ -80,6 +80,22 @@ FABRIC_TOPOLOGY_KEYED = {
 }
 
 FABRIC_TOPOLOGY_NO_POD = [{'gpu': 0, 'bdf': '0000:01:00.0'}]
+
+FABRIC_INFO_UUID_POD = [
+    {
+        'gpu': gpu,
+        'fabric': {
+            'bdf': f'{gpu + 1:04d}:01:00.0',
+            'fabric_info': {
+                'ppod_id': 'c94ee52c-135f-4b37-9e58-fe5365b8f7bc',
+                'ppod_size': 72,
+                'vpod_id': 1,
+                'vpod_size': 8,
+            },
+        },
+    }
+    for gpu in range(4)
+]
 
 FABRIC_TEXT_VPOD0 = """\
 GPU 0
@@ -194,6 +210,15 @@ TransferBench (candidate) starting smoketest preset
 **.**F***.******
 """
 
+SMOKETEST_PIPE_TABLE_OUTPUT = """\
+TransferBench smoketest preset
+Legend: *=Pass .=Skip F=Fail
+| Name      | GPU | DMA | GFX | Alt |
+|-----------|-----|-----|-----|-----|
+| Copy H2D  | ALL |  *  |  .  |  F  |
+| Copy D2H  | ALL |  *  |  *  |  *  |
+"""
+
 
 def _with_sentinel(output: str, exit_code: int) -> str:
     return output.rstrip('\n') + f'\n{EXIT_SENTINEL}={exit_code}\n'
@@ -234,6 +259,15 @@ class TestExtractNodePodMembership(unittest.TestCase):
         m = extract_node_pod_membership(FABRIC_TOPOLOGY_NO_POD)
         self.assertEqual(m['gpus'], 0)
         self.assertTrue(m['errors'])
+
+    def test_nested_fabric_info_with_uuid_ppod(self):
+        m = extract_node_pod_membership(FABRIC_INFO_UUID_POD)
+        self.assertEqual(m['gpus'], 4)
+        self.assertEqual(m['vpod_ids'], [1])
+        self.assertEqual(m['ppod_ids'], ['c94ee52c-135f-4b37-9e58-fe5365b8f7bc'])
+        self.assertEqual(m['vpod_size'], 8)
+        self.assertEqual(m['ppod_size'], 72)
+        self.assertEqual(m['errors'], [])
 
     def test_plaintext_fallback(self):
         m = extract_node_pod_membership(FABRIC_TEXT_VPOD0)
@@ -287,6 +321,25 @@ class TestReconcileClusterVpod(unittest.TestCase):
     def test_empty_input_fails(self):
         rec = reconcile_cluster_vpod({})
         self.assertEqual(rec['status'], 'FAIL')
+
+    def test_uuid_ppod_is_reported_when_vpods_agree(self):
+        per_node = {
+            'nodeA': extract_node_pod_membership(FABRIC_INFO_UUID_POD),
+            'nodeB': extract_node_pod_membership(FABRIC_INFO_UUID_POD),
+        }
+        rec = reconcile_cluster_vpod(per_node)
+        self.assertEqual(rec['status'], 'PASS')
+        self.assertEqual(rec['vpod_id'], 1)
+        self.assertEqual(rec['ppod_id'], 'c94ee52c-135f-4b37-9e58-fe5365b8f7bc')
+
+    def test_mixed_vpod_identifier_types_fail_without_sort_error(self):
+        per_node = {
+            'nodeA': {'vpod_ids': [1], 'ppod_ids': [], 'errors': []},
+            'nodeB': {'vpod_ids': ['fabric-b'], 'ppod_ids': [], 'errors': []},
+        }
+        rec = reconcile_cluster_vpod(per_node)
+        self.assertEqual(rec['status'], 'FAIL')
+        self.assertTrue(any('multiple vPods' in error for error in rec['errors']))
 
     def test_multi_local_vpod_fails(self):
         per_node = {
@@ -344,6 +397,14 @@ class TestSmoketestParser(unittest.TestCase):
         self.assertGreaterEqual(parsed['num_pass'], 10)
         self.assertGreaterEqual(parsed['num_skip'], 2)
 
+    def test_pipe_table_markers(self):
+        parsed = SmoketestParser.parse(_with_sentinel(SMOKETEST_PIPE_TABLE_OUTPUT, 0))
+        self.assertEqual(parsed['exit_code'], 0)
+        self.assertEqual(parsed['num_pass'], 4)
+        self.assertEqual(parsed['num_fail'], 1)
+        self.assertEqual(parsed['num_skip'], 1)
+        self.assertEqual(parsed['num_tests'], 6)
+
     def test_empty_output(self):
         parsed = SmoketestParser.parse('')
         self.assertIsNone(parsed['exit_code'])
@@ -374,9 +435,7 @@ class TestEvaluateSmoketest(unittest.TestCase):
         self.assertTrue(any('non-zero exit code' in e for e in errors))
 
     def test_fail_on_precondition_exit_2(self):
-        parsed = SmoketestParser.parse(
-            _with_sentinel(SMOKETEST_FATAL_PRECONDITION_OUTPUT, 2)
-        )
+        parsed = SmoketestParser.parse(_with_sentinel(SMOKETEST_FATAL_PRECONDITION_OUTPUT, 2))
         verdict, errors = evaluate_smoketest(parsed)
         self.assertEqual(verdict, 'FAIL')
         self.assertTrue(any('ERR_FATAL precondition' in e for e in errors))
@@ -440,6 +499,13 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         self.assertNotIn('TB_NUM_RANKS=', cmd)
         self.assertNotIn('TB_RANK=', cmd)
 
+    def test_build_command_uses_size_list_environment_variable(self):
+        """The smoketest preset reads sizes from SIZE_LIST, not argv."""
+        check = TransferBenchSmokeCheck(MagicMock(), size_list=['4K', '16M'])
+        cmd = check.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
+        self.assertIn('SIZE_LIST=4K,16M', cmd)
+        self.assertNotIn('smoketest 4K 16M', cmd)
+
     def test_build_command_multi_rank_includes_socket_env(self):
         check = TransferBenchSmokeCheck(MagicMock(), rank_mode='multi_rank')
         cmd = check.build_command(rank=2, num_ranks=4, master_addr='10.0.0.1')
@@ -453,44 +519,64 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         cmd = check.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
         self.assertTrue(cmd.startswith('sudo bash -c '))
         self.assertIn('TransferBench', cmd)
+        self.assertIn('transferbench-smoke "$(command -v TransferBench)"', cmd)
+        self.assertIn('"$1" smoketest', cmd)
 
-    def test_build_command_does_not_inject_path_or_ld_library_path(self):
-        """PATH / LD_LIBRARY_PATH come from cluster file env_vars (AIMVT-181 review).
-
-        The smoketest used to expose ``rocm_path``/``amd_smi_path`` knobs that
-        prepended PATH=<rocm>/bin and LD_LIBRARY_PATH=<rocm>/lib inline. Those
-        were removed in favour of the cluster file's top-level ``env_vars``
-        block, which the parallel SSH layer exports on every host before each
-        command. This regression guard ensures we never re-grow that
-        duplication: ``build_command`` must not emit either token.
-        """
+    def test_build_command_does_not_inject_runtime_paths_without_extra_env(self):
+        """Runtime paths are opt-in rather than derived from a ROCm root."""
         check = TransferBenchSmokeCheck(MagicMock(), use_sudo=True)
         cmd = check.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
         self.assertNotIn('PATH=', cmd)
         self.assertNotIn('LD_LIBRARY_PATH=', cmd)
         check_no_sudo = TransferBenchSmokeCheck(MagicMock(), use_sudo=False)
-        cmd_no_sudo = check_no_sudo.build_command(
-            rank=0, num_ranks=1, master_addr='127.0.0.1'
-        )
+        cmd_no_sudo = check_no_sudo.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
         self.assertNotIn('PATH=', cmd_no_sudo)
         self.assertNotIn('LD_LIBRARY_PATH=', cmd_no_sudo)
 
-    def test_amd_smi_fabric_command_uses_bare_binary(self):
-        """The pod-membership query resolves ``amd-smi`` from PATH (AIMVT-181 review).
+    def test_build_command_injects_explicit_runtime_env_inside_sudo_shell(self):
+        check = TransferBenchSmokeCheck(
+            MagicMock(),
+            use_sudo=True,
+            extra_env={'LD_LIBRARY_PATH': '/opt/rocm/lib:$LD_LIBRARY_PATH'},
+        )
+        cmd = check.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
+        self.assertIn('export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH', cmd)
+        self.assertTrue(cmd.startswith('sudo bash -c '))
 
-        Operators who install ROCm in a non-default location set the
-        cluster-wide ``PATH`` via the cluster file's ``env_vars`` block; the
-        smoketest does not expose a per-check ``amd_smi_path`` knob.
-        """
+    def test_build_command_sets_disabled_boolean_flags_to_zero(self):
+        check = TransferBenchSmokeCheck(
+            MagicMock(),
+            run_parallel=False,
+            use_bdma=False,
+            force_single_pod=False,
+        )
+        cmd = check.build_command(rank=0, num_ranks=1, master_addr='127.0.0.1')
+        self.assertIn('RUN_PARALLEL=0', cmd)
+        self.assertIn('USE_BDMA=0', cmd)
+        self.assertIn('FORCE_SINGLE_POD=0', cmd)
+
+    def test_amd_smi_fabric_command_resolves_before_sudo(self):
+        """A bare amd-smi name resolves before sudo replaces PATH."""
         check_no_sudo = TransferBenchSmokeCheck(MagicMock(), use_sudo=False)
         self.assertEqual(
             check_no_sudo._amd_smi_fabric_command(),
-            'amd-smi fabric --topology --json',
+            'amd-smi fabric --json',
         )
         check_sudo = TransferBenchSmokeCheck(MagicMock(), use_sudo=True)
         self.assertEqual(
             check_sudo._amd_smi_fabric_command(),
-            'sudo amd-smi fabric --topology --json',
+            'sudo "$(command -v amd-smi)" fabric --json',
+        )
+
+    def test_amd_smi_fabric_command_uses_explicit_path(self):
+        check = TransferBenchSmokeCheck(
+            MagicMock(),
+            use_sudo=True,
+            amd_smi_binary='/opt/rocm/bin/amd-smi',
+        )
+        self.assertEqual(
+            check._amd_smi_fabric_command(),
+            'sudo /opt/rocm/bin/amd-smi fabric --json',
         )
 
     def test_constructor_rejects_removed_path_kwargs(self):
@@ -503,6 +589,51 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             TransferBenchSmokeCheck(MagicMock(), rocm_path='/custom/rocm')  # type: ignore[call-arg]
         with self.assertRaises(TypeError):
             TransferBenchSmokeCheck(MagicMock(), amd_smi_path='/custom/bin/amd-smi')  # type: ignore[call-arg]
+
+    def test_constructor_accepts_amd_smi_binary_and_rejects_invalid_extra_env(self):
+        check = TransferBenchSmokeCheck(MagicMock(), amd_smi_binary='/opt/rocm/bin/amd-smi')
+        self.assertEqual(check.amd_smi_binary, '/opt/rocm/bin/amd-smi')
+        with self.assertRaises(ValueError):
+            TransferBenchSmokeCheck(MagicMock(), extra_env={'LD_LIBRARY_PATH;bad': '/opt/rocm/lib'})
+
+    def test_preflight_config_wires_amd_smi_binary_and_extra_env(self):
+        from cvs.tests.preflight import preflight_checks
+
+        phdl = MagicMock()
+        phdl.reachable_hosts = ['nodeA']
+        config = {
+            'connectivity_check': {
+                'transferbench': {
+                    'connectivity_mode': 'run',
+                    'tb_binary': '/opt/amd-apps/TransferBench/TransferBench',
+                    'amd_smi_binary': '/opt/rocm/bin/amd-smi',
+                    'extra_env': {'LD_LIBRARY_PATH': '/opt/rocm/lib:/usr/lib64/openmpi/lib'},
+                }
+            }
+        }
+        checker_results = {
+            'status': 'PASS',
+            'rank_mode': 'per_node',
+            'pod_membership': {},
+            'nodes': {},
+            'totals': {},
+            'errors': [],
+        }
+
+        with (
+            patch.object(preflight_checks, 'TransferBenchSmokeCheck') as checker_cls,
+            patch.object(preflight_checks, 'preflight_update_test_result'),
+        ):
+            checker_cls.return_value.run.return_value = checker_results
+            preflight_checks.test_ifoe_transferbench_smoke(phdl, config)
+
+        kwargs = checker_cls.call_args.kwargs
+        self.assertEqual(kwargs['tb_binary'], '/opt/amd-apps/TransferBench/TransferBench')
+        self.assertEqual(kwargs['amd_smi_binary'], '/opt/rocm/bin/amd-smi')
+        self.assertEqual(
+            kwargs['extra_env'],
+            {'LD_LIBRARY_PATH': '/opt/rocm/lib:/usr/lib64/openmpi/lib'},
+        )
 
     def test_run_pass_per_node(self):
         phdl = self._make_phdl(

@@ -11,8 +11,9 @@ The preflight checks system validates essential cluster health and configuration
 3. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
 4. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(AIMVT-180; opt-in)*
 5. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
-   preset to validate IFoE scale-up data-path (after a single-vPod precondition via
-   `amd-smi fabric --topology --json`) *(AIMVT-181; opt-in)*
+   preset to validate the IFoE scale-up data path (using MI4XX AFM admission or,
+   for generic profiles, an `amd-smi fabric --json` single-vPod precondition)
+   *(AIMVT-181; opt-in)*
 6. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Quick Start
@@ -145,11 +146,13 @@ TransferBench candidate-branch **`smoketest`** preset on every reachable
 node and reconciling the binary's exit code with per-cell
 `[PASS] / [FAIL] / [SKIP]` markers in its output.
 
-Before TransferBench runs the check enforces a single-vPod precondition by
-querying:
+With MI4XX node health enabled, TransferBench consumes its mandatory
+`afmctl show device --json` vPOD admission and does not run a second AMD SMI
+topology query. Generic profiles enforce the single-vPod precondition by
+querying `amd_smi_binary` (default: `amd-smi`):
 
 ```
-sudo amd-smi fabric --topology --json
+sudo <resolved-amd-smi-binary> fabric --json
 ```
 
 on every reachable node and verifying that every node reports exactly one
@@ -162,19 +165,21 @@ issue.
 Each TransferBench invocation issues:
 
 ```
-[sudo] NUM_ITERATIONS=<n> NUM_WARMUPS=<n> ALWAYS_VALIDATE=1 RUN_PARALLEL=1 \
+[sudo] [extra_env assignments] SIZE_LIST=<size1>,<size2> NUM_ITERATIONS=<n> NUM_WARMUPS=<n> ALWAYS_VALIDATE=1 RUN_PARALLEL=1 \
   [TB_NUM_RANKS=<n> TB_RANK=<r> TB_MASTER_ADDR=<rank0> TB_MASTER_PORT=<port>] \
-  <tb_binary> smoketest <size_list...>
+  <resolved-tb_binary> smoketest
 ```
 
 with a `__TB_SMOKE_EXIT__=$?` sentinel appended so we can recover the
 binary's exit code from stdout even when the parallel SSH transport
 discards process exit codes.
 
-`PATH` and `LD_LIBRARY_PATH` (e.g. for a non-default ROCm install) are
-inherited from the cluster file's top-level `env_vars` block — the
-parallel SSH layer exports them on every host before each command, so
-the smoketest does not duplicate that knob in its own config.
+The cluster file's `env_vars` block configures the outer SSH shell. Because
+`sudo` may replace `PATH` with `secure_path` and strips `LD_LIBRARY_PATH`, CVS
+resolves a bare `tb_binary` / `amd_smi_binary` before elevation; production
+configs should supply absolute paths for both. Use `extra_env` for runtime
+values required by TransferBench inside the root shell—for example,
+`LD_LIBRARY_PATH` when the ROCm library directory is not in the dynamic-linker cache.
 
 ### Orchestration modes
 
@@ -208,8 +213,12 @@ Per-node verdict is derived as:
 "connectivity_check": {
   "transferbench": {
     "connectivity_mode": "run",
-    "tb_binary": "TransferBench",
+    "tb_binary": "/path/to/TransferBench",
+    "amd_smi_binary": "/path/to/amd-smi",
     "use_sudo": true,
+    "extra_env": {
+      "LD_LIBRARY_PATH": "/path/to/rocm/lib:$LD_LIBRARY_PATH"
+    },
     "preset": "smoketest",
     "size_list": ["1K", "16M"],
     "num_iterations": 2,
@@ -288,13 +297,17 @@ cvs run pytorch_xdit_wan \
 ```
 1. Load and validate cluster + preflight configurations
 2. Test SSH connectivity to all nodes
-3. Run parallel preflight checks:
-   - GID consistency across all RDMA interfaces
-   - RDMA connectivity using rping (mode-dependent)
-   - ROCm version consistency via amd-smi
-   - Interface naming pattern compliance
-4. Generate comprehensive summary and HTML report
-5. Return overall PASS/FAIL status
+3. Run MI4XX node-health / AFM vPOD admission when enabled
+4. Validate ROCm version consistency
+5. Run IFoE checks before RDMA-specific eligibility pruning:
+   - L2 connectivity using `afmctl test ping` (opt-in)
+   - TransferBench scale-up data-path smoketest (opt-in)
+6. Run RDMA checks:
+   - Interface naming and presence
+   - GID consistency
+   - RDMA connectivity using `ibv_rc_pingpong` (mode-dependent)
+7. Generate the comprehensive summary and HTML report
+8. Return overall PASS/FAIL status
 ```
 
 ### Parallel Execution

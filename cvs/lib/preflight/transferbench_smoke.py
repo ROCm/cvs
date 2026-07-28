@@ -5,7 +5,7 @@ Ethernet) scale-up connectivity by:
 
 1. Receiving the mandatory AFM ``afmctl show device --json`` vPOD admission
    result on MI4XX, or (for generic legacy configurations) querying
-   ``amd-smi fabric --topology --json`` on every reachable cluster
+   ``amd-smi fabric --json`` on every reachable cluster
    node to discover each GPU's physical (``ppod_id``) and virtual / logical
    (``vpod_id``) pod membership. Because TransferBench's data-path smoketest
    exits early (precondition failure) when ranks span multiple virtual pods,
@@ -46,6 +46,7 @@ import re
 import shlex
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.preflight.base import PreflightCheck
 
 
@@ -54,6 +55,7 @@ from cvs.lib.preflight.base import PreflightCheck
 # ---------------------------------------------------------------------------
 
 DEFAULT_TB_BINARY = 'TransferBench'
+DEFAULT_AMD_SMI_BINARY = 'amd-smi'
 DEFAULT_PRESET = 'smoketest'
 DEFAULT_SIZE_LIST = ['1K', '16M']
 DEFAULT_NUM_ITERATIONS = 2
@@ -73,6 +75,8 @@ EXIT_SENTINEL = '__TB_SMOKE_EXIT__'
 MARKER_PASS = '*'
 MARKER_FAIL = 'F'
 MARKER_SKIP = '.'
+
+_ENV_VAR_NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +111,7 @@ def _coerce_int(value: Any) -> Optional[int]:
 def _walk_gpu_records(payload: Any) -> Iterable[Dict[str, Any]]:
     """Yield dict-shaped GPU records from arbitrary amd-smi JSON shapes.
 
-    amd-smi has historically emitted topology JSON in several flavours:
+    amd-smi has historically emitted fabric JSON in several flavours:
       - a top-level list of GPU records,
       - a dict with a ``gpu_data`` list (similar to the ECC/PCIe wrappers),
       - a dict keyed by GPU index whose values are GPU records,
@@ -131,9 +135,7 @@ def _walk_gpu_records(payload: Any) -> Iterable[Dict[str, Any]]:
                 if isinstance(entry, dict):
                     yield entry
             return
-    looks_like_gpu_record = any(
-        k in payload for k in ('gpu', 'gpu_id', 'bdf', 'vpod_id', 'ppod_id', 'fabric')
-    )
+    looks_like_gpu_record = any(k in payload for k in ('gpu', 'gpu_id', 'bdf', 'vpod_id', 'ppod_id', 'fabric'))
     if looks_like_gpu_record:
         yield payload
         return
@@ -144,32 +146,66 @@ def _walk_gpu_records(payload: Any) -> Iterable[Dict[str, Any]]:
             yield value
 
 
-def _extract_pod_ids_from_record(record: Dict[str, Any]) -> Dict[str, Optional[int]]:
+def _walk_nested_dicts(record: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
+    """Yield a record and every nested mapping it contains.
+
+    AMD SMI has moved fabric membership fields between ``fabric``,
+    ``fabric_info``, and other nested envelopes across releases. Walking the
+    record keeps the parser format-tolerant without binding it to a particular
+    ROCm version or platform.
+    """
+    pending: List[Dict[str, Any]] = [record]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+        yield current
+        for value in current.values():
+            if isinstance(value, dict):
+                pending.append(value)
+            elif isinstance(value, list):
+                pending.extend(entry for entry in value if isinstance(entry, dict))
+
+
+def _coerce_pod_id(value: Any) -> Optional[Any]:
+    """Normalize a pPod/vPod identifier while preserving opaque UUIDs."""
+    numeric = _coerce_int(value)
+    if numeric is not None:
+        return numeric
+    if isinstance(value, str):
+        identifier = value.strip()
+        if identifier and identifier.upper() not in {'N/A', 'NA', 'NONE', 'NULL'}:
+            return identifier
+    return None
+
+
+def _extract_pod_ids_from_record(record: Dict[str, Any]) -> Dict[str, Any]:
     """Return ``{ppod_id, vpod_id, ppod_size, vpod_size}`` for one GPU record.
 
-    Looks for the fields at the top level and inside a nested ``fabric`` /
-    ``pod`` / ``topology`` dict. Returns ``None`` for any field that is not
-    present or cannot be coerced to int.
+    Looks through nested AMD SMI envelopes. vPod/pPod sizes are numeric, while
+    pod identifiers can be numeric or opaque strings such as UUIDs.
     """
     keys = ('ppod_id', 'vpod_id', 'ppod_size', 'vpod_size')
-    candidates: List[Dict[str, Any]] = [record]
-    for nested_key in ('fabric', 'pod', 'topology', 'pod_info', 'membership'):
-        nested = record.get(nested_key)
-        if isinstance(nested, dict):
-            candidates.append(nested)
-    out: Dict[str, Optional[int]] = {k: None for k in keys}
-    for cand in candidates:
+    out: Dict[str, Any] = {k: None for k in keys}
+    for candidate in _walk_nested_dicts(record):
         for key in keys:
-            if out[key] is None and key in cand:
-                out[key] = _coerce_int(cand[key])
+            if out[key] is not None or key not in candidate:
+                continue
+            if key in ('ppod_id', 'vpod_id'):
+                out[key] = _coerce_pod_id(candidate[key])
+            else:
+                out[key] = _coerce_int(candidate[key])
     return out
 
 
 _PLAINTEXT_KV_RE = re.compile(r'^\s*([A-Z_][A-Z0-9_]*)\s*[:=]\s*(.+?)\s*$', re.IGNORECASE)
 
 
-def parse_amd_smi_fabric_text(text: str) -> List[Dict[str, Optional[int]]]:
-    """Parse the ``amd-smi fabric --topology`` plaintext output.
+def parse_amd_smi_fabric_text(text: str) -> List[Dict[str, Any]]:
+    """Parse plaintext output from ``amd-smi fabric``.
 
     Used as a fallback when the cluster's amd-smi build does not honour
     ``--json``. Splits the output into per-GPU blocks (separated by ``GPU``
@@ -200,7 +236,7 @@ def parse_amd_smi_fabric_text(text: str) -> List[Dict[str, Optional[int]]]:
     if current:
         blocks.append(current)
 
-    parsed_blocks: List[Dict[str, Optional[int]]] = []
+    parsed_blocks: List[Dict[str, Any]] = []
     for block in blocks:
         record: Dict[str, Any] = {}
         header = block[0]
@@ -224,8 +260,15 @@ def parse_amd_smi_fabric_text(text: str) -> List[Dict[str, Optional[int]]]:
     return parsed_blocks
 
 
+def _pod_id_sort_key(value: Any) -> Tuple[int, Any]:
+    """Sort numeric pod IDs before opaque identifiers without type errors."""
+    if isinstance(value, int):
+        return (0, value)
+    return (1, str(value))
+
+
 def extract_node_pod_membership(node_payload: Any) -> Dict[str, Any]:
-    """Reduce an ``amd-smi fabric --topology`` payload to per-node summary.
+    """Reduce an ``amd-smi fabric --json`` payload to per-node summary.
 
     Accepts either:
       - the parsed JSON object returned by ``rocm_plib.get_gpu_fabric_info_dict``
@@ -235,8 +278,8 @@ def extract_node_pod_membership(node_payload: Any) -> Dict[str, Any]:
     Returns:
         dict with:
           - ``gpus`` (int): number of GPU records parsed from the payload.
-          - ``vpod_ids`` (sorted list[int]): unique vPod IDs observed.
-          - ``ppod_ids`` (sorted list[int]): unique pPod IDs observed.
+          - ``vpod_ids`` (sorted list[int | str]): unique vPod IDs observed.
+          - ``ppod_ids`` (sorted list[int | str]): unique pPod IDs observed.
           - ``vpod_size`` (int | None): node-wide majority vpod_size (or None).
           - ``ppod_size`` (int | None): node-wide majority ppod_size (or None).
           - ``errors`` (list[str]): parsing/observation issues.
@@ -260,7 +303,7 @@ def extract_node_pod_membership(node_payload: Any) -> Dict[str, Any]:
         for entry in _walk_gpu_records(node_payload):
             records.append(entry)
 
-    pod_id_dicts: List[Dict[str, Optional[int]]] = []
+    pod_id_dicts: List[Dict[str, Any]] = []
     for record in records:
         ids = _extract_pod_ids_from_record(record)
         if any(v is not None for v in ids.values()):
@@ -268,18 +311,22 @@ def extract_node_pod_membership(node_payload: Any) -> Dict[str, Any]:
 
     out['gpus'] = len(pod_id_dicts)
     if not pod_id_dicts:
-        out['errors'].append(
-            'amd-smi fabric payload contained no GPU records with vpod_id/ppod_id fields'
-        )
+        out['errors'].append('amd-smi fabric payload contained no GPU records with vpod_id/ppod_id fields')
         return out
 
-    vpods = sorted({d['vpod_id'] for d in pod_id_dicts if d['vpod_id'] is not None})
-    ppods = sorted({d['ppod_id'] for d in pod_id_dicts if d['ppod_id'] is not None})
+    vpods = sorted(
+        {d['vpod_id'] for d in pod_id_dicts if d['vpod_id'] is not None},
+        key=_pod_id_sort_key,
+    )
+    ppods = sorted(
+        {d['ppod_id'] for d in pod_id_dicts if d['ppod_id'] is not None},
+        key=_pod_id_sort_key,
+    )
     out['vpod_ids'] = vpods
     out['ppod_ids'] = ppods
 
     if not vpods:
-        out['errors'].append('No vpod_id values reported by amd-smi fabric topology')
+        out['errors'].append('No vpod_id values reported by amd-smi fabric data')
     elif len(vpods) > 1:
         out['errors'].append(
             f'Multiple vPod IDs reported by a single node: {vpods} '
@@ -323,7 +370,7 @@ def reconcile_cluster_vpod(
     }
     if not per_node_membership:
         result['status'] = 'FAIL'
-        result['errors'].append('No nodes reported amd-smi fabric topology')
+        result['errors'].append('No nodes reported amd-smi fabric data')
         return result
 
     nodes_without_vpod = [n for n, m in per_node_membership.items() if not m.get('vpod_ids')]
@@ -334,9 +381,7 @@ def reconcile_cluster_vpod(
             + ', '.join(sorted(nodes_without_vpod)[:10])
         )
 
-    multi_vpod_nodes = [
-        n for n, m in per_node_membership.items() if len(m.get('vpod_ids') or []) > 1
-    ]
+    multi_vpod_nodes = [n for n, m in per_node_membership.items() if len(m.get('vpod_ids') or []) > 1]
     if multi_vpod_nodes:
         result['status'] = 'FAIL'
         result['errors'].append(
@@ -344,15 +389,11 @@ def reconcile_cluster_vpod(
             + ', '.join(sorted(multi_vpod_nodes)[:10])
         )
 
-    singleton_pairs = {
-        n: m['vpod_ids'][0]
-        for n, m in per_node_membership.items()
-        if len(m.get('vpod_ids') or []) == 1
-    }
-    distinct_vpods = sorted(set(singleton_pairs.values()))
+    singleton_pairs = {n: m['vpod_ids'][0] for n, m in per_node_membership.items() if len(m.get('vpod_ids') or []) == 1}
+    distinct_vpods = sorted(set(singleton_pairs.values()), key=_pod_id_sort_key)
     if len(distinct_vpods) > 1:
         result['status'] = 'FAIL'
-        groups: Dict[int, List[str]] = {}
+        groups: Dict[Any, List[str]] = {}
         for n, vp in singleton_pairs.items():
             groups.setdefault(vp, []).append(n)
         group_strs = [
@@ -381,19 +422,13 @@ def reconcile_cluster_vpod(
 
 _BRACKET_VERDICT_RE = re.compile(r'\[\s*(PASS|FAIL|SKIP(?:PED)?|ERROR)\s*\]', re.IGNORECASE)
 _TEST_LINE_NUMBER_RE = re.compile(r'^\s*(?:Test\s+)?#?\s*(\d+)\b', re.IGNORECASE)
-_SUMMARY_LINE_RE = re.compile(
-    r'(?P<passed>\d+)\s*/\s*(?P<total>\d+)\s*(?:tests?\s*)?PASS', re.IGNORECASE
-)
-_SECONDARY_COUNT_RE = re.compile(
-    r'(?P<n>\d+)\s+(?P<label>FAIL|SKIP(?:PED)?|ERROR)', re.IGNORECASE
-)
+_SUMMARY_LINE_RE = re.compile(r'(?P<passed>\d+)\s*/\s*(?P<total>\d+)\s*(?:tests?\s*)?PASS', re.IGNORECASE)
+_SECONDARY_COUNT_RE = re.compile(r'(?P<n>\d+)\s+(?P<label>FAIL|SKIP(?:PED)?|ERROR)', re.IGNORECASE)
 _WARNING_LINE_RE = re.compile(r'^\s*(?:WARN(?:ING)?|NOTE|INFO)\s*[:\-]\s*(.+)$', re.IGNORECASE)
 _FAIL_KEYWORD_RE = re.compile(r'\b(FAILED|FATAL|ERR_FATAL|FAILURE|ABORTED?)\b', re.IGNORECASE)
 _SKIP_KEYWORD_RE = re.compile(r'\b(SKIP(?:PED)?|SKIPPING)\b', re.IGNORECASE)
 _MARKER_BLOCK_RE = re.compile(r'^[ \t]*[' + re.escape(MARKER_PASS + MARKER_FAIL + MARKER_SKIP) + r']{4,}\s*$')
-_EXIT_SENTINEL_RE = re.compile(
-    re.escape(EXIT_SENTINEL) + r'\s*=\s*(?P<code>-?\d+)\s*$', re.MULTILINE
-)
+_EXIT_SENTINEL_RE = re.compile(re.escape(EXIT_SENTINEL) + r'\s*=\s*(?P<code>-?\d+)\s*$', re.MULTILINE)
 
 
 class SmoketestParser:
@@ -465,6 +500,7 @@ class SmoketestParser:
         result['raw'] = text
 
         cls._collect_per_test_rows(text, result)
+        cls._collect_marker_table(text, result)
         cls._collect_marker_blocks(text, result)
         cls._collect_summary(text, result)
         cls._collect_warnings_and_errors(text, result)
@@ -504,10 +540,10 @@ class SmoketestParser:
     def _collect_marker_blocks(text: str, result: Dict[str, Any]) -> None:
         """Capture compact marker blocks like ``****F.*.``.
 
-        Only consulted when no bracketed verdict rows were found; otherwise
-        the per-test rows already provide the counts we need.
+        Only consulted when no bracketed verdict rows or pipe-table marker
+        cells were found; otherwise those formats already provide the counts.
         """
-        if result['per_test']:
+        if result['per_test'] or any(result[key] for key in ('num_pass', 'num_fail', 'num_skip')):
             return
         for line in text.splitlines():
             if not _MARKER_BLOCK_RE.match(line):
@@ -518,6 +554,29 @@ class SmoketestParser:
                 elif ch == MARKER_FAIL:
                     result['num_fail'] += 1
                 elif ch == MARKER_SKIP:
+                    result['num_skip'] += 1
+
+    @staticmethod
+    def _collect_marker_table(text: str, result: Dict[str, Any]) -> None:
+        """Capture marker cells from TransferBench's pipe-delimited table.
+
+        Recent TransferBench builds render executor results as table cells such
+        as ``|  *  |`` instead of a single compact marker line. Count only
+        cells whose complete trimmed value is a known marker so table headers,
+        borders, and names cannot affect the result.
+        """
+        if result['per_test']:
+            return
+        for line in text.splitlines():
+            if not line.lstrip().startswith('|'):
+                continue
+            for cell in line.split('|')[1:-1]:
+                marker = cell.strip()
+                if marker == MARKER_PASS:
+                    result['num_pass'] += 1
+                elif marker == MARKER_FAIL:
+                    result['num_fail'] += 1
+                elif marker == MARKER_SKIP:
                     result['num_skip'] += 1
 
     @staticmethod
@@ -657,7 +716,7 @@ class TransferBenchSmokeCheck(PreflightCheck):
 
       1. **Precondition** – On MI4XX, consume the mandatory AFM
          ``afmctl show device --json`` admission result. Generic profiles
-         retain ``amd-smi fabric --topology --json`` as a compatibility
+         retain ``amd-smi fabric --json`` as a compatibility
          precondition. In either mode, the selected nodes must share one
          logical vPOD before dispatch (TransferBench multi-rank smoketest
          exits with ``ERR_FATAL`` when ranks span multiple virtual pods).
@@ -685,6 +744,7 @@ class TransferBenchSmokeCheck(PreflightCheck):
         phdl,
         *,
         tb_binary: str = DEFAULT_TB_BINARY,
+        amd_smi_binary: str = DEFAULT_AMD_SMI_BINARY,
         use_sudo: bool = False,
         preset: str = DEFAULT_PRESET,
         size_list: Optional[Sequence[str]] = None,
@@ -706,7 +766,8 @@ class TransferBenchSmokeCheck(PreflightCheck):
         config_dict: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(phdl, config_dict)
-        self.tb_binary = tb_binary
+        self.tb_binary = self._validate_binary_name('tb_binary', tb_binary)
+        self.amd_smi_binary = self._validate_binary_name('amd_smi_binary', amd_smi_binary)
         self.use_sudo = bool(use_sudo)
         self.preset = preset
         self.size_list = list(size_list) if size_list else list(DEFAULT_SIZE_LIST)
@@ -720,43 +781,86 @@ class TransferBenchSmokeCheck(PreflightCheck):
         self.master_node = master_node
         self.max_skip_pct = float(max_skip_pct)
         self.ssh_timeout = int(ssh_timeout)
-        self.extra_env = dict(extra_env or {})
+        self.extra_env = self._validate_extra_env(extra_env)
         self.extra_args = list(extra_args or [])
         self.skip_pod_check = bool(skip_pod_check)
         self.afm_vpod_admission = dict(afm_vpod_admission) if afm_vpod_admission is not None else None
 
         rank_mode_norm = (rank_mode or 'per_node').strip().lower()
         if rank_mode_norm not in ('per_node', 'multi_rank'):
-            raise ValueError(
-                f"rank_mode must be 'per_node' or 'multi_rank' (got '{rank_mode}')"
-            )
+            raise ValueError(f"rank_mode must be 'per_node' or 'multi_rank' (got '{rank_mode}')")
         self.rank_mode = rank_mode_norm
 
     # ------------------------------------------------------------------
     # Command construction
     # ------------------------------------------------------------------
 
-    def _env_assignments(self, rank: int, num_ranks: int, master_addr: str) -> List[str]:
+    @staticmethod
+    def _validate_binary_name(config_key: str, value: Any) -> str:
+        """Validate a configured executable name or path."""
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f'{config_key} must be a non-empty string')
+        return value.strip()
+
+    @staticmethod
+    def _validate_extra_env(extra_env: Optional[Dict[str, str]]) -> Dict[str, str]:
+        """Validate runtime environment supplied for the TransferBench process.
+
+        ``build_env_prefix`` quotes values during command construction.
+        Restricting keys to shell environment variable names prevents a config
+        key from changing command syntax before quoting is applied.
+        """
+        if extra_env is None:
+            return {}
+        if not isinstance(extra_env, dict):
+            raise ValueError('extra_env must be a mapping of environment variable names to values')
+
+        normalized: Dict[str, str] = {}
+        for key, value in extra_env.items():
+            if not isinstance(key, str) or not _ENV_VAR_NAME_RE.fullmatch(key):
+                raise ValueError(f'Invalid environment variable name in extra_env: {key!r}')
+            if value is None:
+                raise ValueError(f'extra_env[{key!r}] must not be null')
+            normalized[key] = str(value)
+        return normalized
+
+    @staticmethod
+    def _sudo_executable_argument(executable: str) -> str:
+        """Render an executable argument that remains valid after ``sudo``.
+
+        ``sudo`` may replace PATH with ``secure_path``.  A configured path is
+        already independent of PATH; a bare executable name is resolved by
+        the outer SSH shell instead, while the cluster-file environment is
+        still in effect.  The resulting absolute path is passed as an argv
+        value to the privileged process rather than inherited through sudo.
+        """
+        if '/' in executable:
+            return shlex.quote(executable)
+        return f'"$(command -v {shlex.quote(executable)})"'
+
+    def _env_assignments(
+        self,
+        rank: int,
+        num_ranks: int,
+        master_addr: str,
+        size_list: Sequence[str],
+    ) -> List[str]:
         """Build ``KEY=VALUE`` assignments for one rank's TransferBench invocation."""
         env: Dict[str, str] = {}
         env['NUM_ITERATIONS'] = str(self.num_iterations)
         env['NUM_WARMUPS'] = str(self.num_warmups)
+        env['SIZE_LIST'] = ','.join(str(size) for size in size_list)
         env['ALWAYS_VALIDATE'] = '1' if self.always_validate else '0'
         env['USE_REMOTE_READ'] = '1'
         env['BLOCK_BYTES'] = '256'
-        if self.run_parallel:
-            env['RUN_PARALLEL'] = '1'
-        if self.use_bdma:
-            env['USE_BDMA'] = '1'
-        if self.force_single_pod:
-            env['FORCE_SINGLE_POD'] = '1'
+        env['RUN_PARALLEL'] = '1' if self.run_parallel else '0'
+        env['USE_BDMA'] = '1' if self.use_bdma else '0'
+        env['FORCE_SINGLE_POD'] = '1' if self.force_single_pod else '0'
         if num_ranks > 1:
             env['TB_NUM_RANKS'] = str(num_ranks)
             env['TB_RANK'] = str(rank)
             env['TB_MASTER_ADDR'] = master_addr
             env['TB_MASTER_PORT'] = str(self.socket_master_port)
-        for k, v in self.extra_env.items():
-            env[k] = str(v)
         return [f'{k}={shlex.quote(v)}' for k, v in env.items()]
 
     def build_command(
@@ -776,27 +880,38 @@ class TransferBenchSmokeCheck(PreflightCheck):
         the binary's exit code from stdout when the parallel SSH layer
         discards process exit codes.
 
-        ``PATH`` / ``LD_LIBRARY_PATH`` (e.g. for a custom ROCm install) are
-        intentionally **not** injected here -- they are inherited from the
-        cluster file's ``env_vars`` block, which the parallel SSH layer
-        exports on every host before each command. This keeps a single
-        cluster-wide source of truth for tool location.
+        ``extra_env`` is deliberately exported inside that inner shell. It is
+        the opt-in escape hatch for runtime values such as
+        ``LD_LIBRARY_PATH`` that sudo strips from the cluster-file
+        ``env_vars`` environment. Its values use the same safe, limited
+        self-referential expansion supported by ``build_env_prefix``. No
+        runtime path is injected by default.
         """
-        env_parts = self._env_assignments(rank, num_ranks, master_addr)
-        binary = shlex.quote(self.tb_binary)
-        preset = shlex.quote(self.preset)
         sizes = list(size_list) if size_list is not None else self.size_list
-        size_args = ' '.join(shlex.quote(str(s)) for s in sizes)
+        env_parts = self._env_assignments(rank, num_ranks, master_addr, sizes)
+        runtime_env_prefix = build_env_prefix(self.extra_env)
+        preset = shlex.quote(self.preset)
         extras = ' '.join(shlex.quote(s) for s in self.extra_args)
         env_inline = ' '.join(env_parts).strip()
-        binary_invocation = f'{binary} {preset} {size_args} {extras}'.strip()
+
+        # A command name must be resolved before sudo applies secure_path.
+        # ``bash -c`` receives the resolved executable in $1, while the
+        # fixed $0 value makes positional handling independent of the path.
+        if self.use_sudo:
+            binary = '"$1"'
+        else:
+            binary = shlex.quote(self.tb_binary)
+        binary_invocation = f'{binary} {preset} {extras}'.strip()
         if env_inline:
             inner = f'{env_inline} {binary_invocation}'
         else:
             inner = binary_invocation
+        if runtime_env_prefix:
+            inner = f'{runtime_env_prefix}; {inner}'
         inner_with_sentinel = f'{inner}; echo "{EXIT_SENTINEL}=$?"'
         if self.use_sudo:
-            return f'sudo bash -c {shlex.quote(inner_with_sentinel)}'
+            binary_arg = self._sudo_executable_argument(self.tb_binary)
+            return f'sudo bash -c {shlex.quote(inner_with_sentinel)} transferbench-smoke {binary_arg}'
         return f'bash -c {shlex.quote(inner_with_sentinel)}'
 
     # ------------------------------------------------------------------
@@ -804,20 +919,23 @@ class TransferBenchSmokeCheck(PreflightCheck):
     # ------------------------------------------------------------------
 
     def _amd_smi_fabric_command(self) -> str:
-        """Build the ``amd-smi fabric --topology --json`` invocation.
+        """Build the format-tolerant ``amd-smi fabric --json`` invocation.
 
-        The ``amd-smi`` binary is resolved from ``PATH`` on each node;
-        operators who install ROCm in a non-default location should
-        export the appropriate ``PATH`` (and, when needed,
-        ``LD_LIBRARY_PATH``) via the cluster file's ``env_vars`` block.
+        When sudo is enabled, a bare ``amd_smi_binary`` name is resolved by
+        the outer SSH shell before sudo applies ``secure_path``. Operators
+        can instead set an absolute ``amd_smi_binary`` path in the preflight
+        configuration for fully explicit tool selection.
         """
-        cmd = 'amd-smi fabric --topology --json'
+        binary = shlex.quote(self.amd_smi_binary)
+        if self.use_sudo:
+            binary = self._sudo_executable_argument(self.amd_smi_binary)
+        cmd = f'{binary} fabric --json'
         if self.use_sudo:
             cmd = 'sudo ' + cmd
         return cmd
 
     def _query_pod_membership(self) -> Dict[str, Dict[str, Any]]:
-        """Run ``amd-smi fabric --topology --json`` on each reachable node.
+        """Run ``amd-smi fabric --json`` on each reachable node.
 
         Tolerates plaintext (non-JSON) outputs by passing the raw string to
         ``extract_node_pod_membership``, which then routes it through the
@@ -919,17 +1037,10 @@ class TransferBenchSmokeCheck(PreflightCheck):
         # rank's command.
         rank_by_host = {node: rank for rank, node in enumerate(ordered)}
         cmd_by_reachable = [
-            self.build_command(
-                rank=rank_by_host[h], num_ranks=num_ranks, master_addr=master
-            )
-            for h in hosts
+            self.build_command(rank=rank_by_host[h], num_ranks=num_ranks, master_addr=master) for h in hosts
         ]
-        self.log_info(
-            f'Dispatching multi-rank smoketest (num_ranks={num_ranks}, master={master})'
-        )
-        out_dict = self.phdl.exec_cmd_list(
-            cmd_by_reachable, timeout=self.ssh_timeout, print_console=False
-        )
+        self.log_info(f'Dispatching multi-rank smoketest (num_ranks={num_ranks}, master={master})')
+        out_dict = self.phdl.exec_cmd_list(cmd_by_reachable, timeout=self.ssh_timeout, print_console=False)
         for h, output in out_dict.items():
             if h not in per_node:
                 per_node[h] = {'command': '', 'output': output}
@@ -979,9 +1090,7 @@ class TransferBenchSmokeCheck(PreflightCheck):
         hosts = list(self.phdl.reachable_hosts)
         if not hosts:
             self.results['status'] = 'FAIL'
-            self.results['errors'].append(
-                'No reachable hosts available for TransferBench smoketest'
-            )
+            self.results['errors'].append('No reachable hosts available for TransferBench smoketest')
             return self.results
         self.results['totals']['nodes_total'] = len(hosts)
 
@@ -1032,10 +1141,7 @@ class TransferBenchSmokeCheck(PreflightCheck):
 
         effective_rank_mode = self.rank_mode
         if self.rank_mode == 'multi_rank' and len(hosts) < 2:
-            self.log_warning(
-                f'multi_rank requested but only {len(hosts)} reachable node(s); '
-                f'falling back to per_node'
-            )
+            self.log_warning(f'multi_rank requested but only {len(hosts)} reachable node(s); falling back to per_node')
             effective_rank_mode = 'per_node'
         self.results['rank_mode'] = effective_rank_mode
 
@@ -1097,4 +1203,5 @@ __all__ = [
     'DEFAULT_SIZE_LIST',
     'DEFAULT_PRESET',
     'DEFAULT_TB_BINARY',
+    'DEFAULT_AMD_SMI_BINARY',
 ]
