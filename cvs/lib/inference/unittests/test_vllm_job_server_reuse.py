@@ -50,7 +50,7 @@ class FakeOrchWithOutput:
         self._tail_output = tail_output
         self._grep_exit = grep_exit  # 1 = no match (safe), 0 = match found
 
-    def exec(self, cmd, hosts=None, detailed=False):
+    def exec(self, cmd, hosts=None, detailed=False, print_console=True):
         if detailed:
             return {"10.0.0.1": {"exit_code": self._grep_exit, "stdout": ""}}
         return {"10.0.0.1": self._tail_output}
@@ -68,7 +68,7 @@ class FakeOrchMultiHost:
     def __init__(self):
         self.exec_calls = []  # list of (cmd, hosts) actually issued
 
-    def exec(self, cmd, hosts=None, detailed=False):
+    def exec(self, cmd, hosts=None, detailed=False, print_console=True):
         self.exec_calls.append((cmd, hosts))
         host = hosts[0]
         return {host: f"content for {host}"}
