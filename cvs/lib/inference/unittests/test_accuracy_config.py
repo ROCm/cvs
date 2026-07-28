@@ -24,7 +24,7 @@ from cvs.lib.inference.utils.accuracy_config import AccuracyConfig, AccuracyTask
 
 def _task(**over):
     """A valid AccuracyTask with fields overridable per case."""
-    base = {"id": "a", "task": "mmlu"}
+    base = {"id": "a", "task": "gsm8k"}
     base.update(over)
     return AccuracyTask(**base)
 
@@ -54,9 +54,9 @@ class TestAccuracyTaskDefaults(unittest.TestCase):
     """AC12, AC23, AC24: defaults, empty-string id, include_path (no I/O)."""
 
     def test_defaults_on_minimal_task(self):
-        t = AccuracyTask(id="a", task="mmlu")
+        t = AccuracyTask(id="a", task="gsm8k")
         self.assertEqual(t.id, "a")
-        self.assertEqual(t.task, "mmlu")
+        self.assertEqual(t.task, "gsm8k")
         self.assertEqual(t.num_fewshot, 0)
         self.assertEqual(t.metadata, {})
         self.assertEqual(t.include_path, "")
@@ -66,18 +66,18 @@ class TestAccuracyTaskDefaults(unittest.TestCase):
 
     def test_empty_string_id_is_valid(self):
         # AC23: "" is a valid id, not treated as missing.
-        t = AccuracyTask(id="", task="mmlu")
+        t = AccuracyTask(id="", task="gsm8k")
         self.assertEqual(t.id, "")
 
     def test_include_path_no_filesystem_check(self):
         # AC24: nonexistent path accepted as plain string, no I/O.
-        t = AccuracyTask(id="a", task="mmlu", include_path="/some/nonexistent/path")
+        t = AccuracyTask(id="a", task="gsm8k", include_path="/some/nonexistent/path")
         self.assertEqual(t.include_path, "/some/nonexistent/path")
 
     def test_default_dicts_are_isolated_per_instance(self):
         # Mutable-default isolation for metadata/gen_kwargs on AccuracyTask.
-        t1 = AccuracyTask(id="a", task="mmlu")
-        t2 = AccuracyTask(id="b", task="mmlu")
+        t1 = AccuracyTask(id="a", task="gsm8k")
+        t2 = AccuracyTask(id="b", task="gsm8k")
         self.assertIsNot(t1.metadata, t2.metadata)
         self.assertIsNot(t1.gen_kwargs, t2.gen_kwargs)
 
@@ -88,7 +88,7 @@ class TestAccuracyTaskRequiredFields(unittest.TestCase):
     def test_missing_required_field_raises(self):
         for missing in ("id", "task"):
             with self.subTest(missing=missing):
-                kwargs = {"id": "a", "task": "mmlu"}
+                kwargs = {"id": "a", "task": "gsm8k"}
                 del kwargs[missing]
                 with self.assertRaises(ValidationError):
                     AccuracyTask(**kwargs)
@@ -209,10 +209,10 @@ class TestAccuracyTaskStringTyping(unittest.TestCase):
 
     def test_non_str_id_or_task_raises(self):
         cases = [
-            {"id": 123, "task": "mmlu"},
+            {"id": 123, "task": "gsm8k"},
             {"id": "a", "task": 123},
-            {"id": 1.5, "task": "mmlu"},
-            {"id": True, "task": "mmlu"},   # bool is a non-str scalar; not coerced to str
+            {"id": 1.5, "task": "gsm8k"},
+            {"id": True, "task": "gsm8k"},   # bool is a non-str scalar; not coerced to str
             {"id": "a", "task": False},     # bool is a non-str scalar; not coerced to str
         ]
         for kwargs in cases:
@@ -226,7 +226,7 @@ class TestAccuracyTaskExtraForbid(unittest.TestCase):
 
     def test_unknown_field_raises(self):
         with self.assertRaises(ValidationError):
-            AccuracyTask(id="a", task="mmlu", extra_field=1)
+            AccuracyTask(id="a", task="gsm8k", extra_field=1)
 
 
 class TestAccuracyConfigConstruction(unittest.TestCase):
@@ -239,7 +239,7 @@ class TestAccuracyConfigConstruction(unittest.TestCase):
 
     def test_single_task_constructs(self):
         # AC2 + edge case: exactly one task is trivially unique.
-        cfg = AccuracyConfig(tasks=[AccuracyTask(id="a", task="mmlu")])
+        cfg = AccuracyConfig(tasks=[AccuracyTask(id="a", task="gsm8k")])
         self.assertEqual(len(cfg.tasks), 1)
         self.assertEqual(cfg.tasks[0].id, "a")
 
@@ -247,23 +247,23 @@ class TestAccuracyConfigConstruction(unittest.TestCase):
         # AC3.
         cfg = AccuracyConfig(
             tasks=[
-                AccuracyTask(id="a", task="mmlu"),
-                AccuracyTask(id="b", task="mmlu"),
-                AccuracyTask(id="c", task="mmlu"),
+                AccuracyTask(id="a", task="gsm8k"),
+                AccuracyTask(id="b", task="gsm8k"),
+                AccuracyTask(id="c", task="gsm8k"),
             ]
         )
         self.assertEqual([t.id for t in cfg.tasks], ["a", "b", "c"])
 
     def test_list_of_dicts_becomes_tasks(self):
         # AC25.
-        cfg = AccuracyConfig(tasks=[{"id": "a", "task": "mmlu"}])
+        cfg = AccuracyConfig(tasks=[{"id": "a", "task": "gsm8k"}])
         self.assertIsInstance(cfg.tasks[0], AccuracyTask)
         self.assertEqual(cfg.tasks[0].id, "a")
 
     def test_mixed_dicts_and_instances(self):
         # AC26: every element ends up an AccuracyTask.
         cfg = AccuracyConfig(
-            tasks=[AccuracyTask(id="a", task="mmlu"), {"id": "b", "task": "gsm8k"}]
+            tasks=[AccuracyTask(id="a", task="gsm8k"), {"id": "b", "task": "gsm8k"}]
         )
         self.assertTrue(all(isinstance(t, AccuracyTask) for t in cfg.tasks))
         self.assertEqual([t.id for t in cfg.tasks], ["a", "b"])
@@ -463,7 +463,7 @@ class TestValidationPrecedence(unittest.TestCase):
 
     def test_field_error_preempts_duplicate_validator(self):
         with self.assertRaises(ValidationError) as ctx:
-            AccuracyConfig(tasks=[{"id": "a", "task": "mmlu"}, {"id": "a"}])
+            AccuracyConfig(tasks=[{"id": "a", "task": "gsm8k"}, {"id": "a"}])
         msg = str(ctx.exception)
         # The missing required 'task' field on element index 1 is what surfaces.
         # Assert the fully-qualified error location "tasks.1.task" rather than a
