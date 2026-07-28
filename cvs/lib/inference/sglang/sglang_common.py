@@ -14,7 +14,7 @@ log = globals.log
 DEFAULT_GPU_MEM_THRESHOLD_MB = 5000
 AMD_SMI_METRIC_CMD = "sudo amd-smi metric --json"
 
-SERVER_READY_RE = re.compile(
+_SERVER_READY_RE = re.compile(
     r"fired up and ready to roll|Uvicorn running|Application startup complete|200 OK",
     re.I,
 )

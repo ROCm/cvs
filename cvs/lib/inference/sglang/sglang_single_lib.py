@@ -31,7 +31,7 @@ from cvs.lib.inference.sglang.sglang_common import (
     first_float,
     normalize_sglang_threshold_spec,
     resolve_client_host,
-    SERVER_READY_RE,
+    _SERVER_READY_RE,
 )
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import fail_test

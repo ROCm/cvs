@@ -34,7 +34,7 @@ from cvs.lib.inference.sglang.sglang_common import (
     resolve_server_node_list,
     collect_sglang_gpu_topology,
     format_sglang_gpu_topology_lines,
-    SERVER_READY_RE,
+    _SERVER_READY_RE,
 )
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import fail_test

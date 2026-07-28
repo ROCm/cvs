@@ -30,7 +30,8 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.inference.sglang.sglang_common import as_node_list, resolve_server_node_list
+from cvs.lib.inference.sglang.sglang_common import as_node_list, cleanup_sglang_log_dir, resolve_server_node_list
+
 from cvs.lib.inference.sglang.sglang_config_loader import (
     SglangSingleVariantConfig,
     flat_expected_from_specs,
@@ -407,8 +408,7 @@ def orch(request, cluster_dict, variant_config, lifecycle):
     if not lifecycle.torn_down:
         log.info("orch leak-guard: tearing down containers")
         o.teardown_containers()
-        if hasattr(o, "cleanup_log_dir"):
-            o.cleanup_log_dir(variant_config.paths.log_dir)
+        cleanup_sglang_log_dir(o, variant_config.paths.log_dir)
 
 
 @pytest.fixture(scope="module")
