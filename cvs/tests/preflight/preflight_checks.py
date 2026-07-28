@@ -606,7 +606,7 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
 
     Two precondition gates run before the binary is invoked:
 
-      1. **vPod membership** – ``amd-smi fabric --topology --json`` is queried
+      1. **vPod membership** – ``amd-smi fabric --json`` is queried
          on every reachable node and the union of reported ``vpod_id`` values
          must be a single id (the smoketest preset itself exits with
          ``ERR_FATAL`` when ranks span multiple virtual pods).
@@ -656,6 +656,12 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
 
     tb_binary = get_nested_config(
         config_dict, 'connectivity_check.transferbench', 'tb_binary', 'TransferBench'
+    )
+    amd_smi_binary = get_nested_config(
+        config_dict, 'connectivity_check.transferbench', 'amd_smi_binary', 'amd-smi'
+    )
+    extra_env = get_nested_config(
+        config_dict, 'connectivity_check.transferbench', 'extra_env', {}
     )
     use_sudo = _config_flag_enabled(
         get_nested_config(config_dict, 'connectivity_check.transferbench', 'use_sudo', True),
@@ -720,9 +726,10 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
     )
 
     log.info(
-        "Running IFoE TransferBench smoketest (tb_binary=%s, preset=%s, rank_mode=%s, "
+        "Running IFoE TransferBench smoketest (tb_binary=%s, amd_smi_binary=%s, preset=%s, rank_mode=%s, "
         "size_list=%s, num_iterations=%s, max_skip_pct=%s) on %d host(s)",
         tb_binary,
+        amd_smi_binary,
         preset,
         rank_mode,
         size_list,
@@ -734,6 +741,7 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
     checker = TransferBenchSmokeCheck(
         phdl,
         tb_binary=tb_binary,
+        amd_smi_binary=amd_smi_binary,
         use_sudo=use_sudo,
         preset=preset,
         size_list=size_list if isinstance(size_list, (list, tuple)) else [size_list],
@@ -748,6 +756,7 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
         master_node=master_node if master_node else None,
         max_skip_pct=max_skip_pct,
         ssh_timeout=ssh_timeout,
+        extra_env=extra_env,
         skip_pod_check=skip_pod_check,
         config_dict=config_dict,
     )

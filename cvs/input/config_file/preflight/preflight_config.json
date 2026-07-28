@@ -92,22 +92,28 @@
       },
 
       "transferbench": {
-        "_comment": "IFoE scale-up data-path validation via the TransferBench candidate-branch smoketest preset (AIMVT-181). Opt-in: defaults to 'skip'. Enforces a single-vPod precondition via 'amd-smi fabric --topology --json' before invoking TransferBench. PATH and LD_LIBRARY_PATH for ROCm / amd-smi / TransferBench should be set cluster-wide via the cluster file's top-level 'env_vars' block (see cvs/input/cluster_file/README.md); they are not duplicated here.",
+        "_comment": "IFoE scale-up data-path validation via the TransferBench candidate-branch smoketest preset (AIMVT-181). Opt-in: defaults to 'skip'. Enforces a single-vPod precondition via the version-tolerant 'amd-smi fabric --json' output before invoking TransferBench. Cluster-file env_vars still configure the outer SSH shell, but sudo does not inherit PATH or LD_LIBRARY_PATH reliably: use amd_smi_binary/tb_binary for explicit executables and extra_env for TransferBench runtime variables.",
 
         "connectivity_mode": "skip",
-        "_comment_connectivity_mode": "TransferBench smoketest mode. Options: 'run' (execute the smoketest preset on each reachable node) or 'skip' (default; preflight will not invoke TransferBench). Flip to 'run' once the TransferBench candidate-branch binary and amd-smi are installed cluster-wide and reachable on PATH (typically via cluster file 'env_vars').",
+        "_comment_connectivity_mode": "TransferBench smoketest mode. Options: 'run' (execute the smoketest preset on each reachable node) or 'skip' (default; preflight will not invoke TransferBench). Flip to 'run' once the TransferBench candidate-branch binary and amd-smi are installed cluster-wide.",
 
         "tb_binary": "TransferBench",
-        "_comment_tb_binary": "TransferBench binary name. PATH-resolved by default; set cluster-wide PATH overrides via the cluster file's 'env_vars'. Override with an absolute path here only when this single preflight check needs to point at a different binary than the rest of the cluster's tooling.",
+        "_comment_tb_binary": "TransferBench executable path or name. In sudo mode a bare name is resolved by the outer SSH shell before sudo applies secure_path, but an absolute path is recommended for production preflight configurations.",
+
+        "amd_smi_binary": "amd-smi",
+        "_comment_amd_smi_binary": "amd-smi executable path or name for the pod-membership precondition. In sudo mode a bare name is resolved before sudo applies secure_path; set an absolute path such as '/opt/rocm/bin/amd-smi' to make the selection fully explicit.",
 
         "use_sudo": true,
-        "_comment_use_sudo": "When true, both TransferBench and amd-smi are invoked with sudo. amd-smi fabric topology queries and TransferBench's IFoE access typically require root on production cluster images.",
+        "_comment_use_sudo": "When true, both TransferBench and amd-smi are invoked with sudo. amd-smi fabric queries and TransferBench's IFoE access typically require root on production cluster images.",
+
+        "extra_env": {},
+        "_comment_extra_env": "Optional map of environment variables applied only to the TransferBench process inside the sudo shell. Use this for runtime variables sudo strips, for example {\"LD_LIBRARY_PATH\": \"/path/to/rocm/lib:$LD_LIBRARY_PATH\"}. Values are safely quoted and support only self-referential $KEY expansion.",
 
         "preset": "smoketest",
         "_comment_preset": "TransferBench preset name. Defaults to 'smoketest' (the AIMVT-181 target). Change only when a TransferBench build ships a renamed preset with the same semantics.",
 
         "size_list": ["1K", "16M"],
-        "_comment_size_list": "Transfer sizes passed positionally to TransferBench. The smoketest preset accepts a list and runs each test at every size. Keep the list small for preflight; default '1K' (small, latency-sensitive) and '16M' (large, bandwidth-sensitive) covers both regimes without exploding runtime.",
+        "_comment_size_list": "Transfer sizes sent to the smoketest preset through its SIZE_LIST environment variable. The preset runs each test at every size. Keep the list small for preflight; default '1K' (small, latency-sensitive) and '16M' (large, bandwidth-sensitive) covers both regimes without exploding runtime.",
 
         "num_iterations": 2,
         "_comment_num_iterations": "Value for the NUM_ITERATIONS env var. Defaults to 2 -- enough to surface intermittent failures but small enough to keep total preflight runtime bounded.",
