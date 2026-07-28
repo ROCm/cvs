@@ -68,14 +68,14 @@ def detect_rocm_path(phdl, config_rocm_path):
     return '/opt/rocm'
 
 
-def check_perftest_dmabuf_support(shdl, binary_path, head_node):
+def check_perftest_dmabuf_support(shdl, binary_path):
     """
     Check if the given perftest binary on the cluster node supports the
     --use_rocm_dmabuf flag by executing the binary's help output and
     grepping for the flag.
 
     Args:
-        phdl: Pssh handle used to execute commands on one or more cluster nodes.
+        shdl: Pssh handle used to execute commands on one head node.
         binary_path (str): Full path to the perftest binary on the node.
 
     Returns:
@@ -84,21 +84,12 @@ def check_perftest_dmabuf_support(shdl, binary_path, head_node):
     """
     cmd = f'{binary_path} --help 2>&1 | grep use_rocm_dmabuf | wc -l'
     log.info("Checking dmabuf support: %s", cmd)
+    dmabuf_check_out = shdl.exec(cmd)
     dmabuf_available = False
-
-    # if head_node is None, that would be a programming error
-    # but we still cover the edge case
-    if head_node is None:
-        log.warning("ibperf dmabuf check failed: head_node is None, check programming and re-run")
-        return dmabuf_available
-    try:
-        dmabuf_check_out = shdl.exec(cmd)
-        dmabuf_available = int(dmabuf_check_out[head_node].strip()) > 0
-        log.info("dmabuf available in ibperf build" if dmabuf_available else "dmabuf not available in ibperf build")
-        return dmabuf_available
-    except Exception as e:
-        log.warning(f"ibperf dmabuf check failed: {e}")
-        return dmabuf_available
+    for node in dmabuf_check_out.keys():
+        dmabuf_available = int(dmabuf_check_out[node].strip()) > 0
+    log.info("dmabuf available in ibperf build" if dmabuf_available else "dmabuf not available in ibperf build")
+    return dmabuf_available
 
 
 def get_ib_bw_pps(phdl, msg_size, cmd):
@@ -227,7 +218,6 @@ def run_ib_perf_bw_test(
     port_no=1516,
     duration=60,
     rocm_path='',
-    cluster_node_list=None,
 ):
     app_port = port_no
     result_dict = {}
@@ -239,12 +229,8 @@ def run_ib_perf_bw_test(
     if rocm_path:
         log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
         phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
+    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{bw_test}')
     server_addr = None
-
-    # if cluster_node_list is None that would be programming error
-    if cluster_node_list:
-        head_node = cluster_node_list[0]
-    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{bw_test}', head_node)
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
         cmd_dict[node] = []
@@ -259,15 +245,30 @@ def run_ib_perf_bw_test(
             for gpu_no in range(0, 8):
                 card_no = 'card' + str(gpu_no)
                 rdma_dev = gpu_nic_dict[node][card_no]['rdma_dev']
-                if dmabuf_supported:
-                    cmd = f'numactl --physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]} --localalloc {app_path}/{bw_test} \
-                            -d {rdma_dev} --use_rocm={gpu_no} --use_rocm_dmabuf -x {gid_index} --report_gbits -b -F -D {duration} -p {port_no} \
-                            -s {msg_size} -q {qp_count} > /tmp/ib_perf_{inst_count}_logs &  2>&1'
-                else:
-                    cmd = f'numactl --physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]} --localalloc {app_path}/{bw_test} \
-                            -d {rdma_dev} --use_rocm={gpu_no} -x {gid_index} --report_gbits -b -F -D {duration} -p {port_no} \
-                            -s {msg_size} -q {qp_count} > /tmp/ib_perf_{inst_count}_logs &  2>&1'
-
+                cmd_parts = [
+                    "numactl",
+                    f'--physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]}',
+                    "--localalloc",
+                    f"{app_path}/{bw_test}",
+                    "-d",
+                    rdma_dev,
+                    f"--use_rocm={gpu_no}",
+                    *(["--use_rocm_dmabuf"] if dmabuf_supported else []),
+                    "-x",
+                    str(gid_index),
+                    "--report_gbits",
+                    "-b",
+                    "-F",
+                    "-D",
+                    str(duration),
+                    "-p",
+                    str(port_no),
+                    "-s",
+                    str(msg_size),
+                    "-q",
+                    str(qp_count),
+                ]
+                cmd = " ".join(cmd_parts) + f" > /tmp/ib_perf_{inst_count}_logs 2>&1 &"
                 cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
                 inst_count = inst_count + 1
                 port_no = port_no + 1
@@ -280,14 +281,31 @@ def run_ib_perf_bw_test(
             for gpu_no in range(0, 8):
                 card_no = 'card' + str(gpu_no)
                 rdma_dev = gpu_nic_dict[node][card_no]['rdma_dev']
-                if dmabuf_supported:
-                    cmd = f'numactl --physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]} --localalloc {app_path}/{bw_test} \
-                            -d {rdma_dev} --use_rocm={gpu_no} --use_rocm_dmabuf -x {gid_index} --report_gbits -b -F -D {duration} -p {port_no} \
-                            -s {msg_size} -q {qp_count} {server_addr} > /tmp/ib_perf_{inst_count}_logs &  2>&1'
-                else:
-                    cmd = f'numactl --physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]} --localalloc {app_path}/{bw_test} \
-                            -d {rdma_dev} --use_rocm={gpu_no} -x {gid_index} --report_gbits -b -F -D {duration} -p {port_no} \
-                            -s {msg_size} -q {qp_count} {server_addr} > /tmp/ib_perf_{inst_count}_logs &  2>&1'
+                cmd_parts = [
+                    "numactl",
+                    f'--physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]}',
+                    "--localalloc",
+                    f"{app_path}/{bw_test}",
+                    "-d",
+                    rdma_dev,
+                    f"--use_rocm={gpu_no}",
+                    *(["--use_rocm_dmabuf"] if dmabuf_supported else []),
+                    "-x",
+                    str(gid_index),
+                    "--report_gbits",
+                    "-b",
+                    "-F",
+                    "-D",
+                    str(duration),
+                    "-p",
+                    str(port_no),
+                    "-s",
+                    str(msg_size),
+                    "-q",
+                    str(qp_count),
+                    server_addr,
+                ]
+                cmd = " ".join(cmd_parts) + f" > /tmp/ib_perf_{inst_count}_logs 2>&1 &"
                 cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
                 inst_count = inst_count + 1
                 port_no = port_no + 1
@@ -339,7 +357,6 @@ def run_ib_perf_lat_test(
     gid_index,
     port_no=1516,
     rocm_path='',
-    cluster_node_list=None,
 ):
     app_port = port_no
     result_dict = {}
@@ -352,10 +369,7 @@ def run_ib_perf_lat_test(
         log.info(f'Setting LD_LIBRARY_PATH to {rocm_path}/lib for perftest binaries')
         phdl.exec(f'echo "export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH" >> /tmp/ib_cmds_file.txt')
     server_addr = None
-    # if cluster_node_list is None that would be programming error
-    if cluster_node_list:
-        head_node = cluster_node_list[0]
-    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{lat_test}', head_node)
+    dmabuf_supported = check_perftest_dmabuf_support(shdl, f'{app_path}/{lat_test}')
     for node in bck_nic_dict.keys():
         result_dict[node] = {}
         cmd_dict[node] = []
@@ -370,15 +384,30 @@ def run_ib_perf_lat_test(
             for gpu_no in range(0, 8):
                 card_no = 'card' + str(gpu_no)
                 rdma_dev = gpu_nic_dict[node][card_no]['rdma_dev']
-                if dmabuf_supported:
-                    cmd = f'numactl --physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]} --localalloc {app_path}/{lat_test} \
-                            -d {rdma_dev} --use_rocm={gpu_no} --use_rocm_dmabuf -x {gid_index} --report_gbits -F -p {port_no} \
-                            -s {msg_size} > /tmp/ib_perf_{inst_count}_logs &  2>&1'
-                else:
-                    cmd = f'numactl --physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]} --localalloc {app_path}/{lat_test} \
-                            -d {rdma_dev} --use_rocm={gpu_no} -x {gid_index} --report_gbits -F -p {port_no} \
-                            -s {msg_size} > /tmp/ib_perf_{inst_count}_logs &  2>&1'
-
+                cmd_parts = [
+                    "numactl",
+                    f'--physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]}',
+                    "--localalloc",
+                    f"{app_path}/{bw_test}",
+                    "-d",
+                    rdma_dev,
+                    f"--use_rocm={gpu_no}",
+                    *(["--use_rocm_dmabuf"] if dmabuf_supported else []),
+                    "-x",
+                    str(gid_index),
+                    "--report_gbits",
+                    "-b",
+                    "-F",
+                    "-D",
+                    str(duration),
+                    "-p",
+                    str(port_no),
+                    "-s",
+                    str(msg_size),
+                    "-q",
+                    str(qp_count),
+                ]
+                cmd = " ".join(cmd_parts) + f" > /tmp/ib_perf_{inst_count}_logs 2>&1 &"
                 cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
                 inst_count = inst_count + 1
                 port_no = port_no + 1
@@ -391,14 +420,31 @@ def run_ib_perf_lat_test(
             for gpu_no in range(0, 8):
                 card_no = 'card' + str(gpu_no)
                 rdma_dev = gpu_nic_dict[node][card_no]['rdma_dev']
-                if dmabuf_supported:
-                    cmd = f'numactl --physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]} --localalloc {app_path}/{lat_test} \
-                            -d {rdma_dev} --use_rocm={gpu_no} --use_rocm_dmabuf -x {gid_index} --report_gbits -F -p {port_no} \
-                            -s {msg_size} {server_addr} > /tmp/ib_perf_{inst_count}_logs &  2>&1'
-                else:
-                    cmd = f'numactl --physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]} --localalloc {app_path}/{lat_test} \
-                            -d {rdma_dev} --use_rocm={gpu_no} -x {gid_index} --report_gbits -F -p {port_no} \
-                            -s {msg_size} {server_addr} > /tmp/ib_perf_{inst_count}_logs &  2>&1'
+                cmd_parts = [
+                    "numactl",
+                    f'--physcpubind={gpu_numa_dict[node][card_no]["local_cpulist"]}',
+                    "--localalloc",
+                    f"{app_path}/{bw_test}",
+                    "-d",
+                    rdma_dev,
+                    f"--use_rocm={gpu_no}",
+                    *(["--use_rocm_dmabuf"] if dmabuf_supported else []),
+                    "-x",
+                    str(gid_index),
+                    "--report_gbits",
+                    "-b",
+                    "-F",
+                    "-D",
+                    str(duration),
+                    "-p",
+                    str(port_no),
+                    "-s",
+                    str(msg_size),
+                    "-q",
+                    str(qp_count),
+                    server_addr,
+                ]
+                cmd = " ".join(cmd_parts) + f" > /tmp/ib_perf_{inst_count}_logs 2>&1 &"
                 cmd_dict[node].append(f'echo "{cmd}" >> /tmp/ib_cmds_file.txt')
                 inst_count = inst_count + 1
                 port_no = port_no + 1
