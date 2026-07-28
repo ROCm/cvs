@@ -34,7 +34,6 @@ from typing_extensions import Literal
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.inferencing_config_loader import validate_thresholds_cover_sweep
-from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
 from cvs.lib.inference.utils.vllm_server_metrics import PROM_METRICS
 from cvs.lib.utils.config_loader import substitute_config
 from cvs.lib.utils.gpu import GPU_METRICS
@@ -245,12 +244,18 @@ class VariantConfig(_Forbid):
 
     @model_validator(mode="after")
     def _check_thresholds_cover_sweep(self):
+        """Every sweep cell must have a threshold entry; no metric within it is
+        mandatory. Evaluation (``test_metric``/``test_gpu_metric``/
+        ``test_prom_metric``) already treats an absent ``client.*``/``gpu.*``/
+        ``prom.*`` spec as "don't gate this metric" (skips the assertion), so
+        a threshold.json is free to gate only the handful of metrics an
+        operator cares about instead of every member of every family.
+        """
         validate_thresholds_cover_sweep(
             expected_cells=self.expected_cells(),
             thresholds=self.thresholds,
             enforce_thresholds=self.enforce_thresholds,
-            gated_metrics=GATED_METRICS,
-            gated_gpu_metrics=GATED_GPU_METRICS,
+            gated_metrics=set(),
         )
         return self
 

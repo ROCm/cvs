@@ -2,14 +2,17 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for cvs.lib.inference.utils.vllm_config_loader's gpu.* gated-metric
-coverage extension to _check_thresholds_cover_sweep. No hardware.
+Unit tests for cvs.lib.inference.utils.vllm_config_loader's gpu.*/prom.*
+threshold coverage in _check_thresholds_cover_sweep. No hardware.
+
+_check_thresholds_cover_sweep only requires that every sweep cell have a
+threshold entry -- it never requires that entry name every gated metric.
+Operators may gate only the metrics they care about; test_metric/
+test_gpu_metric/test_prom_metric already treat an absent spec as
+"don't gate this metric" at evaluation time.
 '''
 
 import unittest
-import warnings
-
-from pydantic import ValidationError
 
 from cvs.lib.inference.utils.vllm_config_loader import (
     GATED_GPU_METRICS,
@@ -74,22 +77,17 @@ class TestGpuGatedMetricCoverage(unittest.TestCase):
         vc = self._variant_with({self._CELL: _full_gated_specs()}, enforce=True)
         self.assertEqual(vc.enforce_thresholds, True)
 
-    def test_missing_gpu_metric_raises_when_enforced(self):
+    def test_missing_gpu_metric_does_not_raise_when_enforced(self):
+        # Operators may gate only a subset of gpu.* metrics; an absent one is
+        # simply not gated, not an authoring error.
         specs = _full_gated_specs()
         del specs["gpu.peak_gpu_memory_mb"]
-        with self.assertRaises(ValidationError) as ctx:
-            self._variant_with({self._CELL: specs}, enforce=True)
-        self.assertIn("missing gated-metric specs", str(ctx.exception))
-        self.assertIn("gpu.peak_gpu_memory_mb", str(ctx.exception))
+        vc = self._variant_with({self._CELL: specs}, enforce=True)
+        self.assertNotIn("gpu.peak_gpu_memory_mb", vc.thresholds[self._CELL])
 
-    def test_missing_gpu_metric_warns_when_record_only(self):
-        specs = _full_gated_specs()
-        del specs["gpu.model_load_s"]
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            self._variant_with({self._CELL: specs}, enforce=False)
-        self.assertTrue(any("missing gated-metric specs" in str(x.message) for x in caught))
+    def test_no_gpu_specs_at_all_does_not_raise_when_enforced(self):
+        vc = self._variant_with({self._CELL: {}}, enforce=True)
+        self.assertEqual(vc.thresholds[self._CELL], {})
 
     def test_all_five_gpu_metrics_are_gated(self):
         self.assertEqual(
@@ -141,22 +139,18 @@ class TestPromGatedMetricCoverage(unittest.TestCase):
         vc = self._variant_with({self._CELL: _full_gated_specs()}, enforce=True)
         self.assertEqual(vc.enforce_thresholds, True)
 
-    def test_missing_prom_metric_raises_when_enforced(self):
+    def test_missing_prom_metric_does_not_raise_when_enforced(self):
+        # Operators may gate only a subset of prom.* metrics; an absent one is
+        # simply not gated, not an authoring error.
         specs = _full_gated_specs()
         del specs["prom.queue_time_p50_ms"]
-        with self.assertRaises(ValidationError) as ctx:
-            self._variant_with({self._CELL: specs}, enforce=True)
-        self.assertIn("missing gated-metric specs", str(ctx.exception))
-        self.assertIn("prom.queue_time_p50_ms", str(ctx.exception))
+        vc = self._variant_with({self._CELL: specs}, enforce=True)
+        self.assertNotIn("prom.queue_time_p50_ms", vc.thresholds[self._CELL])
 
-    def test_missing_prom_metric_warns_when_record_only(self):
-        specs = _full_gated_specs()
-        del specs["prom.prefill_time_p95_ms"]
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            self._variant_with({self._CELL: specs}, enforce=False)
-        self.assertTrue(any("missing gated-metric specs" in str(x.message) for x in caught))
+    def test_only_one_prom_metric_gated_does_not_raise_when_enforced(self):
+        specs = {"prom.queue_time_p50_ms": {"kind": "max_ms", "value": 200}}
+        vc = self._variant_with({self._CELL: specs}, enforce=True)
+        self.assertEqual(vc.thresholds[self._CELL], specs)
 
     def test_all_four_prom_metrics_are_gated(self):
         self.assertEqual(
