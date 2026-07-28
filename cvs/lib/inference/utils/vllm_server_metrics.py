@@ -141,6 +141,15 @@ def histogram_quantile(buckets: "dict[str, float] | None", q: float) -> "float |
     "+Inf". Returns None if buckets is empty/missing or total count (the
     "+Inf" bucket) is 0 -- mirrors vllm_parsing.py's `_safe_div` None-safe
     convention, never a ZeroDivisionError.
+
+    PromQL parity for the +Inf bucket: linear interpolation is only valid
+    between two finite boundaries. If the target quantile falls into the
+    unbounded "+Inf" bucket, PromQL cannot interpolate past the highest
+    finite boundary and clamps to it instead of extrapolating to infinity --
+    without this, an overloaded server (some requests genuinely exceeding
+    every finite bucket) would report `inf` ms instead of a finite p95/p99.
+    The one exception is a "+Inf"-only histogram (no finite boundary exists
+    to clamp to), where PromQL itself returns +Inf.
     """
     if not buckets:
         return None
@@ -155,6 +164,8 @@ def histogram_quantile(buckets: "dict[str, float] | None", q: float) -> "float |
     prev_bound, prev_count = 0.0, 0.0
     for bound, count in parsed:
         if count >= target:
+            if bound == float("inf"):
+                return bound if len(parsed) == 1 else prev_bound
             if bound == prev_bound or count == prev_count:
                 return bound
             frac = (target - prev_count) / (count - prev_count)

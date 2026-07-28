@@ -222,6 +222,15 @@ class TestHistogramQuantile(unittest.TestCase):
         buckets = {"+Inf": 4.0}
         self.assertEqual(histogram_quantile(buckets, 0.5), float("inf"))
 
+    def test_target_in_inf_bucket_clamps_to_highest_finite_bound(self):
+        # 10 total obs, all but 1 land at or below 1.0s; the last only shows
+        # up in "+Inf" (an overloaded request exceeding every finite bucket).
+        # p95 target rank = 9.5, which only the "+Inf" bucket satisfies.
+        # PromQL cannot interpolate past the last finite boundary, so it
+        # clamps to it (1.0) instead of returning +Inf.
+        buckets = {"0.3": 5.0, "0.5": 8.0, "1.0": 9.0, "+Inf": 10.0}
+        self.assertEqual(histogram_quantile(buckets, 0.95), 1.0)
+
     def test_never_raises_on_malformed_le_values(self):
         try:
             out = histogram_quantile({"not_a_number": 1.0, "+Inf": 2.0}, 0.5)
