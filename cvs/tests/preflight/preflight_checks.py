@@ -13,6 +13,7 @@ from cvs.lib.preflight.gid_consistency import GidConsistencyCheck
 from cvs.lib.preflight.version_check import RocmVersionCheck
 from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
 from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
+from cvs.lib.preflight.mi4xx_node_health import Mi4xxNodeHealthCheck
 from cvs.lib.preflight.transferbench_smoke import TransferBenchSmokeCheck
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
@@ -68,6 +69,66 @@ def _config_flag_enabled(value, default=True):
     if isinstance(value, str):
         return value.strip().lower() in ('1', 'true', 'yes', 'on')
     return bool(value)
+
+
+def _mi4xx_node_health_config(config_dict):
+    """Return the MI4XX admission block without treating generic preflight as MI4XX."""
+    config = get_nested_config(config_dict, 'node_check', 'mi4xx_node_health', {})
+    return config if isinstance(config, dict) else {}
+
+
+def _mi4xx_node_health_enabled(config_dict):
+    return _config_flag_enabled(_mi4xx_node_health_config(config_dict).get('enabled'), default=False)
+
+
+def _mi4xx_node_health_failure_mode(config_dict):
+    """MI4XX admission is a mandatory gate whenever the profile enables it."""
+    config = _mi4xx_node_health_config(config_dict)
+    value = str(config.get('failure_mode', 'gate')).strip().lower()
+    if value in ('gate', 'strict', 'fail', 'required'):
+        return 'gate'
+    if _mi4xx_node_health_enabled(config_dict):
+        raise ValueError("node_check.mi4xx_node_health.enabled requires failure_mode='gate'")
+    return 'report'
+
+
+def _mi4xx_admission_failed(config_dict):
+    if not _mi4xx_node_health_enabled(config_dict):
+        return False
+    return (preflight_results.get('mi4xx_node_health') or {}).get('status') == 'FAIL'
+
+
+def _blocked_by_mi4xx_admission(check_name):
+    """Create a non-successful downstream result when the mandatory gate failed."""
+    return {
+        'status': 'BLOCKED',
+        'blocked': True,
+        'skipped': False,
+        'message': (
+            f"{check_name} was not run because mandatory MI4XX node-health / AFM vPOD admission failed"
+        ),
+    }
+
+
+def _mi4xx_admitted_port_ids():
+    """Return mask-admitted IFoE ports recorded by a passing MI4XX gate.
+
+    AFM can report a physical link UP even when the corresponding station is
+    intentionally masked.  IFoE ``ports: up`` consumes this map so it tests
+    only ports that node health has admitted from the station policy.
+    """
+    admission = preflight_results.get('mi4xx_node_health') or {}
+    if admission.get('status') != 'PASS':
+        return {}
+    result = {}
+    for node, node_result in (admission.get('node_results') or {}).items():
+        ports = {}
+        for bdf, inventory in (node_result.get('afm_port_inventory') or {}).items():
+            if 'mask_enabled_port_ids' in inventory:
+                ports[bdf] = list(inventory.get('mask_enabled_port_ids') or [])
+        if ports:
+            result[node] = ports
+    return result
 
 
 # Global results storage for HTML report generation
@@ -312,6 +373,87 @@ def test_node_reachability(phdl):
     preflight_update_test_result()
 
 
+def test_mi4xx_node_health(phdl, config_dict, cluster_dict):
+    """Perform mandatory MI4XX node and AFM/vPOD admission when configured.
+
+    The gate is intentionally read-only.  It records diagnostics and lets the
+    report test run, but downstream scale-up checks are marked BLOCKED when
+    admission fails.  The final report test returns the pytest failure after
+    writing the report artifact.
+    """
+    global preflight_results
+
+    if not _mi4xx_node_health_enabled(config_dict):
+        preflight_results['mi4xx_node_health'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'MI4XX node-health admission is not enabled for this preflight profile',
+            'node_results': {},
+            'vpod_membership': {'status': 'SKIPPED', 'errors': []},
+        }
+        preflight_update_test_result()
+        return
+
+    failure_mode = _mi4xx_node_health_failure_mode(config_dict)
+    health_config = _mi4xx_node_health_config(config_dict)
+    log.info("Running mandatory MI4XX node-health / AFM vPOD admission on %d reachable host(s)", len(phdl.reachable_hosts))
+    checker = Mi4xxNodeHealthCheck(
+        phdl,
+        expected_gpus_per_node=health_config.get('expected_gpus_per_node', 4),
+        expected_ifoe_devices_per_node=health_config.get('expected_ifoe_devices_per_node', 4),
+        expected_network_ports_per_device=health_config.get('expected_network_ports_per_device', 36),
+        afmctl_path=health_config.get('afmctl_path', 'afmctl'),
+        amd_smi_path=health_config.get('amd_smi_path', 'amd-smi'),
+        json_args=health_config.get('json_args', ['--json']),
+        use_sudo=_config_flag_enabled(health_config.get('use_sudo'), default=True),
+        required_ifoe_modules=health_config.get('required_ifoe_modules', ['ifoe']),
+        agent_process_name=health_config.get('agent_process_name', 'inb-node-agent'),
+        agent_slot_ids=health_config.get('agent_slot_ids', {}),
+        readiness_timeout_seconds=health_config.get('readiness_timeout_seconds', 600),
+        poll_interval_seconds=health_config.get('poll_interval_seconds', 15),
+        allow_disabled_stations=_config_flag_enabled(health_config.get('allow_disabled_stations'), default=True),
+        reject_partial_stations=_config_flag_enabled(health_config.get('reject_partial_stations'), default=True),
+        min_up_ports_per_gpu=health_config.get('min_up_ports_per_gpu', 0),
+        require_uniform_station_mask=_config_flag_enabled(
+            health_config.get('require_uniform_station_mask'), default=False
+        ),
+        expected_station_masks=health_config.get('expected_station_masks', {}),
+        expected_virtualization_mode=health_config.get('expected_virtualization_mode', 'bare-metal'),
+        config_dict=config_dict,
+    )
+    results = checker.run()
+    declared_nodes = sorted(cluster_dict.get('node_dict', {}).keys())
+    tested_nodes = sorted((results.get('node_results') or {}).keys())
+    missing_nodes = sorted(set(declared_nodes) - set(tested_nodes))
+    results['failure_mode'] = failure_mode
+    results['coverage'] = {
+        'expected_nodes': declared_nodes,
+        'tested_nodes': tested_nodes,
+        'missing_nodes': missing_nodes,
+        'complete': not missing_nodes,
+    }
+    if missing_nodes:
+        message = 'Mandatory MI4XX admission did not run on declared node(s): ' + ', '.join(missing_nodes)
+        results['status'] = 'FAIL'
+        results.setdefault('errors', []).append(message)
+        membership = results.setdefault('vpod_membership', {})
+        membership['status'] = 'FAIL'
+        membership.setdefault('errors', []).append(message)
+
+    preflight_results['mi4xx_node_health'] = results
+    if results.get('status') == 'FAIL':
+        log.error("Mandatory MI4XX node-health admission FAILED")
+        for node, result in (results.get('node_results') or {}).items():
+            for error in result.get('errors') or []:
+                log.error("Node %s MI4XX admission: %s", node, error)
+        for error in results.get('errors') or []:
+            log.error("MI4XX admission: %s", error)
+    else:
+        vpod = (results.get('vpod_membership') or {}).get('vpod_accelerators') or []
+        log.info("Mandatory MI4XX node-health admission PASS; AFM vPOD accelerators=%s", vpod)
+    preflight_update_test_result()
+
+
 def test_rocm_version_consistency(phdl, config_dict):
     """
     Test ROCm version consistency across all cluster nodes.
@@ -494,6 +636,14 @@ def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     """
     global preflight_results
 
+    if _mi4xx_admission_failed(config_dict):
+        blocked = _blocked_by_mi4xx_admission('IFoE L2 connectivity')
+        blocked.update({'mode': 'blocked', 'node_results': {}, 'failure_mode': 'gate'})
+        preflight_results['ifoe_l2_connectivity'] = blocked
+        log.warning(blocked['message'])
+        preflight_update_test_result()
+        return
+
     mode = get_nested_config(config_dict, 'connectivity_check.ifoe', 'connectivity_mode', 'skip')
     failure_mode = _ifoe_failure_mode(config_dict)
     if isinstance(mode, str):
@@ -558,6 +708,10 @@ def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     use_sudo = _config_flag_enabled(
         get_nested_config(config_dict, 'connectivity_check.ifoe', 'use_sudo', False), default=False
     )
+    json_args = get_nested_config(config_dict, 'connectivity_check.ifoe', 'json_args', ['--json'])
+    allow_text_fallback = _config_flag_enabled(
+        get_nested_config(config_dict, 'connectivity_check.ifoe', 'allow_text_fallback', False), default=False
+    )
 
     log.info(
         "Running IFoE L2 connectivity (afmctl=%s, bdf_discovery=%s, mesh_mode=%s, "
@@ -590,9 +744,12 @@ def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
         loss_threshold_pct=loss_threshold_pct,
         ssh_timeout=ssh_timeout,
         use_sudo=use_sudo,
+        json_args=json_args if isinstance(json_args, (list, tuple)) else [json_args],
+        allow_text_fallback=allow_text_fallback,
         bdf_discovery=bdf_discovery,
         require_complete_coverage=require_complete_coverage,
         strict_discovery=strict_discovery,
+        admitted_port_ids_by_node=_mi4xx_admitted_port_ids(),
         config_dict=config_dict,
     )
 
@@ -705,6 +862,14 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
     """
     global preflight_results
 
+    if _mi4xx_admission_failed(config_dict):
+        blocked = _blocked_by_mi4xx_admission('IFoE TransferBench smoketest')
+        blocked.update({'mode': 'blocked', 'nodes': {}, 'totals': {}, 'pod_membership': {}})
+        preflight_results['transferbench_smoke'] = blocked
+        log.warning(blocked['message'])
+        preflight_update_test_result()
+        return
+
     mode = get_nested_config(config_dict, 'connectivity_check.transferbench', 'connectivity_mode', 'skip')
     if isinstance(mode, str):
         mode_normalized = mode.strip().lower()
@@ -799,6 +964,14 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
         ),
         default=False,
     )
+    afm_vpod_admission = None
+    if _mi4xx_node_health_enabled(config_dict):
+        # The MI4XX gate is authoritative.  Never fall back to the unreliable
+        # amd-smi fabric topology path or honor skip_pod_check in this mode.
+        afm_vpod_admission = (preflight_results.get('mi4xx_node_health') or {}).get('vpod_membership')
+        if skip_pod_check:
+            log.warning("Ignoring transferbench.skip_pod_check because MI4XX AFM/vPOD admission is mandatory")
+        skip_pod_check = False
 
     log.info(
         "Running IFoE TransferBench smoketest (tb_binary=%s, preset=%s, rank_mode=%s, "
@@ -830,6 +1003,7 @@ def test_ifoe_transferbench_smoke(phdl, config_dict):
         max_skip_pct=max_skip_pct,
         ssh_timeout=ssh_timeout,
         skip_pod_check=skip_pod_check,
+        afm_vpod_admission=afm_vpod_admission,
         config_dict=config_dict,
     )
 
@@ -896,6 +1070,23 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     ``excluded_nodes_gid`` for the report (hosts already removed from ``phdl``).
     """
     global preflight_results
+
+    if _mi4xx_admission_failed(config_dict):
+        blocked = _blocked_by_mi4xx_admission('RDMA connectivity')
+        blocked.update(
+            {
+                'mode': 'blocked',
+                'total_pairs': 0,
+                'successful_pairs': 0,
+                'failed_pairs': 0,
+                'pair_results': {},
+                'node_status': {},
+            }
+        )
+        preflight_results['rdma_connectivity'] = blocked
+        log.warning(blocked['message'])
+        preflight_update_test_result()
+        return
 
     # Host list matches prior-step pruning (reachability, interface, GID); not full cluster_dict.
     node_list = list(phdl.reachable_hosts)
@@ -1009,6 +1200,7 @@ def test_generate_preflight_report(phdl, config_dict, request):
 
     # Ensure we have results from all checks
     required_checks = [
+        'mi4xx_node_health',
         'gid_consistency',
         'rocm_versions',
         'interface_names',
@@ -1089,7 +1281,19 @@ def test_generate_preflight_report(phdl, config_dict, request):
             log.warning(f"Failed to add preflight report to bundle: {e}")
             log.info(f"Preflight report available at: {html_report_path}")
 
-    # Report overall status but don't fail the test
+    # A mandatory MI4XX admission failure is deliberately reported only after
+    # report artifacts are written, so downstream checks can be marked
+    # BLOCKED with actionable diagnostics rather than disappearing from the
+    # preflight output.
+    mi4xx_results = preflight_results.get('mi4xx_node_health') or {}
+    if (
+        _mi4xx_node_health_enabled(config_dict)
+        and mi4xx_results.get('status') != 'PASS'
+        and _mi4xx_node_health_failure_mode(config_dict) == 'gate'
+    ):
+        pytest.fail("Mandatory MI4XX node-health / AFM vPOD admission gate failed; see preflight report")
+
+    # Report overall status but don't fail generic/report-only preflight profiles.
     if summary['overall_status'] == 'FAIL':
         log.warning("One or more preflight checks detected issues - see detailed results above")
         log.info("Preflight report generated successfully - review HTML report for detailed analysis")

@@ -3,7 +3,9 @@
 This module validates IFoE (Infinity Fabric over Ethernet, a.k.a. XGMI-over-
 Ethernet) scale-up connectivity by:
 
-1. Querying ``amd-smi fabric --topology --json`` on every reachable cluster
+1. Receiving the mandatory AFM ``afmctl show device --json`` vPOD admission
+   result on MI4XX, or (for generic legacy configurations) querying
+   ``amd-smi fabric --topology --json`` on every reachable cluster
    node to discover each GPU's physical (``ppod_id``) and virtual / logical
    (``vpod_id``) pod membership. Because TransferBench's data-path smoketest
    exits early (precondition failure) when ranks span multiple virtual pods,
@@ -653,12 +655,12 @@ class TransferBenchSmokeCheck(PreflightCheck):
 
     The check is two-phase:
 
-      1. **Precondition** – Query ``amd-smi fabric --topology --json`` on
-         every reachable node, then enforce that all nodes report the same
-         singleton vPod ID (TransferBench multi-rank smoketest exits with
-         ``ERR_FATAL`` when ranks span multiple vPods, and the per-node
-         single-rank case is meaningless when the cluster's IFoE fabric was
-         intended to span more than one node).
+      1. **Precondition** – On MI4XX, consume the mandatory AFM
+         ``afmctl show device --json`` admission result. Generic profiles
+         retain ``amd-smi fabric --topology --json`` as a compatibility
+         precondition. In either mode, the selected nodes must share one
+         logical vPOD before dispatch (TransferBench multi-rank smoketest
+         exits with ``ERR_FATAL`` when ranks span multiple virtual pods).
       2. **Smoketest** – Invoke ``TransferBench smoketest`` on each node and
          parse the output. Two orchestration modes are supported:
 
@@ -700,6 +702,7 @@ class TransferBenchSmokeCheck(PreflightCheck):
         extra_env: Optional[Dict[str, str]] = None,
         extra_args: Optional[Sequence[str]] = None,
         skip_pod_check: bool = False,
+        afm_vpod_admission: Optional[Dict[str, Any]] = None,
         config_dict: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(phdl, config_dict)
@@ -720,6 +723,7 @@ class TransferBenchSmokeCheck(PreflightCheck):
         self.extra_env = dict(extra_env or {})
         self.extra_args = list(extra_args or [])
         self.skip_pod_check = bool(skip_pod_check)
+        self.afm_vpod_admission = dict(afm_vpod_admission) if afm_vpod_admission is not None else None
 
         rank_mode_norm = (rank_mode or 'per_node').strip().lower()
         if rank_mode_norm not in ('per_node', 'multi_rank'):
@@ -841,6 +845,34 @@ class TransferBenchSmokeCheck(PreflightCheck):
             per_node[node] = membership
         return per_node
 
+    def _validate_afm_vpod_admission(self, hosts: Sequence[str]) -> Dict[str, Any]:
+        """Validate and normalize an MI4XX AFM admission result for TransferBench.
+
+        ``amd-smi fabric --topology`` has proven unreliable on MI4XX images.
+        The node-health gate already has the authoritative AFM view, so this
+        deliberately performs no fallback topology query when admission is
+        supplied.
+        """
+        admission = dict(self.afm_vpod_admission or {})
+        errors = list(admission.get('errors') or [])
+        status = str(admission.get('status') or '').upper()
+        per_node = admission.get('per_node') or {}
+        membership = admission.get('vpod_accelerators') or []
+        missing_nodes = sorted(set(hosts) - set(per_node))
+        if status != 'PASS':
+            errors.append('Mandatory AFM/vPOD admission did not pass')
+        if not membership:
+            errors.append('Mandatory AFM/vPOD admission did not report vPOD accelerator membership')
+        if missing_nodes:
+            errors.append('Mandatory AFM/vPOD admission is missing reachable node(s): ' + ', '.join(missing_nodes))
+        return {
+            'status': 'PASS' if not errors else 'FAIL',
+            'source': admission.get('source', 'afmctl show device --json'),
+            'per_node': per_node,
+            'vpod_accelerators': list(membership),
+            'errors': errors,
+        }
+
     # ------------------------------------------------------------------
     # Smoketest dispatch
     # ------------------------------------------------------------------
@@ -953,7 +985,24 @@ class TransferBenchSmokeCheck(PreflightCheck):
             return self.results
         self.results['totals']['nodes_total'] = len(hosts)
 
-        if not self.skip_pod_check:
+        if self.afm_vpod_admission is not None:
+            reconcile = self._validate_afm_vpod_admission(hosts)
+            self.results['pod_membership'] = reconcile
+            if reconcile['status'] != 'PASS':
+                self.results['status'] = 'FAIL'
+                self.results['errors'].extend(reconcile.get('errors') or [])
+                for node in hosts:
+                    self.results['nodes'][node] = {
+                        'status': 'BLOCKED',
+                        'errors': ['mandatory AFM/vPOD admission failed; smoketest not dispatched'],
+                        'command': '',
+                        'exit_code': None,
+                        'parsed': {},
+                        'raw_output': '',
+                        'rank': None,
+                    }
+                return self.results
+        elif not self.skip_pod_check:
             per_node_membership = self._query_pod_membership()
             reconcile = reconcile_cluster_vpod(per_node_membership)
             self.results['pod_membership'] = reconcile

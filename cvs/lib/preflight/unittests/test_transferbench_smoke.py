@@ -500,9 +500,9 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         fail loudly instead of silently being ignored.
         """
         with self.assertRaises(TypeError):
-            TransferBenchSmokeCheck(MagicMock(), rocm_path='/opt/rocm')  # type: ignore[call-arg]
+            TransferBenchSmokeCheck(MagicMock(), rocm_path='/custom/rocm')  # type: ignore[call-arg]
         with self.assertRaises(TypeError):
-            TransferBenchSmokeCheck(MagicMock(), amd_smi_path='/opt/rocm/bin/amd-smi')  # type: ignore[call-arg]
+            TransferBenchSmokeCheck(MagicMock(), amd_smi_path='/custom/bin/amd-smi')  # type: ignore[call-arg]
 
     def test_run_pass_per_node(self):
         phdl = self._make_phdl(
@@ -527,6 +527,46 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         for node in ('nodeA', 'nodeB'):
             self.assertEqual(results['nodes'][node]['status'], 'PASS')
             self.assertEqual(results['nodes'][node]['exit_code'], 0)
+
+    def test_run_uses_mandatory_afm_admission_without_amd_smi_topology(self):
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA', 'nodeB'],
+            exec_responses=[
+                {
+                    'nodeA': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
+                    'nodeB': _with_sentinel(SMOKETEST_PASS_OUTPUT, 0),
+                },
+            ],
+        )
+        admission = {
+            'status': 'PASS',
+            'source': 'afmctl show device --json',
+            'per_node': {'nodeA': [0, 1, 2, 3], 'nodeB': [0, 1, 2, 3]},
+            'vpod_accelerators': [0, 1, 2, 3],
+            'errors': [],
+        }
+        results = TransferBenchSmokeCheck(phdl, afm_vpod_admission=admission).run()
+
+        self.assertEqual(results['status'], 'PASS')
+        self.assertEqual(results['pod_membership']['status'], 'PASS')
+        self.assertEqual(results['pod_membership']['source'], 'afmctl show device --json')
+        self.assertEqual(phdl.exec.call_count, 1)
+        self.assertNotIn('amd-smi fabric', phdl.exec.call_args.args[0])
+
+    def test_failed_afm_admission_blocks_transferbench_without_dispatch(self):
+        phdl = self._make_phdl(reachable_hosts=['nodeA'])
+        admission = {
+            'status': 'FAIL',
+            'source': 'afmctl show device --json',
+            'per_node': {},
+            'vpod_accelerators': [],
+            'errors': ['nodeA: AFM device is PROVIDER'],
+        }
+        results = TransferBenchSmokeCheck(phdl, afm_vpod_admission=admission).run()
+
+        self.assertEqual(results['status'], 'FAIL')
+        self.assertEqual(results['nodes']['nodeA']['status'], 'BLOCKED')
+        phdl.exec.assert_not_called()
 
     def test_run_fails_when_vpods_diverge(self):
         phdl = self._make_phdl(

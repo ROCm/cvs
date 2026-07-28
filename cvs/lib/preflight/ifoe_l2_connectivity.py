@@ -3,7 +3,10 @@ IFoE L2 Connectivity Check (AIMVT-180).
 
 Validates L2 connectivity by invoking ``afmctl test ping`` on each
 reachable node and parsing the per-port pass/fail counts and the
-aggregate ``Summary:`` section that ``afmctl`` emits.
+aggregate ``Summary:`` section that ``afmctl`` emits. Current MI4XX AFM
+images expose JSON for inventory commands but not for ``test ping``; the
+ping parser therefore treats its documented tabular text format as the
+primary protocol rather than a JSON compatibility fallback.
 
 This is a *per-node* preflight check: each node runs one
 ``afmctl test ping`` invocation per configured ``(bdf, dst_accelerator)``
@@ -34,7 +37,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib.preflight.base import PreflightCheck
 
@@ -82,6 +85,47 @@ def _normalize_bdf(value) -> Optional[str]:
     """Return a canonical BDF, or ``None`` when *value* is not a BDF."""
     candidate = str(value).strip()
     return candidate.lower() if _BDF_VALUE_PATTERN.match(candidate) else None
+
+
+def _json_normalise_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
+
+
+def _json_flatten_values(value: Any, prefix: str = "") -> Dict[str, Any]:
+    """Flatten JSON dictionaries while retaining both leaf and path keys."""
+    flattened: Dict[str, Any] = {}
+    if not isinstance(value, Mapping):
+        return flattened
+    for key, child in value.items():
+        normalised = _json_normalise_key(key)
+        path = f"{prefix}_{normalised}" if prefix else normalised
+        if isinstance(child, Mapping):
+            flattened.update(_json_flatten_values(child, path))
+        else:
+            flattened.setdefault(normalised, child)
+            flattened[path] = child
+    return flattened
+
+
+def _json_first_value(flattened: Mapping[str, Any], keys: Sequence[str]) -> Any:
+    for key in keys:
+        value = flattened.get(_json_normalise_key(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _walk_json_dicts(value: Any, inherited_bdf: Optional[str] = None):
+    """Yield all JSON dictionaries and BDF inherited from a BDF-keyed envelope."""
+    if isinstance(value, Mapping):
+        direct_bdf = _json_first_value(_json_flatten_values(value), ("bdf", "device_bdf", "pci_bdf"))
+        current_bdf = _normalize_bdf(direct_bdf) or inherited_bdf
+        yield dict(value), current_bdf
+        for key, child in value.items():
+            yield from _walk_json_dicts(child, _normalize_bdf(key) or current_bdf)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_json_dicts(child, inherited_bdf)
 
 
 def parse_accelerator_ranges(value) -> Tuple[List[int], List[str]]:
@@ -156,8 +200,141 @@ class AfmctlPingParser:
 
     HEADER_RE = re.compile(r"^\s*Accel\s*ID\s+Port#\s+IFoE\s+Req", re.IGNORECASE)
 
+    @staticmethod
+    def _traffic_key(value: Any) -> Optional[str]:
+        key = _json_normalise_key(value)
+        aliases = {
+            "ifoe_req": "ifoe_req",
+            "ifoe_request": "ifoe_req",
+            "request": "ifoe_req",
+            "ifoe_resp": "ifoe_resp",
+            "ifoe_response": "ifoe_resp",
+            "response": "ifoe_resp",
+            "non_ifoe": "non_ifoe",
+            "nonifoe": "non_ifoe",
+        }
+        return aliases.get(key)
+
+    @staticmethod
+    def _as_int(value: Any) -> Optional[int]:
+        if isinstance(value, bool) or value is None:
+            return None
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
     @classmethod
-    def parse(cls, output: str) -> Dict:
+    def _metric_from_json(cls, value: Any) -> Optional[Dict[str, Any]]:
+        """Normalize a JSON traffic-counter object without assuming AFM's wrapper schema."""
+        if isinstance(value, Mapping):
+            flattened = _json_flatten_values(value)
+            passed = cls._as_int(_json_first_value(flattened, ("pass", "passed", "pass_count", "success")))
+            total = cls._as_int(_json_first_value(flattened, ("total", "count", "num_pings", "pings")))
+            failed = cls._as_int(_json_first_value(flattened, ("fail", "failed", "fail_count", "errors")))
+            raw_status = _json_first_value(flattened, ("status", "state", "result"))
+            raw_loss = _json_first_value(flattened, ("loss_pct", "loss_percent", "loss"))
+        elif isinstance(value, str):
+            pass_match = re.search(r"(\d+)\s*/\s*(\d+)\s+PASS", value, re.IGNORECASE)
+            fail_match = re.search(r"(\d+)\s*/\s*(\d+)\s+fail", value, re.IGNORECASE)
+            if not pass_match:
+                return None
+            passed, total = int(pass_match.group(1)), int(pass_match.group(2))
+            failed = int(fail_match.group(1)) if fail_match else max(0, total - passed)
+            raw_status = None
+            loss_match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*%\s*loss", value, re.IGNORECASE)
+            raw_loss = loss_match.group(1) if loss_match else None
+        else:
+            return None
+        if passed is None or total is None:
+            return None
+        if failed is None:
+            failed = max(0, total - passed)
+        try:
+            loss_pct = float(str(raw_loss).strip().rstrip("%")) if raw_loss is not None else (
+                (failed / total) * 100.0 if total else 100.0
+            )
+        except (TypeError, ValueError):
+            return None
+        status = str(raw_status or "").strip().upper()
+        if status not in ("PASS", "FAIL"):
+            status = "PASS" if failed == 0 and passed == total and total > 0 else "FAIL"
+        return {
+            "pass": passed,
+            "total": total,
+            "fail": failed,
+            "fail_total": total,
+            "loss_pct": loss_pct,
+            "status": status,
+        }
+
+    @classmethod
+    def _parse_json(cls, document: Any, result: Dict) -> None:
+        if not isinstance(document, (Mapping, list)):
+            result["parse_errors"].append("afmctl ping JSON must be an object or array")
+            return
+        root_flattened = _json_flatten_values(document) if isinstance(document, Mapping) else {}
+        root_bdf = _normalize_bdf(_json_first_value(root_flattened, ("bdf", "device_bdf", "pci_bdf")))
+        result["bdf"] = root_bdf
+        result["pings_per_port"] = cls._as_int(
+            _json_first_value(root_flattened, ("pings_per_port", "ping_count", "num_pings"))
+        )
+
+        def record_port(port: Any, accelerator: Any, traffic: Dict[str, Dict[str, Any]]) -> None:
+            port_number = cls._as_int(port)
+            if port_number is None or port_number < 0:
+                result["parse_errors"].append(f"Malformed port ID {port!r} in afmctl ping JSON")
+                return
+            key = str(port_number)
+            if key in result["ports"]:
+                result["parse_errors"].append(f"Duplicate afmctl ping result row for port {key}")
+                return
+            entry = {"accelerator_id": cls._as_int(accelerator)}
+            entry.update({name: {k: v for k, v in metric.items() if k not in ("fail", "fail_total", "loss_pct")} for name, metric in traffic.items()})
+            result["ports"][key] = entry
+
+        def walk(value: Any, inherited_bdf: Optional[str] = None, in_summary: bool = False) -> None:
+            if isinstance(value, Mapping):
+                flattened = _json_flatten_values(value)
+                bdf = _normalize_bdf(_json_first_value(flattened, ("bdf", "device_bdf", "pci_bdf"))) or inherited_bdf
+                if result["bdf"] is None and bdf:
+                    result["bdf"] = bdf
+                port = _json_first_value(flattened, ("port", "port_id", "port_number", "port_num", "port#"))
+                accelerator = _json_first_value(flattened, ("accelerator_id", "accel_id", "destination_accelerator"))
+                traffic: Dict[str, Dict[str, Any]] = {}
+                for key, child in value.items():
+                    traffic_key = cls._traffic_key(key)
+                    if traffic_key:
+                        metric = cls._metric_from_json(child)
+                        if metric is not None:
+                            traffic[traffic_key] = metric
+                if port is not None and traffic:
+                    record_port(port, accelerator, traffic)
+                elif in_summary and traffic:
+                    for traffic_key, metric in traffic.items():
+                        existing = result["summary"].get(traffic_key)
+                        if existing and existing != metric:
+                            result["parse_errors"].append(
+                                f"Conflicting afmctl ping summary values for {traffic_key}"
+                            )
+                        else:
+                            result["summary"][traffic_key] = metric
+                for key, child in value.items():
+                    walk(
+                        child,
+                        _normalize_bdf(key) or bdf,
+                        in_summary or "summary" in _json_normalise_key(key),
+                    )
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child, inherited_bdf, in_summary)
+
+        walk(document)
+        if not result["ports"] and not result["summary"]:
+            result["parse_errors"].append("Could not locate port results or Summary data in afmctl ping JSON")
+
+    @classmethod
+    def parse(cls, output: str, *, allow_text_fallback: bool = True) -> Dict:
         """Parse one ``afmctl test ping`` invocation's stdout.
 
         Args:
@@ -177,9 +354,23 @@ class AfmctlPingParser:
             "ports": {},
             "summary": {},
             "parse_errors": [],
+            "format": None,
         }
         if not output:
             result["parse_errors"].append("Empty afmctl output")
+            return result
+
+        stripped_output = output.lstrip()
+        if stripped_output.startswith("{") or stripped_output.startswith("["):
+            result["format"] = "json"
+            try:
+                cls._parse_json(json.loads(output), result)
+            except json.JSONDecodeError as exc:
+                result["parse_errors"].append(f"Invalid afmctl ping JSON: {exc.msg}")
+            return result
+        result["format"] = "text-v1"
+        if not allow_text_fallback:
+            result["parse_errors"].append("Expected JSON from afmctl test ping; legacy text fallback is disabled")
             return result
 
         lines = output.splitlines()
@@ -259,8 +450,8 @@ class AfmctlPingParser:
         return result
 
 
-def parse_afmctl_show_device(output: str) -> List[Dict]:
-    """Parse one or more ``afmctl show device`` blocks into device descriptors.
+def _parse_afmctl_show_device_text(output: str) -> List[Dict]:
+    """Parse legacy text ``afmctl show device`` blocks into device descriptors.
 
     The output of ``afmctl show device`` is a multi-line block per device::
 
@@ -337,8 +528,95 @@ def parse_afmctl_show_device(output: str) -> List[Dict]:
     return devices
 
 
+def parse_afmctl_show_device_json(output: str) -> Tuple[List[Dict], List[str]]:
+    """Parse semantic device records from ``afmctl show device --json``.
+
+    AFM JSON wrapper keys have changed between platform releases, so this
+    parser deliberately identifies a device by its BDF plus accelerator/vPOD
+    fields instead of relying on a fixed top-level list name.
+    """
+    try:
+        document = json.loads(output)
+    except json.JSONDecodeError as exc:
+        return [], [f"Invalid afmctl show device JSON: {exc.msg}"]
+
+    devices: List[Dict] = []
+    seen_bdfs = set()
+    for record, inherited_bdf in _walk_json_dicts(document):
+        flattened = _json_flatten_values(record)
+        bdf = _normalize_bdf(_json_first_value(flattened, ("bdf", "device_bdf", "pci_bdf"))) or inherited_bdf
+        if not bdf or bdf in seen_bdfs:
+            continue
+        if not any(
+            _json_normalise_key(key) in flattened
+            for key in ("accelerator_id", "accel_id", "local_accelerators", "vpod_accelerators")
+        ):
+            continue
+        seen_bdfs.add(bdf)
+        accelerator_ids, accelerator_errors = parse_accelerator_ranges(
+            _json_first_value(flattened, ("accelerator_id", "accel_id", "accelerator"))
+        )
+        local_accelerators, local_errors = parse_accelerator_ranges(
+            _json_first_value(flattened, ("local_accelerators", "local_accels"))
+        )
+        vpod_accelerators, vpod_errors = parse_accelerator_ranges(
+            _json_first_value(flattened, ("vpod_accelerators", "v_pod_accelerators", "vpod_accels"))
+        )
+        errors = accelerator_errors + local_errors + vpod_errors
+        if len(accelerator_ids) != 1:
+            errors.append("Expected one accelerator ID")
+        port_count = _json_first_value(
+            flattened, ("num_network_port", "num_network_ports", "network_ports", "number_of_network_ports")
+        )
+        try:
+            port_count = int(port_count)
+        except (TypeError, ValueError):
+            port_count = None
+        devices.append(
+            {
+                "bdf": bdf,
+                "accelerator_id": accelerator_ids[0] if len(accelerator_ids) == 1 else None,
+                "local_accelerators": local_accelerators,
+                "vpod_accelerators": vpod_accelerators,
+                "num_network_ports": port_count,
+                # Retain generic AFM state fields for callers that enforce
+                # additional admission policy beyond topology discovery.
+                "config_phase": _json_first_value(
+                    flattened, ("config_phase", "configuration_phase", "phase")
+                ),
+                "virtualization_mode": _json_first_value(
+                    flattened, ("virtualization_mode", "virtualisation_mode", "virt_mode", "virtualization")
+                ),
+                "parse_errors": errors,
+            }
+        )
+    if not devices:
+        return [], ["afmctl show device JSON contained no accelerator descriptors"]
+    return devices, []
+
+
+def parse_afmctl_show_device_output(output: str, *, allow_text_fallback: bool = True) -> Tuple[List[Dict], List[str], str]:
+    """Parse AFM device output, treating text as an opt-in compatibility mode."""
+    raw = (output or "").strip()
+    if not raw:
+        return [], ["Empty afmctl show device output"], "empty"
+    if raw.startswith("{") or raw.startswith("["):
+        devices, errors = parse_afmctl_show_device_json(raw)
+        return devices, errors, "json"
+    if not allow_text_fallback:
+        return [], ["Expected JSON from afmctl show device; legacy text fallback is disabled"], "text-v1"
+    devices = _parse_afmctl_show_device_text(output)
+    errors = [] if devices else ["afmctl show device text output contained no accelerator descriptors"]
+    return devices, errors, "text-v1"
+
+
+def parse_afmctl_show_device(output: str) -> List[Dict]:
+    """Compatibility convenience wrapper around :func:`parse_afmctl_show_device_output`."""
+    return parse_afmctl_show_device_output(output, allow_text_fallback=True)[0]
+
+
 class AfmctlPortParser:
-    """Parse ``afmctl show port --brief`` without assuming a MI4XX schema.
+    """Parse ``afmctl show port --json`` without assuming a MI4XX schema.
 
     The AFM JSON schema has not yet been captured from MI4XX hardware.  JSON
     is therefore parsed by field semantics (``port`` + ``state`` and optional
@@ -348,8 +626,9 @@ class AfmctlPortParser:
     parse errors rather than classifying all ports as DOWN.
     """
 
-    _PORT_KEYS = ("port", "port_id", "port_number", "port_num", "port#")
-    _STATE_KEYS = ("state", "status", "port_state", "link_state")
+    _PORT_KEYS = ("port", "port_id", "port_number", "port_num", "port#", "id")
+    _STATION_KEYS = ("station_id", "station")
+    _STATE_KEYS = ("state", "status", "port_state", "link_state", "link_status", "link_up")
     _BDF_KEYS = ("bdf", "device_bdf", "pci_bdf")
     _KNOWN_STATES = {
         "UP",
@@ -360,10 +639,12 @@ class AfmctlPortParser:
         "FAILED",
         "INACTIVE",
         "ACTIVE",
+        "LINK_DOWN",
+        "NONE",
     }
 
     @classmethod
-    def parse(cls, output: str) -> Dict:
+    def parse(cls, output: str, *, allow_text_fallback: bool = True) -> Dict:
         """Return structured port inventory from JSON or supported text.
 
         The result has ``ports_by_bdf`` and ``unscoped_ports`` maps whose
@@ -378,7 +659,7 @@ class AfmctlPortParser:
             "parse_errors": [],
         }
         if not output or not output.strip():
-            result["parse_errors"].append("Empty afmctl show port --brief output")
+            result["parse_errors"].append("Empty afmctl show port output")
             return result
 
         stripped = output.lstrip()
@@ -393,10 +674,15 @@ class AfmctlPortParser:
             cls._parse_json(document, result)
         else:
             result["format"] = "text-v1"
-            cls._parse_text(output, result)
+            if allow_text_fallback:
+                cls._parse_text(output, result)
+            else:
+                result["parse_errors"].append(
+                    "Expected JSON from afmctl show port; legacy text fallback is disabled"
+                )
 
         if not result["ports_by_bdf"] and not result["unscoped_ports"]:
-            result["parse_errors"].append("Could not locate port/state records in afmctl show port --brief output")
+            result["parse_errors"].append("Could not locate port/state records in afmctl show port output")
         return result
 
     @staticmethod
@@ -408,12 +694,25 @@ class AfmctlPortParser:
         normalised = {cls._norm_key(key): value for key, value in item.items()}
         for key in keys:
             value = normalised.get(cls._norm_key(key))
-            if value is not None:
+            if value is not None and not isinstance(value, Mapping):
                 return value
+        # MI4XX AFM JSON records the physical state under ``status`` (for
+        # example ``status.link_status: LINK_UP``). Inspect that bounded
+        # nested block without flattening the whole parent record, which could
+        # otherwise mistake a child port ID for a device-level port.
+        for container_name in ("status", "link", "spec"):
+            nested = normalised.get(container_name)
+            if not isinstance(nested, Mapping):
+                continue
+            nested_normalised = {cls._norm_key(key): value for key, value in nested.items()}
+            for key in keys:
+                value = nested_normalised.get(cls._norm_key(key))
+                if value is not None and not isinstance(value, Mapping):
+                    return value
         return None
 
     @classmethod
-    def _record(cls, result: Dict, port, state, bdf=None) -> None:
+    def _record(cls, result: Dict, port, state, bdf=None, station=None) -> None:
         try:
             if isinstance(port, bool):
                 raise ValueError
@@ -423,11 +722,28 @@ class AfmctlPortParser:
         except (TypeError, ValueError):
             result["parse_errors"].append(f"Malformed port ID {port!r}")
             return
-        state_string = str(state).strip().upper().replace("-", "_").replace(" ", "_")
+        state_string = re.sub(r"[^A-Z0-9]+", "_", str(state).strip().upper()).strip("_")
+        if state_string == "LINK_UP":
+            state_string = "UP"
+        elif state_string.startswith("NO_PHY_LINK"):
+            state_string = "DOWN"
         if state_string not in cls._KNOWN_STATES:
             result["parse_errors"].append(f"Unknown port state {state!r} for port {port_number}")
             return
         entry = {"port": port_number, "state": state_string, "is_up": state_string == "UP"}
+        if station is not None:
+            try:
+                if isinstance(station, bool):
+                    raise ValueError
+                station_number = int(str(station).strip())
+                if station_number < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                result["parse_errors"].append(
+                    f"Malformed station ID {station!r} for port {port_number}"
+                )
+                return
+            entry["station_id"] = station_number
         normalized_bdf = _normalize_bdf(bdf) if bdf is not None else None
         if bdf is not None and not normalized_bdf:
             result["parse_errors"].append(f"Malformed BDF {bdf!r} for port {port_number}")
@@ -441,7 +757,7 @@ class AfmctlPortParser:
 
     @classmethod
     def _parse_json(cls, document, result: Dict) -> None:
-        def walk(value, inherited_bdf=None, candidate_port=None) -> None:
+        def walk(value, inherited_bdf=None, candidate_port=None, allow_port_record=True) -> None:
             if isinstance(value, dict):
                 bdf = cls._value_for(value, cls._BDF_KEYS)
                 current_bdf = bdf if bdf is not None else inherited_bdf
@@ -449,16 +765,22 @@ class AfmctlPortParser:
                 if port is None:
                     port = candidate_port
                 state = cls._value_for(value, cls._STATE_KEYS)
-                if port is not None and state is not None:
-                    cls._record(result, port, state, current_bdf)
+                station = cls._value_for(value, cls._STATION_KEYS)
+                if allow_port_record and port is not None and state is not None:
+                    cls._record(result, port, state, current_bdf, station)
                 for key, child in value.items():
                     key_bdf = _normalize_bdf(key)
                     child_bdf = key_bdf or current_bdf
                     child_port = int(key) if str(key).isdigit() else None
-                    walk(child, child_bdf, child_port)
+                    child_allow_port_record = allow_port_record and cls._norm_key(key) not in {
+                        "status",
+                        "spec",
+                        "ifcp",
+                    }
+                    walk(child, child_bdf, child_port, child_allow_port_record)
             elif isinstance(value, list):
                 for child in value:
-                    walk(child, inherited_bdf, candidate_port)
+                    walk(child, inherited_bdf, candidate_port, allow_port_record)
 
         walk(document)
 
@@ -555,7 +877,6 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
 
     DEFAULT_AFMCTL_PATH = "afmctl"
     DEFAULT_PINGS_PER_PORT = 1
-    DEFAULT_PER_PING_TIMEOUT_SEC = 10
     DEFAULT_SSH_TIMEOUT_SEC = 180
     DEFAULT_LOSS_THRESHOLD_PCT = 0.0
     DEFAULT_TRAFFIC_TYPES: Tuple[str, ...] = TRAFFIC_TYPES
@@ -575,9 +896,12 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         loss_threshold_pct: Optional[float] = None,
         ssh_timeout: Optional[int] = None,
         use_sudo: bool = False,
+        json_args: Optional[Sequence[str]] = None,
+        allow_text_fallback: bool = True,
         bdf_discovery: str = "auto",
         require_complete_coverage: bool = True,
         strict_discovery: bool = True,
+        admitted_port_ids_by_node: Optional[Mapping[str, Mapping[str, Iterable[int]]]] = None,
         config_dict: Optional[Dict] = None,
     ):
         """Initialize the IFoE L2 connectivity check.
@@ -598,11 +922,12 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             ports: Port spec for ``-p``: ``"all"``/``None`` for all ports,
                 ``"up"`` for discovered operational ports, a list
                 ``[0,1,2]``, or a string ``"0,1,2"`` / ``"0-7"``.
-            port_discovery: ``"auto"`` uses ``afmctl show port --brief`` for
-                ``ports="up"``; ``"config"`` rejects automatic discovery.
+            port_discovery: ``"auto"`` uses ``afmctl show port -b <BDF>
+                --json`` for ``ports="up"``; ``"config"`` rejects automatic
+                discovery.
             pings_per_port: Value for ``-c`` (per-port-pair ping count).
-            per_ping_timeout: Value for ``-t`` (per-ping timeout). Omitted
-                from the command line if ``None``.
+            per_ping_timeout: Value for ``-t`` in minutes (per-ping timeout).
+                Omitted from the command line if ``None``.
             traffic_types: Subset of ``("ifoe_req", "ifoe_resp", "non_ifoe")``
                 used both to filter ``--traffic-type`` and to gate pass/fail
                 evaluation. Defaults to all three.
@@ -610,12 +935,23 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 enabled traffic type (default ``0.0``).
             ssh_timeout: Overall SSH timeout for each ``afmctl`` invocation.
             use_sudo: Prepend ``sudo`` when calling ``afmctl``.
+            json_args: JSON-output option(s) appended to AFM discovery
+                commands (``show device`` and ``show port``); AFM ping
+                output is structured text on current MI4XX images.
+            allow_text_fallback: Permit legacy text parsing for the AFM
+                discovery commands when they cannot honour the requested JSON
+                option. The typed preflight config disables this compatibility
+                fallback by default.
             bdf_discovery: ``"auto"`` (run ``afmctl show device`` if ``bdfs``
                 is empty) or ``"config"`` (require ``bdfs`` to be supplied).
             require_complete_coverage: Fail a node when planned pairs were not
                 all invoked and parsed.
             strict_discovery: Treat malformed topology/port discovery output as
                 a failure instead of a warning.
+            admitted_port_ids_by_node: Optional node/BDF-specific port IDs
+                admitted by MI4XX node health. When supplied with
+                ``ports="up"``, physical UP ports outside this set (for
+                example, intentionally station-masked ports) are excluded.
             config_dict: Optional full preflight config block (passed through
                 to the base class for reporting purposes).
         """
@@ -659,11 +995,29 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         )
         self.ssh_timeout: int = int(ssh_timeout) if ssh_timeout else self.DEFAULT_SSH_TIMEOUT_SEC
         self.use_sudo: bool = bool(use_sudo)
+        self.json_args = [str(arg) for arg in (json_args or ["--json"])]
+        if not self.json_args or not any(arg in ("--json", "-j") for arg in self.json_args):
+            raise ValueError("json_args must request JSON output")
+        self.allow_text_fallback = bool(allow_text_fallback)
         self.bdf_discovery: str = (bdf_discovery or "auto").strip().lower()
         if self.bdf_discovery not in ("auto", "config"):
             raise ValueError("bdf_discovery must be 'auto' or 'config'")
         self.require_complete_coverage: bool = bool(require_complete_coverage)
         self.strict_discovery: bool = bool(strict_discovery)
+        self.admitted_port_ids_by_node: Dict[str, Dict[str, List[int]]] = {}
+        for node, per_bdf in (admitted_port_ids_by_node or {}).items():
+            if not isinstance(per_bdf, Mapping):
+                raise ValueError(f"Admitted IFoE ports for {node!r} must be a BDF mapping")
+            normalized_bdfs: Dict[str, List[int]] = {}
+            for raw_bdf, raw_ports in per_bdf.items():
+                bdf = _normalize_bdf(raw_bdf)
+                if not bdf:
+                    raise ValueError(f"Invalid admitted IFoE BDF {raw_bdf!r} for {node!r}")
+                values, errors = parse_accelerator_ranges(raw_ports)
+                if errors:
+                    raise ValueError(f"Invalid admitted IFoE port IDs for {node!r}/{bdf}: {errors[0]}")
+                normalized_bdfs[bdf] = values
+            self.admitted_port_ids_by_node[str(node)] = normalized_bdfs
         # Backends without ``exec_cmd_list`` can only broadcast a command to
         # every host.  Cache each broadcast so consuming its result for node A
         # does not repeat the same source command on node B (and, importantly,
@@ -705,12 +1059,10 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
     def build_show_port_command(self, bdf: str) -> str:
         """Render the source-BDF-scoped port discovery command.
 
-        The exact MI4XX brief/JSON schema is intentionally not assumed.  The
-        command is explicit about the source BDF, while the parser accepts a
-        BDF-scoped or an unscoped brief response.  Hardware validation must
-        confirm the CLI grammar before this becomes the admission gate.
+        The command is explicit about the source BDF and requests JSON. AFM
+        does not permit ``--brief`` and ``--json`` in the same invocation.
         """
-        parts = self._afmctl_parts() + ["show", "port", "--brief", "-b", bdf]
+        parts = self._afmctl_parts() + ["show", "port", "-b", bdf, *self.json_args]
         return " ".join(shlex.quote(p) for p in parts)
 
     @staticmethod
@@ -788,15 +1140,22 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
 
     def _discover_topology(self) -> None:
         """Populate ``topology`` for every reachable node via ``show device``."""
-        command = " ".join(shlex.quote(p) for p in self._afmctl_parts() + ["show", "device"])
+        command = " ".join(
+            shlex.quote(p) for p in self._afmctl_parts() + ["show", "device", *self.json_args]
+        )
         for node, result in self._exec_all(command).items():
             if node not in self.results:
                 continue
             exit_status = result.get("exit_status")
             if exit_status not in (None, 0):
                 self._add_node_issue(node, "DISCOVERY_ERROR", f"afmctl show device exited with status {exit_status}")
-            devices = parse_afmctl_show_device(result.get("output", ""))
+            devices, parse_errors, output_format = parse_afmctl_show_device_output(
+                result.get("output", ""), allow_text_fallback=self.allow_text_fallback
+            )
             self.results[node]["topology"] = devices
+            self.results[node]["topology_format"] = output_format
+            for error in parse_errors:
+                self._add_node_issue(node, "DISCOVERY_ERROR", error, self.strict_discovery)
             if not devices:
                 self._add_node_issue(node, "DISCOVERY_ERROR", "afmctl show device returned no accelerator descriptors")
             for device in devices:
@@ -811,17 +1170,29 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         result = self._exec_on_node(node, command)
         output = result.get("output", "")
         exit_status = result.get("exit_status")
-        parsed = AfmctlPortParser.parse(output)
+        parsed = AfmctlPortParser.parse(output, allow_text_fallback=self.allow_text_fallback)
         bdf_key = _normalize_bdf(bdf) or bdf
         scoped = (parsed.get("ports_by_bdf") or {}).get(bdf_key)
         ports = scoped if scoped is not None else parsed.get("unscoped_ports") or {}
+        physical_up_ports = sorted(entry["port"] for entry in ports.values() if entry.get("is_up"))
+        admitted_ports = self.admitted_port_ids_by_node.get(node, {}).get(bdf_key)
+        if admitted_ports is None:
+            up_ports = physical_up_ports
+            excluded_masked_ports: List[int] = []
+        else:
+            admitted_set = set(admitted_ports)
+            up_ports = [port for port in physical_up_ports if port in admitted_set]
+            excluded_masked_ports = [port for port in physical_up_ports if port not in admitted_set]
         inventory = {
             "command": command,
             "raw_output": output,
             "exit_status": exit_status,
             "format": parsed.get("format"),
             "ports": list(ports.values()),
-            "up_ports": sorted(entry["port"] for entry in ports.values() if entry.get("is_up")),
+            "physical_up_ports": physical_up_ports,
+            "mask_enabled_port_ids": admitted_ports,
+            "excluded_masked_up_ports": excluded_masked_ports,
+            "up_ports": up_ports,
             "parse_errors": list(parsed.get("parse_errors") or []),
         }
         self.results[node]["port_inventory"][bdf] = inventory
@@ -1083,7 +1454,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 command = self.build_ping_command(bdf, dst, ports=selected_ports)
                 self.log_info(f"Executing on {node}: {command}")
                 execution = self._exec_on_node(node, command)
-                parsed = AfmctlPingParser.parse(execution.get("output", ""))
+                parsed = AfmctlPingParser.parse(execution.get("output", ""), allow_text_fallback=True)
                 status, errors, failure_category = self._evaluate_invocation(
                     parsed, bdf, dst, selected_ports, execution.get("exit_status")
                 )

@@ -10,12 +10,15 @@ The preflight checks system validates essential cluster health before running pe
 2. **RDMA Connectivity** - Tests node-to-node RDMA communication using ibv_rc_pingpong
 3. **ROCm Version Consistency** - Verifies consistent ROCm versions across nodes
 4. **Interface Name Consistency** - Validates RDMA interface naming patterns
-5. **IFoE L2 Connectivity (AIMVT-180; opt-in)** - Runs `afmctl test ping`
+5. **MI4XX Node-Health Admission (mandatory when enabled)** - Validates
+   AMDGPU/KFD, AIFM node agent, four GPU/AFM devices, AFM `ACTIVE`
+   bare-metal vPOD membership, and IFoE station-mask/AFM-UP-port coherence
+6. **IFoE L2 Connectivity (AIMVT-180; opt-in)** - Runs `afmctl test ping`
    on each node and enforces per-port and Summary pass/fail accounting
-6. **IFoE TransferBench Smoketest (AIMVT-181; opt-in)** - Runs the
+7. **IFoE TransferBench Smoketest (AIMVT-181; opt-in)** - Runs the
    TransferBench candidate-branch `smoketest` preset to validate IFoE
-   scale-up data-path one layer above L2 (after a single-vPod precondition
-   check via `amd-smi fabric --topology --json`)
+   scale-up data-path one layer above L2 (using the MI4XX AFM admission
+   result, not `amd-smi fabric --topology`, when MI4XX is enabled)
 
 ## Configuration File Structure
 
@@ -30,7 +33,8 @@ The preflight configuration file follows this structure:
     "node_check": {
       "gid_index": "3",
       "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
+      "mi4xx_node_health": {"enabled": false, "failure_mode": "gate"}
     },
     "connectivity_check": {
       "rdma": {
@@ -60,6 +64,7 @@ The preflight configuration uses a **nested structure organized by execution pha
 preflight/
 ├── debug/                # Debug and troubleshooting options  
 ├── node_check/           # Individual node validation parameters
+│   └── mi4xx_node_health/ # Mandatory MI4XX driver/AIFM/AFM/vPOD admission when enabled
 ├── connectivity_check/   # Inter-node connectivity tests
 │   ├── rdma/             # RDMA-specific parameters (including nodes_per_full_mesh_group)
 │   ├── ifoe/             # IFoE L2 ping parameters (AIMVT-180; opt-in)
@@ -68,10 +73,11 @@ preflight/
 ```
 
 ### Execution Flow
-1. **node_check** - Validate individual nodes in parallel
-2. **connectivity_check.rdma.nodes_per_full_mesh_group** - Configure RDMA batching resources
-3. **connectivity_check** - Test inter-node connectivity by protocol
-4. **reporting** - Generate reports and outputs
+1. **node_check** - Validate individual nodes in parallel; MI4XX admission runs after SSH reachability
+2. **MI4XX admission** - When enabled, block IFoE, TransferBench, and RDMA scale-up tests until every declared node is admitted
+3. **connectivity_check.rdma.nodes_per_full_mesh_group** - Configure RDMA batching resources
+4. **connectivity_check** - Test inter-node connectivity by protocol
+5. **reporting** - Generate reports and outputs
 
 ## Configuration Parameters
 
@@ -170,6 +176,54 @@ All parameters below are optional and have sensible defaults. The sample configu
   - Legacy hint for reporting: preflight now prunes interface/GID-failed nodes automatically
   - Interface failures are excluded from mesh testing regardless of this flag
 
+#### MI4XX Node-Health Admission (`node_check.mi4xx_node_health`)
+
+Set `enabled: true` for every MI4XX rack scale-up preflight. This is a
+mandatory **read-only** gate: it records platform state and never attempts to
+load `amdgpu`, start an AIFM agent, change a vPOD, change a station mask, or
+reboot a node. If it fails, CVS writes the report, marks IFoE L2,
+TransferBench, and RDMA scale-up checks as `BLOCKED`, then fails the preflight
+command after report generation.
+
+- **`failure_mode`** (required: `"gate"` when enabled)
+  - MI4XX admission cannot be downgraded to report-only behavior.
+- **Expected inventory** (`expected_gpus_per_node: 4`,
+  `expected_ifoe_devices_per_node: 4`, `expected_network_ports_per_device: 36`)
+  - Requires four GPUs from `amd-smi list --json`, four AFM devices from
+    `afmctl show device --json`, and 36 AFM network ports per device.
+- **Tool paths and privileges**
+  - Set `afmctl_path`, `amd_smi_path`, and `use_sudo` to match the selected
+    rack image. CVS does not assume the tools are on a benchmark user's
+    `PATH`.
+- **AMDGPU and AIFM state** (`required_ifoe_modules`, `agent_process_name`,
+  `agent_slot_ids`)
+  - Requires loaded `amdgpu`, `/dev/kfd`, required IFoE module(s), a running
+    AIFM node agent, and optionally a configured per-node slot ID. Current-boot
+    kernel initialization failure signatures also fail admission.
+- **AFM/vPOD state**
+  - Every AFM device must be `ACTIVE`, `bare-metal`, have an accelerator ID
+    (including valid ID `0`), and report non-empty vPOD accelerator membership.
+    The membership must agree across all devices and all declared benchmark
+    nodes. CVS polls read-only AFM state for `readiness_timeout_seconds`
+    (default 600 seconds); it does not perform recovery.
+- **Station-mask policy**
+  - `lane_en_bitmap` contains 18 station nibbles per GPU (36 network ports).
+    `f` means fully enabled, `0` means intentionally masked/disabled, and
+    partial `c`/`3` is rejected. The default permits valid `f`/`0` mixes; it
+    does **not** impose an all-ports-enabled policy.
+  - CVS uses AFM `spec.station_id` to require both ports of each `f` station
+    to be physically UP. Physical links reported for a `0`-masked station are
+    intentionally ignored: a station mask is an IFoE enablement policy, not a
+    promise that its associated cables are electrically down. Set `min_up_ports_per_gpu`,
+    `require_uniform_station_mask`, or `expected_station_masks` only for a
+    deployment that explicitly requires that policy.
+- **Rendezvous/firewall coverage**
+  - CVS does not add a generic port scanner. Keep the existing RDMA
+    `full_mesh` test enabled with an `ibv_test_port_range` that is permitted
+    between all nodes; that directly validates the TCP/RDMA path used by
+    RCCL-style scale-up rendezvous. TransferBench `multi_rank` likewise
+    requires `socket_master_port` to be reachable between all selected nodes.
+
 #### IFoE Settings (`connectivity_check.ifoe`) — opt-in (AIMVT-180)
 
 Runs `afmctl test ping` on each reachable node and validates the per-port
@@ -182,6 +236,12 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - Absolute path or PATH-resolved binary name on each node
 - **`use_sudo`** (default: `false`)
   - Prepend `sudo` to the afmctl invocation when the cluster image requires root
+- **`json_args`** (default: `["--json"]`) and **`allow_text_fallback`** (default: `false`)
+  - CVS requests JSON for `afmctl show device` and `show port -b <BDF>`, and
+    uses those JSON parsers for topology and port discovery. This AFM release
+    does not support `--json` for `afmctl test ping`; CVS instead strictly
+    parses its documented per-port text table and `Summary:` block. Discovery
+    text parsing remains an explicit compatibility diagnostic only.
 - **`bdf_discovery`** (default: `"auto"`)
   - `"auto"` — run `afmctl show device` on each node and use the reported BDFs
   - `"config"` — use only the `bdfs` list below; nodes with no matching BDFs FAIL
@@ -197,16 +257,20 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - A full mesh excludes `source == destination`; a self-ping is an invalid coverage cell, not a fabric result
   - With `strict_discovery: true`, a missing vPOD membership list fails the gate rather than silently substituting a local-only mesh. Set strict discovery to `false` only for a diagnostic run while collecting the missing hardware fixture.
 - **`ports`** (default: `"all"`; benchmark recommendation: `"up"`)
-  - `"up"` discovers the UP ports for every source BDF with `afmctl show port --brief` and supplies them explicitly through `-p`
+  - `"up"` discovers the UP ports for every source BDF with `afmctl show port -b <BDF> --json` and supplies them explicitly through `-p`
+  - When MI4XX node-health admission is enabled, `"up"` is further intersected
+    with the port IDs from its `f` stations. This excludes physical links that
+    AFM reports as UP but the rack intentionally station-masks out.
   - `"all"` omits `-p`, a string such as `"0-7"` or `"0,1,2"`, or a list `[0, 1, 2]`
   - `"all"` can include intentionally down or unwired ports and therefore must not be used for a strict benchmark gate
 - **`port_discovery`** (default: `"auto"`)
-  - Used with `ports: "up"`; CVS prefers a structured afmctl response when available and otherwise uses a defensive text parser
+  - Used with `ports: "up"`; CVS parses the requested JSON response and fails
+    closed if port state is malformed or incomplete
   - If the hardware's output is unknown or malformed, strict discovery fails closed rather than falling back to all ports
 - **`pings_per_port`** (default: `1`; benchmark recommendation: `3`)
   - Passed to afmctl as `-c <count>`
 - **`per_ping_timeout`** (default: `null`)
-  - Optional afmctl `-t <seconds>` value; omitted when `null`
+  - Optional afmctl `-t <minutes>` value; omitted when `null`
 - **`traffic_types`** (default: `["ifoe_req", "ifoe_resp", "non_ifoe"]`)
   - Determines which afmctl traffic categories are required to pass
   - When all three are selected, `--traffic-type` is omitted so afmctl runs them all
@@ -223,15 +287,20 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - `"report"` preserves diagnostic-only preflight behavior
   - `"gate"` records the detailed report and then fails pytest/CLI if L2 results or coverage fail
 
-> **MI4XX rack validation required.** `afmctl show port --brief` JSON/text formats and the exact UP-state field names must be captured from the target image before `ports: "up"` is used as an admission gate. Until then, use this implementation for parser and coverage validation against saved fixtures, not as proof of on-rack behavior.
+> **MI4XX benchmark profile.** Use `mesh_mode: "full_mesh"`, `ports: "up"`,
+> `strict_discovery: true`, and `failure_mode: "gate"`. This validates every
+> active IFoE path while allowing stations intentionally masked by the rack
+> configuration.
 
 #### TransferBench Settings (`connectivity_check.transferbench`) — opt-in (AIMVT-181)
 
 Runs the TransferBench candidate-branch **`smoketest`** preset on every reachable
 node to validate IFoE scale-up data-path connectivity (one layer above the
-AIMVT-180 L2 ping). Enforces a single-vPod precondition by parsing
-`amd-smi fabric --topology --json` before invoking TransferBench, and reconciles
-the binary's exit code with per-cell `[PASS]/[FAIL]/[SKIP]` markers.
+AIMVT-180 L2 ping). With MI4XX node health enabled, it consumes the mandatory
+`afmctl show device --json` admission result and never queries unreliable
+`amd-smi fabric --topology`. Generic non-MI4XX profiles retain the `amd-smi`
+precondition. The binary's exit code is reconciled with per-cell
+`[PASS]/[FAIL]/[SKIP]` markers.
 
 > **PATH / LD_LIBRARY_PATH.** This check resolves `TransferBench` and `amd-smi`
 > from each node's `PATH`. Cluster-wide tool location (e.g. a non-default ROCm
@@ -250,8 +319,8 @@ the binary's exit code with per-cell `[PASS]/[FAIL]/[SKIP]` markers.
     per-check override (use cluster file `env_vars` to point at a non-default
     install).
 - **`use_sudo`** (default: `true`)
-  - Prepend `sudo` to TransferBench and amd-smi calls (typically required
-    on production cluster images for IFoE access and the fabric topology query)
+  - Prepend `sudo` to TransferBench and generic-mode amd-smi calls (typically
+    required on production cluster images for IFoE access)
 - **`preset`** (default: `"smoketest"`)
   - TransferBench preset name. Change only when a TransferBench build ships
     a renamed preset with the same semantics.
@@ -271,8 +340,8 @@ the binary's exit code with per-cell `[PASS]/[FAIL]/[SKIP]` markers.
 - **`use_bdma`** (default: `false`)
   - `USE_BDMA=1` to prefer the BDMA path on supported hardware.
 - **`force_single_pod`** (default: `true`)
-  - `FORCE_SINGLE_POD=1` — defense in depth alongside the amd-smi
-    vPod precondition.
+  - `FORCE_SINGLE_POD=1` — defense in depth alongside the AFM admission on
+    MI4XX or the amd-smi vPod precondition in generic mode.
 - **`rank_mode`** (default: `"per_node"`)
   - `"per_node"` — each reachable node runs an independent single-rank
     TransferBench (exercises intra-node AID↔MID IFoE only)
@@ -293,9 +362,9 @@ the binary's exit code with per-cell `[PASS]/[FAIL]/[SKIP]` markers.
 - **`ssh_timeout`** (default: `600`)
   - Per-invocation SSH timeout (seconds) for each TransferBench run
 - **`skip_pod_check`** (default: `false`)
-  - Bypass the amd-smi pod-membership precondition. Only enable for
-    environments where amd-smi is not yet available; you lose the early
-    failure signal.
+  - Compatibility-only bypass of the generic amd-smi pod-membership check.
+    It is ignored for MI4XX: AFM/vPOD admission is mandatory and cannot be
+    skipped.
 
 ### Reporting Settings (`reporting`)
 

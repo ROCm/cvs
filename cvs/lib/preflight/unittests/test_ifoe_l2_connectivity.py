@@ -1,5 +1,6 @@
 """Unit tests for IFoE L2 connectivity preflight check (AIMVT-180)."""
 
+import json
 import os
 import sys
 import unittest
@@ -14,6 +15,7 @@ from cvs.lib.preflight.ifoe_l2_connectivity import (
     expand_accelerator_ranges,
     parse_accelerator_ranges,
     parse_afmctl_show_device,
+    parse_afmctl_show_device_json,
 )
 
 
@@ -124,6 +126,28 @@ Port#    State
 """
 
 
+PING_JSON_OUTPUT = json.dumps(
+    {
+        "bdf": "0001:01:00.1",
+        "pings_per_port": 1,
+        "results": [
+            {
+                "destination_accelerator": 0,
+                "port": 0,
+                "ifoe_req": {"pass": 1, "total": 1, "status": "PASS"},
+                "ifoe_resp": {"pass": 1, "total": 1, "status": "PASS"},
+                "non_ifoe": {"pass": 1, "total": 1, "status": "PASS"},
+            }
+        ],
+        "summary": {
+            "ifoe_req": {"pass": 1, "total": 1, "fail": 0, "loss_pct": 0.0},
+            "ifoe_resp": {"pass": 1, "total": 1, "fail": 0, "loss_pct": 0.0},
+            "non_ifoe": {"pass": 1, "total": 1, "fail": 0, "loss_pct": 0.0},
+        },
+    }
+)
+
+
 def passing_output_for(destination_accelerator, ports=(0,), bdf='0001:01:00.1'):
     """Build internally consistent one-ping AFM output for a destination."""
     rows = '\n'.join(
@@ -199,6 +223,18 @@ class TestAfmctlPingParser(unittest.TestCase):
         self.assertEqual(parsed['summary']['ifoe_req']['status'], 'FAIL')
         self.assertEqual(parsed['summary']['ifoe_resp']['status'], 'PASS')
 
+    def test_json_output_is_parsed_without_text_fallback(self):
+        parsed = AfmctlPingParser.parse(PING_JSON_OUTPUT, allow_text_fallback=False)
+        self.assertEqual(parsed['format'], 'json')
+        self.assertEqual(parsed['bdf'], '0001:01:00.1')
+        self.assertEqual(parsed['ports']['0']['accelerator_id'], 0)
+        self.assertEqual(parsed['summary']['ifoe_req']['status'], 'PASS')
+        self.assertEqual(parsed['parse_errors'], [])
+
+    def test_text_output_is_rejected_when_compatibility_fallback_is_disabled(self):
+        parsed = AfmctlPingParser.parse(PASSING_OUTPUT, allow_text_fallback=False)
+        self.assertTrue(any('fallback is disabled' in error for error in parsed['parse_errors']))
+
 
 class TestParseAfmctlShowDevice(unittest.TestCase):
     """Tests for parse_afmctl_show_device()."""
@@ -233,6 +269,25 @@ class TestParseAfmctlShowDevice(unittest.TestCase):
         self.assertEqual(device['vpod_accelerators'], list(range(24, 32)))
         self.assertFalse(device['parse_errors'])
 
+    def test_json_device_inventory_is_first_class(self):
+        payload = json.dumps(
+            {
+                'devices': [
+                    {
+                        'bdf': '0001:01:00.1',
+                        'accelerator_id': 0,
+                        'local_accelerators': [0, 1],
+                        'vpod_accelerators': [0, 1],
+                        'num_network_ports': 36,
+                    }
+                ]
+            }
+        )
+        devices, errors = parse_afmctl_show_device_json(payload)
+        self.assertEqual(errors, [])
+        self.assertEqual(devices[0]['bdf'], '0001:01:00.1')
+        self.assertEqual(devices[0]['vpod_accelerators'], [0, 1])
+
 
 class TestAcceleratorRangeParsing(unittest.TestCase):
     """Tests for safe accelerator-list/range parsing."""
@@ -252,7 +307,7 @@ class TestAcceleratorRangeParsing(unittest.TestCase):
 
 
 class TestAfmctlPortParser(unittest.TestCase):
-    """Tests for JSON and versioned-text ``show port --brief`` parsing."""
+    """Tests for JSON and versioned-text AFM port inventory parsing."""
 
     def test_json_port_inventory_is_scoped_to_bdf_and_selects_only_up(self):
         parsed = AfmctlPortParser.parse(SHOW_PORT_JSON_OUTPUT)
@@ -271,6 +326,36 @@ class TestAfmctlPortParser(unittest.TestCase):
         self.assertFalse(inventory['1']['is_up'])
         self.assertTrue(inventory['2']['is_up'])
         self.assertFalse(parsed['parse_errors'])
+
+    def test_mi4xx_json_uses_id_and_nested_link_status(self):
+        output = json.dumps(
+            {
+                "device": [
+                    {
+                        "bdf": "0001:01:00.1",
+                        "port": [
+                            {
+                                "id": "0",
+                                "spec": {"station_id": "0"},
+                                "status": {"link_status": "LINK_UP"},
+                            },
+                            {
+                                "id": "1",
+                                "spec": {"station_id": "0"},
+                                "status": {"link_status": "NO_PHY_LINK, PCS_NO_BLOCK_LOCK"},
+                            },
+                        ],
+                    }
+                ]
+            }
+        )
+        parsed = AfmctlPortParser.parse(output, allow_text_fallback=False)
+        inventory = parsed['ports_by_bdf']['0001:01:00.1']
+        self.assertTrue(inventory['0']['is_up'])
+        self.assertFalse(inventory['1']['is_up'])
+        self.assertEqual(inventory['0']['station_id'], 0)
+        self.assertEqual(inventory['1']['station_id'], 0)
+        self.assertEqual(parsed['parse_errors'], [])
 
     def test_unknown_or_malformed_port_formats_fail_closed(self):
         malformed_json = AfmctlPortParser.parse('{"ports": [{"port": 0, "state": "FLAPPING"}]}')
@@ -311,6 +396,13 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertIn('--dst-accelerator 0', cmd)
         self.assertNotIn('-p ', cmd)
         self.assertNotIn('--traffic-type', cmd)
+        self.assertNotIn('--json', cmd)
+
+    def test_build_show_port_command_uses_json_without_incompatible_brief_flag(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        command = check.build_show_port_command('0001:01:00.1')
+        self.assertIn('show port -b 0001:01:00.1 --json', command)
+        self.assertNotIn('--brief', command)
 
     def test_build_ping_command_with_ports_and_timeout(self):
         check = IfoeL2ConnectivityCheck(
@@ -386,6 +478,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             bdfs=['0001:01:00.1'],
             dst_accelerators=[0],
             bdf_discovery='config',
+            allow_text_fallback=False,
         )
         results = check.run()
         self.assertEqual(set(results.keys()), {'nodeA', 'nodeB'})
@@ -395,6 +488,25 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             self.assertEqual(accel_block['0']['status'], 'PASS')
             self.assertEqual(accel_block['0']['parsed']['summary']['ifoe_req']['loss_pct'], 0.0)
         self.assertEqual(phdl.exec.call_count, 1)
+
+    def test_run_accepts_json_ping_output_if_a_future_afm_version_emits_it(self):
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA'],
+            exec_responses=[{'nodeA': PING_JSON_OUTPUT}],
+        )
+        check = IfoeL2ConnectivityCheck(
+            phdl,
+            bdfs=['0001:01:00.1'],
+            dst_accelerators=[0],
+            bdf_discovery='config',
+            allow_text_fallback=False,
+        )
+        results = check.run()
+
+        self.assertEqual(results['nodeA']['status'], 'PASS')
+        invocation = results['nodeA']['accelerators']['0001:01:00.1']['0']
+        self.assertEqual(invocation['parsed']['format'], 'json')
+        self.assertNotIn('--json', invocation['command'])
 
     def test_run_marks_failure_on_loss(self):
         phdl = self._make_phdl(
@@ -565,6 +677,61 @@ Port#    State
         self.assertIn('-p 0,2', invocation['command'])
         self.assertEqual(set(invocation['parsed']['ports']), {'0', '2'})
         self.assertTrue(node['coverage']['complete'])
+
+    def test_up_port_discovery_excludes_physically_up_masked_stations(self):
+        port_inventory = json.dumps(
+            {
+                'device': [
+                    {
+                        'bdf': '0001:01:00.1',
+                        'port': [
+                            {
+                                'id': '0',
+                                'spec': {'station_id': '0'},
+                                'status': {'link_status': 'LINK_UP'},
+                            },
+                            {
+                                'id': '1',
+                                'spec': {'station_id': '1'},
+                                'status': {'link_status': 'LINK_UP'},
+                            },
+                            {
+                                'id': '2',
+                                'spec': {'station_id': '2'},
+                                'status': {'link_status': 'LINK_UP'},
+                            },
+                        ],
+                    }
+                ]
+            }
+        )
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA'],
+            exec_responses=[
+                {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
+                {'nodeA': port_inventory},
+                {'nodeA': passing_output_for(1, ports=(0, 2))},
+            ],
+        )
+        check = IfoeL2ConnectivityCheck(
+            phdl,
+            bdfs=['0001:01:00.1'],
+            dst_accelerators=[1],
+            ports='up',
+            port_discovery='auto',
+            bdf_discovery='config',
+            admitted_port_ids_by_node={'nodeA': {'0001:01:00.1': [0, 2]}},
+        )
+
+        results = check.run()
+        inventory = results['nodeA']['port_inventory']['0001:01:00.1']
+        invocation = results['nodeA']['accelerators']['0001:01:00.1']['1']
+        self.assertEqual(results['nodeA']['status'], 'PASS')
+        self.assertEqual(inventory['physical_up_ports'], [0, 1, 2])
+        self.assertEqual(inventory['excluded_masked_up_ports'], [1])
+        self.assertEqual(inventory['up_ports'], [0, 2])
+        self.assertEqual(invocation['selected_ports'], [0, 2])
+        self.assertIn('-p 0,2', invocation['command'])
 
     def test_no_up_ports_fails_closed_without_issuing_ping(self):
         phdl = self._make_phdl(

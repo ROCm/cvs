@@ -13,7 +13,46 @@
       
       "_example_rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
       "rdma_interfaces": "[<changeme>]",
-      "_comment_rdma_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand."
+      "_comment_rdma_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand.",
+
+      "mi4xx_node_health": {
+        "_comment": "Set enabled=true for every MI4XX rack scale-up run. This is a read-only mandatory admission gate: CVS records failures but never loads modules, starts AIFM, reconfigures a vPOD, unmasks stations, or reboots a node.",
+
+        "enabled": false,
+        "_comment_enabled": "MI4XX benchmark profile switch. When true, failure_mode must remain gate and AFM ACTIVE/bare-metal vPOD admission is required before IFoE, TransferBench, or RDMA scale-up checks run.",
+
+        "failure_mode": "gate",
+        "_comment_failure_mode": "Mandatory MI4XX admission behavior. Only gate is valid when enabled=true; report-only mode is not an admissible scale-up configuration.",
+
+        "expected_gpus_per_node": 4,
+        "expected_ifoe_devices_per_node": 4,
+        "expected_network_ports_per_device": 36,
+        "_comment_expected_counts": "A healthy MI4XX node exposes four AMD-SMI GPUs, four AFM devices, and 36 IFoE network ports per AFM device. CVS fails closed if JSON inventory differs.",
+
+        "afmctl_path": "afmctl",
+        "amd_smi_path": "amd-smi",
+        "json_args": ["--json"],
+        "use_sudo": true,
+        "_comment_commands": "All AFM and AMD-SMI inventory queries request JSON. Set paths/use_sudo for the selected rack image; do not replace JSON parsing with screen-scraping.",
+
+        "required_ifoe_modules": ["ifoe"],
+        "agent_process_name": "inb-node-agent",
+        "agent_slot_ids": {},
+        "_comment_agent": "The expected AIFM node-agent process. Optionally map each cluster node name to its required slot ID when the rack deployment assigns them statically.",
+
+        "readiness_timeout_seconds": 600,
+        "poll_interval_seconds": 15,
+        "_comment_readiness": "AFM may take about five minutes after bring-up. CVS polls read-only state until this timeout, then fails; recovery remains a platform bring-up action.",
+
+        "allow_disabled_stations": true,
+        "reject_partial_stations": true,
+        "min_up_ports_per_gpu": 0,
+        "require_uniform_station_mask": false,
+        "expected_station_masks": {},
+        "_comment_station_policy": "A station mask has 18 nibbles/GPU (36 ports): f=fully enabled, 0=intentionally masked, c/3=unsupported partial. Default allows valid f/0 mixes and requires both AFM ports of every f station (matched by AFM station_id) to be UP; physical links on 0 stations are intentionally ignored. Set min_up_ports_per_gpu, require_uniform_station_mask, or exact masks only when the deployment profile requires them.",
+
+        "expected_virtualization_mode": "bare-metal"
+      }
     },
     
     "connectivity_check": {
@@ -62,6 +101,10 @@
         "use_sudo": false,
         "_comment_use_sudo": "When true, afmctl is invoked with sudo. Enable if afmctl needs root on the cluster image.",
 
+        "json_args": ["--json"],
+        "allow_text_fallback": false,
+        "_comment_json": "CVS requests JSON for afmctl show device and show port. This AFM version exposes test ping only as its documented tabular text format, which CVS parses strictly. Leave discovery text fallback false for MI4XX; enable it only as an explicit compatibility diagnostic on a platform that cannot return discovery JSON.",
+
         "bdf_discovery": "auto",
         "_comment_bdf_discovery": "How to determine which accelerator BDFs to ping on each node. 'auto' runs 'afmctl show device' on each node and uses the BDFs reported there. 'config' uses only the explicit 'bdfs' list below.",
 
@@ -76,16 +119,16 @@
         "_comment_mesh_mode": "'full_mesh' builds every ordered non-self accelerator pair inside each discovered vPOD. 'config' preserves the legacy bdf x dst_accelerators behavior. Full mesh is the benchmark-preflight setting.",
 
         "ports": "up",
-        "_comment_ports": "'up' discovers each source BDF's operational ports with 'afmctl show port --brief' and passes only those IDs through -p. 'all' omits -p and is retained only for compatibility; it can report intentional down/unwired ports as packet loss.",
+        "_comment_ports": "'up' discovers each source BDF's operational ports with 'afmctl show port -b <BDF> --json' and passes only those IDs through -p. 'all' omits -p and is retained only for compatibility; it can report intentional down/unwired ports as packet loss.",
 
         "port_discovery": "auto",
-        "_comment_port_discovery": "For ports='up', auto probes afmctl's supported brief/JSON output and fails closed if the port state cannot be parsed. 'config' requires an explicit port selection instead.",
+        "_comment_port_discovery": "For ports='up', auto probes afmctl JSON output and fails closed if the port state cannot be parsed. AFM rejects --brief together with --json, so CVS uses JSON without --brief. 'config' requires an explicit port selection instead.",
 
         "pings_per_port": 3,
         "_comment_pings_per_port": "Value for -c (pings per selected UP port pair). Three samples reduce one-shot transient noise; lower only for short diagnostic runs.",
 
         "per_ping_timeout": null,
-        "_comment_per_ping_timeout": "Optional value for afmctl's -t flag (per-ping timeout). Leave null to use afmctl's default.",
+        "_comment_per_ping_timeout": "Optional value for afmctl's -t flag in minutes (per-ping timeout). Leave null to use afmctl's default.",
 
         "traffic_types": ["ifoe_req", "ifoe_resp", "non_ifoe"],
         "_comment_traffic_types": "Traffic categories to enforce when evaluating PASS/FAIL. Maps to afmctl's --traffic-type (request, response, non-ifoe). When all three are selected (default) --traffic-type is omitted so afmctl exercises every category.",
@@ -107,7 +150,7 @@
       },
 
       "transferbench": {
-        "_comment": "IFoE scale-up data-path validation via the TransferBench candidate-branch smoketest preset (AIMVT-181). Opt-in: defaults to 'skip'. Enforces a single-vPod precondition via 'amd-smi fabric --topology --json' before invoking TransferBench. PATH and LD_LIBRARY_PATH for ROCm / amd-smi / TransferBench should be set cluster-wide via the cluster file's top-level 'env_vars' block (see cvs/input/cluster_file/README.md); they are not duplicated here.",
+        "_comment": "IFoE scale-up data-path validation via the TransferBench candidate-branch smoketest preset (AIMVT-181). Opt-in: defaults to 'skip'. When MI4XX node health is enabled, TransferBench consumes the mandatory AFM 'afmctl show device --json' admission and never queries unreliable 'amd-smi fabric --topology'. Generic non-MI4XX profiles retain the amd-smi precondition. PATH and LD_LIBRARY_PATH for ROCm / amd-smi / TransferBench should be set cluster-wide via the cluster file's top-level 'env_vars' block (see cvs/input/cluster_file/README.md); they are not duplicated here.",
 
         "connectivity_mode": "skip",
         "_comment_connectivity_mode": "TransferBench smoketest mode. Options: 'run' (execute the smoketest preset on each reachable node) or 'skip' (default; preflight will not invoke TransferBench). Flip to 'run' once the TransferBench candidate-branch binary and amd-smi are installed cluster-wide and reachable on PATH (typically via cluster file 'env_vars').",
@@ -158,7 +201,7 @@
         "_comment_ssh_timeout": "Overall SSH timeout (seconds) for each TransferBench invocation. The smoketest typically completes well within this on healthy hardware; increase for large size_list values or slow validate paths.",
 
         "skip_pod_check": false,
-        "_comment_skip_pod_check": "When true, bypasses the amd-smi pod-membership precondition. Only flip this on for environments where amd-smi is not yet available; you lose the early failure signal."
+        "_comment_skip_pod_check": "Compatibility-only generic-mode bypass of the amd-smi pod-membership precondition. It is ignored for MI4XX: AFM vPOD admission is mandatory and cannot be skipped."
       }
     },
     

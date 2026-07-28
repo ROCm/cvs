@@ -782,6 +782,66 @@ class PreflightDebugConfig(BaseModel):
     )
 
 
+class PreflightMi4xxNodeHealthConfig(BaseModel):
+    """Mandatory read-only MI4XX admission policy when enabled.
+
+    This gate validates the platform state that must already be established by
+    rack bring-up.  CVS deliberately does not attempt recovery actions such as
+    loading modules, starting the AIFM agent, changing a vPOD, or changing an
+    IFoE station mask.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = Field(default=False, description="Enable mandatory MI4XX node/vPOD admission")
+    failure_mode: str = Field(default="gate", description="Must be gate when MI4XX admission is enabled")
+    expected_gpus_per_node: int = Field(default=4, ge=1)
+    expected_ifoe_devices_per_node: int = Field(default=4, ge=1)
+    expected_network_ports_per_device: int = Field(default=36, ge=1)
+    afmctl_path: str = Field(default="afmctl")
+    amd_smi_path: str = Field(default="amd-smi")
+    json_args: List[str] = Field(default_factory=lambda: ["--json"])
+    use_sudo: bool = Field(default=True)
+    required_ifoe_modules: List[str] = Field(default_factory=lambda: ["ifoe"])
+    agent_process_name: str = Field(default="inb-node-agent")
+    agent_slot_ids: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Optional mapping of benchmark node name to required AIFM agent slot ID",
+    )
+    readiness_timeout_seconds: int = Field(default=600, ge=0)
+    poll_interval_seconds: int = Field(default=15, ge=1)
+    allow_disabled_stations: bool = Field(
+        default=True,
+        description="Permit fully masked (0) IFoE stations; does not permit partial stations",
+    )
+    reject_partial_stations: bool = Field(default=True)
+    min_up_ports_per_gpu: int = Field(default=0, ge=0, le=36)
+    require_uniform_station_mask: bool = Field(default=False)
+    expected_station_masks: Dict[str, str] = Field(default_factory=dict)
+    expected_virtualization_mode: str = Field(default="bare-metal")
+
+    @field_validator("failure_mode")
+    @classmethod
+    def validate_failure_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ("gate", "report", "report_only"):
+            raise ValueError("MI4XX node-health failure_mode must be one of: gate, report, report_only")
+        return normalized
+
+    @field_validator("json_args")
+    @classmethod
+    def validate_json_args(cls, value: List[str]) -> List[str]:
+        if not value or not any(str(arg).strip() in ("--json", "-j") for arg in value):
+            raise ValueError("MI4XX node-health json_args must request JSON output")
+        return [str(arg) for arg in value]
+
+    @model_validator(mode="after")
+    def validate_enabled_gate(self):
+        if self.enabled and self.failure_mode != "gate":
+            raise ValueError("MI4XX node-health admission is mandatory: enabled=true requires failure_mode='gate'")
+        return self
+
+
 class PreflightNodeCheckConfig(BaseModel):
     """Individual node validation settings."""
 
@@ -792,6 +852,10 @@ class PreflightNodeCheckConfig(BaseModel):
     rdma_interfaces: List[str] = Field(
         default_factory=lambda: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
         description="List of specific RDMA interface names to check and test",
+    )
+    mi4xx_node_health: PreflightMi4xxNodeHealthConfig = Field(
+        default_factory=PreflightMi4xxNodeHealthConfig,
+        description="MI4XX node health and AFM/vPOD admission policy",
     )
 
 
@@ -902,6 +966,14 @@ class PreflightIfoeConfig(BaseModel):
     connectivity_mode: str = Field(default="skip", description="IFoE L2 connectivity mode: run or skip")
     afmctl_path: str = Field(default="afmctl", description="afmctl binary path or command name")
     use_sudo: bool = Field(default=False, description="Run afmctl through sudo")
+    json_args: List[str] = Field(
+        default_factory=lambda: ["--json"],
+        description="JSON output option appended to afmctl show device and show port discovery commands",
+    )
+    allow_text_fallback: bool = Field(
+        default=False,
+        description="Allow legacy text parsing for afmctl discovery commands when a platform cannot return requested JSON",
+    )
     bdf_discovery: str = Field(default="auto", description="BDF discovery mode: auto or config")
     bdfs: List[str] = Field(default_factory=list, description="Optional explicit source accelerator BDFs")
     dst_accelerators: List[int] = Field(
@@ -918,7 +990,9 @@ class PreflightIfoeConfig(BaseModel):
         default="auto", description="Port discovery mode when ports=up: auto or config"
     )
     pings_per_port: int = Field(default=1, ge=1, description="afmctl pings per selected port pair")
-    per_ping_timeout: Optional[int] = Field(default=None, ge=1, description="Optional afmctl per-ping timeout")
+    per_ping_timeout: Optional[int] = Field(
+        default=None, ge=1, description="Optional afmctl -t per-ping timeout in minutes"
+    )
     traffic_types: List[str] = Field(
         default_factory=lambda: ["ifoe_req", "ifoe_resp", "non_ifoe"],
         description="Traffic classes that must be evaluated",
@@ -975,6 +1049,55 @@ class PreflightIfoeConfig(BaseModel):
             raise ValueError("IFoE failure_mode must be one of: gate, report, report_only")
         return normalized
 
+    @field_validator('json_args')
+    @classmethod
+    def validate_ifoe_json_args(cls, value: List[str]) -> List[str]:
+        if not value or not any(str(arg).strip() in ('--json', '-j') for arg in value):
+            raise ValueError("IFoE json_args must request JSON output")
+        return [str(arg) for arg in value]
+
+
+class PreflightTransferBenchConfig(BaseModel):
+    """TransferBench IFoE smoketest settings."""
+
+    model_config = ConfigDict(extra="allow")
+
+    connectivity_mode: str = Field(default="skip")
+    tb_binary: str = Field(default="TransferBench")
+    use_sudo: bool = Field(default=True)
+    preset: str = Field(default="smoketest")
+    size_list: List[str] = Field(default_factory=lambda: ["1K", "16M"])
+    num_iterations: int = Field(default=2, ge=1)
+    num_warmups: int = Field(default=0, ge=0)
+    always_validate: bool = Field(default=True)
+    run_parallel: bool = Field(default=True)
+    use_bdma: bool = Field(default=False)
+    force_single_pod: bool = Field(default=True)
+    rank_mode: str = Field(default="per_node")
+    socket_master_port: int = Field(default=31337, ge=1, le=65535)
+    master_node: str = Field(default="")
+    max_skip_pct: float = Field(default=25.0, ge=0.0, le=100.0)
+    ssh_timeout: int = Field(default=600, ge=1)
+    skip_pod_check: bool = Field(
+        default=False,
+        description="Compatibility-only generic-mode bypass; ignored when the MI4XX admission gate is enabled",
+    )
+
+    @field_validator('connectivity_mode')
+    @classmethod
+    def validate_transferbench_connectivity_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ('run', 'skip', 'off', 'disabled'):
+            raise ValueError("TransferBench connectivity_mode must be one of: run, skip, off, disabled")
+        return normalized
+
+    @field_validator('rank_mode')
+    @classmethod
+    def validate_transferbench_rank_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ('per_node', 'multi_rank'):
+            raise ValueError("TransferBench rank_mode must be one of: per_node, multi_rank")
+        return normalized
 
 class PreflightConnectivityCheckConfig(BaseModel):
     """Connectivity check settings by protocol."""
@@ -983,6 +1106,10 @@ class PreflightConnectivityCheckConfig(BaseModel):
 
     rdma: PreflightRdmaConfig = Field(default_factory=PreflightRdmaConfig, description="RDMA connectivity settings")
     ifoe: PreflightIfoeConfig = Field(default_factory=PreflightIfoeConfig, description="IFoE L2 connectivity settings")
+    transferbench: PreflightTransferBenchConfig = Field(
+        default_factory=PreflightTransferBenchConfig,
+        description="IFoE TransferBench data-path smoketest settings",
+    )
 
 
 class PreflightReportingConfig(BaseModel):
