@@ -974,6 +974,10 @@ class PreflightIfoeConfig(BaseModel):
         default=False,
         description="Allow legacy text parsing for afmctl discovery commands when a platform cannot return requested JSON",
     )
+    skip_pass: bool = Field(
+        default=True,
+        description="Pass --skip-pass to afmctl test ping and validate selected-port coverage from Summary totals",
+    )
     bdf_discovery: str = Field(default="auto", description="BDF discovery mode: auto or config")
     bdfs: List[str] = Field(default_factory=list, description="Optional explicit source accelerator BDFs")
     dst_accelerators: List[int] = Field(

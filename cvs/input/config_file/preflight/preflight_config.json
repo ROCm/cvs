@@ -103,7 +103,10 @@
 
         "json_args": ["--json"],
         "allow_text_fallback": false,
-        "_comment_json": "CVS requests JSON for afmctl show device and show port. This AFM version exposes test ping only as its documented tabular text format, which CVS parses strictly. Leave discovery text fallback false for MI4XX; enable it only as an explicit compatibility diagnostic on a platform that cannot return discovery JSON.",
+        "_comment_json": "CVS requests JSON for afmctl show device and show port. Port JSON is written to a private remote /tmp artifact and retrieved over SFTP so SSH stdout cannot corrupt it. This AFM version exposes test ping only as its documented tabular text format. Leave discovery text fallback false for MI4XX; enable it only as an explicit compatibility diagnostic on a platform that cannot return discovery JSON.",
+
+        "skip_pass": true,
+        "_comment_skip_pass": "Pass --skip-pass to afmctl test ping. AFM then returns failure rows plus the Summary only; CVS validates the Summary totals against the selected-port count, reducing SSH output without weakening coverage. Set false only when complete per-port PASS output is required for diagnostics.",
 
         "bdf_discovery": "auto",
         "_comment_bdf_discovery": "How to determine which accelerator BDFs to ping on each node. 'auto' runs 'afmctl show device' on each node and uses the BDFs reported there. 'config' uses only the explicit 'bdfs' list below.",
@@ -119,10 +122,10 @@
         "_comment_mesh_mode": "'full_mesh' builds every ordered non-self accelerator pair inside each discovered vPOD. 'config' preserves the legacy bdf x dst_accelerators behavior. Full mesh is the benchmark-preflight setting.",
 
         "ports": "up",
-        "_comment_ports": "'up' discovers each source BDF's operational ports with 'afmctl show port -b <BDF> --json' and passes only those IDs through -p. 'all' omits -p and is retained only for compatibility; it can report intentional down/unwired ports as packet loss.",
+        "_comment_ports": "'up' writes each source BDF's 'afmctl show port -b <BDF> --json' output to a private /tmp artifact, retrieves it through SFTP, and passes only operational port IDs through -p. 'all' omits -p and is retained only for compatibility; it can report intentional down/unwired ports as packet loss.",
 
         "port_discovery": "auto",
-        "_comment_port_discovery": "For ports='up', auto probes afmctl JSON output and fails closed if the port state cannot be parsed. AFM rejects --brief together with --json, so CVS uses JSON without --brief. 'config' requires an explicit port selection instead.",
+        "_comment_port_discovery": "For ports='up', auto retrieves AFM's JSON inventory over SFTP and fails closed on command, transfer, cleanup, or parser errors. AFM rejects --brief together with --json, so CVS uses JSON without --brief. 'config' requires an explicit port selection instead.",
 
         "pings_per_port": 3,
         "_comment_pings_per_port": "Value for -c (pings per selected UP port pair). Three samples reduce one-shot transient noise; lower only for short diagnostic runs.",

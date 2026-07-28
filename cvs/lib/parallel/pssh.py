@@ -17,6 +17,18 @@ from cvs.lib import globals
 global_log = globals.log
 
 
+def _select_reachable_hosts(reachable_hosts, hosts):
+    """Return requested reachable hosts in established host-list order."""
+    reachable = list(reachable_hosts)
+    if hosts is None:
+        return reachable
+    requested = list(hosts)
+    unknown_hosts = [host for host in requested if host not in reachable]
+    if unknown_hosts:
+        raise ValueError(f"SFTP download requested unreachable host(s): {unknown_hosts}")
+    return [host for host in reachable if host in requested]
+
+
 class Pssh:
     """
     Single-process parallel SSH: one ParallelSSHClient (one gevent hub) over a host list.
@@ -361,10 +373,10 @@ class Pssh:
                 f"{len(errors)}/{len(self.reachable_hosts)} hosts: {errors}"
             ) from errors[0][1]
 
-    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_'):
+    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_', hosts=None):
         """
-        SFTP-download `remote_file` from every host in this Pssh's reachable_hosts
-        to the runner node. Wraps ParallelSSHClient.copy_remote_file.
+        SFTP-download ``remote_file`` from selected reachable hosts to the
+        runner node. Wraps ``ParallelSSHClient.copy_remote_file``.
 
         Use this instead of `exec('cat <file>')` + parsing stdout when the file
         may exceed a few KB. `cat`-over-exec reassembles bytes through the
@@ -381,19 +393,35 @@ class Pssh:
           local_file: Local path prefix on the runner node (host name will be appended).
           recurse: If True, recursively download a directory tree.
           suffix_separator: Separator placed between local_file and host. Default '_'.
+          hosts: Optional iterable of reachable hosts to fetch from. ``None``
+              fetches from every reachable host.
 
         Returns:
-          dict: {host: actual_local_path} for each host in reachable_hosts.
+          dict: {host: actual_local_path} for each selected host.
 
         Raises:
           IOError: If transfer fails on any host. Message lists offending hosts.
         """
-        self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts)
-        cmds = self.client.copy_remote_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
-        self.client.pool.join()
+        target_hosts = _select_reachable_hosts(self.reachable_hosts, hosts)
+        if not target_hosts:
+            return {}
+
+        self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, target_hosts)
+        if target_hosts == self.reachable_hosts:
+            client = self.client
+        elif self.password is None:
+            client = ParallelSSHClient(
+                target_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, **self.ssh_client_kwargs
+            )
+        else:
+            client = ParallelSSHClient(
+                target_hosts, user=self.user, password=self.password, keepalive_seconds=30, **self.ssh_client_kwargs
+            )
+        cmds = client.copy_remote_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
+        client.pool.join()
         errors = []
         result = {}
-        for cmd, host in zip(cmds, self.reachable_hosts):
+        for cmd, host in zip(cmds, target_hosts):
             try:
                 cmd.get()
                 result[host] = f'{local_file}{suffix_separator}{host}'
@@ -402,7 +430,7 @@ class Pssh:
         if errors:
             raise IOError(
                 f"download_file '{remote_file}' -> '{local_file}' failed on "
-                f"{len(errors)}/{len(self.reachable_hosts)} hosts: {errors}"
+                f"{len(errors)}/{len(target_hosts)} hosts: {errors}"
             ) from errors[0][1]
         return result
 

@@ -33,6 +33,18 @@ Summary:
 """
 
 
+SKIP_PASS_OUTPUT = """\
+0001:01:00.1                   : Ping test results (1 pings per port pair)
+Accel ID    Port#     IFoE Req        IFoE Rsp        Non-IFoE
+--------    -----     --------        ---------       --------
+
+Summary:
+  IFoE Request    : 2/2 PASS, 0/2 fail (0.00% loss)
+  IFoE Response   : 2/2 PASS, 0/2 fail (0.00% loss)
+  Non-IFoE        : 2/2 PASS, 0/2 fail (0.00% loss)
+"""
+
+
 FAILING_OUTPUT = """\
 0001:01:00.1                   : Ping test results (3 pings per port pair)
 Accel ID    Port#     IFoE Req        IFoE Rsp        Non-IFoE
@@ -185,6 +197,14 @@ class TestAfmctlPingParser(unittest.TestCase):
             self.assertEqual(parsed['summary'][ttype]['loss_pct'], 0.0)
             self.assertEqual(parsed['summary'][ttype]['pass'], 2)
             self.assertEqual(parsed['summary'][ttype]['fail'], 0)
+        self.assertFalse(parsed['parse_errors'])
+
+    def test_skip_pass_output_retains_summary_without_success_rows(self):
+        parsed = AfmctlPingParser.parse(SKIP_PASS_OUTPUT)
+        self.assertEqual(parsed['bdf'], '0001:01:00.1')
+        self.assertEqual(parsed['pings_per_port'], 1)
+        self.assertEqual(parsed['ports'], {})
+        self.assertEqual(parsed['summary']['ifoe_req']['total'], 2)
         self.assertFalse(parsed['parse_errors'])
 
     def test_failing_output_parsed(self):
@@ -374,17 +394,39 @@ class TestAfmctlPortParser(unittest.TestCase):
 class TestIfoeL2ConnectivityCheck(unittest.TestCase):
     """Tests for the IfoeL2ConnectivityCheck class."""
 
-    def _make_phdl(self, reachable_hosts, exec_responses):
+    def _make_phdl(self, reachable_hosts, exec_responses, port_artifacts=None):
         """Build a MagicMock phdl that returns scripted exec() responses.
 
         Args:
             reachable_hosts: list of host names.
             exec_responses: list of {host: output} dicts returned by successive
                 ``phdl.exec()`` calls.
+            port_artifacts: optional ``{host: JSON}`` mapping written by the
+                SFTP mock when AFM port discovery retrieves its private file.
         """
         phdl = MagicMock()
         phdl.reachable_hosts = list(reachable_hosts)
-        phdl.exec = MagicMock(side_effect=exec_responses)
+        responses = iter(exec_responses)
+
+        def exec_side_effect(*_args, **_kwargs):
+            try:
+                return next(responses)
+            except StopIteration:
+                return {host: '' for host in reachable_hosts}
+
+        def download_file(_remote_file, local_prefix, recurse=False, suffix_separator='_', hosts=None):
+            result = {}
+            for host in hosts or reachable_hosts:
+                if host not in (port_artifacts or {}):
+                    raise IOError(f'no SFTP artifact configured for {host}')
+                local_path = f'{local_prefix}{suffix_separator}{host}'
+                with open(local_path, 'w', encoding='utf-8') as artifact_file:
+                    artifact_file.write(port_artifacts[host])
+                result[host] = local_path
+            return result
+
+        phdl.exec = MagicMock(side_effect=exec_side_effect)
+        phdl.download_file = MagicMock(side_effect=download_file)
         return phdl
 
     def test_build_ping_command_defaults(self):
@@ -397,6 +439,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertNotIn('-p ', cmd)
         self.assertNotIn('--traffic-type', cmd)
         self.assertNotIn('--json', cmd)
+        self.assertIn('--skip-pass', cmd)
 
     def test_build_show_port_command_uses_json_without_incompatible_brief_flag(self):
         check = IfoeL2ConnectivityCheck(MagicMock())
@@ -422,6 +465,28 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertIn('--dst-accelerator 3', cmd)
         self.assertIn('-t 10', cmd)
         self.assertIn('--traffic-type request', cmd)
+        self.assertIn('--skip-pass', cmd)
+
+    def test_skip_pass_summary_proves_selected_port_coverage(self):
+        phdl = self._make_phdl(
+            reachable_hosts=['nodeA'],
+            exec_responses=[{'nodeA': SKIP_PASS_OUTPUT}],
+        )
+        check = IfoeL2ConnectivityCheck(
+            phdl,
+            bdfs=['0001:01:00.1'],
+            dst_accelerators=[1],
+            ports=[0, 2],
+            bdf_discovery='config',
+            skip_pass=True,
+        )
+
+        results = check.run()
+
+        invocation = results['nodeA']['accelerators']['0001:01:00.1']['1']
+        self.assertEqual(results['nodeA']['status'], 'PASS')
+        self.assertEqual(invocation['parsed']['ports'], {})
+        self.assertIn('--skip-pass', invocation['command'])
 
     def test_build_ping_command_ports_string(self):
         check = IfoeL2ConnectivityCheck(MagicMock(), ports='0-7')
@@ -655,8 +720,10 @@ Port#    State
             exec_responses=[
                 {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
                 {'nodeA': port_inventory},
+                {'nodeA': ''},
                 {'nodeA': passing_output_for(1, ports=(0, 2))},
             ],
+            port_artifacts={'nodeA': port_inventory},
         )
         check = IfoeL2ConnectivityCheck(
             phdl,
@@ -675,7 +742,8 @@ Port#    State
         invocation = node['accelerators']['0001:01:00.1']['1']
         self.assertEqual(invocation['selected_ports'], [0, 2])
         self.assertIn('-p 0,2', invocation['command'])
-        self.assertEqual(set(invocation['parsed']['ports']), {'0', '2'})
+        self.assertEqual(invocation['parsed']['summary']['ifoe_req']['total'], 2)
+        self.assertEqual(node['port_inventory']['0001:01:00.1']['artifact_transport'], 'sftp')
         self.assertTrue(node['coverage']['complete'])
 
     def test_up_port_discovery_excludes_physically_up_masked_stations(self):
@@ -687,17 +755,17 @@ Port#    State
                         'port': [
                             {
                                 'id': '0',
-                                'spec': {'station_id': '0'},
+                                'spec': {'station_id': '0', 'admin_state': 'enabled'},
                                 'status': {'link_status': 'LINK_UP'},
                             },
                             {
                                 'id': '1',
-                                'spec': {'station_id': '1'},
+                                'spec': {'station_id': '1', 'admin_state': 'enabled'},
                                 'status': {'link_status': 'LINK_UP'},
                             },
                             {
                                 'id': '2',
-                                'spec': {'station_id': '2'},
+                                'spec': {'station_id': '2', 'admin_state': 'enabled'},
                                 'status': {'link_status': 'LINK_UP'},
                             },
                         ],
@@ -710,8 +778,10 @@ Port#    State
             exec_responses=[
                 {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
                 {'nodeA': port_inventory},
+                {'nodeA': ''},
                 {'nodeA': passing_output_for(1, ports=(0, 2))},
             ],
+            port_artifacts={'nodeA': port_inventory},
         )
         check = IfoeL2ConnectivityCheck(
             phdl,
@@ -740,6 +810,7 @@ Port#    State
                 {'nodeA': FULL_MESH_SHOW_DEVICE_OUTPUT},
                 {'nodeA': SHOW_PORT_ALL_DOWN_OUTPUT},
             ],
+            port_artifacts={'nodeA': SHOW_PORT_ALL_DOWN_OUTPUT},
         )
         check = IfoeL2ConnectivityCheck(
             phdl,
@@ -759,7 +830,7 @@ Port#    State
         self.assertFalse(node['coverage']['complete'])
         self.assertTrue(any(issue['category'] == 'PORT_DISCOVERY_ERROR' for issue in node['error_details']))
         self.assertTrue(any(issue['category'] == 'COVERAGE_ERROR' for issue in node['error_details']))
-        self.assertEqual(phdl.exec.call_count, 2)
+        self.assertGreaterEqual(phdl.exec.call_count, 3)
 
     def test_nonzero_ping_exit_status_fails_even_when_output_is_passing(self):
         phdl = self._make_phdl(

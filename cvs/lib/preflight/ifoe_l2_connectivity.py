@@ -2,18 +2,19 @@
 IFoE L2 Connectivity Check (AIMVT-180).
 
 Validates L2 connectivity by invoking ``afmctl test ping`` on each
-reachable node and parsing the per-port pass/fail counts and the
-aggregate ``Summary:`` section that ``afmctl`` emits. Current MI4XX AFM
-images expose JSON for inventory commands but not for ``test ping``; the
+reachable node and parsing its aggregate ``Summary:`` section. Current MI4XX
+AFM images expose JSON for inventory commands but not for ``test ping``; the
 ping parser therefore treats its documented tabular text format as the
-primary protocol rather than a JSON compatibility fallback.
+primary protocol rather than a JSON compatibility fallback. By default the
+check requests ``--skip-pass``: successful per-port rows are suppressed while
+summary totals preserve selected-port coverage and failing rows remain useful
+diagnostics.
 
 This is a *per-node* preflight check: each node runs one
 ``afmctl test ping`` invocation per configured ``(bdf, dst_accelerator)``
 pairing. The check requires no pairwise SSH coordination because
 ``afmctl`` drives the request/response state machine in the device and
-reports a per-port pass/fail table plus an aggregate Summary that we
-surface to the operator.
+reports an aggregate Summary that we surface to the operator.
 
 Example command issued on each node::
 
@@ -35,8 +36,11 @@ Example output parsed by :class:`AfmctlPingParser`::
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
+import tempfile
+import uuid
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib.preflight.base import PreflightCheck
@@ -902,6 +906,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         require_complete_coverage: bool = True,
         strict_discovery: bool = True,
         admitted_port_ids_by_node: Optional[Mapping[str, Mapping[str, Iterable[int]]]] = None,
+        skip_pass: bool = True,
         config_dict: Optional[Dict] = None,
     ):
         """Initialize the IFoE L2 connectivity check.
@@ -952,6 +957,9 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 admitted by MI4XX node health. When supplied with
                 ``ports="up"``, physical UP ports outside this set (for
                 example, intentionally station-masked ports) are excluded.
+            skip_pass: Pass AFM ``--skip-pass`` to emit only failed port rows
+                plus the aggregate Summary. Summary totals still prove
+                selected-port coverage; failed rows remain diagnostics.
             config_dict: Optional full preflight config block (passed through
                 to the base class for reporting purposes).
         """
@@ -1004,6 +1012,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             raise ValueError("bdf_discovery must be 'auto' or 'config'")
         self.require_complete_coverage: bool = bool(require_complete_coverage)
         self.strict_discovery: bool = bool(strict_discovery)
+        self.skip_pass: bool = bool(skip_pass)
         self.admitted_port_ids_by_node: Dict[str, Dict[str, List[int]]] = {}
         for node, per_bdf in (admitted_port_ids_by_node or {}).items():
             if not isinstance(per_bdf, Mapping):
@@ -1054,6 +1063,8 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         ttype = self._traffic_type_cli()
         if ttype:
             parts.extend(["--traffic-type", ttype])
+        if self.skip_pass:
+            parts.append("--skip-pass")
         return " ".join(shlex.quote(p) for p in parts)
 
     def build_show_port_command(self, bdf: str) -> str:
@@ -1064,6 +1075,21 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         """
         parts = self._afmctl_parts() + ["show", "port", "-b", bdf, *self.json_args]
         return " ".join(shlex.quote(p) for p in parts)
+
+    @staticmethod
+    def _port_artifact_path(bdf: str) -> str:
+        """Return a unique, shell-safe remote path for one AFM JSON inventory."""
+        safe_bdf = bdf.replace(":", "_").replace(".", "_")
+        return f"/tmp/cvs-ifoe-port-{safe_bdf}-{uuid.uuid4().hex}.json"
+
+    def build_show_port_artifact_command(self, bdf: str, artifact_path: str) -> str:
+        """Write a source-BDF AFM JSON inventory to a private remote file."""
+        return f"umask 077; {self.build_show_port_command(bdf)} > {shlex.quote(artifact_path)}"
+
+    @staticmethod
+    def _build_remove_artifact_command(artifact_path: str) -> str:
+        """Render a safe cleanup command for a generated AFM JSON artifact."""
+        return f"rm -f -- {shlex.quote(artifact_path)}"
 
     @staticmethod
     def _normalise_exec_results(raw_results) -> Dict[str, Dict]:
@@ -1165,12 +1191,41 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                     )
 
     def _discover_up_ports(self, node: str, bdf: str) -> Optional[List[int]]:
-        """Discover and record operational ports for one source BDF."""
-        command = self.build_show_port_command(bdf)
+        """Discover operational ports from an AFM JSON artifact retrieved over SFTP."""
+        artifact_path = self._port_artifact_path(bdf)
+        command = self.build_show_port_artifact_command(bdf, artifact_path)
         result = self._exec_on_node(node, command)
-        output = result.get("output", "")
         exit_status = result.get("exit_status")
-        parsed = AfmctlPortParser.parse(output, allow_text_fallback=self.allow_text_fallback)
+        parsed: Dict[str, Any] = {
+            "format": None,
+            "ports_by_bdf": {},
+            "unscoped_ports": {},
+            "parse_errors": [],
+        }
+        transfer_error = None
+        cleanup_error = None
+        cleanup_status = None
+        try:
+            if exit_status in (None, 0):
+                with tempfile.TemporaryDirectory(prefix="cvs_ifoe_port_") as temp_dir:
+                    local_prefix = os.path.join(temp_dir, "port.json")
+                    downloaded_paths = self.phdl.download_file(artifact_path, local_prefix, hosts=[node])
+                    local_path = downloaded_paths.get(node)
+                    if not local_path:
+                        raise IOError(f"SFTP did not return an artifact path for {node}")
+                    with open(local_path, "r", encoding="utf-8") as artifact_file:
+                        parsed = AfmctlPortParser.parse(
+                            artifact_file.read(), allow_text_fallback=self.allow_text_fallback
+                        )
+        except (OSError, ValueError, TypeError) as exc:
+            transfer_error = str(exc)
+        finally:
+            try:
+                cleanup_result = self._exec_on_node(node, self._build_remove_artifact_command(artifact_path))
+                cleanup_status = cleanup_result.get("exit_status")
+            except (OSError, ValueError, TypeError) as exc:
+                cleanup_error = str(exc)
+
         bdf_key = _normalize_bdf(bdf) or bdf
         scoped = (parsed.get("ports_by_bdf") or {}).get(bdf_key)
         ports = scoped if scoped is not None else parsed.get("unscoped_ports") or {}
@@ -1185,7 +1240,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             excluded_masked_ports = [port for port in physical_up_ports if port not in admitted_set]
         inventory = {
             "command": command,
-            "raw_output": output,
+            "artifact_transport": "sftp",
             "exit_status": exit_status,
             "format": parsed.get("format"),
             "ports": list(ports.values()),
@@ -1198,6 +1253,14 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         self.results[node]["port_inventory"][bdf] = inventory
         if exit_status not in (None, 0):
             self._add_node_issue(node, "PORT_DISCOVERY_ERROR", f"{bdf}: show port exited with status {exit_status}")
+            return None
+        if cleanup_status not in (None, 0) or cleanup_error:
+            self._add_node_issue(node, "PORT_DISCOVERY_ERROR", f"{bdf}: failed to remove temporary port artifact")
+            return None
+        if transfer_error:
+            self._add_node_issue(
+                node, "PORT_DISCOVERY_ERROR", f"{bdf}: SFTP port artifact retrieval failed: {transfer_error}"
+            )
             return None
         if inventory["parse_errors"]:
             for error in inventory["parse_errors"]:
@@ -1291,20 +1354,24 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 f"requested {self.pings_per_port}"
             )
             status, failure_category = "FAIL", "COVERAGE_ERROR"
-        actual_ports = {int(port) for port in (parsed.get("ports") or {}) if str(port).isdigit()}
         if selected_ports is not None:
             expected_ports = set(selected_ports)
-            missing_ports = sorted(expected_ports - actual_ports)
-            unexpected_ports = sorted(actual_ports - expected_ports)
-            if missing_ports or unexpected_ports:
-                errors.append(
-                    f"Port coverage mismatch: missing={missing_ports or 'none'}, unexpected={unexpected_ports or 'none'}"
-                )
-                status, failure_category = "FAIL", "COVERAGE_ERROR"
+            if not self.skip_pass:
+                actual_ports = {int(port) for port in (parsed.get("ports") or {}) if str(port).isdigit()}
+                missing_ports = sorted(expected_ports - actual_ports)
+                unexpected_ports = sorted(actual_ports - expected_ports)
+                if missing_ports or unexpected_ports:
+                    errors.append(
+                        f"Port coverage mismatch: missing={missing_ports or 'none'}, unexpected={unexpected_ports or 'none'}"
+                    )
+                    status, failure_category = "FAIL", "COVERAGE_ERROR"
             expected_total = len(expected_ports) * self.pings_per_port
             for ttype in self.traffic_types:
                 entry = (parsed.get("summary") or {}).get(ttype)
-                if entry and entry.get("total") != expected_total:
+                if entry is None:
+                    errors.append(f"Missing {TRAFFIC_LABELS[ttype]} summary line for selected-port coverage")
+                    status, failure_category = "FAIL", "COVERAGE_ERROR"
+                elif entry.get("total") != expected_total:
                     errors.append(
                         f"{TRAFFIC_LABELS[ttype]} summary total {entry.get('total')} does not match "
                         f"{len(expected_ports)} selected ports x {self.pings_per_port} pings"

@@ -226,22 +226,35 @@ command after report generation.
 
 #### IFoE Settings (`connectivity_check.ifoe`) — opt-in (AIMVT-180)
 
-Runs `afmctl test ping` on each reachable node and validates the per-port
-pass/fail table plus the aggregate `Summary:` block in afmctl's output.
+Runs `afmctl test ping` on each reachable node and validates its aggregate
+`Summary:` block. AFM's `--skip-pass` output retains failed port rows for
+diagnostics while omitting successful rows; CVS verifies Summary totals against
+the selected-port count.
 
 - **`connectivity_mode`** (default: `"skip"`)
   - `"run"` — execute the L2 ping on every reachable node
   - `"skip"` — preflight records a SKIPPED result and does not invoke afmctl
 - **`afmctl_path`** (default: `"afmctl"`)
   - Absolute path or PATH-resolved binary name on each node
+- **`skip_pass`** (default: `true`)
+  - Passes `--skip-pass` to `afmctl test ping`, reducing output to failed port
+    rows and the Summary block.
+  - A passing summary still proves complete selected-port coverage because CVS
+    requires each traffic type's `total` to equal `selected ports × -c`.
+  - Set it to `false` only when complete per-port PASS output is needed for a
+    diagnostic artifact.
 - **`use_sudo`** (default: `false`)
   - Prepend `sudo` to the afmctl invocation when the cluster image requires root
 - **`json_args`** (default: `["--json"]`) and **`allow_text_fallback`** (default: `false`)
   - CVS requests JSON for `afmctl show device` and `show port -b <BDF>`, and
-    uses those JSON parsers for topology and port discovery. This AFM release
-    does not support `--json` for `afmctl test ping`; CVS instead strictly
-    parses its documented per-port text table and `Summary:` block. Discovery
-    text parsing remains an explicit compatibility diagnostic only.
+    uses those JSON parsers for topology and port discovery. It writes each
+    port inventory to a `umask 077` remote `/tmp` artifact, retrieves that
+    single-host artifact through SFTP, and removes it before continuing. This
+    avoids parsing AFM JSON through SSH stdout; command, SFTP, cleanup, and
+    parse errors all fail closed.
+  - This AFM release does not support `--json` for `afmctl test ping`; CVS
+    parses its documented text Summary and any failed-port rows. Discovery text
+    parsing remains an explicit compatibility diagnostic only.
 - **`bdf_discovery`** (default: `"auto"`)
   - `"auto"` — run `afmctl show device` on each node and use the reported BDFs
   - `"config"` — use only the `bdfs` list below; nodes with no matching BDFs FAIL
@@ -257,15 +270,18 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
   - A full mesh excludes `source == destination`; a self-ping is an invalid coverage cell, not a fabric result
   - With `strict_discovery: true`, a missing vPOD membership list fails the gate rather than silently substituting a local-only mesh. Set strict discovery to `false` only for a diagnostic run while collecting the missing hardware fixture.
 - **`ports`** (default: `"all"`; benchmark recommendation: `"up"`)
-  - `"up"` discovers the UP ports for every source BDF with `afmctl show port -b <BDF> --json` and supplies them explicitly through `-p`
+  - `"up"` writes `afmctl show port -b <BDF> --json` to a private remote file,
+    retrieves it over SFTP, and supplies the discovered UP ports explicitly
+    through `-p`
   - When MI4XX node-health admission is enabled, `"up"` is further intersected
     with the port IDs from its `f` stations. This excludes physical links that
     AFM reports as UP but the rack intentionally station-masks out.
   - `"all"` omits `-p`, a string such as `"0-7"` or `"0,1,2"`, or a list `[0, 1, 2]`
   - `"all"` can include intentionally down or unwired ports and therefore must not be used for a strict benchmark gate
 - **`port_discovery`** (default: `"auto"`)
-  - Used with `ports: "up"`; CVS parses the requested JSON response and fails
-    closed if port state is malformed or incomplete
+  - Used with `ports: "up"`; CVS parses the SFTP-retrieved JSON artifact and
+    fails closed if AFM command execution, SFTP, artifact cleanup, or port
+    state parsing fails
   - If the hardware's output is unknown or malformed, strict discovery fails closed rather than falling back to all ports
 - **`pings_per_port`** (default: `1`; benchmark recommendation: `3`)
   - Passed to afmctl as `-c <count>`

@@ -501,6 +501,16 @@ def test_rocm_version_consistency(phdl, config_dict):
     preflight_update_test_result()
 
 
+def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
+    """Run IFoE L2 before RDMA-specific interface and GID pruning.
+
+    IFoE uses AFM/vPOD topology rather than conventional RDMA interfaces.
+    Keeping this test ahead of the legacy RDMA eligibility filters ensures an
+    absent or separately configured RDMA NIC cannot suppress IFoE validation.
+    """
+    _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict)
+
+
 def test_interface_name_consistency(phdl, config_dict):
     """
     Test RDMA interface presence and consistency across all cluster nodes.
@@ -617,7 +627,7 @@ def _ifoe_failure_mode(config_dict):
     raise ValueError("connectivity_check.ifoe.failure_mode must be 'gate' or 'report'")
 
 
-def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
+def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     """
     Test IFoE L2 connectivity using ``afmctl test ping`` (AIMVT-180).
 
@@ -712,6 +722,9 @@ def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     allow_text_fallback = _config_flag_enabled(
         get_nested_config(config_dict, 'connectivity_check.ifoe', 'allow_text_fallback', False), default=False
     )
+    skip_pass = _config_flag_enabled(
+        get_nested_config(config_dict, 'connectivity_check.ifoe', 'skip_pass', True), default=True
+    )
 
     log.info(
         "Running IFoE L2 connectivity (afmctl=%s, bdf_discovery=%s, mesh_mode=%s, "
@@ -746,6 +759,7 @@ def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
         use_sudo=use_sudo,
         json_args=json_args if isinstance(json_args, (list, tuple)) else [json_args],
         allow_text_fallback=allow_text_fallback,
+        skip_pass=skip_pass,
         bdf_discovery=bdf_discovery,
         require_complete_coverage=require_complete_coverage,
         strict_discovery=strict_discovery,

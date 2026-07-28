@@ -1046,6 +1046,27 @@ class TestPsshFileTransfer(unittest.TestCase):
             "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="."
         )
 
+    def test_download_file_targets_only_requested_host(self):
+        target_client = MagicMock()
+        target_client.copy_remote_file.return_value = [self._ok_greenlet()]
+        with patch("cvs.lib.parallel.pssh.ParallelSSHClient", return_value=target_client) as mock_client:
+            result = self.pssh.download_file("/remote/file.json", "/tmp/local.json", hosts=["host2"])
+
+        self.assertEqual(result, {"host2": "/tmp/local.json_host2"})
+        self.mock_client.copy_remote_file.assert_not_called()
+        mock_client.assert_called_once_with(
+            ["host2"], user="user", password="pass", keepalive_seconds=30
+        )
+        target_client.copy_remote_file.assert_called_once_with(
+            "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="_"
+        )
+        target_client.pool.join.assert_called_once()
+
+    def test_download_file_rejects_unknown_target_host(self):
+        with self.assertRaisesRegex(ValueError, "unreachable host"):
+            self.pssh.download_file("/remote/file.json", "/tmp/local.json", hosts=["host3"])
+        self.mock_client.copy_remote_file.assert_not_called()
+
     def test_download_file_partial_failure_raises_ioerror(self):
         # Failed host -> IOError lists it; succeeded host's path is NOT returned
         # (we raise before constructing a partial return value)
