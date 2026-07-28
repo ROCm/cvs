@@ -54,7 +54,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.all = MagicMock()
         orch.all.exec.return_value = {"10.0.0.1": "ok", "10.0.0.2": "ok"}
         result = orch.exec("ls", timeout=5)
-        orch.all.exec.assert_called_once_with("ls", timeout=5, detailed=False)
+        orch.all.exec.assert_called_once_with("ls", timeout=5, detailed=False, print_console=True)
         self.assertEqual(result, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
@@ -63,8 +63,35 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.head = MagicMock()
         orch.head.exec.return_value = {"10.0.0.1": "ok"}
         result = orch.exec_on_head("hostname", timeout=10)
-        orch.head.exec.assert_called_once_with("hostname", timeout=10, detailed=False)
+        orch.head.exec.assert_called_once_with("hostname", timeout=10, detailed=False, print_console=True)
         self.assertEqual(result, {"10.0.0.1": "ok"})
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_forwards_print_console_false_to_all(self, _mock_pssh):
+        """print_console=False must reach the pssh handle, not be swallowed here.
+
+        A dropped kwarg is silent -- the command still works, it just logs
+        hundreds of MB -- so this is pinned explicitly.
+        """
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        orch.exec("cat /tmp/huge", print_console=False)
+        self.assertIs(orch.all.exec.call_args.kwargs["print_console"], False)
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_forwards_print_console_false_to_host_subset(self, mock_pssh):
+        """The subset branch builds its own Pssh; it must forward too."""
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.exec("cat /tmp/huge", hosts=["10.0.0.2"], print_console=False)
+        subset_handle = mock_pssh.return_value
+        self.assertIs(subset_handle.exec.call_args.kwargs["print_console"], False)
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_on_head_forwards_print_console_false(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.exec_on_head("cat /tmp/huge", print_console=False)
+        self.assertIs(orch.head.exec.call_args.kwargs["print_console"], False)
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
     def test_cleanup_returns_true(self, _mock_pssh):

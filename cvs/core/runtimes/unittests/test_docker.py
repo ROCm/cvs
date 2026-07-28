@@ -384,6 +384,61 @@ class TestDockerRuntimeExec(unittest.TestCase):
         self.assertTrue(rendered.startswith("docker exec cvs_iter_test bash -c "))
 
 
+class TestDockerRuntimeExecPrintConsole(unittest.TestCase):
+    """print_console must survive the runtime layer.
+
+    DockerRuntime sits between ContainerOrchestrator and Pssh. It previously
+    dropped print_console on all three exec paths, so a caller asking for a
+    quiet bulk read still got every line logged -- 486 MB of amd-smi JSON in
+    one observed vLLM run. A dropped kwarg fails silently, hence these pins.
+    """
+
+    def test_exec_forwards_print_console_false(self):
+        orchestrator = MagicMock()
+        orchestrator.all.exec.return_value = {"host1": ""}
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.exec("cvs_iter_test", "cat /tmp/huge", print_console=False)
+
+        self.assertIs(orchestrator.all.exec.call_args.kwargs["print_console"], False)
+
+    def test_exec_with_hosts_subset_forwards_print_console_false(self):
+        orchestrator = MagicMock()
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        with patch("cvs.lib.parallel_ssh_lib.Pssh") as mock_pssh_cls:
+            mock_pssh = MagicMock()
+            mock_pssh.exec.return_value = {"host1": ""}
+            mock_pssh_cls.return_value = mock_pssh
+
+            rt.exec("cvs_iter_test", "cat /tmp/huge", hosts=["host1"], print_console=False)
+
+            self.assertIs(mock_pssh.exec.call_args.kwargs["print_console"], False)
+
+    def test_exec_on_head_forwards_print_console_false(self):
+        orchestrator = MagicMock()
+        orchestrator.head.exec.return_value = {"host1": ""}
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.exec_on_head("cvs_iter_test", "cat /tmp/huge", print_console=False)
+
+        self.assertIs(orchestrator.head.exec.call_args.kwargs["print_console"], False)
+
+    def test_default_stays_verbose(self):
+        """Omitting the kwarg must keep the historical logging behavior."""
+        orchestrator = MagicMock()
+        orchestrator.all.exec.return_value = {"host1": ""}
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.exec("cvs_iter_test", "echo hi")
+
+        self.assertIs(orchestrator.all.exec.call_args.kwargs["print_console"], True)
+
+
 class TestDockerRuntimeSudoProbeCachedAcrossCalls(unittest.TestCase):
     """Regression test for the bug being fixed: with a REAL BaremetalOrchestrator
     (not a bare MagicMock) as DockerRuntime's orchestrator, the underlying
