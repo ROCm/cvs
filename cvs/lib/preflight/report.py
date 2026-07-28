@@ -1091,7 +1091,7 @@ class PreflightReportGenerator(PreflightCheck):
                 <tr>
                     <td><code>{html.escape(str(node))}</code></td>
                     <td><code>{html.escape(str(bdf))}</code></td>
-                    <td>{html.escape(str(dst))}</td>
+                    <td>{html.escape(str(invocation.get('dst_accelerator', dst)))}</td>
                     <td><code>{html.escape(invocation.get('command', ''))}</code></td>
                     <td>{detail_html}</td>
                 </tr>

@@ -695,7 +695,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
 
     @staticmethod
     def _build_remove_artifact_command(artifact_path: str) -> str:
-        """Render a safe best-effort cleanup command for a generated artifact."""
+        """Render a safe cleanup command for a generated artifact."""
         return f"rm -f -- {shlex.quote(artifact_path)}"
 
     @staticmethod
@@ -988,7 +988,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         """Execute IFoE L2 connectivity check across all reachable nodes.
 
         Returns:
-            ``{node: {status, errors, accelerators: {bdf: {dst_accelerator:
+            ``{node: {status, errors, accelerators: {bdf: {invocation_key:
             {command, raw_output, parsed, status, errors}}}, ...}}``.
         """
         self.log_info(
@@ -1110,7 +1110,6 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             for cell in node_result["plan"]:
                 bdf = cell["source_bdf"]
                 dst = cell["dst_accelerator"]
-                selected_ports = cell["selected_ports"]
                 for invocation_ports in cell["invocation_port_sets"]:
                     command = self.build_ping_command(bdf, dst, ports=invocation_ports)
                     self.log_info(f"Executing on {node}: {command}")

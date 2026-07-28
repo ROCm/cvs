@@ -6,7 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.lib.env_lib import build_env_prefix
-from cvs.lib.parallel.pssh import Pssh
+from cvs.lib.parallel.pssh import Pssh, _select_reachable_hosts
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.pssh_sharder import PsshSharder
 from cvs.lib.parallel.interfaces import ShardableSshInterface
@@ -337,11 +337,7 @@ class MultiProcessPssh(ShardableSshInterface):
             return result
 
         if hosts is not None:
-            requested_hosts = list(hosts)
-            unknown_hosts = [host for host in requested_hosts if host not in self.reachable_hosts]
-            if unknown_hosts:
-                raise ValueError(f"SFTP download requested unreachable host(s): {unknown_hosts}")
-            target_hosts = [host for host in self.reachable_hosts if host in requested_hosts]
+            target_hosts = _select_reachable_hosts(self.reachable_hosts, hosts)
             if not target_hosts:
                 return {}
             target_pssh = Pssh(

@@ -17,6 +17,18 @@ from cvs.lib import globals
 global_log = globals.log
 
 
+def _select_reachable_hosts(reachable_hosts, hosts):
+    """Return the requested reachable hosts in established host-list order."""
+    reachable = list(reachable_hosts)
+    if hosts is None:
+        return reachable
+    requested = list(hosts)
+    unknown_hosts = [host for host in requested if host not in reachable]
+    if unknown_hosts:
+        raise ValueError(f"SFTP download requested unreachable host(s): {unknown_hosts}")
+    return [host for host in reachable if host in requested]
+
+
 class Pssh:
     """
     Single-process parallel SSH: one ParallelSSHClient (one gevent hub) over a host list.
@@ -390,11 +402,7 @@ class Pssh:
         Raises:
           IOError: If transfer fails on any host. Message lists offending hosts.
         """
-        requested_hosts = list(self.reachable_hosts) if hosts is None else list(hosts)
-        unknown_hosts = [host for host in requested_hosts if host not in self.reachable_hosts]
-        if unknown_hosts:
-            raise ValueError(f"SFTP download requested unreachable host(s): {unknown_hosts}")
-        target_hosts = [host for host in self.reachable_hosts if host in requested_hosts]
+        target_hosts = _select_reachable_hosts(self.reachable_hosts, hosts)
         if not target_hosts:
             return {}
 

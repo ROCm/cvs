@@ -15,6 +15,7 @@ from cvs.lib.preflight.ifoe_l2_connectivity import (
     parse_accelerator_ranges,
     parse_afmctl_show_device,
 )
+from cvs.lib.preflight.report import PreflightReportGenerator
 
 
 PASSING_OUTPUT = """\
@@ -784,6 +785,42 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertEqual(results['nodeA']['status'], 'FAIL')
         self.assertEqual(invocation['failure_category'], 'PARSE_ERROR')
         self.assertTrue(any('did not identify the requested source BDF' in error for error in invocation['errors']))
+
+    def test_per_port_failure_report_displays_destination_not_internal_key(self):
+        ifoe_results = {
+            'node_results': {
+                'nodeA': {
+                    'status': 'FAIL',
+                    'errors': [],
+                    'coverage': {
+                        'expected_pairs': 1,
+                        'planned_pairs': 1,
+                        'expected_invocations': 2,
+                        'completed_invocations': 2,
+                        'complete': True,
+                    },
+                    'port_inventory': {},
+                    'accelerators': {
+                        '0001:01:00.1': {
+                            '57:port:9': {
+                                'dst_accelerator': 57,
+                                'command': 'afmctl test ping -p 9',
+                                'status': 'FAIL',
+                                'errors': ['Port 9 IFoE Request: 0/1 (FAIL)'],
+                                'parsed': {'ports': {}, 'summary': {}},
+                            }
+                        }
+                    },
+                }
+            },
+            'total_invocations': 2,
+            'failed_invocations': 1,
+        }
+
+        html = PreflightReportGenerator(MagicMock(), {})._generate_ifoe_l2_html(ifoe_results)
+
+        self.assertIn('<td>57</td>', html)
+        self.assertNotIn('<td>57:port:9</td>', html)
 
     def test_strict_full_mesh_requires_vpod_membership(self):
         phdl = self._make_phdl(
