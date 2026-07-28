@@ -78,7 +78,7 @@
     "server_warmup_wait_s": "330",
     "server_poll_count": "120",
     "server_poll_wait_time": "60",
-    "client_poll_count": "80",
+    "client_poll_count": "150",
     "client_poll_wait_time": "60"
   },
   "sweep": {
