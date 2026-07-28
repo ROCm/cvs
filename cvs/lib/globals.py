@@ -9,6 +9,16 @@ import logging
 
 log = logging.getLogger()
 
+# pssh's own host_logger emits every remote stdout/stderr line, tagged with the
+# host (pssh/clients/base/single.py). Upstream keeps it quiet behind a
+# NullHandler unless enable_host_logger() is called -- which CVS never does --
+# but `log` above is the ROOT logger, so propagation delivers those lines to
+# CVS's handlers anyway. The result is that every line is logged twice: once by
+# pssh, once by Pssh._process_output (cvs/lib/parallel/pssh.py). Detaching the
+# third-party logger keeps the _process_output copy, which is the one that
+# honors print_console and can therefore be suppressed for bulk-data commands.
+logging.getLogger('pssh.host_logger').propagate = False
+
 error_list = []
 
 
