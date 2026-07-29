@@ -38,7 +38,8 @@ class ContainerRuntime(Protocol):
         ...
 
     def exec_on_head(self, container_name, cmd, timeout=None, detailed=False, print_console=True):
-        """Execute command directly on head node (baremetal)."""
+        """Execute command directly on head node (baremetal). See exec() for
+        the detailed and print_console semantics."""
         ...
 
     def load_image(self, tar_path, timeout=None):

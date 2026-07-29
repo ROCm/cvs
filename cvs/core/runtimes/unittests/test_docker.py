@@ -427,6 +427,22 @@ class TestDockerRuntimeExecPrintConsole(unittest.TestCase):
 
         self.assertIs(orchestrator.head.exec.call_args.kwargs["print_console"], False)
 
+    def test_exec_on_head_accepts_and_forwards_detailed(self):
+        """BaremetalOrchestrator.build_mpi_cmd calls exec_on_head(detailed=True).
+
+        The container path lacked the parameter entirely, so that call raised
+        TypeError for any container-orchestrated MPI job. Pinned here because
+        distribute_using_mpi has no in-tree caller to catch it.
+        """
+        orchestrator = MagicMock()
+        orchestrator.head.exec.return_value = {"host1": {"output": "", "exit_code": 0}}
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        rt.exec_on_head("cvs_iter_test", "echo hi", detailed=True)
+
+        self.assertIs(orchestrator.head.exec.call_args.kwargs["detailed"], True)
+
     def test_default_stays_verbose(self):
         """Omitting the kwarg must keep the historical logging behavior."""
         orchestrator = MagicMock()

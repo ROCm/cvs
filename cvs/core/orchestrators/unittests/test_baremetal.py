@@ -80,9 +80,22 @@ class TestBaremetalOrchestrator(unittest.TestCase):
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
     def test_exec_forwards_print_console_false_to_host_subset(self, mock_pssh):
-        """The subset branch builds its own Pssh; it must forward too."""
+        """The subset branch builds its own Pssh; it must forward too.
+
+        orch.all is stubbed with a distinct mock so that falling through to the
+        all-hosts branch would fail this test rather than silently satisfy it
+        -- both handles would otherwise be the same patched Pssh return value.
+        """
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        mock_pssh.reset_mock()
         orch.exec("cat /tmp/huge", hosts=["10.0.0.2"], print_console=False)
+        # A subset handle was constructed for exactly the requested host...
+        mock_pssh.assert_called_once()
+        self.assertEqual(mock_pssh.call_args.args[1], ["10.0.0.2"])
+        # ...the all-hosts handle was bypassed...
+        orch.all.exec.assert_not_called()
+        # ...and the kwarg reached the subset handle.
         subset_handle = mock_pssh.return_value
         self.assertIs(subset_handle.exec.call_args.kwargs["print_console"], False)
 

@@ -679,6 +679,9 @@ class VllmJob:
             try:
                 raw = json.loads(text)
             except (json.JSONDecodeError, ValueError) as e:
-                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}") from e
+                # The artifact is read with print_console=False, so its content
+                # is nowhere else in the log -- carry a slice into the error or
+                # the failure is undiagnosable.
+                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}: {text[:500]}") from e
             results[host] = to_client_metrics(raw, tp=self.tp, isl=self.isl, pp=self.pp)
         return results

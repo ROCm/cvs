@@ -650,7 +650,9 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         Args:
             cmd: Command to execute on head node
             timeout: Command timeout
-            detailed: If True, return detailed execution info including exit_code
+            detailed: If True, return detailed execution info including
+                exit_code. Mirrors BaremetalOrchestrator.exec_on_head, whose
+                build_mpi_cmd path calls this with detailed=True.
             print_console: If False, the command's output is returned but not
                 logged. See exec().
 
