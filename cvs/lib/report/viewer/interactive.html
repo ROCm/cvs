@@ -195,7 +195,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
         <button type="button" id="interactivity-zoom-reset">Reset view</button>
       </div>
     </div>
-    <p class="subsection-hint" id="interactivity-chart-hint">Interactivity = 1 / mean TPOT (tok/s/user), matching InferenceX · Y = total token throughput per GPU · scroll to zoom · shift+drag to pan · drag to box-zoom · click a point to pin the detail card</p>
+    <p class="subsection-hint" id="interactivity-chart-hint">Interactivity = 1000 / mean TPOT (ms) (tok/s/user), matching InferenceX · Y = total token throughput per GPU · scroll to zoom · shift+drag to pan · drag to box-zoom · click a point to pin the detail card</p>
     <article class="chart-card chart-card-wide" style="position:relative">
       <div class="chart-wrap chart-wrap-interactivity" id="interactivity-chart-wrap"></div>
       <div class="interactivity-tooltip" id="interactivity-tooltip" role="tooltip" aria-hidden="true"></div>
@@ -630,9 +630,9 @@ function tpFromCellId(cellId) {
   return match ? Number(match[1]) : null;
 }
 
-function nnodesFromCellId(cellId) {
-  const match = String(cellId || '').match(/NNODES=(\d+)/i);
-  return match ? Number(match[1]) : 1;
+function ppFromCellId(cellId) {
+  const match = String(cellId || '').match(/PP=(\d+)/i);
+  return match ? Number(match[1]) : null;
 }
 
 function runCardMap() {
@@ -721,8 +721,8 @@ function buildInteractivityTooltipMeta(cell, interactivity, totalPg) {
   const rc = runCardMap();
   const prov = reportData.provenance || {};
   const tp = tpFromCellId(cell.cell_id) || Number(rc.TP) || null;
-  const nnodes = nnodesFromCellId(cell.cell_id);
-  const totalGpus = tp ? tp * nnodes : null;
+  const pp = ppFromCellId(cell.cell_id) || Number(rc.PP) || 1;
+  const totalGpus = tp ? tp * pp : null;
   const outputPg = outputPerGpuThroughput(cell);
   const inputPg = inputPerGpuThroughput(cell, totalPg, outputPg);
   const driver = rc.Driver || 'inference';
@@ -738,6 +738,7 @@ function buildInteractivityTooltipMeta(cell, interactivity, totalPg) {
       ['Output Token Throughput per GPU', fmtTooltipNum(outputPg, 3)],
       ['Total GPUs', totalGpus != null ? String(totalGpus) : '—'],
       ['Tensor Parallelism', tp != null ? String(tp) : '—'],
+      ['Pipeline Parallelism', String(pp)],
       ['Expert Parallelism', '1'],
       ['DP Attention', dpAttentionLabel()],
       ['Concurrency', String(cell.concurrency)],

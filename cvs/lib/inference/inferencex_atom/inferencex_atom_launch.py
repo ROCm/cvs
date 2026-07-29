@@ -48,14 +48,14 @@ def _example_job(variant: Any, *, isl: str, osl: str, concurrency: str) -> Infer
     )
 
 
-def server_command(variant: Any, *, rank: int = 0) -> str:
+def server_command(variant: Any) -> str:
     example_cell, isl, osl, conc = _first_sweep_coords(variant)
     del example_cell
     job = _example_job(variant, isl=isl, osl=osl, concurrency=conc)
     if job.driver == "atom":
-        argv = job._atom_server_argv(rank)
+        argv = job._atom_server_argv()
     else:
-        argv = job._server_argv(rank)
+        argv = job._server_argv()
     return " ".join(shlex.quote(str(arg)) for arg in argv)
 
 

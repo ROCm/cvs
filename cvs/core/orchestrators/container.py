@@ -5,12 +5,14 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+from __future__ import annotations
+
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 import getpass
 import re
 import shlex
+from cvs.core.image_display import format_image_display
 from cvs.core.runtimes import RuntimeFactory
-from cvs.lib.report.provenance import format_image_display
 
 
 # Default container configuration - matches the original docker command

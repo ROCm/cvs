@@ -187,7 +187,7 @@ def publish_inference_suite_report(
         pytest_html_href=pytest_href,
         log_file_href=log_href,
     )
-    from cvs.lib.report.provenance import format_image_display
+    from cvs.core.image_display import format_image_display
     from cvs.lib.report.registry import get_session_results
 
     store = get_session_results()

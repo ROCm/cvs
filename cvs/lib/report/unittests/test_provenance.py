@@ -8,11 +8,20 @@ from cvs.lib.report.provenance import (
     extend_run_card_display,
     provenance_run_card_rows,
 )
+from cvs.core.image_display import format_image_display
 from cvs.lib.report.unittests._fixtures import (
     generic_inference_report_config,
     generic_variant,
     two_cell_inf_res,
 )
+
+
+def test_format_image_display_shortens_digest_with_tag():
+    display = format_image_display(
+        image_tag="rocm/cvs:test",
+        image_digest="rocm/atom-dev@sha256:abc123deadbeefcafebabe",
+    )
+    assert display.startswith("rocm/cvs:test @ sha256:abc123deadbe")
 
 
 def test_build_inference_report_provenance_collects_paths():
