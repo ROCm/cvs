@@ -1045,13 +1045,25 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         }
         return ",".join(afmctl_names[t] for t in self.traffic_types)
 
-    def _afmctl_parts(self) -> List[str]:
-        """Return the privilege-safe executable prefix for an afmctl command."""
-        return (["sudo", "-n"] if self.use_sudo else []) + [self.afmctl_path]
+    def _afmctl_command(self, arguments: Sequence[str]) -> str:
+        """Render an afmctl command without relying on sudo's secure_path."""
+        rendered_arguments = " ".join(shlex.quote(part) for part in arguments)
+        executable = shlex.quote(self.afmctl_path)
+        if not self.use_sudo:
+            return f"{executable} {rendered_arguments}"
+        if self.afmctl_path.startswith("/"):
+            return f"sudo -n {executable} {rendered_arguments}"
+        return (
+            f'_cvs_afmctl="$(command -v {executable})" || '
+            f'{{ printf \'%s\\n\' {shlex.quote(f"Unable to find {self.afmctl_path} in PATH")} >&2; exit 127; }}; '
+            'case "$_cvs_afmctl" in /*) ;; *) '
+            "printf '%s\\n' 'Resolved afmctl path is not absolute' >&2; exit 127 ;; esac; "
+            f'sudo -n "$_cvs_afmctl" {rendered_arguments}'
+        )
 
     def build_ping_command(self, bdf: str, dst_accelerator: int, ports=None) -> str:
         """Render the ``afmctl test ping`` command line for one invocation."""
-        parts = self._afmctl_parts() + ["test", "ping"]
+        parts = ["test", "ping"]
         parts.extend(["-b", bdf])
         parts.extend(["-c", str(self.pings_per_port)])
         port_spec = _format_ports_arg(self.ports if ports is None else ports)
@@ -1065,7 +1077,11 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             parts.extend(["--traffic-type", ttype])
         if self.skip_pass:
             parts.append("--skip-pass")
-        return " ".join(shlex.quote(p) for p in parts)
+        return self._afmctl_command(parts)
+
+    def build_show_device_command(self) -> str:
+        """Render the JSON topology-discovery command."""
+        return self._afmctl_command(["show", "device", *self.json_args])
 
     def build_show_port_command(self, bdf: str) -> str:
         """Render the source-BDF-scoped port discovery command.
@@ -1073,8 +1089,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         The command is explicit about the source BDF and requests JSON. AFM
         does not permit ``--brief`` and ``--json`` in the same invocation.
         """
-        parts = self._afmctl_parts() + ["show", "port", "-b", bdf, *self.json_args]
-        return " ".join(shlex.quote(p) for p in parts)
+        return self._afmctl_command(["show", "port", "-b", bdf, *self.json_args])
 
     @staticmethod
     def _port_artifact_path(bdf: str) -> str:
@@ -1166,9 +1181,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
 
     def _discover_topology(self) -> None:
         """Populate ``topology`` for every reachable node via ``show device``."""
-        command = " ".join(
-            shlex.quote(p) for p in self._afmctl_parts() + ["show", "device", *self.json_args]
-        )
+        command = self.build_show_device_command()
         for node, result in self._exec_all(command).items():
             if node not in self.results:
                 continue

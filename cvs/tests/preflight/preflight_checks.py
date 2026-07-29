@@ -717,7 +717,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
         traffic_types=['ifoe_req', 'ifoe_resp', 'non_ifoe'],
         loss_threshold_pct=0.0,
         ssh_timeout=180,
-        use_sudo=False,
+        use_sudo=True,
         json_args=['--json'],
         allow_text_fallback=False,
         skip_pass=True,

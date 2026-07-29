@@ -451,6 +451,19 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertIn('show port -b 0001:01:00.1 --json', command)
         self.assertNotIn('--brief', command)
 
+    def test_privileged_commands_resolve_afmctl_before_sudo(self):
+        check = IfoeL2ConnectivityCheck(MagicMock(), use_sudo=True)
+
+        commands = [
+            check.build_show_device_command(),
+            check.build_show_port_command('0001:01:00.1'),
+            check.build_ping_command('0001:01:00.1', 0),
+        ]
+        for command in commands:
+            self.assertIn('_cvs_afmctl="$(command -v afmctl)"', command)
+            self.assertIn('case "$_cvs_afmctl" in /*)', command)
+            self.assertIn('sudo -n "$_cvs_afmctl"', command)
+
     def test_build_ping_command_with_ports_and_timeout(self):
         check = IfoeL2ConnectivityCheck(
             MagicMock(),
@@ -978,6 +991,7 @@ class TestL2PingConfigContract(unittest.TestCase):
             self.assertTrue(kwargs['strict_discovery'])
             self.assertFalse(kwargs['allow_text_fallback'])
             self.assertTrue(kwargs['skip_pass'])
+            self.assertTrue(kwargs['use_sudo'])
             result = preflight_checks.preflight_results['ifoe_l2_connectivity']
             self.assertEqual(result['status'], 'PASS')
             self.assertEqual(result['failure_mode'], 'gate')
