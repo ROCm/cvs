@@ -66,6 +66,10 @@ class Pssh:
             self.log.info("%s", self.reachable_hosts)
             self.log.info("%s", self.user)
             self.log.info("%s", self.pkey)
+        self._recreate_parallel_client()
+
+    def _recreate_parallel_client(self):
+        if self.password is None:
             self.client = ParallelSSHClient(
                 self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, **self.ssh_client_kwargs
             )
@@ -77,6 +81,18 @@ class Pssh:
                 keepalive_seconds=30,
                 **self.ssh_client_kwargs,
             )
+
+    def _run_command_with_session_retry(self, *args, **kwargs):
+        try:
+            return self.client.run_command(*args, **kwargs)
+        except SessionError as e:
+            self.log.info(
+                "ParallelSSH: SessionError on first attempt; recreating client and retrying once (%s).",
+                e,
+            )
+            self.log.debug("ParallelSSH session retry detail", exc_info=True)
+            self._recreate_parallel_client()
+            return self.client.run_command(*args, **kwargs)
 
     def check_connectivity(self, hosts):
         """
@@ -265,9 +281,11 @@ class Pssh:
                 self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
 
         if timeout is None:
-            output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
+            output = self._run_command_with_session_retry(full_cmd, stop_on_errors=self.stop_on_errors)
         else:
-            output = self.client.run_command(full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
+            output = self._run_command_with_session_retry(
+                full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors
+            )
         cmd_output = self._process_output(
             output, cmd=full_cmd, print_console=print_console, include_exit_codes=detailed
         )
@@ -300,9 +318,9 @@ class Pssh:
                 self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s)")
 
         if timeout is None:
-            output = self.client.run_command('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
+            output = self._run_command_with_session_retry('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
         else:
-            output = self.client.run_command(
+            output = self._run_command_with_session_retry(
                 '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors
             )
 

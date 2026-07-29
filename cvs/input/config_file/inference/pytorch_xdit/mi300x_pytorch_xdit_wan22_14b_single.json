@@ -2,9 +2,9 @@
     "config": {
         "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
         "container_name": "wan22-benchmark",
-        "hf_token_file": "/home/{user-id}/.hf_token",
-        "hf_home": "/home/{user-id}",
-        "output_base_dir": "/home/{user-id}/cvs_outputs",
+        "hf_token_file": "{home}/.hf_token",
+        "hf_home": "{home}/.cache/huggingface",
+        "output_base_dir": "{home}/cvs_outputs",
         "model_repo": "Wan-AI/Wan2.2-I2V-A14B",
         "model_rev": "206a9ee1b7bfaaf8f7e4d81335650533490646a3",
         "container_config": {
@@ -24,6 +24,7 @@
             "num_benchmark_steps": 5,
             "compile": true,
             "torchrun_nproc": 8,
+            "_expected_results_comment": "Validation thresholds below are placeholders. Tune them for your target cluster, software stack, and benchmark conditions before using them as pass/fail criteria.",
             "expected_results": {
                 "auto": {
                     "max_avg_total_time_s": 15.0
