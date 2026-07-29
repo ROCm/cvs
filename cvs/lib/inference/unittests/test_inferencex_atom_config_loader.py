@@ -116,7 +116,7 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
         self.assertIn(cell, variant.expected_cells())
         self.assertEqual(
             variant.thresholds[cell]["scaling.efficiency_pct"],
-            {"kind": "min", "value": 22},
+            {"kind": "min", "value": 11},
         )
 
     def test_load_w1_mi300x_multinode_sglang_variant(self):
@@ -152,6 +152,40 @@ class TestInferenceXAtomConfigLoader(unittest.TestCase):
             variant.thresholds[cell]["scaling.efficiency_pct"],
             {"kind": "min", "value": 50},
         )
+
+    def test_load_w5_mi300x_single_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi300x_inferencex-atom_deepseek-v4-pro_fp4fp8_single.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Pro")
+        self.assertEqual(variant.params.driver, "atom")
+        self.assertFalse(variant.enforce_thresholds)
+        self.assertEqual(
+            variant.expected_cells(),
+            [
+                "ISL=5000,OSL=1024,TP=8,CONC=64",
+                "ISL=5000,OSL=1024,TP=8,CONC=128",
+            ],
+        )
+
+    def test_load_w5_mi300x_multinode_vllm_atom_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / (
+            "input/config_file/inference/inferencex_atom/"
+            "mi300x_inferencex-atom_deepseek-v4-pro_fp4fp8_distributed.json"
+        )
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Pro")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertFalse(variant.enforce_thresholds)
+        self.assertEqual(len(variant.expected_cells()), 3)
+        cell = "ISL=5000,OSL=1024,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertIn(cell, variant.expected_cells())
+        self.assertIn("scaling.efficiency_pct", variant.thresholds[cell])
 
     def test_load_baseline_sweep_mi300x_variant(self):
         root = Path(__file__).resolve().parents[3]
