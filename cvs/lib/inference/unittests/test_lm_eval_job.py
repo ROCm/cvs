@@ -41,9 +41,13 @@ def _ctx(**overrides):
 
 
 class TestBuildLmEvalCmd(unittest.TestCase):
-    def test_install_guard_prefix_always_present(self):
+    def test_env_script_sourced_before_install_guard(self):
+        # HF_HUB_CACHE/HF_TOKEN are written to /tmp/server_env_script.sh by
+        # server setup (see vllm_job.build_server_cmd) and are NOT inherited
+        # across separate exec_on_head invocations -- lm_eval must source
+        # that script itself, matching VllmJob's client-launch convention.
         cmd = build_lm_eval_cmd(_task(), _ctx())
-        self.assertTrue(cmd.startswith(LM_EVAL_INSTALL_CHECK_CMD + " && "))
+        self.assertTrue(cmd.startswith("source /tmp/server_env_script.sh && " + LM_EVAL_INSTALL_CHECK_CMD + " && "))
 
     def test_default_single_task_shape(self):
         cmd = build_lm_eval_cmd(_task(), _ctx())
@@ -52,13 +56,21 @@ class TestBuildLmEvalCmd(unittest.TestCase):
         self.assertIn(
             "--model_args base_url=http://127.0.0.1:8000/v1/completions,"
             "model=meta-llama/Llama-3-8b,tokenizer=/data/models/Llama-3-8b,"
-            "tokenizer_backend=huggingface,num_concurrent=8,max_retries=3",
+            "tokenizer_backend=huggingface,num_concurrent=8,max_retries=3,"
+            "trust_remote_code=True",
             cmd,
         )
         self.assertIn("--tasks mmlu", cmd)
         self.assertIn("--num_fewshot 0", cmd)
         self.assertIn("--output_path /tmp/accuracy-out/mmlu", cmd)
         self.assertIn("--log_samples", cmd)
+
+    def test_trust_remote_code_always_present(self):
+        # Models with custom tokenizer code (Qwen, ChatGLM, Phi, MPT, ...)
+        # fail to load without this -- unconditional since it's a no-op for
+        # models that don't need it.
+        cmd = build_lm_eval_cmd(_task(), _ctx())
+        self.assertIn("trust_remote_code=True", cmd)
 
     def test_apply_chat_template_switches_model_flag(self):
         cmd = build_lm_eval_cmd(_task(apply_chat_template=True), _ctx())
@@ -147,17 +159,29 @@ class TestBuildLmEvalCmd(unittest.TestCase):
 
 
 class FakeOrch:
-    """Head-only orch test double: records commands, returns queued responses."""
+    """Head-only orch test double: records commands, returns queued responses.
+
+    The first exec_on_head call (the lm_eval run itself) is made with
+    detailed=True and expects a {'output': ..., 'exit_code': ...} response;
+    responses for that call may be given as a bare string (wrapped here with
+    exit_code=0) or as an explicit dict to simulate a non-zero exit.
+    """
 
     def __init__(self, responses=None):
         self.head_cmds = []
+        self.head_kwargs = []
         self._responses = list(responses or [])
 
     def exec_on_head(self, cmd, *a, **k):
         self.head_cmds.append(cmd)
+        self.head_kwargs.append(k)
         if self._responses:
-            return {"10.0.0.1": self._responses.pop(0)}
-        return {"10.0.0.1": ""}
+            response = self._responses.pop(0)
+        else:
+            response = "" if not k.get("detailed") else {"output": "", "exit_code": 0}
+        if k.get("detailed") and not isinstance(response, dict):
+            response = {"output": response, "exit_code": 0}
+        return {"10.0.0.1": response}
 
 
 class TestRunAccuracyTasks(unittest.TestCase):
@@ -255,6 +279,35 @@ class TestRunAccuracyTasks(unittest.TestCase):
         orch = FakeOrch(responses=[None, ""])  # run output is None, find is empty
         with self.assertRaises(RuntimeError):
             run_accuracy_tasks(**self._run_kwargs(orch, [_task()]))
+
+    def test_nonzero_exit_code_raises_before_checking_for_results(self):
+        # A results*.json can exist on disk from a prior run even though this
+        # invocation of lm_eval itself failed -- exit_code must be checked
+        # before treating the run as successful, independent of file presence.
+        orch = FakeOrch(responses=[{"output": "traceback...", "exit_code": 1}])
+        with self.assertRaises(RuntimeError) as ctx:
+            run_accuracy_tasks(**self._run_kwargs(orch, [_task()]))
+        self.assertIn("exited with code 1", str(ctx.exception))
+        # must fail fast: no find/cat calls issued after a nonzero exit.
+        self.assertEqual(len(orch.head_cmds), 1)
+
+    def test_run_invocation_requests_detailed_exit_code(self):
+        payload = {"results": {"mmlu": {"acc,none": 0.5}}}
+        orch = FakeOrch(responses=["", "1700000000.0 /out/mmlu/model/results.json", json.dumps(payload)])
+        run_accuracy_tasks(**self._run_kwargs(orch, [_task()]))
+        self.assertTrue(orch.head_kwargs[0].get("detailed"))
+
+    def test_zero_exit_code_with_dict_response_succeeds(self):
+        payload = {"results": {"mmlu": {"acc,none": 0.5}}}
+        orch = FakeOrch(
+            responses=[
+                {"output": "", "exit_code": 0},
+                "1700000000.0 /out/mmlu/model/results.json",
+                json.dumps(payload),
+            ]
+        )
+        out = run_accuracy_tasks(**self._run_kwargs(orch, [_task()]))
+        self.assertEqual(out, {"mmlu": {"mmlu.acc__none": 0.5}})
 
 
 if __name__ == "__main__":

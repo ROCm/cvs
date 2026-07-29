@@ -33,7 +33,7 @@ class EnrootRuntime:
         self.log.error("Enroot runtime not yet implemented")
         return {}
 
-    def exec_on_head(self, container_name, cmd, timeout=None):
+    def exec_on_head(self, container_name, cmd, timeout=None, detailed=False):
         """Execute on head in Enroot containers - not yet implemented."""
         self.log.error("Enroot runtime not yet implemented")
         return {}

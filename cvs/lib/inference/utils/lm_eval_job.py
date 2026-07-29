@@ -43,6 +43,7 @@ def build_lm_eval_cmd(task: AccuracyTask, ctx: LmEvalCtx) -> str:
             "tokenizer_backend=huggingface",
             f"num_concurrent={task.num_concurrent}",
             "max_retries=3",
+            "trust_remote_code=True",
         ]
     )
 
@@ -75,7 +76,7 @@ def build_lm_eval_cmd(task: AccuracyTask, ctx: LmEvalCtx) -> str:
         args += ["--gen_kwargs", gen_kwargs]
 
     lm_eval_cmd = " ".join(shlex.quote(str(a)) for a in args)
-    return f"{LM_EVAL_INSTALL_CHECK_CMD} && {lm_eval_cmd}"
+    return f"source /tmp/server_env_script.sh && {LM_EVAL_INSTALL_CHECK_CMD} && {lm_eval_cmd}"
 
 
 def run_accuracy_tasks(
@@ -92,14 +93,20 @@ def run_accuracy_tasks(
 
     for task in tasks:
         cmd = build_lm_eval_cmd(task, ctx)
-        out = orch.exec_on_head(cmd, timeout=PER_TASK_TIMEOUT_S)
+        out = orch.exec_on_head(cmd, timeout=PER_TASK_TIMEOUT_S, detailed=True)
         try:
-            (run_output,) = out.values()
+            (run_result,) = out.values()
         except ValueError as e:
             raise RuntimeError(
                 f"lm_eval task {task.id!r}: expected exactly one exec_on_head result, got {len(out)}: {e}"
             ) from e
-        run_output = run_output or ""
+        run_output = (run_result or {}).get("output") or ""
+        exit_code = (run_result or {}).get("exit_code", -1)
+        if exit_code != 0:
+            raise RuntimeError(
+                f"lm_eval task {task.id!r} exited with code {exit_code} "
+                f"-- treating as a run failure. Command output tail: {run_output[-2000:]!r}"
+            )
 
         task_out_dir = f"{output_dir}/{task.id}"
         find_cmd = f"find {shlex.quote(task_out_dir)} -name 'results*.json' -printf '%T@ %p\\n' | sort -rn"
