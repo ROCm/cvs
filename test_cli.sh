@@ -98,6 +98,9 @@ done
 # Test: cvs exec --help
 run_test "cvs exec --help" "$CVS exec --help"
 
+# Test: cvs sshkeyscan --help
+run_test "cvs sshkeyscan --help" "$CVS sshkeyscan --help"
+
 # Wait for all tests to complete and collect results
 echo "Waiting for all tests to complete..."
 echo "===================="

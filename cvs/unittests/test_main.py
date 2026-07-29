@@ -15,7 +15,16 @@ class TestMain(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up shared test data"""
-        cls.expected_ordered_plugins = ["copy-config", "generate", "list", "run", "scp", "monitor", "exec"]
+        cls.expected_ordered_plugins = [
+            "copy-config",
+            "generate",
+            "list",
+            "run",
+            "scp",
+            "monitor",
+            "exec",
+            "sshkeyscan",
+        ]
 
     def test_get_version_success(self):
         """Test successful version retrieval"""
