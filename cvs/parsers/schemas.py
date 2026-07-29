@@ -663,6 +663,9 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
     width: int = Field(default=1024, ge=1, description="Output image width in pixels")
     ulysses_degree: int = Field(default=8, ge=1, description="Ulysses parallelism degree")
     ring_degree: int = Field(default=1, ge=1, description="Ring parallelism degree")
+    pipefusion_parallel_degree: int = Field(default=1, ge=1, description="PipeFusion pipeline-parallel degree (multi-node)")
+    tensor_parallel_degree: int = Field(default=1, ge=1, description="Tensor-parallel degree (1 = disabled)")
+    data_parallel_degree: int = Field(default=1, ge=1, description="Data-parallel degree (1 = disabled)")
     use_torch_compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
     torchrun_nproc: int = Field(default=8, ge=1, description="Number of processes for torchrun (usually num GPUs)")
     expected_results: Dict[str, PytorchXditFluxExpectedResults] = Field(
@@ -789,6 +792,30 @@ class PytorchXditFluxConfigFile(BaseModel):
             raise ValueError("No benchmarks configured in 'benchmark_params' - at least flux1_dev_t2i is required")
         return self
 
+    @model_validator(mode='after')
+    def validate_distributed_parallelism(self):
+        """When nnodes >= 2, ensure xDiT parallel degrees match nnodes × torchrun_nproc."""
+        flux = self.benchmark_params.flux1_dev_t2i
+        nnodes = self.config.nnodes
+        if not flux or not nnodes or nnodes < 2:
+            return self
+
+        world_size = nnodes * flux.torchrun_nproc
+        product = (
+            flux.ulysses_degree
+            * flux.ring_degree
+            * flux.pipefusion_parallel_degree
+            * flux.tensor_parallel_degree
+            * flux.data_parallel_degree
+        )
+        if product != world_size:
+            raise ValueError(
+                f"Parallel degree product {product} != world_size {world_size} "
+                f"(nnodes={nnodes} × torchrun_nproc={flux.torchrun_nproc}). "
+                f"Adjust ulysses/ring/pipefusion/tensor_parallel/data_parallel."
+            )
+        return self
+
 
 class PytorchXditFluxConfig(BaseModel):
     """Schema for config section in pytorch-xdit Flux configs."""
@@ -822,6 +849,46 @@ class PytorchXditFluxConfig(BaseModel):
             "Model revision (commit hash). Empty means use any available cached snapshot under hf_home. "
             "Ignored if model_repo is an explicit local filesystem path."
         ),
+    )
+    nnodes: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Distributed node count for unified multi-node torchrun (omit for single-node / scale-out)",
+    )
+    server_node_list: Optional[List[str]] = Field(
+        default=None,
+        description="Ordered server nodes for distributed job; defaults to all cluster nodes",
+    )
+    master_addr: str = Field(
+        default="",
+        description="Rank-0 rendezvous address; empty means first server node at runtime",
+    )
+    master_port: int = Field(
+        default=29500,
+        ge=1,
+        le=65535,
+        description="Rank-0 rendezvous port for distributed torchrun",
+    )
+    nccl_ib_hca: str = Field(
+        default="",
+        description="NCCL_IB_HCA for multi-node ROCm/NCCL (e.g. rdma0,...,rdma7)",
+    )
+    nccl_socket_ifname: str = Field(
+        default="",
+        description="NCCL_SOCKET_IFNAME for multi-node jobs",
+    )
+    gloo_socket_ifname: str = Field(
+        default="",
+        description="GLOO_SOCKET_IFNAME for multi-node jobs",
+    )
+    nccl_ib_gid_index: int = Field(
+        default=1,
+        ge=0,
+        description="NCCL_IB_GID_INDEX for IB/RoCE",
+    )
+    nccl_debug: str = Field(
+        default="INFO",
+        description="NCCL_DEBUG level (ERROR, INFO, WARN, ...)",
     )
     container_config: PytorchXditContainerConfig = Field(
         default_factory=PytorchXditContainerConfig, description="Container device/volume/env configuration"
