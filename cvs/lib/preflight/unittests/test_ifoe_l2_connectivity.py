@@ -4,7 +4,9 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+from pydantic import ValidationError
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
@@ -17,6 +19,8 @@ from cvs.lib.preflight.ifoe_l2_connectivity import (
     parse_afmctl_show_device,
     parse_afmctl_show_device_json,
 )
+from cvs.lib.preflight.report import PreflightReportGenerator
+from cvs.parsers.schemas import PreflightConfigFile
 
 
 PASSING_OUTPUT = """\
@@ -892,9 +896,141 @@ Port#    State
         self.assertEqual(node['status'], 'FAIL')
         self.assertEqual(node['plan'], [])
         self.assertFalse(node['coverage']['complete'])
-        self.assertTrue(
-            any('vPOD accelerator membership is unavailable' in error for error in node['errors'])
+        self.assertTrue(any('vPOD accelerator membership is unavailable' in error for error in node['errors']))
+
+
+class TestL2PingConfigContract(unittest.TestCase):
+    def test_schema_accepts_only_the_two_customer_facing_options(self):
+        config = PreflightConfigFile.model_validate(
+            {
+                'l2ping': {
+                    'enabled': True,
+                    'pings_per_port': 5,
+                }
+            }
         )
+
+        self.assertTrue(config.l2ping.enabled)
+        self.assertEqual(config.l2ping.pings_per_port, 5)
+
+        with self.assertRaises(ValidationError):
+            PreflightConfigFile.model_validate(
+                {
+                    'l2ping': {
+                        'enabled': True,
+                        'pings_per_port': 3,
+                        'loss_threshold_pct': 1.0,
+                    }
+                }
+            )
+
+        with self.assertRaises(ValidationError):
+            PreflightConfigFile.model_validate(
+                {
+                    'connectivity_check': {
+                        'ifoe': {
+                            'connectivity_mode': 'run',
+                        }
+                    }
+                }
+            )
+
+    def test_preflight_entrypoint_uses_fixed_strict_policy(self):
+        from cvs.tests.preflight import preflight_checks
+
+        phdl = MagicMock()
+        phdl.reachable_hosts = ['nodeA']
+        config = {
+            'l2ping': {
+                'enabled': True,
+                'pings_per_port': 5,
+            }
+        }
+        cluster = {'node_dict': {'nodeA': {}}}
+        checker_results = {
+            'nodeA': {
+                'status': 'PASS',
+                'errors': [],
+                'accelerators': {},
+                'coverage': {'complete': True},
+            }
+        }
+
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        try:
+            with (
+                patch.object(preflight_checks, 'IfoeL2ConnectivityCheck') as checker_cls,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+            ):
+                checker_cls.return_value.run.return_value = checker_results
+                preflight_checks.test_ifoe_l2_connectivity(phdl, config, cluster)
+
+            kwargs = checker_cls.call_args.kwargs
+            self.assertEqual(kwargs['pings_per_port'], 5)
+            self.assertEqual(kwargs['afmctl_path'], 'afmctl')
+            self.assertEqual(kwargs['bdfs'], [])
+            self.assertEqual(kwargs['mesh_mode'], 'full_mesh')
+            self.assertEqual(kwargs['ports'], 'up')
+            self.assertEqual(kwargs['traffic_types'], ['ifoe_req', 'ifoe_resp', 'non_ifoe'])
+            self.assertEqual(kwargs['loss_threshold_pct'], 0.0)
+            self.assertTrue(kwargs['require_complete_coverage'])
+            self.assertTrue(kwargs['strict_discovery'])
+            self.assertFalse(kwargs['allow_text_fallback'])
+            self.assertTrue(kwargs['skip_pass'])
+            result = preflight_checks.preflight_results['ifoe_l2_connectivity']
+            self.assertEqual(result['status'], 'PASS')
+            self.assertEqual(result['failure_mode'], 'gate')
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+    def test_disabled_l2ping_skips_without_constructing_checker(self):
+        from cvs.tests.preflight import preflight_checks
+
+        phdl = MagicMock()
+        phdl.reachable_hosts = ['nodeA']
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        try:
+            with (
+                patch.object(preflight_checks, 'IfoeL2ConnectivityCheck') as checker_cls,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+            ):
+                preflight_checks.test_ifoe_l2_connectivity(
+                    phdl,
+                    {'l2ping': {'enabled': False, 'pings_per_port': 3}},
+                    {'node_dict': {'nodeA': {}}},
+                )
+
+            checker_cls.assert_not_called()
+            result = preflight_checks.preflight_results['ifoe_l2_connectivity']
+            self.assertTrue(result['skipped'])
+            self.assertEqual(result['mode'], 'skip')
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+    def test_report_includes_customer_ping_count(self):
+        results = {
+            'status': 'PASS',
+            'pings_per_port': 5,
+            'node_results': {
+                'nodeA': {
+                    'status': 'PASS',
+                    'errors': [],
+                    'accelerators': {},
+                    'port_inventory': {},
+                    'coverage': {'complete': True},
+                }
+            },
+            'coverage': {'complete': True},
+        }
+        generator = PreflightReportGenerator(MagicMock(), {'ifoe_l2_connectivity': results}, {})
+
+        html_report = generator._generate_ifoe_l2_html(results)
+
+        self.assertIn('pings per port: <code>5</code>', html_report)
 
 
 if __name__ == '__main__':

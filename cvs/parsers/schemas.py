@@ -912,111 +912,13 @@ class PreflightRdmaConfig(BaseModel):
         return v
 
 
-class PreflightIfoeConfig(BaseModel):
-    """IFoE L2 ping settings used by the ``afmctl`` preflight check.
+class PreflightL2PingConfig(BaseModel):
+    """Small customer-facing IFoE L2 ping policy."""
 
-    ``mesh_mode`` and ``ports`` deliberately retain conservative legacy
-    defaults.  MI4XX benchmark configurations should opt into
-    ``full_mesh`` and ``up`` once their ``afmctl show port`` output has been
-    validated on hardware.
-    """
+    model_config = ConfigDict(extra="forbid")
 
-    model_config = ConfigDict(extra="allow")
-
-    connectivity_mode: str = Field(default="skip", description="IFoE L2 connectivity mode: run or skip")
-    afmctl_path: str = Field(default="afmctl", description="afmctl binary path or command name")
-    use_sudo: bool = Field(default=False, description="Run afmctl through sudo")
-    json_args: List[str] = Field(
-        default_factory=lambda: ["--json"],
-        description="JSON output option appended to afmctl show device and show port discovery commands",
-    )
-    allow_text_fallback: bool = Field(
-        default=False,
-        description="Allow legacy text parsing for afmctl discovery commands when a platform cannot return requested JSON",
-    )
-    skip_pass: bool = Field(
-        default=True,
-        description="Pass --skip-pass to afmctl test ping and validate selected-port coverage from Summary totals",
-    )
-    bdf_discovery: str = Field(default="auto", description="BDF discovery mode: auto or config")
-    bdfs: List[str] = Field(default_factory=list, description="Optional explicit source accelerator BDFs")
-    dst_accelerators: List[int] = Field(
-        default_factory=lambda: [0], description="Explicit destination accelerator IDs for mesh_mode=config"
-    )
-    mesh_mode: str = Field(
-        default="config",
-        description="config uses dst_accelerators; full_mesh discovers ordered non-self accelerator pairs",
-    )
-    ports: Union[str, List[int]] = Field(
-        default="all", description="all, up, an afmctl port range/string, or an explicit port list"
-    )
-    port_discovery: str = Field(default="auto", description="Port discovery mode when ports=up: auto or config")
-    pings_per_port: int = Field(default=1, ge=1, description="afmctl pings per selected port pair")
-    per_ping_timeout: Optional[int] = Field(
-        default=None, ge=1, description="Optional afmctl -t per-ping timeout in minutes"
-    )
-    traffic_types: List[str] = Field(
-        default_factory=lambda: ["ifoe_req", "ifoe_resp", "non_ifoe"],
-        description="Traffic classes that must be evaluated",
-    )
-    loss_threshold_pct: float = Field(default=0.0, ge=0.0, le=100.0, description="Maximum aggregate loss")
-    ssh_timeout: int = Field(default=180, ge=1, description="SSH timeout per afmctl invocation")
-    require_complete_coverage: bool = Field(
-        default=True, description="Fail when any planned IFoE source/destination/port cell is not completed"
-    )
-    strict_discovery: bool = Field(
-        default=True, description="Fail when topology or UP-port discovery is malformed or incomplete"
-    )
-    failure_mode: str = Field(
-        default="report", description="report records failures only; gate makes IFoE L2 failures fail pytest"
-    )
-
-    @field_validator('connectivity_mode')
-    @classmethod
-    def validate_ifoe_connectivity_mode(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized not in ('run', 'skip', 'off', 'disabled'):
-            raise ValueError("IFoE connectivity_mode must be one of: run, skip, off, disabled")
-        return normalized
-
-    @field_validator('bdf_discovery')
-    @classmethod
-    def validate_ifoe_bdf_discovery(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized not in ('auto', 'config'):
-            raise ValueError("IFoE bdf_discovery must be one of: auto, config")
-        return normalized
-
-    @field_validator('mesh_mode')
-    @classmethod
-    def validate_ifoe_mesh_mode(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized not in ('config', 'full_mesh', 'full', 'auto'):
-            raise ValueError("IFoE mesh_mode must be one of: config, full_mesh, full, auto")
-        return normalized
-
-    @field_validator('port_discovery')
-    @classmethod
-    def validate_ifoe_port_discovery(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized not in ('auto', 'config'):
-            raise ValueError("IFoE port_discovery must be one of: auto, config")
-        return normalized
-
-    @field_validator('failure_mode')
-    @classmethod
-    def validate_ifoe_failure_mode(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized not in ('gate', 'report', 'report_only'):
-            raise ValueError("IFoE failure_mode must be one of: gate, report, report_only")
-        return normalized
-
-    @field_validator('json_args')
-    @classmethod
-    def validate_ifoe_json_args(cls, value: List[str]) -> List[str]:
-        if not value or not any(str(arg).strip() in ('--json', '-j') for arg in value):
-            raise ValueError("IFoE json_args must request JSON output")
-        return [str(arg) for arg in value]
+    enabled: bool = Field(default=False, description="Enable the mandatory IFoE L2 connectivity gate")
+    pings_per_port: int = Field(default=3, ge=1, description="Ping samples per selected IFoE port pair")
 
 
 class PreflightTransferBenchConfig(BaseModel):
@@ -1068,11 +970,17 @@ class PreflightConnectivityCheckConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     rdma: PreflightRdmaConfig = Field(default_factory=PreflightRdmaConfig, description="RDMA connectivity settings")
-    ifoe: PreflightIfoeConfig = Field(default_factory=PreflightIfoeConfig, description="IFoE L2 connectivity settings")
     transferbench: PreflightTransferBenchConfig = Field(
         default_factory=PreflightTransferBenchConfig,
         description="IFoE TransferBench data-path smoketest settings",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_legacy_ifoe_l2ping(cls, value):
+        if isinstance(value, dict) and "ifoe" in value:
+            raise ValueError("connectivity_check.ifoe is no longer supported; use the top-level l2ping block")
+        return value
 
 
 class PreflightReportingConfig(BaseModel):
@@ -1112,6 +1020,10 @@ class PreflightConfigFile(BaseModel):
     node_health: PreflightNodeHealthConfig = Field(
         default_factory=PreflightNodeHealthConfig,
         description="Generic GPU node health with optional MI4XX fabric admission",
+    )
+    l2ping: PreflightL2PingConfig = Field(
+        default_factory=PreflightL2PingConfig,
+        description="Strict IFoE L2 connectivity admission",
     )
     node_check: PreflightNodeCheckConfig = Field(
         default_factory=PreflightNodeCheckConfig, description="Individual node validation settings"

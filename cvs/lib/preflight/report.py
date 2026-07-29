@@ -1149,11 +1149,12 @@ class PreflightReportGenerator(PreflightCheck):
         failed_nodes = sorted(n for n, r in node_results.items() if r.get('status') == 'FAIL')
         total_invocations = int(ifoe_results.get('total_invocations', 0))
         failed_invocations = int(ifoe_results.get('failed_invocations', 0))
+        pings_per_port = int(ifoe_results.get('pings_per_port', 3))
         loss_threshold = ifoe_results.get('loss_threshold_pct', 0.0)
         traffic_types = ifoe_results.get('traffic_types') or []
-        mesh_mode = ifoe_results.get('mesh_mode', 'config')
-        ports = ifoe_results.get('ports', 'all')
-        failure_mode = ifoe_results.get('failure_mode', 'report')
+        mesh_mode = ifoe_results.get('mesh_mode', 'full_mesh')
+        ports = ifoe_results.get('ports', 'up')
+        failure_mode = ifoe_results.get('failure_mode', 'gate')
         coverage = ifoe_results.get('coverage') or {}
         missing_nodes = coverage.get('missing_nodes') or []
         incomplete_nodes = coverage.get('incomplete_nodes') or []
@@ -1165,6 +1166,7 @@ class PreflightReportGenerator(PreflightCheck):
             <p>Tested via <code>afmctl test ping</code>.
             Mesh mode: <code>{html.escape(str(mesh_mode))}</code>;
             port selection: <code>{html.escape(str(ports))}</code>;
+            pings per port: <code>{pings_per_port}</code>;
             result mode: <code>{html.escape(str(failure_mode))}</code>;
             Traffic types enforced: <code>{html.escape(", ".join(str(t) for t in traffic_types))}</code>;
             loss threshold: <code>{html.escape(str(loss_threshold))}%</code>;

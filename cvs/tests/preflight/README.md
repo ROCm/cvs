@@ -72,6 +72,10 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
       "gpus_per_node": 4,
       "fabric_checks": true
     },
+    "l2ping": {
+      "enabled": true,
+      "pings_per_port": 3
+    },
     "node_check": {
       "gid_index": "3",
       "expected_rocm_version": "6.2.0",
@@ -98,7 +102,8 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 - **`node_health.gpus_per_node`**: Exact GPU count expected on every node
 - **`node_health.fabric_checks`**: Add the MI4XX AIFM/AFM/vPOD and IFoE station/port checks
 - **`connectivity_check.rdma.connectivity_mode`**: `"basic"`, `"full_mesh"`, or `"skip"`
-- **`connectivity_check.ifoe.connectivity_mode`**: `"run"` or `"skip"` (default)
+- **`l2ping.enabled`**: Run the strict IFoE L2 connectivity gate
+- **`l2ping.pings_per_port`**: Samples sent through each discovered UP port pair (default: `3`)
 - **`connectivity_check.transferbench.connectivity_mode`**: `"run"` or `"skip"` (default)
 - **`node_check.expected_rocm_version`**: ROCm version expected across all nodes
 - **`node_check.rdma_interfaces`**: List of expected RDMA interface names
@@ -118,33 +123,18 @@ Each invocation issues:
     --dst-accelerator <accel_id> [-t <per_ping_timeout>] [--traffic-type ...]
 ```
 
-The check is **opt-in**: it defaults to `connectivity_mode: "skip"` so it
-will not run unless explicitly enabled. Enable it by setting
-`preflight.connectivity_check.ifoe.connectivity_mode` to `"run"` once the
-IFoE driver and `afmctl` are available on every node.
-
-When `bdfs` is empty and `bdf_discovery` is `"auto"` (default), preflight
-runs `afmctl show device` on every reachable node and uses the BDFs it
-reports. A node is marked **FAIL** if any enabled traffic type
-(`ifoe_req`, `ifoe_resp`, `non_ifoe`) exceeds `loss_threshold_pct` (default
-`0.0`), or if any per-port table entry reports `FAIL`.
+The check is opt-in through `preflight.l2ping.enabled`. When enabled, CVS
+discovers each node's source BDFs, vPOD peers, and operational ports, then
+tests every ordered non-self accelerator pair. It validates IFoE request,
+IFoE response, and non-IFoE traffic with a zero-loss policy and requires
+complete coverage. Discovery or connectivity failures fail the preflight gate.
 
 ### Example IFoE config block
 
 ```json
-"connectivity_check": {
-  "ifoe": {
-    "connectivity_mode": "run",
-    "afmctl_path": "/usr/local/bin/afmctl",
-    "use_sudo": true,
-    "bdf_discovery": "auto",
-    "dst_accelerators": [0, 1],
-    "ports": "all",
-    "pings_per_port": 5,
-    "traffic_types": ["ifoe_req", "ifoe_resp", "non_ifoe"],
-    "loss_threshold_pct": 0.0,
-    "ssh_timeout": 240
-  }
+"l2ping": {
+  "enabled": true,
+  "pings_per_port": 3
 }
 ```
 

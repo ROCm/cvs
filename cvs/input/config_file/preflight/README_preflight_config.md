@@ -33,6 +33,10 @@ The preflight configuration file follows this structure:
       "gpus_per_node": 4,
       "fabric_checks": true
     },
+    "l2ping": {
+      "enabled": true,
+      "pings_per_port": 3
+    },
     "debug": {
       "scriptlet": false
     },
@@ -69,10 +73,10 @@ The preflight configuration uses a **nested structure organized by execution pha
 preflight/
 ├── debug/                # Debug and troubleshooting options  
 ├── node_health/          # Generic GPU health plus optional MI4XX fabric admission
+├── l2ping/               # Strict IFoE L2 connectivity admission
 ├── node_check/           # Individual node validation parameters
 ├── connectivity_check/   # Inter-node connectivity tests
 │   ├── rdma/             # RDMA-specific parameters (including nodes_per_full_mesh_group)
-│   ├── ifoe/             # IFoE L2 ping parameters (AIMVT-180; opt-in)
 │   └── transferbench/    # IFoE TransferBench smoketest parameters (AIMVT-181; opt-in)
 └── reporting/           # Output and report generation
 ```
@@ -214,89 +218,25 @@ configuration.
     RCCL-style scale-up rendezvous. TransferBench `multi_rank` likewise
     requires `socket_master_port` to be reachable between all selected nodes.
 
-#### IFoE Settings (`connectivity_check.ifoe`) — opt-in (AIMVT-180)
+#### L2 Ping Settings (`l2ping`) — opt-in (AIMVT-180)
 
-Runs `afmctl test ping` on each reachable node and validates its aggregate
-`Summary:` block. AFM's `--skip-pass` output retains failed port rows for
-diagnostics while omitting successful rows; CVS verifies Summary totals against
-the selected-port count.
+Runs `afmctl test ping` on every reachable node as a strict IFoE fabric gate.
+CVS discovers each node's AFM BDFs, vPOD peers, and UP ports, then tests every
+ordered non-self accelerator pair. When node-health fabric admission is
+available, physical UP ports are intersected with its station-mask-admitted
+ports.
 
-- **`connectivity_mode`** (default: `"skip"`)
-  - `"run"` — execute the L2 ping on every reachable node
-  - `"skip"` — preflight records a SKIPPED result and does not invoke afmctl
-- **`afmctl_path`** (default: `"afmctl"`)
-  - Absolute path or PATH-resolved binary name on each node
-- **`skip_pass`** (default: `true`)
-  - Passes `--skip-pass` to `afmctl test ping`, reducing output to failed port
-    rows and the Summary block.
-  - A passing summary still proves complete selected-port coverage because CVS
-    requires each traffic type's `total` to equal `selected ports × -c`.
-  - Set it to `false` only when complete per-port PASS output is needed for a
-    diagnostic artifact.
-- **`use_sudo`** (default: `false`)
-  - Prepend `sudo` to the afmctl invocation when the cluster image requires root
-- **`json_args`** (default: `["--json"]`) and **`allow_text_fallback`** (default: `false`)
-  - CVS requests JSON for `afmctl show device` and `show port -b <BDF>`, and
-    uses those JSON parsers for topology and port discovery. It writes each
-    port inventory to a `umask 077` remote `/tmp` artifact, retrieves that
-    single-host artifact through SFTP, and removes it before continuing. This
-    avoids parsing AFM JSON through SSH stdout; command, SFTP, cleanup, and
-    parse errors all fail closed.
-  - This AFM release does not support `--json` for `afmctl test ping`; CVS
-    parses its documented text Summary and any failed-port rows. Discovery text
-    parsing remains an explicit compatibility diagnostic only.
-- **`bdf_discovery`** (default: `"auto"`)
-  - `"auto"` — run `afmctl show device` on each node and use the reported BDFs
-  - `"config"` — use only the `bdfs` list below; nodes with no matching BDFs FAIL
-- **`bdfs`** (default: `[]`)
-  - Optional explicit list of accelerator BDFs to test on every node
-  - Example: `["0001:01:00.1"]`
-- **`dst_accelerators`** (default: `[0]`)
-  - Compatibility-only destination list for `mesh_mode: "config"`
-  - Do not use a shared static list for a rack with node-specific global accelerator IDs
-- **`mesh_mode`** (default: `"config"`; benchmark recommendation: `"full_mesh"`)
-  - `"config"` — preserve the legacy `(source BDF, dst_accelerator)` combinations
-  - `"full_mesh"` — discover source accelerator IDs and vPOD membership, then test every ordered non-self source-to-peer pair
-  - A full mesh excludes `source == destination`; a self-ping is an invalid coverage cell, not a fabric result
-  - With `strict_discovery: true`, a missing vPOD membership list fails the gate rather than silently substituting a local-only mesh. Set strict discovery to `false` only for a diagnostic run while collecting the missing hardware fixture.
-- **`ports`** (default: `"all"`; benchmark recommendation: `"up"`)
-  - `"up"` writes `afmctl show port -b <BDF> --json` to a private remote file,
-    retrieves it over SFTP, and supplies the discovered UP ports explicitly
-    through `-p`
-  - When node health has `fabric_checks: true`, `"up"` is further intersected
-    with the port IDs from its `f` stations. This excludes physical links that
-    AFM reports as UP but the rack intentionally station-masks out.
-  - `"all"` omits `-p`, a string such as `"0-7"` or `"0,1,2"`, or a list `[0, 1, 2]`
-  - `"all"` can include intentionally down or unwired ports and therefore must not be used for a strict benchmark gate
-- **`port_discovery`** (default: `"auto"`)
-  - Used with `ports: "up"`; CVS parses the SFTP-retrieved JSON artifact and
-    fails closed if AFM command execution, SFTP, artifact cleanup, or port
-    state parsing fails
-  - If the hardware's output is unknown or malformed, strict discovery fails closed rather than falling back to all ports
-- **`pings_per_port`** (default: `1`; benchmark recommendation: `3`)
-  - Passed to afmctl as `-c <count>`
-- **`per_ping_timeout`** (default: `null`)
-  - Optional afmctl `-t <minutes>` value; omitted when `null`
-- **`traffic_types`** (default: `["ifoe_req", "ifoe_resp", "non_ifoe"]`)
-  - Determines which afmctl traffic categories are required to pass
-  - When all three are selected, `--traffic-type` is omitted so afmctl runs them all
-- **`loss_threshold_pct`** (default: `0.0`)
-  - Maximum tolerated loss percentage per traffic type (Summary line)
-- **`ssh_timeout`** (default: `180`)
-  - Per-invocation SSH timeout (seconds); raise for high `pings_per_port`
-- **`require_complete_coverage`** (default: `true`)
-  - Require every planned source, non-self destination, selected UP port, and invocation result to be present
-  - Required nodes lost to an earlier preflight prune are reported as missing coverage, rather than silently reducing the mesh
-- **`strict_discovery`** (default: `true`)
-  - Treat missing/malformed topology, vPOD membership, or port state as a failure
-- **`failure_mode`** (default: `"report"`; benchmark recommendation: `"gate"`)
-  - `"report"` preserves diagnostic-only preflight behavior
-  - `"gate"` records the detailed report and then fails pytest/CLI if L2 results or coverage fail
+- **`enabled`** (default: `false`)
+  - Run l2ping before TransferBench and RDMA.
+  - When enabled, packet loss, incomplete coverage, malformed discovery, or a
+    missing required node fails the preflight gate.
+- **`pings_per_port`** (default: `3`)
+  - Number of samples sent through each selected port pair.
+  - Higher values increase confidence and runtime.
 
-> **MI4XX benchmark profile.** Use `mesh_mode: "full_mesh"`, `ports: "up"`,
-> `strict_discovery: true`, and `failure_mode: "gate"`. This validates every
-> active IFoE path while allowing stations intentionally masked by the rack
-> configuration.
+CVS owns the command path, JSON transport, full-mesh topology discovery,
+UP-port selection, three traffic types, zero-loss policy, strict coverage,
+timeouts, and gate behavior. These are intentionally not customer options.
 
 #### TransferBench Settings (`connectivity_check.transferbench`) — opt-in (AIMVT-181)
 
