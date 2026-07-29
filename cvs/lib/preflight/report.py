@@ -99,7 +99,7 @@ class PreflightReportGenerator(PreflightCheck):
         connectivity_results = self.results.get('rdma_connectivity', {})
         rocm_results = self.results.get('rocm_versions', {})
         interface_results = self.results.get('interface_names', {})
-        mi4xx_health_results = self.results.get('mi4xx_node_health', {})
+        node_health_results = self.results.get('node_health', {})
         ifoe_l2_results = self.results.get('ifoe_l2_connectivity', {})
         tb_smoke_results = self.results.get('transferbench_smoke', {})
         reachability_results = self.results.get('node_reachability')
@@ -108,7 +108,7 @@ class PreflightReportGenerator(PreflightCheck):
             'overall_status': 'PASS',
             'checks': {
                 'ssh_reachability': self._summarize_reachability_results(reachability_results),
-                'mi4xx_node_health': self._summarize_mi4xx_node_health_results(mi4xx_health_results),
+                'node_health': self._summarize_node_health_results(node_health_results),
                 'gid_consistency': self._summarize_gid_results(gid_results),
                 'ifoe_l2_connectivity': self._summarize_ifoe_l2_results(ifoe_l2_results),
                 'transferbench_smoke': self._summarize_transferbench_smoke_results(tb_smoke_results),
@@ -133,9 +133,9 @@ class PreflightReportGenerator(PreflightCheck):
                 "Fix GID configuration on RDMA interfaces before running performance tests"
             )
 
-        if summary['checks']['mi4xx_node_health']['status'] == 'FAIL':
+        if summary['checks']['node_health']['status'] == 'FAIL':
             summary['recommendations'].append(
-                "Restore MI4XX driver, AIFM agent, AFM ACTIVE/bare-metal vPOD state, and valid IFoE station masks before scale-up"
+                "Restore GPU node health and, when enabled, MI4XX AIFM/AFM/vPOD fabric state before scale-up"
             )
 
         if summary['checks']['ifoe_l2_connectivity']['status'] == 'FAIL':
@@ -226,16 +226,20 @@ class PreflightReportGenerator(PreflightCheck):
             'summary': f"{ok_interfaces}/{total_interfaces} interfaces have valid GID",
         }
 
-    def _summarize_mi4xx_node_health_results(self, health_results):
-        """Summarize mandatory MI4XX node/AFM admission without hiding blocked work."""
+    def _summarize_node_health_results(self, health_results):
+        """Summarize mandatory GPU and optional MI4XX fabric admission."""
         if not health_results or health_results.get('skipped') or health_results.get('status') == 'SKIPPED':
-            message = health_results.get('message', 'MI4XX node-health admission is not enabled') if isinstance(health_results, dict) else ''
+            message = (
+                health_results.get('message', 'Node-health admission is not enabled')
+                if isinstance(health_results, dict)
+                else ''
+            )
             return {
                 'status': 'SKIPPED',
                 'total_nodes': 0,
                 'passing_nodes': 0,
                 'failed_nodes': [],
-                'summary': message or 'MI4XX node-health admission skipped',
+                'summary': message or 'Node-health admission skipped',
             }
 
         node_results = health_results.get('node_results') or {}
@@ -248,8 +252,9 @@ class PreflightReportGenerator(PreflightCheck):
         membership = health_results.get('vpod_membership') or {}
         status = health_results.get('status') or ('FAIL' if failed_nodes or missing_nodes else 'PASS')
         passing_nodes = total_nodes - len(failed_nodes)
-        summary = f"{passing_nodes}/{total_nodes} nodes passed MI4XX admission"
-        if membership.get('status') == 'PASS':
+        fabric_checks = bool(health_results.get('fabric_checks'))
+        summary = f"{passing_nodes}/{total_nodes} nodes passed node-health admission"
+        if fabric_checks and membership.get('status') == 'PASS':
             accelerators = membership.get('vpod_accelerators') or []
             summary += f"; AFM vPOD accelerator membership {accelerators}"
         if missing_nodes:
@@ -261,6 +266,7 @@ class PreflightReportGenerator(PreflightCheck):
             'failed_nodes': failed_nodes,
             'missing_nodes': missing_nodes,
             'vpod_accelerators': membership.get('vpod_accelerators') or [],
+            'fabric_checks': fabric_checks,
             'summary': summary,
         }
 
@@ -430,11 +436,7 @@ class PreflightReportGenerator(PreflightCheck):
                 'summary': tb_results.get('message', 'TransferBench smoketest blocked by mandatory admission'),
             }
         if not tb_results or tb_results.get('skipped'):
-            msg = (
-                tb_results.get('message')
-                if isinstance(tb_results, dict)
-                else 'TransferBench smoketest not performed'
-            )
+            msg = tb_results.get('message') if isinstance(tb_results, dict) else 'TransferBench smoketest not performed'
             return {
                 'status': 'SKIPPED',
                 'nodes_total': 0,
@@ -452,8 +454,7 @@ class PreflightReportGenerator(PreflightCheck):
 
         status = tb_results.get('status') or ('FAIL' if failed_nodes else ('WARNING' if warning_nodes else 'PASS'))
         summary_text = (
-            f"{totals.get('nodes_pass', 0)}/{totals.get('nodes_total', 0)} nodes passed "
-            f"TransferBench smoketest"
+            f"{totals.get('nodes_pass', 0)}/{totals.get('nodes_total', 0)} nodes passed TransferBench smoketest"
         )
         if warning_nodes:
             summary_text += f" ({len(warning_nodes)} with skip-budget warnings)"
@@ -575,7 +576,7 @@ class PreflightReportGenerator(PreflightCheck):
             </header>
 
             {self._generate_executive_summary_html(summary)}
-            {self._generate_mi4xx_node_health_html(results.get('mi4xx_node_health', {}))}
+            {self._generate_node_health_html(results.get('node_health', {}))}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
             {self._generate_ifoe_l2_html(results.get('ifoe_l2_connectivity', {}))}
             {self._generate_transferbench_smoke_html(results.get('transferbench_smoke', {}))}
@@ -1007,21 +1008,22 @@ class PreflightReportGenerator(PreflightCheck):
         """
         return html
 
-    def _generate_mi4xx_node_health_html(self, health_results):
-        """Render the MI4XX driver/AIFM/AFM/station admission diagnostics."""
+    def _generate_node_health_html(self, health_results):
+        """Render generic GPU and optional MI4XX fabric health diagnostics."""
         if not health_results:
             return ""
         if health_results.get('skipped') or health_results.get('status') == 'SKIPPED':
-            message = health_results.get('message', 'MI4XX node-health admission is not enabled')
+            message = health_results.get('message', 'Node-health admission is not enabled')
             return f"""
         <section>
-            <h2>MI4XX Node-Health Admission</h2>
+            <h2>Node-Health Admission</h2>
             <p><em>{html.escape(str(message))}</em></p>
         </section>
         """
 
         node_results = health_results.get('node_results') or {}
         membership = health_results.get('vpod_membership') or {}
+        fabric_checks = bool(health_results.get('fabric_checks'))
         coverage = health_results.get('coverage') or {}
         shared_vpod = membership.get('vpod_accelerators') or []
         missing_nodes = coverage.get('missing_nodes') or []
@@ -1030,63 +1032,88 @@ class PreflightReportGenerator(PreflightCheck):
         vpod_text = (
             f"shared AFM accelerator membership <code>{html.escape(str(shared_vpod))}</code>"
             if shared_vpod
-            else 'AFM vPOD accelerator membership unavailable'
+            else ('AFM vPOD accelerator membership unavailable' if fabric_checks else 'fabric checks disabled')
         )
         coverage_text = ''
         if missing_nodes:
-            coverage_text = '<p class="error-summary">Declared node(s) not admitted: ' + html.escape(', '.join(map(str, missing_nodes))) + '</p>'
+            coverage_text = (
+                '<p class="error-summary">Declared node(s) not admitted: '
+                + html.escape(', '.join(map(str, missing_nodes)))
+                + '</p>'
+            )
         membership_errors = membership.get('errors') or []
         membership_error_html = ''
         if membership_errors:
-            membership_error_html = '<ul class="error-list">' + ''.join(
-                f'<li>{html.escape(str(error))}</li>' for error in membership_errors
-            ) + '</ul>'
+            membership_error_html = (
+                '<ul class="error-list">'
+                + ''.join(f'<li>{html.escape(str(error))}</li>' for error in membership_errors)
+                + '</ul>'
+            )
 
         rows = []
         for node in sorted(node_results):
             result = node_results[node]
             devices = result.get('afm_devices') or []
-            device_states = '; '.join(
-                f"{device.get('bdf', '?')}: {device.get('config_phase', '?')}/"
-                f"{device.get('virtualization_mode', '?')}" for device in devices
-            ) or 'not reported'
+            device_states = (
+                '; '.join(
+                    f"{device.get('bdf', '?')}: {device.get('config_phase', '?')}/"
+                    f"{device.get('virtualization_mode', '?')}"
+                    for device in devices
+                )
+                or 'not reported'
+            )
             masks = result.get('station_masks') or {}
             mask_text = '; '.join(f"{bdf}: {mask}" for bdf, mask in sorted(masks.items())) or 'not reported'
             port_inventory = result.get('afm_port_inventory') or {}
-            up_port_text = '; '.join(
-                f"{bdf}: {entry.get('enabled_station_up_ports', 0)}/"
-                f"{entry.get('expected_enabled_ports', 0)} mask-enabled UP "
-                f"({entry.get('up_ports', 0)} physical UP)"
-                for bdf, entry in sorted(port_inventory.items())
-            ) or 'not reported'
+            up_port_text = (
+                '; '.join(
+                    f"{bdf}: {entry.get('enabled_station_up_ports', 0)}/"
+                    f"{entry.get('expected_enabled_ports', 0)} mask-enabled UP "
+                    f"({entry.get('up_ports', 0)} physical UP)"
+                    for bdf, entry in sorted(port_inventory.items())
+                )
+                or 'not reported'
+            )
             errors = result.get('errors') or []
-            error_html = '—' if not errors else '<ul style="margin:0;color:#721c24;">' + ''.join(
-                f'<li>{html.escape(str(error))}</li>' for error in errors
-            ) + '</ul>'
+            error_html = (
+                '—'
+                if not errors
+                else '<ul style="margin:0;color:#721c24;">'
+                + ''.join(f'<li>{html.escape(str(error))}</li>' for error in errors)
+                + '</ul>'
+            )
             node_status = result.get('status', 'UNKNOWN')
+            fabric_cells = ''
+            if fabric_checks:
+                fabric_cells = (
+                    f'<td>{html.escape(device_states)}</td>'
+                    f'<td><code>{html.escape(mask_text)}</code></td>'
+                    f'<td>{html.escape(up_port_text)}</td>'
+                )
             rows.append(
                 '<tr>'
                 f'<td><code>{html.escape(str(node))}</code></td>'
                 f'<td><span class="status-{"pass" if node_status == "PASS" else "fail"}">{html.escape(str(node_status))}</span></td>'
                 f'<td>{len(result.get("gpu_inventory") or [])}</td>'
-                f'<td>{html.escape(device_states)}</td>'
-                f'<td><code>{html.escape(mask_text)}</code></td>'
-                f'<td>{html.escape(up_port_text)}</td>'
+                f'{fabric_cells}'
                 f'<td>{error_html}</td>'
                 '</tr>'
             )
 
+        fabric_headers = (
+            '<th>AFM devices</th><th>Station masks</th><th>AFM enabled-station ports</th>' if fabric_checks else ''
+        )
         return f"""
         <section>
-            <h2>MI4XX Node-Health Admission</h2>
+            <h2>Node-Health Admission</h2>
             <p><span class="{status_class}">{html.escape(str(status))}</span>. This mandatory, read-only gate validates
-            AMDGPU/KFD, AIFM agent, GPU inventory, AFM ACTIVE bare-metal vPOD state, and IFoE station/port coherence.
+            AMDGPU/KFD, GPU inventory, and kernel health{'; with fabric checks enabled it also validates AIFM, AFM ACTIVE bare-metal vPOD state, and IFoE station/port coherence' if fabric_checks else ''}.
             vPOD: {vpod_text}.</p>
             {coverage_text}
             {membership_error_html}
             <table>
                 <thead>
-                    <tr><th>Node</th><th>Status</th><th>GPUs</th><th>AFM devices</th><th>Station masks</th><th>AFM enabled-station ports</th><th>Issues</th></tr>
+                    <tr><th>Node</th><th>Status</th><th>GPUs</th>{fabric_headers}<th>Issues</th></tr>
                 </thead>
                 <tbody>{''.join(rows)}</tbody>
             </table>
@@ -1359,12 +1386,8 @@ class PreflightReportGenerator(PreflightCheck):
                 if ppod_id is not None:
                     pod_summary_parts.append(f'shared ppod_id=<code>{html.escape(str(ppod_id))}</code>')
                 if pod_membership.get('status') == 'FAIL':
-                    pod_summary_parts.append(
-                        '<span class="status-fail">precondition FAILED</span>'
-                    )
-        pod_summary_html = (
-            '; '.join(pod_summary_parts) if pod_summary_parts else 'pod-membership info unavailable'
-        )
+                    pod_summary_parts.append('<span class="status-fail">precondition FAILED</span>')
+        pod_summary_html = '; '.join(pod_summary_parts) if pod_summary_parts else 'pod-membership info unavailable'
 
         header_html = f"""
         <section>
@@ -1380,12 +1403,9 @@ class PreflightReportGenerator(PreflightCheck):
 
         cluster_err_html = ''
         if cluster_errors:
-            err_items = ''.join(
-                f'<li>{html.escape(str(e))}</li>' for e in cluster_errors
-            )
+            err_items = ''.join(f'<li>{html.escape(str(e))}</li>' for e in cluster_errors)
             cluster_err_html = (
-                f'<div class="error-list"><strong>Cluster-level errors:</strong>'
-                f'<ul>{err_items}</ul></div>'
+                f'<div class="error-list"><strong>Cluster-level errors:</strong><ul>{err_items}</ul></div>'
             )
 
         failing = sorted(
@@ -1394,9 +1414,10 @@ class PreflightReportGenerator(PreflightCheck):
         )
 
         if not failing:
-            return header_html + cluster_err_html + (
-                '<p class="status-pass">All reachable nodes passed TransferBench smoketest.</p>'
-                '</section>'
+            return (
+                header_html
+                + cluster_err_html
+                + ('<p class="status-pass">All reachable nodes passed TransferBench smoketest.</p></section>')
             )
 
         rows = []
@@ -1418,9 +1439,7 @@ class PreflightReportGenerator(PreflightCheck):
             )
             detail_bits.append(f'<p><strong>Test marker counts:</strong> <code>{html.escape(counts)}</code></p>')
             if exit_code is not None:
-                detail_bits.append(
-                    f'<p><strong>Exit code:</strong> <code>{html.escape(str(exit_code))}</code></p>'
-                )
+                detail_bits.append(f'<p><strong>Exit code:</strong> <code>{html.escape(str(exit_code))}</code></p>')
             if errors:
                 detail_bits.append(
                     '<p><strong>Verdict errors:</strong></p><ul style="color:#721c24;margin:6px 0;">'
@@ -1458,7 +1477,8 @@ class PreflightReportGenerator(PreflightCheck):
                 </tr>
             """)
 
-        table_html = """
+        table_html = (
+            """
             <p class="error-summary">The following nodes failed or warned on the TransferBench smoketest:</p>
             <table>
                 <thead>
@@ -1470,11 +1490,14 @@ class PreflightReportGenerator(PreflightCheck):
                     </tr>
                 </thead>
                 <tbody>
-        """ + ''.join(rows) + """
+        """
+            + ''.join(rows)
+            + """
                 </tbody>
             </table>
         </section>
         """
+        )
         return header_html + cluster_err_html + table_html
 
     @staticmethod

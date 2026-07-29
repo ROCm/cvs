@@ -6,15 +6,16 @@ A comprehensive validation system for GPU clusters before running performance te
 
 The preflight checks system validates essential cluster health and configuration consistency across all nodes. It performs the following validations:
 
-1. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
-2. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
-3. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
-4. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(AIMVT-180; opt-in)*
-5. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
+1. **Node Health** - Validates AMDGPU/KFD, GPU visibility, and kernel health, with optional MI4XX fabric admission
+2. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
+3. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
+4. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
+5. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(AIMVT-180; opt-in)*
+6. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
    preset to validate the IFoE scale-up data path (using MI4XX AFM admission or,
    for generic profiles, an `amd-smi fabric --json` single-vPod precondition)
    *(AIMVT-181; opt-in)*
-6. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
+7. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Quick Start
 
@@ -66,6 +67,11 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 ```json
 {
   "preflight": {
+    "node_health": {
+      "enabled": true,
+      "gpus_per_node": 4,
+      "fabric_checks": true
+    },
     "node_check": {
       "gid_index": "3",
       "expected_rocm_version": "6.2.0",
@@ -88,6 +94,9 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 
 ### Key Parameters
 
+- **`node_health.enabled`**: Run mandatory GPU node-health admission
+- **`node_health.gpus_per_node`**: Exact GPU count expected on every node
+- **`node_health.fabric_checks`**: Add the MI4XX AIFM/AFM/vPOD and IFoE station/port checks
 - **`connectivity_check.rdma.connectivity_mode`**: `"basic"`, `"full_mesh"`, or `"skip"`
 - **`connectivity_check.ifoe.connectivity_mode`**: `"run"` or `"skip"` (default)
 - **`connectivity_check.transferbench.connectivity_mode`**: `"run"` or `"skip"` (default)
@@ -146,7 +155,7 @@ TransferBench candidate-branch **`smoketest`** preset on every reachable
 node and reconciling the binary's exit code with per-cell
 `[PASS] / [FAIL] / [SKIP]` markers in its output.
 
-With MI4XX node health enabled, TransferBench consumes its mandatory
+With node-health `fabric_checks` enabled, TransferBench consumes its mandatory
 `afmctl show device --json` vPOD admission and does not run a second AMD SMI
 topology query. Generic profiles enforce the single-vPod precondition by
 querying `amd_smi_binary` (default: `amd-smi`):
@@ -297,7 +306,7 @@ cvs run pytorch_xdit_wan \
 ```
 1. Load and validate cluster + preflight configurations
 2. Test SSH connectivity to all nodes
-3. Run MI4XX node-health / AFM vPOD admission when enabled
+3. Run generic GPU node health and optional MI4XX AFM/vPOD admission when enabled
 4. Validate ROCm version consistency
 5. Run IFoE checks before RDMA-specific eligibility pruning:
    - L2 connectivity using `afmctl test ping` (opt-in)
@@ -401,6 +410,11 @@ cvs/cvs/input/config_file/preflight/
 ```json
 {
   "preflight": {
+    "node_health": {
+      "enabled": true,
+      "gpus_per_node": 8,
+      "fabric_checks": false
+    },
     "node_check": {
       "gid_index": "3",
       "expected_rocm_version": "6.2.0",

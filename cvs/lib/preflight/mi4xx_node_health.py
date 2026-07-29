@@ -1,4 +1,4 @@
-"""MI4XX node admission checks for scale-up preflight.
+"""AMD GPU node-health checks with optional MI4XX fabric admission.
 
 The check intentionally validates state only.  It never loads a driver, starts
 an AIFM agent, changes a vPOD, or masks an IFoE station.  Those are platform
@@ -107,9 +107,7 @@ def parse_afmctl_device_json(output: str) -> Tuple[List[Dict[str, Any]], List[st
     devices, errors = parse_afmctl_show_device_json(output)
     for device in devices:
         device["config_phase"] = _normalise_state(device.get("config_phase"))
-        device["virtualization_mode"] = _normalise_virtualization_mode(
-            device.get("virtualization_mode")
-        )
+        device["virtualization_mode"] = _normalise_virtualization_mode(device.get("virtualization_mode"))
     return devices, errors
 
 
@@ -169,15 +167,20 @@ def parse_station_masks(output: str) -> Tuple[Dict[str, str], List[str]]:
     return masks, errors
 
 
-class Mi4xxNodeHealthCheck(PreflightCheck):
-    """Read-only MI4XX node and AFM/vPOD admission gate."""
+class NodeHealthCheck(PreflightCheck):
+    """Read-only GPU node-health gate with optional MI4XX AFM validation.
+
+    The generic phase validates AMDGPU/KFD readiness, GPU visibility, and
+    current-boot kernel health.  ``fabric_checks=True`` adds the MI4XX
+    AIFM/AFM/vPOD/station admission phase.
+    """
 
     def __init__(
         self,
         phdl,
         *,
         expected_gpus_per_node: int = 4,
-        expected_ifoe_devices_per_node: int = 4,
+        fabric_checks: bool = True,
         expected_network_ports_per_device: int = 36,
         afmctl_path: str = "afmctl",
         amd_smi_path: str = "amd-smi",
@@ -198,7 +201,12 @@ class Mi4xxNodeHealthCheck(PreflightCheck):
     ) -> None:
         super().__init__(phdl, config_dict)
         self.expected_gpus_per_node = int(expected_gpus_per_node)
-        self.expected_ifoe_devices_per_node = int(expected_ifoe_devices_per_node)
+        if self.expected_gpus_per_node < 1:
+            raise ValueError("expected_gpus_per_node must be at least 1")
+        self.fabric_checks = bool(fabric_checks)
+        # MI4XX exposes one AFM/IFoE device for each GPU.  Keep this invariant
+        # internal instead of asking customers for a duplicate device count.
+        self.expected_ifoe_devices_per_node = self.expected_gpus_per_node
         self.expected_network_ports_per_device = int(expected_network_ports_per_device)
         self.afmctl_path = afmctl_path
         self.amd_smi_path = amd_smi_path
@@ -208,7 +216,9 @@ class Mi4xxNodeHealthCheck(PreflightCheck):
             raise ValueError("json_args must request JSON output")
         self.use_sudo = bool(use_sudo)
         raw_modules = required_ifoe_modules or ["ifoe"]
-        self.required_ifoe_modules = [str(raw_modules)] if isinstance(raw_modules, str) else [str(m) for m in raw_modules]
+        self.required_ifoe_modules = (
+            [str(raw_modules)] if isinstance(raw_modules, str) else [str(m) for m in raw_modules]
+        )
         self.agent_process_name = agent_process_name
         self.agent_slot_ids = {str(k): int(v) for k, v in (agent_slot_ids or {}).items()}
         self.readiness_timeout_seconds = max(0, int(readiness_timeout_seconds))
@@ -286,9 +296,7 @@ class Mi4xxNodeHealthCheck(PreflightCheck):
         executor = getattr(self.phdl, "exec_cmd_list", None)
         if callable(executor):
             try:
-                output = executor(
-                    [commands.get(host, "true") for host in hosts], timeout=90, print_console=False
-                )
+                output = executor([commands.get(host, "true") for host in hosts], timeout=90, print_console=False)
                 if isinstance(output, dict):
                     normalized = {}
                     for host in hosts:
@@ -302,10 +310,7 @@ class Mi4xxNodeHealthCheck(PreflightCheck):
         # Test doubles and legacy SSH adapters may lack exec_cmd_list.  The
         # fallback remains functionally correct, but normal CVS Pssh objects
         # take the single-wave path above.
-        return {
-            host: str(self._exec_all(commands.get(host, "true")).get(host, ""))
-            for host in hosts
-        }
+        return {host: str(self._exec_all(commands.get(host, "true")).get(host, "")) for host in hosts}
 
     @staticmethod
     def _module_command(module: str) -> str:
@@ -340,20 +345,21 @@ class Mi4xxNodeHealthCheck(PreflightCheck):
                 self._add_error(result, "amdgpu kernel module is not loaded")
             if probes.get("kfd", "").strip() != "1":
                 self._add_error(result, "/dev/kfd is absent")
-            for module in self.required_ifoe_modules:
-                if probes.get(f"module:{module}", "").strip() != "1":
-                    self._add_error(result, f"IFoE kernel module {module!r} is not loaded")
-            agent_output = probes.get("agent", "")
-            matching_lines = [line for line in agent_output.splitlines() if self.agent_process_name in line]
-            if not matching_lines:
-                self._add_error(result, f"AIFM node agent {self.agent_process_name!r} is not running")
-            else:
-                slot = self.agent_slot_ids.get(node)
-                if slot is not None and not any(
-                    re.search(rf"(?:--?slot[-_]id[= ]|--?slot[= ]){re.escape(str(slot))}(?:\s|$)", line)
-                    for line in matching_lines
-                ):
-                    self._add_error(result, f"AIFM node agent is not running with required slot-id {slot}")
+            if self.fabric_checks:
+                for module in self.required_ifoe_modules:
+                    if probes.get(f"module:{module}", "").strip() != "1":
+                        self._add_error(result, f"IFoE kernel module {module!r} is not loaded")
+                agent_output = probes.get("agent", "")
+                matching_lines = [line for line in agent_output.splitlines() if self.agent_process_name in line]
+                if not matching_lines:
+                    self._add_error(result, f"AIFM node agent {self.agent_process_name!r} is not running")
+                else:
+                    slot = self.agent_slot_ids.get(node)
+                    if slot is not None and not any(
+                        re.search(rf"(?:--?slot[-_]id[= ]|--?slot[= ]){re.escape(str(slot))}(?:\s|$)", line)
+                        for line in matching_lines
+                    ):
+                        self._add_error(result, f"AIFM node agent is not running with required slot-id {slot}")
             kernel_output = probes.get("kernel", "")
             kernel_failures = [line.strip() for line in kernel_output.splitlines() if _KERNEL_FAILURE_RE.search(line)]
             result["kernel_failures"] = kernel_failures
@@ -376,9 +382,7 @@ class Mi4xxNodeHealthCheck(PreflightCheck):
     def _evaluate_afm_devices(self, output: str) -> Tuple[List[Dict[str, Any]], List[str]]:
         devices, errors = parse_afmctl_device_json(output)
         if len(devices) != self.expected_ifoe_devices_per_node:
-            errors.append(
-                f"Expected {self.expected_ifoe_devices_per_node} AFM devices, found {len(devices)}"
-            )
+            errors.append(f"Expected {self.expected_ifoe_devices_per_node} AFM devices, found {len(devices)}")
         accelerator_ids = set()
         vpod_sets = set()
         for device in devices:
@@ -437,8 +441,7 @@ class Mi4xxNodeHealthCheck(PreflightCheck):
             if all_ready or time.monotonic() >= deadline:
                 break
             self.log_info(
-                f"MI4XX AFM/vPOD admission pending after attempt {attempt}; "
-                f"retrying in {self.poll_interval_seconds}s"
+                f"MI4XX AFM/vPOD admission pending after attempt {attempt}; retrying in {self.poll_interval_seconds}s"
             )
             time.sleep(self.poll_interval_seconds)
         for node, errors in latest_errors.items():
@@ -495,9 +498,7 @@ class Mi4xxNodeHealthCheck(PreflightCheck):
         bdfs_by_node: Dict[str, List[str]] = {}
         for node, result in self.results.items():
             ifoe_bdfs = [
-                gpu_bdf[:-1] + "1"
-                for gpu_bdf in (result.get("station_masks") or {})
-                if gpu_bdf.endswith(".0")
+                gpu_bdf[:-1] + "1" for gpu_bdf in (result.get("station_masks") or {}) if gpu_bdf.endswith(".0")
             ]
             bdfs_by_node[node] = ifoe_bdfs
             commands[node] = self.build_afm_ports_command(ifoe_bdfs) if ifoe_bdfs else "true"
@@ -562,15 +563,12 @@ class Mi4xxNodeHealthCheck(PreflightCheck):
                         )
                         continue
                     down_ports = [
-                        f"{port.get('port')} ({port.get('state')})"
-                        for port in station_ports
-                        if not port.get("is_up")
+                        f"{port.get('port')} ({port.get('state')})" for port in station_ports if not port.get("is_up")
                     ]
                     if down_ports:
                         self._add_error(
                             result,
-                            f"{ifoe_bdf}: enabled station {station} has non-UP port(s): "
-                            + ", ".join(down_ports),
+                            f"{ifoe_bdf}: enabled station {station} has non-UP port(s): " + ", ".join(down_ports),
                         )
             result["afm_port_inventory"] = inventories
 
@@ -614,35 +612,51 @@ class Mi4xxNodeHealthCheck(PreflightCheck):
         if not hosts:
             return {
                 "status": "FAIL",
+                "fabric_checks": self.fabric_checks,
                 "node_results": {},
-                "vpod_membership": {"status": "FAIL", "errors": ["No reachable nodes"]},
-                "errors": ["No reachable nodes for MI4XX admission"],
+                "vpod_membership": {
+                    "status": "FAIL" if self.fabric_checks else "SKIPPED",
+                    "errors": ["No reachable nodes"] if self.fabric_checks else [],
+                },
+                "errors": ["No reachable nodes for node-health admission"],
             }
 
         host_outputs: Dict[str, Dict[str, str]] = {node: {} for node in hosts}
         host_outputs_map = {
             "amdgpu": self._exec_all(self._module_command("amdgpu")),
             "kfd": self._exec_all("test -e /dev/kfd && printf 1 || printf 0"),
-            "agent": self._exec_all(self._agent_command(self.agent_process_name)),
             "kernel": self._exec_all(self._kernel_command()),
         }
-        for module in self.required_ifoe_modules:
-            host_outputs_map[f"module:{module}"] = self._exec_all(self._module_command(module))
+        if self.fabric_checks:
+            host_outputs_map["agent"] = self._exec_all(self._agent_command(self.agent_process_name))
+            for module in self.required_ifoe_modules:
+                host_outputs_map[f"module:{module}"] = self._exec_all(self._module_command(module))
         for key, outputs in host_outputs_map.items():
             for node in hosts:
                 host_outputs[node][key] = str(outputs.get(node, ""))
         self._evaluate_host_prerequisites(host_outputs)
         self._evaluate_gpu_inventory(self._exec_all(self.build_gpu_inventory_command()))
-        self._poll_afm_readiness()
-        self._evaluate_station_masks()
-        self._cross_check_port_inventory()
-        membership = self._reconcile_cluster_vpod()
-        for error in membership["errors"]:
-            for result in self.results.values():
-                self._add_error(result, error)
+        if self.fabric_checks:
+            self._poll_afm_readiness()
+            self._evaluate_station_masks()
+            self._cross_check_port_inventory()
+            membership = self._reconcile_cluster_vpod()
+            for error in membership["errors"]:
+                for result in self.results.values():
+                    self._add_error(result, error)
+        else:
+            membership = {
+                "status": "SKIPPED",
+                "skipped": True,
+                "vpod_accelerators": [],
+                "per_node": {},
+                "errors": [],
+                "message": "MI4XX fabric checks are disabled",
+            }
         failures = [node for node, result in self.results.items() if result["status"] == "FAIL"]
         return {
-            "status": "FAIL" if failures or membership["status"] != "PASS" else "PASS",
+            "status": "FAIL" if failures or (self.fabric_checks and membership["status"] != "PASS") else "PASS",
+            "fabric_checks": self.fabric_checks,
             "node_results": self.results,
             "failed_nodes": failures,
             "vpod_membership": membership,
@@ -650,7 +664,13 @@ class Mi4xxNodeHealthCheck(PreflightCheck):
         }
 
 
+# Backward-compatible library alias; customer configuration now uses the
+# generation-neutral ``node_health`` name.
+Mi4xxNodeHealthCheck = NodeHealthCheck
+
+
 __all__ = [
+    "NodeHealthCheck",
     "Mi4xxNodeHealthCheck",
     "parse_afmctl_device_json",
     "parse_amd_smi_gpu_json",

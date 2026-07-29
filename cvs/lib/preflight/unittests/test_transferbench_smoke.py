@@ -634,6 +634,59 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             kwargs['extra_env'],
             {'LD_LIBRARY_PATH': '/opt/rocm/lib:/usr/lib64/openmpi/lib'},
         )
+        self.assertIsNone(kwargs['afm_vpod_admission'])
+
+    def test_preflight_uses_afm_admission_only_when_fabric_checks_are_enabled(self):
+        from cvs.tests.preflight import preflight_checks
+
+        phdl = MagicMock()
+        phdl.reachable_hosts = ['nodeA']
+        config = {
+            'node_health': {
+                'enabled': True,
+                'gpus_per_node': 4,
+                'fabric_checks': True,
+            },
+            'connectivity_check': {
+                'transferbench': {
+                    'connectivity_mode': 'run',
+                }
+            },
+        }
+        admission = {
+            'status': 'PASS',
+            'source': 'afmctl show device --json',
+            'per_node': {'nodeA': [0, 1, 2, 3]},
+            'vpod_accelerators': [0, 1, 2, 3],
+            'errors': [],
+        }
+        checker_results = {
+            'status': 'PASS',
+            'rank_mode': 'per_node',
+            'pod_membership': {},
+            'nodes': {},
+            'totals': {},
+            'errors': [],
+        }
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        preflight_checks.preflight_results['node_health'] = {
+            'status': 'PASS',
+            'fabric_checks': True,
+            'vpod_membership': admission,
+        }
+        try:
+            with (
+                patch.object(preflight_checks, 'TransferBenchSmokeCheck') as checker_cls,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+            ):
+                checker_cls.return_value.run.return_value = checker_results
+                preflight_checks.test_ifoe_transferbench_smoke(phdl, config)
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+        self.assertEqual(checker_cls.call_args.kwargs['afm_vpod_admission'], admission)
 
     def test_run_pass_per_node(self):
         phdl = self._make_phdl(

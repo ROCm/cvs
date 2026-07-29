@@ -1,5 +1,11 @@
 {
   "preflight": {
+    "node_health": {
+      "enabled": true,
+      "gpus_per_node": 4,
+      "fabric_checks": true
+    },
+
     "node_check": {
       "_comment": "Individual node validation (parallel across nodes)",
       
@@ -13,46 +19,7 @@
       
       "_example_rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
       "rdma_interfaces": "[<changeme>]",
-      "_comment_rdma_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand.",
-
-      "mi4xx_node_health": {
-        "_comment": "Set enabled=true for every MI4XX rack scale-up run. This is a read-only mandatory admission gate: CVS records failures but never loads modules, starts AIFM, reconfigures a vPOD, unmasks stations, or reboots a node.",
-
-        "enabled": false,
-        "_comment_enabled": "MI4XX benchmark profile switch. When true, failure_mode must remain gate and AFM ACTIVE/bare-metal vPOD admission is required before IFoE, TransferBench, or RDMA scale-up checks run.",
-
-        "failure_mode": "gate",
-        "_comment_failure_mode": "Mandatory MI4XX admission behavior. Only gate is valid when enabled=true; report-only mode is not an admissible scale-up configuration.",
-
-        "expected_gpus_per_node": 4,
-        "expected_ifoe_devices_per_node": 4,
-        "expected_network_ports_per_device": 36,
-        "_comment_expected_counts": "A healthy MI4XX node exposes four AMD-SMI GPUs, four AFM devices, and 36 IFoE network ports per AFM device. CVS fails closed if JSON inventory differs.",
-
-        "afmctl_path": "afmctl",
-        "amd_smi_path": "amd-smi",
-        "json_args": ["--json"],
-        "use_sudo": true,
-        "_comment_commands": "All AFM and AMD-SMI inventory queries request JSON. Set paths/use_sudo for the selected rack image; do not replace JSON parsing with screen-scraping.",
-
-        "required_ifoe_modules": ["ifoe"],
-        "agent_process_name": "inb-node-agent",
-        "agent_slot_ids": {},
-        "_comment_agent": "The expected AIFM node-agent process. Optionally map each cluster node name to its required slot ID when the rack deployment assigns them statically.",
-
-        "readiness_timeout_seconds": 600,
-        "poll_interval_seconds": 15,
-        "_comment_readiness": "AFM may take about five minutes after bring-up. CVS polls read-only state until this timeout, then fails; recovery remains a platform bring-up action.",
-
-        "allow_disabled_stations": true,
-        "reject_partial_stations": true,
-        "min_up_ports_per_gpu": 0,
-        "require_uniform_station_mask": false,
-        "expected_station_masks": {},
-        "_comment_station_policy": "A station mask has 18 nibbles/GPU (36 ports): f=fully enabled, 0=intentionally masked, c/3=unsupported partial. Default allows valid f/0 mixes and requires both AFM ports of every f station (matched by AFM station_id) to be UP; physical links on 0 stations are intentionally ignored. Set min_up_ports_per_gpu, require_uniform_station_mask, or exact masks only when the deployment profile requires them.",
-
-        "expected_virtualization_mode": "bare-metal"
-      }
+      "_comment_rdma_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand."
     },
     
     "connectivity_check": {
