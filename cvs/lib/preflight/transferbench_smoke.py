@@ -29,10 +29,10 @@ Ethernet) scale-up connectivity by:
    - Skipped cells are tolerated up to ``max_skip_pct``; above the budget
      the result is marked ``WARNING``.
 
-The check is **opt-in**: when ``connectivity_check.transferbench.connectivity_mode``
-is ``"skip"`` (default) the test records a SKIPPED result and returns without
-contacting nodes. Operators flip it to ``"run"`` once TransferBench's
-candidate branch is installed cluster-wide.
+The preflight entrypoint makes this check opt-in through
+``preflight.transferbench.enabled`` and supplies a validated, CVS-supported
+profile. This library class retains explicit constructor arguments for unit
+testing and internal profile implementation; they are not customer config.
 
 The smoketest preset itself, and the ``amd-smi fabric`` topology fields, are
 both required to run on real IFoE-equipped hardware; this module never
@@ -922,9 +922,8 @@ class TransferBenchSmokeCheck(PreflightCheck):
         """Build the format-tolerant ``amd-smi fabric --json`` invocation.
 
         When sudo is enabled, a bare ``amd_smi_binary`` name is resolved by
-        the outer SSH shell before sudo applies ``secure_path``. Operators
-        can instead set an absolute ``amd_smi_binary`` path in the preflight
-        configuration for fully explicit tool selection.
+        the outer SSH shell before sudo applies ``secure_path``. Internal
+        callers of this library class may also supply an absolute path.
         """
         binary = shlex.quote(self.amd_smi_binary)
         if self.use_sudo:

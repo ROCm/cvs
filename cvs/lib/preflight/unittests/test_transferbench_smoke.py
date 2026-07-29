@@ -12,6 +12,8 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+from pydantic import ValidationError
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
 from cvs.lib.preflight.transferbench_smoke import (
@@ -23,6 +25,8 @@ from cvs.lib.preflight.transferbench_smoke import (
     parse_amd_smi_fabric_text,
     reconcile_cluster_vpod,
 )
+from cvs.lib.preflight.report import PreflightReportGenerator
+from cvs.parsers.schemas import PreflightConfigFile
 
 
 # ---------------------------------------------------------------------------
@@ -596,44 +600,108 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         with self.assertRaises(ValueError):
             TransferBenchSmokeCheck(MagicMock(), extra_env={'LD_LIBRARY_PATH;bad': '/opt/rocm/lib'})
 
-    def test_preflight_config_wires_amd_smi_binary_and_extra_env(self):
+    def test_schema_accepts_only_the_six_customer_facing_options(self):
+        config = PreflightConfigFile.model_validate(
+            {
+                'transferbench': {
+                    'enabled': True,
+                    'scope': 'cluster',
+                    'profile': 'smoketest',
+                    'message_sizes': ['1K', '16M'],
+                    'iterations': 3,
+                    'warmup_iterations': 1,
+                }
+            }
+        )
+
+        self.assertTrue(config.transferbench.enabled)
+        self.assertEqual(config.transferbench.scope, 'cluster')
+        self.assertEqual(config.transferbench.message_sizes, ['1K', '16M'])
+
+        with self.assertRaises(ValidationError):
+            PreflightConfigFile.model_validate(
+                {
+                    'transferbench': {
+                        'enabled': True,
+                        'scope': 'node',
+                        'profile': 'bandwidth',
+                    }
+                }
+            )
+
+        with self.assertRaises(ValidationError):
+            PreflightConfigFile.model_validate(
+                {
+                    'transferbench': {
+                        'enabled': True,
+                        'tb_binary': '/custom/TransferBench',
+                    }
+                }
+            )
+
+        with self.assertRaises(ValidationError):
+            PreflightConfigFile.model_validate(
+                {
+                    'connectivity_check': {
+                        'transferbench': {
+                            'connectivity_mode': 'run',
+                        }
+                    }
+                }
+            )
+
+    def test_simplified_preflight_config_wires_workload_and_fixed_policy(self):
         from cvs.tests.preflight import preflight_checks
 
         phdl = MagicMock()
-        phdl.reachable_hosts = ['nodeA']
+        phdl.reachable_hosts = ['nodeA', 'nodeB']
         config = {
-            'connectivity_check': {
-                'transferbench': {
-                    'connectivity_mode': 'run',
-                    'tb_binary': '/opt/amd-apps/TransferBench/TransferBench',
-                    'amd_smi_binary': '/opt/rocm/bin/amd-smi',
-                    'extra_env': {'LD_LIBRARY_PATH': '/opt/rocm/lib:/usr/lib64/openmpi/lib'},
-                }
+            'transferbench': {
+                'enabled': True,
+                'scope': 'cluster',
+                'profile': 'smoketest',
+                'message_sizes': ['1K', '1M', '16M'],
+                'iterations': 4,
+                'warmup_iterations': 1,
             }
         }
         checker_results = {
             'status': 'PASS',
-            'rank_mode': 'per_node',
+            'rank_mode': 'multi_rank',
             'pod_membership': {},
             'nodes': {},
             'totals': {},
             'errors': [],
         }
 
-        with (
-            patch.object(preflight_checks, 'TransferBenchSmokeCheck') as checker_cls,
-            patch.object(preflight_checks, 'preflight_update_test_result'),
-        ):
-            checker_cls.return_value.run.return_value = checker_results
-            preflight_checks.test_ifoe_transferbench_smoke(phdl, config)
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        try:
+            with (
+                patch.object(preflight_checks, 'TransferBenchSmokeCheck') as checker_cls,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+            ):
+                checker_cls.return_value.run.return_value = checker_results
+                preflight_checks.test_ifoe_transferbench_smoke(phdl, config)
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
 
         kwargs = checker_cls.call_args.kwargs
-        self.assertEqual(kwargs['tb_binary'], '/opt/amd-apps/TransferBench/TransferBench')
-        self.assertEqual(kwargs['amd_smi_binary'], '/opt/rocm/bin/amd-smi')
-        self.assertEqual(
-            kwargs['extra_env'],
-            {'LD_LIBRARY_PATH': '/opt/rocm/lib:/usr/lib64/openmpi/lib'},
-        )
+        self.assertEqual(kwargs['tb_binary'], 'TransferBench')
+        self.assertEqual(kwargs['amd_smi_binary'], 'amd-smi')
+        self.assertEqual(kwargs['preset'], 'smoketest')
+        self.assertEqual(kwargs['size_list'], ['1K', '1M', '16M'])
+        self.assertEqual(kwargs['num_iterations'], 4)
+        self.assertEqual(kwargs['num_warmups'], 1)
+        self.assertEqual(kwargs['rank_mode'], 'multi_rank')
+        self.assertEqual(kwargs['ssh_timeout'], 2250)
+        self.assertEqual(kwargs['extra_env'], {})
+        self.assertTrue(kwargs['always_validate'])
+        self.assertTrue(kwargs['run_parallel'])
+        self.assertTrue(kwargs['force_single_pod'])
+        self.assertFalse(kwargs['use_bdma'])
+        self.assertFalse(kwargs['skip_pod_check'])
         self.assertIsNone(kwargs['afm_vpod_admission'])
 
     def test_preflight_uses_afm_admission_only_when_fabric_checks_are_enabled(self):
@@ -647,10 +715,13 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
                 'gpus_per_node': 4,
                 'fabric_checks': True,
             },
-            'connectivity_check': {
-                'transferbench': {
-                    'connectivity_mode': 'run',
-                }
+            'transferbench': {
+                'enabled': True,
+                'scope': 'node',
+                'profile': 'smoketest',
+                'message_sizes': ['1K', '16M'],
+                'iterations': 2,
+                'warmup_iterations': 0,
             },
         }
         admission = {
@@ -687,6 +758,93 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             preflight_checks.preflight_results.update(previous_results)
 
         self.assertEqual(checker_cls.call_args.kwargs['afm_vpod_admission'], admission)
+
+    def test_disabled_preflight_skips_without_constructing_checker(self):
+        from cvs.tests.preflight import preflight_checks
+
+        phdl = MagicMock()
+        phdl.reachable_hosts = ['nodeA']
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        try:
+            with (
+                patch.object(preflight_checks, 'TransferBenchSmokeCheck') as checker_cls,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+            ):
+                preflight_checks.test_ifoe_transferbench_smoke(
+                    phdl,
+                    {'transferbench': {'enabled': False}},
+                )
+
+            checker_cls.assert_not_called()
+            result = preflight_checks.preflight_results['transferbench_smoke']
+            self.assertTrue(result['skipped'])
+            self.assertEqual(result['mode'], 'skip')
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+    def test_enabled_preflight_failure_is_a_gate(self):
+        from cvs.tests.preflight import preflight_checks
+
+        phdl = MagicMock()
+        phdl.reachable_hosts = ['nodeA']
+        config = {
+            'transferbench': {
+                'enabled': True,
+                'scope': 'node',
+                'profile': 'smoketest',
+                'message_sizes': ['1K', '16M'],
+                'iterations': 2,
+                'warmup_iterations': 0,
+            }
+        }
+        checker_results = {
+            'status': 'FAIL',
+            'rank_mode': 'per_node',
+            'pod_membership': {},
+            'nodes': {'nodeA': {'status': 'FAIL', 'errors': ['data mismatch']}},
+            'totals': {'nodes_fail': 1, 'nodes_total': 1, 'nodes_warning': 0},
+            'errors': [],
+        }
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        try:
+            with (
+                patch.object(preflight_checks, 'TransferBenchSmokeCheck') as checker_cls,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+                patch.object(preflight_checks.pytest, 'fail') as fail,
+            ):
+                checker_cls.return_value.run.return_value = checker_results
+                preflight_checks.test_ifoe_transferbench_smoke(phdl, config)
+
+            fail.assert_called_once_with('TransferBench preflight gate failed; see preflight report')
+            self.assertEqual(preflight_checks.preflight_results['transferbench_smoke']['status'], 'FAIL')
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+    def test_report_includes_customer_workload(self):
+        results = {
+            'status': 'PASS',
+            'scope': 'cluster',
+            'profile': 'smoketest',
+            'message_sizes': ['1K', '1M', '16M'],
+            'iterations': 4,
+            'warmup_iterations': 1,
+            'rank_mode': 'multi_rank',
+            'pod_membership': {},
+            'nodes': {},
+            'totals': {},
+            'errors': [],
+        }
+        generator = PreflightReportGenerator(MagicMock(), {'transferbench_smoke': results}, {})
+
+        html_report = generator._generate_transferbench_smoke_html(results)
+
+        self.assertIn('Scope: <code>cluster</code>', html_report)
+        self.assertIn('message sizes: <code>1K, 1M, 16M</code>', html_report)
+        self.assertIn('iterations/warmups: <code>4/1</code>', html_report)
 
     def test_run_pass_per_node(self):
         phdl = self._make_phdl(

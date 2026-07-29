@@ -473,6 +473,8 @@ class PreflightReportGenerator(PreflightCheck):
             'failed_nodes': failed_nodes,
             'warning_nodes': warning_nodes,
             'rank_mode': tb_results.get('rank_mode'),
+            'scope': tb_results.get('scope'),
+            'profile': tb_results.get('profile'),
             'summary': summary_text,
         }
 
@@ -1372,6 +1374,11 @@ class PreflightReportGenerator(PreflightCheck):
         nodes = tb_results.get('nodes') or {}
         totals = tb_results.get('totals') or {}
         pod_membership = tb_results.get('pod_membership') or {}
+        scope = tb_results.get('scope') or 'node'
+        profile = tb_results.get('profile') or 'smoketest'
+        message_sizes = tb_results.get('message_sizes') or ['1K', '16M']
+        iterations = int(tb_results.get('iterations', 2))
+        warmup_iterations = int(tb_results.get('warmup_iterations', 0))
         rank_mode = tb_results.get('rank_mode') or 'per_node'
         max_skip = tb_results.get('max_skip_pct', 25.0)
         cluster_errors = tb_results.get('errors') or []
@@ -1394,8 +1401,11 @@ class PreflightReportGenerator(PreflightCheck):
         header_html = f"""
         <section>
             <h2>IFoE TransferBench Smoketest</h2>
-            <p>Tested via the TransferBench candidate-branch <code>smoketest</code> preset.
-            Rank mode: <code>{html.escape(rank_mode)}</code>;
+            <p>Tested via TransferBench profile <code>{html.escape(str(profile))}</code>.
+            Scope: <code>{html.escape(str(scope))}</code>
+            (effective rank mode: <code>{html.escape(rank_mode)}</code>);
+            message sizes: <code>{html.escape(', '.join(str(size) for size in message_sizes))}</code>;
+            iterations/warmups: <code>{iterations}/{warmup_iterations}</code>;
             skip budget: <code>{html.escape(str(max_skip))}%</code>;
             nodes pass/warn/fail: <code>{totals.get('nodes_pass', 0)}/{totals.get('nodes_warning', 0)}/{totals.get('nodes_fail', 0)}</code>
             (of {totals.get('nodes_total', 0)} total);

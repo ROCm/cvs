@@ -76,6 +76,14 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
       "enabled": true,
       "pings_per_port": 3
     },
+    "transferbench": {
+      "enabled": true,
+      "scope": "node",
+      "profile": "smoketest",
+      "message_sizes": ["1K", "16M"],
+      "iterations": 2,
+      "warmup_iterations": 0
+    },
     "node_check": {
       "gid_index": "3",
       "expected_rocm_version": "6.2.0",
@@ -104,7 +112,10 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 - **`connectivity_check.rdma.connectivity_mode`**: `"basic"`, `"full_mesh"`, or `"skip"`
 - **`l2ping.enabled`**: Run the strict IFoE L2 connectivity gate
 - **`l2ping.pings_per_port`**: Samples sent through each discovered UP port pair (default: `3`)
-- **`connectivity_check.transferbench.connectivity_mode`**: `"run"` or `"skip"` (default)
+- **`transferbench.enabled`**: Run the mandatory TransferBench data-path gate
+- **`transferbench.scope`**: `"node"` or `"cluster"`
+- **`transferbench.profile`**: CVS-supported profile (`"smoketest"`)
+- **`transferbench.message_sizes`**, **`iterations`**, **`warmup_iterations`**: Workload intensity
 - **`node_check.expected_rocm_version`**: ROCm version expected across all nodes
 - **`node_check.rdma_interfaces`**: List of expected RDMA interface names
 - **`connectivity_check.rdma.ibv_test_timeout`**: Timeout in seconds for ibv_rc_pingpong tests
@@ -147,8 +158,8 @@ node and reconciling the binary's exit code with per-cell
 
 With node-health `fabric_checks` enabled, TransferBench consumes its mandatory
 `afmctl show device --json` vPOD admission and does not run a second AMD SMI
-topology query. Generic profiles enforce the single-vPod precondition by
-querying `amd_smi_binary` (default: `amd-smi`):
+topology query. Generic profiles enforce the single-vPod precondition with
+the CVS-managed `amd-smi` command:
 
 ```
 sudo <resolved-amd-smi-binary> fabric --json
@@ -164,7 +175,7 @@ issue.
 Each TransferBench invocation issues:
 
 ```
-[sudo] [extra_env assignments] SIZE_LIST=<size1>,<size2> NUM_ITERATIONS=<n> NUM_WARMUPS=<n> ALWAYS_VALIDATE=1 RUN_PARALLEL=1 \
+[sudo] SIZE_LIST=<size1>,<size2> NUM_ITERATIONS=<n> NUM_WARMUPS=<n> ALWAYS_VALIDATE=1 RUN_PARALLEL=1 \
   [TB_NUM_RANKS=<n> TB_RANK=<r> TB_MASTER_ADDR=<rank0> TB_MASTER_PORT=<port>] \
   <resolved-tb_binary> smoketest
 ```
@@ -173,26 +184,22 @@ with a `__TB_SMOKE_EXIT__=$?` sentinel appended so we can recover the
 binary's exit code from stdout even when the parallel SSH transport
 discards process exit codes.
 
-The cluster file's `env_vars` block configures the outer SSH shell. Because
-`sudo` may replace `PATH` with `secure_path` and strips `LD_LIBRARY_PATH`, CVS
-resolves a bare `tb_binary` / `amd_smi_binary` before elevation; production
-configs should supply absolute paths for both. Use `extra_env` for runtime
-values required by TransferBench inside the root shell—for example,
-`LD_LIBRARY_PATH` when the ROCm library directory is not in the dynamic-linker cache.
+CVS owns executable resolution, privilege handling, environment setup,
+validation flags, skip policy, and timeout derivation. The customer selects
+the workload through `profile`, `message_sizes`, `iterations`, and
+`warmup_iterations`.
 
-### Orchestration modes
+### Scopes
 
-- **`per_node`** (default) — one independent single-rank TransferBench per
-  reachable node. Exercises intra-node AID↔MID IFoE only, but needs no
-  cross-node coordination and is the safest first run when bringing up a
-  cluster.
-- **`multi_rank`** — every reachable node is wired into one socket-comm
-  cluster (`TB_NUM_RANKS=N`, `TB_RANK=0..N-1`, `TB_MASTER_ADDR=<rank0>`).
+- **`node`** (default) — one independent single-rank TransferBench per
+  reachable node, exercising intra-node AID↔MID IFoE.
+- **`cluster`** — every reachable node is wired into one socket-comm cluster
+  (`TB_NUM_RANKS=N`, `TB_RANK=0..N-1`, `TB_MASTER_ADDR=<rank0>`).
   This is the closest thing to a full-mesh IFoE scale-up test the candidate
   branch ships today; it traverses the rack IFoE switch end-to-end. Requires
-  bidirectional IP reachability on `socket_master_port` between every pair
+  bidirectional IP reachability on CVS-owned port `31337` between every pair
   of nodes, and at least two reachable hosts (otherwise we degrade to
-  `per_node` automatically and log a warning).
+  node scope automatically and log a warning).
 
 ### Verdict logic
 
@@ -203,38 +210,24 @@ Per-node verdict is derived as:
    pod-membership or executor-symmetry issue inside the preset)
 3. Any non-zero exit code → **FAIL**
 4. Any parsed `FAIL` marker or fatal-keyword line in stdout → **FAIL**
-5. `num_skip / num_tests > max_skip_pct%` → **WARNING**
+5. More than the CVS-owned skip budget → **WARNING**
 6. Otherwise → **PASS**
 
 ### Example TransferBench config block
 
 ```json
-"connectivity_check": {
-  "transferbench": {
-    "connectivity_mode": "run",
-    "tb_binary": "/path/to/TransferBench",
-    "amd_smi_binary": "/path/to/amd-smi",
-    "use_sudo": true,
-    "extra_env": {
-      "LD_LIBRARY_PATH": "/path/to/rocm/lib:$LD_LIBRARY_PATH"
-    },
-    "preset": "smoketest",
-    "size_list": ["1K", "16M"],
-    "num_iterations": 2,
-    "num_warmups": 0,
-    "always_validate": true,
-    "run_parallel": true,
-    "force_single_pod": true,
-    "rank_mode": "per_node",
-    "max_skip_pct": 25.0,
-    "ssh_timeout": 600
-  }
+"transferbench": {
+  "enabled": true,
+  "scope": "node",
+  "profile": "smoketest",
+  "message_sizes": ["1K", "16M"],
+  "iterations": 2,
+  "warmup_iterations": 0
 }
 ```
 
-To exercise the rack IFoE switch end-to-end, flip `rank_mode` to
-`"multi_rank"` and open `socket_master_port` (default `31337`) in the
-firewall between every node pair.
+To exercise the rack IFoE switch end-to-end, set `scope` to `"cluster"` and
+allow TCP port `31337` between every selected node.
 
 ## Output and Reporting
 

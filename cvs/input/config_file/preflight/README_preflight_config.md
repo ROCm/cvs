@@ -37,6 +37,14 @@ The preflight configuration file follows this structure:
       "enabled": true,
       "pings_per_port": 3
     },
+    "transferbench": {
+      "enabled": true,
+      "scope": "node",
+      "profile": "smoketest",
+      "message_sizes": ["1K", "16M"],
+      "iterations": 2,
+      "warmup_iterations": 0
+    },
     "debug": {
       "scriptlet": false
     },
@@ -74,10 +82,10 @@ preflight/
 ├── debug/                # Debug and troubleshooting options  
 ├── node_health/          # Generic GPU health plus optional MI4XX fabric admission
 ├── l2ping/               # Strict IFoE L2 connectivity admission
+├── transferbench/        # IFoE data-path validation admission
 ├── node_check/           # Individual node validation parameters
 ├── connectivity_check/   # Inter-node connectivity tests
-│   ├── rdma/             # RDMA-specific parameters (including nodes_per_full_mesh_group)
-│   └── transferbench/    # IFoE TransferBench smoketest parameters (AIMVT-181; opt-in)
+│   └── rdma/             # RDMA-specific parameters (including nodes_per_full_mesh_group)
 └── reporting/           # Output and report generation
 ```
 
@@ -215,8 +223,8 @@ configuration.
   - CVS does not add a generic port scanner. Keep the existing RDMA
     `full_mesh` test enabled with an `ibv_test_port_range` that is permitted
     between all nodes; that directly validates the TCP/RDMA path used by
-    RCCL-style scale-up rendezvous. TransferBench `multi_rank` likewise
-    requires `socket_master_port` to be reachable between all selected nodes.
+    RCCL-style scale-up rendezvous. TransferBench `scope: "cluster"` likewise
+    requires CVS-owned TCP port `31337` between all selected nodes.
 
 #### L2 Ping Settings (`l2ping`) — opt-in (AIMVT-180)
 
@@ -238,7 +246,7 @@ CVS owns the command path, JSON transport, full-mesh topology discovery,
 UP-port selection, three traffic types, zero-loss policy, strict coverage,
 timeouts, and gate behavior. These are intentionally not customer options.
 
-#### TransferBench Settings (`connectivity_check.transferbench`) — opt-in (AIMVT-181)
+#### TransferBench Settings (`transferbench`) — opt-in (AIMVT-181)
 
 Runs the TransferBench candidate-branch **`smoketest`** preset on every reachable
 node to validate IFoE scale-up data-path connectivity (one layer above the
@@ -246,90 +254,24 @@ AIMVT-180 L2 ping). With node-health fabric checks enabled, it consumes the mand
 `afmctl show device --json` admission result and never queries unreliable
 `amd-smi fabric --topology`. Generic non-MI4XX profiles retain the `amd-smi`
 precondition. The binary's exit code is reconciled with per-cell
-`[PASS]/[FAIL]/[SKIP]` markers.
+`[PASS]/[FAIL]/[SKIP]` markers. A failed enabled run is a mandatory preflight
+gate; skip-budget warnings remain non-fatal.
 
-> **sudo execution environment.** The cluster file's top-level `env_vars` block
-> still sets the outer SSH-shell environment, but `sudo` can replace `PATH`
-> with `secure_path` and strips `LD_LIBRARY_PATH`. In sudo mode, CVS resolves
-> bare executable names before elevation; production configurations should use
-> the explicit `tb_binary` / `amd_smi_binary` paths below. Use `extra_env` for
-> TransferBench runtime variables that must be present inside the privileged
-> shell.
+- **`enabled`** (default: `false`) — run the TransferBench gate.
+- **`scope`** (default: `"node"`) — `"node"` runs independently on every
+  node; `"cluster"` runs one multi-rank job across all reachable nodes.
+- **`profile`** (default: `"smoketest"`) — CVS-supported validation profile.
+  Only `smoketest` is supported in this iteration because its output and
+  verdict contract are explicitly parsed by CVS.
+- **`message_sizes`** (default: `["1K", "16M"]`) — message sizes exercised
+  by every smoketest cell.
+- **`iterations`** (default: `2`) — validated iterations per test and size.
+- **`warmup_iterations`** (default: `0`) — warmups before validated work.
 
-- **`connectivity_mode`** (default: `"skip"`)
-  - `"run"` — execute the smoketest on every reachable node
-  - `"skip"` — preflight records a SKIPPED result and does not invoke TransferBench
-- **`tb_binary`** (default: `"TransferBench"`)
-  - TransferBench executable path or name. A bare name is resolved in the
-    outer SSH shell before sudo changes `PATH`; an absolute path is recommended
-    in production, e.g. `/path/to/TransferBench`.
-- **`amd_smi_binary`** (default: `"amd-smi"`)
-  - Executable path or name for the pod-membership precondition. A bare name
-    is resolved before sudo applies `secure_path`; set an absolute path such as
-    `/opt/rocm/bin/amd-smi` to make the command independent of PATH.
-- **`use_sudo`** (default: `true`)
-  - Prepend `sudo` to TransferBench and generic-mode amd-smi calls (typically
-    required on production cluster images for IFoE access)
-- **`extra_env`** (default: `{}`)
-  - Optional mapping of environment values applied only to the TransferBench
-    process inside the privileged shell. Use it for runtime variables sudo
-    strips, for example:
-
-    ```json
-    "extra_env": {
-      "LD_LIBRARY_PATH": "/path/to/rocm/lib:$LD_LIBRARY_PATH"
-    }
-    ```
-
-  - Values are safely quoted and keys must be shell environment-variable names.
-    The only supported expansion is a variable's own `$KEY` reference, such as
-    `$LD_LIBRARY_PATH`; it is evaluated inside the privileged shell rather
-    than inherited from the outer SSH shell.
-- **`preset`** (default: `"smoketest"`)
-  - TransferBench preset name. Change only when a TransferBench build ships
-    a renamed preset with the same semantics.
-- **`size_list`** (default: `["1K", "16M"]`)
-  - Transfer sizes supplied to the `smoketest` preset through its `SIZE_LIST`
-    environment variable. Kept short for preflight; default covers both
-    small/latency and large/bandwidth regimes.
-- **`num_iterations`** (default: `2`)
-  - `NUM_ITERATIONS` env var. Two iterations is enough to surface intermittent
-    failures without blowing up runtime.
-- **`num_warmups`** (default: `0`)
-  - `NUM_WARMUPS` env var. Preflight is a connectivity gate, not a benchmark.
-- **`always_validate`** (default: `true`)
-  - `ALWAYS_VALIDATE=1` so every iteration is data-validated. Required for
-    silent-corruption detection.
-- **`run_parallel`** (default: `true`)
-  - `RUN_PARALLEL=1` so tests with disjoint executors run concurrently.
-- **`use_bdma`** (default: `false`)
-  - `USE_BDMA=1` to prefer the BDMA path on supported hardware.
-- **`force_single_pod`** (default: `true`)
-  - `FORCE_SINGLE_POD=1` — defense in depth alongside the AFM admission on
-    MI4XX or the amd-smi vPod precondition in generic mode.
-- **`rank_mode`** (default: `"per_node"`)
-  - `"per_node"` — each reachable node runs an independent single-rank
-    TransferBench (exercises intra-node AID↔MID IFoE only)
-  - `"multi_rank"` — every reachable node is wired into one socket-comm
-    cluster (`TB_NUM_RANKS=N`, `TB_RANK=0..N-1`, `TB_MASTER_ADDR=<rank0>`)
-    so the smoketest traverses the rack IFoE switch end-to-end. Requires
-    bidirectional IP reachability on `socket_master_port` between every pair
-    of nodes.
-- **`socket_master_port`** (default: `31337`)
-  - `TB_MASTER_PORT` used in `multi_rank` mode. Must be free and open in
-    the firewall on every node.
-- **`master_node`** (default: `""`)
-  - Optional hostname / IP forced to rank 0; defaults to the lexicographically
-    smallest reachable host.
-- **`max_skip_pct`** (default: `25.0`)
-  - Maximum percentage of smoketest cells allowed to be `SKIP` before the
-    node is downgraded to `WARNING`. Set to `0.0` for the strictest gate.
-- **`ssh_timeout`** (default: `600`)
-  - Per-invocation SSH timeout (seconds) for each TransferBench run
-- **`skip_pod_check`** (default: `false`)
-  - Compatibility-only bypass of the generic amd-smi pod-membership check.
-    It is ignored when node-health fabric checks are enabled: AFM/vPOD admission is mandatory and cannot be
-    skipped.
+CVS owns executable discovery, privilege handling, runtime environment,
+validation and parallelism flags, single-vPOD enforcement, deterministic
+master selection, skip policy, and timeout derivation. Cluster scope uses the
+fixed coordination port `31337`, which must be open between selected nodes.
 
 ### Reporting Settings (`reporting`)
 

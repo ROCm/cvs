@@ -810,6 +810,34 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
         )
 
 
+def _transferbench_config(config_dict):
+    """Return the customer-facing TransferBench configuration."""
+    legacy = get_nested_config(config_dict, 'connectivity_check', 'transferbench', None)
+    if legacy is not None:
+        raise ValueError(
+            "connectivity_check.transferbench is no longer supported; use preflight.transferbench with "
+            "enabled, scope, profile, message_sizes, iterations, and warmup_iterations"
+        )
+    config = config_dict.get('transferbench', {}) if isinstance(config_dict, dict) else {}
+    if not isinstance(config, dict):
+        raise ValueError("preflight.transferbench must be an object")
+    supported = {'enabled', 'scope', 'profile', 'message_sizes', 'iterations', 'warmup_iterations'}
+    unknown = sorted(set(config) - supported)
+    if unknown:
+        raise ValueError("Unsupported preflight.transferbench option(s): " + ', '.join(unknown))
+    return config
+
+
+def _transferbench_enabled(config_dict):
+    return _config_flag_enabled(_transferbench_config(config_dict).get('enabled'), default=False)
+
+
+def _transferbench_timeout(message_sizes, iterations, warmup_iterations):
+    """Derive a conservative per-invocation timeout from workload intensity."""
+    workload_units = max(1, len(message_sizes)) * max(1, iterations + warmup_iterations)
+    return max(600, 150 * workload_units)
+
+
 def _run_ifoe_transferbench_smoke(phdl, config_dict):
     """Test IFoE scale-up via TransferBench candidate-branch smoketest (AIMVT-181).
 
@@ -828,13 +856,11 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
          two reachable nodes; otherwise we degrade to ``per_node`` mode and
          log a warning.
 
-    Configuration lives under ``connectivity_check.transferbench`` in the
-    preflight config file. The check is **opt-in**: when
-    ``connectivity_mode`` is ``"skip"`` (default) or omitted, the test
-    records a SKIPPED result and returns immediately without contacting
-    nodes. Nodes whose smoketest fails are reported but are **not** pruned
-    from ``phdl`` -- operators decide whether to proceed with downstream
-    RDMA / RCCL testing.
+    Configuration lives under ``transferbench`` in the preflight config file.
+    The check is opt-in through ``enabled``. Once enabled, a failed run is a
+    mandatory preflight gate; skip-budget warnings remain non-fatal. Failed
+    nodes are not pruned from ``phdl`` so downstream diagnostics and reporting
+    can still run.
     """
     global preflight_results
 
@@ -846,16 +872,11 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
         preflight_update_test_result()
         return
 
-    mode = get_nested_config(config_dict, 'connectivity_check.transferbench', 'connectivity_mode', 'skip')
-    if isinstance(mode, str):
-        mode_normalized = mode.strip().lower()
-    else:
-        mode_normalized = 'skip' if not mode else 'run'
-
-    if mode_normalized in ('skip', 'off', 'disabled', 'false', '0'):
-        log.info("IFoE TransferBench smoketest skipped by configuration (mode=%s)", mode)
+    transferbench_config = _transferbench_config(config_dict)
+    if not _transferbench_enabled(config_dict):
+        log.info("IFoE TransferBench smoketest skipped because preflight.transferbench is disabled")
         preflight_results['transferbench_smoke'] = {
-            'mode': mode_normalized,
+            'mode': 'skip',
             'skipped': True,
             'message': 'IFoE TransferBench smoketest skipped by configuration',
             'nodes': {},
@@ -864,96 +885,76 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
         return
 
     if not phdl.reachable_hosts:
-        log.warning("IFoE TransferBench smoketest skipped: no reachable hosts remain after earlier preflight pruning")
+        message = 'No reachable nodes available for TransferBench smoketest'
+        log.warning(message)
         preflight_results['transferbench_smoke'] = {
-            'mode': mode_normalized,
-            'skipped': True,
-            'message': 'No reachable nodes available for TransferBench smoketest',
+            'mode': 'run',
+            'skipped': False,
+            'status': 'FAIL',
+            'message': message,
             'nodes': {},
         }
         preflight_update_test_result()
+        pytest.fail(message)
         return
 
-    tb_binary = get_nested_config(config_dict, 'connectivity_check.transferbench', 'tb_binary', 'TransferBench')
-    amd_smi_binary = get_nested_config(config_dict, 'connectivity_check.transferbench', 'amd_smi_binary', 'amd-smi')
-    extra_env = get_nested_config(config_dict, 'connectivity_check.transferbench', 'extra_env', {})
-    use_sudo = _config_flag_enabled(
-        get_nested_config(config_dict, 'connectivity_check.transferbench', 'use_sudo', True),
-        default=True,
-    )
-    preset = get_nested_config(config_dict, 'connectivity_check.transferbench', 'preset', 'smoketest')
-    size_list = get_nested_config(config_dict, 'connectivity_check.transferbench', 'size_list', ['1K', '16M'])
-    num_iterations = int(get_nested_config(config_dict, 'connectivity_check.transferbench', 'num_iterations', 2))
-    num_warmups = int(get_nested_config(config_dict, 'connectivity_check.transferbench', 'num_warmups', 0))
-    always_validate = _config_flag_enabled(
-        get_nested_config(config_dict, 'connectivity_check.transferbench', 'always_validate', True),
-        default=True,
-    )
-    run_parallel = _config_flag_enabled(
-        get_nested_config(config_dict, 'connectivity_check.transferbench', 'run_parallel', True),
-        default=True,
-    )
-    use_bdma = _config_flag_enabled(
-        get_nested_config(config_dict, 'connectivity_check.transferbench', 'use_bdma', False),
-        default=False,
-    )
-    force_single_pod = _config_flag_enabled(
-        get_nested_config(config_dict, 'connectivity_check.transferbench', 'force_single_pod', True),
-        default=True,
-    )
-    rank_mode = get_nested_config(config_dict, 'connectivity_check.transferbench', 'rank_mode', 'per_node')
-    socket_master_port = int(
-        get_nested_config(config_dict, 'connectivity_check.transferbench', 'socket_master_port', 31337)
-    )
-    master_node = get_nested_config(config_dict, 'connectivity_check.transferbench', 'master_node', None)
-    max_skip_pct = float(get_nested_config(config_dict, 'connectivity_check.transferbench', 'max_skip_pct', 25.0))
-    ssh_timeout = int(get_nested_config(config_dict, 'connectivity_check.transferbench', 'ssh_timeout', 600))
-    skip_pod_check = _config_flag_enabled(
-        get_nested_config(config_dict, 'connectivity_check.transferbench', 'skip_pod_check', False),
-        default=False,
-    )
+    scope = str(transferbench_config.get('scope', 'node')).strip().lower()
+    if scope not in ('node', 'cluster'):
+        raise ValueError("preflight.transferbench.scope must be 'node' or 'cluster'")
+    profile = str(transferbench_config.get('profile', 'smoketest')).strip().lower()
+    if profile != 'smoketest':
+        raise ValueError("preflight.transferbench.profile must be a CVS-supported profile: smoketest")
+    message_sizes = transferbench_config.get('message_sizes', ['1K', '16M'])
+    if not isinstance(message_sizes, (list, tuple)) or not message_sizes:
+        raise ValueError("preflight.transferbench.message_sizes must be a non-empty list")
+    message_sizes = [str(size).strip() for size in message_sizes]
+    if any(not size for size in message_sizes):
+        raise ValueError("preflight.transferbench.message_sizes entries must not be empty")
+    iterations = int(transferbench_config.get('iterations', 2))
+    warmup_iterations = int(transferbench_config.get('warmup_iterations', 0))
+    if iterations < 1:
+        raise ValueError("preflight.transferbench.iterations must be at least 1")
+    if warmup_iterations < 0:
+        raise ValueError("preflight.transferbench.warmup_iterations must be at least 0")
+    rank_mode = 'per_node' if scope == 'node' else 'multi_rank'
+    ssh_timeout = _transferbench_timeout(message_sizes, iterations, warmup_iterations)
     afm_vpod_admission = None
     if _node_health_fabric_checks_enabled(config_dict):
         # The MI4XX gate is authoritative.  Never fall back to the unreliable
-        # amd-smi fabric topology path or honor skip_pod_check in this mode.
+        # amd-smi fabric topology path.
         afm_vpod_admission = (preflight_results.get('node_health') or {}).get('vpod_membership')
-        if skip_pod_check:
-            log.warning("Ignoring transferbench.skip_pod_check because MI4XX AFM/vPOD admission is mandatory")
-        skip_pod_check = False
 
     log.info(
-        "Running IFoE TransferBench smoketest (tb_binary=%s, amd_smi_binary=%s, preset=%s, rank_mode=%s, "
-        "size_list=%s, num_iterations=%s, max_skip_pct=%s) on %d host(s)",
-        tb_binary,
-        amd_smi_binary,
-        preset,
-        rank_mode,
-        size_list,
-        num_iterations,
-        max_skip_pct,
+        "Running TransferBench profile=%s scope=%s message_sizes=%s iterations=%d warmups=%d timeout=%ds on %d host(s)",
+        profile,
+        scope,
+        message_sizes,
+        iterations,
+        warmup_iterations,
+        ssh_timeout,
         len(phdl.reachable_hosts),
     )
 
     checker = TransferBenchSmokeCheck(
         phdl,
-        tb_binary=tb_binary,
-        amd_smi_binary=amd_smi_binary,
-        use_sudo=use_sudo,
-        preset=preset,
-        size_list=size_list if isinstance(size_list, (list, tuple)) else [size_list],
-        num_iterations=num_iterations,
-        num_warmups=num_warmups,
-        always_validate=always_validate,
-        run_parallel=run_parallel,
-        use_bdma=use_bdma,
-        force_single_pod=force_single_pod,
+        tb_binary='TransferBench',
+        amd_smi_binary='amd-smi',
+        use_sudo=True,
+        preset=profile,
+        size_list=message_sizes,
+        num_iterations=iterations,
+        num_warmups=warmup_iterations,
+        always_validate=True,
+        run_parallel=True,
+        use_bdma=False,
+        force_single_pod=True,
         rank_mode=rank_mode,
-        socket_master_port=socket_master_port,
-        master_node=master_node if master_node else None,
-        max_skip_pct=max_skip_pct,
+        socket_master_port=31337,
+        master_node=None,
+        max_skip_pct=25.0,
         ssh_timeout=ssh_timeout,
-        extra_env=extra_env,
-        skip_pod_check=skip_pod_check,
+        extra_env={},
+        skip_pod_check=False,
         afm_vpod_admission=afm_vpod_admission,
         config_dict=config_dict,
     )
@@ -961,15 +962,21 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
     results = checker.run()
 
     preflight_results['transferbench_smoke'] = {
-        'mode': mode_normalized,
+        'mode': 'run',
         'skipped': False,
         'status': results.get('status'),
+        'scope': scope,
+        'profile': profile,
+        'message_sizes': message_sizes,
+        'iterations': iterations,
+        'warmup_iterations': warmup_iterations,
+        'ssh_timeout': ssh_timeout,
         'rank_mode': results.get('rank_mode'),
         'pod_membership': results.get('pod_membership') or {},
         'nodes': results.get('nodes') or {},
         'totals': results.get('totals') or {},
         'errors': results.get('errors') or [],
-        'max_skip_pct': max_skip_pct,
+        'max_skip_pct': 25.0,
     }
 
     totals = results.get('totals') or {}
@@ -989,7 +996,7 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
         log.warning(
             "IFoE TransferBench smoketest WARNING: %d node(s) exceeded skip budget (max %s%%)",
             totals.get('nodes_warning', 0),
-            max_skip_pct,
+            25.0,
         )
     else:
         log.info(
@@ -1002,6 +1009,8 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
         )
 
     preflight_update_test_result()
+    if results.get('status') == 'FAIL':
+        pytest.fail("TransferBench preflight gate failed; see preflight report")
 
 
 def test_rdma_connectivity(phdl, cluster_dict, config_dict):

@@ -922,45 +922,43 @@ class PreflightL2PingConfig(BaseModel):
 
 
 class PreflightTransferBenchConfig(BaseModel):
-    """TransferBench IFoE smoketest settings."""
+    """Small customer-facing TransferBench preflight policy."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
-    connectivity_mode: str = Field(default="skip")
-    tb_binary: str = Field(default="TransferBench")
-    use_sudo: bool = Field(default=True)
-    preset: str = Field(default="smoketest")
-    size_list: List[str] = Field(default_factory=lambda: ["1K", "16M"])
-    num_iterations: int = Field(default=2, ge=1)
-    num_warmups: int = Field(default=0, ge=0)
-    always_validate: bool = Field(default=True)
-    run_parallel: bool = Field(default=True)
-    use_bdma: bool = Field(default=False)
-    force_single_pod: bool = Field(default=True)
-    rank_mode: str = Field(default="per_node")
-    socket_master_port: int = Field(default=31337, ge=1, le=65535)
-    master_node: str = Field(default="")
-    max_skip_pct: float = Field(default=25.0, ge=0.0, le=100.0)
-    ssh_timeout: int = Field(default=600, ge=1)
-    skip_pod_check: bool = Field(
-        default=False,
-        description="Compatibility-only generic-mode bypass; ignored when the MI4XX admission gate is enabled",
+    enabled: bool = Field(default=False, description="Enable the mandatory TransferBench preflight gate")
+    scope: str = Field(default="node", description="node for independent runs or cluster for one multi-rank run")
+    profile: str = Field(default="smoketest", description="CVS-supported TransferBench validation profile")
+    message_sizes: List[str] = Field(
+        default_factory=lambda: ["1K", "16M"],
+        min_length=1,
+        description="Message sizes exercised by the selected profile",
     )
+    iterations: int = Field(default=2, ge=1, description="Validated iterations per test and message size")
+    warmup_iterations: int = Field(default=0, ge=0, description="Warmup iterations before validation")
 
-    @field_validator('connectivity_mode')
+    @field_validator('scope')
     @classmethod
-    def validate_transferbench_connectivity_mode(cls, value: str) -> str:
+    def validate_transferbench_scope(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in ('run', 'skip', 'off', 'disabled'):
-            raise ValueError("TransferBench connectivity_mode must be one of: run, skip, off, disabled")
+        if normalized not in ('node', 'cluster'):
+            raise ValueError("TransferBench scope must be one of: node, cluster")
         return normalized
 
-    @field_validator('rank_mode')
+    @field_validator('profile')
     @classmethod
-    def validate_transferbench_rank_mode(cls, value: str) -> str:
+    def validate_transferbench_profile(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in ('per_node', 'multi_rank'):
-            raise ValueError("TransferBench rank_mode must be one of: per_node, multi_rank")
+        if normalized != 'smoketest':
+            raise ValueError("TransferBench profile must be a CVS-supported profile: smoketest")
+        return normalized
+
+    @field_validator('message_sizes')
+    @classmethod
+    def validate_transferbench_message_sizes(cls, value: List[str]) -> List[str]:
+        normalized = [str(size).strip() for size in value]
+        if any(not size for size in normalized):
+            raise ValueError("TransferBench message_sizes entries must not be empty")
         return normalized
 
 
@@ -970,16 +968,16 @@ class PreflightConnectivityCheckConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     rdma: PreflightRdmaConfig = Field(default_factory=PreflightRdmaConfig, description="RDMA connectivity settings")
-    transferbench: PreflightTransferBenchConfig = Field(
-        default_factory=PreflightTransferBenchConfig,
-        description="IFoE TransferBench data-path smoketest settings",
-    )
 
     @model_validator(mode="before")
     @classmethod
-    def reject_legacy_ifoe_l2ping(cls, value):
+    def reject_legacy_preflight_checks(cls, value):
         if isinstance(value, dict) and "ifoe" in value:
             raise ValueError("connectivity_check.ifoe is no longer supported; use the top-level l2ping block")
+        if isinstance(value, dict) and "transferbench" in value:
+            raise ValueError(
+                "connectivity_check.transferbench is no longer supported; use the top-level transferbench block"
+            )
         return value
 
 
@@ -1024,6 +1022,10 @@ class PreflightConfigFile(BaseModel):
     l2ping: PreflightL2PingConfig = Field(
         default_factory=PreflightL2PingConfig,
         description="Strict IFoE L2 connectivity admission",
+    )
+    transferbench: PreflightTransferBenchConfig = Field(
+        default_factory=PreflightTransferBenchConfig,
+        description="TransferBench data-path validation admission",
     )
     node_check: PreflightNodeCheckConfig = Field(
         default_factory=PreflightNodeCheckConfig, description="Individual node validation settings"
