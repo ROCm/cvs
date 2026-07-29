@@ -268,8 +268,15 @@ class NodeHealthCheck(PreflightCheck):
         )
 
     def build_gpu_inventory_command(self) -> str:
-        return " ".join(
-            shlex.quote(part) for part in self._privileged_parts(self.amd_smi_path) + ["list", *self.json_args]
+        executable = shlex.quote(self.amd_smi_path)
+        arguments = " ".join(shlex.quote(part) for part in ["list", *self.json_args])
+        privilege_prefix = "sudo -n " if self.use_sudo else ""
+        return (
+            f'_cvs_amd_smi="$(command -v {executable})" || '
+            f'{{ printf \'%s\\n\' {shlex.quote(f"Unable to find {self.amd_smi_path} in PATH")} >&2; exit 127; }}; '
+            'case "$_cvs_amd_smi" in /*) ;; *) '
+            "printf '%s\\n' 'Resolved amd-smi path is not absolute' >&2; exit 127 ;; esac; "
+            f'{privilege_prefix}"$_cvs_amd_smi" {arguments}'
         )
 
     def build_station_mask_command(self) -> str:

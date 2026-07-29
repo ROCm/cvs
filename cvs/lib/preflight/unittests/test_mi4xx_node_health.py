@@ -245,6 +245,24 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
         ).build_station_mask_command()
         self.assertIn('sudo -n cat', command)
 
+    def test_gpu_inventory_resolves_absolute_path_before_sudo(self):
+        command = Mi4xxNodeHealthCheck(
+            FakePssh(hosts=('nodeA',)), use_sudo=True, readiness_timeout_seconds=0
+        ).build_gpu_inventory_command()
+
+        self.assertIn('_cvs_amd_smi="$(command -v amd-smi)"', command)
+        self.assertIn('case "$_cvs_amd_smi" in /*)', command)
+        self.assertIn('sudo -n "$_cvs_amd_smi" list --json', command)
+
+    def test_gpu_inventory_uses_resolved_path_without_sudo(self):
+        command = Mi4xxNodeHealthCheck(
+            FakePssh(hosts=('nodeA',)), use_sudo=False, readiness_timeout_seconds=0
+        ).build_gpu_inventory_command()
+
+        self.assertIn('_cvs_amd_smi="$(command -v amd-smi)"', command)
+        self.assertIn('"$_cvs_amd_smi" list --json', command)
+        self.assertNotIn('sudo -n "$_cvs_amd_smi"', command)
+
     def test_partial_station_is_rejected_by_default_policy(self):
         check = self._check(FakePssh(hosts=("nodeA",)))
         check.results = {"nodeA": {"status": "PASS", "errors": []}}
