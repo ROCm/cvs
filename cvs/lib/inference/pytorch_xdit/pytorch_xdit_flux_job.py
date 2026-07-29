@@ -19,9 +19,10 @@ from __future__ import annotations
 import re
 import shlex
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib import globals
+from cvs.lib.parallel_ssh_lib import Pssh
 
 log = globals.log
 
@@ -56,6 +57,103 @@ def _secret_str(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def _phdl_connection_kwargs(s_phdl) -> Dict[str, Any]:
+    """Best-effort SSH connection kwargs for a scoped one-node Pssh handle."""
+    return {
+        "user": getattr(s_phdl, "user", None),
+        "password": getattr(s_phdl, "password", None),
+        "pkey": getattr(s_phdl, "pkey", "id_rsa"),
+        "env_vars": getattr(s_phdl, "env_vars", None),
+    }
+
+
+def _exec_on_single_node(
+    s_phdl,
+    node: str,
+    cmd: str,
+    *,
+    timeout: Optional[int] = None,
+    print_console: bool = True,
+) -> str:
+    """Run ``cmd`` on exactly one node, even when ``s_phdl`` covers more hosts."""
+    phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
+    if phdl_hosts == [node]:
+        out = s_phdl.exec(cmd, timeout=timeout, print_console=print_console)
+        return (out or {}).get(node, "")
+
+    scoped = Pssh(
+        getattr(s_phdl, "log", log),
+        [node],
+        **_phdl_connection_kwargs(s_phdl),
+    )
+    out = scoped.exec(cmd, timeout=timeout, print_console=print_console)
+    return (out or {}).get(node, "")
+
+
+def _exec_on_nodes(
+    s_phdl,
+    nodes: Sequence[str],
+    cmd: str,
+    *,
+    timeout: Optional[int] = None,
+    print_console: bool = True,
+) -> Dict[str, str]:
+    """Run the same command on an explicit node subset."""
+    node_list = list(nodes)
+    phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
+
+    if phdl_hosts == node_list:
+        return s_phdl.exec(cmd, timeout=timeout, print_console=print_console) or {}
+
+    results: Dict[str, str] = {}
+    for node in node_list:
+        results[node] = _exec_on_single_node(
+            s_phdl,
+            node,
+            cmd,
+            timeout=timeout,
+            print_console=print_console,
+        )
+    return results
+
+
+def _exec_cmd_list_on_nodes(
+    s_phdl,
+    nodes: Sequence[str],
+    cmd_list: Sequence[str],
+    *,
+    timeout: Optional[int] = None,
+    print_console: bool = True,
+) -> Dict[str, str]:
+    """
+    Run per-node commands on an explicit node subset.
+
+    ``Pssh.exec_cmd_list`` maps commands to ``s_phdl.host_list`` order. This helper
+    avoids mis-launch when the participating node set is a subset or reordered.
+    """
+    node_list = list(nodes)
+    commands = list(cmd_list)
+    if len(node_list) != len(commands):
+        raise ValueError(
+            f"node/cmd length mismatch: {len(node_list)} nodes vs {len(commands)} commands"
+        )
+
+    phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
+    if phdl_hosts == node_list:
+        return s_phdl.exec_cmd_list(commands, timeout=timeout, print_console=print_console) or {}
+
+    results: Dict[str, str] = {}
+    for node, cmd in zip(node_list, commands):
+        results[node] = _exec_on_single_node(
+            s_phdl,
+            node,
+            cmd,
+            timeout=timeout,
+            print_console=print_console,
+        )
+    return results
+
+
 def resolve_server_nodes(cluster_dict: Mapping[str, Any], inference_dict: Mapping[str, Any]) -> List[str]:
     explicit = inference_dict.get("server_node_list")
     if explicit:
@@ -74,11 +172,29 @@ def resolve_master_addr(
     inference_dict: Mapping[str, Any],
     node_to_hostname: Mapping[str, str],
     rank0_node: str,
+    *,
+    s_phdl=None,
 ) -> str:
+    """
+    Resolve torchrun rendezvous address.
+
+    Prefer explicit config. Otherwise use rank-0 IP when possible, then hostname.
+    """
     addr = (inference_dict.get("master_addr") or "").strip()
     if addr:
         return addr
-    return node_to_hostname.get(rank0_node, rank0_node)
+
+    if s_phdl is not None:
+        ip_cmd = "hostname -I | awk '{print $1}'"
+        ip_out = _exec_on_single_node(s_phdl, rank0_node, ip_cmd, print_console=False).strip()
+        first_ip = (ip_out.split() or [""])[0].strip()
+        if first_ip:
+            log.info("Resolved master_addr from rank-0 node %s: %s", rank0_node, first_ip)
+            return first_ip
+
+    hostname = node_to_hostname.get(rank0_node, rank0_node)
+    log.info("Using hostname for master_addr on rank-0 node %s: %s", rank0_node, hostname)
+    return hostname
 
 
 def parallel_product(flux_params: Mapping[str, Any]) -> int:
@@ -272,11 +388,16 @@ class FluxBenchmarkJob:
 
     def validate_parallelism(self) -> Optional[str]:
         if not self.distributed:
-            world_size, product, err = validate_parallelism(1, self.flux_params)
+            _, _, err = validate_parallelism(1, self.flux_params)
         else:
-            world_size, product, err = validate_parallelism(self.nnodes, self.flux_params)
+            _, _, err = validate_parallelism(self.nnodes, self.flux_params)
         if err:
             return err
+
+        world_size, product, _ = validate_parallelism(
+            self.nnodes if self.distributed else 1,
+            self.flux_params,
+        )
         log.info(
             "Parallelism OK (%s): world_size=%s product=%s "
             "(ulysses=%s ring=%s pipefusion=%s tp=%s dp=%s)",
@@ -293,13 +414,15 @@ class FluxBenchmarkJob:
 
     def check_kfd(self) -> List[str]:
         log.info("Checking /dev/kfd on %d node(s)", len(self.server_nodes))
-        kfd_check = self.s_phdl.exec(
+        kfd_check = _exec_on_nodes(
+            self.s_phdl,
+            self.server_nodes,
             "test -e /dev/kfd && echo KFD_OK || echo KFD_MISSING",
             print_console=False,
         )
         missing = []
         for node in self.server_nodes:
-            output = (kfd_check or {}).get(node, "")
+            output = kfd_check.get(node, "")
             if "KFD_OK" not in (output or ""):
                 missing.append(node)
                 log.error("ROCm device node /dev/kfd not found on %s", node)
@@ -309,7 +432,7 @@ class FluxBenchmarkJob:
 
     def _fetch_hostnames(self) -> Dict[str, str]:
         log.info("Getting hostnames from %d node(s)", len(self.server_nodes))
-        hostname_result = self.s_phdl.exec("hostname")
+        hostname_result = _exec_on_nodes(self.s_phdl, self.server_nodes, "hostname")
         return {
             node: (hostname_result.get(node, "") or "").strip() or node
             for node in self.server_nodes
@@ -344,10 +467,8 @@ class FluxBenchmarkJob:
     def _build_docker_cmd(
         self,
         *,
-        node: str,
         node_rank: int,
         host_output_dir: str,
-        node_to_hostname: Mapping[str, str],
         master_addr: str,
         master_port: int,
     ) -> str:
@@ -401,7 +522,12 @@ class FluxBenchmarkJob:
 
         if self.distributed:
             rank0_node = self.server_nodes[0]
-            master_addr = resolve_master_addr(self.inference_dict, node_to_hostname, rank0_node)
+            master_addr = resolve_master_addr(
+                self.inference_dict,
+                node_to_hostname,
+                rank0_node,
+                s_phdl=self.s_phdl,
+            )
             primary_output_dir = f"{output_base_dir}/flux_{node_to_hostname[rank0_node]}_outputs"
             plan.primary_output_dir = primary_output_dir
             plan.world_size = compute_world_size(self.nnodes, self.nproc_per_node)
@@ -411,10 +537,8 @@ class FluxBenchmarkJob:
                 plan.output_dirs_by_node[node] = primary_output_dir
                 plan.docker_cmds.append(
                     self._build_docker_cmd(
-                        node=node,
                         node_rank=node_rank,
                         host_output_dir=primary_output_dir,
-                        node_to_hostname=node_to_hostname,
                         master_addr=master_addr,
                         master_port=master_port,
                     )
@@ -437,10 +561,8 @@ class FluxBenchmarkJob:
             plan.output_dirs_by_node[node] = host_output_dir
             plan.docker_cmds.append(
                 self._build_docker_cmd(
-                    node=node,
                     node_rank=0,
                     host_output_dir=host_output_dir,
-                    node_to_hostname=node_to_hostname,
                     master_addr="127.0.0.1",
                     master_port=master_port,
                 )
@@ -456,7 +578,11 @@ class FluxBenchmarkJob:
         plan.world_size = self.nproc_per_node
         return plan
 
-    def run(self, *, timeout: int = DEFAULT_BENCHMARK_TIMEOUT_S) -> Tuple[Dict[str, str], FluxLaunchPlan, List[str]]:
+    def run(
+        self,
+        *,
+        timeout: int = DEFAULT_BENCHMARK_TIMEOUT_S,
+    ) -> Tuple[Dict[str, str], FluxLaunchPlan, List[str]]:
         errors: List[str] = []
 
         par_err = self.validate_parallelism()
@@ -479,9 +605,17 @@ class FluxBenchmarkJob:
 
         log.info(
             "Creating output directories on %d node(s)",
-            len(plan.mkdir_cmds),
+            len(plan.node_order),
         )
-        self.s_phdl.exec_cmd_list(plan.mkdir_cmds)
+        try:
+            _exec_cmd_list_on_nodes(
+                self.s_phdl,
+                plan.node_order,
+                plan.mkdir_cmds,
+            )
+        except Exception as exc:
+            errors.append(f"Failed to create output directories: {exc}")
+            return {}, plan, errors
 
         mode_label = "distributed unified" if self.distributed else "single-node"
         log.info(
@@ -492,7 +626,12 @@ class FluxBenchmarkJob:
         log.debug("Docker command (sample): %s", _redact_secrets(plan.docker_cmds[0]))
 
         try:
-            results = self.s_phdl.exec_cmd_list(plan.docker_cmds, timeout=timeout)
+            results = _exec_cmd_list_on_nodes(
+                self.s_phdl,
+                plan.node_order,
+                plan.docker_cmds,
+                timeout=timeout,
+            )
         except Exception as exc:
             errors.append(f"Benchmark execution failed with exception: {exc}")
             return {}, plan, errors
@@ -505,7 +644,8 @@ class FluxBenchmarkJob:
                 errors.append(msg)
 
         failed_nodes = []
-        for node, output in (results or {}).items():
+        for node in plan.node_order:
+            output = (results or {}).get(node, "")
             if scan_fatal_output(output):
                 log.error("Benchmark output indicates failure on %s", node)
                 failed_nodes.append(node)
