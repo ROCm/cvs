@@ -26,7 +26,7 @@ from cvs.lib.utils_lib import (
 from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditFluxConfigFile
-from cvs.parsers.pytorch_xdit_flux import FluxOutputParser
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux import FluxOutputParser
 
 log = globals.log
 
