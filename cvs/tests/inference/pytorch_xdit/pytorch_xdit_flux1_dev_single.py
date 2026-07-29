@@ -344,7 +344,7 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict):
     )
     update_test_result()
 
-def test_a_verify_parallelism_config(master_node, inference_dict, benchmark_params_dict):
+def test_verify_parallelism_config(master_node, inference_dict, benchmark_params_dict):
     """Fail fast if xDiT parallel degrees do not match 1 node × torchrun_nproc."""
     globals.error_list = []
 
