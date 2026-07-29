@@ -37,6 +37,7 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     validate_flux_parallelism_config,
     compute_world_size,
     parallel_product,
+    build_output_cleanup_cmd, 
 )
 
 log = globals.log
@@ -233,6 +234,12 @@ def test_cleanup_stale_containers(s_phdl, inference_dict, cluster_dict):
     for rank in range(nnodes):
         docker_lib.kill_docker_container(s_phdl, f"{container_name}-rank{rank}")
     docker_lib.delete_all_containers_and_volumes(s_phdl)
+
+    output_base_dir = inference_dict.get("output_base_dir")
+    if output_base_dir:
+        cleanup_cmd = build_output_cleanup_cmd(output_base_dir, use_sudo=True)
+        log.info("Cleaning stale FLUX outputs under %s", output_base_dir)
+        s_phdl.exec(cleanup_cmd)
 
     log.info("Container cleanup completed on all server nodes")
     update_test_result()

@@ -599,6 +599,7 @@ class FluxBenchmarkJob:
             return {}, FluxLaunchPlan(), errors
 
         plan = self.build_launch_plan()
+
         if not plan.docker_cmds:
             errors.append("No docker commands generated")
             return {}, plan, errors
@@ -718,3 +719,10 @@ def validate_flux_parallelism_config(
         return None
     _, _, err = validate_parallelism(1, flux_params)
     return err
+
+def build_output_cleanup_cmd(output_base_dir: str, *, use_sudo: bool = True) -> str:
+    prefix = "sudo " if use_sudo else ""
+    # Glob must expand in shell — do not quote the *
+    return (
+        f"bash -c {shlex.quote(f'{prefix}rm -rf {output_base_dir}/flux_*_outputs')}"
+    )
