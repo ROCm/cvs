@@ -1,5 +1,19 @@
 {
     "rccl": {
+        "installation_params": {
+            "nfs_install": "True",
+            "_comment_nfs_install": "If nfs_install is True, rccl-tests and rccl library (optional) will be installed in NFS. Otherwise, all nodes will have local installation",
+            "rccl_lib_install": "False",
+            "_comment_rccl_lib_install": "False indicates RCCL library will not be built, change to True if you want to build it outside ROCm",
+            "rccl_lib_install_dir": "/opt/rocm/lib",
+            "_comment_rccl_lib_install_dir": "Either provide the RCCL lib from ROCm installation (/opt/rocm/lib) or provide the path where your want it to build and install",
+            "rccl_tests_install_dir": "<changeme>",
+            "_comment_rccl_tests_install_dir": "Provide path where rccl-tests need to be installed",
+            "rccl_repository": "https://github.com/ROCm/rocm-systems.git",
+            "ompi_install_dir": "<changeme>",
+            "_comment_ompi_install_dir": "Provide path where ompi is installed, the path will be tested for valid ompi installation, if missing rccl-tests will not be built"
+        },
+
         "mpi_params": {
             "no_of_nodes": "2",
             "no_of_local_ranks": "8",
