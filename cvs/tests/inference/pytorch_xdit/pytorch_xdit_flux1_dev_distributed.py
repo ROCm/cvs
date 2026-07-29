@@ -35,6 +35,8 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     resolve_nnodes,
     resolve_server_nodes,
     validate_flux_parallelism_config,
+    compute_world_size,
+    parallel_product,
 )
 
 log = globals.log
@@ -390,6 +392,44 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict):
 def test_verify_parallelism_config(cluster_dict, inference_dict, benchmark_params_dict):
     """Fail fast if xDiT parallel degrees do not match nnodes × torchrun_nproc."""
     globals.error_list = []
+
+    flux_params = benchmark_params_dict["flux1_dev_t2i"]
+    server_nodes = resolve_server_nodes(cluster_dict, inference_dict)
+    nnodes = resolve_nnodes(inference_dict, server_nodes)
+    participating = server_nodes[:nnodes]
+    nproc = int(flux_params["torchrun_nproc"])
+    world_size = compute_world_size(nnodes, nproc)
+    product = parallel_product(flux_params)
+
+    ulysses = int(flux_params["ulysses_degree"])
+    ring = int(flux_params["ring_degree"])
+    pipefusion = int(flux_params.get("pipefusion_parallel_degree", 1))
+    tp = int(flux_params.get("tensor_parallel_degree", 1))
+    dp = int(flux_params.get("data_parallel_degree", 1))
+    sp_size = ulysses * ring
+
+    log.info("=" * 60)
+    log.info("Distributed FLUX topology")
+    log.info("=" * 60)
+    log.info("Participating nodes: %d", nnodes)
+    for rank, node in enumerate(participating):
+        log.info("  rank %d -> %s (%d GPUs)", rank, node, nproc)
+    log.info("GPUs per node (torchrun_nproc): %d", nproc)
+    log.info("Total GPU ranks (world_size): %d = %d nodes × %d nproc", world_size, nnodes, nproc)
+    log.info(
+        "xDiT parallel layout: ulysses=%d × ring=%d × pipefusion=%d × tp=%d × dp=%d = %d",
+        ulysses, ring, pipefusion, tp, dp, product,
+    )
+    log.info("Sequence-parallel size (ulysses × ring): %d", sp_size)
+    log.info(
+        "Rendezvous: %s:%s",
+        inference_dict.get("master_addr") or "<auto rank-0>",
+        inference_dict.get("master_port", 29500),
+    )
+    if product == world_size:
+        log.info("Parallelism check: PASS (product %d == world_size %d)", product, world_size)
+    log.info("=" * 60)
+
     err = validate_flux_parallelism_config(
         inference_dict,
         benchmark_params_dict,
