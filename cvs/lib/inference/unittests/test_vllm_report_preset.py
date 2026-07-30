@@ -68,9 +68,7 @@ class TestVllmReportPreset(unittest.TestCase):
     def test_preset_config_identity(self):
         self.assertEqual(VLLM_REPORT_CONFIG.suite_id, "vllm")
         self.assertEqual(VLLM_REPORT_CONFIG.inference_test_substring, "test_vllm_inference")
-        self.assertEqual(
-            VLLM_REPORT_CONFIG.row_card_test_names, ("test_metric", "test_gpu_metric", "test_prom_metric")
-        )
+        self.assertEqual(VLLM_REPORT_CONFIG.row_card_test_names, ("test_metric", "test_gpu_metric", "test_prom_metric"))
 
     def test_preset_lifecycle_labels_match_what_suite_records(self):
         # Guard against drift: the vLLM suite (cvs/tests/inference/vllm/vllm.py)

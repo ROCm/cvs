@@ -200,7 +200,5 @@ def to_prom_metrics(before_text: "str | None", after_text: "str | None") -> dict
     result = dict(all_none)
     for qname, q in _QUANTILES.items():
         result[f"prom.queue_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _QUEUE_TIME_METRIC, q)
-        result[f"prom.prefill_time_{qname}_ms"] = _quantile_ms(
-            before_metrics, after_metrics, _PREFILL_TIME_METRIC, q
-        )
+        result[f"prom.prefill_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _PREFILL_TIME_METRIC, q)
     return result

@@ -39,7 +39,29 @@ from cvs.lib.inference.vllm_job import scrape_vllm_metrics
 
 # Shared bucket list (queue/prefill/decode/inference/e2e), seconds -- per
 # VLLM_PROMETHEUS_METRICS_SPEC.md Sec 1.
-_BUCKETS = [0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 120.0, 240.0, 480.0, 960.0, 1920.0, 7680.0]
+_BUCKETS = [
+    0.3,
+    0.5,
+    0.8,
+    1.0,
+    1.5,
+    2.0,
+    2.5,
+    5.0,
+    10.0,
+    15.0,
+    20.0,
+    30.0,
+    40.0,
+    50.0,
+    60.0,
+    120.0,
+    240.0,
+    480.0,
+    960.0,
+    1920.0,
+    7680.0,
+]
 
 
 def _histogram_text(name: str, cumulative_counts: dict, total_sum: float) -> str:
@@ -122,9 +144,7 @@ class TestParsePrometheusText(unittest.TestCase):
         self.assertEqual(out["vllm:num_requests_waiting"], 3.0)
 
     def test_multiple_metrics_coexist(self):
-        text = _full_scrape_text(
-            _cumulative([0.1, 0.2]), 0.3, _cumulative([0.4]), 0.4
-        )
+        text = _full_scrape_text(_cumulative([0.1, 0.2]), 0.3, _cumulative([0.4]), 0.4)
         out = parse_prometheus_text(text)
         self.assertIn("vllm:request_queue_time_seconds", out)
         self.assertIn("vllm:request_prefill_time_seconds", out)
@@ -265,9 +285,7 @@ class TestToPromMetrics(unittest.TestCase):
     def test_end_to_end_realistic_before_after_pair(self):
         # "before" scrape: server already served 3 queue-wait observations
         # from a prior cell (0.1, 0.2, 0.4s) -- the reused-server baseline.
-        before_text = _full_scrape_text(
-            _cumulative([0.1, 0.2, 0.4]), 0.7, _cumulative([0.2, 0.3]), 0.5
-        )
+        before_text = _full_scrape_text(_cumulative([0.1, 0.2, 0.4]), 0.7, _cumulative([0.2, 0.3]), 0.5)
         # "after" scrape: this cell added 2 more queue-wait obs (0.6, 0.9s)
         # and 1 more prefill obs (1.2s) on top of the same server's counters.
         after_text = _full_scrape_text(
