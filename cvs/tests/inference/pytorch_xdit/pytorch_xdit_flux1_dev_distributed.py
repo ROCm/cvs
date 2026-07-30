@@ -460,7 +460,6 @@ def test_run_flux1_benchmark(s_phdl, cluster_dict, inference_dict, benchmark_par
         hf_token,
         distributed=True,
         cluster_dict=cluster_dict,
-        timeout=900,
     ):
         fail_test(msg)
     update_test_result()
