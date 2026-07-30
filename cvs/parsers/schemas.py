@@ -12,11 +12,13 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 """
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
+import math
 from pathlib import Path
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
-import math
+import warnings
 
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
@@ -754,6 +756,64 @@ class PytorchXditFluxConfig(BaseModel):
 # =============================================================================
 
 
+LEGACY_PREFLIGHT_RDMA_PATHS = {
+    "gid_index": "gid_index",
+    "rdma_interfaces": "interfaces",
+}
+
+
+def normalize_legacy_preflight_rdma_config(value):
+    """Move the two deprecated node-check RDMA keys to their canonical block.
+
+    Returns a deep-copied configuration and one consolidated warning message,
+    or the original value and ``None`` when no legacy keys are present.
+    Conflicting legacy and canonical values fail rather than silently choosing
+    which RDMA inventory should be tested.
+    """
+    if not isinstance(value, dict):
+        return value, None
+
+    node_check = value.get("node_check")
+    if not isinstance(node_check, dict):
+        return value, None
+
+    legacy_keys = [key for key in LEGACY_PREFLIGHT_RDMA_PATHS if key in node_check]
+    if not legacy_keys:
+        return value, None
+
+    normalized = deepcopy(value)
+    normalized_node_check = normalized["node_check"]
+    connectivity_check = normalized.setdefault("connectivity_check", {})
+    if not isinstance(connectivity_check, dict):
+        raise ValueError(
+            "preflight.connectivity_check must be an object when deprecated node_check RDMA options are used"
+        )
+    rdma = connectivity_check.setdefault("rdma", {})
+    if not isinstance(rdma, dict):
+        raise ValueError(
+            "preflight.connectivity_check.rdma must be an object when deprecated node_check RDMA options are used"
+        )
+
+    migrations = []
+    for legacy_key in legacy_keys:
+        canonical_key = LEGACY_PREFLIGHT_RDMA_PATHS[legacy_key]
+        legacy_value = normalized_node_check.pop(legacy_key)
+        if canonical_key in rdma and rdma[canonical_key] != legacy_value:
+            raise ValueError(
+                f"Conflicting preflight RDMA options: preflight.node_check.{legacy_key} and "
+                f"preflight.connectivity_check.rdma.{canonical_key} must have the same value when both are provided"
+            )
+        rdma.setdefault(canonical_key, legacy_value)
+        migrations.append(f"preflight.node_check.{legacy_key} -> preflight.connectivity_check.rdma.{canonical_key}")
+
+    warning_message = (
+        "Deprecated preflight RDMA configuration detected: "
+        + ", ".join(migrations)
+        + ". Use the preflight.connectivity_check.rdma paths; legacy paths will be removed in a future release."
+    )
+    return normalized, warning_message
+
+
 class PreflightParallelismConfig(BaseModel):
     """Legacy parallelism settings for preflight checks."""
 
@@ -1025,7 +1085,10 @@ class PreflightConfigFile(BaseModel):
                 + ", ".join(removed)
                 + "; use node_check and connectivity_check.ifoe"
             )
-        return value
+        normalized, warning_message = normalize_legacy_preflight_rdma_config(value)
+        if warning_message:
+            warnings.warn(warning_message, FutureWarning, stacklevel=2)
+        return normalized
 
     @model_validator(mode="after")
     def validate_fabric_prerequisites(self):

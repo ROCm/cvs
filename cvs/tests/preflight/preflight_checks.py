@@ -22,7 +22,7 @@ from cvs.lib.parallel.multiprocess_pssh import MultiProcessPssh as Pssh
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
-from cvs.parsers.schemas import validate_config_file
+from cvs.parsers.schemas import normalize_legacy_preflight_rdma_config, validate_config_file
 
 from cvs.lib import globals
 
@@ -279,6 +279,9 @@ def config_dict(config_file, cluster_dict):
         raise ValueError("Configuration file must contain 'preflight' section")
 
     config_dict = config_dict_t['preflight']
+    config_dict, compatibility_warning = normalize_legacy_preflight_rdma_config(config_dict)
+    if compatibility_warning:
+        log.warning(compatibility_warning)
 
     # Resolve path placeholders
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)

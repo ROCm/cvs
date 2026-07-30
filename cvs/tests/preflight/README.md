@@ -119,6 +119,13 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 - **`connectivity_check.rdma.ibv_test_timeout`**: Timeout in seconds for ibv_rc_pingpong tests
 - **`connectivity_check.rdma.ibv_test_port_range`**: Port range for parallel ibv_rc_pingpong tests
 
+Legacy RDMA configurations may temporarily use `node_check.gid_index` and
+`node_check.rdma_interfaces`. CVS maps them to
+`connectivity_check.rdma.gid_index` and `connectivity_check.rdma.interfaces`
+and emits a deprecation warning. The legacy paths will be removed in a future
+release. If legacy and canonical values are both supplied, they must match.
+New configurations should use only the canonical paths.
+
 ## IFoE L2 Connectivity (AIMVT-180)
 
 Validates L2 reachability of IFoE links by invoking `afmctl test ping` on

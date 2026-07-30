@@ -102,6 +102,25 @@ When `connectivity_mode` is `"skip"`, CVS skips RDMA interface presence, GID
 validation, and pairwise RDMA connectivity. IFoE checks are independent and
 can still run.
 
+### Legacy RDMA configuration — deprecated
+
+Existing RDMA preflight configurations may temporarily keep these two legacy
+paths:
+
+| Deprecated path | Canonical path |
+|---|---|
+| `preflight.node_check.gid_index` | `preflight.connectivity_check.rdma.gid_index` |
+| `preflight.node_check.rdma_interfaces` | `preflight.connectivity_check.rdma.interfaces` |
+
+CVS normalizes the legacy values before validation and prints a deprecation
+warning. These paths will be removed in a future release; new configurations
+must use the canonical `connectivity_check.rdma` shape shown above.
+
+If a deprecated and canonical path are both present, their values must match.
+Conflicting values are rejected rather than silently selecting a different GID
+or interface inventory. This compatibility exception does not apply to the
+retired `node_health`, `l2ping`, or `transferbench` blocks.
+
 ## Reporting and debug
 
 - `reporting.generate_html_report` and `generate_rdma_pairs_csv` are JSON
